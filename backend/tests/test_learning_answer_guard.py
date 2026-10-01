@@ -4688,6 +4688,11 @@ _DISOWNED = [
     "The base case stops the recursion. The above is false.",
     "Myths:\n- the base case stops the recursion",
     "The following is a myth: the base case stops the recursion",
+    # PKG-14 final fix round (spec §13 A103): the one unambiguous form added — the
+    # whole sentence is "It's a myth that <span>."
+    "It's a myth that the base case stops the recursion.",
+    "It is a common myth that the base case stops the recursion!",
+    "Recursion is hard. It’s a myth that the base case stops the recursion.",
 ]
 _OWNED = [
     "The base case stops the recursion.",
@@ -4718,6 +4723,40 @@ _HONEST_WITH_ERROR_WORDS = [
      "The derivative is 2x cos(x^2)"),
     ("x = 3. This is not true for x = -3 though.", "x = 3"),
 ]
+
+
+# A103: "It's a myth that" governs only a span that IS the rest of its sentence.
+_MYTH_THAT_NOT_THE_SPAN = [
+    "It's a myth that recursion loops forever; the base case stops the recursion.",
+    "It's a myth that the base case stops the recursion only for factorial.",
+    "It's not a myth that the base case stops the recursion.",
+]
+
+
+@pytest.mark.parametrize("answer", _MYTH_THAT_NOT_THE_SPAN)
+def test_myth_that_governs_only_a_span_that_is_the_whole_rest_of_the_sentence(answer):
+    assert guard.disowned(answer, _DISOWN_SPAN) is False
+
+
+# A103 (accepted limits, recorded in HANDOFF-14): these disowning forms are NOT
+# recognised, because each has an honest reading the rule cannot tell apart
+# ("People wrongly believe X" also opens an explanation of why X is believed;
+# "Myth - X" is also a "myth-busting" list whose items are the truths), or the
+# span is first written in the student's own voice. A false negative is only
+# leniency toward an answer that sabotages itself — never credit for someone
+# else's work — so the rule stays narrow (the false positives it would bring
+# back are on honest course content).
+_ACCEPTED_FALSE_NEGATIVES = [
+    "People wrongly believe the base case stops the recursion.",
+    "Myth - the base case stops the recursion",
+    # the span is judged where it FIRST occurs — here in the student's own voice
+    "I know the base case stops the recursion. The following is a myth: the base case stops the recursion",
+]
+
+
+@pytest.mark.parametrize("answer", _ACCEPTED_FALSE_NEGATIVES)
+def test_the_accepted_false_negatives_stay_graded(answer):
+    assert guard.disowned(answer, _DISOWN_SPAN) is False
 
 
 @pytest.mark.parametrize("answer,span", _HONEST_WITH_ERROR_WORDS)

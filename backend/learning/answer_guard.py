@@ -1618,6 +1618,16 @@ _BACK_VERBS = frozenset({"is", "was", "are", "were", "s"})
 _RESET_WORDS = frozenset({"but", "however", "actually", "instead", "rather", "really", "reality"})
 _RESET_LABELS = ("correct:", "correction:", "answer:", "true:", "the truth is", "correct answer is",
                  "right answer is", "real answer is", "in fact", "what's true", "whats true")
+# PKG-14 final fix round (spec §13 A103): the one added form — the WHOLE sentence
+# is "It's a myth that <span>." (the span runs to the sentence's end). Exact word
+# lists, so "It's not a myth that …" and a span sharing its sentence with other
+# words ("It's a myth that X; Y.") are not it.
+_MYTH_THAT = frozenset(
+    tuple(f"{lead} {common}myth that".split())
+    for lead in ("it's a", "it s a", "it is a")
+    for common in ("", "common ")
+)
+_SENTENCE_TAIL = " \t.!?\"'\u201d\u2019)"
 _UNIT_WORD = re.compile(r"[a-z']+")
 _UNIT_BREAK = re.compile(r"[.!?]+|\n")
 
@@ -1740,6 +1750,10 @@ def disowned(answer: str, span: str) -> bool:
         bw = _words(before)
         if _resets(before, bw):
             return False
+        # A103: "It's a myth that <span>." — the frame is the sentence's whole lead
+        # and the span its whole rest
+        if tuple(bw) in _MYTH_THAT and not answer[end : units[first][1]].strip(_SENTENCE_TAIL):
+            return True
         # only a colon label governs inside its own sentence ("Myths: <span>");
         # a sentence cut mid-reason ("The claim below is false because <span>") never
         if before.rstrip().endswith(":") and _forward_frame(before, bw):

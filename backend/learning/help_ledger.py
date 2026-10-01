@@ -2,22 +2,40 @@
 HELP LEDGER, on half A's `learning_reveals` table (migration
 20261001010805_learning_help_ledger.sql).
 
-Every unit of help a student got on an item — a hint rung above H0 in any
-session or surface, an H4 sibling payload, an H6 release, worked solution or
-deterministic reference, a served-text reveal — is a row keyed by
-(student, question_hash), written AS THE HELP IS SERVED. Every grade's floor is
-the MAX help ever recorded for that pair (`max_help`), across loop checks,
-review, the post-test and the probe; the grading routes re-read it inside their
-claim, right before the one evidence write.
+What writes a 'help' row, keyed by (student, question_hash), AS THE HELP IS
+SERVED — exactly these (corrected in the PKG-14 final fix round, spec §13 A102;
+the first docstring and the migration's header comment listed more):
+
+- a hint rung GRANTED by /api/learn/loop/hint (the rung, before its text);
+- a planned loop hint turn's rung — H6 when a leaking deterministic payload is
+  served as H6 (`_LoopTurn._record_planned_help`);
+- an H4 sibling payload, on the SIBLING, at RUNG_NO_CREDIT_MIN;
+- a quiz "Ask about this" session, on the quiz question, at RUNG_NO_CREDIT_MIN
+  (spec §13 A99, services/quiz_ask.py).
+
+A served-text reveal is a 'reveal' row (reveal_store), which `max_help` reads as
+RUNG_NO_CREDIT_MIN. What writes NO help row, on purpose: a POST-GRADE release —
+the feedback turn after a graded wrong answer states the answer, but the item
+is already graded, and every later grade of it floors through the evidence
+journal instead (a wrong attempt marks the item released in
+`loop_state_store.revealed_hashes`, A23, which `_reveal_floor` reads as
+RUNG_NO_CREDIT_MIN), so a help row would add nothing. Review, the post-test and
+the probe serve no hints, so their rows are 'posed' rows only.
+
+Every grade's floor is the MAX help ever recorded for that pair (`max_help`),
+read by loop checks, review, the post-test, the probe and the quiz submit; the
+loop grading routes re-read it inside their claim, right before the one
+evidence write.
 
 The ledger also records every item POSED to the student ('posed', with
 `graded_at` set once graded): the served-text scan set is every posed item not
-yet graded, newest first, bounded by LOOP_SCAN_POSED_MAX (`ungraded_posed`).
+yet graded, newest first, bounded by LOOP_SCAN_POSED_MAX (`ungraded_posed_window`).
 
 Hashes, ids, rungs and timestamps only — never item or tutor text. Every
 reader and writer RAISES on a failed store call; the callers decide (a failed
 floor read is RUNG_NO_CREDIT_MIN, a failed write follows the accepted DB-down
-rule: the session-local record stands and an ERROR is logged)."""
+rule: the session-local record stands and an ERROR is logged; the quiz-ask
+write refuses the session instead, as it has no session-local record)."""
 
 from __future__ import annotations
 
