@@ -201,14 +201,16 @@ SESSION_SITES = {
     ("services/decisions.py", "_run_decision"): {"deps.session_id"},
     ("routes/learn_loop.py", "record_usage"): {"self.session_id"},
     ("routes/learn_loop.py", "_loop_continuation_text"): {"turn.session_id"},
-    ("routes/learn.py", "_continuation_text"): {"getattr(carried.get('deps'), 'session_id', None)"},
+    ("routes/learn.py", "_continuation_text"): {
+        "_usage_session_id(getattr(carried.get('deps'), 'session_id', None), getattr(carried.get('deps'), 'user_id', None))"
+    },
     ("routes/learn.py", "_start_session_agent"): {"session_id"},
-    ("routes/learn.py", "_chat_via_agent"): {"session_id"},
+    ("routes/learn.py", "_chat_via_agent"): {"_usage_session_id(session_id, deps.user_id)"},
     ("routes/learn.py", "_usage"): {
-        "body.session_id",
-        "session_id",
-    },  # /chat/stream, the opener stream
-    ("routes/learn.py", "_action_turn"): {"body.session_id"},
+        "_usage_session_id(body.session_id, body.user_id)",  # /chat/stream (owner-checked)
+        "session_id",  # the opener stream: a server-minted id
+    },
+    ("routes/learn.py", "_action_turn"): {"_usage_session_id(body.session_id, body.user_id)"},
 }
 
 

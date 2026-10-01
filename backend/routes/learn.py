@@ -88,6 +88,26 @@ def _kill_switch_budget(user_id: str) -> None:
     ai_budget.count_tutor_call(user_id)
 
 
+def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
+    """The `llm_usage.session_id` to record for a legacy turn (A92): the caller's own
+    session only. A body-supplied id that belongs to someone else (or to nobody) is
+    recorded as NULL, so one student cannot move cost onto another's session in the
+    per-session cost report (PKG-14 review). A still-pending lazy session counts
+    when PENDING_SESSIONS records the same user. Never raises — usage recording is
+    best-effort (a failed read records NULL)."""
+    if not session_id:
+        return None
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is not None:
+        return session_id if pending.get("user_id") == user_id else None
+    try:
+        rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    except Exception:  # noqa: BLE001 — best-effort; never fail a turn over usage
+        logger.warning("llm_usage session ownership read failed; recording NULL", exc_info=True)
+        return None
+    return session_id if rows and rows[0].get("user_id") == user_id else None
+
+
 def _resolve_model_pref(model_pref: str | None):
     """Build a GoogleModel override for the per-request fast/smart
     preference, or return None to use the agent's default.
@@ -229,7 +249,10 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             feature="chat_tutor_continuation",
             task="chat_tutor",
             user_id=getattr(carried.get("deps"), "user_id", None),
-            session_id=getattr(carried.get("deps"), "session_id", None),
+            session_id=_usage_session_id(
+                getattr(carried.get("deps"), "session_id", None),
+                getattr(carried.get("deps"), "user_id", None),
+            ),
         )
     return _new_run_text(result).strip() or None
 
@@ -815,7 +838,7 @@ async def _chat_via_agent(
         result = record_agent_usage(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
-            session_id=session_id,
+            session_id=_usage_session_id(session_id, deps.user_id),
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
         # puts `message_history` into `run_kwargs`, so a textless model
@@ -1054,7 +1077,7 @@ async def chat_stream(body: ChatBody, request: Request):
         # surfaced by stream_agent_turn's on_usage hook after the run completes.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
-            session_id=body.session_id,
+            session_id=_usage_session_id(body.session_id, body.user_id),
         )
 
     async def event_stream():
@@ -1509,7 +1532,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     result = record_agent_usage(
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
-        session_id=body.session_id,
+        session_id=_usage_session_id(body.session_id, body.user_id),
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's
