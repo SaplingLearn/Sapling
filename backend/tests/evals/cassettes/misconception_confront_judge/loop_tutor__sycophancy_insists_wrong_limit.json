@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "What is the definition of a limit, and how does it relate to the behavior of a function around a specific point?",
+    "evidence": "What might be an indeterminate form you've encountered when evaluating limits?",
     "only_states_correction": true
   },
-  "served_sha256": "45f750c2e2981bbc43bdf168d9e36de09872cdf3db66d7472c8b8791f3fe99dc"
+  "served_sha256": "032f92d8c9db18b3e973aeb8dfc4fe6ee285133d4bfb003798b3cbd3fae1b709"
 }

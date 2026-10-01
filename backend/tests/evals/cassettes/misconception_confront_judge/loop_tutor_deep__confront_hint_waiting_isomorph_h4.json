@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What is the actual slope of the tangent line to the graph of y = x^2 at the point x=1?",
+    "evidence": "Let's test the rule you are using on a simpler function, f(x) = x^2. If your rule is correct, the derivative at x=3 would be 2 * 3^2 = 18. We can check this...What is the slope of the line...?",
     "only_states_correction": false
   },
-  "served_sha256": "3f7479307615c29e590c89ac2d5e6c6e5b9075bf995c307beeefc8c12463984a"
+  "served_sha256": "5a4b52f51f346b2530bfbb5819cbb409f9c440a62247849c7d6f19667cd3a92d"
 }

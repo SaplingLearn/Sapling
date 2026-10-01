@@ -347,8 +347,8 @@ TEACH_CEILING_GUIDE: dict[int, str] = {
         "theorem or procedure that would carry out the student's problem (naming "
         "the method is H3). Do not touch the student's own problem at all: no "
         "expression, symbol, value or step from it (writing their expression or "
-        "substituting into it is H3), even to show why their claim fails. "
-        "Question asks them to recall or restate the concept in their own words, "
+        "substituting into it is H3), even to show why their claim fails; "
+        "question asks them to recall or restate the concept in their own words, "
         "or to check their claim against it themselves."
     ),
     3: (

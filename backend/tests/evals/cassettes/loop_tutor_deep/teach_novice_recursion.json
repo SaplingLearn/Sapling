@@ -1,19 +1,26 @@
 {
   "attempts": [
-    "```json\n{\n\"key_idea\": \"A recursive function is one that calls itself to solve smaller versions of the same problem.\",\n\"body\": \"Imagine a set of Russian nesting dolls. To find the smallest one, you open the current doll to find a smaller one inside. You repeat this process until you get to the one doll that won't open.\",\n\"question\": \"What do you think would happen in programming if a function just kept calling a smaller version of itself forever?\"\n}\n```"
+    "{\n  \"key_idea\": \"Recursion solves a problem by calling itself on smaller and smaller versions of the same problem.\",\n  \"body\": \"Think of a set of Russian nesting dolls. To find the smallest doll, you open the largest one, which reveals a slightly smaller doll inside. You repeat that exact same action\u2014opening the doll\u2014until you get to the one that doesn't open.\",\n  \"question\": \"In that nesting doll analogy, what would happen if there was no smallest doll?\"\n}"
   ],
   "input_sha256": "b0c251597ed07fbbc6f953352ef3af81bf01a8bf116ca898fb32ba239b4fe2d0",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Imagine a set of Russian nesting dolls. To find the smallest one, you open the current doll to find a smaller one inside. You repeat this process until you get to the one doll that won't open.",
-    "key_idea": "A recursive function is one that calls itself to solve smaller versions of the same problem.",
-    "question": "What do you think would happen in programming if a function just kept calling a smaller version of itself forever?"
+    "body": "Think of a set of Russian nesting dolls. To find the smallest doll, you open the largest one, which reveals a slightly smaller doll inside. You repeat that exact same action\u2014opening the doll\u2014until you get to the one that doesn't open.",
+    "key_idea": "Recursion solves a problem by calling itself on smaller and smaller versions of the same problem.",
+    "question": "In that nesting doll analogy, what would happen if there was no smallest doll?"
   },
   "prompt_hash": "10676b7d004e",
-  "requests": 1,
+  "requests": 2,
   "rescued": false,
   "retries": 0,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_deep",
-  "tool_calls": []
+  "tool_calls": [
+    {
+      "args": {
+        "query": "recursion definition"
+      },
+      "tool_name": "search_course_materials"
+    }
+  ]
 }

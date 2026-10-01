@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "This stopping condition is called a \"base case.\" It handles the simplest version of the problem directly, without making another recursive call.",
+    "evidence": "This stopping condition is often called a \"base case.\" The base case handles a simple input that can be solved without further recursion.",
     "reveals_final_answer": false,
     "rung": 2
   },
-  "served_sha256": "343673bb6ea53c6487d2131d6e7a7853ce51644caa508e5b742423a6bc6969de"
+  "served_sha256": "814b71cad4a2ce4dc6708c3f47e07dff6ad2327fed41b5b6795b1be2e12dae27"
 }

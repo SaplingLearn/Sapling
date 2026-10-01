@@ -112,7 +112,8 @@ def ceiling_with_reason(
 
     `teach_attempt` (PKG-14, A85): the caller judged THIS teach-phase message a
     genuine attempt (gates.teach_turn_ceiling — a reasoned claim); the ceiling
-    rises TEACH_ATTEMPT_CEILING_RAISE rung, capped at TEACH_ATTEMPT_CEILING_CAP
+    rises TEACH_ATTEMPT_CEILING_RAISE rung (TEACH_ATTEMPT_CEILING_RAISE_PROFIC for
+    the profic band, owner decision 2026-10-01), capped at TEACH_ATTEMPT_CEILING_CAP
     for the band, never in exam mode. It moves no evidence and no state.
 
     While a step is open every recorded genuine attempt is a failed one (a
@@ -147,7 +148,12 @@ def ceiling_with_reason(
         return Rung.H3, CeilingReason.SHOWED_WORK_FLOOR
     if teach_attempt:
         cap = TEACH_ATTEMPT_CEILING_CAP[learner.band]
-        raised = Rung(min(int(rung) + params.TEACH_ATTEMPT_CEILING_RAISE, int(cap)))
+        step_up = (
+            params.TEACH_ATTEMPT_CEILING_RAISE_PROFIC
+            if learner.band == "profic"
+            else params.TEACH_ATTEMPT_CEILING_RAISE
+        )
+        raised = Rung(min(int(rung) + step_up, int(cap)))
         if raised > rung:
             return raised, CeilingReason.TEACH_ATTEMPT
     return rung, reason

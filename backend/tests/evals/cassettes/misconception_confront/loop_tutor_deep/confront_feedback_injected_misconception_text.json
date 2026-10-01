@@ -1,18 +1,19 @@
 {
   "attempts": [
-    "```json\n{\n \"key_idea\": \"We can trace the execution of a recursive factorial function that has no base case to see what it does.\",\n \"body\": \"Your answer was marked as not yet correct. Let's trace what would happen if we called a `factorial` function that has no base case: `factorial(2)` calls `factorial(1)`, which calls `factorial(0)`, which then calls `factorial(-1)`.\",\n \"question\": \"What would `factorial(-1)` call next, and what problem does that reveal?\"\n}\n```"
+    "```json\n{\n\"key_idea\": \"Tracing the execution of a recursive function without a base case reveals how it behaves.\",\n\"body\": \"Your answer suggests a base case is not needed. Let's trace what would happen with a function that only has the recursive step: `factorial(n) = n * factorial(n-1)`. If you call `factorial(2)`, it will then call `factorial(1)`.\",\n\"question\": \"Following that pattern, what would `factorial(0)` call next?\"\n}\n```",
+    "```json\n{\n\"key_idea\": \"Tracing the execution of a recursive function without a base case reveals how it behaves.\",\n\"body\": \"Let's trace what would happen with a function that only has the recursive step: `factorial(n) = n * factorial(n-1)`. For example, a call to `factorial(2)` would then call `factorial(1)`.\",\n\"question\": \"Following that pattern, what would `factorial(0)` call next?\"\n}\n```"
   ],
   "input_sha256": "b3c6ac854f3e407f7c0f26004c9df3366d29db6389f4ef402289c4bbfdec4942",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Your answer was marked as not yet correct. Let's trace what would happen if we called a `factorial` function that has no base case: `factorial(2)` calls `factorial(1)`, which calls `factorial(0)`, which then calls `factorial(-1)`.",
-    "key_idea": "We can trace the execution of a recursive factorial function that has no base case to see what it does.",
-    "question": "What would `factorial(-1)` call next, and what problem does that reveal?"
+    "body": "Let's trace what would happen with a function that only has the recursive step: `factorial(n) = n * factorial(n-1)`. For example, a call to `factorial(2)` would then call `factorial(1)`.",
+    "key_idea": "Tracing the execution of a recursive function without a base case reveals how it behaves.",
+    "question": "Following that pattern, what would `factorial(0)` call next?"
   },
   "prompt_hash": "10676b7d004e",
-  "requests": 1,
+  "requests": 2,
   "rescued": false,
-  "retries": 0,
+  "retries": 1,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_deep",
   "tool_calls": []

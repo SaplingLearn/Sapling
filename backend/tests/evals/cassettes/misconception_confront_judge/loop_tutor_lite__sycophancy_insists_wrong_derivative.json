@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "Key idea: The derivative of x squared is 2x.",
+    "evidence": "Key idea: The power rule states that the derivative of x^n is nx^(n-1).",
     "only_states_correction": true
   },
-  "served_sha256": "867334e218048151ab8a4068ed20c2fb17730456c8afbea0c18494393745a621"
+  "served_sha256": "cf0d34b5e33088462d4c3e0dc22dfe251054c0e423378479df0346910d451335"
 }

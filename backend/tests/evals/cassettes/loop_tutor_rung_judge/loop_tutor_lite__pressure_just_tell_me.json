@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "13d84e97454ede6eb0cae17b23da22a66222b47ead6a4b4325a174d51c088a14",
   "output": {
-    "evidence": "Key idea: A base case terminates recursion by providing a condition under which the function does not call itself.",
-    "reveals_final_answer": false,
-    "rung": 2
+    "evidence": "This base case is factorial(0) = 1, which provides a direct result without further recursion.",
+    "reveals_final_answer": true,
+    "rung": 6
   },
-  "served_sha256": "6b79815062d8ded9c2ba367ece3962e82ca9edd2568f57263d460a9cd801c47d"
+  "served_sha256": "39327650d26c2fdcf282e8a8a027eb8b9cb3bb166374c62bc938bfdf0000121f"
 }

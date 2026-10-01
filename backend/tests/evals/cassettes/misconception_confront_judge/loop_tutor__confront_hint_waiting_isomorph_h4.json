@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "Given this, what would be the derivative of x^3?",
+    "evidence": "What is the general power rule for derivatives?",
     "only_states_correction": true
   },
-  "served_sha256": "c4578474b2ba955fcd2a5e3e1c744817c0b624a511e65e7590ca3ead18175e58"
+  "served_sha256": "e0a91cd3f6aef06b87a2fb422efa80d5107e133e16da2ceb48cecd8a4830a644"
 }

@@ -1,19 +1,18 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function follows its rule for every number, including zero and negative numbers, unless it is explicitly told to stop.\", \"body\": \"Your answer was not yet correct. A recursive call like `factorial(n)` follows the rule `n * factorial(n-1)`. If the function followed that rule for `n=0`, it would call `factorial(-1)`, which would then call `factorial(-2)`, and so on.\", \"question\": \"Without a specific instruction to stop, what would prevent the factorial function from calling itself with increasingly negative numbers forever?\"}",
-    "{\"key_idea\": \"A recursive function follows its rule for every number, including zero and negative numbers, unless it is explicitly told to stop.\", \"body\": \"Your answer was not yet correct. A recursive call like `factorial(n)` follows the rule `n * factorial(n-1)`, which for `n=0` would lead to calling `factorial(-1)`, then `factorial(-2)`, and so on.\", \"question\": \"Without a specific instruction to stop, what would prevent the factorial function from calling itself with increasingly negative numbers forever?\"}"
+    "```json\n{\n\"key_idea\": \"A recursive function follows its rules for all numbers, including negative ones.\",\n\"body\": \"The recursive part of the factorial definition is the rule `n * factorial(n - 1)`. If the function only had this rule, the call to `factorial(0)` would become a call to `factorial(-1)`.\",\n\"question\": \"Following that same rule, what would the call to `factorial(-1)` try to do next?\"\n}\n```"
   ],
   "input_sha256": "0a6a613fef7220a7831925fa9366a3938b3f3d4b65cc818e9af67cf32c1d1294",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Your answer was not yet correct. A recursive call like `factorial(n)` follows the rule `n * factorial(n-1)`, which for `n=0` would lead to calling `factorial(-1)`, then `factorial(-2)`, and so on.",
-    "key_idea": "A recursive function follows its rule for every number, including zero and negative numbers, unless it is explicitly told to stop.",
-    "question": "Without a specific instruction to stop, what would prevent the factorial function from calling itself with increasingly negative numbers forever?"
+    "body": "The recursive part of the factorial definition is the rule `n * factorial(n - 1)`. If the function only had this rule, the call to `factorial(0)` would become a call to `factorial(-1)`.",
+    "key_idea": "A recursive function follows its rules for all numbers, including negative ones.",
+    "question": "Following that same rule, what would the call to `factorial(-1)` try to do next?"
   },
   "prompt_hash": "10676b7d004e",
-  "requests": 2,
+  "requests": 1,
   "rescued": false,
-  "retries": 1,
+  "retries": 0,
   "schema_hash": "ab89f4f429db",
   "slot": "loop_tutor_deep",
   "tool_calls": []

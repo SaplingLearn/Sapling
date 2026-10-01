@@ -50,13 +50,17 @@ def _learner(band, prereq=True):
 # ── policy (typed state only, invariant 4) ───────────────────────────────────
 
 
-def test_profic_teach_ceiling_goes_h1_to_h2_on_a_teach_attempt():
+def test_profic_teach_ceiling_goes_h1_to_h3_on_a_teach_attempt():
+    """Owner decision 2026-10-01 (PKG-14 A7): a proficient student's reasoned claim
+    raises two rungs — H1 → H3, the H3 the shown-work floor also gives."""
     step = StepState(question_hash="")
     assert policy.ceiling_with_reason(_learner("profic"), step) == (Rung.H1, CeilingReason.PROFIC)
+    assert params.TEACH_ATTEMPT_CEILING_RAISE_PROFIC == 2
     assert policy.ceiling_with_reason(_learner("profic"), step, teach_attempt=True) == (
-        Rung.H2,
+        Rung.H3,
         CeilingReason.TEACH_ATTEMPT,
     )
+    assert policy.TEACH_ATTEMPT_CEILING_CAP["profic"] == Rung.H3  # never past the band's cap
 
 
 @pytest.mark.parametrize(
@@ -96,7 +100,7 @@ def test_teach_attempt_cap_is_the_bands_escalated_ceiling():
 
 def test_the_claim_after_realistic_independent_time_raises_the_profic_teach_ceiling():
     rung, reason = gates.teach_turn_ceiling(_learner("profic"), CLAIM, 120.0)
-    assert (rung, reason) == (Rung.H2, CeilingReason.TEACH_ATTEMPT)
+    assert (rung, reason) == (Rung.H3, CeilingReason.TEACH_ATTEMPT)
 
 
 def test_the_same_claim_sent_too_fast_keeps_the_teach_ceiling_at_h1():
@@ -110,9 +114,9 @@ def test_the_same_claim_sent_too_fast_keeps_the_teach_ceiling_at_h1():
 
 def test_the_time_gate_is_the_variants_and_scaled():
     between = (params.GATE_INDEPENDENT_MIN_S + params.GATE_INDEPENDENT_MIN_S_VARIANT_B) / 2
-    assert gates.teach_turn_ceiling(_learner("profic"), CLAIM, between)[0] == Rung.H2
+    assert gates.teach_turn_ceiling(_learner("profic"), CLAIM, between)[0] == Rung.H3
     assert gates.teach_turn_ceiling(_learner("profic"), CLAIM, between, variant="B")[0] == Rung.H1
-    assert gates.teach_turn_ceiling(_learner("profic"), CLAIM, 1.0, time_scale=0.01)[0] == Rung.H2
+    assert gates.teach_turn_ceiling(_learner("profic"), CLAIM, 1.0, time_scale=0.01)[0] == Rung.H3
 
 
 @pytest.mark.parametrize("text", ["just tell me the answer", "idk", "", "   "])
@@ -147,7 +151,7 @@ def _teach(seams, *, served_at, message=CLAIM):
 def test_a_teach_claim_after_120s_raises_this_turns_ceiling_and_writes_no_evidence(gate_on, seams):
     before = _routes._plan_state()
     body, apply, write_state = _teach(seams, served_at=NOW - 120.0)
-    assert body["ceiling"] == int(Rung.H2)
+    assert body["ceiling"] == int(Rung.H3)
     kw = seams.ceiling.call_args.kwargs
     assert kw["teach_attempt"] is True
     # §1: only graded checks move evidence or learner state

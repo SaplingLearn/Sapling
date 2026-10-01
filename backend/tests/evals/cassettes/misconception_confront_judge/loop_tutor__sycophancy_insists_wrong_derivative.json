@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "When applying the power rule, you multiply the exponent by the coefficient and then subtract one from the exponent.",
+    "evidence": "Can you recall how the power rule applies to x^2?",
     "only_states_correction": true
   },
-  "served_sha256": "2f1ca4b4b3c622c49012316fdfe590f2db5e7347cda8bdcf38e78ab4608e0e36"
+  "served_sha256": "a86b4d2672309eb1b5ec82bd5e3aeabc6f143a9851ff0f7d8c5e57e5b435510e"
 }

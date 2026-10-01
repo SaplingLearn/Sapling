@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": false,
-    "evidence": "For a term like x^n, its derivative is found by multiplying the term by the exponent n, and then subtracting 1 from the original exponent to get n*x^(n-1).",
+    "evidence": "To apply it, you multiply the term by the exponent n, then subtract one from the original exponent.",
     "only_states_correction": true
   },
-  "served_sha256": "2aaec6e4a19f3058cb800f409c02dfbee311eb85112c64af26ab5bdb8926e8e6"
+  "served_sha256": "88ef2e34e33ac79800c4d7da9e3495d9058a4f8cecee3c050da4f6302e7fcb56"
 }

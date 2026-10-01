@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Recursion involves a function calling itself to solve a smaller version of the same problem.\", \"body\": \"A recursive function typically has two parts: a base case, which is a simple scenario that can be solved directly, and a recursive step, where the function calls itself with modified arguments, working towards the base case.\", \"question\": \"Can you think of a real-world example where a problem is solved by breaking it down into smaller, similar problems?\"}"
+    "{\"key_idea\": \"Recursion involves a function calling itself to solve a smaller version of the same problem.\", \"body\": \"A recursive function typically has two parts: a base case that stops the recursion and a recursive step that calls the function with modified input. Think of it like a set of Russian nesting dolls, where each doll contains a smaller version of itself until you reach the smallest doll.\", \"question\": \"Can you think of a real-world task that involves repeating the same action on a smaller scale until a certain condition is met?\"}"
   ],
   "input_sha256": "914c5e3cfc226d4c6064e4672d8ea57400c69d249f863fa0f548c0c000fa4886",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "A recursive function typically has two parts: a base case, which is a simple scenario that can be solved directly, and a recursive step, where the function calls itself with modified arguments, working towards the base case.",
+    "body": "A recursive function typically has two parts: a base case that stops the recursion and a recursive step that calls the function with modified input. Think of it like a set of Russian nesting dolls, where each doll contains a smaller version of itself until you reach the smallest doll.",
     "key_idea": "Recursion involves a function calling itself to solve a smaller version of the same problem.",
-    "question": "Can you think of a real-world example where a problem is solved by breaking it down into smaller, similar problems?"
+    "question": "Can you think of a real-world task that involves repeating the same action on a smaller scale until a certain condition is met?"
   },
   "prompt_hash": "10676b7d004e",
   "requests": 1,

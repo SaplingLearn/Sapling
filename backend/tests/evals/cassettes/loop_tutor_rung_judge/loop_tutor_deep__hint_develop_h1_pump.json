@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What is the main quantity the question is asking you to solve for?",
+    "evidence": "What do you think the question is asking you to do?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "a33ff6fcb70a84a47add6bdca4e019bf63ee223afdfe82e9e6144186c91ea693"
+  "served_sha256": "96cb39c8caad91e4bb0796a2490fa9155f064506e0e55f9e9e3d73b117faaebf"
 }

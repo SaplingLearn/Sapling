@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "```json\n{\n \"key_idea\": \"You've correctly identified the base case for this recursive function.\",\n \"body\": \"Your answer was correct.\",\n \"question\": \"What is the next part of a recursive definition you need to figure out?\"\n}\n```"
+    "```json\n{\n\"key_idea\": \"You have correctly identified the base case for this recursive function.\",\n\"body\": \"Your answer is correct.\",\n\"question\": \"What is the other component that every recursive function needs?\"\n}\n```"
   ],
   "input_sha256": "6de68c3cee2e61565c8d26d328929b8aa9d09162da05a23b774a1b88b22bc1f5",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Your answer was correct.",
-    "key_idea": "You've correctly identified the base case for this recursive function.",
-    "question": "What is the next part of a recursive definition you need to figure out?"
+    "body": "Your answer is correct.",
+    "key_idea": "You have correctly identified the base case for this recursive function.",
+    "question": "What is the other component that every recursive function needs?"
   },
   "prompt_hash": "10676b7d004e",
   "requests": 1,

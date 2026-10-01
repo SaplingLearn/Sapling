@@ -127,7 +127,7 @@ def test_the_h1_claim_case_takes_its_ceiling_from_the_policy():
     seconds = case.metadata["independent_s"]
     assert seconds >= 2 * params.GATE_INDEPENDENT_MIN_S
     assert case.inputs[2] == int(gates.teach_turn_ceiling(learner, case.inputs[3], seconds)[0])
-    assert case.inputs[2] == int(Rung.H2)
+    assert case.inputs[2] == int(Rung.H3)  # owner 2026-10-01: profic raise is two rungs
     fast = params.GATE_INDEPENDENT_MIN_S - 1
     assert gates.teach_turn_ceiling(learner, case.inputs[3], fast)[0] == Rung.H1
 

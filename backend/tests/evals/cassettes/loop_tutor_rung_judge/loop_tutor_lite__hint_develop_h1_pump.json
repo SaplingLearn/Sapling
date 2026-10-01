@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
   "output": {
-    "evidence": "What are the key pieces of information presented in the problem?",
+    "evidence": "What specific information is provided in the problem statement?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "d7fa07368354834bb5ad8f289ffeddc29f06fc58bcaf01b699fef4718a4ebf5c"
+  "served_sha256": "1e5d9a85925600d6e481aa77f8acc7d20ea05b166660bec03312c45a8e4512e0"
 }

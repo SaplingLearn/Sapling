@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Consider the list 9, 2, 4, which has the same numbers in a different order.\n\nDoes your 'middle one' rule give the same average for the list 9, 2, 4?",
+    "evidence": "Let's test your 'middle value' rule on a different set of numbers, like {1, 2, 100}.",
     "only_states_correction": false
   },
-  "served_sha256": "c99e333c78ca871eb53bf2b085201c9c0095898f631d7c4518d51dce4c998e01"
+  "served_sha256": "43f466d01ff0ef8f08fcddedb1ca21d28bd6555af59c2357a38b19fece8ff9ff"
 }

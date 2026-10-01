@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "In the expression sin(x)/x, what value does the denominator approach as x approaches 0?",
+    "evidence": "What value does the denominator in your expression approach as x gets closer to 0?",
     "only_states_correction": false
   },
-  "served_sha256": "bcb079f6c834665f200abb4834e96bb4e52e84a668b07d0a25056ff0a027ddcf"
+  "served_sha256": "f8861918d8d71de01eb7f196412061bad00672142960da465facbc0812f87f61"
 }

@@ -1,13 +1,13 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Understanding the base case is crucial for preventing infinite recursion in a factorial function.\", \"body\": \"The base case defines when the recursion stops. If we consider a function like factorial(3) without a defined base case, the function would continue calling itself with factorial(2), then factorial(1), and so on, decreasing the input indefinitely.\", \"question\": \"What would happen if you tried to calculate factorial(0) or factorial(-1) without a specific condition to stop the recursion?\"}"
+    "{\"key_idea\": \"Base cases are essential in recursive functions to define when the recursion should stop.\", \"body\": \"Without a base case, a recursive function would not have a condition to terminate, leading to infinite recursion. Consider what would happen if you tried to compute factorial(3) with no base case.\", \"question\": \"What would be the sequence of calls for factorial(3) if there were no base case?\"}"
   ],
   "input_sha256": "d3ed870010b02018d9e66754eaec7651c6e8eee53051459b089cbd5b25c13047",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "The base case defines when the recursion stops. If we consider a function like factorial(3) without a defined base case, the function would continue calling itself with factorial(2), then factorial(1), and so on, decreasing the input indefinitely.",
-    "key_idea": "Understanding the base case is crucial for preventing infinite recursion in a factorial function.",
-    "question": "What would happen if you tried to calculate factorial(0) or factorial(-1) without a specific condition to stop the recursion?"
+    "body": "Without a base case, a recursive function would not have a condition to terminate, leading to infinite recursion. Consider what would happen if you tried to compute factorial(3) with no base case.",
+    "key_idea": "Base cases are essential in recursive functions to define when the recursion should stop.",
+    "question": "What would be the sequence of calls for factorial(3) if there were no base case?"
   },
   "prompt_hash": "10676b7d004e",
   "requests": 1,

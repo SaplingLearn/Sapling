@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What result do you get for the derivative of x^2 when you calculate it using the limit definition?",
+    "evidence": "What result do you get for the derivative of x^3 when you apply the limit definition, lim(h->0) [f(x+h) - f(x)]/h?",
     "only_states_correction": false
   },
-  "served_sha256": "27775ebf97e521736d89e773bd4ca5a6b6ea8db2b06fc0272e5f0e25f7b8d769"
+  "served_sha256": "69946a0aff0113aed7764eac2220f953ae1e09db7e734119603b01f0e3da479f"
 }
