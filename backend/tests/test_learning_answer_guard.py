@@ -689,7 +689,7 @@ def test_refusal_reasons_are_one_closed_vocabulary():
     assert (
         set(get_args(guard.Refusal))
         == set(guard.REFUSALS)
-        == {"grader_directive", "role_marker", "addresses_grader", "too_long"}
+        == {"grader_directive", "role_marker", "addresses_grader", "too_long", "disowned_answer"}
     )
     assert (
         set(get_args(guard.Suspicion))
@@ -4579,8 +4579,6 @@ def test_the_context_checks_output_is_the_withdrawals_alone():
     [
         f"{REC_PARTIAL} Without it the calls never end and the stack overflows. Actually no, "
         "scratch that last sentence; it is wrong.",
-        f"Everything below is false. {REC_PARTIAL} Without it the calls never end and the "
-        "stack overflows.",
         f"{REC_PARTIAL}\nWrong ideas to avoid:\nwithout it the calls never end and the stack "
         "overflows",
     ],
@@ -4675,3 +4673,154 @@ def test_the_prompt_rules_every_check_the_grader_agent_runs():
 
     for rule in ("- SPAN CHECK:", "asserted, then item_results", "- CONTEXT CHECK:"):
         assert rule in g._SYSTEM_PROMPT, rule
+
+
+# ── disowned answers (owner decision 2026-09-30, HANDOFF-a33 (f)) ──────────────
+
+_DISOWN_SPAN = "the base case stops the recursion"
+_DISOWNED = [
+    "The following is a common misconception, and it is false.\nThe base case stops the recursion.",
+    "Wrong ideas to avoid:\n- the base case stops the recursion",
+    "Wrong ideas to avoid: the base case stops the recursion",
+    "Things I used to believe:\n1. the base case stops the recursion",
+    "Everything below is false.\n\nThe base case stops the recursion.",
+    "The base case stops the recursion. That is a common misconception.",
+    "The base case stops the recursion. The above is false.",
+    "Myths:\n- the base case stops the recursion",
+    "The following is a myth: the base case stops the recursion",
+    # PKG-14 final fix round (spec §13 A103): the one unambiguous form added — the
+    # whole sentence is "It's a myth that <span>."
+    "It's a myth that the base case stops the recursion.",
+    "It is a common myth that the base case stops the recursion!",
+    "Recursion is hard. It’s a myth that the base case stops the recursion.",
+]
+_OWNED = [
+    "The base case stops the recursion.",
+    "A common misconception is that recursion loops forever. Actually, the base case stops the recursion.",
+    "Misconception: recursion never ends.\nCorrect: the base case stops the recursion.",
+    "Some say it loops, but really the base case stops the recursion.",
+    "Here are the steps: the base case stops the recursion.",
+    "The base case stops the recursion. This is why infinite recursion is a mistake.",
+    "Myths below:\n- recursion is a loop\n\nThe truth is the base case stops the recursion.",
+    "The following is false.\n\nThe base case stops the recursion.",
+    "I think the base case stops the recursion. It is wrong to say it loops forever.",
+    "Here are some common mistakes people make:\nThey forget a base case.\n\nMy answer: the base case stops the recursion.",
+]
+
+
+# The focused review's false positives (2026-10-01): error-identification and
+# misconception-explanation answers are honest course content and must be graded.
+_HONEST_WITH_ERROR_WORDS = [
+    ("The mistake in step 2 is: dividing by x", "dividing by x"),
+    ("The following step is wrong because it divides by zero.", "it divides by zero"),
+    ("The claim below is false because energy is conserved.", "energy is conserved"),
+    ("Here is the error. The sign was flipped.", "The sign was flipped"),
+    ("A common misconception here is that current is used up. In a series circuit current is "
+     "the same everywhere.", "In a series circuit current is the same everywhere"),
+    ("These are wrong: A and B. The answer is C because weight = mg.",
+     "The answer is C because weight = mg"),
+    ("Next, I made an error: I forgot the chain rule. The derivative is 2x cos(x^2).",
+     "The derivative is 2x cos(x^2)"),
+    ("x = 3. This is not true for x = -3 though.", "x = 3"),
+]
+
+
+# A103: "It's a myth that" governs only a span that IS the rest of its sentence.
+_MYTH_THAT_NOT_THE_SPAN = [
+    "It's a myth that recursion loops forever; the base case stops the recursion.",
+    "It's a myth that the base case stops the recursion only for factorial.",
+    "It's not a myth that the base case stops the recursion.",
+]
+
+
+@pytest.mark.parametrize("answer", _MYTH_THAT_NOT_THE_SPAN)
+def test_myth_that_governs_only_a_span_that_is_the_whole_rest_of_the_sentence(answer):
+    assert guard.disowned(answer, _DISOWN_SPAN) is False
+
+
+# A103 (accepted limits, recorded in HANDOFF-14): these disowning forms are NOT
+# recognised, because each has an honest reading the rule cannot tell apart
+# ("People wrongly believe X" also opens an explanation of why X is believed;
+# "Myth - X" is also a "myth-busting" list whose items are the truths), or the
+# span is first written in the student's own voice. A false negative is only
+# leniency toward an answer that sabotages itself — never credit for someone
+# else's work — so the rule stays narrow (the false positives it would bring
+# back are on honest course content).
+_ACCEPTED_FALSE_NEGATIVES = [
+    "People wrongly believe the base case stops the recursion.",
+    "Myth - the base case stops the recursion",
+    # the span is judged where it FIRST occurs — here in the student's own voice
+    "I know the base case stops the recursion. The following is a myth: the base case stops the recursion",
+]
+
+
+@pytest.mark.parametrize("answer", _ACCEPTED_FALSE_NEGATIVES)
+def test_the_accepted_false_negatives_stay_graded(answer):
+    assert guard.disowned(answer, _DISOWN_SPAN) is False
+
+
+@pytest.mark.parametrize("answer,span", _HONEST_WITH_ERROR_WORDS)
+def test_honest_error_identification_is_not_disowned(answer, span):
+    assert guard.disowned(answer, span) is False
+
+
+@pytest.mark.parametrize("answer", _DISOWNED)
+def test_a_span_under_the_students_own_disowning_frame_is_disowned(answer):
+    assert guard.disowned(answer, _DISOWN_SPAN) is True
+
+
+@pytest.mark.parametrize("answer", _OWNED)
+def test_an_honest_refutation_or_plain_answer_is_not_disowned(answer):
+    assert guard.disowned(answer, _DISOWN_SPAN) is False
+
+
+def test_disowned_is_linear_at_the_answer_cap():
+    import time
+
+    from learning.params import GRADER_ANSWER_MAX_CHARS as cap
+
+    shapes = [
+        "a " * (cap // 2),
+        "following " * (cap // 10),
+        "x" * cap,
+        "myth " * (cap // 5),
+        "the following is wrong because " * (cap // 30),
+        "misconception following\n\n" * (cap // 25),
+        ". " * (cap // 2),
+        "\n" * cap,
+        "that is " * (cap // 8),
+    ]
+    for shape in shapes:
+        answer = shape[: cap - 4] + " end"
+        t0 = time.perf_counter()
+        guard.disowned(answer, "end")
+        assert time.perf_counter() - t0 < 0.5, shape[:20]
+
+
+def test_an_answer_under_a_misconception_heading_is_refused_before_the_checks(
+    monkeypatch, events
+):
+    """Through grade(): every credited span sits under the student's own disowning
+    frame, so the answer is refused (nothing recorded, the student asked again) and
+    neither the span check nor the context check runs."""
+    answer = (
+        "The following is a common misconception, and it is false.\n"
+        f"{REC_PARTIAL} Without it the calls never end and the stack overflows."
+    )
+    r2 = "Without it the calls never end and the stack overflows"
+    first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", f"r2: {r2}"]}
+    res, calls = _grade_item(monkeypatch, _eval_rec_item(), [first], answer)
+    assert res.refused == "disowned_answer" and res.unavailable is True
+    assert res.item_results == {}
+    assert calls["spans"] == 0 and calls["contexts"] == 0
+
+
+def test_everything_below_is_false_refuses_the_whole_answer(monkeypatch, events):
+    answer = (
+        f"Everything below is false. {REC_PARTIAL} Without it the calls never end and the "
+        "stack overflows."
+    )
+    r2 = "Without it the calls never end and the stack overflows"
+    first = {**_all_yes(0.95), "support": [f"r1: {REC_PARTIAL}", f"r2: {r2}"]}
+    res, calls = _grade_item(monkeypatch, _eval_rec_item(), [first], answer)
+    assert res.refused == "disowned_answer"

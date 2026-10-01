@@ -45,6 +45,21 @@ def pytest_configure(config):
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
         "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
+    config.addinivalue_line(
+        "markers",
+        "kill_switch: legacy /api/learn path under LEARNING_LOOP_ENABLED=false (spec §11.5)",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _kill_switch(request, monkeypatch):
+    """Spec §11.5 (PKG-14b): tests marked kill_switch drive the legacy /api/learn/*
+    path — the loop is the default for everyone after launch, so a module that
+    exercises the legacy handlers pins the kill switch explicitly."""
+    if request.node.get_closest_marker("kill_switch"):
+        import config
+
+        monkeypatch.setattr(config, "LEARNING_LOOP_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)
@@ -371,6 +386,34 @@ def _hermetic_llm_transport(request, monkeypatch):
             "moved its transport seam. Update _GENAI_EGRESS_METHODS in "
             "tests/conftest.py; do not leave the suite unguarded."
         )
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_jev_transport(request, monkeypatch):
+    """The `_hermetic_llm_transport` guarantee for Jev (PKG-15): no test reaches
+    api.typesafe.ai. Every agents/_jev.py client is built on its
+    `_transport_override`, so a refusing transport installed here makes an
+    unstubbed Jev call fail (as a `transport` JevUnavailable — the seam then
+    falls back, so the test sees Gemini's answer, never a live Jev one). Tests
+    that script Jev install their own httpx2.MockTransport over this one."""
+    if (
+        request.node.get_closest_marker("e2e_staging")
+        or request.node.get_closest_marker("integration")
+        or request.node.get_closest_marker("live_llm")
+    ):
+        yield
+        return
+    import httpx2
+
+    from agents import _jev
+
+    def _refuse(_request):
+        raise httpx2.ConnectError("unstubbed Jev egress (tests/conftest.py guard)")
+
+    monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(_refuse))
+    _jev.reset_for_tests()
+    yield
+    _jev.reset_for_tests()
 
 
 @pytest.fixture(autouse=True)

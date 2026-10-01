@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A base case is essential for stopping recursion and ensuring a function returns a value.\", \"body\": \"Without a base case, a recursive function would call itself indefinitely, leading to an infinite loop or a stack overflow error.\", \"question\": \"What would happen if you tried to compute factorial(3) in your head without a base case?\"}"
+    "{\"key_idea\": \"Base cases are essential in recursive functions to define when the recursion should stop.\", \"body\": \"Without a base case, a recursive function would not have a condition to terminate, leading to infinite recursion. Consider what would happen if you tried to compute factorial(3) with no base case.\", \"question\": \"What would be the sequence of calls for factorial(3) if there were no base case?\"}"
   ],
   "input_sha256": "d3ed870010b02018d9e66754eaec7651c6e8eee53051459b089cbd5b25c13047",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "Without a base case, a recursive function would call itself indefinitely, leading to an infinite loop or a stack overflow error.",
-    "key_idea": "A base case is essential for stopping recursion and ensuring a function returns a value.",
-    "question": "What would happen if you tried to compute factorial(3) in your head without a base case?"
+    "body": "Without a base case, a recursive function would not have a condition to terminate, leading to infinite recursion. Consider what would happen if you tried to compute factorial(3) with no base case.",
+    "key_idea": "Base cases are essential in recursive functions to define when the recursion should stop.",
+    "question": "What would be the sequence of calls for factorial(3) if there were no base case?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

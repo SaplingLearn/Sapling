@@ -124,6 +124,14 @@ async def _lifespan(_app: FastAPI):
     # starts after it, and before any other step whose failure could skip it.
     shutdown_draft_pool()
     await stop_sweeper()
+    # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded) so
+    # their decision.shadow + llm_usage rows reach the event drain below, then close the
+    # Jev clients. Both are no-ops when Jev never ran (JEV_ENABLED=false).
+    from agents import _jev
+    from services import decisions
+
+    await decisions.shutdown_shadows()
+    await _jev.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
@@ -282,7 +290,7 @@ app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_
 
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(learn.router,       prefix="/api/learn")
-# Learning loop (PKG-07): 404 unless learning_loop_active (build phase: env + staff/QA toggle, spec §7).
+# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch).
 app.include_router(learn_loop.router, prefix="/api/learn/loop")
 app.include_router(quiz.router,        prefix="/api/quiz")
 app.include_router(calendar.router,    prefix="/api/calendar")

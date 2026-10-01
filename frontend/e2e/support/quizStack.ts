@@ -52,6 +52,16 @@ export const TUTOR_REPLY =
   "[e2e-function-model] Deterministic tutor reply: every recursive function " +
   "needs a base case so it can stop calling itself.";
 
+/** The "Ask about this" sheet's reply in this lane — one definition, in
+ *  support/quiz.ts (PKG-14b, spec §11.4). */
+export {
+  ASK_PANEL_REPLY,
+  ASK_PANEL_REPLY_TAIL,
+  expectAskReply,
+  expectAskedQuestionFloored,
+  expectQuizAskSession,
+} from "./quiz";
+
 // ── Browser priming ────────────────────────────────────────────────────────
 
 export interface PrimeOptions {

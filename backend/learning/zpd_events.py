@@ -21,6 +21,7 @@ from learning import params
 from learning.evidence import Channel
 from learning.ladder import Rung
 from learning.leak import Detector
+from learning.arms import Variant
 from learning.policy import Band, BandAction, CeilingReason, Tier
 from services.events_service import log_event
 
@@ -99,6 +100,8 @@ def emit_zpd_step(
     item_difficulty: int,
     tier: Tier | None = None,
     grader_backend: GraderBackend | None = None,
+    variant: Variant | None = None,
+    session_id: str | None = None,
 ) -> None:
     def build() -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -129,6 +132,13 @@ def emit_zpd_step(
             payload["tier"] = tier
         if grader_backend is not None:
             payload["grader_backend"] = grader_backend
+        # PKG-14 (A8): the concept's within-student arm variant, as the route knew it
+        if variant is not None:
+            payload["variant"] = variant
+        # PKG-14 (A82): the loop session, so cost can be attributed per session;
+        # omitted when there is none (the post-test), never blanked
+        if session_id is not None:
+            payload["session_id"] = session_id
         return payload
 
     _emit("zpd.step", "usage", user_id, request_id, build)
@@ -215,4 +225,33 @@ def emit_zpd_rating(
         user_id,
         request_id,
         lambda: {"rating": rating, "checks_since_last": checks_since_last},
+    )
+
+
+def emit_zpd_reveal(
+    *,
+    user_id: str,
+    request_id: str | None,
+    session_id: str | None,
+    question_hashes: list[str],
+    unscanned: bool,
+    phase: str,
+) -> None:
+    """PKG-14 (spec §13 A88): a SERVED tutor turn stated the answers of these
+    open, posed items (they are now revealed: never selected again, no
+    unassisted credit), or — `unscanned` — its open items could not be read.
+    This is the served-solution count the zero-leak gate reads (m5); zpd.leak is
+    a leak CAUGHT on the active item and redacted before it was served."""
+    _emit(
+        "zpd.reveal",
+        "usage",
+        user_id,
+        request_id,
+        lambda: {
+            "question_hashes": list(question_hashes),
+            "count": len(question_hashes),
+            "unscanned": unscanned,
+            "phase": phase,
+            "session_id": session_id,
+        },
     )

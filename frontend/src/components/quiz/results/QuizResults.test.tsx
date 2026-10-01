@@ -13,9 +13,18 @@ import { buildMissedItems } from "./MissedList";
 // seed. The mock renders the seed so the assertion is on the props, not on
 // whatever the real sheet does with them.
 vi.mock("../question/AskPanel", () => ({
-  AskPanel: (props: { open: boolean; seed: Record<string, string>; conceptName: string }) =>
+  AskPanel: (props: {
+    open: boolean;
+    seed: Record<string, string>;
+    conceptName: string;
+    quizAsk?: { attemptId: string; questionIndex: number };
+  }) =>
     props.open ? (
-      <div data-testid="quiz-ask-panel" data-concept={props.conceptName}>
+      <div
+        data-testid="quiz-ask-panel"
+        data-concept={props.conceptName}
+        data-quiz-ask={props.quizAsk ? JSON.stringify(props.quizAsk) : ""}
+      >
         {JSON.stringify(props.seed)}
       </div>
     ) : null,
@@ -279,6 +288,11 @@ describe("QuizResults", () => {
     fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
     const panel = screen.getByTestId("quiz-ask-panel");
     expect(panel).toHaveAttribute("data-concept", "Recursion");
+    // spec §13 A99: the panel names the row's question (attempt + index)
+    expect(JSON.parse(panel.getAttribute("data-quiz-ask") || "null")).toEqual({
+      attemptId: "attempt-1",
+      questionIndex: 1, // question 102 is the attempt's second item
+    });
     expect(JSON.parse(panel.textContent ?? "{}")).toEqual({
       stem: STEMS[102],
       chosenLabel: "A",

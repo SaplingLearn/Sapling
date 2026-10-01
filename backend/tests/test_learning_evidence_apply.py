@@ -399,14 +399,6 @@ LEGACY_NODES = [
 ]
 LEGACY_PAYLOAD = {
     "new_nodes": [{"concept_name": "Loops", "initial_mastery": 0.0}],
-    "updated_nodes": [
-        {
-            "concept_name": "recursion",
-            "mastery_delta": 0.1,
-            "reason": "Quiz: 3/3 correct",
-            "event_type": "quiz_correct",
-        },
-    ],
     "new_edges": [
         {
             "source": "Loops",
@@ -437,34 +429,6 @@ LEGACY_TRACE = [
             }
         ],
         {"on_conflict": "user_id,course_id,concept_name"},
-    ),
-    (
-        "graph_nodes",
-        "update",
-        [
-            {
-                "mastery_score": 0.6,
-                "mastery_tier": "learning",
-                "times_studied": 2,
-                "last_studied_at": "<TS>",
-            }
-        ],
-        {"filters": {"id": "eq.n1"}},
-    ),
-    (
-        "node_mastery_events",
-        "insert",
-        [
-            {
-                "id": "<UUID>",
-                "node_id": "n1",
-                "delta": 0.1,
-                "reason": "Quiz: 3/3 correct",
-                "created_at": "<TS>",
-                "event_type": "quiz_correct",
-            }
-        ],
-        {},
     ),
     (
         "graph_edges",
@@ -505,16 +469,18 @@ def _run_legacy(payload):
 
 def test_legacy_payload_table_trace_unchanged():
     """Green on main BEFORE Task 6, green after: a payload without `evidence`
-    makes exactly these table calls, in this order, with these arguments."""
+    makes exactly these table calls, in this order, with these arguments.
+    (PKG-14b: the `updated_nodes` key is gone, spec §11.2 — the legacy payload
+    is `new_nodes` + `new_edges`, and it moves no mastery.)"""
     result, trace = _run_legacy(LEGACY_PAYLOAD)
-    assert result == [{"concept": "Recursion", "before": 0.5, "after": 0.6}]
+    assert result == []
     assert trace == LEGACY_TRACE
 
 
 @pytest.mark.parametrize("evidence_value", [None, []])
 def test_empty_evidence_key_is_the_legacy_path(evidence_value):
     result, trace = _run_legacy({**LEGACY_PAYLOAD, "evidence": evidence_value})
-    assert result == [{"concept": "Recursion", "before": 0.5, "after": 0.6}]
+    assert result == []
     assert trace == LEGACY_TRACE
 
 
@@ -1252,12 +1218,12 @@ class TestApplyEvidence:
             "evidence": [{"node_id": "n1", "channel": "mc", "correct": True}],
         }
         result, mocks, _ = _apply(payload, edges=[])
-        assert [c["concept"] for c in result] == ["Recursion", "Recursion"]
-        assert [r.get("event_type") for r in _event_rows(mocks)] == ["quiz_correct", "evidence"]
-        # Two studies of n1 (times_studied 1 → 3): the legacy loop writes 2
-        # without refreshing its row, and the evidence mirror adds to that.
+        # PKG-14b: the legacy keys left are new_nodes/new_edges, which move no
+        # mastery; only the evidence is a study of n1 (times_studied 1 → 2).
+        assert [c["concept"] for c in result] == ["Recursion"]
+        assert [r.get("event_type") for r in _event_rows(mocks)] == ["evidence"]
         n1_counts = [u["times_studied"] for f, u in _node_updates(mocks) if f == "eq.n1"]
-        assert n1_counts == [2, 3]
+        assert n1_counts == [2]
 
     def test_evidence_instances_are_accepted(self):
         from learning.evidence import Evidence
@@ -1408,7 +1374,10 @@ def _graph_update_payloads(source: str) -> list[tuple[int, str | None]]:
 # PKG-11 (a PKG-03 reopen): the one evidence caller sanctioned before PKG-05.
 # submit_quiz sends {"evidence": ...} only in the body of its `if loop_on:`
 # branch (spec §7); every other apply_graph_update call stays legacy-keyed.
-SANCTIONED_EVIDENCE_CALLERS = frozenset({("routes/quiz.py", "submit_quiz")})
+# PKG-14b (spec §11.2): the quiz is evidence-only for every student, so its
+# call is no longer behind `if loop_on:` — it moved to
+# SANCTIONED_EVIDENCE_PERSISTERS below. No gated caller is sanctioned now.
+SANCTIONED_EVIDENCE_CALLERS: frozenset = frozenset()
 LOOP_GATE_LOCAL = "loop_on"
 
 
@@ -1508,7 +1477,13 @@ def test_gated_evidence_call_detector(source, expected):
 # Evidence dict grade_answer returned with ONE apply_graph_update call, because
 # flush_pending cannot carry the review's retention target (spec §3.2).
 SANCTIONED_EVIDENCE_PERSISTERS = frozenset(
-    {("learning/evidence.py", "flush_pending"), ("learning/review.py", "grade_review")}
+    {
+        ("learning/evidence.py", "flush_pending"),
+        ("learning/review.py", "grade_review"),
+        # PKG-14b: ungated after the cutover (spec §11.2), one mc evidence per
+        # question — was a SANCTIONED_EVIDENCE_CALLERS (gated) entry.
+        ("routes/quiz.py", "submit_quiz"),
+    }
 )
 
 
@@ -2113,8 +2088,10 @@ class TestEvidenceSeq:
             "evidence": [{"node_id": "n1", "channel": "mc", "correct": True}],
         }
         _, mocks, _ = _apply(payload, edges=[])
-        legacy_row, evidence_row = _event_rows(mocks)
-        assert legacy_row["event_type"] == "quiz_correct" and "evidence_seq" not in legacy_row
+        # PKG-14b: no legacy journal row exists any more (updated_nodes is
+        # gone, spec §11.2); the legacy trace carries no seq, the one evidence
+        # row takes 0.
+        (evidence_row,) = _event_rows(mocks)
         assert evidence_row["evidence_seq"] == 0
 
 

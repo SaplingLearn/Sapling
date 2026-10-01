@@ -47,6 +47,7 @@ import {
   startLoopSession,
   streamLoopChat,
   streamLoopCheckAnswer,
+  submitLoopRating,
   type EnrolledCourse,
   type LoopCheckAnswer,
   type LoopCheckItem,
@@ -55,6 +56,7 @@ import {
   type LoopPhase,
   type LoopPlanConcept,
   type LoopProbeItem,
+  type LoopRating,
   type LoopSessionStatus,
   type LoopTurnResult,
   type StreamChatHandlers,
@@ -199,6 +201,8 @@ export function LoopLearn() {
   const [hintBusy, setHintBusy] = useState(false);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const [checkBusy, setCheckBusy] = useState(false);
+  // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
+  const [askRating, setAskRating] = useState<string | null>(null);
 
   // Close
   const [close, setClose] = useState<LoopCloseResponse | null>(null);
@@ -353,6 +357,7 @@ export function LoopLearn() {
     setHintBusy(false);
     setCheckNote(null);
     setCheckBusy(false);
+    setAskRating(null);
     setClose(null);
     setCloseBusy(false);
     setCloseNote(null);
@@ -721,6 +726,7 @@ export function LoopLearn() {
         setAttempt(EMPTY_DRAFT);
         setHint(null);
       }
+      if (submission && res.ask_rating && sid) setAskRating(sid);
       if (res.phase) dispatch({ type: "phase", phase: res.phase });
       applyActivated(res.check);
       if (res.budget?.level === "hard") {
@@ -759,6 +765,14 @@ export function LoopLearn() {
   };
 
   const stop = () => streamAbort.current?.abort();
+
+  const rate = (rating: LoopRating) => {
+    const sid = askRating;
+    setAskRating(null); // one click answers it
+    if (sid) {
+      submitLoopRating(sid, rating).catch((err) => reportError(err, "Couldn't save your rating."));
+    }
+  };
 
   const submitAttempt = async (idk: boolean) => {
     if (!sessionId || !item || attemptBusy) return;
@@ -1200,6 +1214,7 @@ export function LoopLearn() {
     const firstConcept = plan?.[0];
     const chatHeader = (
       <div style={{ padding: "14px 32px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+        {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
         {item ? (
           <CheckCard
             item={item}
@@ -1798,6 +1813,37 @@ function ClosePanel({
           </Link>
         </div>
       </div>
+    </div>
+  );
+}
+
+const RATING_CHOICES: { value: LoopRating; label: string }[] = [
+  { value: "too_easy", label: "Too easy" },
+  { value: "appropriate", label: "About right" },
+  { value: "too_hard", label: "Too hard" },
+];
+
+/** PKG-14 (spec §3.4): "How hard did these feel?" after every
+ *  ZPD_RATING_EVERY_N_CHECKS graded checks; the server says when (done.ask_rating). */
+function RatingPrompt({ onRate }: { onRate: (rating: LoopRating) => void }) {
+  return (
+    <div
+      data-testid="loop-rating"
+      role="group"
+      aria-label="How hard did these questions feel?"
+      style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13 }}
+    >
+      <span style={{ color: "var(--text-muted)" }}>How hard did these questions feel?</span>
+      {RATING_CHOICES.map((c) => (
+        <button
+          key={c.value}
+          data-testid={`loop-rating-${c.value}`}
+          className="btn btn--sm btn--ghost"
+          onClick={() => onRate(c.value)}
+        >
+          {c.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -465,3 +465,52 @@ LEARNER_BRIEF_RETRY_AFTER_S = 300
 # brief built on a loop turn reads this many lowest-mastery course nodes and
 # keeps the first LEARNER_BRIEF_TOP_STATES that map to a course concept
 LEARNER_BRIEF_CANDIDATE_NODES = 50
+
+# ── PKG-14 evaluation ladder (spec §3.3, §10; † = not in spec §3, HANDOFF-14) ──
+# † ZPD report LOG block ("last k=5 opportunities", the in_zone flag): the
+# nightly derive_zpd_metrics.py reads these; no validated cut-point.
+HTC_K_WINDOW = 5  # †
+ZPD_IN_ZONE_MIN_GAP = 0.25  # †
+ZPD_IN_ZONE_MIN_ASSISTED = 0.6  # †
+ZPD_IN_ZONE_MAX_UNASSISTED = 0.85  # †
+# † weeks of the admin KPI htc_k trend and the metrics script's report window (A6)
+KPI_TREND_WEEKS = 4
+# spec §10 gates (not KPIs): 0 solution reveals, ≥ 95% ceiling compliance
+GATE_LEAKS_MAX = 0
+GATE_CEILING_COMPLIANCE_MIN = 0.95
+# † research §"Measure learning…" (rung 3 is tool-removed and ≥ 2 days delayed)
+POSTTEST_MIN_AGE_DAYS = 2
+POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
+# † PKG-14 (spec §13 A89, owner): an unanswered post-test pose is void after this
+# long — it may be re-posed, and a late answer to it is refused (409)
+POSTTEST_POSE_TTL_HOURS = 24
+# † the first A/B candidate (A6): variant B's independent-time gate for the
+# develop/profic bands (novice keeps GATE_INDEPENDENT_MIN_S_NOVICE for both)
+GATE_INDEPENDENT_MIN_S_VARIANT_B = 90
+# † owner decision 2026-09-29 (PKG-14, spec §13 A85): a reasoned claim in the
+# teach phase that passes the genuine-attempt rule raises THAT turn's ceiling by
+# this many rungs (the ladder's one rung after an attempt), capped per band
+TEACH_ATTEMPT_CEILING_RAISE = 1
+# † owner decision 2026-10-01 (PKG-14 A7): a proficient student's reasoned claim
+# raises TWO rungs (H1 → H3, the same H3 the shown-work floor gives) — both tier
+# slots answer a confident wrong claim with a next-step hint, and two prompt
+# rounds at H2 did not change that; develop/novice keep the one-rung raise
+TEACH_ATTEMPT_CEILING_RAISE_PROFIC = 2
+# † PKG-14 (spec §13 A85): a failed or paused turn's teach independent-time
+# anchor is held in memory (a failed turn writes nothing, ADR 0024); at most this
+# many sessions' anchors are held (oldest evicted first)
+LOOP_FAILED_ANCHORS_MAX = 10_000
+# † PKG-14 review fix round (owner decision 1, spec §13 A93): the served-text scan
+# set is every item POSED to the student and not yet graded, newest first, at most
+# this many; an older ungraded item (beyond the window) is covered by an
+# 'unscanned' marker at the window's edge, so it grades as assisted (fail closed)
+LOOP_SCAN_POSED_MAX = 200
+# † A93 (M3) as amended by spec §13 A101 (PKG-14 final fix round): a streamed
+# turn is scanned as it is relayed — EVERY relayed delta, before the next one
+# goes out (the 80-char cadence it replaced left an answer completed inside the
+# window unscanned until the next scan). Each scan reads only the new suffix plus
+# an overlap reaching back over the longest answer form among the scan set's
+# items (twice its non-space length), LEAK_POSITION_WINDOW_CHARS (the
+# answer-position look-back) and this many more non-space characters (option
+# keyword contexts, number-word phrases), snapped back to the sentence start
+LOOP_SCAN_CONTEXT_CHARS = 96

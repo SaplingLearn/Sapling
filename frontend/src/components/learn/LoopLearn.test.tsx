@@ -39,7 +39,7 @@ const api = vi.hoisted(() => ({
   startLoopSession: vi.fn(), nextLoopProbe: vi.fn(), answerLoopProbe: vi.fn(),
   getLoopPlan: vi.fn(), approveLoopPlan: vi.fn(), streamLoopChat: vi.fn(), streamLoopCheckAnswer: vi.fn(),
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
-  getGraph: vi.fn(), nextLoopCheck: vi.fn(),
+  getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 
@@ -408,6 +408,53 @@ describe("LoopLearn — A26", () => {
     await resumedTeach();
     const link = await screen.findByTestId("loop-tree-link");
     expect(link.getAttribute("href")).toMatch(/^\/tree/);
+  });
+});
+
+describe("LoopLearn — perceived-difficulty rating (PKG-14, spec §3.4)", () => {
+  it("a graded check whose done carries ask_rating shows the three-button prompt; one click answers it", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply: "Nice.", phase: "feedback", graded: true, verdict: "correct", ask_rating: true }));
+    api.submitLoopRating.mockResolvedValue({ ok: true });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    const prompt = await screen.findByTestId("loop-rating");
+    for (const r of ["too_easy", "appropriate", "too_hard"]) {
+      expect(prompt.querySelector(`[data-testid="loop-rating-${r}"]`)).toBeTruthy();
+    }
+    fireEvent.click(screen.getByTestId("loop-rating-too_hard"));
+    expect(api.submitLoopRating).toHaveBeenCalledWith("s2", "too_hard");
+    await waitFor(() => expect(screen.queryByTestId("loop-rating")).toBeNull());
+  });
+
+  it("no prompt without ask_rating", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply: "Nice.", phase: "feedback", graded: true, verdict: "correct" }));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await screen.findByText("Nice.");
+    expect(screen.queryByTestId("loop-rating")).toBeNull();
+    expect(api.submitLoopRating).not.toHaveBeenCalled();
+  });
+
+  it("a plain chat turn never asks, even if a done carried the key", async () => {
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Sure.", phase: "teach", ask_rating: true }));
+    await resumedTeach();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "hi" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await screen.findByText("Sure.");
+    expect(screen.queryByTestId("loop-rating")).toBeNull();
+  });
+
+  it("a failed rating save is reported, and the prompt stays answered", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply: "Nice.", phase: "feedback", graded: true, ask_rating: true }));
+    api.submitLoopRating.mockRejectedValue(new Error("boom"));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    fireEvent.click(await screen.findByTestId("loop-rating-appropriate"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.queryByTestId("loop-rating")).toBeNull();
   });
 });
 

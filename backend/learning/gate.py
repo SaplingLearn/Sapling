@@ -1,33 +1,21 @@
-"""Flag + per-user opt-in for the learning loop (spec §7). Fails closed."""
+"""Kill switch (spec §7, §13 A14): the loop is the default for every student;
+LEARNING_LOOP_ENABLED=false/0/off/no turns it off for everyone. No per-user read.
+
+PKG-14b retired the build-phase staff/QA toggle (the per-user settings column
+— the column stays, dead; ADR 0030): this module imports no database helper, so a
+gate call can never reach the DB in either state.
+"""
 
 from __future__ import annotations
 
-import logging
-
 import config
-from db.connection import table
-
-logger = logging.getLogger("sapling.learning.gate")
 
 
 def learning_loop_active(user_id: str) -> bool:
-    """True only when LEARNING_LOOP_ENABLED is set AND the user opted in.
-
-    Never raises. With the env var off it performs no database read, so the
-    flag-off path is byte-identical to the pre-series product.
-    """
-    if not config.LEARNING_LOOP_ENABLED:
-        return False
-    try:
-        rows = table("user_settings").select(
-            "learning_loop_beta", filters={"user_id": f"eq.{user_id}"}
-        )
-    except Exception as exc:  # fail closed
-        logger.warning("learning_loop_active: read failed for %s: %s", user_id, exc)
-        return False
-    if not rows:
-        return False
-    return bool(rows[0].get("learning_loop_beta", False))
+    """`config.LEARNING_LOOP_ENABLED`, read at call time (so a test or a reload sees
+    the current value). `user_id` is kept for the signature every caller uses; the
+    answer is the same for every user. Never raises."""
+    return bool(config.LEARNING_LOOP_ENABLED)
 
 
 def learning_loop_for_request(user_id: str) -> bool:
@@ -35,10 +23,8 @@ def learning_loop_for_request(user_id: str) -> bool:
 
     A route evaluates this at entry and carries the result on
     `SaplingDeps.learning_loop`; agents, tools and services read that field
-    and never call the gate themselves, so a request costs at most one
-    `user_settings` read (`tests/test_learning_gate_route_entry.py` pins that
-    only `routes/` references the gate). Same fail-closed contract as
-    `learning_loop_active`: env kill switch off -> False with no read; any
-    read error -> False.
+    and never call the gate themselves (`tests/test_learning_gate_route_entry.py`
+    pins that only `routes/` references the gate). Post-launch it is the env
+    kill switch alone — no read of any kind.
     """
     return learning_loop_active(user_id)

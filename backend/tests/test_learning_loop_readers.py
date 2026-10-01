@@ -165,4 +165,9 @@ def test_revealed_hashes_are_wrong_or_no_credit_plus_shown_siblings(evidence_db)
     from learning.loop_state_store import revealed_hashes
 
     assert revealed_hashes("u1") == {"qb", "qc", "qd"}
-    assert {name for name, _, _, _ in evidence_db} == {"node_mastery_events", "sessions"}
+    # PKG-14 (spec §13 A88): + the served reveals, keyed by the student
+    assert {name for name, _, _, _ in evidence_db} == {
+        "node_mastery_events",
+        "sessions",
+        "learning_reveals",
+    }

@@ -2,9 +2,9 @@
   "judge_model": "gemini-2.5-pro",
   "judge_prompt_hash": "56120063861e7227b4690754af5b01d7ff13e039c9510237736a770622e40921",
   "output": {
-    "evidence": "What is the other essential part of a recursive definition?",
+    "evidence": "What is the other component that every recursive function needs?",
     "reveals_final_answer": false,
     "rung": 1
   },
-  "served_sha256": "46846861048c6db8513bffc31b2e8d07438622c6ec3b86a2354cfa047fade995"
+  "served_sha256": "560a4af950cfa5ee2feef130fc18b86f70c74ee7f99fc03c5d6f8977775f6097"
 }

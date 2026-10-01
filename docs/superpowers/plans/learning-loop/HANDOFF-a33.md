@@ -343,3 +343,5 @@ cd backend && venv/bin/python -m pytest tests/test_agent_output_schemas.py tests
 ## Post-hoc changes
 
 (Appended by later packages that modified this package's code. Format: `PKG-MM <date>: <what> — commit <sha>`.)
+- PKG-14 2026-10-01: open question (f) CLOSED by the owner (2026-09-30) — a correct answer under the student's own disowning frame earns no credit; decided in code (`answer_guard.disowned`, linear), refusal `disowned_answer` (spec §13 A97) — commit 049881d6
+- PKG-14 2026-10-01 (final fix round, spec §13 A103): open question (f)'s `disowned()` gains "It's a myth that <span>." (whole sentence); its remaining false negatives are accepted limits (leniency toward a self-sabotaging answer, never credit theft) — commit ecb1eca5

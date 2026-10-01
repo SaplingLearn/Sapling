@@ -261,8 +261,21 @@ def test_jev_enabled_parse_fails_closed(seam, raw, expected):
     assert seam.parse_jev_enabled(raw) is expected
 
 
-def test_jev_is_served_by_gemini_and_shadow_is_a_noop(seam, monkeypatch, grader_spy, events):
+def test_grading_is_never_served_from_jev_and_its_shadow_runs_beside_gemini(
+    seam, monkeypatch, grader_spy, events
+):
+    """PKG-15 (spec §13 A98; was PKG-05b's `jev_absent` / shadow no-op pin): a grading
+    decision asked to serve from Jev is served by Gemini with
+    decision.fallback{jev_unsupported}, and no Jev call is made; `shadow_jev` serves
+    Gemini unchanged (the shadow itself: tests/test_learning_decisions_jev.py)."""
     monkeypatch.setattr(seam, "JEV_ENABLED", True)
+    asked = []
+
+    async def _ask(*a, **k):
+        asked.append(a)
+        raise seam._jev.JevUnavailable("transport")
+
+    monkeypatch.setattr(seam._jev, "ask", _ask)
     monkeypatch.setenv("DECISION_BACKEND_GRADE_RUBRIC_ITEMS", "jev")
     v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps()))
     assert (v.backend, v.fallback) == ("gemini", True)
@@ -271,14 +284,15 @@ def test_jev_is_served_by_gemini_and_shadow_is_a_noop(seam, monkeypatch, grader_
             "decision": "grade_rubric_items",
             "from_backend": "jev",
             "to_backend": "gemini",
-            "reason": "jev_absent",
+            "reason": "jev_unsupported",
             "request_id": "r1",
         }
     ]
+    assert asked == []
     events.clear()
     monkeypatch.setenv("DECISION_BACKEND_GRADE_RUBRIC_ITEMS", "shadow_jev")
     v = asyncio.run(seam.grade_rubric_items(_gstate(seam), deps=_deps()))
-    assert (v.backend, v.fallback) == ("gemini", False) and _kinds(events) == ["decision.made"]
+    assert (v.backend, v.fallback) == ("gemini", False) and _kinds(events)[0] == "decision.made"
     assert len(grader_spy["calls"]) == 2
 
 
@@ -419,7 +433,13 @@ def test_match_wrong_reason_without_prior_runs_decision_and_never_invents(seam, 
         invented = asyncio.run(seam.match_wrong_reason(st, deps=_deps()))
     assert (v.value, v.probs, invented.value) == ("w_speed", {"w_speed": 0.8}, seam.NO_MATCH)
     assert re.findall(r"^OPTION (\S+):", calls["prompts"][0], re.M) == ["w_loop", "w_speed"]
-    assert recorded[0] == {"feature": "tutor", "task": "decision", "user_id": "u1"}
+    # PKG-14b (A92): the decision run records its session (deps.session_id).
+    assert recorded[0] == {
+        "feature": "tutor",
+        "task": "decision",
+        "user_id": "u1",
+        "session_id": "s1",
+    }
 
 
 @pytest.mark.parametrize(
@@ -695,7 +715,7 @@ def test_decision_made_payload_is_ids_enums_numbers(seam, grader_spy, events):
     assert not any(t in json.dumps(kw) for t in (QUESTION, REFERENCE, "It stops the calls."))
 
 
-def test_emit_shadow_payload_refuses_text_and_has_no_caller(seam, events, caplog):
+def test_emit_shadow_payload_refuses_text_and_has_one_caller(seam, events, caplog):
     shadow = dict(
         primary_value="w_loop",
         shadow_value="none",
@@ -721,7 +741,8 @@ def test_emit_shadow_payload_refuses_text_and_has_no_caller(seam, events, caplog
     assert [
         p.relative_to(BACKEND).as_posix() for p in _app_files() if "emit_shadow(" in p.read_text()
     ] == ["services/decisions.py"]
-    assert (BACKEND / "services" / "decisions.py").read_text().count("emit_shadow(") == 1
+    # PKG-15: its one caller is the background shadow run (_run_shadow)
+    assert (BACKEND / "services" / "decisions.py").read_text().count("emit_shadow(") == 2
 
 
 # ── Task 5: grade_answer through the seam (PKG-05 reopened) ───────────────
@@ -967,13 +988,30 @@ def test_seam_ref_detector(source, rel, hits):
     assert len(_seam_refs(source, rel)) == hits, _seam_refs(source, rel)
 
 
+DECISION_NAMES_FOR_PIN = (
+    "grade_rubric_items",
+    "reason_is_correct",
+    "match_wrong_reason",
+    "item_answerable",
+    "judge_leak",
+    "deterministic_yes_no",
+)
+
+
 def test_seam_callers_are_only_grade_answer():
     importers = sorted(
         p.relative_to(BACKEND).as_posix()
         for p in _app_files()
         if _seam_refs(p.read_text(), p.relative_to(BACKEND).as_posix())
     )
-    assert importers == ["agents/tools/check.py"]
+    # PKG-15: agents/_jev.py reads the §3.6 settings (JEV_ENABLED, JEV_MODEL, ...) off the
+    # seam at call time; it is the backend UNDER the seam, never a caller of a decision
+    # PKG-15 R1 (minor 7): main.py's lifespan drains the shadows at shutdown, nothing else
+    assert importers == ["agents/_jev.py", "agents/tools/check.py", "main.py"]
+    main_src = (BACKEND / "main.py").read_text()
+    assert re.findall(r"decisions\.(\w+)\(", main_src) == ["shutdown_shadows"]
+    jev = (BACKEND / "agents" / "_jev.py").read_text()
+    assert not any(f"decisions.{n}(" in jev for n in DECISION_NAMES_FOR_PIN)
 
 
 # ── Task 6: eval harness (gold loaders + §3.6 gates) ──────────────────────

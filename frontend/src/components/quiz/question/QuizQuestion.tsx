@@ -480,6 +480,11 @@ export function QuizQuestion({
         courseId={courseId}
         courseLabel={concept.courseCode || undefined}
         seed={askSeed}
+        quizAsk={
+          session.attemptId && item
+            ? { attemptId: session.attemptId, questionIndex: item.index }
+            : undefined
+        }
         returnFocusTo={askRef}
       />
     </div>

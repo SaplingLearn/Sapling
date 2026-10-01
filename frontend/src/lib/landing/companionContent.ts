@@ -189,24 +189,27 @@ export const WIKI_GRAPH_TERMS = [
   { term:'Scope', def:'Your graph is yours, and it keys to the course rather than the section. Retake a course and your mastery carries over instead of resetting.' },
 ] as const;
 
-/** backend/config.py::get_mastery_tier. The floors are MASTERY_MASTERED_MIN
- *  0.75 / MASTERY_LEARNING_MIN 0.45 / MASTERY_STRUGGLING_MIN 0.1 — the
- *  page had 0.40 and 0.01 before, which were nobody’s thresholds. */
+/** backend/learning/bkt.py::tier_for (PKG-14b). The floors are learning/params.py
+ *  BKT_PROFICIENT 0.95 / BAND_NOVICE_MAX 0.30 / TIER_UNEXPLORED_MAX 0.10
+ *  (the retired 0.75 / 0.45 / 0.10 cuts are gone). */
 export const WIKI_TIERS = [
-  { name:'Mastered', range:'0.75 – 1.00', dot:'background:' + TIER.mastered + ';', meaning:'The top tier. Achievements that count mastered concepts count these.' },
-  { name:'Learning', range:'0.45 – 0.74', dot:'background:' + TIER.learning + ';', meaning:'Partly there. Still eligible for the recommendations on your dashboard.' },
-  { name:'Struggling', range:'0.10 – 0.44', dot:'background:' + TIER.struggling + ';', meaning:'Repeated misses. Quiz generation leans hardest on this tier.' },
+  { name:'Mastered', range:'0.95 – 1.00', dot:'background:' + TIER.mastered + ';', meaning:'The top tier. Achievements that count mastered concepts count these.' },
+  { name:'Learning', range:'0.30 – 0.94', dot:'background:' + TIER.learning + ';', meaning:'Partly there. Still eligible for the recommendations on your dashboard.' },
+  { name:'Struggling', range:'0.10 – 0.29', dot:'background:' + TIER.struggling + ';', meaning:'Repeated misses. Quiz generation leans hardest on this tier.' },
   { name:'Unexplored', range:'0.00 – 0.09', dot:'background:' + TIER.unexplored + ';', meaning:'Planted but never demonstrated. Every new concept lands here at 0.00.' },
 ] as const;
 
-/** The one arithmetic on the page. Quiz deltas are services/quiz_config.py
- *  MASTERY_DELTA_PER_CORRECT / _PER_WRONG; the tutor bound is the validated
- *  range on agents/tools/graph.py::MasteryUpdate.mastery_delta. */
-export const WIKI_MASTERY_FORMULA = 'after = clamp(before + correct × 0.03 − wrong × 0.02, 0, 1)';
+/** The one arithmetic on the page (PKG-14b): every graded answer is evidence for
+ *  a Bayesian knowledge-tracing update — backend/learning/bkt.py::update over
+ *  learning/params.py (guess/slip per channel, the learn step BKT_T). No flat
+ *  delta exists any more, and the tutor records no mastery.
+ *  UI/UX: copy updated for the new model; polish pending (HANDOFF-14). */
+export const WIKI_MASTERY_FORMULA = 'after = P(knows it | your answer), then + learning step';
 
 export const WIKI_MASTERY_MOVES = [
-  { source:'Quiz answer', value:'+0.03 / −0.02', note:'Per question, right or wrong. Mastery is earned faster than it is lost, so a rough quiz dents progress without erasing it.' },
-  { source:'Tutor turn', value:'−0.10 … +0.30', note:'The tutor proposes a change per concept and the range is enforced, so no conversation can hand you a mastered node.' },
+  { source:'Quiz answer', value:'evidence', note:'Each question is one piece of evidence, weighed by how easy it is to guess. A question counts once a day, so retaking a quiz cannot farm mastery.' },
+  { source:'Graded check', value:'evidence', note:'A check item you answer in Learn. Hints you used lower the credit, and a shown answer earns none.' },
+  { source:'Tutor turn', value:'no change', note:'Conversation never moves mastery. Only graded answers do, so no chat can hand you a mastered node.' },
   { source:'New concept', value:'0.00', note:'Whatever planted it — a document, a note, a tutor session — a concept arrives unexplored. Extracting seeds your tree, it does not grade it.' },
   { source:'Flashcard rating', value:'no change', note:'Rating a card records the rating. It does not write to the concept the card tests.' },
   { source:'Assignment score', value:'no change', note:'Your gradebook tracks the grade on your transcript. It runs alongside your graph rather than into it.' },
@@ -321,7 +324,7 @@ export const WIKI_CLASS_TERMS = [
 
 export const WIKI_ONBOARDING_SPECS = [
   { label:'Sign-in', value:'Google, domain-gated', note:'Gated to a school email domain — bu.edu by default.' },
-  { label:'Asked once', value:'Year, majors, learning style', note:'Learning style is stored, but it does not shape the tutor much yet.' },
+  { label:'Asked once', value:'Year, majors, courses', note:'Enough to set up your courses and your knowledge tree.' },
   { label:'Courses', value:'From the catalog', note:'Searched by name or code, then enrolled into the current term.' },
 ] as const;
 

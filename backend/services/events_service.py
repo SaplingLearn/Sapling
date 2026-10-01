@@ -43,7 +43,7 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
                                         actually called the tool that records them,
                                         digest_present, digest_chars, recent_attempts,
                                         misconceptions (see docs/quiz-prompt-budget.md)
-quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
+quiz.completed                usage     quiz_id, concept_node_id, score, total, p_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
 quiz.answer_key_served        usage     quiz_id
@@ -66,7 +66,7 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 learn.answer_refused          audit     reason (grader_directive / role_marker /
-                                        addresses_grader / too_long), format,
+                                        addresses_grader / too_long / disowned_answer), format,
                                         check_item_id, request_id, rubric_items, directives,
                                         role_markers, verdict_tokens, exempted, answer_chars
                                         — a check answer that addressed the grader, or was
@@ -129,6 +129,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import re
 import threading
 from typing import Any, Optional
 
@@ -244,6 +245,7 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "zpd.band_adjust",
     "zpd.wheelspin",
     "zpd.leak",
+    "zpd.reveal",  # PKG-14 (spec §13 A88): a served turn stated open posed items' answers
     "zpd.rating",
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
@@ -346,6 +348,7 @@ def log_llm_usage(
     request_id: str | None = None,
     cached_tokens: int | None = None,
     thinking_tokens: int | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
@@ -355,6 +358,8 @@ def log_llm_usage(
 
     ``cached_tokens`` / ``thinking_tokens`` (spec §13 A21) land on every row,
     ``None`` when unmeasured, and cached input is billed at the cached rate.
+    ``session_id`` (PKG-14b, spec §13 A92) is the loop session the run belonged
+    to, ``None`` (never blank) when the run site knew none.
     """
     if not _logging_enabled():
         return
@@ -374,6 +379,7 @@ def log_llm_usage(
             # objects' keys differ (PGRST102), and the worker batches rows.
             "cached_tokens": cached_tokens,
             "thinking_tokens": thinking_tokens,
+            "session_id": (session_id or "").strip() or None,
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
                 cached_tokens=cached_tokens,
@@ -412,11 +418,46 @@ def dropped_count() -> int:
 # ── Flush ───────────────────────────────────────────────────────────────────
 
 
+#: Columns a deploy may reach before their migration (PKG-14b; the
+#: graph_service._JOURNAL_OPTIONAL_COLUMNS idiom). An insert error that NAMES one
+#: as unknown — PGRST204 "Could not find the '<col>' column of '<table>'" or
+#: 42703 'column "<col>" of relation … does not exist' — drops exactly that
+#: column from the batch and retries once, so a code-before-migration deploy
+#: loses no llm_usage row (every $/token budget cap reads them). Any other error
+#: keeps every column and takes the per-row salvage below.
+_OPTIONAL_COLUMNS: dict[str, tuple[str, ...]] = {"llm_usage": ("session_id",)}
+
+
+def _error_text(exc: BaseException) -> str:
+    """The exception's message plus, for db.connection's httpx.HTTPStatusError
+    (whose message omits the body), the PostgREST error body that names the
+    column — graph_service._error_text's rule, kept local (no import cycle)."""
+    text = str(exc)
+    try:
+        body = exc.response.text  # type: ignore[attr-defined]
+    except Exception:
+        return text
+    return f"{text} {body}" if isinstance(body, str) else text
+
+
+def _unknown_optional_columns(table_name: str, exc: BaseException) -> list[str]:
+    text = _error_text(exc)
+    return [
+        column
+        for column in _OPTIONAL_COLUMNS.get(table_name, ())
+        if re.search(
+            rf"['\"]{column}['\"]\s+column\b|\bcolumn\s+['\"]?{column}['\"]?(?!\w)", text
+        )
+    ]
+
+
 def _flush_batch(items: list[dict]) -> None:
     """Insert a batch grouped by table. Errors are swallowed + logged.
 
-    A failed bulk insert falls back to inserting that table's rows one at a
-    time, so a single poison row can't take its whole batch down with it.
+    A failed bulk insert first drops an optional column the error names as
+    unknown (``_OPTIONAL_COLUMNS``) and retries; otherwise it falls back to
+    inserting that table's rows one at a time, so a single poison row can't
+    take its whole batch down with it.
     """
     if not items:
         return
@@ -426,7 +467,20 @@ def _flush_batch(items: list[dict]) -> None:
     for table_name, rows in grouped.items():
         try:
             table(table_name).insert(rows)
-        except Exception:
+        except Exception as exc:
+            unknown = _unknown_optional_columns(table_name, exc)
+            if unknown:
+                logger.warning(
+                    "events insert for table %r named unknown column(s) %s (migration "
+                    "not applied yet?); retrying %d row(s) without them",
+                    table_name, unknown, len(rows),
+                )
+                rows = [{k: v for k, v in row.items() if k not in unknown} for row in rows]
+                try:
+                    table(table_name).insert(rows)
+                    continue
+                except Exception:
+                    pass
             logger.info(
                 "events bulk insert failed for table %r (%d row(s)); "
                 "retrying rows individually",

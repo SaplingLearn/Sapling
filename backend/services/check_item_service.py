@@ -415,6 +415,45 @@ def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str,
     return grouped
 
 
+#: question hashes per `in.(...)` read in items_by_hash (a URL-length bound)
+_HASH_BATCH = 100
+
+
+def items_by_hash(hashes) -> list[CheckItem]:
+    """The items with these question hashes, every course (PKG-14, spec §13
+    A88: the open post-test poses a served turn is scanned against), decrypted,
+    in batches of _HASH_BATCH. The caller matches each to its pose's course."""
+    keys = sorted({h for h in hashes or [] if h})
+    out: list[CheckItem] = []
+    for i in range(0, len(keys), _HASH_BATCH):
+        batch = keys[i : i + _HASH_BATCH]
+        rows = table(_TABLE).select(
+            _COLUMNS,
+            filters={"question_hash": f"in.({','.join(pg_quote_value(h) for h in batch)})"},
+            order="id",
+        )
+        out.extend(_to_items(rows))
+    return out
+
+
+def items_by_ids(ids) -> list[CheckItem]:
+    """The items with these plaintext ids, decrypted, in batches of _HASH_BATCH
+    (PKG-14, spec §13 A101: the served-text scan set's posed steps and review
+    items in a few `in.(...)` reads instead of one get_check_item per id).
+    Raises on a failed read (the scan set's caller fails closed)."""
+    keys = sorted({i for i in ids or [] if i})
+    out: list[CheckItem] = []
+    for i in range(0, len(keys), _HASH_BATCH):
+        batch = keys[i : i + _HASH_BATCH]
+        rows = table(_TABLE).select(
+            _COLUMNS,
+            filters={"id": f"in.({','.join(pg_quote_value(k) for k in batch)})"},
+            order="id",
+        )
+        out.extend(_to_items(rows))
+    return out
+
+
 def course_has_items(course_id: str) -> bool:
     """Whether the course has any item (feeds /probe/next's no_check_items and
     the A26 "No check items for this course yet" state)."""

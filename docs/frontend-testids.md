@@ -139,7 +139,6 @@ route:
 | `onboarding-course-search` | course search field |
 | `onboarding-course-result-${course.id}` | one course search result |
 | `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
-| `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
 
 ### `upload-modal`
 
@@ -484,11 +483,14 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 Added with the learning loop's student UI (PKG-13; spec §9, §11.3). Owner:
 `frontend/src/components/learn/LoopLearn.tsx`. `Learn()` (`screens/Learn.tsx`)
 mounts it when `getLoopStatus` reports the loop active; the legacy `tutor`
-screen otherwise. The chat log inside `loop-messages` is `ChatPanel`, whose own
-`tutor-*` ids (`tutor-messages`, `tutor-input`, `tutor-send`, `tutor-stop`) stay.
+screen only when it reports inactive (the kill switch, PKG-14b). The chat log
+inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
+(`tutor-messages`, `tutor-input`, `tutor-send`, `tutor-stop`) stay.
 
 | testid | element |
 | --- | --- |
+| `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
+| `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
 | `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
 | `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3) |
 | `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
@@ -535,6 +537,8 @@ screen otherwise. The chat log inside `loop-messages` is `ChatPanel`, whose own
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
 | `loop-continue` | "Continue" after feedback — sends the next chat turn |
+| `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
+| `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
 | `loop-close-summary` | the close summary text |
 | `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |

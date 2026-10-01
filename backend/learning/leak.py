@@ -298,18 +298,30 @@ def _folded_token_spans(text: str) -> list[tuple[int, int]]:
     return [(origin[m.start()], origin[m.end() - 1] + 1) for m in _TOKEN.finditer(folded)]
 
 
+def _option_folded(text: str) -> tuple[str, list[int]]:
+    """The copy `_option_hits` reads: folded, every WITHHELD marker as _MASKED
+    (same length, so `origin` still maps each character back)."""
+    folded, origin = _folded(text)
+    return folded.replace(WITHHELD, _MASKED), origin
+
+
 def _option_hits(
-    text: str, option: _OptionRule | None, *, strict: bool = False, gate=None
+    text: str,
+    option: _OptionRule | None,
+    *,
+    strict: bool = False,
+    gate=None,
+    folded: tuple[str, list[int]] | None = None,
 ) -> list[tuple[int, int]]:
     """The spans (in `text`) of the key letter in an option context — any
     standalone key letter too when `strict` — read on the folded copy, where
     every WITHHELD marker reads as one lowercase word (_MASKED).
     strip_leak reads it on the WHOLE text, markers and all, as detect_leak
-    does, so the two always agree."""
+    does, so the two always agree. `folded`: `_option_folded(text)`, when the
+    caller has it."""
     if option is None:
         return []
-    folded, origin = _folded(text)
-    folded = folded.replace(WITHHELD, _MASKED)
+    folded, origin = folded if folded is not None else _option_folded(text)
     found: list[tuple[int, int]] = []
     for pattern in option.context:
         for m in pattern.finditer(folded):
@@ -513,11 +525,16 @@ def _number_word_values(text: str) -> list[tuple[Fraction, int, int]]:
     return out
 
 
-def _number_word_hits(text: str, numeric: _Numeric | None) -> list[tuple[int, int]]:
-    """Strict mode: the spans where `text` writes the numeric answer's value in words."""
+def _number_word_hits(
+    text: str, numeric: _Numeric | None, values: list[tuple[Fraction, int, int]] | None = None
+) -> list[tuple[int, int]]:
+    """Strict mode: the spans where `text` writes the numeric answer's value in
+    words (`values`: `_number_word_values(text)`, when the caller has it)."""
     if numeric is None:
         return []
-    return [(a, b) for value, a, b in _number_word_values(text) if value == numeric.value]
+    if values is None:
+        values = _number_word_values(text)
+    return [(a, b) for value, a, b in values if value == numeric.value]
 
 
 def _numeric_hits(
@@ -593,15 +610,44 @@ def _same_lemma(token: str, answer: str) -> bool:
     return stem >= max(params.LEAK_STEM_MIN_CHARS, math.ceil(params.LEAK_STEM_MIN_SHARE * longer))
 
 
-def _lemma_run_hits(toks: list[AnswerToken], run: tuple[str, ...]) -> list[tuple[int, int]]:
+def _lemma_index(toks: list[AnswerToken]) -> dict[str, list[int]]:
+    """Where each token value starts ("=" + value) and, for an alphabetic token
+    of at least LEAK_STEM_MIN_CHARS, its stem prefix ("~" + the first
+    LEAK_STEM_MIN_CHARS characters) — the only places `_same_lemma` can match:
+    a non-equal match needs a shared prefix of at least LEAK_STEM_MIN_CHARS
+    between two alphabetic words (PKG-14, spec §13 A101: an exact index, not a
+    heuristic; `_lemma_run_hits` finds the same spans with or without it)."""
+    stem = params.LEAK_STEM_MIN_CHARS
+    index: dict[str, list[int]] = {}
+    for i, t in enumerate(toks):
+        index.setdefault("=" + t.value, []).append(i)
+        if t.value.isalpha() and len(t.value) >= stem:
+            index.setdefault("~" + t.value[:stem], []).append(i)
+    return index
+
+
+def _lemma_starts(index: dict[str, list[int]], first: str) -> list[int]:
+    stem = params.LEAK_STEM_MIN_CHARS
+    starts = set(index.get("=" + first, ()))
+    if first.isalpha() and len(first) >= stem:
+        starts.update(index.get("~" + first[:stem], ()))
+    return sorted(starts)
+
+
+def _lemma_run_hits(
+    toks: list[AnswerToken], run: tuple[str, ...], index: dict[str, list[int]] | None = None
+) -> list[tuple[int, int]]:
     """The spans where `toks` hold `run` token by token up to inflection
-    (`_same_lemma`)."""
+    (`_same_lemma`). `index`: `_lemma_index(toks)`, when the caller has it —
+    only the positions where run[0] can match are tried."""
     k = len(run)
     if not k:
         return []
+    last = len(toks) - k
+    starts = range(last + 1) if index is None else [i for i in _lemma_starts(index, run[0]) if i <= last]
     return [
         (toks[i].start, toks[i + k - 1].end)
-        for i in range(len(toks) - k + 1)
+        for i in starts
         if all(_same_lemma(toks[i + j].value, run[j]) for j in range(k))
     ]
 
@@ -614,9 +660,11 @@ def _final_hits(text: str, toks: list[AnswerToken], rules: _Rules) -> list[tuple
     return hits
 
 
-def _option_text_hits(toks: list[AnswerToken], rules: _Rules) -> list[tuple[int, int]]:
+def _option_text_hits(
+    toks: list[AnswerToken], rules: _Rules, index: dict[str, list[int]] | None = None
+) -> list[tuple[int, int]]:
     # option_run is set in strict mode only, so its inflections count too
-    return _lemma_run_hits(toks, rules.option_run)
+    return _lemma_run_hits(toks, rules.option_run, index)
 
 
 def _ngrams(seq: list[str], n: int) -> set[tuple[str, ...]]:
@@ -707,14 +755,23 @@ def confront_text_states_answer(
     return bool(_final_hits(text, toks, rules))
 
 
-def _copied_runs(text: str, given: str) -> list[tuple[int, int]]:
+def _given_grams(given: str) -> set[tuple[str, ...]]:
+    """The LEAK_PROVENANCE_MIN_TOKENS-grams of `given`'s answer tokens."""
+    n = params.LEAK_PROVENANCE_MIN_TOKENS
+    theirs = [t.value for t in answer_tokens(given)]
+    return {tuple(theirs[i : i + n]) for i in range(len(theirs) - n + 1)}
+
+
+def _copied_runs(
+    text: str, given: str, *, toks: list[AnswerToken] | None = None, grams=None
+) -> list[tuple[int, int]]:
     """The spans of `text` it copied verbatim from `given`: unions of runs of
     LEAK_PROVENANCE_MIN_TOKENS consecutive answer tokens that `given` also
-    holds consecutively (numbers compared by value)."""
+    holds consecutively (numbers compared by value). `toks` / `grams`: the
+    text's answer tokens and `_given_grams(given)`, when the caller has them."""
     n = params.LEAK_PROVENANCE_MIN_TOKENS
-    toks = answer_tokens(text)
-    theirs = [t.value for t in answer_tokens(given)]
-    grams = {tuple(theirs[i : i + n]) for i in range(len(theirs) - n + 1)}
+    toks = answer_tokens(text) if toks is None else toks
+    grams = _given_grams(given) if grams is None else grams
     values = [t.value for t in toks]
     runs: list[tuple[int, int]] = []
     for i in range(len(toks) - n + 1):
@@ -733,36 +790,114 @@ def _inside_copy(span: tuple[int, int], runs: list[tuple[int, int]]) -> bool:
     return any(ra <= a and b <= rb and (ra < a or b < rb) for ra, rb in runs)
 
 
-def _served_hits(text: str, rules: _Rules, given: str) -> list[tuple[int, int, Detector]]:
-    """Every rule's hits in served mode, labelled with their detector: copies
-    of `given` dropped, strict number words and standalone letters kept only
-    in answer position."""
-    hits: list[tuple[int, int, Detector]] = []
+class GivenText(NamedTuple):
+    """What served mode reads off the text the model was GIVEN (`given`),
+    computed once and shared by every scan of a turn (PKG-14, spec §13 A101)."""
+
+    grams: set[tuple[str, ...]]  # `_given_grams(given)`: the provenance rule
+    words: set[str]  # its 3+-letter words: `_quantifies_given`
+
+
+def given_text(given: str) -> GivenText:
+    return GivenText(_given_grams(given), {w.lower() for w in re.findall(r"[A-Za-z]{3,}", given)})
+
+
+class ServedText(NamedTuple):
+    """Everything served mode reads off the EMITTED text that does not depend on
+    the item — computed once per scanned text and shared by every item's rules
+    (PKG-14, spec §13 A101: a scan of N items tokenised the text N times)."""
+
+    text: str
+    ascii_spans: list[tuple[int, int]]
+    words: list[str]
+    toks: list[AnswerToken]
+    runs: list[tuple[int, int]]  # spans copied from `given` (provenance)
+    number_words: list[tuple[Fraction, int, int]]
+    folded: tuple[str, list[int]]
+    given_words: set[str]
+    lemma_index: dict[str, list[int]]
+    ngram_sets: dict[int, set[tuple[str, ...]]]  # n → the text's n-grams (filled on use)
+
+
+def served_text(text: str, given: GivenText | str) -> ServedText:
+    if isinstance(given, str):
+        given = given_text(given)
     ascii_spans = [(m.start(), m.end()) for m in _TOKEN.finditer(text)]
-    words = [text[a:b].lower() for a, b in ascii_spans]
-    n = rules.n
-    hits += [
-        (ascii_spans[i][0], ascii_spans[i + n - 1][1], "ngram")
-        for i in range(len(words) - n + 1)
-        if rules.grams and tuple(words[i : i + n]) in rules.grams
-    ]
     toks = answer_tokens(text)
+    return ServedText(
+        text=text,
+        ascii_spans=ascii_spans,
+        words=[text[a:b].lower() for a, b in ascii_spans],
+        toks=toks,
+        runs=_copied_runs(text, "", toks=toks, grams=given.grams),
+        number_words=_number_word_values(text),
+        folded=_option_folded(text),
+        given_words=given.words,
+        lemma_index=_lemma_index(toks),
+        ngram_sets={},
+    )
+
+
+def _served_hits_on(st: ServedText, rules: _Rules) -> list[tuple[int, int, Detector]]:
+    """`_served_hits` on a prepared text: every rule's hits in served mode,
+    labelled with their detector: copies of `given` dropped, strict number words
+    and standalone letters kept only in answer position."""
+    text = st.text
+    hits: list[tuple[int, int, Detector]] = []
+    n = rules.n
+    words = st.words
+    if rules.grams and n > 0:
+        if n not in st.ngram_sets:
+            st.ngram_sets[n] = _ngrams(words, n)
+        if not rules.grams.isdisjoint(st.ngram_sets[n]):  # the spans only on a hit
+            hits += [
+                (st.ascii_spans[i][0], st.ascii_spans[i + n - 1][1], "ngram")
+                for i in range(len(words) - n + 1)
+                if tuple(words[i : i + n]) in rules.grams
+            ]
+    toks = st.toks
     final = _answer_hits(toks, rules.answer)
     if rules.strict:
         final += _numeric_hits(text, toks, rules.numeric, words=False)
-        final += _lemma_run_hits(toks, rules.answer.run)
-        given_words = {w.lower() for w in re.findall(r"[A-Za-z]{3,}", given)}
+        final += _lemma_run_hits(toks, rules.answer.run, st.lemma_index)
         final += [
             (a, b)
-            for a, b in _number_word_hits(text, rules.numeric)
-            if _answer_position(text, a, b) or _quantifies_given(text, b, given_words)
+            for a, b in _number_word_hits(text, rules.numeric, st.number_words)
+            if _answer_position(text, a, b) or _quantifies_given(text, b, st.given_words)
         ]
     hits += [(a, b, "final_answer") for a, b in final]
-    option = _option_hits(text, rules.option, strict=rules.strict, gate=_answer_position)
-    option += _option_text_hits(toks, rules)
+    option = _option_hits(
+        text, rules.option, strict=rules.strict, gate=_answer_position, folded=st.folded
+    )
+    option += _option_text_hits(toks, rules, st.lemma_index)
     hits += [(a, b, "option") for a, b in option]
-    runs = _copied_runs(text, given)
-    return [h for h in hits if not _inside_copy((h[0], h[1]), runs)]
+    return [h for h in hits if not _inside_copy((h[0], h[1]), st.runs)]
+
+
+def _served_hits(text: str, rules: _Rules, given: str) -> list[tuple[int, int, Detector]]:
+    """Every rule's hits in served mode (`_served_hits_on` of the prepared text)."""
+    return _served_hits_on(served_text(text, given), rules)
+
+
+def served_rules(
+    *,
+    reference: str,
+    final_answer: str,
+    canonical_answer: str | None = None,
+    correct_option: str | None = None,
+    option_text: str | None = None,
+) -> _Rules:
+    """The strict served-mode rules of one item, built once (PKG-14, spec §13
+    A101) — the rules `detect_leak(strict=True, given=…)` builds per call.
+    ValueError exactly where detect_leak raises (no final answer, a bad
+    correct_option)."""
+    return _rules(reference, final_answer, canonical_answer, correct_option, True, option_text)
+
+
+def served_leaked(st: ServedText, rules: _Rules) -> bool:
+    """`detect_leak(..., strict=True, given=…).leaked` below H6, on a prepared
+    text and prebuilt rules: the same hits, so the same verdict."""
+    return bool(_served_hits_on(st, rules))
 
 
 def leak_spans(

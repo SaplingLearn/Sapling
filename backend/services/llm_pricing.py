@@ -37,6 +37,12 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash-lite": (0.0001, 0.0004),
     "gemini-2.0-flash": (0.0001, 0.0004),
     "gemini-2.0-flash-lite": (0.000075, 0.0003),
+    # TypeSafe Jev (learning loop PKG-15; provider="typesafe" on the llm_usage row;
+    # rate from #672 / docs.typesafe.ai/models): $0.042 per 1M input tokens, output
+    # free. Exact pinned id only (services/decisions.JEV_MODEL). NOTE: cost_usd is
+    # stored at 6dp, so a call under ~12 input tokens rounds to $0 (#672's
+    # NUMERIC(18,10) widening is not on this branch; HANDOFF-15 Known gaps).
+    "jev-1.13.0": (0.000042, 0.0),
 }
 
 # Cached-input rates per 1K tokens (spec §13 A21): 10% of the input rate —

@@ -1026,6 +1026,20 @@ def test_probe_second_refusal_is_idk(probe):
     assert r.json()["reference_answer"] == "SECRET-REFERENCE"
 
 
+def test_a_disowned_probe_answer_is_asked_again_and_never_becomes_idk(probe):
+    """A97: a disowned answer may have been right, so it never escalates to idk —
+    however many times, the item stays current, nothing is recorded, and the
+    refusal counter does not move."""
+    _answer_doc(probe)
+    probe.grade.side_effect = _grader(refused="disowned_answer")
+    for _ in range(P.CHECK_REFUSALS_AS_IDK + 2):
+        r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="Myths:\n- y"))
+        assert r.status_code == 200 and r.json() == {"graded": False, "refused": True}
+    pr = probe.store["doc"]["probe"]
+    assert pr["current"]["question_hash"] == "h-A-3" and "grading_claim" not in pr["current"]
+    assert pr["refusals"].get("h-A-3", 0) == 0 and probe.agu.call_count == 0
+
+
 def test_probe_answer_emits_probe_done_and_moves_to_plan(probe):
     stable = [0.55, 0.58, 0.6]
     history = [_obs("A", p, k=i) for i, p in enumerate(stable)]  # one short of MIN

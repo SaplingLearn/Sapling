@@ -8,7 +8,6 @@ Covers:
 - POST /api/quiz/generate — agent success path (quiz_agent.run mocked)
 - POST /api/quiz/generate — agent failure degrades to 502
 """
-import pytest
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,39 +27,6 @@ def _noop_ctx_agent():
     return AsyncMock(
         return_value=SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {}))
     )
-
-
-# ── Scoring formula (pure logic, no HTTP) ────────────────────────────────────
-
-class TestMasteryScoreFormula:
-    """
-    The formula in submit_quiz:
-        mastery_after = clamp(mastery_before + (correct * 0.03) - (wrong * 0.02), 0.0, 1.0)
-    """
-
-    def _calc(self, before: float, correct: int, total: int) -> float:
-        wrong = total - correct
-        return max(0.0, min(1.0, before + (correct * 0.03) - (wrong * 0.02)))
-
-    def test_perfect_score_increases_mastery(self):
-        assert self._calc(0.5, 5, 5) == pytest.approx(0.5 + 0.15)
-
-    def test_zero_score_decreases_mastery(self):
-        assert self._calc(0.5, 0, 5) == pytest.approx(0.5 - 0.10)
-
-    def test_partial_score(self):
-        # 3 correct (+0.09), 2 wrong (-0.04)
-        assert self._calc(0.5, 3, 5) == pytest.approx(0.55)
-
-    def test_mastery_clamped_at_1(self):
-        assert self._calc(0.95, 5, 5) == 1.0
-
-    def test_mastery_clamped_at_0(self):
-        assert self._calc(0.05, 0, 5) == 0.0
-
-    def test_mastery_unchanged_when_score_balances_out(self):
-        # e.g. 2 correct (+0.06) vs 3 wrong (-0.06) ≈ no change
-        assert self._calc(0.5, 2, 5) == pytest.approx(0.5)
 
 
 # ── POST /api/quiz/submit ────────────────────────────────────────────────────
@@ -113,13 +79,27 @@ def _make_table(questions=None):
     return factory
 
 
+def _bkt_graph(user_id, graph_update, course_id=None):
+    """PKG-14b: a stand-in graph that applies each evidence with the real BKT
+    update from the node's 0.5, reporting before/after the way
+    apply_graph_update does — so a submit's direction is the evidence's."""
+    from learning.bkt import update
+
+    p, changes = 0.5, []
+    for ev in graph_update["evidence"]:
+        after = update(p, ev["channel"], ev["correct"])
+        changes.append({"concept": "Loops", "before": p, "after": after})
+        p = after
+    return changes
+
+
 @contextmanager
 def _submit_quiz_mocks(questions=None):
     with (
         patch("routes.quiz.table", side_effect=_make_table(questions)),
-        # Mastery writes now route through apply_graph_update (the sanctioned
-        # graph path) instead of a direct graph_nodes.update.
-        patch("routes.quiz.apply_graph_update"),
+        # Mastery writes route through apply_graph_update (the sanctioned
+        # graph path) as graded evidence only (PKG-14b).
+        patch("routes.quiz.apply_graph_update", side_effect=_bkt_graph),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
         # Also neutralize the persistence side of the background update so these
@@ -623,7 +603,7 @@ class TestSubmitQuizMasteryWrite:
     sanctioned graph path), keyed by concept_name + the abstract course id."""
 
     def test_mastery_write_routes_through_apply_graph_update(self):
-        apply_mock = MagicMock()
+        apply_mock = MagicMock(side_effect=_bkt_graph)
 
         def factory(name):
             mock = MagicMock()
@@ -668,12 +648,15 @@ class TestSubmitQuizMasteryWrite:
         # user_id first, abstract course id passed (graph keys on abstract).
         assert args[0] == "user_andres"
         assert kwargs["course_id"] == "course1"
-        updated = args[1]["updated_nodes"]
-        assert len(updated) == 1
-        assert updated[0]["concept_name"] == "Loops"
-        # Perfect score → positive mastery delta.
-        assert updated[0]["mastery_delta"] > 0
-        # The response still reports before/after.
+        # PKG-14b: graded evidence only — one mc evidence per question.
+        payload = args[1]
+        assert set(payload) == {"evidence"}
+        # owner decision 2 (A94): SAMPLE_QUESTIONS carry no stem key, so their
+        # hash is None — hashless questions count ONCE per attempt
+        assert [(e["node_id"], e["channel"], e["correct"]) for e in payload["evidence"]] == [
+            ("node1", "mc", True),
+        ]
+        # The response reports the span the graph wrote.
         data = r.json()
         assert data["mastery_after"] > data["mastery_before"]
 

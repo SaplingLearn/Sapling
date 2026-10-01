@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import get_mastery_tier            # noqa: E402
+from learning.bkt import tier_for            # noqa: E402  (PKG-14b)
 from db import seed_helpers as h               # noqa: E402
 from db.connection import table                # noqa: E402
 from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
@@ -78,15 +78,12 @@ ENR_SECOND_HIST_F25 = "rich-enr-second-hist200-f25"
 # course_chunks rows carry (services/document_indexing.py::_course_code).
 COURSE_CS_CODE = "CS101"
 
-# Learning loop (PKG-13): the loop users (staff/QA toggle, build phase; spec
-# §13 A14). The loop is dark behind LEARNING_LOOP_ENABLED during the build and
-# user_settings.learning_loop_beta is a staff/QA toggle set by SQL or this seed
-# (spec §7). Only these users carry it, so every legacy rich-* user's GATE stays
-# off — the E2E lane runs with LEARNING_LOOP_ENABLED=true and relies on that split
-# to keep the tutor/quiz/Learn paths of legacy users untouched. The flag's
-# process-wide branches (upload check-item drafting, A35 course context) are on
-# for everyone in the lane regardless (scripts/e2e-up.sh). PKG-14b rewrites this
-# comment: after launch the gate ignores the toggle (spec §11.2).
+# Learning loop (PKG-13): the loop users — a prerequisite chain, shared check
+# items and (for the capped user) today's spend. After PKG-14b (spec §7, §11.2)
+# the loop is EVERY student's default and the gate reads no per-user row: the
+# `learning_loop_beta` writes below are a retired build-phase staff/QA toggle —
+# inert fixture data nothing reads after PKG-14b. The E2E lane is chosen by
+# LEARNING_LOOP_ENABLED in the shell (unset = default lane; false = kill switch).
 USER_LOOP = "rich-user-loop"
 USER_CAPPED = "rich-user-capped"
 LOOP_USERS = (USER_LOOP, USER_CAPPED)
@@ -212,13 +209,11 @@ _USERS = [
         "name": "Rich Active", "first_name": "Rich", "last_name": "Active",
         "username": "rich-active", "year": "Junior",
         "majors": ["Computer Science"], "minors": ["Mathematics"],
-        "learning_style": "visual",
     }),
     (USER_SECOND, "rich.second@richlocal.test", True, True, 5, {
         "name": "Sam Second", "first_name": "Sam", "last_name": "Second",
         "username": "rich-second", "year": "Senior",
         "majors": ["Biology"], "minors": [],
-        "learning_style": "kinesthetic",
     }),
     (USER_NEW, "rich.new@richlocal.test", False, True, 0, {
         "name": "Newt Newman",
@@ -230,25 +225,22 @@ _USERS = [
         "name": "Lou Loop", "first_name": "Lou", "last_name": "Loop",
         "username": "rich-loop", "year": "Sophomore",
         "majors": ["Computer Science"], "minors": [],
-        "learning_style": "visual",
     }),
     (USER_CAPPED, "rich.capped@richlocal.test", True, True, 1, {
         "name": "Casey Cap", "first_name": "Casey", "last_name": "Cap",
         "username": "rich-capped", "year": "Freshman",
         "majors": ["Computer Science"], "minors": [],
-        "learning_style": "visual",
     }),
     (USER_ADMIN, "rich.admin@richlocal.test", True, True, 30, {
         "name": "Ada Admin", "first_name": "Ada", "last_name": "Admin",
         "username": "rich-admin", "year": "Staff",
         "majors": [], "minors": [],
-        "learning_style": "reading_writing",
     }),
 ]
 
 # Profile fields that are 🔒 (column-encrypted) vs. plaintext.
 _PROFILE_ENCRYPTED_FIELDS = ("name", "first_name", "last_name")
-_PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors", "learning_style")
+_PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors")  # PKG-14b: no learning_style
 
 
 def seed_users() -> None:
@@ -317,23 +309,28 @@ def seed_enrollments() -> None:
 
 
 # Graph nodes keyed on the ABSTRACT course_id (mastery is cumulative across
-# terms). (node_id, concept_name, mastery_score) — tier derived from score.
+# terms). (node_id, concept_name, mastery_score) — tier derived from score with
+# the launch cuts (learning.bkt.tier_for: mastered ≥ 0.95, learning ≥ 0.30,
+# struggling ≥ 0.10; spec §13 A95). Every tier has a node (graph.spec.ts's
+# journey guard; tests/test_seed_local_rich.py pins it): "Variables and Types"
+# is the one mastered node (0.96 since the PKG-14 final fix round; it was 0.92,
+# mastered only on the retired 0.75 cut).
 _GRAPH_NODES = {
     COURSE_CS: [
-        ("rich-node-cs-variables", "Variables and Types", 0.92),      # mastered
+        ("rich-node-cs-variables", "Variables and Types", 0.96),      # mastered
         ("rich-node-cs-controlflow", "Control Flow", 0.6),            # learning
         ("rich-node-cs-recursion", "Recursion", 0.25),                # struggling
         ("rich-node-cs-pointers", "Pointers and Memory", 0.05),       # unexplored
-        ("rich-node-cs-algorithms", "Algorithms", 0.8),               # mastered
+        ("rich-node-cs-algorithms", "Algorithms", 0.8),               # learning
     ],
     COURSE_MATH: [
-        ("rich-node-math-vectors", "Vectors", 0.85),                  # mastered
+        ("rich-node-math-vectors", "Vectors", 0.85),                  # learning
         ("rich-node-math-matrices", "Matrices", 0.5),                 # learning
         ("rich-node-math-eigenvalues", "Eigenvalues", 0.2),           # struggling
         ("rich-node-math-determinants", "Determinants", 0.0),         # unexplored
     ],
     COURSE_BIO: [
-        ("rich-node-bio-membrane", "Cell Membrane", 0.78),            # mastered
+        ("rich-node-bio-membrane", "Cell Membrane", 0.78),            # learning
         ("rich-node-bio-mitochondria", "Mitochondria", 0.55),         # learning
         ("rich-node-bio-dna", "DNA Replication", 0.15),               # struggling
         ("rich-node-bio-photosynthesis", "Photosynthesis", 0.05),     # unexplored
@@ -383,7 +380,7 @@ def seed_graph() -> None:
                     "concept_name": concept,
                     "subject": subject,
                     "mastery_score": score,
-                    "mastery_tier": get_mastery_tier(score),
+                    "mastery_tier": tier_for(score),
                 },
                 on_conflict="user_id,course_id,concept_name",
             )
@@ -922,7 +919,7 @@ def _seed_embedding(text: str) -> list[float]:
 
 
 def seed_learning_loop() -> None:
-    """PKG-13: the loop users — the staff/QA toggle, a prerequisite chain each,
+    """PKG-13: the loop users — (retired, inert after PKG-14b) staff/QA toggle rows, a prerequisite chain each,
     an indexed shared course document, shared encrypted check items drafted from
     it, and the capped user's spend and due card. Imports are function-local:
     `learning.*`, the `config` budget names, the RAG helpers and the
@@ -948,6 +945,8 @@ def seed_learning_loop() -> None:
 
     for uid in LOOP_USERS:
         # share_class_context: the uploader's consent the shared chunks rest on (#629).
+        # learning_loop_beta: retired build-phase staff/QA toggle; nothing reads it
+        # after PKG-14b (spec §7) — kept as inert fixture data.
         h.upsert(
             "user_settings",
             {"user_id": uid, "learning_loop_beta": True, "share_class_context": True},
@@ -963,7 +962,7 @@ def seed_learning_loop() -> None:
                     "concept_name": concept,
                     "subject": concept.split()[0],
                     "mastery_score": 0.0,
-                    "mastery_tier": get_mastery_tier(0.0),
+                    "mastery_tier": tier_for(0.0),
                 },
                 on_conflict="user_id,course_id,concept_name",
             )

@@ -132,6 +132,8 @@ MODEL_ROUTES = [
     "/start-session",
     "/start-session/stream",
     "/action",
+    # PKG-14: the post-test answer runs the grader (tests/test_learning_posttest.py).
+    "/posttest/answer",
 ]
 #: No rate-limit DEPENDENCY. /probe/answer runs the grader but checks the rate
 #: limit inline, after the gate (PKG-08 fix round; PKG-12's pattern), pinned in
@@ -151,7 +153,13 @@ NO_MODEL_ROUTES = [
     "/sessions",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
-RATE_LIMITED_NO_MODEL = ["/step/attempt"]
+RATE_LIMITED_NO_MODEL = [
+    "/step/attempt",
+    # PKG-14 (A87): the post-test start records the pose it opens
+    "/posttest/start",
+    # PKG-14 review fix round: the zpd.rating answer writes state and an event
+    "/rating",
+]
 #: PKG-12: no review route carries the dependency — /review/answer checks the rate
 #: limit inline for a check answer only (tests/test_learning_review.py).
 REVIEW_ROUTES = ["/review/next", "/review/answer", "/review/summary", "/review/active"]
@@ -332,6 +340,12 @@ def seams():
         ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
+        # PKG-14 (spec §13 A88): the open posed items a served turn is scanned
+        # against, and the learning_reveals store (none by default)
+        ns.open_posed = p("posed_items", return_value=([], None))  # A93: (items, overflow)
+        ns.record_reveals = p("record_reveals")
+        ns.record_unscanned = p("record_unscanned")
+        ns.unscanned_since = p("unscanned_since", return_value=False)
         # PKG-10 (A76): the evidence-journal half of the re-check rule
         ns.journal = stack.enter_context(
             patch("learning.misconceptions.recent_evidence", return_value=[])
@@ -1383,6 +1397,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
     agent.override, agent.run = _override, _run
     turn = SimpleNamespace(
         user_id="u1",
+        session_id="s1",  # PKG-14b (A92): the continuation's usage row names its session
         band="develop",
         slot="loop_tutor",
         agent=agent,
@@ -1809,6 +1824,25 @@ def test_the_second_refusal_of_an_item_is_recorded_as_idk(gate_on, seams):
     assert entry["refusals"] == CHECK_REFUSALS_AS_IDK and entry["last_verdict"] == "idk"
     assert entry["attempted_at"] == [] and entry["attempts"] == 0
     seams.zpd.emit_zpd_step.assert_called_once()
+
+
+def test_a_disowned_answer_at_the_threshold_is_asked_again_never_idk(gate_on, seams):
+    """A97: a disowned answer may have been right, so it never escalates to idk —
+    even one refusal short of the threshold it is asked again, nothing is graded
+    or flushed, and the refusal counter does not move."""
+    from learning.params import CHECK_REFUSALS_AS_IDK
+
+    seams.store["doc"] = _state(refusals=CHECK_REFUSALS_AS_IDK - 1)
+    seams.grade.side_effect = [SimpleNamespace(**{**vars(REFUSED), "refused": "disowned_answer"})]
+    body = client.post(
+        "/api/learn/loop/check/answer", json=_answer(answer="Myths:\n- n == 0 returns 1")
+    ).json()
+    assert seams.grade.await_count == 1
+    seams.flush.assert_not_called()
+    assert body["graded"] is False and body["refused"] is True
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["refusals"] == CHECK_REFUSALS_AS_IDK - 1 and "graded_at" not in entry
+    assert "grading_claim" not in entry
 
 
 def test_a_refusal_on_the_stream_route_serves_the_template(gate_on, seams):
@@ -2816,7 +2850,9 @@ def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monk
 
     turn = {"reply": "legacy", "graph_update": {}, "mastery_changes": []}
     with (
-        patch("learning.gate.table", side_effect=factory),
+        # PKG-14b: the post-launch gate imports no table at all; spy on the
+        # one DB entry point instead (the assertion below is unchanged).
+        patch("db.connection.table", side_effect=factory),
         patch(
             "routes.learn.table", side_effect=lambda n: MagicMock(select=MagicMock(return_value=[]))
         ),

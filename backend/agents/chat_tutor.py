@@ -5,7 +5,8 @@ with a typed Pydantic AI agent. Tools handle the data lookups that used
 to be string-stuffed — wire names: search_course_materials (registered
 under that prompt-facing name via Tool(..., name=...), #135),
 read_session_history_tool, read_user_progress_tool,
-apply_graph_update_tool, update_mastery_tool.
+apply_graph_update_tool (PKG-14b removed update_mastery_tool: the legacy
+tutor is the kill-switch path and records no mastery, spec §11.6).
 
 Modes (Socratic, Expository, TeachBack) are gated by selecting different
 system prompts at construction time. The route picks the right agent
@@ -35,7 +36,7 @@ from agents.tools.chat_context import (
     read_user_progress_tool,
     search_course_materials_tool,
 )
-from agents.tools.graph import apply_graph_update_tool, update_mastery_tool
+from agents.tools.graph import apply_graph_update_tool
 from agents.tools.graph_read import (
     read_concepts_for_user_tool,
     read_graph_neighborhood_tool,
@@ -70,8 +71,8 @@ _ACADEMIC_INTEGRITY = (
 _SHARED_PREAMBLE = (
     "You are Sapling, an AI tutor that helps a student build mastery in "
     "their course material. You have tools to fetch the student's "
-    "progress, search their uploaded course documents, and update their "
-    "knowledge graph mastery scores. Use tools when relevant — don't "
+    "progress, search their uploaded course documents, and add new "
+    "concepts to their knowledge graph. Use tools when relevant — don't "
     "fabricate context.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
@@ -83,12 +84,9 @@ _SHARED_PREAMBLE = (
     + "\n\n"
     "Knowledge graph tools:\n"
     "- apply_graph_update_tool: register NEW concepts the student hasn't seen before.\n"
-    "- update_mastery_tool: adjust mastery on EXISTING concepts this turn. "
-    "Use +0.1 to +0.3 when they answer correctly; −0.05 to −0.1 for gaps. "
-    "Call this in EVERY turn where the student demonstrated understanding "
-    "or revealed a misconception. After your tool calls complete, ALWAYS "
-    "write your reply to the student — never end the turn on a tool call "
-    "or with an empty message.\n\n"
+    "After your tool calls complete, ALWAYS write your reply to the "
+    "student — never end the turn on a tool call or with an empty "
+    "message.\n\n"
     "Graph tools (read):\n"
     "- read_graph_neighborhood: expand around named concepts — their "
     "mastery, tier, and how they connect (prerequisite/builds_on/related).\n"
@@ -144,7 +142,8 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All seven tools are registered on every mode. The system prompt steers
+# All six legacy tools are registered on every mode (PKG-14b dropped
+# update_mastery_tool). The system prompt steers
 # WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
 
@@ -169,7 +168,6 @@ def _build_tools(learning_loop: bool = False) -> list:
         read_session_history_tool,
         read_user_progress_tool,
         apply_graph_update_tool,
-        update_mastery_tool,
         # #149: read-only graph tools, registered under the prompt-facing
         # names the _SHARED_PREAMBLE "Graph tools (read)" paragraph uses.
         Tool(read_graph_neighborhood_tool, name="read_graph_neighborhood", takes_ctx=True),

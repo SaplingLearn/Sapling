@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "Based on a sketch of the graph of y = x^2, what would you estimate the slope to be at x = 2, and what slope does your rule for x^4 suggest for x^2 at that same point?",
+    "evidence": "Let's test the rule you are using on a simpler function, f(x) = x^2. If your rule is correct, the derivative at x=3 would be 2 * 3^2 = 18. We can check this...What is the slope of the line...?",
     "only_states_correction": false
   },
-  "served_sha256": "37be2507c75832b15e6154d6f2c62df5a4ba586ea87cae93e4f36e227911e6ea"
+  "served_sha256": "5a4b52f51f346b2530bfbb5819cbb409f9c440a62247849c7d6f19667cd3a92d"
 }

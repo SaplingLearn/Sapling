@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What value would the function try to calculate next after `factorial(0)`?",
+    "evidence": "Following that pattern, what would `factorial(0)` call next?",
     "only_states_correction": false
   },
-  "served_sha256": "293302c66758851bfb960bb37badc00ba8d9776e10cee2cccf2d875f5ecd1432"
+  "served_sha256": "075a5e6f818eca4995f6148fd6731934128ef4a3b733fc947eaf06e859e0e54d"
 }

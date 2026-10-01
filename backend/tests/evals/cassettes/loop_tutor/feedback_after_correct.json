@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Your answer correctly identified the base case for the problem.\", \"body\": \"The grader marked your answer as correct.\", \"question\": \"What specifically about the problem led you to choose n == 0 as the base case?\"}"
+    "{\"key_idea\": \"Your answer correctly identified the base case.\", \"body\": \"The base case is a fundamental part of a recursive function's structure.\", \"question\": \"What specifically about the base case definition helps you confirm your choice?\"}"
   ],
   "input_sha256": "0e7d80f6fc27a8ad8981a9a46a5487a75416a27738f110a1e5dc3648573dd619",
   "model": "gemini-2.5-flash",
   "output": {
-    "body": "The grader marked your answer as correct.",
-    "key_idea": "Your answer correctly identified the base case for the problem.",
-    "question": "What specifically about the problem led you to choose n == 0 as the base case?"
+    "body": "The base case is a fundamental part of a recursive function's structure.",
+    "key_idea": "Your answer correctly identified the base case.",
+    "question": "What specifically about the base case definition helps you confirm your choice?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

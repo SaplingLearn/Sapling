@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any, Literal, NamedTuple, Sequence, get_args
 
 from learning import params
+from learning.arms import Variant
 from learning.ladder import ItemLike, Rung
 
 Band = Literal["novice", "develop", "profic"]
@@ -47,6 +48,10 @@ class CeilingReason(str, Enum):
     NOVICE_WORKED_FIRST = "novice_worked_first"
     NOVICE_PREREQ_GAP = "novice_prereq_gap"
     SHOWED_WORK_FLOOR = "showed_work_floor"
+    # PKG-14 (A85): a teach-phase genuine attempt (a reasoned claim) raised it
+    TEACH_ATTEMPT = "teach_attempt"
+    # PKG-14 (spec §10 rung 3): the tool-removed post-test forces H0
+    POSTTEST = "posttest"
 
 
 @dataclass
@@ -91,8 +96,25 @@ class ContextPolicy(NamedTuple):
 # ── ceiling (spec §3.3 CEILING; §13 A4) ──────────────────────────────────────
 
 
-def ceiling_with_reason(learner: LearnerView, step: StepState) -> tuple[Rung, CeilingReason]:
+#: PKG-14 (A85): the highest ceiling a teach attempt may raise a band to — what
+#: the band allows after attempts (profic escalated H3, develop H6, novice H5).
+TEACH_ATTEMPT_CEILING_CAP: dict[str, Rung] = {
+    "profic": Rung.H3,
+    "develop": Rung.H6,
+    "novice": Rung.H5,
+}
+
+
+def ceiling_with_reason(
+    learner: LearnerView, step: StepState, *, teach_attempt: bool = False
+) -> tuple[Rung, CeilingReason]:
     """Highest rung this turn may reach, first-match over the §3.3 table.
+
+    `teach_attempt` (PKG-14, A85): the caller judged THIS teach-phase message a
+    genuine attempt (gates.teach_turn_ceiling — a reasoned claim); the ceiling
+    rises TEACH_ATTEMPT_CEILING_RAISE rung (TEACH_ATTEMPT_CEILING_RAISE_PROFIC for
+    the profic band, owner decision 2026-10-01), capped at TEACH_ATTEMPT_CEILING_CAP
+    for the band, never in exam mode. It moves no evidence and no state.
 
     While a step is open every recorded genuine attempt is a failed one (a
     correct attempt closes the step), so `genuine_attempts` is the table's
@@ -124,6 +146,16 @@ def ceiling_with_reason(learner: LearnerView, step: StepState) -> tuple[Rung, Ce
         rung, reason = Rung.H5, CeilingReason.NOVICE_PREREQ_GAP
     if step.showed_work and rung < Rung.H3:
         return Rung.H3, CeilingReason.SHOWED_WORK_FLOOR
+    if teach_attempt:
+        cap = TEACH_ATTEMPT_CEILING_CAP[learner.band]
+        step_up = (
+            params.TEACH_ATTEMPT_CEILING_RAISE_PROFIC
+            if learner.band == "profic"
+            else params.TEACH_ATTEMPT_CEILING_RAISE
+        )
+        raised = Rung(min(int(rung) + step_up, int(cap)))
+        if raised > rung:
+            return raised, CeilingReason.TEACH_ATTEMPT
     return rung, reason
 
 
@@ -516,3 +548,26 @@ def next_isomorph(item: ItemLike, items: Sequence[ItemLike]) -> ItemLike | None:
         ):
             return cand
     return None
+
+
+# ── within-student arms (PKG-14; spec §3.3, §10 rung 2) ─────────────────────
+# `variant_for` (ids + the arm label in, variant out) lives in learning/arms.py:
+# invariant 4 holds this module to typed, text-free parameters.
+
+
+def independent_gate(band: Band, variant: Variant) -> str:
+    """The name of the `GATE_*` independent-time constant for a band and the
+    concept's variant (a name, so `params.gate_seconds` applies the A5 time
+    scale to it). Variant B changes only the develop/profic gate; novice keeps
+    GATE_INDEPENDENT_MIN_S_NOVICE for both."""
+    if variant not in get_args(Variant):
+        raise ValueError(f"unknown variant {variant!r}")
+    if band == "novice":
+        return "GATE_INDEPENDENT_MIN_S_NOVICE"
+    return "GATE_INDEPENDENT_MIN_S_VARIANT_B" if variant == "B" else "GATE_INDEPENDENT_MIN_S"
+
+
+def independent_min_s(band: Band, variant: Variant) -> int:
+    """Seconds of independent work before an attempt is genuine (spec §3.3),
+    unscaled, for a band and the concept's variant."""
+    return getattr(params, independent_gate(band, variant))

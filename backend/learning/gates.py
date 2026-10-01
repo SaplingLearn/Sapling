@@ -24,7 +24,15 @@ import re
 from typing import get_args
 
 from learning import params
-from learning.policy import Band, StepState
+from learning.policy import (
+    Band,
+    CeilingReason,
+    LearnerView,
+    StepState,
+    ceiling_with_reason,
+    independent_gate,
+)
+from learning.ladder import Rung
 
 NON_ATTEMPT_PATTERNS: tuple[str, ...] = (
     "just tell me",
@@ -300,8 +308,11 @@ def is_genuine_attempt(
     band: Band,
     *,
     time_scale: float = 1.0,
+    variant: str = "A",
 ) -> bool:
-    """Whether an attempt counts toward hint unlocking (spec §3.3). It never
+    """Whether an attempt counts toward hint unlocking (spec §3.3). `variant` is
+    the concept's within-student arm (PKG-14, `policy.variant_for`); "A" — every
+    concept while `loop_arm` is NULL — keeps the §3.3 thresholds. It never
     blocks grading an explicit submission (A16). `matched_non_attempt` is
     DEFINED as `has_non_attempt_phrase(text)` (never `matches_non_attempt`):
     a phrase or plea anywhere vetoes the attempt, even beside an answer or a
@@ -315,7 +326,7 @@ def is_genuine_attempt(
         return False
     if text_len_chars <= 0 and not has_shown_work:
         return False
-    gate = "GATE_INDEPENDENT_MIN_S_NOVICE" if band == "novice" else "GATE_INDEPENDENT_MIN_S"
+    gate = independent_gate(band, variant)  # PKG-14: variant B moves the develop/profic gate
     return independent_seconds >= params.gate_seconds(gate, time_scale)
 
 
@@ -348,3 +359,48 @@ def offer_allowed(band: Band, last_attempt_wrong: bool) -> bool:
     """The error-triggered "want a hint?" offer: OFFER_BANDS only, after a wrong
     genuine attempt."""
     return band in params.OFFER_BANDS and last_attempt_wrong
+
+
+def teach_attempt(
+    message: str,
+    independent_seconds: float | None,
+    band: Band,
+    *,
+    time_scale: float = 1.0,
+    variant: str = "A",
+) -> bool:
+    """PKG-14 (spec §13 A85): whether a teach-phase message counts as a genuine
+    attempt for THIS turn's ceiling — the EXISTING rule, is_genuine_attempt with
+    has_non_attempt_phrase (the non-attempt list) and the independent-time gate
+    on `independent_seconds` (the time since the loop's previous served turn).
+    Undecidable (no anchor, NaN, any error) → False: fail closed, no raise."""
+    if independent_seconds is None:
+        return False
+    try:
+        return is_genuine_attempt(
+            len((message or "").strip()),
+            False,
+            has_non_attempt_phrase(message or ""),
+            independent_seconds,
+            band,
+            time_scale=time_scale,
+            variant=variant,
+        )
+    except (ValueError, TypeError):
+        return False
+
+
+def teach_turn_ceiling(
+    learner: LearnerView,
+    message: str,
+    independent_seconds: float | None,
+    *,
+    time_scale: float = 1.0,
+    variant: str = "A",
+) -> tuple[Rung, CeilingReason]:
+    """The ceiling of a teach turn with no active item (A85): the policy's, with
+    `teach_attempt` from the existing genuine-attempt rule."""
+    attempt = teach_attempt(
+        message, independent_seconds, learner.band, time_scale=time_scale, variant=variant
+    )
+    return ceiling_with_reason(learner, StepState(question_hash=""), teach_attempt=attempt)

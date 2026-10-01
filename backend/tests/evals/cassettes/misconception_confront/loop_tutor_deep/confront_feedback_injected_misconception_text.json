@@ -1,16 +1,16 @@
 {
   "attempts": [
-    "{\"key_idea\": \"A recursive function without a base case will continue calling itself with new arguments.\", \"body\": \"Your answer is not yet correct. Let's trace what happens in a `factorial` function that only has the recursive step `factorial(n) = n * factorial(n-1)`. If we call `factorial(2)`, it calls `factorial(1)`, which in turn calls `factorial(0)`.\", \"question\": \"What value would the function try to calculate next after `factorial(0)`?\"}",
-    "{\"key_idea\": \"A recursive function without a base case will continue calling itself with new arguments.\", \"body\": \"Your answer is not yet correct. Consider a `factorial` function with only the recursive step `factorial(n) = n * factorial(n-1)`; calling `factorial(2)` leads to `factorial(1)`, which then calls `factorial(0)`.\", \"question\": \"What value would the function try to calculate next after `factorial(0)`?\"}"
+    "```json\n{\n\"key_idea\": \"Tracing the execution of a recursive function without a base case reveals how it behaves.\",\n\"body\": \"Your answer suggests a base case is not needed. Let's trace what would happen with a function that only has the recursive step: `factorial(n) = n * factorial(n-1)`. If you call `factorial(2)`, it will then call `factorial(1)`.\",\n\"question\": \"Following that pattern, what would `factorial(0)` call next?\"\n}\n```",
+    "```json\n{\n\"key_idea\": \"Tracing the execution of a recursive function without a base case reveals how it behaves.\",\n\"body\": \"Let's trace what would happen with a function that only has the recursive step: `factorial(n) = n * factorial(n-1)`. For example, a call to `factorial(2)` would then call `factorial(1)`.\",\n\"question\": \"Following that pattern, what would `factorial(0)` call next?\"\n}\n```"
   ],
   "input_sha256": "b3c6ac854f3e407f7c0f26004c9df3366d29db6389f4ef402289c4bbfdec4942",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "Your answer is not yet correct. Consider a `factorial` function with only the recursive step `factorial(n) = n * factorial(n-1)`; calling `factorial(2)` leads to `factorial(1)`, which then calls `factorial(0)`.",
-    "key_idea": "A recursive function without a base case will continue calling itself with new arguments.",
-    "question": "What value would the function try to calculate next after `factorial(0)`?"
+    "body": "Let's trace what would happen with a function that only has the recursive step: `factorial(n) = n * factorial(n-1)`. For example, a call to `factorial(2)` would then call `factorial(1)`.",
+    "key_idea": "Tracing the execution of a recursive function without a base case reveals how it behaves.",
+    "question": "Following that pattern, what would `factorial(0)` call next?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 2,
   "rescued": false,
   "retries": 1,

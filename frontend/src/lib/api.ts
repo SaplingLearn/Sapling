@@ -247,6 +247,27 @@ export const deleteGraphNode = (userId: string, nodeId: string) =>
 // Learn
 export type ModelPref = 'smart' | 'fast';
 
+/**
+ * PKG-14 (spec §13 A99): a session opened ABOUT one quiz question (the quiz's
+ * "Ask about this" panel). The question is named by its attempt and index; the
+ * server resolves its identity from the attempt row and records the help, so
+ * quiz evidence on that question earns no unassisted credit. On the loop path
+ * the session starts teaching the quiz's concept (no probe).
+ */
+export interface QuizAskOrigin {
+  attemptId: string;
+  questionIndex: number;
+}
+
+const quizAskFields = (quizAsk?: QuizAskOrigin) =>
+  quizAsk
+    ? {
+        origin: 'quiz_ask' as const,
+        quiz_attempt_id: quizAsk.attemptId,
+        quiz_question_index: quizAsk.questionIndex,
+      }
+    : {};
+
 export const startSession = (
   userId: string,
   topic: string,
@@ -254,6 +275,7 @@ export const startSession = (
   courseId?: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  quizAsk?: QuizAskOrigin,
 ) =>
   fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
     method: 'POST',
@@ -264,6 +286,7 @@ export const startSession = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     }),
   });
 
@@ -450,6 +473,7 @@ export const startSessionStream = (
   courseId?: string,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  quizAsk?: QuizAskOrigin,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/start-session/stream',
@@ -460,17 +484,16 @@ export const startSessionStream = (
       use_shared_context: useSharedContext,
       course_id: courseId,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...quizAskFields(quizAsk),
     },
     handlers,
   );
 };
 
+/** PKG-14b (spec §11.2): the three always-empty lists are gone from the wire. */
 export interface SessionSummaryData {
   concepts_covered: string[];
-  mastery_changes: { concept: string; before: number; after: number }[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export const endSession = (sessionId: string, userId: string) =>
@@ -1047,7 +1070,11 @@ export interface LoopTurnResult extends ChatResult {
   unavailable?: boolean;
   answer_released?: boolean;
   refused?: boolean;
+  /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
+  ask_rating?: boolean;
 }
+/** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
+export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
 export interface LoopCheckNext {
   phase: LoopPhase;
   check: LoopCheckItem | null;
@@ -1205,6 +1232,14 @@ export const requestLoopHint = (sessionId: string, userId: string, questionHash:
 /** The hint's text: the `[ACTION: hint]` turn at the item's (new) rung (JSON; may 429). */
 export const requestLoopHintTurn = (sessionId: string, userId: string) =>
   loopPost<LoopTurnResult>('/action', { session_id: sessionId, user_id: userId, action_type: 'hint' });
+
+/** PKG-14: the perceived-difficulty rating the loop asks for every N checks; the
+ *  user is the session cookie's. Emits zpd.rating and resets the counter. */
+export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
+  fetchJSON<{ ok: true }>('/api/learn/loop/rating', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, rating }),
+  });
 
 /** Ends the session with its close (idempotent; A60). 409 while a close or a grade is in flight. */
 export const closeLoopSession = (sessionId: string, userId: string) =>
@@ -1364,13 +1399,16 @@ export interface OnboardingProfilePayload {
   majors: string[];
   minors: string[];
   course_ids: string[];
-  learning_style: 'visual' | 'reading' | 'auditory' | 'hands-on' | 'mixed';
 }
 
 export const submitOnboardingProfile = (payload: OnboardingProfilePayload) =>
   fetchJSON<{ user_id: string; courses_linked: string[] }>('/api/onboarding/profile', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    // Deploy-skew shim (PKG-14b): the pre-launch backend still REQUIRES
+    // `learning_style` (a bare str), the post-launch one ignores it. Sending ""
+    // keeps onboarding working whichever deploys first (the frontend worker or
+    // Railway). Remove once both run PKG-14b.
+    body: JSON.stringify({ ...payload, learning_style: '' }),
   });
 
 // Profile

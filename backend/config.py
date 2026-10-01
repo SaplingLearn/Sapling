@@ -28,7 +28,8 @@ SECURE_COOKIES: bool = _sc_env.lower() == "true" if _sc_env is not None else FRO
 # a deployment that sets nothing gets the strict checks. Set APP_ENV=local (or
 # development/dev/test) to relax SESSION_SECRET for local dev.
 APP_ENV = os.getenv("APP_ENV", "production").strip().lower()
-IS_LOCAL = APP_ENV in {"local", "development", "dev", "test"}
+LOCAL_APP_ENVS = frozenset({"local", "development", "dev", "test"})  # every other value = production
+IS_LOCAL = APP_ENV in LOCAL_APP_ENVS
 
 # Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
 # Default preserves prod's @bu.edu-only behavior. Staging can widen this (e.g.
@@ -40,9 +41,21 @@ ALLOWED_EMAIL_DOMAINS = [
     if d.strip()
 ]
 
-# Learning loop series (docs/superpowers/specs/2026-09-26-learning-loop-design.md §7).
-# Only "true" (any case) enables; everything else, including unset, is off.
-LEARNING_LOOP_ENABLED = os.getenv("LEARNING_LOOP_ENABLED", "false").strip().lower() == "true"
+# Learning loop series (docs/superpowers/specs/2026-09-26-learning-loop-design.md §7,
+# post-launch parse — PKG-14b). The loop is the default for every student.
+_raw = os.getenv("LEARNING_LOOP_ENABLED", "").strip().lower()
+# Kill switch (spec §13 A14): any falsy spelling turns the loop off; unset or empty means ON.
+LEARNING_LOOP_ENABLED = _raw not in {"false", "0", "off", "no"}
+if _raw not in {"false", "0", "off", "no", "", "true", "1", "on", "yes"}:
+    # Still ON (the §7 table is unchanged), but say so: a typo such as "disabled"
+    # or "n" would otherwise leave the loop on with no trace (PKG-14 review).
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "LEARNING_LOOP_ENABLED=%r is not a recognised spelling; the learning loop is ON. "
+        "Use false/0/off/no to turn it off.",
+        _raw,
+    )
 # Spec §13 A5: every GATE_* seconds constant is scaled by this factor (production never
 # sets it; the E2E lane sets 0.01 so hint gates open in seconds). learning.params stays
 # config-free (invariant 2), so routes/learn_loop.py reads it here and passes
@@ -119,53 +132,12 @@ def validate_config() -> None:
         )
 
 
-# ── Mastery tiers (#557) ────────────────────────────────────────────────────
+# ── Mastery tiers ───────────────────────────────────────────────────────────
 #
-# THE thresholds. Every Python surface that classifies a mastery score reads
-# them from here — the graph writes that denormalize `mastery_tier`, the
-# tutor's progress tool, flashcard selection, the seeds. Three sets used to
-# exist (this one, the tutor's 0.7/0.4, and flashcards' ad-hoc <0.4), which
-# meant a student could read "Struggling" on the Tree and be counted as
-# in-progress by the tutor in the same session.
-#
-# ONE mirror is unavoidable and is therefore pinned by test rather than by
-# hope: `frontend/src/components/screens/Learn.tsx::tierForScore` re-declares
-# these to classify a STREAMED mastery delta client-side, so the live Tree
-# agrees with the refetch that follows it. It cannot import from here, so
-# `tests/test_mastery_tier_unification.py` reads that file and asserts the
-# numbers match. Change these and that test tells you what else to change.
-#
-# If a surface ever needs a genuinely different cut, name it HERE as its own
-# constant with the reason. A local literal is how the last three diverged.
-MASTERY_MASTERED_MIN = 0.75
-MASTERY_LEARNING_MIN = 0.45
-MASTERY_STRUGGLING_MIN = 0.1
-
-
-def get_mastery_tier(score: float) -> str:
-    if score >= MASTERY_MASTERED_MIN:
-        return "mastered"
-    elif score >= MASTERY_LEARNING_MIN:
-        return "learning"
-    elif score >= MASTERY_STRUGGLING_MIN:
-        return "struggling"
-    return "unexplored"
-
-
-def is_mastered(score: float) -> bool:
-    """The top tier — the same one the Tree labels "mastered"."""
-    return score >= MASTERY_MASTERED_MIN
-
-
-def is_weak(score: float) -> bool:
-    """Below the learning floor: "struggling" OR "unexplored".
-
-    Both mean "not yet learning this", which is the question every caller is
-    actually asking — which concepts need work (weak counts, flashcard drills,
-    quiz focus). Splitting them here would just push the union back out to the
-    call sites, which is where the drift came from.
-    """
-    return score < MASTERY_LEARNING_MIN
+# PKG-14b (spec §11.2): the one score → tier map is learning/bkt.py::tier_for
+# (with in_mastered_tier / is_weak), on the spec §3.1 cuts in learning/params.py
+# (TIER_UNEXPLORED_MAX / BAND_NOVICE_MAX / BKT_PROFICIENT). The legacy copy
+# that lived here (#557) is deleted.
 
 
 def canopy_metrics_token() -> str:

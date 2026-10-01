@@ -90,6 +90,28 @@ def _write_baselines(all_baselines: dict[str, dict[str, float]]) -> None:
     BASELINES_PATH.write_text(json.dumps(all_baselines, indent=2, sort_keys=True) + "\n")
 
 
+#: A40 06(s) (PKG-14): an eval floor is the MINIMUM of LOOP-style repeated
+#: recordings, never one. With SAPLING_EVAL_RUNS_LOG=<path>, every evaluated
+#: dataset appends one JSON line {"dataset", "mode", "scores", "raised"} to
+#: <path>; tests/evals/floors.py turns N such runs into the floors (and a
+#: routing block). Unset, nothing is written.
+RUNS_LOG_ENV = "SAPLING_EVAL_RUNS_LOG"
+
+
+def _log_run(name: str, scores: dict[str, float], *, raised: bool) -> None:
+    path = os.getenv(RUNS_LOG_ENV)
+    if not path:
+        return
+    line = {
+        "dataset": name,
+        "mode": MODE,
+        "scores": {ev: round(v, 6) for ev, v in sorted(scores.items())},
+        "raised": raised,
+    }
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line, sort_keys=True) + "\n")
+
+
 def ensure_utf8_output() -> None:
     """Force UTF-8 on stdout/stderr.
 
@@ -142,6 +164,8 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
             file=sys.stderr,
         )
         ok = False
+
+    _log_run(name, scores, raised=bool(report.failures))
 
     all_baselines = _load_baselines()
 

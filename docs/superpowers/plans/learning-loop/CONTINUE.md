@@ -230,6 +230,7 @@ It needs Workflow tool access; without it, use the per-step prompts.
 ## 7. Open coordination items (decide between Jose and Andres; they do not block the build)
 
 1. **Two decision seams.** #672 (Andres) and #673 both add `backend/services/decisions.py`, `backend/agents/decision.py` and an ADR 0027, with different designs. #672 has live Jev access. Pick one and fold the other into it before either merges.
+   - **2026-10-01, PKG-15:** #673's seam is the one built on. PKG-15 (`feat/learning-loop-15-jev`, HANDOFF-15, ADR 0031) ports #672's Jev knowledge onto it: the wire shapes, the confidence convention, the token estimate, the error codes, the env names and the price. It uses the official `typesafe-sdk==0.7.2` instead of #672's direct-HTTP client. #672's seam is therefore **superseded**. Its owner should close it, or fold what PKG-15 did not take (the #640 tutor router, the flash-lite decision backend, the NUMERIC(18,10) `cost_usd` widening) into their own PRs. #672 itself was not touched.
 2. **ADR numbers.** #677's ADR 0028 (PostHog) takes the number PKG-14's cutover ADR was going to use; #705 takes 0029.
 3. **Feature flags (#705).** It could replace `learning_loop_beta` with `flag_on("learning_loop", user)` once it merges. Keep `learning_loop_beta` until then.
 4. **Epic #692** (merged slices: #693 zero-token `llm_usage`, #696 Docker lock, #702/#703 OCR, #691, #697, #698) must reach `main`. Then **merge `main` into `feat/learning-loop`**, because the budget caps and the cost check are blind while `llm_usage` records 0 tokens.

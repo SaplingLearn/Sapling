@@ -1,15 +1,15 @@
 {
   "attempts": [
-    "{\"key_idea\": \"Every recursive function needs a condition that stops the recursion.\", \"body\": \"This stopping condition is known as the base case. Without a base case, a recursive function would call itself indefinitely.\", \"question\": \"What is the role of a base case in a recursive function?\"}"
+    "```json\n{\n  \"key_idea\": \"A recursive function must have a specific condition that tells it when to stop.\",\n  \"body\": \"This stopping condition is often called a \\\"base case.\\\" The base case handles a simple input that can be solved without further recursion.\",\n  \"question\": \"In general, what happens if a recursive function does not have a base case?\"\n}\n```"
   ],
   "input_sha256": "e8f96f37c4d9bbf4e2bce8fa37492504f1be320bfec6fcfcd721d16fcd69ad77",
   "model": "gemini-2.5-pro",
   "output": {
-    "body": "This stopping condition is known as the base case. Without a base case, a recursive function would call itself indefinitely.",
-    "key_idea": "Every recursive function needs a condition that stops the recursion.",
-    "question": "What is the role of a base case in a recursive function?"
+    "body": "This stopping condition is often called a \"base case.\" The base case handles a simple input that can be solved without further recursion.",
+    "key_idea": "A recursive function must have a specific condition that tells it when to stop.",
+    "question": "In general, what happens if a recursive function does not have a base case?"
   },
-  "prompt_hash": "23e9d0b6402d",
+  "prompt_hash": "10676b7d004e",
   "requests": 1,
   "rescued": false,
   "retries": 0,

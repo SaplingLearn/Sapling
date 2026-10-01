@@ -359,8 +359,9 @@ register_function_handler("note_chat", _note_chat_handler)
 #
 # Request-path in function mode: routes/documents.py runs the generator
 # synchronously inside the upload when SAPLING_MODEL_MODE=function, since
-# post-response handlers stay unregistered by design. Inert unless
-# LEARNING_LOOP_ENABLED=true (unset in the E2E stack until PKG-13, spec §7).
+# post-response handlers stay unregistered by design. Inert when
+# LEARNING_LOOP_ENABLED is off (the kill-switch lane); the default lane runs it
+# (the flag defaults ON after PKG-14b, spec §7).
 # For each E2E_DOC_CONCEPTS name — the function-mode upload's concepts, so
 # each draft's `concept` matches the call's batch — one free and one teachback
 # item, and CHECK_ITEM_MC_MIN_PER_CONCEPT mc_reason items (difficulties 1, 2):

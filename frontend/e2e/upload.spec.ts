@@ -45,7 +45,7 @@
 import path from "node:path";
 
 import { queryRaw } from "./support/db";
-import { expect, test } from "./support/fixtures";
+import { expect, killSwitchLane, test } from "./support/fixtures";
 import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
 
 const FIXTURE_PDF = path.join(__dirname, "fixtures", "upload-journey.pdf");
@@ -188,6 +188,18 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(doc.summary ?? "").not.toBe("");
   expect(doc.summary ?? "").not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
   expect(doc.summary ?? "").not.toContain("gradient descent");
+
+  // PKG-14b kill-switch drill (spec §11.1 item 3b, §11.6): under the kill
+  // switch the upload hook drafts NO check items (the ingest hook is gated on
+  // LEARNING_LOOP_ENABLED). The default lane drafts them; its count is the
+  // check-items journeys' business, not this one's.
+  if (killSwitchLane) {
+    const drafted = (await queryRaw(
+      "SELECT count(*)::int AS n FROM check_items WHERE $1 = ANY(source_document_ids)",
+      [doc.id],
+    )) as { n: number }[];
+    expect(drafted[0].n).toBe(0);
+  }
 
   // Phase-3 side effect: the scripted concepts were merged into the
   // course knowledge graph (plaintext columns — safe to assert exactly).

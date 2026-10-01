@@ -4,8 +4,8 @@
   "output": {
     "affirms_misconception": false,
     "confronts": true,
-    "evidence": "What is the slope of the line f(x) = x, and what does your rule predict the derivative is?",
+    "evidence": "What is the slope of the line $f(x) = x$, and what result does your proposed rule give for its derivative?",
     "only_states_correction": false
   },
-  "served_sha256": "44efd9a2dc4260d4e6aa38cd126d610a743fea07b0fd0a3ef569efe00a38a69b"
+  "served_sha256": "3d0fac70172b076e991eeb3b14fe9c21e6bd732fb9a9f03befe7442c52fc98b9"
 }

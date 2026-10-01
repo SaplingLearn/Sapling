@@ -437,9 +437,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         from services.graph_service import apply_graph_update
         apply_graph_update(
             "user1",
-            {"updated_nodes": [{"concept_name": "Loops", "mastery_delta": 0.1}],
-             "new_nodes": [],
-             "new_edges": []}
+            {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
         )
 
         mock_uoff.assert_called_once_with("user1", "course-1")
@@ -469,8 +467,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         try:
             apply_graph_update(
                 "user1",
-                {"updated_nodes": [{"concept_name": "Loops", "mastery_delta": 0.05}],
-                 "new_nodes": [], "new_edges": []}
+                {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
             )
         except RuntimeError:
             self.fail("apply_graph_update raised RuntimeError from update_course_context")
@@ -494,8 +491,7 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         from services.graph_service import apply_graph_update
         apply_graph_update(
             "user1",
-            {"updated_nodes": [{"concept_name": "GenericConcept", "mastery_delta": 0.1}],
-             "new_nodes": [], "new_edges": []}
+            {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
         )
         mock_update_ctx.assert_not_called()
 

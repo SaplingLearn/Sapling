@@ -32,7 +32,10 @@ class SaplingDeps:
             for concepts_covered derivation in end_session.
         mastery_changes: Accumulates the real before/after mastery deltas
             returned by apply_graph_update so the route can surface them in
-            the chat response for parity with the legacy path.
+            the chat response. Always empty since PKG-14b: no tutor tool
+            moves mastery any more (update_mastery_tool is gone); kept
+            because services/chat_stream.py and the chat wire shape
+            (`mastery_changes: []`) still read it.
         feature: Which product surface is driving this run ("quiz",
             "tutor", …). Several tools are registered on more than one
             agent — `read_concepts_for_user` is on both the quiz and the

@@ -29,6 +29,7 @@ PURE_MODULES = (
     "leak.py",
     "probe.py",
     "planner.py",
+    "arms.py",  # PKG-14: variant_for (ids + the arm label in, a variant out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
@@ -65,7 +66,14 @@ LOOP_ROUTES = BACKEND / "routes" / "learn_loop.py"
 #: flush_pending, under a grading claim), reached only from POST /probe/answer.
 #: PKG-12: learning/review.py::grade_review (a review's one evidence write, reached as
 #: `review.grade_review`), reached only from POST /review/answer.
-EVIDENCE_WRITERS = {"_grade_submission", "_probe_submission", "grade_review"}
+EVIDENCE_WRITERS = {
+    "_grade_submission",
+    "_probe_submission",
+    "grade_review",
+    # PKG-14: the tool-removed post-test's answer handler (spec §10 rung 3) — an
+    # explicit submission route that grades and flushes itself, once per answer
+    "posttest_answer",
+}
 #: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
 EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "probe_answer", "review_answer"}
 _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
@@ -210,6 +218,12 @@ GRAPH_PRIVATE_WRITERS = GRAPH_WRITER_FUNCS[1:]
 # call to GRAPH_WRITER_FUNCS. Nothing else in that module may write.
 LEARNER_STATE_MODULE = "learning/learner_state.py"
 LEARNER_STATE_WRITE = ("learner_state", "upsert", "write_state")  # table, method, enclosing def
+# PKG-14 (spec §13 A79): the one non-evidence learner_state write — an UPDATE of
+# the four derived columns inside write_metrics, called only by the nightly
+# metrics script (the last block of inv_01 pins its callers).
+LEARNER_STATE_METRICS_WRITE = ("learner_state", "update", "write_metrics")
+LEARNER_STATE_SANCTIONED = (LEARNER_STATE_WRITE, LEARNER_STATE_METRICS_WRITE)
+METRICS_SCRIPT = "scripts/derive_zpd_metrics.py"
 GRAPH_TABLE_READ_METHODS = ("select", "select_with_count")
 INV01_EXEMPT_PREFIXES = ("tests/", "venv/", "db/archive/", "db/e2e_checks/")
 _WRITE_CHAIN = re.compile(
@@ -286,7 +300,7 @@ def _graph_table_offenders(rel: str, source: str) -> list[str]:
     for line, tbl, method, enclosing in _graph_table_uses(source):
         if method in GRAPH_TABLE_READ_METHODS:
             continue
-        if rel == LEARNER_STATE_MODULE and (tbl, method, enclosing) == LEARNER_STATE_WRITE:
+        if rel == LEARNER_STATE_MODULE and (tbl, method, enclosing) in LEARNER_STATE_SANCTIONED:
             continue
         use = f".{method}(" if method else "a handle that is not a direct read"
         offenders.append(f"{rel}:{line} uses table({tbl!r}) for {use}; only reads allowed")
@@ -335,11 +349,10 @@ def test_inv_01_single_graph_writer():
             offenders += _private_writer_offenders(rel, text)
         if rel != GRAPH_WRITER:
             for m in _WRITE_CHAIN.finditer(text):
-                if (
-                    rel == LEARNER_STATE_MODULE
-                    and (m.group(1), m.group(2)) == LEARNER_STATE_WRITE[:2]
-                ):
-                    continue  # write_state's own upsert; the ast half pins it to write_state
+                if rel == LEARNER_STATE_MODULE and (m.group(1), m.group(2)) in {
+                    w[:2] for w in LEARNER_STATE_SANCTIONED
+                }:
+                    continue  # write_state's upsert / write_metrics' update; the ast half pins each to its def
                 line = text.count("\n", 0, m.start()) + 1
                 offenders.append(f"{rel}:{line} writes {m.group(1)} via .{m.group(2)}(")
             offenders += _graph_table_offenders(rel, text)
@@ -377,6 +390,42 @@ def test_inv_01_single_graph_writer():
     assert "apply_graph_update(" in (BACKEND / "routes/quiz.py").read_text(), (
         "routes/quiz.py must reach the graph through apply_graph_update"
     )
+
+    # PKG-14: learner_state.write_metrics (the derived-column UPDATE) is the
+    # metrics script's seam only — referenced (called, imported, aliased) from
+    # nowhere but its module, the script and their tests.
+    callers = sorted(
+        p.relative_to(BACKEND).as_posix()
+        for p in BACKEND.rglob("*.py")
+        if "venv" not in p.parts and "write_metrics" in p.read_text()
+    )
+    assert callers == [
+        LEARNER_STATE_MODULE,
+        METRICS_SCRIPT,
+        "tests/test_learning_loop_invariants.py",
+    ] + sorted(c for c in callers if c.startswith("tests/test_learning_zpd_metrics")), (
+        f"write_metrics is the metrics script's seam only: {callers}"
+    )
+
+
+def test_inv_20_metrics_script_idempotent():
+    """PKG-14 (spec §8 invariant 20): the nightly ZPD metrics script offers a dry
+    run, never inserts, names on_conflict on every upsert, and writes
+    learner_state only through learning.learner_state.write_metrics."""
+    path = BACKEND / METRICS_SCRIPT
+    assert path.exists(), "PKG-14 ships scripts/derive_zpd_metrics.py"
+    text = path.read_text()
+    assert "--dry-run" in text, "the script must offer --dry-run"
+    # sys.path.insert (the script preamble) is no table write
+    assert not re.search(r"(?<!sys\.path)\.insert\(", text), (
+        "metrics are an UPDATE of derived columns; never insert"
+    )
+    for m in re.finditer(r"\.upsert\(", text):
+        assert "on_conflict=" in text[m.end() : m.end() + 400], "every upsert names on_conflict"
+    assert not re.search(r"""table\(\s*["']learner_state["']""", text), (
+        "write learner_state only via learning.learner_state.write_metrics"
+    )
+    assert "write_metrics(" in text
 
 
 def test_inv_02_pure_modules_import_nothing_impure():
@@ -619,29 +668,42 @@ def test_inv_10_lru_cache_has_clear_hook():
     pytest.skip("asserted by the first package that adds an lru_cache under backend/learning/")
 
 
-def test_inv_11_gate_false_when_env_unset(monkeypatch):
-    gate = reload_gate(monkeypatch, None)
-    calls = []
-    monkeypatch.setattr(gate, "table", lambda name: calls.append(name) or _Boom(calls))
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, True),
+        ("", True),
+        ("true", True),
+        ("1", True),
+        ("yes", True),
+        ("false", False),
+        ("FALSE", False),
+        (" False ", False),
+        ("0", False),
+        ("off", False),
+        ("no", False),
+    ],
+)
+def test_inv_11_gate_false_when_env_unset(monkeypatch, raw, expected):
+    """The name is historical: in the build phase an unset LEARNING_LOOP_ENABLED meant False.
+    Post-launch (PKG-14b, spec §7, §13 A14) the env var is a kill switch that defaults ON:
+    unset or "" → True for every user; any of false/0/off/no (any case, whitespace ignored) → False.
+    There is no student opt-in, so the gate reads no table in either case."""
+    import config
+
+    # PKG-00's helper (this module): hermetic against backend/.env (load_dotenv is a
+    # no-op for the reload) and registers every rebound attribute for undo, so the
+    # recomputed flag never leaks into later modules. None = unset.
+    gate = reload_gate(monkeypatch, raw)
+    assert config.LEARNING_LOOP_ENABLED is expected
+    assert not hasattr(gate, "table"), (
+        "post-launch learning/gate.py imports no table(): nothing to read"
+    )
     before = db_client_calls()
     for uid in ("user_andres", "e2e-student", "nobody"):
-        assert gate.learning_loop_active(uid) is False
-    assert calls == [], "gate touched the database with the env var unset"
-    assert db_client_calls()[len(before) :] == [], (
-        "gate reached the DB client with the env var unset"
-    )
-
-
-class _Boom:
-    """Stand-in table that records a read instead of raising: the gate
-    swallows every exception, so a raise here would never reach the test."""
-
-    def __init__(self, calls: list | None = None):
-        self.calls = calls if calls is not None else []
-
-    def select(self, *a, **k):
-        self.calls.append(("select", a, k))
-        return []
+        assert gate.learning_loop_active(uid) is expected
+        assert gate.learning_loop_for_request(uid) is expected
+    assert db_client_calls()[len(before) :] == [], "the post-launch gate reached the DB client"
 
 
 def test_inv_12_one_prompt_stack_per_series_agent():
@@ -887,7 +949,10 @@ def test_inv_28_symmetric_missingness(monkeypatch):
 
 
 # ── PKG-05b: decision seam (spec §8.24–25, §13 A24) ─────────────────────────
-TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\b", re.M)
+# PKG-15: the SDK's import name is `typesafe_sdk`; PKG-05b's `typesafe\b` never matched
+# it (no \b between "e" and "_"), so the scan is `typesafe\w*` (+ an AST scan, below)
+TYPESAFE_IMPORT = re.compile(r"^\s*(?:import|from)\s+typesafe\w*", re.M)
+JEV_CLIENT_CLASSES = {"AsyncTypeSafeClient", "TypeSafeClient"}
 SYSTEM_ONE_IMPORT = re.compile(r"^\s*(?:import|from)\s+system_one", re.M)
 IDENTIFIER_FIELDS = {"user_id", "email", "name", "first_name", "last_name"}
 A24_STATES = {
@@ -911,22 +976,278 @@ def _app_python_files():
             yield from sorted(top.rglob("*.py"))
 
 
+def _typesafe_imports(source: str) -> list[int]:
+    """Lines importing typesafe in any spelling: `import`/`from` statements (any
+    `typesafe*` module, incl. typesafe_sdk) and importlib.import_module / __import__
+    with a constant `typesafe*` name."""
+    import ast
+
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            lines += [node.lineno for a in node.names if a.name.startswith("typesafe")]
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("typesafe"):
+            lines.append(node.lineno)
+        elif isinstance(node, ast.Call):
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            arg = node.args[0] if node.args else None
+            if (
+                name in {"import_module", "__import__"}
+                and isinstance(arg, ast.Constant)
+                and str(arg.value).startswith("typesafe")
+            ):
+                lines.append(node.lineno)
+    return sorted(set(lines))
+
+
+_CLIENT_NAME = re.compile(r"(Async)?TypeSafeClient")
+_DYNAMIC_LOOKUPS = {"getattr", "globals", "vars", "__import__", "import_module"}
+
+
+def _annotation_ids(tree) -> set[int]:
+    """Nodes inside a type annotation: naming the class there can never build one."""
+    import ast
+
+    ids: set[int] = set()
+    for n in ast.walk(tree):
+        ann = []
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            ann = [n.returns] + [a.annotation for a in ast.walk(n.args) if isinstance(a, ast.arg)]
+        elif isinstance(n, ast.AnnAssign):
+            ann = [n.annotation]
+        ids |= {id(x) for a in ann if a is not None for x in ast.walk(a)}
+    return ids
+
+
+def _client_class_refs(tree) -> list:
+    """Every node naming a Jev client class: a Name, an Attribute, an import alias, or
+    a string constant spelling it (a getattr / string-built lookup)."""
+    import ast
+
+    skip = _annotation_ids(tree)
+    refs = []
+    for n in ast.walk(tree):
+        if id(n) in skip:
+            continue
+        if (
+            (isinstance(n, ast.Name) and n.id in JEV_CLIENT_CLASSES)
+            or (isinstance(n, ast.Attribute) and n.attr in JEV_CLIENT_CLASSES)
+            or (isinstance(n, ast.alias) and (n.name in JEV_CLIENT_CLASSES or n.asname in JEV_CLIENT_CLASSES))
+            or (
+                isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and _CLIENT_NAME.fullmatch(n.value)
+            )
+        ):
+            refs.append(n)
+    return refs
+
+
+def _client_refs_outside_jev(source: str) -> list[int]:
+    """Lines of an app file (not agents/_jev.py) that name a Jev client class at all —
+    `from agents._jev import AsyncTypeSafeClient`, `_jev.AsyncTypeSafeClient(...)`,
+    `getattr(m, "TypeSafeClient")` alike."""
+    import ast
+
+    return sorted({getattr(n, "lineno", 0) for n in _client_class_refs(ast.parse(source))})
+
+
+def _enabled_is_the_guard(ret) -> bool:
+    """Structurally `model_mode() == "real" and [bool(]<...>.JEV_ENABLED[)]` — exactly two
+    conjuncts, so `(... or True)`, `not ...JEV_ENABLED` or an extra disjunct all fail."""
+    import ast
+
+    if not (isinstance(ret, ast.BoolOp) and isinstance(ret.op, ast.And) and len(ret.values) == 2):
+        return False
+    mode, flag = ret.values
+    mode_ok = (
+        isinstance(mode, ast.Compare)
+        and isinstance(mode.left, ast.Call)
+        and getattr(mode.left.func, "id", None) == "model_mode"
+        and not mode.left.args
+        and len(mode.ops) == 1
+        and isinstance(mode.ops[0], ast.Eq)
+        and isinstance(mode.comparators[0], ast.Constant)
+        and mode.comparators[0].value == "real"
+    )
+    if isinstance(flag, ast.Call) and getattr(flag.func, "id", None) == "bool" and len(flag.args) == 1:
+        flag = flag.args[0]
+    flag_ok = isinstance(flag, ast.Attribute) and flag.attr == "JEV_ENABLED"
+    return mode_ok and flag_ok
+
+
+def _jev_build_guard_violations(source: str) -> list[str]:
+    """The PKG-15 half of invariant 24, on agents/_jev.py's source:
+    - every reference to a Jev client class (Name, Attribute, alias, string) is inside
+      `_client`, and `_client` has one;
+    - `_client`'s first statement (after its docstring) is `if not enabled(): raise ...`;
+    - `enabled()` has one return, structurally `model_mode() == "real" and JEV_ENABLED`;
+    - no dynamic lookup at all (getattr / globals / vars / __import__ / import_module),
+      so a client class cannot be fetched by a computed name."""
+    import ast
+
+    tree = ast.parse(source)
+    out: list[str] = []
+    funcs = {
+        n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    client = funcs.get("_client")
+    inside = {id(n) for n in ast.walk(client)} if client else set()
+    refs = _client_class_refs(tree)
+    for n in refs:
+        if id(n) not in inside:
+            out.append(f"client class referenced outside _client() at line {getattr(n, 'lineno', '?')}")
+    if not any(id(n) in inside for n in refs):
+        out.append("_client() builds no client")
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            fn = n.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name in _DYNAMIC_LOOKUPS:
+                out.append(f"dynamic lookup {name}() at line {n.lineno}")
+        if isinstance(n, ast.Attribute) and n.attr == "__dict__":
+            out.append(f"__dict__ access at line {n.lineno}")
+    body = list(client.body) if client else []
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]  # the docstring
+    first = body[0] if body else None
+    guarded = (
+        isinstance(first, ast.If)
+        and isinstance(first.test, ast.UnaryOp)
+        and isinstance(first.test.op, ast.Not)
+        and isinstance(first.test.operand, ast.Call)
+        and getattr(first.test.operand.func, "id", None) == "enabled"
+        and not first.orelse
+        and isinstance(first.body[0], ast.Raise)
+    )
+    if not guarded:
+        out.append("_client() does not start with `if not enabled(): raise`")
+    en = funcs.get("enabled")
+    rets = [n.value for n in ast.walk(en) if isinstance(n, ast.Return)] if en else []
+    if len(rets) != 1 or not _enabled_is_the_guard(rets[0]):
+        src = "; ".join(ast.unparse(r) for r in rets if r is not None)
+        out.append(f"enabled() is not `model_mode() == 'real' and JEV_ENABLED`: {src!r}")
+    return out
+
+
 def test_inv_24_typesafe_only_in_jev():
-    """typesafe only in agents/_jev.py (PKG-15), pinned exactly; no system-one adapter in app code (§12)."""
-    jev, typesafe, system_one = BACKEND / "agents" / "_jev.py", [], []
+    """typesafe only in agents/_jev.py (PKG-15), pinned exactly; no system-one adapter in
+    app code (§12); no other app file names a Jev client class; the Jev client built
+    only under model_mode() == "real" and JEV_ENABLED."""
+    jev, typesafe, system_one, client_refs = BACKEND / "agents" / "_jev.py", [], [], []
     for path in _app_python_files():
         text = path.read_text(encoding="utf-8", errors="replace")
         rel = path.relative_to(BACKEND).as_posix()
-        if path != jev and TYPESAFE_IMPORT.search(text):
+        if path != jev and (TYPESAFE_IMPORT.search(text) or _typesafe_imports(text)):
             typesafe.append(rel)
+        if path != jev and _client_refs_outside_jev(text):
+            client_refs.append(rel)
         if not rel.startswith("scripts/") and SYSTEM_ONE_IMPORT.search(text):
             system_one.append(rel)
     assert not typesafe, f"typesafe imported outside agents/_jev.py: {typesafe}"
+    assert not client_refs, f"a Jev client class named outside agents/_jev.py: {client_refs}"
     assert not system_one, f"system-one adapter in application code: {system_one}"
+    pins = []
     for line in (BACKEND / "requirements.txt").read_text().splitlines():
         spec = line.split("#")[0].strip()
         if spec.lower().startswith("typesafe"):
             assert re.fullmatch(r"typesafe-sdk==\d+\.\d+\.\d+", spec), f"not an exact pin: {line}"
+            pins.append(spec)
+    if jev.exists():  # PKG-15: no longer vacuous
+        from services import decisions
+
+        assert pins == [decisions.JEV_SDK_VERSION], pins
+        lock = (BACKEND / "requirements.lock").read_text()
+        assert re.search(rf"^{re.escape(decisions.JEV_SDK_VERSION)} \\$", lock, re.M), "not locked"
+        source = jev.read_text(encoding="utf-8")
+        assert _typesafe_imports(source), "agents/_jev.py imports no typesafe"
+        assert _jev_build_guard_violations(source) == []
+
+
+def test_inv_24_scan_self_test():
+    assert _typesafe_imports("import typesafe_sdk\n") == [1]
+    assert _typesafe_imports("from typesafe_sdk._core import x\n") == [1]
+    assert _typesafe_imports("import os, typesafe\n") == [1]
+    assert _typesafe_imports("import importlib\nm = importlib.import_module('typesafe_sdk')\n") == [2]
+    assert _typesafe_imports("m = __import__('typesafe_sdk')\n") == [1]
+    assert _typesafe_imports("# import typesafe_sdk\nx = 'typesafe-sdk==0.7.2'\n") == []
+    assert TYPESAFE_IMPORT.search("from typesafe_sdk import Choice")
+    # review R1 (probe_inv24.py): another module re-exporting / reaching the class
+    assert _client_refs_outside_jev(
+        "from agents._jev import AsyncTypeSafeClient\nc = AsyncTypeSafeClient(api_key='k')\n"
+    ) == [1, 2]
+    assert _client_refs_outside_jev("from agents import _jev\nc = _jev.AsyncTypeSafeClient(api_key='k')\n") == [2]
+    assert _client_refs_outside_jev("c = getattr(m, 'TypeSafeClient')()\n") == [1]
+    assert _client_refs_outside_jev("x = 'a TypeSafeClient mention in prose'\n") == []
+    good = (
+        "def enabled():\n    return model_mode() == 'real' and bool(_settings().JEV_ENABLED)\n"
+        "def _client():\n    'doc'\n    if not enabled():\n        raise JevUnavailable('x')\n"
+        "    return sdk.AsyncTypeSafeClient(api_key=k)\n"
+    )
+    assert _jev_build_guard_violations(good) == []
+    annotated = good + "_cache: dict[int, AsyncTypeSafeClient] = {}\ndef g() -> AsyncTypeSafeClient: ...\n"
+    assert _jev_build_guard_violations(annotated) == []
+    unguarded = good.replace("    if not enabled():\n        raise JevUnavailable('x')\n", "")
+    assert any("does not start" in v for v in _jev_build_guard_violations(unguarded))
+    outside = good + "def other():\n    return AsyncTypeSafeClient()\n"
+    assert any("outside _client" in v for v in _jev_build_guard_violations(outside))
+    aliased = good + "Factory = AsyncTypeSafeClient\n"
+    assert any("outside _client" in v for v in _jev_build_guard_violations(aliased))
+    via_module = good + "def other():\n    return typesafe_sdk.TypeSafeClient()\n"
+    assert any("outside _client" in v for v in _jev_build_guard_violations(via_module))
+    computed = good + (
+        "def other():\n    import typesafe_sdk\n"
+        "    return getattr(typesafe_sdk, 'Async' + 'TypeSafeClient')(api_key='k')\n"
+    )
+    found = _jev_build_guard_violations(computed)
+    assert any("getattr" in v for v in found) and any("outside _client" in v for v in found)
+    assert any("globals" in v for v in _jev_build_guard_violations(good + "g = globals()\n"))
+    for weak in (
+        good.replace("model_mode() == 'real' and ", ""),
+        good.replace(" and bool(_settings().JEV_ENABLED)", " or True"),
+        good.replace("bool(_settings().JEV_ENABLED)", "(bool(_settings().JEV_ENABLED) or True)"),
+        good.replace("bool(_settings().JEV_ENABLED)", "not _settings().JEV_ENABLED"),
+        good.replace("== 'real'", "!= 'real'"),
+        good.replace("and bool(_settings().JEV_ENABLED)", "and bool(_settings().JEV_ENABLED) and True"),
+    ):
+        assert any("enabled()" in v for v in _jev_build_guard_violations(weak)), weak
+    # the reviewer's cases run against the real agents/_jev.py
+    real = (BACKEND / "agents" / "_jev.py").read_text(encoding="utf-8")
+    line = 'return model_mode() == "real" and bool(_settings().JEV_ENABLED)'
+    assert line in real
+    for weak_line in (
+        'return model_mode() == "real" and (bool(_settings().JEV_ENABLED) or True)',
+        'return model_mode() == "real" and not _settings().JEV_ENABLED',
+    ):
+        assert any("enabled()" in v for v in _jev_build_guard_violations(real.replace(line, weak_line)))
+    evasion = real + (
+        "\ndef other():\n    import typesafe_sdk\n"
+        "    return getattr(typesafe_sdk, 'Async' + 'TypeSafeClient')(api_key='k')\n"
+    )
+    assert _jev_build_guard_violations(evasion)
+
+
+def test_inv_24_behaviour_no_client_without_the_guard(monkeypatch):
+    """The guard, run: JEV_ENABLED off, or any mode but real → no client, no call."""
+    import asyncio
+
+    from agents import _jev
+    from services import decisions
+
+    built = []
+    monkeypatch.setattr(_jev, "_client_class_override", lambda **kw: built.append(kw))
+    monkeypatch.setenv(_jev.API_KEY_ENV, "ts-test-key")
+
+    async def build():
+        return _jev._client()
+
+    for mode, enabled in (("real", False), ("function", True), ("test", True)):
+        monkeypatch.setenv("SAPLING_MODEL_MODE", mode)
+        monkeypatch.setattr(decisions, "JEV_ENABLED", enabled)
+        with pytest.raises(_jev.JevUnavailable):
+            asyncio.run(build())
+    assert built == []
 
 
 def test_inv_25_decision_states_carry_no_identifiers():
@@ -1630,26 +1951,32 @@ def test_inv_13a_spec_constants_match_function_handlers():
 
 
 def test_inv_13b_seed_opts_in_exactly_the_loop_users():
-    """Build phase (spec §13 A14): user_settings.learning_loop_beta is a staff/QA
-    toggle, and the seed sets it only for the loop users {rich-user-loop,
-    rich-user-capped}. PKG-14b rewrites this test in place (name kept) to "no
-    journey depends on learning_loop_beta" (spec §8, §11.2)."""
-    text = SEED.read_text()
-    assert 'USER_LOOP = "rich-user-loop"' in text, "seed has no loop user"
-    assert 'USER_CAPPED = "rich-user-capped"' in text, "seed has no capped user"
-    assert re.search(r"^LOOP_USERS = \(USER_LOOP, USER_CAPPED\)$", text, re.M), (
-        "the toggle's allowed set changed"
-    )
-    # Lines that WRITE the column carry the quoted dict key; comments do not.
-    toggle_lines = [ln for ln in text.splitlines() if '"learning_loop_beta"' in ln]
-    assert toggle_lines, "seed never sets learning_loop_beta"
-    assert all("True" in ln for ln in toggle_lines), toggle_lines
-    for legacy in (
-        "USER_ACTIVE",
-        "USER_SECOND",
-        "USER_NEW",
-        "rich-user-active",
-        "rich-user-second",
-        "rich-user-new",
-    ):
-        assert not any(legacy in ln for ln in toggle_lines), f"{legacy} must stay legacy"
+    """The name is historical (PKG-13: only the loop seed users carried the staff/QA toggle).
+    After launch (PKG-14b, spec §8, §11.4) no journey may depend on learning_loop_beta:
+    the gate never reads it, so every seeded student is on the loop in the default lane."""
+    hits = [
+        f"{p.relative_to(FRONTEND_E2E)}:{i}"
+        for p in sorted(FRONTEND_E2E.rglob("*.ts"))
+        for i, line in enumerate(p.read_text().splitlines(), 1)
+        if "learning_loop_beta" in line
+    ]
+    assert hits == [], f"E2E journeys still depend on the retired toggle: {hits}"
+
+
+# ── PKG-14b: the evidence-only rule (spec §11) ──────────────────────────────
+
+LEGACY_MASTERY_SYMBOLS = ("mastery_delta", "MASTERY_DELTA_PER", "get_mastery_tier")
+
+
+def test_inv_21_no_legacy_mastery_writers():
+    """Spec §11: after cutover, only graded evidence can move a belief."""
+    hits = []
+    for path in BACKEND.rglob("*.py"):
+        rel = path.relative_to(BACKEND)
+        if rel.parts[0] in ("venv", "learning") or rel.name == "test_learning_loop_invariants.py":
+            continue
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            for sym in LEGACY_MASTERY_SYMBOLS:
+                if sym in line:
+                    hits.append(f"{rel}:{i}: {sym}")
+    assert hits == [], "legacy mastery writers survive cutover:\n" + "\n".join(hits)

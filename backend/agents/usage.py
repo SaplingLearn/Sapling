@@ -143,12 +143,17 @@ def record_agent_usage(
     feature: str,
     task: AgentTask | None = None,
     user_id: str | None = None,
+    session_id: str | None = None,
 ) -> Any:
     """Record token usage for an agent run and return ``result`` unchanged.
 
     ``user_id`` is optional: pass it where the actor is in scope (routes with a
     ``deps.user_id`` / request body) for per-user rollups; omit it and the
     request_id from the contextvar still attributes the row.
+
+    ``session_id`` (PKG-14b, spec §13 A92): pass the loop/tutor session the run
+    belongs to wherever the run site knows it (``deps.session_id``); it lands in
+    ``llm_usage.session_id`` so the cost report groups per session directly.
 
     Also warns when the run only succeeded after validation retries (#153) —
     same guarded, never-raises contract.
@@ -159,6 +164,7 @@ def record_agent_usage(
         events_service.log_llm_usage(
             feature=feature, task=task, model=served_model_name(result, task), usage=usage,
             user_id=user_id, cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
+            session_id=session_id,
         )
     except Exception:
         logger.debug("record_agent_usage: could not capture usage", exc_info=True)

@@ -34,11 +34,12 @@ export const USER_SECOND = "rich-user-second";
  * gates on it. */
 export const USER_NEW = "rich-user-new";
 
-/** The seeded loop users — staff/QA toggle, build phase; spec §13 A14
- * (db/seed_local_rich.py::seed_learning_loop sets user_settings.learning_loop_beta
- * for exactly these two). "Lou Loop" walks the loop and resume journeys; "Casey
- * Cap" carries today's spend past the novice budget allowance and one due
- * flashcard (spec §13 A26, the budget-cap journey). PKG-14b retires the toggle. */
+/** The seeded loop users (db/seed_local_rich.py::seed_learning_loop). After
+ * PKG-14b they are ordinary students — the loop is everyone's default and the
+ * build-phase staff/QA toggle is retired (nothing reads it). "Lou Loop" walks
+ * the loop and resume journeys; "Casey Cap" carries today's spend past the
+ * novice budget allowance and one due flashcard (spec §13 A26, the budget-cap
+ * journey). */
 export const USER_LOOP = "rich-user-loop";
 export const USER_CAPPED = "rich-user-capped";
 

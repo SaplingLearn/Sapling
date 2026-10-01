@@ -230,4 +230,18 @@ def revealed_hashes(user_id: str) -> set[str]:
         order="id",
     ):
         revealed.update(row.get("revealed") or [])
+    # PKG-14 (spec §13 A88): the open posed items a served tutor turn stated
+    for row in page_all(
+        table(_REVEALS),
+        "id,question_hash",
+        filters={"user_id": f"eq.{user_id}", "kind": "eq.reveal"},
+        order="id",
+    ):
+        if row.get("question_hash"):
+            revealed.add(row["question_hash"])
     return revealed
+
+
+# PKG-14 (spec §13 A88): the learning_reveals table (its writers and the
+# marker reader live in learning/reveal_store.py; this module never inserts)
+_REVEALS = "learning_reveals"

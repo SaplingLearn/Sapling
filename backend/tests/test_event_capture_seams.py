@@ -27,6 +27,10 @@ from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
 
+# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
+# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
+pytestmark = pytest.mark.kill_switch
+
 client = TestClient(app)
 
 
@@ -133,6 +137,7 @@ def test_event_taxonomy_is_pinned():
         "zpd.band_adjust",
         "zpd.wheelspin",
         "zpd.leak",
+        "zpd.reveal",
         "zpd.rating",
         # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
         "decision.made",
@@ -954,7 +959,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     )
     with (
         patch("routes.quiz.table", side_effect=factory),
-        patch("routes.quiz.apply_graph_update"),
+        # PKG-14b: the graph reports the span of the evidence it applied.
+        patch(
+            "routes.quiz.apply_graph_update",
+            return_value=[{"before": 0.5, "after": 0.53}, {"before": 0.53, "after": 0.56}],
+        ),
         patch("routes.quiz.get_quiz_context", return_value={}),
         patch("routes.quiz.quiz_context_agent.run", new=noop_ctx),
         patch("routes.quiz.save_quiz_context"),
@@ -980,8 +989,11 @@ def test_quiz_submit_emits_quiz_completed_on_success(sink):
     assert payload["concept_node_id"] == "node1"
     assert payload["score"] == 2
     assert payload["total"] == 2
-    # mastery 0.5 -> 0.5 + 2*0.03 = 0.56
-    assert payload["mastery_delta"] == pytest.approx(0.06)
+    # PKG-14b: p_delta = the evidence span's p_after − p_before (0.5 -> 0.56).
+    assert payload["p_delta"] == pytest.approx(0.06)
+    from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
+
+    assert LEGACY_MASTERY_SYMBOLS[0] not in payload  # the retired key (inv_21)
 
 
 # ── Chat: chat.message_sent ──────────────────────────────────────────────────
