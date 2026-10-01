@@ -44,7 +44,18 @@ ALLOWED_EMAIL_DOMAINS = [
 # post-launch parse — PKG-14b). The loop is the default for every student.
 _raw = os.getenv("LEARNING_LOOP_ENABLED", "").strip().lower()
 # Kill switch (spec §13 A14): any falsy spelling turns the loop off; unset or empty means ON.
-LEARNING_LOOP_ENABLED = _raw not in {"false", "0", "off", "no"}
+_LOOP_OFF = {"false", "0", "off", "no"}
+LEARNING_LOOP_ENABLED = _raw not in _LOOP_OFF
+if _raw not in _LOOP_OFF | {"", "true", "1", "on", "yes"}:
+    # Still ON (the §7 table is unchanged), but say so: a typo such as "disabled"
+    # or "n" would otherwise leave the loop on with no trace (PKG-14 review).
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "LEARNING_LOOP_ENABLED=%r is not a recognised spelling; the learning loop is ON. "
+        "Use false/0/off/no to turn it off.",
+        _raw,
+    )
 # Spec §13 A5: every GATE_* seconds constant is scaled by this factor (production never
 # sets it; the E2E lane sets 0.01 so hint gates open in seconds). learning.params stays
 # config-free (invariant 2), so routes/learn_loop.py reads it here and passes
