@@ -1826,6 +1826,25 @@ def test_the_second_refusal_of_an_item_is_recorded_as_idk(gate_on, seams):
     seams.zpd.emit_zpd_step.assert_called_once()
 
 
+def test_a_disowned_answer_at_the_threshold_is_asked_again_never_idk(gate_on, seams):
+    """A97: a disowned answer may have been right, so it never escalates to idk —
+    even one refusal short of the threshold it is asked again, nothing is graded
+    or flushed, and the refusal counter does not move."""
+    from learning.params import CHECK_REFUSALS_AS_IDK
+
+    seams.store["doc"] = _state(refusals=CHECK_REFUSALS_AS_IDK - 1)
+    seams.grade.side_effect = [SimpleNamespace(**{**vars(REFUSED), "refused": "disowned_answer"})]
+    body = client.post(
+        "/api/learn/loop/check/answer", json=_answer(answer="Myths:\n- n == 0 returns 1")
+    ).json()
+    assert seams.grade.await_count == 1
+    seams.flush.assert_not_called()
+    assert body["graded"] is False and body["refused"] is True
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["refusals"] == CHECK_REFUSALS_AS_IDK - 1 and "graded_at" not in entry
+    assert "grading_claim" not in entry
+
+
 def test_a_refusal_on_the_stream_route_serves_the_template(gate_on, seams):
     from routes.learn_loop import _ANSWER_REFUSED_REPLY
 

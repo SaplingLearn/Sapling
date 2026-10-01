@@ -1603,13 +1603,14 @@ def support_span(
 # sentence/line units with their offsets, each unit is classified from its
 # lowercased word list, and the walk from the span's unit stops at a frame, a
 # correcting word, or a paragraph break.
+# Only words that label a claim as WRONG BELIEF: never "mistake", "error",
+# "wrong" or "incorrect" alone — error-identification answers ("The mistake in
+# step 2 is: …", "The following step is wrong because …") use those honestly.
 _DISOWN_WORDS = frozenset(
-    "misconception misconceptions myth myths mistake mistakes error errors "
-    "misunderstanding misunderstandings falsehood falsehoods lie lies false wrong "
-    "incorrect untrue nonsense".split()
+    "misconception misconceptions myth myths falsehood falsehoods false untrue".split()
 )
 _NOT_TRUE = frozenset({"true", "correct", "right"})
-_POINTERS = frozenset({"following", "below", "next", "these", "follows"})
+_POINTERS = frozenset({"following", "below", "follows"})
 _GLOBAL_WORDS = frozenset({"everything", "all", "rest"})
 _GLOBAL_TARGETS = frozenset({"below", "following", "follows"})
 _BACK_SUBJECTS = frozenset({"that", "this", "it", "above"})
@@ -1660,15 +1661,24 @@ def _global(words: list[str]) -> bool:
 
 
 def _forward_frame(text: str, words: list[str]) -> bool:
-    """Points ahead AND disowns: "The following is a common misconception, and it is
-    false." / "Everything below is false." / a heading such as "Wrong ideas to avoid:"."""
+    """Points ahead AND disowns, as a complete label: "The following is a common
+    misconception, and it is false." / "Everything below is false." / a heading
+    such as "Wrong ideas to avoid:" or "Myths:". The disowning word must END the
+    sentence (at most two words after it), so "The claim below is false because
+    energy is conserved." — a reason, not a label — is not a frame."""
     heading = text.rstrip().endswith(":")
-    pointing = bool(_POINTERS.intersection(words)) or "here" in words or _global(words)
     avoid = any(a == "to" and b == "avoid" for a, b in zip(words, words[1:]))
-    used_to = any(a == "used" and b == "to" for a, b in zip(words, words[1:]))
-    if heading and (_disowns(words) or avoid or used_to):
-        return True
-    return pointing and _disowns(words)
+    used_to = any(a == "used" and b == "to" and c in {"believe", "think"}
+                  for a, b, c in zip(words, words[1:], words[2:]))
+    if heading:
+        return _disowns(words) or avoid or used_to
+    pointing = bool(_POINTERS.intersection(words)) or _global(words)
+    if not pointing:
+        return False
+    hits = [k for k, w in enumerate(words) if w in _DISOWN_WORDS]
+    nots = [k + 1 for k, (a, b) in enumerate(zip(words, words[1:])) if a == "not" and b in _NOT_TRUE]
+    last = max(hits + nots, default=-1)
+    return last >= 0 and len(words) - 1 - last <= 2
 
 
 _BACK_FILLER = frozenset(
@@ -1683,7 +1693,7 @@ def _backward_frame(words: list[str]) -> bool:
     verb and disowning word adjacent (fillers only between), ending within three
     words. "This is why … is a mistake" and "It is wrong to say …" are not."""
     w = [x for x in words if x]
-    if w[:2] == ["the", "above"] or w[:2] == ["everything", "above"]:
+    if w[:2] in (["the", "above"], ["everything", "above"]):
         w = ["that", *w[2:]]
     elif w[:3] == ["all", "of", "that"] or w[:3] == ["all", "of", "this"]:
         w = ["that", *w[3:]]
@@ -1696,7 +1706,7 @@ def _backward_frame(words: list[str]) -> bool:
         return False
     hit = w[k] in _DISOWN_WORDS or (w[k] == "not" and k + 1 < len(w) and w[k + 1] in _NOT_TRUE)
     rest = len(w) - (k + (2 if w[k] == "not" else 1))
-    return hit and rest <= 3
+    return hit and rest == 0  # the whole sentence is the label: "That is a myth."
 
 
 def disowned(answer: str, span: str) -> bool:
@@ -1730,7 +1740,9 @@ def disowned(answer: str, span: str) -> bool:
         bw = _words(before)
         if _resets(before, bw):
             return False
-        if _forward_frame(before, bw):
+        # only a colon label governs inside its own sentence ("Myths: <span>");
+        # a sentence cut mid-reason ("The claim below is false because <span>") never
+        if before.rstrip().endswith(":") and _forward_frame(before, bw):
             return True
     # walk back to the nearest governing frame (each unit read once: linear)
     texts = [answer[a:b] for a, b, _ in units]

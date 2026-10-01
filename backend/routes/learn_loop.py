@@ -3031,9 +3031,14 @@ async def _grade_submission(
         refused = bool(outcome.refused)
         if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
 
+            # A97: a disowned answer is never escalated to idk — the student may
+            # have been right; they are only asked to state their own answer
+            disowned = outcome.refused == "disowned_answer"
+
             def count_refusal(e: dict) -> None:
-                e["refusals"] = int(e.get("refusals") or 0) + 1
-                if e["refusals"] < CHECK_REFUSALS_AS_IDK:
+                if not disowned:
+                    e["refusals"] = int(e.get("refusals") or 0) + 1
+                if disowned or e["refusals"] < CHECK_REFUSALS_AS_IDK:
                     # nothing was graded: the claim goes with the count
                     e.pop("grading_claim", None)
                     e.pop("grading_claim_at", None)
@@ -4728,9 +4733,12 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         )
         if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
 
+            disowned = outcome.refused == "disowned_answer"  # A97: never escalated to idk
+
             def count_refusal(pr: dict, cur: dict) -> None:
-                pr["refusals"][qh] = int(pr["refusals"].get(qh) or 0) + 1
-                if pr["refusals"][qh] < CHECK_REFUSALS_AS_IDK:
+                if not disowned:
+                    pr["refusals"][qh] = int(pr["refusals"].get(qh) or 0) + 1
+                if disowned or pr["refusals"][qh] < CHECK_REFUSALS_AS_IDK:
                     _release(pr, cur)  # nothing was graded: asked again
 
             state = _update_loop_state(

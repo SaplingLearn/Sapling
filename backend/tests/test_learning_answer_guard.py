@@ -4686,6 +4686,8 @@ _DISOWNED = [
     "Everything below is false.\n\nThe base case stops the recursion.",
     "The base case stops the recursion. That is a common misconception.",
     "The base case stops the recursion. The above is false.",
+    "Myths:\n- the base case stops the recursion",
+    "The following is a myth: the base case stops the recursion",
 ]
 _OWNED = [
     "The base case stops the recursion.",
@@ -4699,6 +4701,28 @@ _OWNED = [
     "I think the base case stops the recursion. It is wrong to say it loops forever.",
     "Here are some common mistakes people make:\nThey forget a base case.\n\nMy answer: the base case stops the recursion.",
 ]
+
+
+# The focused review's false positives (2026-10-01): error-identification and
+# misconception-explanation answers are honest course content and must be graded.
+_HONEST_WITH_ERROR_WORDS = [
+    ("The mistake in step 2 is: dividing by x", "dividing by x"),
+    ("The following step is wrong because it divides by zero.", "it divides by zero"),
+    ("The claim below is false because energy is conserved.", "energy is conserved"),
+    ("Here is the error. The sign was flipped.", "The sign was flipped"),
+    ("A common misconception here is that current is used up. In a series circuit current is "
+     "the same everywhere.", "In a series circuit current is the same everywhere"),
+    ("These are wrong: A and B. The answer is C because weight = mg.",
+     "The answer is C because weight = mg"),
+    ("Next, I made an error: I forgot the chain rule. The derivative is 2x cos(x^2).",
+     "The derivative is 2x cos(x^2)"),
+    ("x = 3. This is not true for x = -3 though.", "x = 3"),
+]
+
+
+@pytest.mark.parametrize("answer,span", _HONEST_WITH_ERROR_WORDS)
+def test_honest_error_identification_is_not_disowned(answer, span):
+    assert guard.disowned(answer, span) is False
 
 
 @pytest.mark.parametrize("answer", _DISOWNED)

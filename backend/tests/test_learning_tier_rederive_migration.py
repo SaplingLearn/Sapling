@@ -20,7 +20,7 @@ MIG_DIR = Path(__file__).resolve().parents[1] / "db" / "migrations"
 def _sql() -> str:
     (path,) = sorted(MIG_DIR.glob("*_learning_rederive_mastery_tier.sql"))
     assert re.fullmatch(r"\d{14}_learning_rederive_mastery_tier\.sql", path.name)
-    return "\n".join(l for l in path.read_text().splitlines() if not l.lstrip().startswith("--"))
+    return "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("--"))
 
 
 def _case(sql: str) -> list[tuple[float, str]]:
