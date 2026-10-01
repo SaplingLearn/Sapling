@@ -119,11 +119,10 @@ function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: st
 // spec sketches. It's a dict keyed by which graph tool wrote
 // (backend/agents/tools/graph.py via services/chat_stream.py
 // merge_graph_updates): `new_nodes` entries are {concept_name,
-// initial_mastery}; `updated_nodes` entries are {concept_name,
-// mastery_delta, reason, event_type}. Neither carries an `id` or an
-// absolute post-update score. `delta.mastery_changes` ({concept, before,
-// after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively via
+// initial_mastery} (PKG-14b: the tutor's mastery-write tool is gone, so no
+// other key is produced). They carry no `id` and no absolute post-update
+// score. `delta.mastery_changes` ({concept, before, after}) IS authoritative
+// for an existing node's new score, so it drives merges for updates; `nodes` entries are read defensively via
 // `rawNodeIdentity` — and any fields we don't recognize are ignored rather
 // than crashing.
 //
