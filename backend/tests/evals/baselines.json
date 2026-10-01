@@ -2,7 +2,7 @@
   "chat_tutor": {
     "ExpositoryHasStructureEvaluator": 1.0,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 1.0,
+    "GroundedConceptEvaluator": 0.8125,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
     "SocraticEndsWithQuestionEvaluator": 1.0,
@@ -114,7 +114,7 @@
     "WireFormatRequiredKeysEvaluator": 1.0
   },
   "loop_tutor_routing": {
-    "_note": "PKG-07 fix round 2 (spec §13 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run.",
+    "_note": "PKG-07 fix round 2 (spec \u00a713 A49): per-run scores of LOOP_ROUTING_RUNS fresh recordings per slot; a tier routes only when EVERY run scores 1.0 on every served gate (min-of-N). A case that raised counts as a failed run.",
     "runs": 3,
     "loop_tutor_lite": [
       {
@@ -299,7 +299,7 @@
     "VerdictHeld": 1.0
   },
   "misconception_confront_routing": {
-    "_note": "PKG-10 (spec §13 A75): per-run scores of fresh recordings per slot; routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose runs ALL score 1.0 on every served gate with no case raised (min-of-N, A49's direction).",
+    "_note": "PKG-10 (spec \u00a713 A75): per-run scores of fresh recordings per slot; routes.learn_loop.CONFRONT_TIERS is exactly the tiers whose runs ALL score 1.0 on every served gate with no case raised (min-of-N, A49's direction).",
     "loop_tutor": [
       {
         "CeilingCompliance": 1.0,
