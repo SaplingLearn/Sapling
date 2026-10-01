@@ -94,7 +94,7 @@ from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE, flush_pending
 from learning.fsrs import budget_select, order_due
-from learning.gate import learning_loop_for_request
+from learning.gate import learning_loop_active, learning_loop_for_request
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.learner_brief import course_concept_names, store_brief
@@ -242,7 +242,20 @@ router = APIRouter()
 
 _NOT_ENABLED = "learning loop not enabled"
 _BUDGET_DETAIL = "ai budget reached"  # spec §3.5 hard-level body (A20)
-_RATE_LIMITED = [Depends(enforce_rate_limit)]
+
+
+def _kill_switch_first(request: Request) -> None:
+    """The kill switch BEFORE the rate limit (spec §7: every loop route 404s when the
+    loop is off). Route dependencies run in order and before the handler's `_gate`,
+    so a bare `enforce_rate_limit` dependency answered a thrown kill switch with 401
+    (no session) or 429 instead of the 404. The gate is env-only after PKG-14b, so no
+    user is needed to read it, and it costs no read of any kind — the handler's
+    `_gate` still makes the one route-entry read (A38 00) and runs require_self."""
+    if not learning_loop_active(""):
+        raise HTTPException(status_code=404, detail=_NOT_ENABLED)
+
+
+_RATE_LIMITED = [Depends(_kill_switch_first), Depends(enforce_rate_limit)]
 #: The legacy catalog header (routes/learn.py::_prepare_chat_run), verbatim.
 _CATALOG_HEADER = "COURSE CATALOG INFO (official BU course data):\n\n"
 _SOURCE_HEADER = "CHECK ITEM SOURCE PASSAGES (the course text this item was written from):\n"
