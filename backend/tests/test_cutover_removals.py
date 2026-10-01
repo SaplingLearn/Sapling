@@ -118,11 +118,22 @@ def _route(path: str):
         "/api/learn/action",
     ],
 )
-def test_every_legacy_model_route_carries_the_rate_limit_dependency(path):
+def test_every_legacy_model_route_reads_the_rate_limit_once_after_require_self(path):
+    """A20 on the legacy routes (A93 review): ONE rate-limit read for both the loop
+    and the kill-switch path, and only AFTER the caller's identity is checked — never
+    a dependency, which FastAPI runs before the handler's require_self."""
+    import inspect
+
     from services import ai_budget
 
-    deps = [d.call for d in _route(path).dependant.dependencies]
-    assert ai_budget.enforce_rate_limit in deps, path
+    route = _route(path)
+    deps = [d.call for d in route.dependant.dependencies]
+    assert ai_budget.enforce_rate_limit not in deps, path
+    body = inspect.getsource(route.endpoint)
+    assert body.count("ai_budget.enforce_rate_limit_for(body.user_id)") == 1, path
+    assert body.index("require_self(body.user_id, request)") < body.index(
+        "ai_budget.enforce_rate_limit_for(body.user_id)"
+    ), path
 
 
 # ── legacy client (kill-switch path) ─────────────────────────────────────────

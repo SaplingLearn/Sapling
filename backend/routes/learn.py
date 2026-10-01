@@ -5,7 +5,7 @@ import uuid
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
@@ -655,15 +655,15 @@ async def _start_session_agent(
     }
 
 
-@router.post("/start-session", dependencies=[Depends(ai_budget.enforce_rate_limit)])
+@router.post("/start-session")
 async def start_session(body: StartSessionBody, request: Request):
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        # the loop route's rate-limit dependency does not run on a delegated call
-        ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("start_session")(body, request)
     _kill_switch_budget(body.user_id)
     result = await _agent_turn_or_http_error(
@@ -953,15 +953,15 @@ async def _chat_turn_json(
     return response
 
 
-@router.post("/chat", dependencies=[Depends(ai_budget.enforce_rate_limit)])
+@router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        # the loop route's rate-limit dependency does not run on a delegated call
-        ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("chat")(body, request)
     _kill_switch_budget(body.user_id)
     _consume_pending(body.session_id, body.user_id)
@@ -970,7 +970,7 @@ async def chat(body: ChatBody, request: Request):
     )
 
 
-@router.post("/chat/stream", dependencies=[Depends(ai_budget.enforce_rate_limit)])
+@router.post("/chat/stream")
 async def chat_stream(body: ChatBody, request: Request):
     """SSE token-streaming chat turn (#70) with live graph deltas (#74).
 
@@ -981,12 +981,12 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        # the loop route's rate-limit dependency does not run on a delegated call
-        ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("chat_stream")(body, request)
     _kill_switch_budget(body.user_id)
     _consume_pending(body.session_id, body.user_id)
@@ -1077,7 +1077,7 @@ async def chat_stream(body: ChatBody, request: Request):
     )
 
 
-@router.post("/start-session/stream", dependencies=[Depends(ai_budget.enforce_rate_limit)])
+@router.post("/start-session/stream")
 async def start_session_stream(body: StartSessionBody, request: Request):
     """Streamed session opener — runs chat_tutor_agent and streams the
     greeting (#152/#151).
@@ -1099,12 +1099,12 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        # the loop route's rate-limit dependency does not run on a delegated call
-        ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("start_session_stream")(body, request)
     _kill_switch_budget(body.user_id)
     request_id = (
@@ -1544,15 +1544,15 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     return {"reply": reply, "graph_update": graph_update}
 
 
-@router.post("/action", dependencies=[Depends(ai_budget.enforce_rate_limit)])
+@router.post("/action")
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
     # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
     if learning_loop_for_request(body.user_id):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
-        # the loop route's rate-limit dependency does not run on a delegated call
-        ai_budget.enforce_rate_limit_for(body.user_id)
         return await _loop_delegate("action")(body, request)
     _kill_switch_budget(body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
