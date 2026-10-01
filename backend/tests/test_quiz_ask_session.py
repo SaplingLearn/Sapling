@@ -434,4 +434,5 @@ def test_quiz_ask_session_ids_reads_the_origin_marker():
     assert quiz_ask_session_ids(handle, to_iso="2026-10-01T00:00:00+00:00") == {"sq1", "sq2"}
     filters = handle.select_with_count.call_args.kwargs["filters"]
     assert filters["loop_state->>origin"] == "eq.quiz_ask"
-    assert filters["created_at"] == "lte.2026-10-01T00:00:00+00:00"
+    assert filters["started_at"] == "lte.2026-10-01T00:00:00+00:00"  # sessions has no created_at
+    assert "created_at" not in filters

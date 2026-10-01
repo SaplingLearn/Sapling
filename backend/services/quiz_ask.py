@@ -112,7 +112,7 @@ def open_quiz_ask(body, *, session_id: str | None) -> QuizAskTarget | None:
 
 
 def quiz_ask_session_ids(handle, *, to_iso: str) -> set[str]:
-    """Spec §13 A106 (review m2): the ids of the quiz-ask sessions created up to
+    """Spec §13 A106 (review m2): the ids of the quiz-ask sessions started up to
     `to_iso` — `sessions.loop_state.origin` = "quiz_ask" (quiz_ask_state's
     marker). They skip the probe and the plan, so the session metrics (the admin
     learning-loop KPI, scripts/derive_zpd_metrics.py) leave them out or report
@@ -123,8 +123,9 @@ def quiz_ask_session_ids(handle, *, to_iso: str) -> set[str]:
         for r in page_all(
             handle,
             "id",
-            filters={"loop_state->>origin": f"eq.{QUIZ_ASK_ORIGIN}", "created_at": f"lte.{to_iso}"},
-            order="created_at,id",
+            # sessions carries started_at, never created_at (0025)
+            filters={"loop_state->>origin": f"eq.{QUIZ_ASK_ORIGIN}", "started_at": f"lte.{to_iso}"},
+            order="started_at,id",
         )
         if r.get("id")
     }

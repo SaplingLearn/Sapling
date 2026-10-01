@@ -386,7 +386,7 @@ def test_caught_leaks_alone_keep_the_gate_green(monkeypatch):
 
 def test_quiz_ask_sessions_are_excluded_from_the_next_session_rate(seeded):
     seeded["sessions"] = [
-        {"id": "s2", "loop_state->>origin": "quiz_ask", "created_at": "2026-07-10T00:00:00+00:00"}
+        {"id": "s2", "loop_state->>origin": "quiz_ask", "started_at": "2026-07-10T00:00:00+00:00"}
     ]
     b = client.get(URL, params=RANGE).json()
     # s1 → s3 (s2, a probe-less quiz-ask session, is not a session of the KPI)
