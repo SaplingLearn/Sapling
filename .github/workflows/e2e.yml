@@ -134,6 +134,15 @@ jobs:
         working-directory: frontend
         run: npx playwright test e2e/
 
+      # Spec §11.4: each lane's oracles must exit 0 (graph|counts|ciphertext|
+      # logscan|orphans + learn_loop). Runs even when Playwright failed, so a
+      # red journey still reports what the database looks like; exit 1 =
+      # findings, 2 = infra.
+      - name: Run the e2e oracles
+        if: ${{ !cancelled() }}
+        working-directory: backend
+        run: venv/bin/python -m e2e_oracles
+
       # #390 — flake tracking: a test that passed only on retry is real
       # signal, not noise. Parse the JSON report's stats into the job summary
       # and fail-visible (not fail-red) by listing every flaky test title.
