@@ -296,6 +296,16 @@ export class LandingEngine {
   glideToPinnedAct1(): void {
     const to = this.act1PinnedScroll();
     if (to === null) return;
+    this.glideScrollTo(to);
+  }
+
+  /**
+   * Ease the page to an arbitrary scroll position over the same window and
+   * curve as `glideToPinnedAct1`. Used on the way out of explore mode to
+   * hand the reader back to wherever they were before the click, rather
+   * than leaving them parked at the act's pinned stage.
+   */
+  glideScrollTo(to: number): void {
     const from = window.scrollY;
     if (Math.abs(to - from) <= 1) return;
     // The governor meters wheel travel against absolute positions. Let it go
@@ -306,6 +316,14 @@ export class LandingEngine {
     this.glideTo = to;
     this.glideT0 = performance.now();
     this.gliding = true;
+  }
+
+  /**
+   * Whether act 1's four-stage slideshow has been scrolled all the way
+   * through. `actPeak` latches progress, so this stays true once reached.
+   */
+  act1Finished(): boolean {
+    return this.actPeak[0] >= 0.999;
   }
 
   /** Programmatic scrolls call this so smoothing doesn't fight them. */

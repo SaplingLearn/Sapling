@@ -166,6 +166,8 @@ export function useLanding(props: LandingProps) {
   s.current = { exploring, expNode, tutorMode, jumpOpen, pastHero, jumpDown, galIdx, parallax };
 
   const expOut = useRef(false);
+  /** Where the page sat before the click that opened explore mode, so exiting can hand it back. */
+  const preExploreScroll = useRef(0);
   const mqDragged = useRef(false);
   const flipRan = useRef(false);
   const engineRef = useRef<LandingEngine | null>(null);
@@ -432,6 +434,10 @@ export function useLanding(props: LandingProps) {
     // there across the same window and the same curve the camera uses, so the
     // correction is part of the transition rather than a cut inside it.
     // Ordered before `beginExplore` only so both clocks start on this frame.
+    // Remembered so `exitExplore` can hand the reader back to wherever they
+    // actually were, rather than leaving them parked at the act's pinned
+    // stage the glide above lands them on.
+    preExploreScroll.current = window.scrollY;
     engine.glideToPinnedAct1();
     beginExplore(engine.view, engine.graph);
     document.body.style.overflow = 'hidden';
@@ -453,6 +459,9 @@ export function useLanding(props: LandingProps) {
     if (cinema) cinema.style.opacity = '';
     expOut.current = true;
     beginExitExplore(engine.view);
+    // Ride the same glide curve back down (or up) to where the reader was
+    // before the click, instead of leaving them at the pinned act stage.
+    engine.glideScrollTo(preExploreScroll.current);
     setExploring(false);
     setExpNode(null);
     setTimeout(() => {
@@ -509,7 +518,10 @@ export function useLanding(props: LandingProps) {
       dragging = false;
       canvas.style.cursor = 'grab';
       if (moved > 6) return;
-      if (!s.current.exploring) { enterExplore(); return; }
+      // Clicking before the four-stage act has played all the way through
+      // would freeze the page on a half-drawn graph: explore mode only
+      // opens once the reader has actually scrolled to the slideshow's end.
+      if (!s.current.exploring) { if (engine.act1Finished()) enterExplore(); return; }
       const r = canvas.getBoundingClientRect();
       const hit = pickNode(view, { x: e.clientX - r.left, y: e.clientY - r.top });
       setExpNode(hit ? hit.i : null);
