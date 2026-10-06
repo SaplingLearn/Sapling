@@ -19,9 +19,10 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Product Scope & Planning
 
-- **Product scope doc** (problem statement, MVP1 scope, out-of-scope, success criteria): **[ADD LINK]**
-- **Notion backlog** (user stories, acceptance criteria, priorities, Sprint 1 tasks): **[ADD LINK]**
-- **GitHub issues / project board:** [Issues](https://github.com/SaplingLearn/Sapling/issues) · **[ADD PROJECT BOARD LINK]**
+- **Product scope doc** (problem statement, MVP1 scope, out-of-scope, success criteria): https://docs.google.com/document/d/1dfL17ZW2E6gI9iTEszQlU_D6CwbORYLiX7ddejPVXHs/edit?tab=t.0
+- **Notion backlog** (user stories, acceptance criteria, priorities, Sprint 1 tasks): https://app.notion.com/p/Sapling-3cd780cd9453802db54fe5a04ccf27a8
+- **Canopy ticket tracker** (our team's own ticket system, connected to the Notion backlog so stories can be followed to their tickets): https://canopy.saplinglearn.com/#tickets. Canopy signs in with GitHub, so access is limited to people attached to the Sapling GitHub repository (team members, mentors, and course staff added as collaborators).
+- **GitHub Issues** (code-level tasks and pull requests): https://github.com/SaplingLearn/Sapling/issues
 
 ## Features
 
@@ -57,14 +58,14 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 - **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
 - **Database** — Supabase (PostgreSQL) for all persistent data
 - **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
-- **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare` (automatic builds on push). Backend hosted on: **[FILL IN: host name + how it deploys]**.
+- **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare` (built by Cloudflare Workers Builds; production and staging environments configured in `frontend/wrangler.toml`). The backend is served at `https://api.saplinglearn.com` (staging: `https://api.staging.saplinglearn.com`); the backend is hosted on Railway (deploy settings are managed in the Railway project, not in this repo).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     U[Browser] --> FE["Next.js frontend<br/>(Cloudflare Workers)"]
-    FE -->|"/api/* rewrite"| BE["FastAPI backend<br/>(hosted on: FILL IN)"]
+    FE -->|"/api/* rewrite"| BE["FastAPI backend<br/>(Railway<br/>api.saplinglearn.com)"]
     U -->|"realtime room chat"| SB
     BE -->|PostgREST| SB[("Supabase Postgres")]
     BE --> AG["Pydantic AI agents"]
@@ -84,6 +85,7 @@ Backend request paths, data model, and known sharp edges: [`docs/architecture.md
 | Supabase project | Postgres database, realtime room chat | Yes |
 | Google Gemini API key | Tutor, quizzes, extraction, study guides | Yes |
 | Google Cloud OAuth client | Sign-in and Calendar | For sign-in |
+| Railway account | Backend hosting | No (deploy only) |
 | Cloudflare account | Frontend hosting | No (deploy only) |
 | Logfire | Tracing and cost telemetry | Optional |
 | Redis | Cross-worker extraction cache | Optional |
@@ -96,43 +98,67 @@ Backend request paths, data model, and known sharp edges: [`docs/architecture.md
 | Gemini cost or rate limits grow with usage | Per-task model routing (cheaper models by default), per-call usage limits, quiz-generation rate limiting, capped vision OCR, cost telemetry in Logfire |
 | Gradescope sync breaks (unofficial API, SSO/Duo changes) | Isolated behind its own service and endpoints; optional, so core features don't depend on it |
 | Student data exposure (an earlier Supabase anon-access gap was found and locked down) | Row Level Security enabled on all tables, AES-256-GCM column encryption, log scrubbing, ownership checks on every route |
-| Backend deploy lives outside this repo | Document the host and process in this README; move deploy config into the repo |
+| Backend deploy settings live in Railway, not in this repo | Host is documented in this README; keep `backend/Dockerfile` as the build definition and move deploy config into the repo over time |
 
 ## Local Setup
 
-Prerequisites: Python 3.12+, Node.js (see `frontend/.nvmrc`), a Supabase project, and a Gemini API key.
+**Prerequisites:** Python 3.12+ (CI runs 3.13), Node.js 22 with npm 10.9.x (the repo enforces this via `engine-strict`; see `frontend/.nvmrc`), a Gemini API key, and a Google OAuth client (Google sign-in is the only local login path). For the database you need either a local Supabase stack (Option A) or your own hosted Supabase project (Option B).
+
+### Option A — local Supabase (turnkey)
+
+The `*.env.local.example` templates are preconfigured for a local Supabase stack and are safe to commit (local demo keys only). Start the local Supabase stack and apply migrations by following [`docs/local-supabase.md`](docs/local-supabase.md).
 
 **Backend**
 
 ```
 cd backend
 python3 -m venv venv
-source venv/bin/activate   # fish: source venv/bin/activate.fish
-                           # Windows PowerShell: venv\Scripts\Activate.ps1
+source venv/bin/activate      # fish: source venv/bin/activate.fish
+                              # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 playwright install chromium   # only needed for Gradescope BU SSO sync
-cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
-# fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY
+cp .env.local.example .env    # Windows PowerShell: Copy-Item .env.local.example .env
+# fill in GEMINI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 python3 main.py               # Windows: python main.py  → http://localhost:5000
 ```
+
+Add `http://localhost:5000/api/auth/google/callback` to your Google OAuth client's authorized redirect URIs.
 
 **Frontend**
 
 ```
 cd frontend
 npm install
-cp .env.example .env.local    # Windows PowerShell: Copy-Item .env.example .env.local
-# set SESSION_SECRET (same value as the backend) and the NEXT_PUBLIC_SUPABASE_* values
-npm run dev                   # → http://localhost:3000
+cp .env.local.example .env.local    # Windows PowerShell: Copy-Item .env.local.example .env.local
+npm run dev                         # → http://localhost:3000
 ```
 
-**Or run everything with Docker** (needs `backend/.env` filled in and `ENCRYPTION_KEY` in your shell environment):
+### Option B — your own hosted Supabase project
+
+```
+cd backend
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
+# fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY,
+# SUPABASE_DB_URL (session-pooler URI), and Google OAuth values
+python -m db.migrate          # create the schema in your Supabase project
+python3 main.py
+
+cd ../frontend
+cp .env.example .env.local    # Windows PowerShell: Copy-Item .env.example .env.local
+# set SESSION_SECRET (same value as the backend; the backend also needs it when APP_ENV is not "local")
+# and NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+npm run dev
+```
+
+### Or run everything with Docker
+
+Needs `backend/.env` filled in and `ENCRYPTION_KEY` in your shell environment:
 
 ```
 docker-compose up
 ```
 
-Setup verified from a fresh clone by: **[TEAMMATE NAME, DATE]**
+Setup verified from a fresh clone by: Jack He, 10/6/2026
 
 ## API Endpoints
 
@@ -313,6 +339,7 @@ Copy the `.env.example` files (see Local Setup). Never commit real `.env` files.
 | `APP_ENV` | — | Deployment environment (default `production`, fail-closed checks). Set `local` for local dev (relaxes `SESSION_SECRET`); set `staging` on the staging deploy (adds a noindex header, still fail-closed). |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
+| `GOOGLE_AUTH_REDIRECT_URI` | — | Sign-in OAuth callback (locally `http://localhost:5000/api/auth/google/callback`; must be listed in your Google OAuth client) |
 | `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes). Required outside `APP_ENV=local`; must match the frontend value. |
 | `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
 | `SUPABASE_DB_URL` | — | Supabase **session-mode pooler** URI (port 5432, user `postgres.<ref>`) — used only by the `db.migrate` migration runner, never at app runtime. Not the direct `db.<ref>` host (IPv6-only, unreachable from most networks); not port 6543 (transaction mode, breaks DDL) |
@@ -376,7 +403,7 @@ SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselin
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/`) runs backend pytest and ruff plus frontend eslint, typecheck, and vitest on every PR and push to `main`. Additional workflows cover end-to-end (Playwright), integration, agent evals, and staging migrations. The frontend deploys automatically to Cloudflare Workers; see "Tech Stack" for the backend host.
+GitHub Actions (`.github/workflows/`) runs backend pytest and ruff plus frontend eslint, typecheck, and vitest on every PR and push to `main`. Additional workflows cover end-to-end (Playwright), integration, agent evals, and staging migrations. The backend CI job installs from the hash-pinned `backend/requirements.lock` and skips the heavy OCR integration tests. The frontend is built and deployed by Cloudflare Workers Builds (see "Tech Stack" for the backend host).
 
 ## Contributing
 
@@ -434,6 +461,15 @@ SUPABASE_DB_URL=postgresql://... python -m db.migrate --baseline # record all as
 Migrations `0019`–`0028` are the **modular schema redesign**: courses split into an abstract `courses` table plus `course_offerings` and `terms`, `user_courses` became `enrollments`, identity split into `users` + `user_profiles`, the gradebook re-keyed onto `enrollment_id`, analytics re-keyed onto offerings, and the graph gained append-only `node_mastery_events`. The public API boundary still keys on the abstract `course_id`.
 
 For staging, after applying migrations you can lay down a self-contained fake demo dataset (graph + gradebook + courses-with-term) with `python -m db.seed_staging` — idempotent and **staging-only**, never run it against production. See `docs/staging/setup-checklist.md` for the full staging bring-up.
+
+## Team
+
+- Andres Lopez
+- Jack He
+- Luke Cooper
+- Jose Gael Cruz-Lopez
+- Azaria Gonzales
+- Aerim Lee
 
 ## License
 
