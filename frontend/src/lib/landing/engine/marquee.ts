@@ -151,10 +151,15 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
       // measure one card set only when the container width changed
       if (!m.setW || m.measuredW !== wrap.clientWidth) {
         const kids = track.children;
-        const half = kids.length / 2;
+        // The track may hold more than two copies of the set on a screen
+        // wide enough that two copies don't out-run the viewport (see
+        // `data-set-size` in Gallery.tsx) — `kids.length / 2` is only right
+        // for exactly two, and undercounts the set on anything wider,
+        // which wraps `off` early and clips straight into empty track.
+        const setSize = Number(track.dataset.setSize) || kids.length / 2;
         const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
         let w = 0;
-        for (let i = 0; i < half; i++) w += (kids[i] as HTMLElement).offsetWidth + gap;
+        for (let i = 0; i < setSize; i++) w += (kids[i] as HTMLElement).offsetWidth + gap;
         m.setW = w || 1;
         m.measuredW = wrap.clientWidth;
       }

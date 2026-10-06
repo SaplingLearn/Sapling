@@ -12,11 +12,17 @@
  * original two full-size rails stacked past any normal viewport height, and
  * keeping both rows was chosen over one bigger rail.
  *
- * Each track lists its cards TWICE. That duplication is the loop: the marquee
- * translates by exactly half the track width and wraps, so the second copy is
- * already in place when the first scrolls out. Removing it leaves a visible
- * gap on every cycle. The duplicates are `aria-hidden`, and only the first
- * copy is reachable by keyboard.
+ * Each track lists its cards at least TWICE. That duplication is the loop:
+ * the marquee translates by exactly one set's width and wraps, so the next
+ * copy is already in place when the current one scrolls out. Two copies is
+ * only enough while the viewport is narrower than one set — on a screen wide
+ * enough to show more than a full set at once (an ultrawide or a multi-monitor
+ * span), two copies run out before the wrap comes back around, and the track
+ * reads as cards popping in out of empty space instead of drifting in from
+ * the edge. `useTrackCopies` measures the real rendered set width against the
+ * wrap's width and renders however many copies keep the track always at least
+ * one set wider than the viewport, re-measuring on resize. The duplicates are
+ * `aria-hidden`, and only the first copy is reachable by keyboard.
  *
  * The card visuals live in galleryMinis.tsx, generated from the source.
  *
@@ -32,6 +38,7 @@
  * on — stay correct at every width.
  */
 
+import { useEffect, useState } from 'react';
 import { GALLERY_MINIS } from './galleryMinis';
 import { FadeIn } from '@/components/landing/anim';
 
@@ -173,6 +180,40 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
   );
 }
 
+/**
+ * How many times `order` must repeat in the track so it never runs out of
+ * content under the visible width — see the note above `Track`.
+ *
+ * Measures the real rendered width of one set (first `setSize` children)
+ * against the wrap's (the mask container's) clientWidth, and keeps enough
+ * copies that the track stays at least one set wider than the viewport, the
+ * invariant `marquee.ts`'s wrap math depends on. Re-measures on resize, since
+ * a window resize or a `--gal-scale` breakpoint both change this.
+ */
+function useTrackCopies(trackRef: React.RefObject<HTMLDivElement | null>, setSize: number): number {
+  const [copies, setCopies] = useState(2);
+  useEffect(() => {
+    const track = trackRef.current;
+    const wrap = track?.parentElement;
+    if (!track || !wrap) return;
+    const measure = () => {
+      const kids = track.children;
+      if (kids.length < setSize) return;
+      const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
+      let setW = 0;
+      for (let i = 0; i < setSize; i++) setW += (kids[i] as HTMLElement).offsetWidth + gap;
+      if (setW <= 0) return;
+      const needed = Math.max(2, Math.ceil(wrap.clientWidth / setW) + 1);
+      setCopies((c) => (c === needed ? c : needed));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [trackRef, setSize]);
+  return copies;
+}
+
 function Track({
   trackRef, order, label, onOpen,
 }: {
@@ -181,18 +222,23 @@ function Track({
   label: string;
   onOpen: (i: number, el: HTMLElement | null) => void;
 }) {
+  const copies = useTrackCopies(trackRef, order.length);
   return (
     <div
       ref={trackRef}
       aria-label={label}
+      // read by `marquee.ts` to measure one set's width regardless of how
+      // many copies are currently rendered
+      data-set-size={order.length}
       onClick={(e) => {
         const card = (e.target as HTMLElement).closest<HTMLElement>('[data-tk]');
         if (card) onOpen(Number(card.dataset.tk), card);
       }}
       style={{ display: 'flex', gap: 'calc(26px * var(--gal-scale, 1))', width: 'max-content', willChange: 'transform', cursor: 'grab', touchAction: 'pan-y' }}
     >
-      {order.map((i) => <Card key={`a${i}`} i={i} ghost={false} />)}
-      {order.map((i) => <Card key={`b${i}`} i={i} ghost />)}
+      {Array.from({ length: copies }, (_, c) => order.map((i) => (
+        <Card key={`${c}-${i}`} i={i} ghost={c > 0} />
+      )))}
     </div>
   );
 }
