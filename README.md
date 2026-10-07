@@ -2,7 +2,8 @@
 
 An AI-powered study companion that builds a live knowledge graph as you learn.
 
-!["preview"](landingpage.png "Preview")
+[![preview](landingpage.png)](landingpage.png)
+
 ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=fff)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
@@ -16,182 +17,285 @@ An AI-powered study companion that builds a live knowledge graph as you learn.
 
 Sapling is a study tool that adapts to how you learn. Chat with an AI tutor across three teaching modes, take adaptive quizzes, track assignments from your syllabus, and compare progress with classmates in study rooms. As you learn, a live knowledge graph maps your mastery in real time.
 
+## Product Scope & Planning
+
+- **Product scope doc** (problem statement, MVP1 scope, out-of-scope, success criteria): https://docs.google.com/document/d/1dfL17ZW2E6gI9iTEszQlU_D6CwbORYLiX7ddejPVXHs/edit?tab=t.0
+- **Notion backlog** (user stories, acceptance criteria, priorities, Sprint 1 tasks): https://app.notion.com/p/Sapling-3cd780cd9453802db54fe5a04ccf27a8
+- **Canopy ticket tracker** (our team's own ticket system, connected to the Notion backlog so stories can be followed to their tickets): https://canopy.saplinglearn.com/#tickets. Canopy signs in with GitHub, so access is limited to people attached to the Sapling GitHub repository (team members, mentors, and course staff added as collaborators).
+- **GitHub Issues** (code-level tasks and pull requests): https://github.com/SaplingLearn/Sapling/issues
+
 ## Features
 
-* **Live Knowledge Graph** — Your understanding is visualized as a growing node graph, with a 2D (D3/SVG, default) or 3D (WebGL) view toggle. Mastery scores update dynamically after every session and quiz, with per-course color shading and mastery-based opacity.
-* **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects). Chat supports inline math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
-* **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance and spaced-repetition scheduling that resurfaces concepts you've missed before.
-* **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
-* **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
-* **Gradescope Sync** — Link a Sapling course to a Gradescope course and pull assignment grades in automatically. Sign in with a Gradescope email/password or, for BU accounts, a live SSO + Duo 2FA flow; credentials are stored encrypted and re-authenticated fresh on each sync.
-* **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
-* **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
-* **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
-* **Document Library** — Upload PDFs and notes (up to 100 MB each); Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Uploads use a streaming SSE pipeline so the UI shows live per-phase progress (*"Classifying..." → "Extracting summary, concepts, and syllabus..." → "Saved."*). Concept notes can be re-scanned manually per doc or per course.
-* **Notetaker** — Write typed notes per course with debounced autosave and tags. Per note, Sapling can AI-summarize, extract concepts (merged into your knowledge graph and linked back to the note), answer questions in a note-grounded AI chat, send the note to the tutor, or generate a quiz targeting the note's weakest linked concept.
-* **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
-* **Room Chat** — Real-time text chat with avatars inside each study room.
-* **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
-* **Achievements & Cosmetics** — Unlock achievements by hitting milestones (sessions, quizzes, streaks). Equip cosmetic rewards like avatar frames, name colors, and title flairs.
-* **Roles & Admin Panel** — Role-based access control with an admin panel for user approval, role assignment, and content management.
-* **Onboarding Flow** — Multi-step onboarding that collects school, major, year, and courses after first sign-in. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.
-* **Newsletter** — Beta-list signup directly from the landing page.
-* **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app.
+- **Live Knowledge Graph** — Your understanding is visualized as a growing node graph, with a 2D (D3/SVG, default) or 3D (WebGL) view toggle. Mastery scores update dynamically after every session and quiz, with per-course color shading and mastery-based opacity.
+- **Three Teaching Modes** — Socratic (guided reasoning), Expository (direct explanation), and TeachBack (you explain, Sapling corrects). Chat supports inline math (KaTeX), Mermaid diagrams, function plots, and theorem callouts.
+- **Adaptive Quizzes** — AI-generated quizzes targeting your weakest concepts, with difficulty scaling based on your performance and spaced-repetition scheduling that resurfaces concepts you've missed before.
+- **Flashcards** — Generate AI flashcards per course, or import them from paste, file (CSV/Markdown/Anki), URL, AI prompt, or photo. Study by topic with spaced-repetition ratings (Easy / Hard / Forgot).
+- **Gradebook** — Track your real-world grade per course. Categories + weights, per-assignment scores, per-course letter-scale overrides, and current grade calculation. Upload a syllabus and Sapling extracts categories and assignments automatically.
+- **Gradescope Sync** — Link a Sapling course to a Gradescope course and pull assignment grades in automatically. Sign in with a Gradescope email/password or, for BU accounts, a live SSO + Duo 2FA flow; credentials are stored encrypted and re-authenticated fresh on each sync.
+- **Study Guide** — Generate a Gemini-powered exam study guide from your uploaded course materials. Guides are cached per exam and can be regenerated at any time.
+- **Class Intelligence** — Aggregates anonymized class-wide patterns to surface common misconceptions and weak areas, personalizing your sessions.
+- **Calendar & Syllabus Tracking** — Paste your syllabus and Sapling extracts assignments, deadlines, and topics automatically.
+- **Document Library** — Upload PDFs and notes (up to 100 MB each); Sapling extracts summaries, key concept notes, and flashcard topics to enrich your knowledge graph and study guides. Uploads use a streaming SSE pipeline so the UI shows live per-phase progress (*"Classifying..." → "Extracting summary, concepts, and syllabus..." → "Saved."*). Concept notes can be re-scanned manually per doc or per course.
+- **Notetaker** — Write typed notes per course with debounced autosave and tags. Per note, Sapling can AI-summarize, extract concepts (merged into your knowledge graph and linked back to the note), answer questions in a note-grounded AI chat, send the note to the tutor, or generate a quiz targeting the note's weakest linked concept.
+- **Study Rooms** — Invite classmates, compare knowledge graphs, and track relative mastery across your group.
+- **Room Chat** — Real-time text chat with avatars inside each study room.
+- **User Profiles** — Public profiles with academic info, bio, featured achievements, and equipped cosmetics.
+- **Achievements & Cosmetics** — Unlock achievements by hitting milestones (sessions, quizzes, streaks). Equip cosmetic rewards like avatar frames, name colors, and title flairs.
+- **Roles & Admin Panel** — Role-based access control with an admin panel for user approval, role assignment, and content management.
+- **Onboarding Flow** — Multi-step onboarding that collects school, major, year, and courses after first sign-in. Sign-in itself is a popup-based Google OAuth flow launched from the landing page.
+- **Newsletter** — Beta-list signup directly from the landing page.
+- **Feedback & Issue Reporting** — Submit session feedback or report bugs directly from the app.
 
 ## Tech Stack
 
-* **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (default) or 3D via `react-force-graph-3d` (three.js/WebGL), lazy-loaded so the 3D stack only enters the bundle when toggled on. Vitest with jsdom + React Testing Library for unit + component tests.
-* **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents — every LLM call in the backend goes through these agents; the legacy structured-prompt helper (`services/gemini_service.py`) was retired in ADR 0024.
-* **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz generation, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus parsing, and note chat; `gemini-2.5-pro` for the chat tutor. Override per task via `SAPLING_MODEL_<TASK>`.
-* **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
-* **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
-* **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
-* **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
-* **Database** — Supabase (PostgreSQL) for all persistent data
-* **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
-* **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare`
+- **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (default) or 3D via `react-force-graph-3d` (three.js/WebGL), lazy-loaded so the 3D stack only enters the bundle when toggled on. Vitest with jsdom + React Testing Library for unit + component tests.
+- **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents — every LLM call in the backend goes through these agents; the legacy structured-prompt helper (`services/gemini_service.py`) was retired in ADR 0024.
+- **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz generation, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus parsing, and note chat; `gemini-2.5-pro` for the chat tutor. Override per task via `SAPLING_MODEL_<TASK>`.
+- **Auth** — Google OAuth sign-in with stateless HMAC-signed session cookies (`SESSION_SECRET`), role-based access control, and an email-domain allowlist (default `bu.edu`).
+- **Streaming** — `sse-starlette` Server-Sent Events on `POST /api/documents/upload` for live per-phase progress. The frontend SSE consumer (`frontend/src/lib/sse.ts`) parses the wire format from a fetch ReadableStream so it works with multipart POSTs (which `EventSource` can't do).
+- **Observability** — [Logfire](https://logfire.pydantic.dev) auto-instruments Pydantic AI agent runs, tool calls, and FastAPI requests. A custom span scrubber (`backend/services/logfire_scrubber.py`) truncates and SHA-256-fingerprints risky attribute paths (prompt text, model output, message content) before egress so user-uploaded document text never ships verbatim. `genai-prices` provides per-call cost telemetry. Per-request structured logging includes a correlation ID, status, and duration.
+- **OCR** — Docling (layout-aware PDF → Markdown) with GOT-OCR 2.0 fallback for math/handwriting; Tesseract retained as a legacy fallback.
+- **Gradescope sync** — Per-user grade import via the unofficial `gradescopeapi` client, plus a Playwright headless-Chromium flow for BU SSO + Duo 2FA sign-in (run `playwright install chromium` after `pip install`). Credentials are stored encrypted and the app re-authenticates fresh on each sync.
+- **Database** — Supabase (PostgreSQL) for all persistent data
+- **Encryption** — AES-256-GCM column-level encryption (via the `cryptography` library) for user PII, document summaries/concept notes, OAuth tokens, chat messages, and gradebook notes
+- **Deploy** — Frontend on Cloudflare Workers via `@opennextjs/cloudflare` (built by Cloudflare Workers Builds; production and staging environments configured in `frontend/wrangler.toml`). The backend is served at `https://api.saplinglearn.com` (staging: `https://api.staging.saplinglearn.com`); the backend is hosted on Railway (deploy settings are managed in the Railway project, not in this repo).
 
-## Usage
+## Architecture
+
+```mermaid
+flowchart LR
+    U[Browser] --> FE["Next.js frontend<br/>(Cloudflare Workers)"]
+    FE -->|"/api/* rewrite"| BE["FastAPI backend<br/>(Railway<br/>api.saplinglearn.com)"]
+    U -->|"realtime room chat"| SB
+    BE -->|PostgREST| SB[("Supabase Postgres")]
+    BE --> AG["Pydantic AI agents"]
+    AG --> GE["Google Gemini API"]
+    BE --> GO["Google OAuth"]
+    BE --> GS["Gradescope"]
+    BE -.optional.-> LF["Logfire"]
+    BE -.optional.-> RD[("Redis cache")]
+```
+
+Backend request paths, data model, and known sharp edges: [`docs/architecture.md`](docs/architecture.md).
+
+## External Services & Required Accounts
+
+| Service | Used for | Needed to run locally? |
+| --- | --- | --- |
+| Supabase project | Postgres database, realtime room chat | Yes |
+| Google Gemini API key | Tutor, quizzes, extraction, study guides | Yes |
+| Google Cloud OAuth client | Sign-in and Calendar | For sign-in |
+| Railway account | Backend hosting | No (deploy only) |
+| Cloudflare account | Frontend hosting | No (deploy only) |
+| Logfire | Tracing and cost telemetry | Optional |
+| Redis | Cross-worker extraction cache | Optional |
+| Gradescope (unofficial client) | Grade sync | Optional |
+
+## Technical Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Gemini cost or rate limits grow with usage | Per-task model routing (cheaper models by default), per-call usage limits, quiz-generation rate limiting, capped vision OCR, cost telemetry in Logfire |
+| Gradescope sync breaks (unofficial API, SSO/Duo changes) | Isolated behind its own service and endpoints; optional, so core features don't depend on it |
+| Student data exposure (an earlier Supabase anon-access gap was found and locked down) | Row Level Security enabled on all tables, AES-256-GCM column encryption, log scrubbing, ownership checks on every route |
+| Backend deploy settings live in Railway, not in this repo | Host is documented in this README; keep `backend/Dockerfile` as the build definition and move deploy config into the repo over time |
+
+## Local Setup
+
+**Prerequisites:** Python 3.12+ (CI runs 3.13), Node.js 22 with npm 10.9.x (the repo enforces this via `engine-strict`; see `frontend/.nvmrc`), a Gemini API key, and a Google OAuth client (Google sign-in is the only local login path). For the database you need either a local Supabase stack (Option A) or your own hosted Supabase project (Option B).
+
+### Option A — local Supabase (turnkey)
+
+The `*.env.local.example` templates are preconfigured for a local Supabase stack and are safe to commit (local demo keys only). Start the local Supabase stack and apply migrations by following [`docs/local-supabase.md`](docs/local-supabase.md).
 
 **Backend**
-```bash
+
+```
 cd backend
 python3 -m venv venv
-source venv/bin/activate   # fish: source venv/bin/activate.fish
+source venv/bin/activate      # fish: source venv/bin/activate.fish
+                              # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env       # fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY
-python3 main.py            # → http://localhost:5000
+playwright install chromium   # only needed for Gradescope BU SSO sync
+cp .env.local.example .env    # Windows PowerShell: Copy-Item .env.local.example .env
+# fill in GEMINI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+python3 main.py               # Windows: python main.py  → http://localhost:5000
 ```
 
+Add `http://localhost:5000/api/auth/google/callback` to your Google OAuth client's authorized redirect URIs.
+
 **Frontend**
-```bash
+
+```
 cd frontend
 npm install
-echo "NEXT_PUBLIC_API_URL=http://localhost:5000" > .env.local
-npm run dev                # → http://localhost:3000
+cp .env.local.example .env.local    # Windows PowerShell: Copy-Item .env.local.example .env.local
+npm run dev                         # → http://localhost:3000
 ```
+
+### Option B — your own hosted Supabase project
+
+```
+cd backend
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
+# fill in GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, ENCRYPTION_KEY,
+# SUPABASE_DB_URL (session-pooler URI), and Google OAuth values
+python -m db.migrate          # create the schema in your Supabase project
+python3 main.py
+
+cd ../frontend
+cp .env.example .env.local    # Windows PowerShell: Copy-Item .env.example .env.local
+# set SESSION_SECRET (same value as the backend; the backend also needs it when APP_ENV is not "local")
+# and NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+npm run dev
+```
+
+### Or run everything with Docker
+
+Needs `backend/.env` filled in and `ENCRYPTION_KEY` in your shell environment:
+
+```
+docker-compose up
+```
+
+Setup verified from a fresh clone by: Jack He, 10/6/2026
 
 ## API Endpoints
 
 **Learn**
+
 - `POST` `/api/learn/start-session` — Start a tutoring session
 - `POST` `/api/learn/chat` — Send a chat message
 - `POST` `/api/learn/action` — Send a structured action (e.g. quiz, recap)
 - `POST` `/api/learn/end-session` — End a session
-- `GET`  `/api/learn/sessions/{user_id}` — List past sessions
+- `GET` `/api/learn/sessions/{user_id}` — List past sessions
 
 **Graph**
-- `GET`  `/api/graph/{user_id}` — Fetch the user's knowledge graph
-- `GET`  `/api/graph/{user_id}/recommendations` — Get next-concept recommendations
-- `GET`  `/api/graph/{user_id}/courses` — List courses
+
+- `GET` `/api/graph/{user_id}` — Fetch the user's knowledge graph
+- `GET` `/api/graph/{user_id}/recommendations` — Get next-concept recommendations
+- `GET` `/api/graph/{user_id}/courses` — List courses
 
 **Quiz**
+
 - `POST` `/api/quiz/generate` — Generate an adaptive quiz
 - `POST` `/api/quiz/submit` — Submit answers and update mastery
 
 **Flashcards**
+
 - `POST` `/api/flashcards/generate` — Generate flashcards for a topic
 - `POST` `/api/flashcards/import/parse` — Parse cards from paste, file, URL, or photo (no save)
 - `POST` `/api/flashcards/import/generate` — AI-generate cards from a topic / prompt
 - `POST` `/api/flashcards/import/cleanup` — Clean up parsed cards before commit
 - `POST` `/api/flashcards/import/cloze` — Convert sentences into cloze-deletion cards
 - `POST` `/api/flashcards/import/commit` — Commit parsed cards to the user's deck
-- `GET`  `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
+- `GET` `/api/flashcards/user/{user_id}` — Fetch a user's flashcards
 - `POST` `/api/flashcards/rate` — Rate a card (Easy / Hard / Forgot)
 - `DELETE` `/api/flashcards/{card_id}` — Delete a card
 
 **Gradebook**
-- `GET`   `/api/gradebook/summary` — Per-course grade summary across the user's courses (filter by `semester`)
-- `GET`   `/api/gradebook/courses/{course_id}` — Full gradebook for a course (categories, assignments, current grade)
-- `POST`  `/api/gradebook/courses/{course_id}/categories` — Create a category
+
+- `GET` `/api/gradebook/summary` — Per-course grade summary across the user's courses (filter by `semester`)
+- `GET` `/api/gradebook/courses/{course_id}` — Full gradebook for a course (categories, assignments, current grade)
+- `POST` `/api/gradebook/courses/{course_id}/categories` — Create a category
 - `PATCH` `/api/gradebook/courses/{course_id}/categories` — Bulk-update categories (weights, names)
 - `DELETE` `/api/gradebook/categories/{category_id}` — Delete a category
-- `POST`  `/api/gradebook/assignments` — Create an assignment
+- `POST` `/api/gradebook/assignments` — Create an assignment
 - `PATCH` `/api/gradebook/assignments/{assignment_id}` — Update an assignment (grade, weight, due date)
 - `DELETE` `/api/gradebook/assignments/{assignment_id}` — Delete an assignment
 - `PATCH` `/api/gradebook/courses/{course_id}/scale` — Override the per-course letter-grade scale
-- `POST`  `/api/gradebook/syllabus/apply` — Apply a parsed syllabus (replaces categories, dedupes assignments)
+- `POST` `/api/gradebook/syllabus/apply` — Apply a parsed syllabus (replaces categories, dedupes assignments)
 
 **Gradescope**
-- `POST`   `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
-- `POST`   `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
+
+- `POST` `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
+- `POST` `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
 - `DELETE` `/api/gradescope/credentials` — Remove stored credentials
-- `GET`    `/api/gradescope/status` — Whether credentials are saved and when the user last synced
-- `GET`    `/api/gradescope/courses` — List the user's Gradescope student courses (live)
-- `GET`    `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
-- `POST`   `/api/gradescope/link` — Create or update a course mapping
+- `GET` `/api/gradescope/status` — Whether credentials are saved and when the user last synced
+- `GET` `/api/gradescope/courses` — List the user's Gradescope student courses (live)
+- `GET` `/api/gradescope/links` — List Sapling-course → Gradescope-course mappings
+- `POST` `/api/gradescope/link` — Create or update a course mapping
 - `DELETE` `/api/gradescope/link/{sapling_course_id}` — Remove a course mapping
-- `POST`   `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook
+- `POST` `/api/gradescope/sync/{sapling_course_id}` — Pull assignments from the linked Gradescope course and upsert grades into the gradebook
 
 **Study Guide**
-- `GET`  `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
-- `GET`  `/api/study-guide/{user_id}/cached` — List all cached study guides
-- `GET`  `/api/study-guide/{user_id}/courses` — List courses for guide generation
-- `GET`  `/api/study-guide/{user_id}/exams` — List exam-type assignments
+
+- `GET` `/api/study-guide/{user_id}/guide` — Get (or generate) a study guide for an exam
+- `GET` `/api/study-guide/{user_id}/cached` — List all cached study guides
+- `GET` `/api/study-guide/{user_id}/courses` — List courses for guide generation
+- `GET` `/api/study-guide/{user_id}/exams` — List exam-type assignments
 - `POST` `/api/study-guide/regenerate` — Invalidate cache and regenerate a guide
 
 **Calendar**
+
 - `POST` `/api/calendar/extract` — Extract assignments from a syllabus
-- `GET`  `/api/calendar/upcoming/{user_id}` — Fetch upcoming assignments
+- `GET` `/api/calendar/upcoming/{user_id}` — Fetch upcoming assignments
 - `POST` `/api/calendar/save` — Save extracted assignments
 
 **Documents**
+
 - `POST` `/api/documents/upload` — **Streaming SSE upload.** Runs the agentic pipeline (classifier → parallel summary/concepts/syllabus → graph merge) and emits typed SSE events the client renders as live progress: `status:start`, `progress:classify`, `progress:classified`, `progress:extract`, `progress:extracted`, `progress:graph_update`, `progress:graph_updated`, `result:finalize`, `status:done`. Errors emit `error:failed` (terminal). Idempotent on `X-Request-ID` — a retry with the same ID returns the previously persisted document without re-running the pipeline.
 - `POST` `/api/documents/upload/sync` — Non-streaming JSON upload. Same orchestrator under the hood, returns the persisted document as a single JSON response. Used by callers that don't need progress events.
-- `GET`  `/api/documents/user/{user_id}` — List a user's documents
+- `GET` `/api/documents/user/{user_id}` — List a user's documents
 - `DELETE` `/api/documents/doc/{doc_id}` — Delete a document
 - `POST` `/api/documents/doc/{doc_id}/scan-concepts` — Re-extract concepts from a stored document into the course graph
 - `POST` `/api/documents/course/{course_id}/scan-concepts` — Extend a course's concept graph from its label alone
 
 **Notes**
-- `GET`    `/api/notes/user/{user_id}` — List a user's notes (filter by `course_id`)
-- `POST`   `/api/notes` — Create a note
-- `GET`    `/api/notes/{note_id}` — Fetch a single note
-- `PATCH`  `/api/notes/{note_id}` — Update a note (title, body, tags, course)
+
+- `GET` `/api/notes/user/{user_id}` — List a user's notes (filter by `course_id`)
+- `POST` `/api/notes` — Create a note
+- `GET` `/api/notes/{note_id}` — Fetch a single note
+- `PATCH` `/api/notes/{note_id}` — Update a note (title, body, tags, course)
 - `DELETE` `/api/notes/{note_id}` — Delete a note
-- `GET`    `/api/notes/{note_id}/concepts` — List concepts linked to a note
-- `POST`   `/api/notes/{note_id}/concepts` — Link a graph concept to a note
+- `GET` `/api/notes/{note_id}/concepts` — List concepts linked to a note
+- `POST` `/api/notes/{note_id}/concepts` — Link a graph concept to a note
 - `DELETE` `/api/notes/{note_id}/concepts/{concept_node_id}` — Unlink a concept
-- `POST`   `/api/notes/{note_id}/summarize` — AI-summarize the note (agent-backed)
-- `POST`   `/api/notes/{note_id}/extract-concepts` — Extract concepts, merge into the graph, link back to the note
-- `POST`   `/api/notes/{note_id}/chat` — Ask a question grounded in the note (agent-backed)
-- `POST`   `/api/notes/{note_id}/send-to-tutor` — Build a tutor handoff (topic + preface) from the note
-- `POST`   `/api/notes/{note_id}/generate-quiz` — Pick the note's weakest linked concept to quiz on
+- `POST` `/api/notes/{note_id}/summarize` — AI-summarize the note (agent-backed)
+- `POST` `/api/notes/{note_id}/extract-concepts` — Extract concepts, merge into the graph, link back to the note
+- `POST` `/api/notes/{note_id}/chat` — Ask a question grounded in the note (agent-backed)
+- `POST` `/api/notes/{note_id}/send-to-tutor` — Build a tutor handoff (topic + preface) from the note
+- `POST` `/api/notes/{note_id}/generate-quiz` — Pick the note's weakest linked concept to quiz on
 
 **Social**
+
 - `POST` `/api/social/rooms/create` — Create a study room
 - `POST` `/api/social/rooms/join` — Join a study room by invite code
-- `GET`  `/api/social/rooms/{user_id}` — List a user's rooms
-- `GET`  `/api/social/rooms/{room_id}/overview` — Room overview with AI-generated group summary
-- `GET`  `/api/social/rooms/{room_id}/activity` — Recent activity feed for a room
+- `GET` `/api/social/rooms/{user_id}` — List a user's rooms
+- `GET` `/api/social/rooms/{room_id}/overview` — Room overview with AI-generated group summary
+- `GET` `/api/social/rooms/{room_id}/activity` — Recent activity feed for a room
 - `POST` `/api/social/rooms/{room_id}/match` — Find study partners within a room
 - `POST` `/api/social/rooms/{room_id}/leave` — Leave a room
 - `DELETE` `/api/social/rooms/{room_id}/members/{member_id}` — Kick a member (room leader only)
-- `GET`  `/api/social/rooms/{room_id}/messages` — Fetch room chat messages
+- `GET` `/api/social/rooms/{room_id}/messages` — Fetch room chat messages
 - `POST` `/api/social/rooms/{room_id}/messages` — Send a chat message
 - `POST` `/api/social/school-match` — Find study partners school-wide
-- `GET`  `/api/social/students` — List all students with mastery stats
+- `GET` `/api/social/students` — List all students with mastery stats
 
 **Auth**
-- `GET`  `/api/auth/google` — Redirect to Google OAuth consent screen
-- `GET`  `/api/auth/google/callback` — OAuth callback, issues session token
-- `GET`  `/api/auth/me` — Get current user from session token
+
+- `GET` `/api/auth/google` — Redirect to Google OAuth consent screen
+- `GET` `/api/auth/google/callback` — OAuth callback, issues session token
+- `GET` `/api/auth/me` — Get current user from session token
 
 **Onboarding**
-- `GET`  `/api/onboarding/courses` — Search courses by name or code
+
+- `GET` `/api/onboarding/courses` — Search courses by name or code
 - `POST` `/api/onboarding/profile` — Save onboarding profile data
 
 **Profile**
-- `GET`  `/api/profile/{user_id}` — Public profile with roles, achievements, cosmetics
-- `PUT`  `/api/profile/{user_id}` — Update profile fields (bio, major, links, etc.)
-- `PUT`  `/api/profile/{user_id}/settings` — Update user settings
+
+- `GET` `/api/profile/{user_id}` — Public profile with roles, achievements, cosmetics
+- `PUT` `/api/profile/{user_id}` — Update profile fields (bio, major, links, etc.)
+- `PUT` `/api/profile/{user_id}/settings` — Update user settings
 - `POST` `/api/profile/{user_id}/avatar` — Upload a profile avatar
 - `POST` `/api/profile/{user_id}/equip` — Equip or unequip a cosmetic item
-- `PUT`  `/api/profile/{user_id}/featured-role` — Set featured role on profile
-- `PUT`  `/api/profile/{user_id}/featured-achievements` — Set featured achievements
+- `PUT` `/api/profile/{user_id}/featured-role` — Set featured role on profile
+- `PUT` `/api/profile/{user_id}/featured-achievements` — Set featured achievements
 - `DELETE` `/api/profile/{user_id}` — Delete account
 
 **Admin**
+
 - `GET`/`POST` `/api/admin/roles` — List / create roles
 - `PATCH`/`DELETE` `/api/admin/roles/{role_id}` — Update / delete a role
 - `POST`/`DELETE` `/api/admin/roles/assign` · `/api/admin/roles/revoke` — Assign / revoke a role
@@ -210,18 +314,22 @@ npm run dev                # → http://localhost:3000
 - `GET` `/api/admin/analytics/overview` — Totals, 30-day series, and role counts
 
 **Feedback**
+
 - `POST` `/api/feedback/feedback` — Submit session or general feedback
 - `POST` `/api/feedback/issue-reports` — Submit a bug/issue report
 
 **Newsletter**
+
 - `POST` `/api/newsletter/subscribe` — Add an email to the beta / newsletter list
 
 ## Environment Variables
 
+Copy the `.env.example` files (see Local Setup). Never commit real `.env` files.
+
 **`backend/.env`**
 
 | Variable | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key |
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
 | `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
@@ -231,10 +339,13 @@ npm run dev                # → http://localhost:3000
 | `APP_ENV` | — | Deployment environment (default `production`, fail-closed checks). Set `local` for local dev (relaxes `SESSION_SECRET`); set `staging` on the staging deploy (adds a noindex header, still fail-closed). |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (for sign-in and Calendar) |
 | `GOOGLE_CLIENT_SECRET` | — | Google OAuth client secret |
-| `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes) |
+| `GOOGLE_AUTH_REDIRECT_URI` | — | Sign-in OAuth callback (locally `http://localhost:5000/api/auth/google/callback`; must be listed in your Google OAuth client) |
+| `SESSION_SECRET` | — | HMAC secret for session tokens (min 32 bytes). Required outside `APP_ENV=local`; must match the frontend value. |
 | `ALLOWED_EMAIL_DOMAINS` | — | Comma-separated sign-in email-domain allowlist (default `bu.edu`). Empty value disables the check (any domain may sign in). |
 | `SUPABASE_DB_URL` | — | Supabase **session-mode pooler** URI (port 5432, user `postgres.<ref>`) — used only by the `db.migrate` migration runner, never at app runtime. Not the direct `db.<ref>` host (IPv6-only, unreachable from most networks); not port 6543 (transaction mode, breaks DDL) |
 | `LOGFIRE_TOKEN` | — | If set, traces ship to logfire.pydantic.dev. Without it, Logfire stays local-only. The Sapling scrubber redacts prompt/output content before egress regardless. |
+| `REDIS_URL` | — | Optional cross-worker cache for OCR/extraction results. Unset = disabled. |
+| `OCR_ENGINE` | — | `docling` (default), `auto` (Docling + GOT-OCR fallback for math), or `tesseract` (legacy) |
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_CONCEPTS` | — | Override concept-extraction-agent model (default `gemini-2.5-flash`) |
@@ -251,41 +362,59 @@ npm run dev                # → http://localhost:3000
 **`frontend/.env.local`**
 
 | Variable | Required | Description |
-|---|---|---|
-| `NEXT_PUBLIC_API_URL` | ✅ | Backend base URL (e.g. `http://localhost:5000`) |
-| `SESSION_SECRET` | — | Same HMAC secret as backend (for middleware token verification) |
+| --- | --- | --- |
+| `BACKEND_URL` | ✅ | Backend origin for the Next.js `/api/*` rewrite (locally `http://localhost:5000`) |
+| `SESSION_SECRET` | ✅ | Same HMAC secret as the backend (min 32 bytes; used by middleware token verification) |
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase project URL (realtime chat in study rooms) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Supabase anon key (realtime chat in study rooms) |
+| `NEXT_PUBLIC_API_URL` | — | Leave empty in production so calls resolve as same-origin `/api/...`. Only set if the frontend runs on a different origin than the proxy and CORS is configured on the backend. |
 
 ## Tests
 
 **Backend** — pytest, mocked Gemini + Supabase. ~660 tests.
-```bash
+
+```
 cd backend
 python -m pytest tests/ -q --ignore=tests/evals
+ruff check .
 ```
 
 **Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (e.g. `DocumentUploadModal`, `TopNav`, `KnowledgeGraph3D`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
-```bash
+
+```
 cd frontend
 npm install
+npm run lint
 npm run typecheck
 npm test            # vitest run
 npm run test:watch  # vitest watch
 ```
 
 **Evals** — extraction-accuracy harness for the migrated agents. Five offline datasets (`document_classification`, `document_summary`, `concept_extraction`, `syllabus_extraction`, `quiz_generation`) run in replay mode against committed cassettes — no network, fully deterministic. Each task reports a per-evaluator accuracy score; a task fails only when it regresses below the committed baseline in `tests/evals/baselines.json` or a cassette is missing. One command runs them all:
-```bash
+
+```
 cd backend
 python tests/evals/run_all.py                                  # replay (default), gate on baselines
 SAPLING_EVAL_MODE=record python tests/evals/run_all.py         # refresh cassettes (live Gemini)
 SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselines from current scores
 ```
+
 `.github/workflows/evals.yml` runs `run_all.py` in replay mode on every PR that touches `backend/agents/**` or the harness. The `chat_tutor` dataset is excluded from the offline harness because its retrieval tool reads a live Supabase (tracked under #149). See `backend/tests/evals/README.md` for the record/refresh workflow.
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/`) runs backend pytest and ruff plus frontend eslint, typecheck, and vitest on every PR and push to `main`. Additional workflows cover end-to-end (Playwright), integration, agent evals, and staging migrations. The backend CI job installs from the hash-pinned `backend/requirements.lock` and skips the heavy OCR integration tests. The frontend is built and deployed by Cloudflare Workers Builds (see "Tech Stack" for the backend host).
+
+## Contributing
+
+Branching strategy, PR review requirements, and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Architecture & Dev Context
 
 **Live architecture overview** — `docs/architecture.md`.
 
-**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Seventeen ADRs as of merge:
+**Architectural Decision Records** — `docs/decisions/` (append-only, MADR-minimal format). Twenty-six ADRs as of this writing:
+
 - `0001` — Adopt Pydantic AI as the agent framework
 - `0002` — Markdown-based dev-context vault structure
 - `0003` — Per-call `usage_limits=` and inline system prompts
@@ -303,6 +432,15 @@ SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselin
 - `0015` — Refactor #3 (chat tutor) shipped as `chat_tutor_agent`
 - `0016` — Refactor #4 (syllabus extraction) unified onto the agent
 - `0017` — Notetaker dynamic implementation (CRUD + four agent-backed actions)
+- `0018` — Session token lifecycle
+- `0019` — `SAPLING_MODEL_MODE` FunctionModel test seam
+- `0020` — Streaming tutor interrupt/retry
+- `0021` — Agent eval harness baselines
+- `0022` — Deploy environment single source of truth
+- `0023` — Tutor graph retrieval seam
+- `0024` — Retire the legacy Gemini seam
+- `0025` — Encrypt RAG chunk text
+- `0026` — Newsletter email stays plaintext
 
 **Things that didn't work** — `docs/attempts/` (each entry has a mandatory "What I'd try next" section).
 
@@ -314,7 +452,7 @@ SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py  # refresh baselin
 
 Schema lives as ordered SQL files in `backend/db/migrations/`, applied in filename order. New migrations use a UTC timestamp prefix (`date -u +%Y%m%d%H%M%S`); the legacy `NNNN_` files are frozen and must never be renamed, since the ledger keys on basename and a rename re-runs the migration. See `backend/db/migrations/README.md`. A minimal runner (`backend/db/migrate.py`) applies pending files in order and records each in a tracking table, so it's idempotent — re-running only applies what's new. The runner connects with `psycopg` over the **session-mode pooler** URI (`SUPABASE_DB_URL`, port 5432, user `postgres.<ref>`); this is the one sanctioned exception to the `db/connection.py::table()`-only convention, since runtime PostgREST can't execute DDL.
 
-```bash
+```
 cd backend
 SUPABASE_DB_URL=postgresql://... python -m db.migrate            # apply pending
 SUPABASE_DB_URL=postgresql://... python -m db.migrate --baseline # record all as applied without running (adopting an existing DB)
@@ -323,6 +461,15 @@ SUPABASE_DB_URL=postgresql://... python -m db.migrate --baseline # record all as
 Migrations `0019`–`0028` are the **modular schema redesign**: courses split into an abstract `courses` table plus `course_offerings` and `terms`, `user_courses` became `enrollments`, identity split into `users` + `user_profiles`, the gradebook re-keyed onto `enrollment_id`, analytics re-keyed onto offerings, and the graph gained append-only `node_mastery_events`. The public API boundary still keys on the abstract `course_id`.
 
 For staging, after applying migrations you can lay down a self-contained fake demo dataset (graph + gradebook + courses-with-term) with `python -m db.seed_staging` — idempotent and **staging-only**, never run it against production. See `docs/staging/setup-checklist.md` for the full staging bring-up.
+
+## Team
+
+- Andres Lopez
+- Jack He
+- Luke Cooper
+- Jose Gael Cruz-Lopez
+- Azaria Gonzales
+- Aerim Lee
 
 ## License
 
