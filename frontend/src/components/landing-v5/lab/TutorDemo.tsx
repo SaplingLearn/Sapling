@@ -140,7 +140,7 @@ export function TutorDemo() {
               onClick={() => pick(i)}
               type="button"
               className="ld-labreply"
-              style={{ padding: '8px 13px', borderRadius: 99, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, color: '#33443B', cursor: 'pointer', transition: 'all 180ms' }}
+              style={{ padding: '8px 13px', borderRadius: 99, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12.5, color: '#33443B', cursor: 'pointer', transition: 'all 180ms' }}
             >
               {r.text}
             </button>
@@ -152,7 +152,7 @@ export function TutorDemo() {
               ? (mode === 'teachback' ? 'IT LISTENS FOR WHAT YOU SKIPPED' : 'IT NEVER HANDS OVER THE ANSWER')
               : 'SESSION COMPLETE · MASTERY WRITTEN BACK TO YOUR GRAPH'}
           </span>
-          <button onClick={reset} type="button" className="ld-labrecent" style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: '#61726A', cursor: 'pointer' }}>
+          <button onClick={reset} type="button" className="ld-labrecent" style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12, color: '#61726A', cursor: 'pointer' }}>
             Start over
           </button>
         </div>

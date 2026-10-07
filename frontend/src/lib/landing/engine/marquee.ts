@@ -41,6 +41,21 @@ export interface MarqueeController {
    * that re-entering doesn't apply the whole elapsed gap as one jump.
    */
   resetClock(now: number): void;
+  /**
+   * Freeze every track where it stands, without stopping the clock.
+   *
+   * Held while the feature lab is open. The lab is a full-bleed panel, so the
+   * rail it covers is drifting where nobody can see it — and the card the
+   * panel has to collapse back into is drifting with it. At the rail's 26px/s
+   * that is ~40px across a few seconds in the lab, which is the difference
+   * between the panel landing on its card and landing beside it.
+   *
+   * Implemented as its own flag rather than by setting each track's `paused`:
+   * that one belongs to hover, and a mouseleave arriving as the lab closes
+   * would clear a hold it never set. The drift clock keeps advancing either
+   * way, so releasing never applies the held interval as one jump.
+   */
+  hold(v: boolean): void;
   destroy(): void;
 }
 
@@ -50,6 +65,7 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
   const tracks: HTMLElement[] = [];
   const cleanups: (() => void)[] = [];
   let last = 0;
+  let held = false;
 
   function bind(track: HTMLElement, dir: number): void {
     if (STATE.has(track)) return;
@@ -135,14 +151,19 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
       // measure one card set only when the container width changed
       if (!m.setW || m.measuredW !== wrap.clientWidth) {
         const kids = track.children;
-        const half = kids.length / 2;
+        // The track may hold more than two copies of the set on a screen
+        // wide enough that two copies don't out-run the viewport (see
+        // `data-set-size` in Gallery.tsx) — `kids.length / 2` is only right
+        // for exactly two, and undercounts the set on anything wider,
+        // which wraps `off` early and clips straight into empty track.
+        const setSize = Number(track.dataset.setSize) || kids.length / 2;
         const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
         let w = 0;
-        for (let i = 0; i < half; i++) w += (kids[i] as HTMLElement).offsetWidth + gap;
+        for (let i = 0; i < setSize; i++) w += (kids[i] as HTMLElement).offsetWidth + gap;
         m.setW = w || 1;
         m.measuredW = wrap.clientWidth;
       }
-      if (!m.drag) {
+      if (!m.drag && !held) {
         if (Math.abs(m.v) > 0.004) {
           m.off += m.v * dt;
           // frame-rate independent decay
@@ -161,11 +182,15 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
     last = now;
   }
 
+  function hold(v: boolean): void {
+    held = v;
+  }
+
   function destroy(): void {
     cleanups.forEach((fn) => fn());
     cleanups.length = 0;
     tracks.length = 0;
   }
 
-  return { bind, update, resetClock, destroy };
+  return { bind, update, resetClock, hold, destroy };
 }
