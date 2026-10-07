@@ -53,7 +53,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
       </div>
 
       <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#12201A' }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#12201A' }}>
           Ready to <br /> Start <em style={{ color: '#0C5638', paddingRight: 8 }}>Growing?</em>
         </h2>
         <p style={{ margin: '24px 0 0', color: '#61726A', fontSize: 17, fontWeight: 400 }}>
@@ -63,7 +63,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
           <button
             onClick={onGetStarted}
             className="ld-btn-solid"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "'DM Sans',sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
           >
             Sign up for Beta Testing
           </button>
