@@ -19,7 +19,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Product Scope & Planning
 
-- **Product scope doc** (problem statement, MVP1 scope, out-of-scope, success criteria): https://docs.google.com/document/d/1dfL17ZW2E6gI9iTEszQlU_D6CwbORYLiX7ddejPVXHs/edit?tab=t.0
+- **Product scope doc** (problem statement, MVP1 scope, out-of-scope, success criteria): https://drive.google.com/file/d/1sjQgW3obct6FgNlhzF1RXxDxDOU2VpNg/view?usp=sharing
 - **Notion backlog** (user stories, acceptance criteria, priorities, Sprint 1 tasks): https://app.notion.com/p/Sapling-3cd780cd9453802db54fe5a04ccf27a8
 - **Canopy ticket tracker** (our team's own ticket system, connected to the Notion backlog so stories can be followed to their tickets): https://canopy.saplinglearn.com/#tickets. Canopy signs in with GitHub, so access is limited to people attached to the Sapling GitHub repository (team members, mentors, and course staff added as collaborators).
 - **GitHub Issues** (code-level tasks and pull requests): https://github.com/SaplingLearn/Sapling/issues
