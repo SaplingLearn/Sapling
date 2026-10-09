@@ -134,10 +134,6 @@ export const subscribeToNewsletter = (email: string) =>
     body: JSON.stringify({ email }),
   });
 
-// Users
-export const getUsers = () =>
-  fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
-
 // Auth
 export interface MeResponse {
   user_id: string;

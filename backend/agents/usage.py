@@ -24,8 +24,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agents._providers import AgentTask, model_for
-from services import events_service
+from agents._providers import AgentTask, model_for, model_mode
+from services import events_service, llm_pricing
 
 logger = logging.getLogger("sapling.agents.usage")
 
@@ -69,6 +69,29 @@ def served_model_name(result: Any, task: AgentTask | None = None) -> str:
         except Exception:
             pass
     return "unknown"
+
+
+def _warn_zero_token_run(result: Any, task: AgentTask | None, feature: str) -> None:
+    """Make a real run that reports no tokens loud (#689).
+
+    A real model that made at least one request always bills tokens, so a
+    zero count means usage extraction broke below us (#689: a genai-prices
+    release pydantic-ai 1.x could not read, swallowed inside pydantic-ai).
+    The row still lands, at $0, and every cost rollup and AI budget cap
+    under-reads. Function mode reports zeros by design, so it stays quiet.
+    """
+    if model_mode() != "real":
+        return
+    usage = result.usage()
+    if getattr(usage, "requests", 0) and not llm_pricing.normalize_usage(usage)["total_tokens"]:
+        logger.warning(
+            "agent run made %d model request(s) but reported 0 tokens "
+            "(task=%s feature=%s); llm_usage cost and AI budget caps will "
+            "under-read (#689)",
+            usage.requests,
+            task,
+            feature,
+        )
 
 
 def _log_recovered_retries(result: Any, task: AgentTask | None, feature: str) -> None:
@@ -128,6 +151,10 @@ def record_agent_usage(
         )
     except Exception:
         logger.debug("record_agent_usage: could not capture usage", exc_info=True)
+    try:
+        _warn_zero_token_run(result, task, feature)
+    except Exception:
+        logger.debug("record_agent_usage: zero-token check slipped", exc_info=True)
     try:
         _log_recovered_retries(result, task, feature)
     except Exception:

@@ -115,10 +115,12 @@ def teardown_fixture() -> None:
 
 
 def check_auth() -> None:
-    r = anon.get("/api/users")
-    check("GET /api/users (no cookie) -> 401", r.status_code == 401, f"got {r.status_code}")
-    r = client.get("/api/users")
-    check("GET /api/users (session) -> 200", r.status_code == 200, f"got {r.status_code}")
+    # /api/auth/me is the cookie-identified probe (the bulk /api/users roster
+    # it replaced here was deleted: it leaked every decrypted name).
+    r = anon.get("/api/auth/me")
+    check("GET /api/auth/me (no cookie) -> 401", r.status_code == 401, f"got {r.status_code}")
+    r = client.get("/api/auth/me")
+    check("GET /api/auth/me (session) -> 200", r.status_code == 200, f"got {r.status_code}")
 
 
 def main() -> int:
