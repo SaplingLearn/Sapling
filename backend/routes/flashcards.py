@@ -17,6 +17,7 @@ from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.tutor_sessions import require_session_owner
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -220,9 +221,13 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     """
     require_self(body.user_id, request)
 
-    # 1. Session summary (optional extra context)
+    # 1. Session summary (optional extra context). require_self only proves
+    #    the caller is body.user_id; the session must ALSO be theirs, or this
+    #    decrypts a classmate's tutor summary into the prompt. 404 for a
+    #    missing or foreign id, decided before anything is read.
     context = ""
     if body.session_id:
+        require_session_owner(body.session_id, body.user_id)
         context = _get_session_summary(body.session_id)
 
     # 2. Library documents for this course (term-scoped when a semester is
