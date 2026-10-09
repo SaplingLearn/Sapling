@@ -31,6 +31,7 @@ from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
     require_session_owner,
+    session_lock,
     session_owned_by,
 )
 from services.xp_service import award_xp_safe
@@ -434,43 +435,64 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     second line of defence and runs BEFORE the pop, so a mismatched caller
     can never destroy the owner's pending session.
     """
-    pending = PENDING_SESSIONS.get(session_id)
-    if pending is None:
-        return
-    if pending["user_id"] != user_id:
-        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
-    # Sync routes run in a threadpool: two of the owner's requests can both read
-    # the payload above. Only the one whose pop returns it materialises the row;
-    # the other finds it already done (no duplicate-key insert).
-    if PENDING_SESSIONS.pop(session_id, None) is None:
-        return
+    with session_lock(session_id):
+        pending = PENDING_SESSIONS.get(session_id)
+        if pending is None:
+            # A competing end/delete may have discarded the pending entry
+            # between the route's ownership guard and this readiness gate.
+            _require_session_owner(session_id, user_id)
+            return
+        if pending["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
-    # Sessions key on the offering (0025). The pending payload carries the
-    # offering id (resolved at start-session) alongside the abstract course id.
-    session_data = {
-        "id": session_id,
-        "user_id": user_id,
-        "mode": pending["mode"],
-        "topic": pending["topic"],
-    }
-    if pending.get("offering_id"):
-        session_data["offering_id"] = pending["offering_id"]
+        # Keep the pending record until both durable writes have completed.
+        # A failed insert or message write is therefore retryable. On retry,
+        # recognize a row/message that committed before its caller saw an
+        # error, so recovery does not duplicate either record.
+        session_rows = table("sessions").select(
+            "id,user_id", filters={"id": f"eq.{session_id}"}, limit=1
+        )
+        if session_rows:
+            if session_rows[0].get("user_id") != user_id:
+                raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
+        else:
+            session_data = {
+                "id": session_id,
+                "user_id": user_id,
+                "mode": pending["mode"],
+                "topic": pending["topic"],
+            }
+            if pending.get("offering_id"):
+                session_data["offering_id"] = pending["offering_id"]
+            table("sessions").insert(session_data)
 
-    table("sessions").insert(session_data)
-    # #117: session.started once the lazy session row actually materializes.
-    # The topic is free text -> content= (fingerprint only), never payload.
-    events_service.log_event(
-        "session.started",
-        category="usage",
-        user_id=user_id,
-        payload={
-            "session_id": session_id,
-            "mode": pending["mode"],
-            "offering_id": pending.get("offering_id"),
-        },
-        content=pending["topic"],
-    )
-    save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        assistant_rows = table("messages").select(
+            "content", filters={"session_id": f"eq.{session_id}", "role": "eq.assistant"}
+        )
+        greeting_persisted = any(
+            decrypt_if_present(row.get("content")) == pending["assistant_reply"]
+            for row in assistant_rows
+        )
+        if not greeting_persisted:
+            save_message(
+                session_id, "assistant", pending["assistant_reply"], pending["graph_update"]
+            )
+
+        # #117: emit only after the lazy row and its opening assistant message
+        # are durable; callers waiting on session_lock cannot observe a
+        # half-materialised session.
+        events_service.log_event(
+            "session.started",
+            category="usage",
+            user_id=user_id,
+            payload={
+                "session_id": session_id,
+                "mode": pending["mode"],
+                "offering_id": pending.get("offering_id"),
+            },
+            content=pending["topic"],
+        )
+        PENDING_SESSIONS.pop(session_id, None)
 
 
 def _ensure_session_ready(session_id: str, user_id: str) -> None:
@@ -1164,17 +1186,18 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
-    _require_session_owner(body.session_id, body.user_id)
-    if body.session_id in PENDING_SESSIONS:
-        PENDING_SESSIONS.pop(body.session_id, None)
-        empty = {
-            "concepts_covered": [],
-            "mastery_changes": [],
-            "new_connections": [],
-            "time_spent_minutes": 0,
-            "recommended_next": [],
-        }
-        return {"summary": empty}
+    with session_lock(body.session_id):
+        _require_session_owner(body.session_id, body.user_id)
+        if body.session_id in PENDING_SESSIONS:
+            PENDING_SESSIONS.pop(body.session_id, None)
+            empty = {
+                "concepts_covered": [],
+                "mastery_changes": [],
+                "new_connections": [],
+                "time_spent_minutes": 0,
+                "recommended_next": [],
+            }
+            return {"summary": empty}
 
     session_rows = table("sessions").select(
         "user_id,started_at",
@@ -1318,15 +1341,16 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     if not topic or len(topic) > 120:
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
-    _require_session_owner(session_id, body.user_id)
-    if session_id in PENDING_SESSIONS:
-        PENDING_SESSIONS[session_id]["topic"] = topic
-        return {"updated": True, "session": {"id": session_id, "topic": topic}}
+    with session_lock(session_id):
+        _require_session_owner(session_id, body.user_id)
+        if session_id in PENDING_SESSIONS:
+            PENDING_SESSIONS[session_id]["topic"] = topic
+            return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
-    table("sessions").update(
-        {"topic": topic},
-        filters={"id": f"eq.{session_id}"},
-    )
+        table("sessions").update(
+            {"topic": topic},
+            filters={"id": f"eq.{session_id}"},
+        )
     return {"updated": True, "session": {"id": session_id, "topic": topic}}
 
 
@@ -1339,13 +1363,14 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
     # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
     # no-op 200 — nothing is deleted, and the answer never says whether the id
     # exists. A second delete (another tab, a double click) still succeeds.
-    if not session_owned_by(session_id, user_id):
-        return {"deleted": True}
-    if session_id in PENDING_SESSIONS:
-        PENDING_SESSIONS.pop(session_id, None)
-        return {"deleted": True}
-    table("messages").delete({"session_id": f"eq.{session_id}"})
-    table("sessions").delete({"id": f"eq.{session_id}"})
+    with session_lock(session_id):
+        if not session_owned_by(session_id, user_id):
+            return {"deleted": True}
+        if session_id in PENDING_SESSIONS:
+            PENDING_SESSIONS.pop(session_id, None)
+            return {"deleted": True}
+        table("messages").delete({"session_id": f"eq.{session_id}"})
+        table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
 
 

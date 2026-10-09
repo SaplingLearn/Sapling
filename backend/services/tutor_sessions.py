@@ -12,12 +12,28 @@ pending between start-session and the first chat turn: it has no
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from threading import Lock, RLock
 from fastapi import HTTPException
 
 from db.connection import table
 
 # Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
 PENDING_SESSIONS: dict[str, dict] = {}
+
+# A session's pending payload and its first persisted assistant message form
+# one readiness boundary. Serialize materialisation and every operation that
+# can rename, end, or discard that pending payload on the same session id.
+_session_locks_guard = Lock()
+_session_locks: dict[str, RLock] = {}
+
+
+@contextmanager
+def session_lock(session_id: str):
+    with _session_locks_guard:
+        lock = _session_locks.setdefault(session_id, RLock())
+    with lock:
+        yield
 
 SESSION_NOT_FOUND = "Session not found"
 

@@ -398,24 +398,136 @@ class TestRequireSessionOwner:
         assert call.kwargs["filters"] == {"id": f"eq.{SESSION}"}
 
 
-def test_a_lost_pop_race_does_not_materialise_the_session_twice():
-    """CodeRabbit on #709: two concurrent owner requests both read the pending
-    payload; only the one whose pop returns it inserts the session row."""
+def test_concurrent_materialisers_wait_for_the_initial_assistant_write():
+    """A waiter cannot pass readiness while the winning request writes hello."""
+    import threading
+    import time
 
-    class _LostRace(dict):
-        def pop(self, key, default=None):  # the other request popped it first
-            super().pop(key, default)
-            return default
-
-    pending = _LostRace(
-        {"s-race": {"user_id": OWNER, "mode": "socratic", "topic": "t",
-                    "assistant_reply": "hi", "graph_update": {}}}
-    )
+    pending = {"s-race": {"user_id": OWNER, "mode": "socratic", "topic": "t",
+                          "assistant_reply": "hi", "graph_update": {}}}
     tables = _Tables()
     from routes import learn
+    assistant_write_started = threading.Event()
+    release_assistant_write = threading.Event()
+    second_entered = threading.Event()
+    second_finished = threading.Event()
+    writes = []
+
+    def save_initial(*args):
+        assistant_write_started.set()
+        assert release_assistant_write.wait(timeout=5)
+        writes.append(args)
+
+    def first():
+        learn._consume_pending("s-race", OWNER)
+
+    def second():
+        second_entered.set()
+        learn._consume_pending("s-race", OWNER)
+        second_finished.set()
 
     with patch("routes.learn.table", side_effect=tables), \
-         patch("routes.learn.PENDING_SESSIONS", pending):
-        learn._consume_pending("s-race", OWNER)
-    assert not tables.touched("sessions", "insert")
-    assert not tables.touched("messages", "insert")
+         patch("routes.learn.PENDING_SESSIONS", pending), \
+         patch("routes.learn.save_message", side_effect=save_initial), \
+         patch("routes.learn.events_service.log_event"):
+        one = threading.Thread(target=first)
+        two = threading.Thread(target=second)
+        one.start()
+        assert assistant_write_started.wait(timeout=5)
+        two.start()
+        assert second_entered.wait(timeout=5)
+        time.sleep(0.05)
+        assert not second_finished.is_set()
+        release_assistant_write.set()
+        one.join(timeout=5)
+        two.join(timeout=5)
+
+    assert not one.is_alive() and not two.is_alive()
+    assert len(writes) == 1
+    assert tables.mocks["sessions"].insert.call_count == 0
+    assert "s-race" not in pending
+
+
+def test_materialisation_recovers_after_session_insert_commits_then_raises():
+    """A retry adopts an already committed row instead of duplicate inserting."""
+    pending = {"s-partial": {"user_id": OWNER, "mode": "socratic", "topic": "t",
+                             "assistant_reply": "hi", "graph_update": {}}}
+    tables = _Tables(session_owner=None)
+    rows = []
+    messages = []
+    session_table = tables("sessions")
+    session_table.select.side_effect = lambda *a, **k: list(rows)
+
+    def insert_session(row):
+        rows.append(row)
+        raise RuntimeError("simulated response loss after commit")
+
+    session_table.insert.side_effect = insert_session
+    message_table = tables("messages")
+    message_table.select.side_effect = lambda *a, **k: list(messages)
+    from routes import learn
+
+    def save_initial(sid, role, content, graph_update):
+        messages.append({"content": content})
+
+    with patch("routes.learn.table", side_effect=tables), \
+         patch("routes.learn.PENDING_SESSIONS", pending), \
+         patch("routes.learn.save_message", side_effect=save_initial), \
+         patch("routes.learn.events_service.log_event"):
+        with pytest.raises(RuntimeError, match="response loss"):
+            learn._consume_pending("s-partial", OWNER)
+        assert "s-partial" in pending
+        # The next read sees the committed row and continues without another insert.
+        session_table.select.side_effect = lambda *a, **k: list(rows)
+        learn._consume_pending("s-partial", OWNER)
+
+    assert session_table.insert.call_count == 1
+    assert len(rows) == 1
+    assert len(messages) == 1
+    assert "s-partial" not in pending
+
+
+def test_materialisation_recovers_after_initial_assistant_commit_then_raises():
+    """A retry sees the committed greeting and does not insert it twice."""
+    pending = {"s-message-partial": {
+        "user_id": OWNER, "mode": "socratic", "topic": "t",
+        "assistant_reply": "Welcome", "graph_update": {},
+    }}
+    tables = _Tables()
+    messages = []
+    message_table = tables("messages")
+    message_table.select.side_effect = lambda *a, **k: list(messages)
+    from routes import learn
+    writes = []
+
+    def save_initial(sid, role, content, graph_update):
+        writes.append(content)
+        messages.append({"content": content})
+        if len(writes) == 1:
+            raise RuntimeError("simulated response loss after message commit")
+
+    with patch("routes.learn.table", side_effect=tables), \
+         patch("routes.learn.PENDING_SESSIONS", pending), \
+         patch("routes.learn.save_message", side_effect=save_initial), \
+         patch("routes.learn.events_service.log_event"):
+        with pytest.raises(RuntimeError, match="message commit"):
+            learn._consume_pending("s-message-partial", OWNER)
+        assert "s-message-partial" in pending
+        learn._consume_pending("s-message-partial", OWNER)
+
+    assert writes == ["Welcome"]
+    assert len(messages) == 1
+    assert "s-message-partial" not in pending
+
+
+def test_request_does_not_continue_after_pending_session_was_discarded():
+    from fastapi import HTTPException
+    from routes import learn
+
+    pending = {}
+    with patch("routes.learn.PENDING_SESSIONS", pending), \
+         patch("routes.learn.table", side_effect=_Tables(session_owner=None)):
+        with pytest.raises(HTTPException) as exc:
+            learn._consume_pending("s-discarded", OWNER)
+
+    assert exc.value.status_code == 404
