@@ -232,7 +232,7 @@ def evaluate(
     destructive: list[Finding],
     commits_ahead: int,
     migrations_drift: str,
-    production_is_ancestor: bool,
+    production_diverged: bool,
     allow_destructive: bool,
     skip_staging_check: bool,
 ) -> list[Finding]:
@@ -264,15 +264,20 @@ def evaluate(
                 "db/migrations/, then re-run.",
             )
         )
-    if not production_is_ancestor:
+    # `production_diverged` is CONTENT divergence, not ancestry (#666): the
+    # runner sets it only when origin/production is not an ancestor of
+    # origin/main AND its production-only commits change the tree. A previous
+    # promotion's merge commit is production-only but changes nothing, so it
+    # never blocks; a hotfix or revert on production still does.
+    if production_diverged:
         findings.append(
             Finding(
                 "production-diverged",
                 "origin/production has commit(s) that are not on origin/main "
-                "(a hotfix or revert that was never back-merged). The merge "
-                "would fail deterministically AFTER migrations applied. "
-                "Back-merge production into main (or otherwise reconcile) "
-                "before promoting.",
+                "and change its content (a hotfix or revert that was never "
+                "back-merged). The merge would fail deterministically AFTER "
+                "migrations applied. Back-merge production into main (or "
+                "otherwise reconcile) before promoting.",
             )
         )
     if findings:
