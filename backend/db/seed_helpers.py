@@ -45,6 +45,15 @@ def insert_if_absent(table_name: str, row_id: str, row: dict) -> None:
     record(table_name, created=True)
 
 
+def insert_by_keys(table_name: str, row: dict, keys: str) -> None:
+    """Insert a row with a composite or non-id primary key without overwriting it."""
+    if exists_by(table_name, {key: row[key] for key in keys.split(",")}):
+        record(table_name, created=False)
+        return
+    table(table_name).insert(row)
+    record(table_name, created=True)
+
+
 def print_summary(order: list[str], header: str) -> int:
     print(f"\n{header}")
     total_created = 0

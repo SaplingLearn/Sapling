@@ -1,14 +1,292 @@
+from collections import defaultdict
+from copy import deepcopy
+
 import pytest
 
 import db.seed_local_rich as rich
+from db import seed_helpers as h, seed_local_owner as owner_seed
+from e2e_oracles import judges
+from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
+from services.encryption import decrypt, encrypt
 
 
 def test_guard_refuses_non_local(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("SUPABASE_URL", "https://prod.supabase.co")
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="not local"):
         rich._guard_local()
 
 
 def test_guard_allows_local(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
     rich._guard_local()  # no raise
+
+
+@pytest.mark.parametrize("url", ["http://localhost:54321", "http://[::1]:54321"])
+def test_guard_accepts_other_exact_loopback_hosts(monkeypatch, url):
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("SUPABASE_URL", url)
+    rich._guard_local()
+
+
+@pytest.mark.parametrize("environment", ["production", "staging", "test", "dev", "development", ""])
+def test_guard_requires_exact_local_environment(monkeypatch, environment):
+    monkeypatch.setenv("APP_ENV", environment)
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    with pytest.raises(SystemExit, match="APP_ENV=local"):
+        rich._guard_local()
+
+
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1.evil.example", "https://localhost.evil.example",
+    "https://remote.example/localhost", "http://[invalid", "", "file://localhost/database",
+])
+def test_guard_rejects_loopback_substrings_and_malformed_urls(monkeypatch, url):
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("SUPABASE_URL", url)
+    with pytest.raises(SystemExit, match="not local"):
+        rich._guard_local()
+
+
+class MemoryDatabase:
+    """Persist writes between CLI runs, rather than echoing mocked payloads."""
+
+    def __init__(self):
+        self.rows = defaultdict(list)
+        self.writes = []
+
+    def table(self, name):
+        db = self
+
+        class Handle:
+            def select(self, columns="*", filters=None, limit=None, offset=None, order=None):
+                rows = [row for row in db.rows[name] if all(
+                    str(row.get(key)) == value.removeprefix("eq.")
+                    for key, value in (filters or {}).items()
+                )]
+                if order:
+                    rows = sorted(rows, key=lambda row: row.get("id", ""))
+                rows = rows[offset or 0:]
+                if limit:
+                    rows = rows[:limit]
+                return deepcopy(rows)
+
+            def select_with_count(self, columns="*", filters=None, limit=None, offset=None, order=None):
+                count = len(self.select(columns, filters=filters))
+                return self.select(columns, filters=filters, limit=limit, offset=offset, order=order), count
+
+            def insert(self, row):
+                if row.get("id"):
+                    assert not any(saved.get("id") == row["id"] for saved in db.rows[name])
+                db.rows[name].append(deepcopy(row))
+                db.writes.append((name, "insert"))
+                return [deepcopy(row)]
+
+            def update(self, row, filters):
+                matching = self.select(filters=filters)
+                for saved in db.rows[name]:
+                    if saved in matching:
+                        saved.update(deepcopy(row))
+                db.writes.append((name, "update"))
+                return self.select(filters=filters)
+
+            def upsert(self, row, on_conflict):
+                filters = {key: f"eq.{row[key]}" for key in on_conflict.split(",")}
+                if self.select(filters=filters):
+                    return self.update(row, filters)
+                return self.insert(row)
+
+        return Handle()
+
+
+@pytest.fixture
+def local_database(monkeypatch):
+    db = MemoryDatabase()
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    for module in (rich, h, owner_seed):
+        monkeypatch.setattr(module, "table", db.table)
+    db.rows["roles"] = [{"id": "11111111-2222-4333-8444-555555555555", "slug": "admin"}]
+    db.rows["users"] = [{
+        "id": "user-personal", "email": encrypt("developer@gmail.com"),
+        "google_id": "personal", "onboarding_completed": False, "is_approved": True,
+    }]
+    db.rows["user_profiles"] = [{"user_id": "user-personal", "name": encrypt("Real Developer")}]
+    return db
+
+
+def _seed_personal():
+    rich.main(["--owner-email", " Developer@Gmail.com "])
+
+
+def test_owner_dataset_populates_all_surfaces_and_is_a_true_noop_on_rerun(local_database):
+    before_identity = deepcopy(local_database.rows["users"][0])
+    before_profile = deepcopy(local_database.rows["user_profiles"][0])
+    _seed_personal()
+    assert len(local_database.rows["enrollments"]) == 5
+    assert len(local_database.rows["graph_nodes"]) == 13
+    assert len(local_database.rows["graph_edges"]) == 7
+    assert len(local_database.rows["node_mastery_events"]) == 6
+    assert len(local_database.rows["documents"]) == 3
+    assert len(local_database.rows["course_chunks"]) == 3
+    assert len(local_database.rows["notes"]) == 2
+    assert len(local_database.rows["quiz_attempts"]) == 3
+    assert len(local_database.rows["gradebook_categories"]) == 9
+    assert len(local_database.rows["assignments"]) == 11
+    assert len(local_database.rows["rooms"]) == 2
+    assert local_database.rows["users"][0] == {**before_identity, "onboarding_completed": True}
+    assert local_database.rows["user_profiles"][0] == before_profile
+    assert not local_database.rows["user_roles"]
+    assert all(row["user_id"] == "user-personal" for row in local_database.rows["graph_nodes"])
+    assert all(row["visibility"] == "private" and row["uploader_id"] == "user-personal"
+               and len(row["embedding"]) == 768 for row in local_database.rows["course_chunks"])
+    snapshot = deepcopy(local_database.rows)
+    writes = len(local_database.writes)
+    _seed_personal()
+    assert local_database.rows == snapshot
+    assert len(local_database.writes) == writes
+
+
+def test_owner_seed_keeps_oracle_ciphertext_and_foreign_keys_clean(local_database):
+    _seed_personal()
+    for table_name, pk, column in _CIPHERTEXT_MANIFEST:
+        pairs = [(row[pk], row[column]) for row in local_database.rows[table_name] if row.get(column) is not None]
+        assert judges.ciphertext_findings(table_name, column, pairs, decrypt) == []
+    references = {
+        "enrollments": {"user_id": "users", "offering_id": "course_offerings"},
+        "graph_nodes": {"user_id": "users", "course_id": "courses"},
+        "graph_edges": {"source_node_id": "graph_nodes", "target_node_id": "graph_nodes"},
+        "node_mastery_events": {"node_id": "graph_nodes"},
+        "gradebook_categories": {"enrollment_id": "enrollments"},
+        "assignments": {"enrollment_id": "enrollments", "category_id": "gradebook_categories"},
+        "documents": {"user_id": "users", "offering_id": "course_offerings"},
+        "notes": {"user_id": "users", "offering_id": "course_offerings"},
+        "course_chunks": {"doc_id": "documents", "uploader_id": "users", "course_id": "courses"},
+        "rooms": {"created_by": "users", "owner_id": "users"},
+        "room_members": {"room_id": "rooms", "user_id": "users"},
+        "room_messages": {"room_id": "rooms", "user_id": "users"},
+        "room_summaries": {"room_id": "rooms"},
+        "quiz_attempts": {"concept_node_id": "graph_nodes", "user_id": "users"},
+        "quiz_context": {"concept_node_id": "graph_nodes", "user_id": "users"},
+        "study_guides": {"exam_id": "assignments", "user_id": "users"},
+        "sessions": {"offering_id": "course_offerings", "user_id": "users"},
+        "messages": {"session_id": "sessions"},
+    }
+    for child, fields in references.items():
+        for field, parent in fields.items():
+            parent_ids = {row["id"] for row in local_database.rows[parent]}
+            orphans = [row.get("id") for row in local_database.rows[child] if row[field] not in parent_ids]
+            assert judges.orphan_findings(f"{child}->{parent}", orphans) == []
+
+
+def test_owner_can_reuse_existing_enrollment_and_concept_without_resetting_them(local_database):
+    local_database.rows["enrollments"].append({
+        "id": "my-enrollment", "user_id": "user-personal", "offering_id": rich.OFF_CS_F25,
+        "nickname": "Keep my nickname",
+    })
+    local_database.rows["graph_nodes"].append({
+        "id": "my-variable", "user_id": "user-personal", "course_id": rich.COURSE_CS,
+        "concept_name": "Variables and Types", "mastery_score": 0.99,
+    })
+    _seed_personal()
+    assert local_database.rows["enrollments"][0]["nickname"] == "Keep my nickname"
+    assert local_database.rows["graph_nodes"][0]["mastery_score"] == 0.99
+    assert any(row["enrollment_id"] == "my-enrollment" for row in local_database.rows["assignments"])
+    assert any(row["node_id"] == "my-variable" for row in local_database.rows["node_mastery_events"])
+
+
+def test_owner_seed_preserves_edits_to_sample_records(local_database):
+    _seed_personal()
+    assignment = local_database.rows["assignments"][0]
+    assignment["title"] = "My revised homework"
+    assignment["points_earned"] = encrypt("99")
+    note = local_database.rows["notes"][0]
+    note["body"] = encrypt("My revised study notes")
+    before = deepcopy(local_database.rows)
+    local_database.writes.clear()
+    _seed_personal()
+    assert local_database.rows == before
+    assert local_database.writes == []
+
+
+def test_partial_owner_seed_can_resume_after_a_write_failure(local_database, monkeypatch):
+    original_insert = owner_seed.OwnerSeedWriter.insert_if_absent
+    failed = False
+
+    def interrupt_once(writer, name, row_id, row):
+        nonlocal failed
+        if name == "documents" and not failed:
+            failed = True
+            raise RuntimeError("interrupted")
+        return original_insert(writer, name, row_id, row)
+
+    with monkeypatch.context() as context:
+        context.setattr(owner_seed.OwnerSeedWriter, "insert_if_absent", interrupt_once)
+        with pytest.raises(RuntimeError, match="interrupted"):
+            _seed_personal()
+    assert local_database.rows["users"][0]["onboarding_completed"] is False
+    _seed_personal()
+    assert local_database.rows["users"][0]["onboarding_completed"] is True
+    assert len(local_database.rows["documents"]) == 3
+    assert len(local_database.rows["assignments"]) == 11
+    assert len(local_database.rows["graph_nodes"]) == 13
+
+
+def test_two_owners_get_independent_datasets_and_sample_fixtures_remain_unchanged(local_database):
+    rich.main([])
+    baseline_nodes = deepcopy([row for row in local_database.rows["graph_nodes"] if row["user_id"] == rich.USER_ACTIVE])
+    baseline_assignments = deepcopy(local_database.rows["assignments"])
+    _seed_personal()
+    local_database.rows["users"].append({"id": "user-second-owner", "onboarding_completed": True})
+    rich.main(["--owner-user-id", "user-second-owner"])
+    assert [row for row in local_database.rows["graph_nodes"] if row["user_id"] == rich.USER_ACTIVE] == baseline_nodes
+    assert all(row in local_database.rows["assignments"] for row in baseline_assignments)
+    assert len(local_database.rows["graph_nodes"]) == 39
+    assert len(local_database.rows["rooms"]) == 6
+
+
+@pytest.mark.parametrize("args", [["--owner-email", "missing@gmail.com"], ["--owner-user-id", "missing"]])
+def test_missing_owner_fails_before_writing(local_database, args):
+    with pytest.raises(SystemExit):
+        rich.main(args)
+    assert local_database.writes == []
+
+
+def test_duplicate_email_requires_an_explicit_user_id(local_database):
+    local_database.rows["users"].append({"id": "duplicate", "email": encrypt("developer@gmail.com")})
+    with pytest.raises(SystemExit):
+        _seed_personal()
+    assert local_database.writes == []
+
+
+def test_wrong_encryption_key_fails_before_writing(local_database):
+    local_database.rows["users"][0]["email"] = "not-ciphertext"
+    with pytest.raises(SystemExit):
+        _seed_personal()
+    assert local_database.writes == []
+
+
+def test_cli_refuses_both_owner_options(local_database):
+    with pytest.raises(SystemExit):
+        rich.main(["--owner-email", "developer@gmail.com", "--owner-user-id", "user-personal"])
+    assert local_database.writes == []
+
+
+def test_cli_checks_environment_before_looking_up_an_owner(local_database, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+
+    def unexpected_database_access(_name):
+        pytest.fail("the guard must run before any database access")
+
+    monkeypatch.setattr(owner_seed, "table", unexpected_database_access)
+    with pytest.raises(SystemExit, match="APP_ENV=local"):
+        _seed_personal()
+    assert local_database.writes == []
+
+
+def test_email_lookup_pages_past_the_postgrest_row_cap(local_database):
+    local_database.rows["users"] = [
+        {"id": f"a-{i:04d}", "email": encrypt(f"user{i}@example.test")} for i in range(1001)
+    ] + local_database.rows["users"]
+    assert owner_seed.resolve_owner(email="developer@gmail.com")["id"] == "user-personal"

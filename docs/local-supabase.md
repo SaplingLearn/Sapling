@@ -93,6 +93,44 @@ The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in 
 Google creates *your* user (`user_<google-id>`) — a fresh account that goes through
 onboarding — not the seeded `seed-user-demo`; the seed is reference/sample data.
 
+### Put the rich sample dataset on your own account (#684)
+
+After signing in with Google once, run this from `backend/` in your activated
+local virtual environment (using your signed-in email):
+
+```bash
+python -m db.seed_local_rich --owner-email you@gmail.com
+```
+
+The command finds your existing account by decrypting local user emails. It
+adds the active rich user's five enrollments, graph and mastery history,
+documents and private chunks, notes, quizzes, gradebook, study guides, chat
+sessions, flashcards, and rooms. It completes local onboarding so you can
+reload into the dashboard; your Google identity, profile, approval, settings,
+and existing study data remain intact. No admin role is granted.
+
+Reload the app and use **All semesters**, or choose Fall 2025, Spring 2026, or
+Fall 2026 to inspect the fixture's term-specific courses. Rerunning the same
+command inserts nothing and preserves edits to the sample data. Each developer
+gets independent sample records; the normal `rich-user-*` E2E fixtures retain
+their original IDs and ownership.
+
+`--owner-user-id` also accepts your existing account ID (shown by
+`GET /api/auth/me` in your signed-in browser), as an alternative to email.
+Unknown or ambiguous accounts fail before any data is written. Seeding refuses
+all environments except **`APP_ENV=local`**, and requires an exact loopback
+Supabase host (`127.0.0.1`, `localhost`, or `::1`).
+
+The chunks use encrypted text and deterministic synthetic 768-dimensional
+embeddings: the fixtures exercise storage and retrieval without calling a
+model, and are not a semantic-search relevance benchmark.
+
+`scripts/local-db-reset.sh` still resets and seeds the standard demo dataset;
+`SEED_RICH=1` additionally seeds the normal rich accounts. A reset removes your
+OAuth account too, so sign in again and rerun the owner command afterward.
+`python -m e2e_oracles` continues to check the normal `rich-user-active` dataset;
+pass `--user` with your account ID to check your graph and API list counts.
+
 ### Automated tests: `POST /api/auth/test-login` (#381)
 
 Google OAuth cannot be driven headlessly, so test harnesses use a separate,
