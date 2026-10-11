@@ -1630,6 +1630,7 @@ export interface GradescopeCourse {
 
 export interface GradescopeLink {
   id: string;
+  enrollment_id?: string;
   sapling_course_id: string;
   gradescope_course_id: string;
   last_synced_at: string | null;
@@ -1684,15 +1685,16 @@ export const listGradescopeCourses = (userId: string) =>
     `/api/gradescope/courses?user_id=${encodeURIComponent(userId)}`,
   );
 
-export const listGradescopeLinks = (userId: string) =>
+export const listGradescopeLinks = (userId: string, semester?: string) =>
   fetchJSON<{ links: GradescopeLink[] }>(
-    `/api/gradescope/links?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradescope/links?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
   );
 
 export const linkGradescopeCourse = (
   userId: string,
   saplingCourseId: string,
   gradescopeCourseId: string,
+  semester?: string,
 ) =>
   fetchJSON<{ link: GradescopeLink | null }>(`/api/gradescope/link`, {
     method: 'POST',
@@ -1700,18 +1702,19 @@ export const linkGradescopeCourse = (
       user_id: userId,
       sapling_course_id: saplingCourseId,
       gradescope_course_id: gradescopeCourseId,
+      ...(semester ? { semester } : {}),
     }),
   });
 
-export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string) =>
+export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
   fetchJSON<{ ok: true }>(
-    `/api/gradescope/link/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradescope/link/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
     { method: 'DELETE' },
   );
 
-export const syncGradescopeCourse = (userId: string, saplingCourseId: string) =>
+export const syncGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
   fetchJSON<GradescopeSyncResult>(
-    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
     { method: 'POST' },
   );
 

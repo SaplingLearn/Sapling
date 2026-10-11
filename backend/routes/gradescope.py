@@ -1,9 +1,9 @@
 """
 backend/routes/gradescope.py
 
-Per-user Gradescope sync. Stores email/password encrypted at rest, logs in
-fresh on each call (no persisted session), and upserts grades into the
-existing assignments table keyed on `gradescope_assignment_id`.
+Per-user Gradescope sync with encrypted passwords or session cookies.
+Each import verifies authentication and writes to an enrollment's assignments
+using `gradescope_assignment_id` for repeat imports.
 
 Endpoints (mounted under /api/gradescope):
 - POST   /credentials                  Test login then save encrypted creds
@@ -28,11 +28,13 @@ from fastapi import APIRouter, HTTPException, Request
 from gradescopeapi.classes.connection import GSConnection
 from pydantic import BaseModel, Field
 
-from db.connection import table
+from db.connection import page_all, table
 from services import gradescope_service
 from services.academics import (
     enrollment_id_for,
     offering_course_id,
+    term_for_offering,
+    term_id_for_label,
     user_enrollment_ids,
     user_offering_ids_for_course,
 )
@@ -82,6 +84,7 @@ class LinkBody(BaseModel):
     user_id: str
     sapling_course_id: str
     gradescope_course_id: str
+    semester: str | None = None
 
 
 class SyncResult(BaseModel):
@@ -169,19 +172,21 @@ def _enrollment_for(user_id: str, sapling_course_id: str) -> str | None:
     return enrollment_id_for(user_id, sapling_course_id)
 
 
-def _all_enrollments_for(user_id: str, sapling_course_id: str) -> list[str]:
-    """EVERY enrollment the user holds in this abstract course, not just the
-    term-preferred one.
+def _all_enrollments_for(user_id: str, sapling_course_id: str, semester: str | None = None) -> list[str]:
+    """Owned enrollments in this course, optionally restricted to a semester.
 
-    `enrollment_id_for` re-derives a single enrollment from the current term on
-    each call, which is right for CREATING a link but wrong for finding one
-    that already exists: a retake gives two enrollments, and a link made in
-    Fall must still be findable, deletable and syncable once Spring is the
-    current term. Resolving by heuristic there produced duplicate links, a
-    delete that reported success while removing nothing, and a sync that 400'd
-    "no link" for a course `GET /links` was still listing (#265 review).
+    An explicit term never falls back to a different enrollment. Without a
+    term, search all enrollments so legacy links survive a term rollover.
     """
     offering_ids = set(user_offering_ids_for_course(user_id, sapling_course_id))
+    if semester is not None:
+        term_id = term_id_for_label(semester)
+        if not term_id:
+            return []
+        offering_ids = {
+            oid for oid in offering_ids
+            if (term_for_offering(oid) or {}).get("id") == term_id
+        }
     if not offering_ids:
         return []
     return [
@@ -237,9 +242,12 @@ def save_credentials(body: CredentialsBody, request: Request):
                 status_code=400, detail="email and password are required for password mode"
             )
         try:
-            gradescope_service.login(body.email, body.password)
+            connection = gradescope_service.login(body.email, body.password)
+            connection.session.close()
         except gradescope_service.GradescopeAuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
+        except gradescope_service.GradescopeFetchError as e:
+            raise HTTPException(status_code=502, detail=str(e))
         payload: dict[str, Any] = {
             "user_id": body.user_id,
             "auth_mode": "password",
@@ -254,12 +262,15 @@ def save_credentials(body: CredentialsBody, request: Request):
                 detail="_gradescope_session cookie is required for cookies mode",
             )
         try:
-            gradescope_service.login_with_cookies(
+            connection = gradescope_service.login_with_cookies(
                 signed_token=body.signed_token,
                 gradescope_session=body.gradescope_session,
             )
+            connection.session.close()
         except gradescope_service.GradescopeAuthError as e:
             raise HTTPException(status_code=401, detail=str(e))
+        except gradescope_service.GradescopeFetchError as e:
+            raise HTTPException(status_code=502, detail=str(e))
         cookie_blob = json.dumps(
             {
                 "_gradescope_session": body.gradescope_session,
@@ -314,16 +325,24 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
         raise HTTPException(status_code=408, detail=str(e) or "Duo push timed out.")
     except gradescope_service.GradescopeAuthError as e:
         raise HTTPException(status_code=401, detail=str(e) or "Gradescope auth failed.")
-    except Exception as e:
-        # Never let a blank `crashed:` reach the client again — surface
-        # type, message, and a request id so the user can paste a useful
-        # error.
+    except Exception:
         logger.exception("Unexpected error in BU SSO flow")
-        msg = str(e) or repr(e) or "no message"
         raise HTTPException(
             status_code=500,
-            detail=f"SSO flow crashed: {type(e).__name__}: {msg}",
+            detail="BU sign-in is unavailable. Please retry or connect using session cookies.",
         )
+
+    # Cookie presence does not prove the SAML callback created a usable login.
+    try:
+        connection = await asyncio.to_thread(
+            gradescope_service.login_with_cookies,
+            cookies.get("signed_token"), cookies.get("_gradescope_session"),
+        )
+        connection.session.close()
+    except gradescope_service.GradescopeAuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except gradescope_service.GradescopeFetchError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
     cookie_blob = json.dumps({
         "_gradescope_session": cookies.get("_gradescope_session"),
@@ -382,6 +401,7 @@ def list_gradescope_courses(user_id: str, request: Request):
     creds = _load_creds(user_id)
     if not creds:
         raise HTTPException(status_code=404, detail="No Gradescope credentials saved")
+    conn = None
     try:
         conn = _establish_connection(creds)
         courses = gradescope_service.list_student_courses(conn)
@@ -389,11 +409,14 @@ def list_gradescope_courses(user_id: str, request: Request):
         raise HTTPException(status_code=401, detail=str(e))
     except gradescope_service.GradescopeFetchError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        if conn is not None:
+            conn.session.close()
     return {"courses": courses}
 
 
 @router.get("/links")
-def list_links(user_id: str, request: Request):
+def list_links(user_id: str, request: Request, semester: str | None = None):
     """List all sapling-course → gradescope-course mappings for user_id.
 
     The table keys on `enrollment_id` (0027) while the API keeps the abstract
@@ -402,6 +425,12 @@ def list_links(user_id: str, request: Request):
     """
     require_self(user_id, request)
     enrollments = user_enrollment_ids(user_id)
+    if semester is not None:
+        term_id = term_id_for_label(semester)
+        enrollments = [
+            e for e in enrollments
+            if term_id and (term_for_offering(e.get("offering_id")) or {}).get("id") == term_id
+        ]
     if not enrollments:
         return {"links": []}
 
@@ -415,6 +444,7 @@ def list_links(user_id: str, request: Request):
     links = [
         {
             "id": r["id"],
+            "enrollment_id": r["enrollment_id"],
             "sapling_course_id": course_by_enrollment[r.get("enrollment_id")],
             "gradescope_course_id": r.get("gradescope_course_id"),
             "last_synced_at": r.get("last_synced_at"),
@@ -432,15 +462,19 @@ def list_links(user_id: str, request: Request):
 def upsert_link(body: LinkBody, request: Request):
     """Create or replace the link between a Sapling course and a Gradescope course."""
     require_self(body.user_id, request)
-    enrollment_id = _enrollment_for(body.user_id, body.sapling_course_id)
+    scoped = _all_enrollments_for(body.user_id, body.sapling_course_id, body.semester)
+    if body.semester is not None:
+        if len(scoped) > 1:
+            raise HTTPException(status_code=409, detail="Multiple enrollments match this semester. Contact support to resolve the course enrollment.")
+        enrollment_id = scoped[0] if scoped else None
+    else:
+        enrollment_id = _enrollment_for(body.user_id, body.sapling_course_id)
     if not enrollment_id:
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
 
-    # Manual upsert. The delete spans EVERY enrollment the user holds in this
-    # course, not just the one we're about to write: otherwise re-linking after
-    # a term rollover leaves the old term's row in place and the course ends up
-    # with two links (#265 review).
-    all_enrollments = _all_enrollments_for(body.user_id, body.sapling_course_id)
+    # Legacy callers replace the course's mapping across terms. Semester-aware
+    # callers replace only that term, preserving mappings for other enrollments.
+    all_enrollments = scoped
     if all_enrollments:
         table("gradescope_course_links").delete(
             filters={"enrollment_id": f"in.({','.join(all_enrollments)})"}
@@ -457,14 +491,14 @@ def upsert_link(body: LinkBody, request: Request):
 
 
 @router.delete("/link/{sapling_course_id}")
-def remove_link(sapling_course_id: str, user_id: str, request: Request):
+def remove_link(sapling_course_id: str, user_id: str, request: Request, semester: str | None = None):
     """Remove the Gradescope link for a Sapling course."""
     require_self(user_id, request)
     # Across ALL the user's enrollments in the course: a link created under a
     # previous term must still be removable once the term has rolled over.
     # Resolving the single term-preferred enrollment here deleted nothing while
     # still answering ok:true (#265 review).
-    all_enrollments = _all_enrollments_for(user_id, sapling_course_id)
+    all_enrollments = _all_enrollments_for(user_id, sapling_course_id, semester)
     if not all_enrollments:
         # Nothing resolvable to delete; stay idempotent rather than 404 on a
         # remove, matching the previous behaviour of a no-match delete.
@@ -490,11 +524,11 @@ def _due_to_date_string(iso: str | None) -> str | None:
 
 
 @router.post("/sync/{sapling_course_id}")
-def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[str, Any]:
+def sync_course(sapling_course_id: str, user_id: str, request: Request, semester: str | None = None) -> dict[str, Any]:
     """Pull assignments from the linked Gradescope course and upsert into the Sapling gradebook."""
     require_self(user_id, request)
     _enforce_gs_rate_limit(user_id, "sync", limit=10, window_sec=300)
-    all_enrollments = _all_enrollments_for(user_id, sapling_course_id)
+    all_enrollments = _all_enrollments_for(user_id, sapling_course_id, semester)
     if not all_enrollments:
         raise HTTPException(status_code=404, detail="Sapling course not found for user")
 
@@ -505,13 +539,14 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     link_rows = table("gradescope_course_links").select(
         "id,enrollment_id,gradescope_course_id",
         filters={"enrollment_id": f"in.({','.join(all_enrollments)})"},
-        limit=1,
     )
     if not link_rows:
         raise HTTPException(
             status_code=400,
             detail="No Gradescope course is linked to this Sapling course",
         )
+    if len(link_rows) != 1:
+        raise HTTPException(status_code=409, detail="Multiple Gradescope links match this course. Select a semester and reconnect the course.")
     gs_course_id = link_rows[0]["gradescope_course_id"]
     enrollment_id = link_rows[0]["enrollment_id"]
 
@@ -519,6 +554,7 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     if not creds:
         raise HTTPException(status_code=404, detail="No Gradescope credentials saved")
 
+    conn = None
     try:
         conn = _establish_connection(creds)
         gs_assignments = gradescope_service.list_assignments(conn, gs_course_id)
@@ -526,12 +562,17 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
         raise HTTPException(status_code=401, detail=str(e))
     except gradescope_service.GradescopeFetchError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        if conn is not None:
+            conn.session.close()
 
     # Load existing assignments keyed by gradescope_assignment_id so we
     # know whether each incoming one is an insert or an update.
-    existing = table("assignments").select(
+    existing = page_all(
+        table("assignments"),
         "id,gradescope_assignment_id",
         filters={"enrollment_id": f"eq.{enrollment_id}"},
+        order="id",
     )
     by_gs_id: dict[str, str] = {
         r["gradescope_assignment_id"]: r["id"]
@@ -544,14 +585,16 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
     # contains "homework") is automatically categorized; otherwise category_id
     # stays None and the user can link it manually.
     # 0021 renamed course_categories -> gradebook_categories, enrollment-keyed.
-    cats = table("gradebook_categories").select(
+    cats = page_all(
+        table("gradebook_categories"),
         "id,name",
         filters={"enrollment_id": f"eq.{enrollment_id}"},
+        order="sort_order,id",
     )
     cats_by_name: dict[str, str] = {
         c["name"].lower().strip(): c["id"]
         for c in cats
-        if c.get("name") and c.get("id")
+        if c.get("name", "").strip() and c.get("id")
     }
 
     def _infer_category_id(title: str) -> str | None:
@@ -592,26 +635,30 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request) -> dict[
                 )
                 updated += 1
             else:
+                assignment_id = str(uuid.uuid4())
                 table("assignments").insert({
-                    "id": str(uuid.uuid4()),
+                    "id": assignment_id,
                     "enrollment_id": enrollment_id,
                     "category_id": _infer_category_id(title),
                     **record_write,
                 })
+                by_gs_id[gs_id] = assignment_id
                 inserted += 1
         except Exception:
             logger.exception("Failed to upsert Gradescope assignment %s", gs_id)
             failed += 1
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    table("gradescope_credentials").update(
-        {"last_synced_at": now_iso},
-        filters={"user_id": f"eq.{user_id}"},
-    )
-    table("gradescope_course_links").update(
-        {"last_synced_at": now_iso},
-        filters={"enrollment_id": f"eq.{enrollment_id}"},
-    )
+    if failed and not (inserted or updated):
+        raise HTTPException(status_code=502, detail="No assignments could be saved. Please retry; if this continues, contact support.")
+    # A timestamp represents a complete import, not a partial or failed one.
+    if not failed:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        table("gradescope_credentials").update(
+            {"last_synced_at": now_iso}, filters={"user_id": f"eq.{user_id}"},
+        )
+        table("gradescope_course_links").update(
+            {"last_synced_at": now_iso}, filters={"id": f"eq.{link_rows[0]['id']}"},
+        )
 
     return SyncResult(
         inserted=inserted, updated=updated, skipped=skipped, failed=failed
