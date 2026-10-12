@@ -2423,3 +2423,84 @@ Expected: PASS, zero failures.
 git add backend/services/summary_docs_service.py backend/tests/test_summary_docs_service.py backend/routes/documents.py backend/tests/test_documents_routes.py
 git commit -m "feat(summary-docs): scan-concepts reads the summary doc instead of documents.summary"
 ```
+
+---
+
+## Part F — Delete cascade (Stage 1 cutover, step 4 of 4)
+
+### Task 17: `delete_document` cascades to the summary doc
+
+**Files:**
+- Modify: `backend/routes/documents.py` (`delete_document`, ~line 272)
+- Modify: `backend/tests/test_documents_routes.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# Append to backend/tests/test_documents_routes.py — find the existing
+# test class for DELETE /doc/{document_id} (search for "delete_document")
+# and add:
+
+    def test_delete_cascades_to_the_summary_doc(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document") as mock_delete_sd,
+        ):
+            t.return_value.select.return_value = [{"id": "doc1"}]
+            r = client.delete("/api/documents/doc/doc1?user_id=u1")
+
+        assert r.status_code == 200
+        mock_delete_sd.assert_called_once_with("doc1")
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `cd backend && python -m pytest tests/test_documents_routes.py -v -k test_delete_cascades_to_the_summary_doc`
+Expected: FAIL — `AttributeError` on `routes.documents.delete_summary_docs_for_document` not existing yet.
+
+- [ ] **Step 3: Write the implementation**
+
+Add `delete_summary_docs_for_document` to the `from services.summary_docs_service import (...)` block, then in `delete_document` (~line 272-294), call it right after the soft-delete:
+
+```python
+@router.delete("/doc/{document_id}")
+def delete_document(document_id: str, request: Request, user_id: str | None = None):
+    if user_id:
+        require_self(user_id, request)
+        _validate_user(user_id)
+    else:
+        user_id = get_session_user_id(request)
+    docs = table("documents").select(
+        "id",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not docs:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    table("documents").update(
+        {"deleted_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
+    )
+    # Spec "Delete-together behavior": the summary doc this document
+    # seeded goes away with it. A hard delete (not the soft-delete the
+    # `documents` row above just got) so the table's own ON DELETE CASCADE
+    # foreign keys clean up its sources/versions/suggestions in one
+    # statement (services/summary_docs_service.py::delete_summary_docs_for_document).
+    delete_summary_docs_for_document(document_id)
+    return {"deleted": True}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd backend && python -m pytest tests/test_documents_routes.py -v`
+Expected: PASS, zero failures.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/routes/documents.py backend/tests/test_documents_routes.py
+git commit -m "feat(summary-docs): deleting a document cascades to its summary doc"
+```
+
+This completes the Stage 1 cutover (spec section 7): no code anywhere reads or writes `documents.summary` after this task. The column itself still physically exists — dropping it is the explicit Stage 2 follow-up, gated on green pytest + Playwright + e2e oracles against everything in this plan, and is NOT part of this plan (see the spec's rollout section).
