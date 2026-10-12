@@ -35,7 +35,11 @@ from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
-from services.summary_docs_service import create_summary_doc, plaintext_from_prosemirror
+from services.summary_docs_service import (
+    attach_summary_previews,
+    create_summary_doc,
+    plaintext_from_prosemirror,
+)
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
@@ -238,7 +242,7 @@ def list_documents(user_id: str, request: Request):
     require_self(user_id, request)
     _validate_user(user_id)
     docs = table("documents").select(
-        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        "id,user_id,offering_id,file_name,category,concept_notes,created_at,processed_at",
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
@@ -248,7 +252,6 @@ def list_documents(user_id: str, request: Request):
     # list_sessions offering_to_course pattern), not once per row.
     offering_to_course: dict[str, str | None] = {}
     for d in docs:
-        d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
             try:
@@ -267,6 +270,7 @@ def list_documents(user_id: str, request: Request):
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = offering_course_id(off_id)
         d["course_id"] = offering_to_course.get(off_id)
+    attach_summary_previews(docs)
     return {"documents": docs}
 
 
@@ -361,7 +365,7 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     """
     try:
         rows = table("documents").select(
-            "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+            "id,user_id,offering_id,file_name,category,concept_notes,created_at,processed_at",
             filters={
                 "user_id": f"eq.{user_id}",
                 "request_id": f"eq.{request_id}",
@@ -377,13 +381,13 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     if not isinstance(first, dict):
         return None
     row = dict(first)
-    row["summary"] = decrypt_if_present(row.get("summary"))
     notes_raw = row.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
             row["concept_notes"] = decrypt_json(notes_raw)
         except Exception:
             row["concept_notes"] = []
+    attach_summary_previews([row])
     return row
 
 

@@ -191,6 +191,35 @@ class TestListDocuments:
         assert body["d-good"]["concept_notes"] == [{"name": "Concept A", "description": "d"}]
         assert body["d-bad"]["concept_notes"] == []
 
+    def test_attaches_summary_preview_fields_and_drops_summary_column(self):
+        docs = [
+            {"id": "d1", "user_id": "u1", "offering_id": "off-1", "file_name": "a.pdf", "category": "other"},
+        ]
+
+        def fake_attach(doc_list):
+            for d in doc_list:
+                d["summary_doc_id"] = "sd-1"
+                d["summary_preview"] = "Preview text."
+                d["summary_source_count"] = 1
+
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.attach_summary_previews", side_effect=fake_attach) as mock_attach,
+        ):
+            t.return_value.select.return_value = docs
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        body = r.json()["documents"][0]
+        assert body["summary_doc_id"] == "sd-1"
+        assert body["summary_preview"] == "Preview text."
+        assert "summary" not in body
+        mock_attach.assert_called_once()
+        # The documents SELECT itself must stop naming the retired column.
+        select_cols = t.return_value.select.call_args[0][0]
+        assert "summary" not in select_cols.split(",")
+
 # ── DELETE /api/documents/doc/{document_id} ──────────────────────────────────
 
 class TestDeleteDocument:
