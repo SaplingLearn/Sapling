@@ -209,3 +209,59 @@ def update_content(summary_doc_id: str, user_id: str, content: dict) -> dict | N
     if not rows:
         return None
     return _decrypt_doc_row(rows[0])
+
+
+#: Versions beyond this are never read — the history panel shows a
+#: bounded, recent timeline, not an unbounded archive.
+_MAX_VERSIONS = 50
+
+
+def list_versions(summary_doc_id: str, user_id: str) -> list[dict] | None:
+    """The history panel's read: newest first, each with a plaintext
+    preview of its first paragraph. None if the caller doesn't own the doc."""
+    owned = table("summary_docs").select(
+        "id", filters={"id": f"eq.{summary_doc_id}", "owner_user_id": f"eq.{user_id}"}, limit=1,
+    )
+    if not owned:
+        return None
+    rows = table("summary_doc_versions").select(
+        "id,trigger,content,created_at",
+        filters={"summary_doc_id": f"eq.{summary_doc_id}"},
+        order="created_at.desc",
+        limit=_MAX_VERSIONS,
+    ) or []
+    out = []
+    for r in rows:
+        content = decrypt_json(r["content"])
+        out.append({
+            "id": r["id"],
+            "trigger": r["trigger"],
+            "created_at": r["created_at"],
+            "preview": plaintext_from_prosemirror(content, max_chars=160),
+        })
+    return out
+
+
+def restore_version(summary_doc_id: str, user_id: str, version_id: str) -> dict | None:
+    """Bring an earlier version's content back as the doc's current
+    content. Writes a NEW version first (trigger='restored') so restoring
+    is itself undoable, never destructive (spec section 2)."""
+    owned = table("summary_docs").select(
+        "id", filters={"id": f"eq.{summary_doc_id}", "owner_user_id": f"eq.{user_id}"}, limit=1,
+    )
+    if not owned:
+        return None
+    version_rows = table("summary_doc_versions").select(
+        "content", filters={"id": f"eq.{version_id}", "summary_doc_id": f"eq.{summary_doc_id}"}, limit=1,
+    )
+    if not version_rows:
+        return None
+    restored_content = decrypt_json(version_rows[0]["content"])
+    _write_version(summary_doc_id, restored_content, "restored")
+    rows = table("summary_docs").update(
+        {"content": encrypt_json(restored_content), "updated_at": _now_iso()},
+        filters={"id": f"eq.{summary_doc_id}", "owner_user_id": f"eq.{user_id}"},
+    )
+    if not rows:
+        return None
+    return _decrypt_doc_row(rows[0])

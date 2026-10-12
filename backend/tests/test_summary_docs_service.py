@@ -295,3 +295,104 @@ class TestUpdateContent:
         with patch("services.summary_docs_service.table") as mock_table:
             mock_table.return_value.update.return_value = []
             assert update_content("sd1", "u1", {"type": "doc", "content": []}) is None
+
+
+from services.summary_docs_service import list_versions, restore_version
+
+
+class TestListVersions:
+    def test_returns_versions_with_plaintext_preview(self):
+        from services.encryption import encrypt_json
+
+        content_a = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "First."}]}]}
+        content_b = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Second."}]}]}
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json(content_b), "created_at": "t0", "updated_at": "t1",
+        }
+        version_rows = [
+            {"id": "v2", "summary_doc_id": "sd1", "content": encrypt_json(content_b), "trigger": "ai_edit_kept", "created_at": "t1"},
+            {"id": "v1", "summary_doc_id": "sd1", "content": encrypt_json(content_a), "trigger": "initial", "created_at": "t0"},
+        ]
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_versions":
+                m.select.return_value = version_rows
+            elif name in ("summary_doc_sources", "summary_doc_suggestions", "documents"):
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            result = list_versions("sd1", "u1")
+
+        assert [v["id"] for v in result] == ["v2", "v1"]
+        assert result[0]["preview"] == "Second."
+        assert result[0]["trigger"] == "ai_edit_kept"
+
+    def test_returns_none_when_not_owned(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = []
+            assert list_versions("sd1", "u1") is None
+
+
+class TestRestoreVersion:
+    def test_restores_content_and_writes_a_new_version(self):
+        from services.encryption import encrypt_json
+
+        old_content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Old."}]}]}
+        current_content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Current."}]}]}
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json(current_content), "created_at": "t0", "updated_at": "t1",
+        }
+        version_row = {"id": "v1", "summary_doc_id": "sd1", "content": encrypt_json(old_content), "trigger": "initial", "created_at": "t0"}
+
+        # Cache one mock per table name — `table(name)` is called more than
+        # once for "summary_docs"/"summary_doc_versions" during
+        # restore_version's own execution AND again below when the test
+        # inspects call history, so a fresh MagicMock() per call (no cache)
+        # would hand the assertion a different, never-called mock.
+        mock_tables: dict = {}
+
+        def _select(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+                m.update.return_value = [{**doc_row, "content": encrypt_json(old_content)}]
+            elif name == "summary_doc_versions":
+                m.select.return_value = [version_row]
+                m.insert.return_value = [{}]
+            elif name in ("summary_doc_sources", "summary_doc_suggestions", "documents"):
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            result = restore_version("sd1", "u1", "v1")
+
+        assert result["content"] == old_content
+        version_insert = mock_tables["summary_doc_versions"].insert.call_args[0][0]
+        assert version_insert["trigger"] == "restored"
+
+    def test_returns_none_for_unknown_version(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}), "created_at": "t0", "updated_at": "t0",
+        }
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_versions":
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            assert restore_version("sd1", "u1", "missing") is None
