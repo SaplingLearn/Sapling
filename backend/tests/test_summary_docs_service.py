@@ -261,3 +261,37 @@ class TestRemoveSource:
         with patch("services.summary_docs_service.table", side_effect=_table):
             result = remove_source("sd1", "u1", "doc1")
         assert result == "primary"
+
+
+from services.summary_docs_service import update_content
+
+
+class TestUpdateContent:
+    def test_updates_content_without_writing_a_version(self):
+        new_content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Edited."}]}]}
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.update.return_value = [{
+                    "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+                    "content": "ciphertext", "created_at": "t0", "updated_at": "t1",
+                }]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select) as mock_table, \
+             patch("services.summary_docs_service.decrypt_json", return_value=new_content), \
+             patch("services.summary_docs_service.encrypt_json", return_value="ciphertext") as enc:
+            result = update_content("sd1", "u1", new_content)
+
+        assert result["content"] == new_content
+        enc.assert_called_once_with(new_content)
+        # update_content writes no version row (see Task header docstring) —
+        # confirm `table("summary_doc_versions")` was never called.
+        called_names = [c.args[0] for c in mock_table.call_args_list if c.args]
+        assert "summary_doc_versions" not in called_names
+
+    def test_returns_none_when_not_owned(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.update.return_value = []
+            assert update_content("sd1", "u1", {"type": "doc", "content": []}) is None

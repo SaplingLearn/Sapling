@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 from db.connection import table
 from services.encryption import (
     decrypt_if_present,
-    encrypt_if_present,
     decrypt_json,
     encrypt_json,
 )
@@ -196,3 +195,17 @@ def remove_source(summary_doc_id: str, user_id: str, document_id: str) -> dict |
     )
     _write_version(summary_doc_id, doc["content"], "source_removed")
     return get_summary_doc(summary_doc_id, user_id)
+
+
+def update_content(summary_doc_id: str, user_id: str, content: dict) -> dict | None:
+    """Autosave: persist the editor's current content. Deliberately writes
+    NO version row — see the plan header's "Deviation from the approved
+    spec" note. Scoped to owner_user_id so one user can never autosave
+    into another's summary doc."""
+    rows = table("summary_docs").update(
+        {"content": encrypt_json(content), "updated_at": _now_iso()},
+        filters={"id": f"eq.{summary_doc_id}", "owner_user_id": f"eq.{user_id}"},
+    )
+    if not rows:
+        return None
+    return _decrypt_doc_row(rows[0])
