@@ -82,6 +82,8 @@ export default function LandingPage() {
         minHeight: '100vh', overflowX: 'clip',
       }}
     >
+      <a href="#main" className="skip-link">Skip to content</a>
+
       {/* ambient constellation, behind everything */}
       <canvas
         ref={ambientCanvasRef}
@@ -121,6 +123,11 @@ export default function LandingPage() {
         onClose={() => setBetaOpen(false)}
       />
 
+      {/* The landmark the skip link targets: hero through the closing CTA.
+          Nav and footer sit outside it. Sticky stages inside the acts are
+          constrained by their own sections, so the wrapper changes nothing
+          about the scroll cinema. */}
+      <main id="main" tabIndex={-1} style={{ outline: 'none' }}>
       <Hero
         heroMounted={state.heroMounted}
         heroText1={state.heroText1}
@@ -175,6 +182,7 @@ export default function LandingPage() {
       />
 
       <FinalCta onGetStarted={() => setBetaOpen(true)} />
+      </main>
 
       <SiteFooter />
 

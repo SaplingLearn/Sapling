@@ -11,11 +11,15 @@
  *
  * Escape and a scrim click both close it back down.
  *
+ * It is a modal dialog: focus moves to the close button when it opens, Tab
+ * stays inside it, and focus returns to whatever opened it on close.
+ *
  * The demo pane mounts the real interactive demo for the open tool — see
  * lab/, ported from the `FeatureLab` design component the source pulls in
  * through `<dc-import>`.
  */
 
+import { useEffect, useRef } from 'react';
 import { GAL, LAB_KIND } from '@/lib/landing/content';
 import { FeatureLabDemo } from './lab';
 
@@ -33,12 +37,42 @@ export function FeatureLab({
   onClose: () => void;
   onPick: (i: number) => void;
 }) {
-  if (index < 0) return null;
+  const open = index >= 0 && Boolean(GAL[index]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const returnTo = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus({ preventScroll: true });
+    return () => returnTo?.focus?.({ preventScroll: true });
+  }, [open]);
+
+  if (!open) return null;
   const g = GAL[index];
-  if (!g) return null;
+
+  // Keep Tab inside the dialog: wrap from the last focusable to the first.
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 80 }}>
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="feature-lab-title"
+      onKeyDown={trapTab}
+      style={{ position: 'fixed', inset: 0, zIndex: 80 }}
+    >
       <div
         onClick={onClose}
         style={{ position: 'absolute', inset: 0, background: 'rgba(8,31,20,0.62)', animation: 'panelFade 420ms ease both' }}
@@ -53,7 +87,7 @@ export function FeatureLab({
             <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.3em', color: '#0C5638', textTransform: 'uppercase' }}>
               {g.num} · {g.kicker}
             </span>
-            <h3 style={{ margin: '16px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#12201A' }}>
+            <h3 id="feature-lab-title" style={{ margin: '16px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(1.9rem,3.2vw,2.9rem)', fontWeight: 600, lineHeight: 1.06, letterSpacing: '-0.018em', color: '#12201A' }}>
               {g.title}
             </h3>
             <p style={{ margin: '18px 0 0', color: '#33443B', fontSize: 15, lineHeight: 1.75, maxWidth: '44ch' }}>{g.desc}</p>
@@ -93,6 +127,7 @@ export function FeatureLab({
                 key={r.kind}
                 data-rail={i}
                 type="button"
+                aria-current={on || undefined}
                 onClick={() => onPick(i)}
                 className="ld-rail"
                 style={{
@@ -115,12 +150,14 @@ export function FeatureLab({
         </div>
 
         <button
+          ref={closeRef}
+          type="button"
           onClick={onClose}
-          aria-label="Close"
+          aria-label="Close the feature demos"
           className="ld-labclose"
           style={{ position: 'absolute', top: 20, right: 20, width: 42, height: 42, borderRadius: 99, border: '1px solid rgba(18,32,26,0.12)', background: '#FDFCF9', color: '#12201A', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 250ms', zIndex: 3, animation: 'panelFade 420ms ease 240ms both' }}
         >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M18 6L6 18M6 6l12 12" />
           </svg>
         </button>

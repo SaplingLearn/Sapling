@@ -5,7 +5,7 @@
  *
  * Ported from `Sapling Landing v5.dc.html`. The answer panels animate on
  * `max-height` rather than `height:auto`, which is what the source does and
- * why every answer shares one 300px ceiling: it keeps the transition
+ * why every answer shares one 480px ceiling: it keeps the transition
  * interruptible without measuring.
  */
 
@@ -86,8 +86,10 @@ export function Faq({
             return (
               <div key={q.q} style={{ borderBottom: '1px solid rgba(18,32,26,0.12)' }}>
                 <button
+                  type="button"
                   onClick={() => onToggle(open ? -1 : i)}
                   aria-expanded={open}
+                  aria-controls={`faq-a-${i}`}
                   style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '22px 4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, textAlign: 'left' }}
                 >
                   <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 19, fontWeight: 600, letterSpacing: '-0.01em', color: open ? '#0C5638' : '#12201A', transition: 'color 300ms' }}>
@@ -104,19 +106,25 @@ export function Faq({
                       transition: 'transform 300ms cubic-bezier(0.22,1,0.36,1), background 300ms',
                     }}
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0C5638" strokeWidth="2" strokeLinecap="round">
+                    <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0C5638" strokeWidth="2" strokeLinecap="round">
                       <path d="M12 5v14M5 12h14" />
                     </svg>
                   </span>
                 </button>
                 <div
+                  id={`faq-a-${i}`}
                   style={{
                     // a shared ceiling, not a measured height — keeps the
-                    // transition interruptible without a layout read
-                    maxHeight: open ? 300 : 0,
+                    // transition interruptible without a layout read. 480,
+                    // not 300: the data answer runs to eleven lines on a phone.
+                    maxHeight: open ? 480 : 0,
                     opacity: open ? 1 : 0,
                     overflow: 'hidden',
-                    transition: 'max-height 450ms cubic-bezier(0.22,1,0.36,1), opacity 350ms ease',
+                    // Hidden from assistive tech while collapsed (it was read
+                    // out at zero height). The text stays in the server HTML.
+                    // Visibility flips after the close transition, not before.
+                    visibility: open ? 'visible' : 'hidden',
+                    transition: `max-height 450ms cubic-bezier(0.22,1,0.36,1), opacity 350ms ease, visibility 0s linear ${open ? '0s' : '450ms'}`,
                   }}
                 >
                   <p className="ld-faq-a" style={{ margin: 0, padding: '0 44px 24px 4px', color: '#33443B', fontSize: 14.5, lineHeight: 1.8 }}>

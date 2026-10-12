@@ -22,7 +22,8 @@
  * the edge. `useTrackCopies` measures the real rendered set width against the
  * wrap's width and renders however many copies keep the track always at least
  * one set wider than the viewport, re-measuring on resize. The duplicates are
- * `aria-hidden`, and only the first copy is reachable by keyboard.
+ * `aria-hidden`. No card takes keyboard focus (see the "Open the feature
+ * demos" button in the header for why); that button is the keyboard route.
  *
  * The server renders ONE copy; the clones arrive on mount. They are a visual
  * device, and rendering them on the server put every card's heading and copy
@@ -355,6 +356,18 @@ export function Gallery({
             talks you through what you missed, and a gradebook and calendar that keep the semester
             honest. Each one writes back to the same graph.
           </p>
+          {/* The keyboard way in. The cards ride a transformed track inside an
+              overflow-clipped mask, so focusing one off-screen would make the
+              browser scroll the mask under the marquee; instead this opens the
+              lab on the first tool, and the lab's own rail reaches all eight. */}
+          <button
+            type="button"
+            onClick={() => onOpen(0, null)}
+            className="ld-navlink"
+            style={{ ...MONO, marginTop: 16, padding: '4px 0', background: 'none', border: 'none', borderBottom: '1px solid rgba(12,86,56,0.35)', cursor: 'pointer', fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#0C5638' }}
+          >
+            Open the feature demos →
+          </button>
         </FadeIn>
 
         {/* the right end of the header row, bottom-aligned: the note lands in

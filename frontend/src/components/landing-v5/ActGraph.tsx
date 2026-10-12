@@ -290,7 +290,7 @@ export function ActGraph({
                     ×
                   </button>
                 </div>
-                <h4 style={{ margin: '12px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#12201A' }}>{node.label}</h4>
+                <h3 style={{ margin: '12px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#12201A' }}>{node.label}</h3>
                 <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.65, color: '#33443B' }}>{node.blurb}</p>
 
                 <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -62,6 +62,11 @@ export interface MarqueeController {
 const STATE = new WeakMap<HTMLElement, MarqueeTrackState>();
 
 export function createMarquee(opts: MarqueeOptions): MarqueeController {
+  // Live MediaQueryList: `.matches` tracks the OS setting without a listener.
+  const reducedMotion =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
   const tracks: HTMLElement[] = [];
   const cleanups: (() => void)[] = [];
   let last = 0;
@@ -171,7 +176,10 @@ export function createMarquee(opts: MarqueeOptions): MarqueeController {
         } else {
           m.v = 0;
         }
-        if (!m.paused) m.off -= (m.dir * m.speed * dt) / 1000;
+        // No auto-drift under prefers-reduced-motion: the rails sit still
+        // and only move when dragged (WCAG 2.2.2 — moving content needs a
+        // way to stop; this is the OS-level one).
+        if (!m.paused && !reducedMotion?.matches) m.off -= (m.dir * m.speed * dt) / 1000;
       }
       m.off = ((m.off % m.setW) + m.setW) % m.setW;
       track.style.transform = 'translate3d(' + (-m.off).toFixed(2) + 'px,0,0)';

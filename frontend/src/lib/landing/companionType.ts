@@ -24,6 +24,9 @@ export const INK = '#1a1814';
 export const BODY = '#3f3b31';
 export const MUTED = '#6f6857';
 export const ACCENT = '#2D8F5C';
+/** ACCENT for TEXT. #2D8F5C is 3.6:1 on the paper ground — fine for dots,
+ *  rings and strokes (3:1 non-text), too light for small type (4.5:1). */
+export const ACCENT_TEXT = '#1B6C42';
 
 /**
  * Cap for running prose inside the shared page box.

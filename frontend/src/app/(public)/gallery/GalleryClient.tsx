@@ -86,7 +86,7 @@ export default function GalleryClient() {
               <figcaption style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                   <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{s.title}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 9, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>{s.group}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 9, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42' }}>{s.group}</span>
                 </span>
                 <span style={{ fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{s.body}</span>
               </figcaption>
@@ -96,7 +96,7 @@ export default function GalleryClient() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '46ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42' }}>
               Rather try it than look at it
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>

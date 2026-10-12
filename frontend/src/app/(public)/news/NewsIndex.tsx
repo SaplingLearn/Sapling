@@ -74,8 +74,10 @@ export default function NewsIndex() {
           build.
         </p>
 
-        {/* one control: query, clear, divider, category listbox */}
-        <div style={{ position: 'relative', zIndex: 30, marginTop: 30, display: 'flex', alignItems: 'center', gap: 10, maxWidth: 560, padding: '6px 6px 6px 14px', borderRadius: 10, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3' }}>
+        {/* one control: query, clear, divider, category listbox. The input
+            itself draws no ring (it sits borderless inside the pill); the
+            pill shows focus via `.cp-searchbar:focus-within` in globals.css. */}
+        <div className="cp-searchbar" style={{ position: 'relative', zIndex: 30, marginTop: 30, display: 'flex', alignItems: 'center', gap: 10, maxWidth: 560, padding: '6px 6px 6px 14px', borderRadius: 10, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3' }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6f6857" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
             <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.3-4.3" />
           </svg>
@@ -177,7 +179,7 @@ export default function NewsIndex() {
               <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 11 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 12, lineHeight: 1 }}>
                   <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.06em', color: '#6f6857' }}>{p.date}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>{p.tag}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42' }}>{p.tag}</span>
                 </span>
                 <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 21, lineHeight: 1.24, letterSpacing: '-0.015em', color: '#1a1814' }}>{p.title}</h2>
                 <p style={{ margin: 0, fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.62, color: '#3f3b31' }}>{p.excerpt}</p>
@@ -192,7 +194,7 @@ export default function NewsIndex() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '46ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42' }}>
               The Sapling Journal
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>

@@ -105,7 +105,7 @@ export function CardsDemo() {
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(18,32,26,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
                   <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#9AA5A0' }}>FRONT</span>
                   <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#12201A' }}>{card.q}</span>
-                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#B4BEB8' }}>click to reveal</span>
+                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#61726A' }}>click to reveal</span>
                 </div>
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', borderRadius: 18, background: '#0C5638', border: '1px solid #0C5638', boxShadow: '0 18px 40px -18px rgba(12,86,56,0.5)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
                   <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#8FD9A8' }}>BACK</span>
@@ -132,7 +132,7 @@ export function CardsDemo() {
                 </button>
               ))}
             </div>
-            <span style={{ fontSize: 11.5, color: '#9AA5A0' }}>
+            <span style={{ fontSize: 11.5, color: '#61726A' }}>
               {flipped ? 'Rate it: 1 Forgot, 2 Hard, 3 Easy' : 'Click the card or press space to reveal'}
             </span>
           </div>

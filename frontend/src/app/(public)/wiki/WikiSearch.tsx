@@ -112,7 +112,7 @@ export function WikiSearchBox({ style }: { style?: React.CSSProperties }) {
         style={{
           width: '100%', boxSizing: 'border-box', padding: '11px 14px 11px 38px',
           borderRadius: 10, border: '1px solid rgba(42,39,31,0.16)', background: '#fffdf7',
-          fontFamily: 'inherit', fontSize: 15, color: '#2b2619', outline: 'none',
+          fontFamily: 'inherit', fontSize: 15, color: '#2b2619',
           transition: 'border-color 140ms ease',
         }}
       />

@@ -72,6 +72,7 @@ export function CompanionShell({
 }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#f4f1ea', color: '#1a1814', fontFamily: SANS }}>
+      <a href="#main" className="skip-link">Skip to content</a>
       {/* Geometry here is locked to the landing navbar: same horizontal
           padding, same 16px/16px vertical padding, same 92px masked scrim.
           The companion sources inset their bar to `min(1320px,92%)`, which
@@ -123,6 +124,8 @@ export function CompanionShell({
           article, 1280 on the footer — so content jumped left and right as you
           navigated. Pages render content now, not a container. */}
       <main
+        id="main"
+        tabIndex={-1}
         style={{
           flex: 1, minWidth: 0, width: '100%', maxWidth: PAGE_MAX,
           margin: '0 auto', padding: `40px ${PAGE_PAD}px 64px`, boxSizing: 'border-box',
@@ -134,7 +137,7 @@ export function CompanionShell({
       <footer style={{ borderTop: '1px solid rgba(42,39,31,0.10)', background: '#faf8f3', padding: `48px ${PAGE_PAD}px`, boxSizing: 'border-box' }}>
         <div style={{ maxWidth: PAGE_MAX, margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
+            <Image src="/sapling-icon.svg" alt="" width={20} height={20} />
             <span style={{ fontSize: 14, color: '#6f6857' }}>Sapling · © 2026</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>

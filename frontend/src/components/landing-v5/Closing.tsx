@@ -90,7 +90,7 @@ export function SiteFooter() {
     <footer className="ld-footer" style={{ borderTop: '1px solid rgba(18,32,26,0.08)', padding: '48px 32px 44px', position: 'relative', zIndex: 1 }}>
       <div className="ld-footer-row" style={{ maxWidth: 1150, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
+          <Image src="/sapling-icon.svg" alt="" width={20} height={20} />
           <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>Sapling · © 2026</span>
         </div>
         <div className="ld-footer-links" style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>

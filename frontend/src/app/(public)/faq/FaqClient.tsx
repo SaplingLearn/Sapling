@@ -47,9 +47,9 @@ export default function FaqClient() {
         <div style={{ marginTop: 44, display: 'flex', flexDirection: 'column', gap: 34 }}>
           {INDEXED.map((g) => (
             <section key={g.label}>
-              <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C', marginBottom: 6 }}>
+              <h2 style={{ margin: '0 0 6px', fontFamily: MONO, fontSize: 10, fontWeight: 400, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42' }}>
                 {g.label}
-              </span>
+              </h2>
               {g.items.map((item) => {
                 const isOpen = open === item.i;
                 return (
@@ -58,6 +58,7 @@ export default function FaqClient() {
                       data-faq={item.i}
                       onClick={() => setOpen(isOpen ? -1 : item.i)}
                       aria-expanded={isOpen}
+                      aria-controls={`faq-a-${item.i}`}
                       type="button"
                       style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '20px 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 22 }}
                     >
@@ -74,12 +75,15 @@ export default function FaqClient() {
                           transition: 'all 260ms cubic-bezier(0.22,1,0.36,1)',
                         }}
                       >
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                        <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                           <path d="M12 5v14M5 12h14" />
                         </svg>
                       </span>
                     </button>
-                    <div style={{ overflow: 'hidden', transition: 'max-height 380ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease', maxHeight: isOpen ? 420 : 0, opacity: isOpen ? 1 : 0 }}>
+                    {/* visibility keeps collapsed answers out of the accessibility
+                        tree (they stay in the server HTML); it flips after the
+                        close transition so the fade still shows. */}
+                    <div id={`faq-a-${item.i}`} style={{ overflow: 'hidden', transition: `max-height 380ms cubic-bezier(0.22,1,0.36,1), opacity 300ms ease, visibility 0s linear ${isOpen ? '0s' : '380ms'}`, maxHeight: isOpen ? 420 : 0, opacity: isOpen ? 1 : 0, visibility: isOpen ? 'visible' : 'hidden' }}>
                       <p style={{ margin: '0 0 20px', paddingRight: 44, fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.7, color: '#3f3b31', maxWidth: PROSE_MEASURE }}>
                         {item.a}
                       </p>
@@ -93,7 +97,7 @@ export default function FaqClient() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '44ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42' }}>
               Still curious
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>

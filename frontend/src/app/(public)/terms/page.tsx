@@ -2,7 +2,7 @@ import { LEGAL_LAST_UPDATED, legalDateLabel } from "@/lib/legal";
 import { pageMetadata } from "@/lib/seo/pageMetadata";
 import { CONTACT_EMAIL } from "@/lib/contact";
 import { CompanionShell } from "@/components/companion/CompanionShell";
-import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
+import { ACCENT_TEXT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from "@/lib/landing/companionType";
 
 /**
  * Terms of Service.
@@ -79,7 +79,7 @@ const BULLET: React.CSSProperties = { color: MUTED, flex: "0 0 auto" };
 const META: React.CSSProperties = {
   display: "block", fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.04em", color: MUTED,
 };
-const LINK: React.CSSProperties = { color: ACCENT };
+const LINK: React.CSSProperties = { color: ACCENT_TEXT, textDecoration: 'underline' };
 
 /** Rows fade in down the page; the cap keeps the last clause from waiting. */
 function enter(i: number): React.CSSProperties {

@@ -389,7 +389,7 @@ export default function WikiPage() {
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_PIPELINE.map((p) => (
                   <div key={p.num} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
-                    <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: '#2D8F5C', paddingTop: 2 }}>{p.num}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: '#1B6C42', paddingTop: 2 }}>{p.num}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                       <span style={VALUE}>{p.title}</span>
                       <span style={DEF}>{p.body}</span>

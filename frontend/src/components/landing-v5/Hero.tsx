@@ -320,10 +320,12 @@ export function Hero({
         <div className="sapling-mesh-blob sapling-mesh-blob--1" />
         <div className="sapling-mesh-blob sapling-mesh-blob--2" />
       </div>
-      <canvas ref={canvasRef} className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
+      <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0 z-0 w-full h-full pointer-events-auto opacity-100" />
 
       {/* Floating Glass Accent Cards */}
-      <div ref={floatingCardsRef} className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
+      {/* Decorative: screen readers would otherwise hear "Mastered Learning
+          Struggling Unexplored Quick Quiz Study Room" out of context. */}
+      <div ref={floatingCardsRef} aria-hidden="true" className="absolute inset-0 z-10 hidden lg:block pointer-events-none">
         <div
           className="floating-card absolute w-52 liquid-glass rounded-2xl p-5"
           style={{ position: 'absolute', top: '24%', right: '12%', opacity: heroMounted ? 1 : 0, transition: 'opacity 0.6s ease 1.0s' }}
@@ -444,9 +446,9 @@ export function Hero({
       </div>
 
       {/* Scroll Indicator */}
-      <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
+      <div aria-hidden="true" style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
         <div className="w-px h-14 landing-divider-v" />
-        <span className="font-jetbrains text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
+        <span className="font-jetbrains text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] mt-3">SEE WHAT&apos;S INSIDE</span>
       </div>
     </section>
   );

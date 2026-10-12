@@ -79,7 +79,7 @@ export function GradesDemo() {
                   }}
                   inputMode="decimal"
                   aria-label={`Points earned, ${r.title}`}
-                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#F6F8F4', ...MONO, fontSize: 12.5, textAlign: 'right', color: '#12201A', outline: 'none' }}
+                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#F6F8F4', ...MONO, fontSize: 12.5, textAlign: 'right', color: '#12201A' }}
                 />
                 <span style={{ ...MONO, fontSize: 12, color: '#9AA5A0' }}>/ {r.possible}</span>
                 <span style={{ width: 44, textAlign: 'right', ...MONO, fontSize: 12, color: pctColor }}>

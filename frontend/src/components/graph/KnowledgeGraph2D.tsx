@@ -650,6 +650,7 @@ function KnowledgeGraph2DImpl({
             return { tx: c.tx, ty: c.ty, scale: s };
           })}
           title="Zoom in"
+          aria-label="Zoom in"
         >
           +
         </button>
@@ -663,6 +664,7 @@ function KnowledgeGraph2DImpl({
             return { tx: c.tx, ty: c.ty, scale: s };
           })}
           title="Zoom out"
+          aria-label="Zoom out"
         >
           −
         </button>
@@ -672,6 +674,7 @@ function KnowledgeGraph2DImpl({
           style={{ padding: "2px 8px", fontSize: 10 }}
           onClick={resetView}
           title="Reset view"
+          aria-label="Reset view"
         >
           ⟲
         </button>

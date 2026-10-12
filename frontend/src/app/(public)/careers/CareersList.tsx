@@ -22,13 +22,13 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { JOBS, DEPT_COLORS } from './jobs';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
+import { ACCENT, ACCENT_TEXT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
 
 const HAIRLINE = '1px solid rgba(42,39,31,0.10)';
 
 const EYEBROW: React.CSSProperties = {
   display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em',
-  textTransform: 'uppercase', color: ACCENT,
+  textTransform: 'uppercase', color: ACCENT_TEXT,
 };
 
 const META: React.CSSProperties = {

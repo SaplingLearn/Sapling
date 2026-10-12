@@ -292,6 +292,9 @@ export function useLanding(props: LandingProps) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (s.current.galIdx >= 0) closeGal();
+      // Explore mode locks body scroll; without this the only way out was
+      // the pointer, which left a keyboard user stranded in it.
+      else if (s.current.exploring) exitExplore();
       else if (s.current.jumpOpen) setJumpOpen(false);
     };
     document.addEventListener('keydown', onKey);

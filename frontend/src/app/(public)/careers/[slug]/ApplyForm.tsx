@@ -26,7 +26,7 @@ import Link from 'next/link';
 import { type Job, DEPT_COLORS } from '../jobs';
 import { submitJobApplication } from '@/lib/api';
 import { CompanionShell } from '@/components/companion/CompanionShell';
-import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
+import { ACCENT, ACCENT_TEXT, BODY, DISPLAY, INK, MONO, MUTED, SERIF } from '@/lib/landing/companionType';
 
 const SANS = "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
 
@@ -63,7 +63,7 @@ const LABEL_STYLE: React.CSSProperties = {
 
 const EYEBROW: React.CSSProperties = {
   display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em',
-  textTransform: 'uppercase', color: ACCENT,
+  textTransform: 'uppercase', color: ACCENT_TEXT,
 };
 
 /**
@@ -242,13 +242,15 @@ export default function ApplyForm({ job }: { job: Job | null }) {
 
                 <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 20 }}>
                   <div>
-                    <label style={LABEL_STYLE}>
+                    <label htmlFor="apply-name" style={LABEL_STYLE}>
                       Full Name <span style={{ color: ALERT }}>*</span>
                     </label>
                     <input
                       type="text"
                       required
                       placeholder="Jane Smith"
+                      id="apply-name"
+                      autoComplete="name"
                       value={form.name}
                       onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                       style={INPUT_STYLE}
@@ -256,13 +258,15 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>
+                    <label htmlFor="apply-email" style={LABEL_STYLE}>
                       Email <span style={{ color: ALERT }}>*</span>
                     </label>
                     <input
                       type="email"
                       required
                       placeholder="jane@university.edu"
+                      id="apply-email"
+                      autoComplete="email"
                       value={form.email}
                       onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                       style={INPUT_STYLE}
@@ -270,10 +274,12 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>Phone Number</label>
+                    <label htmlFor="apply-phone" style={LABEL_STYLE}>Phone Number</label>
                     <input
                       type="tel"
                       placeholder="+1 (555) 000-0000"
+                      id="apply-phone"
+                      autoComplete="tel"
                       value={form.phone}
                       onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
                       style={INPUT_STYLE}
@@ -281,13 +287,15 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>
+                    <label htmlFor="apply-linkedin" style={LABEL_STYLE}>
                       LinkedIn Profile <span style={{ color: ALERT }}>*</span>
                     </label>
                     <input
                       type="url"
                       required
                       placeholder="https://linkedin.com/in/yourprofile"
+                      id="apply-linkedin"
+                      autoComplete="url"
                       value={form.linkedin}
                       onChange={(e) => setForm((f) => ({ ...f, linkedin: e.target.value }))}
                       style={INPUT_STYLE}
@@ -295,10 +303,12 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>Portfolio Link</label>
+                    <label htmlFor="apply-portfolio" style={LABEL_STYLE}>Portfolio Link</label>
                     <input
                       type="url"
                       placeholder="https://yourportfolio.com"
+                      id="apply-portfolio"
+                      autoComplete="url"
                       value={form.portfolio}
                       onChange={(e) => setForm((f) => ({ ...f, portfolio: e.target.value }))}
                       style={INPUT_STYLE}
@@ -306,11 +316,16 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                   </div>
 
                   <div>
-                    <label style={LABEL_STYLE}>
+                    <span id="apply-resume-label" style={LABEL_STYLE}>
                       Resume <span style={{ color: ALERT }}>*</span>
-                    </label>
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
+                    </span>
+                    {/* A <label> for the file input, not a clickable div: the
+                        input is visually hidden (never display:none), so it
+                        stays in the tab order, and Enter/Space or a click on
+                        this zone opens the file picker. The drop zone was
+                        mouse-only before, and resume is required. */}
+                    <label
+                      htmlFor="apply-resume"
                       onDragOver={(e) => {
                         e.preventDefault();
                         setDragging(true);
@@ -318,6 +333,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       onDragLeave={() => setDragging(false)}
                       onDrop={handleDrop}
                       style={{
+                        display: 'block',
                         border: `1.5px dashed ${dragging ? ACCENT : 'rgba(42,39,31,0.22)'}`,
                         borderRadius: 10,
                         padding: '28px 20px',
@@ -380,12 +396,14 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       )}
                       <input
                         ref={fileInputRef}
+                        id="apply-resume"
                         type="file"
                         accept=".pdf"
+                        aria-labelledby="apply-resume-label"
                         onChange={handleFileChange}
-                        style={{ display: 'none' }}
+                        className="sr-only-focusable"
                       />
-                    </div>
+                    </label>
                   </div>
                 </div>
 

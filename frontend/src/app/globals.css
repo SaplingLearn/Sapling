@@ -2801,6 +2801,16 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .cp-shot:hover { border-color: rgba(42,39,31,0.26); box-shadow: 0 16px 36px -18px rgba(26,24,20,0.6); transform: translateY(-3px); }
 .cp-shot:active { transform: translateY(-1px); transition-duration: 90ms; }
 .cp-shot:focus-visible { outline: 2px solid #1B6C42; outline-offset: 3px; }
+/* Visually hidden but still focusable and operable — e.g. a file input
+   inside a styled <label> drop zone. Never use display:none for that: it
+   drops the control from the tab order. The label shows the focus ring. */
+.sr-only-focusable {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+label:has(> .sr-only-focusable:focus-visible) { outline: 2px solid #1B6C42; outline-offset: 2px; }
+/* /news search pill: the borderless input inside shows no ring of its own. */
+.cp-searchbar:focus-within { outline: 2px solid #1B6C42; outline-offset: 2px; }
 
 /* Lightbox entrance (#601 follow-up). Keyframes rather than a transition on a
    state flip: the panel only mounts once the overlay hook has set `mounted`,
@@ -2835,4 +2845,4 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 /* Beta modal — recovered from the previous landing page. */
 .ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
 .ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
-.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); outline: none; }
+.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); }

@@ -5,7 +5,7 @@ import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ArticleArt } from '@/components/journal/ArticleArt';
 import { JsonLd } from '@/components/seo/JsonLd';
 import { resolveSiteUrl } from '@/lib/deployGuard';
-import { ARTICLE, ACCENT, SERIF } from '@/lib/landing/companionType';
+import { ACCENT_TEXT, ARTICLE, SERIF } from '@/lib/landing/companionType';
 import { pageMetadata } from '@/lib/seo/pageMetadata';
 import { articleImage, articleLd } from '@/lib/seo/structuredData';
 import {
@@ -100,7 +100,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
         </Link>
 
         <div style={{ marginTop: 26, display: 'flex', alignItems: 'center', gap: 14, lineHeight: 1 }}>
-          <span style={{ ...ARTICLE.eyebrow, letterSpacing: '0.16em', color: ACCENT }}>{article.tag}</span>
+          <span style={{ ...ARTICLE.eyebrow, letterSpacing: '0.16em', color: ACCENT_TEXT }}>{article.tag}</span>
           <time dateTime={article.publishedAt} style={{ ...ARTICLE.eyebrow, letterSpacing: '0.06em' }}>{dateLabel(article.publishedAt)}</time>
           <span style={ARTICLE.eyebrow}>{readTime(article.body)} READ</span>
         </div>
