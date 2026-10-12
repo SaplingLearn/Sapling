@@ -504,3 +504,103 @@ class TestRestoreVersion:
         # restore_version should return None when decryption fails, matching
         # the behavior of "not owned" and "version not found" paths
         assert result is None
+
+
+from services.summary_docs_service import keep_suggestion, undo_suggestion
+
+
+class TestKeepSuggestion:
+    def test_applies_content_marks_kept_and_writes_version(self):
+        from services.encryption import encrypt_json
+
+        new_content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Edited."}]}]}
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}), "created_at": "t0", "updated_at": "t0",
+        }
+        suggestion_row = {"id": "sg1", "summary_doc_id": "sd1", "status": "pending"}
+
+        # Cache one mock per table name — see the note in Task 4/Task 6's
+        # tests: `table(name)` is called more than once for
+        # "summary_doc_suggestions"/"summary_doc_versions" (inside
+        # keep_suggestion, then again below for assertions), so a fresh
+        # MagicMock() per call would hand the assertion a different,
+        # never-called mock.
+        mock_tables: dict = {}
+
+        def _select(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+                m.update.return_value = [{**doc_row, "content": encrypt_json(new_content)}]
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = [suggestion_row]
+                m.update.return_value = [{}]
+            elif name == "summary_doc_versions":
+                m.insert.return_value = [{}]
+            elif name in ("summary_doc_sources", "documents"):
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            result = keep_suggestion("sd1", "u1", "sg1", new_content)
+
+        assert result["content"] == new_content
+        suggestion_update = mock_tables["summary_doc_suggestions"].update.call_args[0][0]
+        assert suggestion_update["status"] == "kept"
+        version_insert = mock_tables["summary_doc_versions"].insert.call_args[0][0]
+        assert version_insert["trigger"] == "ai_edit_kept"
+
+    def test_returns_none_for_already_resolved_suggestion(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}), "created_at": "t0", "updated_at": "t0",
+        }
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = [{"id": "sg1", "summary_doc_id": "sd1", "status": "kept"}]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            assert keep_suggestion("sd1", "u1", "sg1", {"type": "doc", "content": []}) is None
+
+
+class TestUndoSuggestion:
+    def test_marks_undone_without_touching_content(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}), "created_at": "t0", "updated_at": "t0",
+        }
+
+        mock_tables: dict = {}
+
+        def _select(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = [{"id": "sg1", "summary_doc_id": "sd1", "status": "pending"}]
+                m.update.return_value = [{}]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            assert undo_suggestion("sd1", "u1", "sg1") is True
+        update_call = mock_tables["summary_doc_suggestions"].update.call_args[0][0]
+        assert update_call["status"] == "undone"
+
+    def test_returns_false_when_not_owned_or_not_pending(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = []
+            assert undo_suggestion("sd1", "u1", "sg1") is False

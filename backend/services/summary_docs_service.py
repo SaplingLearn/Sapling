@@ -292,3 +292,56 @@ def restore_version(summary_doc_id: str, user_id: str, version_id: str) -> dict 
     if not rows:
         return None
     return _decrypt_doc_row(rows[0])
+
+
+def _owned_pending_suggestion(summary_doc_id: str, user_id: str, suggestion_id: str) -> dict | None:
+    """Verify the summary doc is owned by the user and the suggestion is
+    still pending (not already resolved). Returns the suggestion row if both
+    checks pass, None otherwise."""
+    owned = table("summary_docs").select(
+        "id", filters={"id": f"eq.{summary_doc_id}", "owner_user_id": f"eq.{user_id}"}, limit=1,
+    )
+    if not owned:
+        return None
+    rows = table("summary_doc_suggestions").select(
+        "id,summary_doc_id,status",
+        filters={"id": f"eq.{suggestion_id}", "summary_doc_id": f"eq.{summary_doc_id}"},
+        limit=1,
+    )
+    if not rows or rows[0]["status"] != "pending":
+        return None
+    return rows[0]
+
+
+def keep_suggestion(summary_doc_id: str, user_id: str, suggestion_id: str, content: dict) -> dict | None:
+    """Resolve a pending suggestion as kept. The caller (the route) has
+    already applied the suggested replacement in the editor and sends the
+    resulting full document as `content` — this function trusts it exactly
+    as it would trust a normal autosave from the authenticated owner, and
+    additionally marks the suggestion row + writes a restore point."""
+    if _owned_pending_suggestion(summary_doc_id, user_id, suggestion_id) is None:
+        return None
+    table("summary_doc_suggestions").update(
+        {"status": "kept", "resolved_at": _now_iso()},
+        filters={"id": f"eq.{suggestion_id}"},
+    )
+    _write_version(summary_doc_id, content, "ai_edit_kept")
+    rows = table("summary_docs").update(
+        {"content": encrypt_json(content), "updated_at": _now_iso()},
+        filters={"id": f"eq.{summary_doc_id}", "owner_user_id": f"eq.{user_id}"},
+    )
+    if not rows:
+        return None
+    return _decrypt_doc_row(rows[0])
+
+
+def undo_suggestion(summary_doc_id: str, user_id: str, suggestion_id: str) -> bool:
+    """Reject a pending suggestion. Nothing was ever applied to `content`,
+    so this only flips the suggestion's status."""
+    if _owned_pending_suggestion(summary_doc_id, user_id, suggestion_id) is None:
+        return False
+    table("summary_doc_suggestions").update(
+        {"status": "undone", "resolved_at": _now_iso()},
+        filters={"id": f"eq.{suggestion_id}"},
+    )
+    return True
