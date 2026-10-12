@@ -185,6 +185,7 @@ def run_counts(args: argparse.Namespace) -> tuple[list[Finding], int]:
 # Full rationale in the migration header:
 # db/migrations/20260812214402_quiz_responses.sql.
 _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
+    ("topic_checklists", "enrollment_id", "content"),
     ("users", "id", "email"),
     ("user_profiles", "user_id", "name"),
     ("user_profiles", "user_id", "first_name"),
@@ -243,6 +244,18 @@ def run_ciphertext(args: argparse.Namespace) -> tuple[list[Finding], int]:
 # db/migrations/{0001_baseline_schema,0021_gradebook,0023_graph_integrity,
 # 0025_study_integrity}.sql and db/seed_local_rich.py's _SUMMARY_ORDER.
 _ORPHAN_CHECKS: tuple[tuple[str, str], ...] = (
+    (
+        "topic_checklists->enrollments",
+        "SELECT tc.enrollment_id AS id FROM topic_checklists tc "
+        "LEFT JOIN enrollments e ON e.id = tc.enrollment_id "
+        "WHERE e.id IS NULL LIMIT 20",
+    ),
+    (
+        "topic_checklist_progress->topic_checklists",
+        "SELECT p.enrollment_id || ':' || p.topic_key AS id FROM topic_checklist_progress p "
+        "LEFT JOIN topic_checklists tc ON tc.enrollment_id = p.enrollment_id "
+        "WHERE tc.enrollment_id IS NULL LIMIT 20",
+    ),
     (
         "graph_edges->graph_nodes",
         "SELECT ge.id AS id FROM graph_edges ge "

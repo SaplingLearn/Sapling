@@ -12,6 +12,13 @@ harness (#385); this is deliberately **not** a whole-app sweep.
 
 ## Naming
 
+Topic Checklist uses the `topic-checklist` prefix in
+`src/components/TopicChecklistPanel.tsx`: root `topic-checklist`, controls
+`topic-checklist-toggle`, `topic-checklist-semester`, `topic-checklist-filter`,
+`topic-checklist-refresh`, and repeated `topic-checklist-topic-{topicId}` /
+`topic-checklist-check-{topicId}`. Topic IDs are stable name hashes supplied by
+the API. Course selection on the map uses `graph-course-filter-{courseId}`.
+
 Kebab-case, `<surface>-<element>`:
 
 ```
@@ -73,6 +80,7 @@ renders the element.
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
 | Quiz | `quiz` | `frontend/src/components/quiz/**` — `QuizScreen.tsx` (route root + error card) switching on phase between `home/QuizHome.tsx` (+ `ConceptDialog`/`AdjustDialog`/`PickList`/`QuizSettings`), `question/QuizQuestion.tsx` (+ `AskPanel`/`LeaveDialog`) and `results/QuizResults.tsx` (+ `MissedList`); the ids on the shared `ui/` primitives and `graph/ConceptNeighbourhood.tsx` are passed in from those files as a `testid` prop (#537) |
 | Knowledge graph | `graph` | `frontend/src/components/graph/KnowledgeGraph.tsx` (wrapper: container root + mode toggle) plus `KnowledgeGraph2D.tsx`/`KnowledgeGraph3D.tsx` (the render/data-layer seam — hidden a11y node list, SVG node/edge marks, zoom controls — added with the #395 graph-integrity journey) |
+| Topic Checklist | `topic-checklist` | `frontend/src/components/TopicChecklistPanel.tsx` (course-scoped outline and study checkmarks) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
