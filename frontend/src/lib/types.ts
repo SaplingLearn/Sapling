@@ -197,6 +197,14 @@ export interface SummaryDoc {
   pending_suggestions: SummaryDocSuggestion[];
 }
 
+// The doc row alone, without sources/pending_suggestions — what
+// update_content/keep_suggestion/restore_version return on the backend
+// (services/summary_docs_service.py). Those three mutate content and
+// return the updated row directly rather than re-running get_summary_doc's
+// join, so callers must not assume .sources/.pending_suggestions are
+// present on this shape.
+export type SummaryDocCore = Omit<SummaryDoc, 'sources' | 'pending_suggestions'>;
+
 export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 export type CosmeticType = 'avatar_frame' | 'banner' | 'name_color' | 'title';
 export type AchievementCategory = 'activity' | 'social' | 'milestone' | 'special';

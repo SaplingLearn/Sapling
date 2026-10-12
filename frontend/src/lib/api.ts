@@ -12,7 +12,7 @@ import type {
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
-  SummaryDoc, SummaryDocSuggestion, SummaryDocVersion,
+  SummaryDoc, SummaryDocCore, SummaryDocSuggestion, SummaryDocVersion,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -811,7 +811,7 @@ export const getSummaryDoc = (summaryDocId: string, userId: string) =>
   fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}?user_id=${encodeURIComponent(userId)}`);
 
 export const updateSummaryDocContent = (summaryDocId: string, userId: string, content: Record<string, unknown>) =>
-  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}`, {
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}`, {
     method: 'PATCH',
     body: JSON.stringify({ user_id: userId, content }),
   });
@@ -823,7 +823,7 @@ export const addSummaryDocSource = (summaryDocId: string, userId: string, docume
   });
 
 export const removeSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
-  fetchJSON<SummaryDoc | { detail: string }>(
+  fetchJSON<SummaryDoc>(
     `/api/summary-docs/${summaryDocId}/sources/${documentId}?user_id=${encodeURIComponent(userId)}`,
     { method: 'DELETE' },
   );
@@ -847,7 +847,7 @@ export const askSummaryDocAgent = (
 export const keepSummaryDocSuggestion = (
   summaryDocId: string, userId: string, suggestionId: string, content: Record<string, unknown>,
 ) =>
-  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/keep`, {
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/keep`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, content }),
   });
@@ -864,7 +864,7 @@ export const listSummaryDocVersions = (summaryDocId: string, userId: string) =>
   );
 
 export const restoreSummaryDocVersion = (summaryDocId: string, userId: string, versionId: string) =>
-  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/versions/${versionId}/restore`, {
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}/versions/${versionId}/restore`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
