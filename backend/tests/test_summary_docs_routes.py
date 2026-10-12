@@ -59,6 +59,11 @@ class TestSources:
             r = client.post("/api/summary-docs/sd1/sources", json={"user_id": "u1", "document_id": "doc2"})
         assert r.status_code == 200
 
+    def test_add_source_404_when_not_owned(self, client):
+        with patch("routes.summary_docs.add_source", return_value=None):
+            r = client.post("/api/summary-docs/sd1/sources", json={"user_id": "u1", "document_id": "doc2"})
+        assert r.status_code == 404
+
     def test_remove_source(self, client):
         with patch("routes.summary_docs.remove_source", return_value=_DOC):
             r = client.delete("/api/summary-docs/sd1/sources/doc2?user_id=u1")
@@ -82,6 +87,11 @@ class TestVersions:
             r = client.get("/api/summary-docs/sd1/versions?user_id=u1")
         assert r.status_code == 200
         assert r.json() == {"versions": versions}
+
+    def test_list_versions_404_when_not_owned(self, client):
+        with patch("routes.summary_docs.list_versions", return_value=None):
+            r = client.get("/api/summary-docs/sd1/versions?user_id=u1")
+        assert r.status_code == 404
 
     def test_restore_version(self, client):
         with patch("routes.summary_docs.restore_version", return_value=_DOC):
