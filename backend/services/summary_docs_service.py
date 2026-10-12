@@ -152,3 +152,47 @@ def get_summary_doc(summary_doc_id: str, user_id: str) -> dict | None:
         for s in suggestion_rows
     ]
     return doc
+
+
+def _write_version(summary_doc_id: str, content: dict, trigger: str) -> None:
+    table("summary_doc_versions").insert({
+        "summary_doc_id": summary_doc_id,
+        "content": encrypt_json(content),
+        "trigger": trigger,
+    })
+
+
+def add_source(summary_doc_id: str, user_id: str, document_id: str) -> dict | None:
+    """Make `document_id` available as context for this summary doc.
+
+    Deliberately does NOT touch `content` — adding a source only makes it
+    available; the doc's text changes only when the user explicitly asks
+    the agent to use it (spec section 2). Still writes a restore-point
+    version, since "a source was added" is itself one of the four
+    meaningful history events.
+    """
+    doc = get_summary_doc(summary_doc_id, user_id)
+    if doc is None:
+        return None
+    table("summary_doc_sources").insert(
+        {"summary_doc_id": summary_doc_id, "document_id": document_id}
+    )
+    _write_version(summary_doc_id, doc["content"], "source_added")
+    return get_summary_doc(summary_doc_id, user_id)
+
+
+def remove_source(summary_doc_id: str, user_id: str, document_id: str) -> dict | str | None:
+    """Stop using `document_id` as context. Returns the updated doc, the
+    string "primary" if the caller tried to remove the doc's own primary
+    document (refused — that would orphan the doc), or None if the caller
+    doesn't own this summary doc."""
+    doc = get_summary_doc(summary_doc_id, user_id)
+    if doc is None:
+        return None
+    if document_id == doc["primary_document_id"]:
+        return "primary"
+    table("summary_doc_sources").delete(
+        filters={"summary_doc_id": f"eq.{summary_doc_id}", "document_id": f"eq.{document_id}"}
+    )
+    _write_version(summary_doc_id, doc["content"], "source_removed")
+    return get_summary_doc(summary_doc_id, user_id)

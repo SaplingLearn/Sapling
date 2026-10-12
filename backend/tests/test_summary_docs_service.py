@@ -142,3 +142,122 @@ class TestGetSummaryDoc:
         assert result["sources"] == [{"document_id": "doc1", "file_name": "Lecture 4.pdf", "added_at": "t0"}]
         assert len(result["pending_suggestions"]) == 1
         assert result["pending_suggestions"][0]["instruction"] == "shorter"
+
+
+from services.summary_docs_service import add_source, remove_source
+
+
+class TestAddSource:
+    def test_adds_source_and_writes_version(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        mock_tables = {}
+
+        def _table(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = []
+                m.insert.return_value = [{}]
+            elif name == "documents":
+                m.select.return_value = []
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = []
+            elif name == "summary_doc_versions":
+                m.insert.return_value = [{}]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_table) as mock_table_func:
+            result = add_source("sd1", "u1", "doc2")
+
+        assert result is not None
+        insert_calls = mock_tables["summary_doc_sources"].insert.call_args_list
+        assert len(insert_calls) > 0
+        assert insert_calls[-1][0][0] == {"summary_doc_id": "sd1", "document_id": "doc2"}
+
+    def test_returns_none_when_not_owned(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = []
+            assert add_source("sd1", "u1", "doc2") is None
+
+
+class TestRemoveSource:
+    def test_deletes_source_row_and_writes_version(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        mock_tables = {}
+
+        def _table(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = [
+                    {"document_id": "doc1", "added_at": "t0"},
+                    {"document_id": "doc2", "added_at": "t1"}
+                ]
+                m.delete.return_value = [{}]
+            elif name == "documents":
+                m.select.return_value = [
+                    {"id": "doc1", "file_name": "Doc 1.pdf"},
+                    {"id": "doc2", "file_name": "Doc 2.pdf"},
+                ]
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = []
+            elif name == "summary_doc_versions":
+                m.insert.return_value = [{}]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_table) as mock_table_func:
+            result = remove_source("sd1", "u1", "doc2")
+
+        assert result is not None
+        mock_tables["summary_doc_sources"].delete.assert_called_with(
+            filters={"summary_doc_id": "eq.sd1", "document_id": "eq.doc2"}
+        )
+
+    def test_refuses_to_remove_the_primary_document(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        mock_tables = {}
+
+        def _table(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = [{"document_id": "doc1", "added_at": "t0"}]
+            elif name == "documents":
+                m.select.return_value = [{"id": "doc1", "file_name": "Doc 1.pdf"}]
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_table) as mock_table_func:
+            result = remove_source("sd1", "u1", "doc1")
+        assert result == "primary"
