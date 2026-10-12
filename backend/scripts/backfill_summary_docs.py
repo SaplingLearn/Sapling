@@ -18,6 +18,16 @@ Loads .env.staging without overriding what is already set — run it under
 `dotenv -f .env.<env> run -- ...` for any other environment (same
 convention as scripts/backfill_document_chunks.py), and check the project
 it prints first.
+
+Not safe to run concurrently with another instance of itself: the
+idempotency check (a row already exists in summary_docs) is read-then-write
+with no locking, so two overlapping runs could both decide the same
+document needs backfilling. create_summary_doc's own inserts
+(summary_docs -> summary_doc_sources -> summary_doc_versions) aren't
+atomic either — if one fails partway through, the document is left with a
+summary_docs row but a FAIL is still logged. Because the idempotency check
+only looks for a summary_docs row, a re-run will treat that document as
+already done and will not retry it; such a document needs a manual look.
 """
 import argparse
 import sys
