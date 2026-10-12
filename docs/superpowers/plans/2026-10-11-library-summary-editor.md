@@ -2645,3 +2645,380 @@ Expected: exit 0, no findings for the four new rows (once the local stack has at
 git add backend/scripts/backfill_summary_docs.py backend/e2e_oracles/gather.py
 git commit -m "feat(summary-docs): backfill script + register encrypted columns with the ciphertext oracle"
 ```
+
+---
+
+## Part H — Frontend
+
+### Task 19: TipTap dependencies + types + API client
+
+**Files:**
+- Modify: `frontend/package.json`
+- Modify: `frontend/src/lib/types.ts` (`Document` interface, ~line 151)
+- Modify: `frontend/src/lib/api.ts`
+
+- [ ] **Step 1: Add the TipTap dependencies**
+
+Run (from `frontend/`): `npm install @tiptap/react@^2 @tiptap/core@^2 @tiptap/pm@^2 @tiptap/starter-kit@^2`
+Expected: `package.json`'s `dependencies` gains the four packages; `package-lock.json` updates.
+
+- [ ] **Step 2: Update the `Document` type**
+
+In `frontend/src/lib/types.ts` (~line 151), replace the `summary` field with the three new preview fields (the backend stopped serving `summary` in Task 14):
+
+```typescript
+export interface Document {
+  id: string;
+  user_id: string;
+  course_id: string | null;
+  file_name: string;
+  category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
+  summary_doc_id: string | null;
+  summary_preview: string | null;
+  summary_source_count: number;
+  concept_notes: ConceptNote[] | null;
+  created_at: string;
+  processed_at: string | null;
+}
+```
+
+Then add the summary-doc types right after it (before `RarityTier`):
+
+```typescript
+export interface SummaryDocSource {
+  document_id: string;
+  file_name: string;
+  added_at: string;
+}
+
+export interface SummaryDocSuggestion {
+  id: string;
+  anchor_from: number | null;
+  anchor_to: number | null;
+  instruction: string;
+  original_text: string | null;
+  proposed_text: string;
+  status: 'pending' | 'kept' | 'undone';
+  created_at: string;
+}
+
+export interface SummaryDocVersion {
+  id: string;
+  trigger: string;
+  created_at: string;
+  preview: string;
+}
+
+export interface SummaryDoc {
+  id: string;
+  owner_user_id: string;
+  primary_document_id: string;
+  content: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  sources: SummaryDocSource[];
+  pending_suggestions: SummaryDocSuggestion[];
+}
+```
+
+- [ ] **Step 3: Add the API client functions**
+
+Append to `frontend/src/lib/api.ts`, right after the existing `scanCourseConcepts` export (~line 805):
+
+```typescript
+// Summary docs (editable library summaries)
+import type { SummaryDoc, SummaryDocSuggestion, SummaryDocVersion } from './types';
+
+export const getSummaryDoc = (summaryDocId: string, userId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}?user_id=${encodeURIComponent(userId)}`);
+
+export const updateSummaryDocContent = (summaryDocId: string, userId: string, content: Record<string, unknown>) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, content }),
+  });
+
+export const addSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/sources`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, document_id: documentId }),
+  });
+
+export const removeSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
+  fetchJSON<SummaryDoc | { detail: string }>(
+    `/api/summary-docs/${summaryDocId}/sources/${documentId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const askSummaryDocAgent = (
+  summaryDocId: string,
+  userId: string,
+  body: { instruction: string; anchor_from?: number | null; anchor_to?: number | null; original_text?: string | null },
+) =>
+  fetchJSON<SummaryDocSuggestion>(`/api/summary-docs/${summaryDocId}/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...body }),
+  });
+
+export const keepSummaryDocSuggestion = (
+  summaryDocId: string, userId: string, suggestionId: string, content: Record<string, unknown>,
+) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/keep`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, content }),
+  });
+
+export const undoSummaryDocSuggestion = (summaryDocId: string, userId: string, suggestionId: string) =>
+  fetchJSON<{ undone: boolean }>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/undo`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const listSummaryDocVersions = (summaryDocId: string, userId: string) =>
+  fetchJSON<{ versions: SummaryDocVersion[] }>(
+    `/api/summary-docs/${summaryDocId}/versions?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const restoreSummaryDocVersion = (summaryDocId: string, userId: string, versionId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/versions/${versionId}/restore`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+```
+
+- [ ] **Step 4: Typecheck**
+
+Run: `cd frontend && npm run typecheck`
+Expected: PASS — this will fail until Task 24 updates every `Document.summary` reference in `Library.tsx` to `summary_preview`; if run now, the only errors should be in `Library.tsx` (expected, fixed in Task 24) and nowhere else. If any OTHER file errors, stop and investigate before continuing — that would mean something unexpected also read `Document.summary`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/package.json frontend/package-lock.json frontend/src/lib/types.ts frontend/src/lib/api.ts
+git commit -m "feat(summary-docs): add TipTap deps, summary-doc types, and API client"
+```
+
+---
+
+### Task 20: TipTap suggestion-highlight mark + decoration plugin
+
+**Files:**
+- Create: `frontend/src/lib/summaryEditor/suggestionMark.ts`
+- Create: `frontend/src/lib/summaryEditor/suggestionDecorations.ts`
+- Modify: `frontend/src/app/globals.css`
+
+This is the editor's core "show a pending AI edit at the point of change" mechanic (spec section 4). A `Mark` highlights the ORIGINAL range while a suggestion is pending; a ProseMirror decoration plugin renders the proposed-text card (with Keep it / Undo this buttons) as a widget right after that range, built with plain DOM calls rather than React — TipTap decorations render outside React's tree, so a hand-built `HTMLElement` with real `onclick` handlers is the correct approach here, not a workaround.
+
+- [ ] **Step 1: Write the suggestion mark**
+
+```typescript
+// frontend/src/lib/summaryEditor/suggestionMark.ts
+import { Mark, mergeAttributes } from "@tiptap/core";
+
+export interface SuggestionMarkOptions {
+  HTMLAttributes: Record<string, unknown>;
+}
+
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    suggestionMark: {
+      setSuggestionMark: (suggestionId: string) => ReturnType;
+      unsetSuggestionMark: () => ReturnType;
+    };
+  }
+}
+
+/**
+ * Highlights the ORIGINAL text of a pending AI suggestion (spec section 4:
+ * "Pending AI edits render as a soft-bordered inline card ... rather than
+ * a floating popover"). Removed via unsetSuggestionMark once the
+ * suggestion is kept or undone — see SummaryEditor.tsx.
+ */
+export const SuggestionMark = Mark.create<SuggestionMarkOptions>({
+  name: "suggestionMark",
+  addOptions() {
+    return { HTMLAttributes: {} };
+  },
+  addAttributes() {
+    return {
+      suggestionId: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("data-suggestion-id"),
+        renderHTML: (attrs) => ({ "data-suggestion-id": attrs.suggestionId }),
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-suggestion-id]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      "span",
+      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
+        class: "summary-suggestion-pending",
+      }),
+      0,
+    ];
+  },
+  addCommands() {
+    return {
+      setSuggestionMark:
+        (suggestionId: string) =>
+        ({ commands }) =>
+          commands.setMark(this.name, { suggestionId }),
+      unsetSuggestionMark:
+        () =>
+        ({ commands }) =>
+          commands.unsetMark(this.name),
+    };
+  },
+});
+```
+
+- [ ] **Step 2: Write the decoration plugin**
+
+```typescript
+// frontend/src/lib/summaryEditor/suggestionDecorations.ts
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
+
+export interface PendingSuggestionWidget {
+  id: string;
+  from: number;
+  to: number;
+  proposedText: string;
+  onKeep: () => void;
+  onUndo: () => void;
+}
+
+interface SuggestionDecorationsStorage {
+  pending: PendingSuggestionWidget[];
+}
+
+const pluginKey = new PluginKey("summarySuggestionDecorations");
+
+function buildSuggestionCard(suggestion: PendingSuggestionWidget): HTMLElement {
+  const card = document.createElement("span");
+  card.className = "summary-suggestion-card";
+  card.contentEditable = "false";
+
+  const proposed = document.createElement("span");
+  proposed.className = "summary-suggestion-card__text";
+  proposed.textContent = suggestion.proposedText;
+  card.appendChild(proposed);
+
+  const actions = document.createElement("span");
+  actions.className = "summary-suggestion-card__actions";
+
+  const keepBtn = document.createElement("button");
+  keepBtn.type = "button";
+  keepBtn.className = "btn btn--sm btn--primary";
+  keepBtn.textContent = "Keep it";
+  keepBtn.onclick = (e) => {
+    e.preventDefault();
+    suggestion.onKeep();
+  };
+
+  const undoBtn = document.createElement("button");
+  undoBtn.type = "button";
+  undoBtn.className = "btn btn--sm btn--ghost";
+  undoBtn.textContent = "Undo this";
+  undoBtn.onclick = (e) => {
+    e.preventDefault();
+    suggestion.onUndo();
+  };
+
+  actions.appendChild(keepBtn);
+  actions.appendChild(undoBtn);
+  card.appendChild(actions);
+  return card;
+}
+
+/**
+ * Extension whose `storage.pending` array the editor component mutates
+ * directly, then forces a redraw of (via `editor.view.dispatch(editor.
+ * state.tr)` — see SummaryEditor.tsx's `refreshSuggestionDecorations`).
+ * This is the standard TipTap technique for decorations driven by state
+ * that lives outside the document itself.
+ */
+export const SuggestionDecorations = Extension.create<Record<string, never>, SuggestionDecorationsStorage>({
+  name: "summarySuggestionDecorations",
+  addStorage() {
+    return { pending: [] };
+  },
+  addProseMirrorPlugins() {
+    const extensionStorage = this.storage;
+    return [
+      new Plugin({
+        key: pluginKey,
+        props: {
+          decorations(state) {
+            const decorations: Decoration[] = [];
+            for (const suggestion of extensionStorage.pending) {
+              if (suggestion.to > state.doc.content.size) continue;
+              decorations.push(
+                Decoration.inline(suggestion.from, suggestion.to, {
+                  class: "summary-suggestion-pending-range",
+                }),
+              );
+              decorations.push(
+                Decoration.widget(suggestion.to, () => buildSuggestionCard(suggestion)),
+              );
+            }
+            return DecorationSet.create(state.doc, decorations);
+          },
+        },
+      }),
+    ];
+  },
+});
+```
+
+- [ ] **Step 3: Add the CSS**
+
+Append to `frontend/src/app/globals.css` (near the other inline-highlight rules — anywhere after the `:root` token block is fine):
+
+```css
+.summary-suggestion-pending-range {
+  background: var(--accent-soft);
+  border-radius: var(--r-xs);
+}
+
+.summary-suggestion-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: var(--bg-panel);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.summary-suggestion-card__text {
+  color: var(--accent);
+  max-width: 320px;
+}
+
+.summary-suggestion-card__actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+```
+
+- [ ] **Step 4: Verify the module compiles**
+
+Run: `cd frontend && npm run typecheck`
+Expected: PASS (these two new files have no consumers yet, so nothing else should change; a type error here means the TipTap API surface used doesn't match the installed version — check `node_modules/@tiptap/core`'s version against what Task 19 installed).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/lib/summaryEditor/suggestionMark.ts frontend/src/lib/summaryEditor/suggestionDecorations.ts frontend/src/app/globals.css
+git commit -m "feat(summary-docs): add the TipTap suggestion mark and decoration plugin"
+```
