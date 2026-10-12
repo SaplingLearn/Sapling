@@ -176,7 +176,7 @@ class TestAddSource:
                 m.insert.return_value = [{}]
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_table) as mock_table_func:
+        with patch("services.summary_docs_service.table", side_effect=_table):
             result = add_source("sd1", "u1", "doc2")
 
         assert result is not None
@@ -225,7 +225,7 @@ class TestRemoveSource:
                 m.insert.return_value = [{}]
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_table) as mock_table_func:
+        with patch("services.summary_docs_service.table", side_effect=_table):
             result = remove_source("sd1", "u1", "doc2")
 
         assert result is not None
@@ -258,6 +258,6 @@ class TestRemoveSource:
                 m.select.return_value = []
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_table) as mock_table_func:
+        with patch("services.summary_docs_service.table", side_effect=_table):
             result = remove_source("sd1", "u1", "doc1")
         assert result == "primary"
