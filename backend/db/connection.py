@@ -1,4 +1,6 @@
+import contextvars
 import os
+import time
 from typing import Iterator, Optional
 
 import httpx
@@ -17,8 +19,68 @@ _HEADERS = {
     "Prefer": "return=representation",
 }
 
+# ── Per-request round-trip accounting ─────────────────────────────────────
+#
+# Every PostgREST call is one HTTP round trip, and most request latency here is
+# a count of them. RequestIDMiddleware installs a fresh [count, seconds] list
+# per request (start_db_stats) and appends `db=N/Xms` to its log line, so the
+# number is measured rather than guessed from reading the code. The list is
+# shared BY REFERENCE: contextvars are copied into threadpool workers and
+# BaseHTTPMiddleware's downstream task, so a sync route or an
+# asyncio.to_thread helper increments the same object the middleware reads.
+# Seconds are time-to-headers, which is the round trip; body transfer is
+# negligible next to it for these payloads.
+_DB_STATS: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar(
+    "sapling_db_stats", default=None,
+)
+
+
+def start_db_stats() -> tuple[list, contextvars.Token]:
+    """Begin counting round trips for the current request. Returns the live
+    [count, seconds] list and the token to pass to `stop_db_stats`."""
+    stats = [0, 0.0]
+    return stats, _DB_STATS.set(stats)
+
+
+def stop_db_stats(token: contextvars.Token) -> None:
+    _DB_STATS.reset(token)
+
+
+def _stamp_request(request: httpx.Request) -> None:
+    request.extensions["sapling_t0"] = time.perf_counter()
+
+
+def _count_response(response: httpx.Response) -> None:
+    stats = _DB_STATS.get()
+    if stats is None:
+        return
+    stats[0] += 1
+    t0 = response.request.extensions.get("sapling_t0")
+    if t0 is not None:
+        stats[1] += time.perf_counter() - t0
+
+
+def _make_client(transport: Optional[httpx.BaseTransport] = None) -> httpx.Client:
+    """The one PostgREST client. A function so tests can build it over a mock
+    transport with the same hooks and limits.
+
+    Keep-alive: httpx's default `keepalive_expiry` is 5s, and at current
+    traffic most requests arrive more than 5s after the last one, so nearly
+    every request paid a fresh TCP+TLS handshake to Supabase on its first
+    query. 30s keeps the connection warm across ordinary think time. The
+    connect timeout is short so an unreachable Supabase fails fast; the read
+    timeout stays 30s for the slow RPCs (vector search, canopy_metrics)."""
+    return httpx.Client(
+        headers=_HEADERS,
+        timeout=httpx.Timeout(30.0, connect=5.0),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=30.0),
+        event_hooks={"request": [_stamp_request], "response": [_count_response]},
+        transport=transport,
+    )
+
+
 # Persistent client — reuses TCP connections across requests (much faster)
-_client = httpx.Client(headers=_HEADERS, timeout=30.0)
+_client = _make_client()
 
 
 class SupabaseTable:

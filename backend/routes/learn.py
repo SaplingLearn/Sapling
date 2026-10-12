@@ -15,7 +15,7 @@ from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
-from db.connection import table
+from db.connection import page_all, pg_quote_value, table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
@@ -24,7 +24,6 @@ from services.auth_guard import require_self, get_session_user_id
 from services.chat_stream import merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present
 from services.profiles import get_display_name
-from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
 from services.xp_service import award_xp_safe
@@ -522,9 +521,13 @@ async def _start_session_agent(
     or the stream's Rung-1 ladder — handles it instead of stashing an empty
     greeting.
 
-    Returns {"session_id", "reply", "graph_update", "mastery_changes",
-    "graph_state"} — a superset of what the JSON route needs, and exactly
-    the shape the streaming `done` event / frontend `ChatResult` expects.
+    Returns {"session_id", "reply", "graph_update", "mastery_changes"} — a
+    superset of what the JSON route needs, and exactly the shape the
+    streaming `done` event / frontend `ChatResult` expects.
+
+    It used to carry a full `graph_state` (get_graph: 6+ round trips,
+    including an unbounded events read) that no client ever read; the Learn
+    screen loads the graph through /api/graph itself.
     """
     if session_id is None:
         session_id = str(uuid.uuid4())
@@ -620,7 +623,6 @@ async def _start_session_agent(
         "reply": reply,
         "graph_update": graph_update,
         "mastery_changes": list(deps.mastery_changes),
-        "graph_state": get_graph(body.user_id),
     }
 
 
@@ -633,7 +635,6 @@ async def start_session(body: StartSessionBody, request: Request):
     return {
         "session_id": result["session_id"],
         "initial_message": result["reply"],
-        "graph_state": result["graph_state"],
     }
 
 
@@ -1090,7 +1091,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             "assistant_reply": reply,
             "graph_update": graph_update,
         }
-        return {"session_id": session_id, "graph_state": get_graph(body.user_id)}
+        return {"session_id": session_id}
 
     async def _fallback() -> dict:
         # Rung 1 only (agent failed before any token, no writes landed).
@@ -1264,6 +1265,19 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
         order="started_at.desc",
         limit=limit,
     )
+    # Message counts for every listed session in ONE paged read, counted here.
+    # This used to be one `messages` query per session — 11 round trips for
+    # the Dashboard's 10, 51 for the Tree's 50. Paged because 50 sessions can
+    # carry more than PostgREST's 1000-row cap, which would undercount
+    # silently.
+    message_counts: dict[str, int] = {}
+    if sessions:
+        in_list = ",".join(pg_quote_value(s["id"]) for s in sessions)
+        for row in page_all(
+            table("messages"), "session_id",
+            filters={"session_id": f"in.({in_list})"}, order="session_id,id",
+        ):
+            message_counts[row["session_id"]] = message_counts.get(row["session_id"], 0) + 1
     # Sessions key on the offering; the frontend speaks abstract course ids.
     # Map each offering → its abstract course once.
     offering_to_course: dict[str, str | None] = {}
@@ -1272,7 +1286,6 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
         off_id = s.get("offering_id")
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = offering_course_id(off_id)
-        msgs = table("messages").select("id", filters={"session_id": f"eq.{s['id']}"})
         result.append({
             "id": s["id"],
             "topic": s["topic"],
@@ -1280,7 +1293,7 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
             "course_id": offering_to_course.get(off_id),
             "started_at": s["started_at"],
             "ended_at": s.get("ended_at"),
-            "message_count": len(msgs),
+            "message_count": message_counts.get(s["id"], 0),
             "is_active": s.get("ended_at") is None,
         })
     return {"sessions": result}

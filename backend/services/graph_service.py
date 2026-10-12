@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from config import get_mastery_tier
-from db.connection import table
+from db.connection import MAX_ROWS, page_all, pg_quote_value, table
 from services.streak_service import touch_streak_safe
 
 logger = logging.getLogger(__name__)
@@ -176,16 +176,24 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     ]
 
     # Mastery events live in the append-only node_mastery_events table (the
-    # graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read all
-    # of this user's node events in one query, then group by node id.
+    # graph_nodes.mastery_events JSONB column was dropped in 0023). Batch-read
+    # this user's node events in one query, then group by node id.
+    #
+    # NEWEST first, then flipped back to ascending. Both consumers only look at
+    # the recent end — velocity is a 14-day window and the UI keeps the last 5
+    # per node — but the read used to be `created_at.asc` with no limit, and
+    # PostgREST caps a response at 1000 rows, so once a user passed 1000 events
+    # they got the OLDEST 1000 and their velocity and history silently froze.
+    # Bounded at the cap on purpose: the full ledger is not needed here.
     events_by_node: dict[str, list] = {}
     if node_ids:
         try:
-            event_rows = table("node_mastery_events").select(
+            event_rows = list(reversed(table("node_mastery_events").select(
                 "node_id,delta,reason,created_at",
                 filters={"node_id": f"in.({','.join(node_ids)})"},
-                order="created_at.asc",
-            ) or []
+                order="created_at.desc",
+                limit=MAX_ROWS,
+            ) or []))
         except Exception:
             event_rows = []
         for ev in event_rows:
@@ -348,18 +356,25 @@ def get_courses(user_id: str) -> list:
         if term_label and term_label not in terms[course_id]:
             terms[course_id].append(term_label)
 
+    # Node counts for every course in ONE paged read, counted here. The graph
+    # keys on the abstract course id, so each course is counted once — never
+    # doubled across offerings. This used to be one `graph_nodes` query per
+    # course, on a list nearly every screen loads; paged so a course past
+    # PostgREST's 1000-row cap is not silently undercounted.
+    node_counts: dict[str, int] = {}
+    if order:
+        in_list = ",".join(pg_quote_value(c) for c in order)
+        for node in page_all(
+            table("graph_nodes"), "course_id",
+            filters={"user_id": f"eq.{user_id}", "course_id": f"in.({in_list})"},
+            order="course_id,id",
+        ):
+            node_counts[node["course_id"]] = node_counts.get(node["course_id"], 0) + 1
+
     result = []
     for course_id in order:
         r = reps[course_id]
         course = r.get("courses", {}) if isinstance(r.get("courses"), dict) else {}
-
-        # Count nodes for this course (graph keys on the abstract course id).
-        # Counted once per distinct course — the fan-out used to run this per
-        # enrollment, double-counting the same abstract course's nodes.
-        node_rows = table("graph_nodes").select(
-            "id",
-            filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
-        ) or []
 
         result.append({
             "enrollment_id": r["id"],
@@ -371,7 +386,7 @@ def get_courses(user_id: str) -> list:
             "color": r.get("color"),
             "nickname": r.get("nickname"),
             "term": r.get("term", ""),
-            "node_count": len(node_rows),
+            "node_count": node_counts.get(course_id, 0),
             "enrolled_at": r.get("enrolled_at"),
             "enrollment_ids": enrollment_ids[course_id],
             "terms": terms[course_id],

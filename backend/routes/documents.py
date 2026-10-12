@@ -669,7 +669,13 @@ async def upload_document_sync(
             ),
         )
 
-    extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
+    # In a thread: pypdf, and the Docling OCR fallback for a scanned PDF, are
+    # CPU-bound for seconds. Run inline in this `async def` they froze the
+    # whole (single-process) server — every other request and every other
+    # user's token stream — for the duration.
+    extracted_text = await asyncio.to_thread(
+        _extract_text_or_422, file_bytes, filename, file.content_type or "",
+    )
 
     # The upload form sends the ABSTRACT course id; documents key on the
     # OFFERING. Resolve to the current-term offering once (create=True so a
@@ -830,9 +836,13 @@ async def upload_document(
     # progress:extracting_text event while OCR runs in a thread. Default
     # behavior is unchanged (synchronous extraction before stream opens)
     # so existing tests and clients keep working.
+    # Off the event loop either way: inline extraction in this `async def`
+    # stalled every other request on the server while a PDF was parsed/OCR'd.
     extracted_text: str | None = (
         None if OCR_ASYNC_ENABLED
-        else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+        else await asyncio.to_thread(
+            _extract_text_or_422, file_bytes, filename, file.content_type or "",
+        )
     )
 
     async def event_stream():

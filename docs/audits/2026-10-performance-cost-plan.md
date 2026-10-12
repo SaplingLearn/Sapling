@@ -51,13 +51,13 @@ that phase · 🧭 needs a team decision.
 
 | # | File | Change | Expected gain | Verify | Status |
 |---|---|---|---|---|---|
-| B1 | `backend/routes/documents.py` (`_extract_text_or_422`), `services/chat_stream.py` (`on_complete`) | Run OCR/PDF extraction and post-stream persistence in `asyncio.to_thread`. | a scanned PDF no longer freezes the whole server for seconds | test: concurrent `GET /api/health` returns fast while an upload extracts | 🔜 |
-| B2 | `backend/routes/learn.py` (`list_sessions`) | One query with `messages(count)` instead of one count per session. | 11 → 1 round trips (Dashboard/Learn), 51 → 1 on Tree | `tests/test_learn_routes.py` | 🔜 |
-| B3 | `backend/services/graph_service.py` (`get_courses`) | One node read grouped in Python instead of one count per course. | 1+N → 2 round trips on almost every route | unit test | 🔜 |
-| B4 | `backend/services/graph_service.py` (mastery history) | Read newest events first with a bound, so PostgREST's 1000-row cap stops returning the **oldest** 1000. | correctness: velocity/"last 5" stop going stale for active users | unit test | 🔜 |
-| B5 | `backend/db/connection.py` | Keep-alive 60 s, 20 connections, 15 s timeout (5 s connect). | no fresh TLS handshake to Supabase on the first call after 5 s idle (~30–150 ms) | first-call latency after 10 s idle | 🔜 |
-| B6 | `backend/db/connection.py` + `services/request_context.py` | Count PostgREST round trips and time per request; append `db=N/Xms` to the request log line. | turns every estimate here into a measured number | log line | 🔜 |
-| B7 | `backend/routes/learn.py` (start-session) | Stop computing `graph_state` the frontend never reads. | −6+ round trips per session start | `tests/test_learn_routes.py` | 🔜 |
+| B1 | `backend/routes/documents.py` (`_extract_text_or_422`), `services/chat_stream.py` (`on_complete`) | Run OCR/PDF extraction and post-stream persistence in `asyncio.to_thread`. | a scanned PDF no longer freezes the whole server for seconds | test: concurrent `GET /api/health` returns fast while an upload extracts | ✅ |
+| B2 | `backend/routes/learn.py` (`list_sessions`) | One paged `messages?session_id=in.(…)` read counted in Python instead of one read per session (embedded `messages(count)` avoided: unverified against the live PostgREST aggregate setting). | 11 → 1 round trips (Dashboard/Learn), 51 → 1 on Tree | `tests/test_learn_routes.py` | ✅ |
+| B3 | `backend/services/graph_service.py` (`get_courses`) | One node read grouped in Python instead of one count per course. | 1+N → 2 round trips on almost every route | unit test | ✅ |
+| B4 | `backend/services/graph_service.py` (mastery history) | Read newest events first with a bound, so PostgREST's 1000-row cap stops returning the **oldest** 1000. | correctness: velocity/"last 5" stop going stale for active users | unit test | ✅ |
+| B5 | `backend/db/connection.py` | Keep-alive 30 s (httpx default 5 s), 20 kept connections, 5 s connect timeout (read stays 30 s for the slow RPCs). | no fresh TLS handshake to Supabase on the first call after 5 s idle (~30–150 ms) | first-call latency after 10 s idle | ✅ |
+| B6 | `backend/db/connection.py` + `services/request_context.py` | Count PostgREST round trips and time per request; append `db=N/Xms` to the request log line. | turns every estimate here into a measured number | log line | ✅ |
+| B7 | `backend/routes/learn.py` (start-session) | Stop computing `graph_state` the frontend never reads. | −6+ round trips per session start | `tests/test_learn_routes.py` | ✅ |
 | B8 | `backend/routes/auth.py` (`/me`) | One embedded select instead of 4–9 reads. | 4–9 → 1 round trip on every app mount | log counter (B6) | 🔜 Tier 2 — F1 already removes most calls |
 | B9 | `services/graph_service.py:882-891` | Move `update_course_context` off the request path and drop the unused Flash summary. | −1 Flash call and −1.5–5 s on mastery-changing tutor turns / quiz submit | `llm_usage feature='course_summary'` | ⏸ touches an LLM call |
 

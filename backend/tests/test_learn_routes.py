@@ -131,16 +131,18 @@ class TestListSessions:
     def test_returns_sessions_with_message_count(self):
         sessions = [
             {"id": "s1", "topic": "Loops", "mode": "socratic", "started_at": "2026-01-01T10:00:00", "ended_at": None},
+            {"id": "s2", "topic": "Trees", "mode": "socratic", "started_at": "2026-01-01T09:00:00", "ended_at": None},
         ]
+        messages = MagicMock()
+        messages.select_with_count.return_value = (
+            [{"session_id": "s1"}, {"session_id": "s1"}], 2,
+        )
 
         def factory(name):
+            if name == "messages":
+                return messages
             mock = MagicMock()
-            if name == "sessions":
-                mock.select.return_value = sessions
-            elif name == "messages":
-                mock.select.return_value = [{"id": "m1"}, {"id": "m2"}]
-            else:
-                mock.select.return_value = []
+            mock.select.return_value = sessions if name == "sessions" else []
             return mock
 
         with patch("routes.learn.table", side_effect=factory):
@@ -148,10 +150,15 @@ class TestListSessions:
 
         assert r.status_code == 200
         data = r.json()["sessions"]
-        assert len(data) == 1
+        assert len(data) == 2
         assert data[0]["topic"] == "Loops"
         assert data[0]["message_count"] == 2
+        assert data[1]["message_count"] == 0
         assert data[0]["is_active"] is True
+        # One read for every session's messages, not one per session.
+        assert messages.select_with_count.call_count == 1
+        filters = messages.select_with_count.call_args.kwargs["filters"]
+        assert filters == {"session_id": 'in.("s1","s2")'}
 
     def test_ended_session_is_not_active(self):
         sessions = [{"id": "s1", "topic": "X", "mode": "socratic", "started_at": "2026-01-01T00:00:00", "ended_at": "2026-01-01T01:00:00"}]
@@ -159,6 +166,7 @@ class TestListSessions:
         def factory(name):
             mock = MagicMock()
             mock.select.return_value = sessions if name == "sessions" else []
+            mock.select_with_count.return_value = ([], 0)
             return mock
 
         with patch("routes.learn.table", side_effect=factory):
@@ -838,7 +846,6 @@ class TestStartSessionAgent:
             patch("routes.learn.agent_for_mode", return_value=agent),
             patch("routes.learn._get_course_id_for_topic", return_value="c1"),
             patch("routes.learn.resolve_offering", return_value="off-1"),
-            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
         )
 
     def test_happy_path_stashes_pending_and_returns_greeting(self):
@@ -847,15 +854,15 @@ class TestStartSessionAgent:
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("Welcome! Let's begin."))
         mocks: dict = {}
-        tbl, afm, topic, off, graph = self._stack(agent, mocks)
+        tbl, afm, topic, off = self._stack(agent, mocks)
         try:
-            with tbl, afm, topic, off, graph:
+            with tbl, afm, topic, off:
                 r = self._post()
             assert r.status_code == 200
             data = r.json()
             assert data["initial_message"] == "Welcome! Let's begin."
             assert data["session_id"]
-            assert data["graph_state"] == {"nodes": [], "edges": []}
+            assert "graph_state" not in data  # nobody read it; get_graph is not called
             # Lazy contract: stashed, never written to `sessions`/`messages`.
             assert len(PENDING_SESSIONS) == 1
             stashed = PENDING_SESSIONS[data["session_id"]]
@@ -872,8 +879,8 @@ class TestStartSessionAgent:
         PENDING_SESSIONS.clear()
         agent = MagicMock()
         agent.run = AsyncMock(side_effect=UsageLimitExceeded("token cap"))
-        tbl, afm, topic, off, graph = self._stack(agent, {})
-        with tbl, afm, topic, off, graph:
+        tbl, afm, topic, off = self._stack(agent, {})
+        with tbl, afm, topic, off:
             r = self._post()
         assert r.status_code == 413
         assert "budget" in r.json()["detail"]
@@ -889,8 +896,8 @@ class TestStartSessionAgent:
         PENDING_SESSIONS.clear()
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("\n"))
-        tbl, afm, topic, off, graph = self._stack(agent, {})
-        with tbl, afm, topic, off, graph:
+        tbl, afm, topic, off = self._stack(agent, {})
+        with tbl, afm, topic, off:
             r = self._post()
         assert r.status_code == 502
         assert PENDING_SESSIONS == {}
@@ -913,9 +920,9 @@ class TestStartSessionAgent:
             textless_run_result(""),
             run_result("Welcome! Let's start with eigenvalues."),
         ])
-        tbl, afm, topic, off, graph = self._stack(agent, {})
+        tbl, afm, topic, off = self._stack(agent, {})
         try:
-            with tbl, afm, topic, off, graph:
+            with tbl, afm, topic, off:
                 r = self._post()
             assert r.status_code == 200, r.text
             data = r.json()

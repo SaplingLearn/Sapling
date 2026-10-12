@@ -153,7 +153,6 @@ class TestStartSessionStream:
                    return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
              patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
              patch("routes.learn.resolve_offering", return_value="off-1"), \
-             patch("routes.learn.get_graph", return_value={"nodes": []}), \
              patch("routes.learn.table") as tbl:
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",
@@ -214,7 +213,6 @@ class TestStartSessionStream:
                    return_value=(fallback_agent, "msg", {}, fallback_deps)) as prep, \
              patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
              patch("routes.learn.resolve_offering", return_value="off-1"), \
-             patch("routes.learn.get_graph", return_value={"nodes": []}), \
              patch("routes.learn.table") as tbl:
             r = client.post("/api/learn/start-session/stream", json={
                 "user_id": "u1", "topic": "Eigenvalues", "mode": "socratic",

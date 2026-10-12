@@ -168,7 +168,6 @@ def test_start_session_json_route_serves_tutor_handler_in_function_mode(monkeypa
         with (
             socratic_agent.override(model=model_for("chat_tutor")),
             patch("routes.learn._get_course_id_for_topic", return_value=""),
-            patch("routes.learn.get_graph", return_value={"nodes": [], "edges": []}),
         ):
             r = client.post("/api/learn/start-session", json={
                 "user_id": "e2e-user", "topic": "Recursion", "mode": "socratic",

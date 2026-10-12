@@ -27,6 +27,8 @@ from typing import Awaitable, Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from db.connection import start_db_stats, stop_db_stats
+
 
 _REQUEST_ID_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "sapling_request_id", default=None,
@@ -60,6 +62,9 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         rid = incoming if _SAFE_ID.match(incoming) else new_request_id()
         request.state.request_id = rid
         token = _REQUEST_ID_CTX.set(rid)
+        # Round-trip counter for the log line below (db/connection.py). Set
+        # before call_next so the downstream task inherits the same list.
+        db_stats, db_token = start_db_stats()
         start = time.perf_counter()
         try:
             response = await call_next(request)
@@ -101,6 +106,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # the var still holds this request's id).
             if _REQUEST_ID_CTX.get() == rid:
                 _REQUEST_ID_CTX.reset(token)
+            stop_db_stats(db_token)
 
         # One log line per request, severity tracking the response code.
         dur_ms = (time.perf_counter() - start) * 1000
@@ -109,10 +115,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             else logging.WARNING if response.status_code >= 400
             else logging.INFO
         )
+        # `db=N/Xms`: PostgREST round trips and their summed time-to-headers.
+        # For a streamed response (SSE) this is the count up to the first
+        # byte — the log line is written when headers go out, not at the end.
         _log.log(
             level,
-            "[%s] %s %s -> %d (%.1fms)",
+            "[%s] %s %s -> %d (%.1fms) db=%d/%.1fms",
             rid, request.method, request.url.path, response.status_code, dur_ms,
+            db_stats[0], db_stats[1] * 1000,
         )
 
         # #117: persist 4xx/5xx as observability events (the error rollups in

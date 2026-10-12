@@ -19,6 +19,7 @@ both, and the error rungs run neither. See `stream_agent_turn` for the rungs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -436,7 +437,11 @@ async def stream_agent_turn(
     mastery = list(deps.mastery_changes)
 
     try:
-        extra = on_complete(reply, merged, mastery) or {}
+        # In a thread: on_complete persists the turn through the synchronous
+        # PostgREST client (two inserts and more). Called inline from this
+        # async generator it blocked the event loop — every other request and
+        # stream on the server — once per tutor turn.
+        extra = (await asyncio.to_thread(on_complete, reply, merged, mastery)) or {}
     except Exception as exc:
         # Persistence failed AFTER the reply fully streamed. Letting this
         # propagate would abort the ASGI response mid-stream with no closing

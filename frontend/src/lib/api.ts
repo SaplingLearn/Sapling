@@ -281,7 +281,7 @@ export const startSession = (
   useSharedContext = true,
   modelPref?: ModelPref,
 ) =>
-  fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
+  fetchJSON<{ session_id: string; initial_message: string }>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
       user_id: userId,
@@ -323,7 +323,6 @@ export interface ChatResult {
   graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
   session_id?: string;
-  graph_state?: any;
 }
 
 interface StreamEvent {

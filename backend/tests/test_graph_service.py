@@ -262,6 +262,45 @@ class TestGetGraph:
         assert len(node["mastery_events"]) == 2
         assert result["stats"]["avg_learning_velocity"] > 0
 
+    def test_mastery_events_read_newest_first_and_keep_the_latest(self):
+        """PostgREST caps a response at 1000 rows. The read used to be
+        created_at.asc with no limit, so past 1000 events a user got the OLDEST
+        1000 and velocity/"last 5" froze. It now asks for the newest page and
+        flips it back to chronological order for the consumers."""
+        nodes = [
+            {"id": "n1", "concept_name": "Loops", "mastery_tier": "learning",
+             "mastery_score": 0.5, "subject": "CS", "times_studied": 3,
+             "user_id": "u1", "course_id": "c1"},
+        ]
+        # what PostgREST returns for created_at.desc: newest first
+        newest_first = [
+            {"node_id": "n1", "delta": 0.1, "reason": f"r{i}",
+             "created_at": f"2026-01-{i:02d}T00:00:00+00:00"}
+            for i in range(9, 0, -1)
+        ]
+        reads: dict = {}
+
+        def factory(name):
+            mock = _mock_table({
+                "users": [{"streak_count": 1}],
+                "graph_nodes": nodes,
+                "graph_edges": [],
+                "node_mastery_events": newest_first,
+                "enrollments": [_enrollment_row("c1", "CS", "Intro CS")],
+            })(name)
+            reads[name] = mock
+            return mock
+
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_graph("u1")
+
+        kwargs = reads["node_mastery_events"].select.call_args.kwargs
+        assert kwargs["order"] == "created_at.desc"
+        assert kwargs["limit"] == 1000
+        node = next(n for n in result["nodes"] if n["id"] == "n1")
+        # the last five, in chronological order
+        assert [e["reason"] for e in node["mastery_events"]] == ["r5", "r6", "r7", "r8", "r9"]
+
     def test_dedupes_subject_root_for_two_offerings_of_same_course(self):
         """#355: a user enrolled in TWO offerings of the same abstract course
         (e.g. re-taking it, or two sections) must get exactly ONE subject-root
@@ -327,14 +366,20 @@ class TestGetCourses:
                 mock.select.return_value = [_enrollment_row(
                     "c1", "MATH101", "Math", term="Spring 2026", offering_id="off-1")]
             elif name == "graph_nodes":
-                mock.select.return_value = [{"id": "n1"}, {"id": "n2"}]
+                mock.select_with_count.return_value = (
+                    [{"course_id": "c1"}, {"course_id": "c1"}], 2,
+                )
+                graph_reads.append(mock)
             else:
                 mock.select.return_value = []
             return mock
 
+        graph_reads: list = []
         with patch("services.graph_service.table", side_effect=factory):
             result = get_courses("u1")
 
+        # one node read for all courses, not one per course
+        assert len(graph_reads) == 1
         assert len(result) == 1
         assert result[0]["course_id"] == "c1"          # abstract course id
         assert result[0]["course_name"] == "Math"
@@ -361,7 +406,9 @@ class TestGetCourses:
                 # _user_enrolled_courses orders enrolled_at.asc
                 mock.select.return_value = [fall, spring]
             elif name == "graph_nodes":
-                mock.select.return_value = [{"id": "n1"}, {"id": "n2"}, {"id": "n3"}]
+                mock.select_with_count.return_value = (
+                    [{"course_id": "cs101"}] * 3, 3,
+                )
             else:
                 mock.select.return_value = []
             return mock
