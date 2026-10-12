@@ -3670,3 +3670,211 @@ Expected: PASS.
 git add frontend/src/components/screens/SummaryEditor/
 git commit -m "feat(summary-docs): add SourcesPanel and HistoryPanel to the editor's right rail"
 ```
+
+---
+
+### Task 23: The `/library/summaries/[id]` route
+
+**Files:**
+- Create: `frontend/src/app/(shell)/library/summaries/[id]/page.tsx`
+
+- [ ] **Step 1: Write the route**
+
+Mirrors the existing dynamic-route convention exactly (`frontend/src/app/(shell)/gradebook/[courseId]/page.tsx`: `"use client"`, `params` as a `Promise`, unwrapped with `use()`):
+
+```typescript
+// frontend/src/app/(shell)/library/summaries/[id]/page.tsx
+"use client";
+import { use } from "react";
+import { SummaryEditor } from "@/components/screens/SummaryEditor/SummaryEditor";
+
+export default function SummaryEditorPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  return <SummaryEditor summaryDocId={decodeURIComponent(id)} />;
+}
+```
+
+- [ ] **Step 2: Typecheck**
+
+Run: `cd frontend && npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 3: Manually verify the route renders**
+
+Run: `cd frontend && npm run dev` (in one terminal), then in a browser visit `http://localhost:3000/library/summaries/<any-id>` while logged in as a seeded user with at least one uploaded document (get a real `summary_doc_id` from that document's row, or from the Library grid once Task 24 adds the "Open summary" link).
+Expected: the editor shell renders (header, empty/seeded doc body, Sources/History tabs) without a client-side exception. A 404-shaped response from `getSummaryDoc` for a made-up id is fine — the point of this check is that the ROUTE itself mounts correctly, not that every id resolves.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add "frontend/src/app/(shell)/library/summaries/"
+git commit -m "feat(summary-docs): add the /library/summaries/[id] route"
+```
+
+---
+
+### Task 24: `Library.tsx` cutover — preview fields, "Open summary", delete warning
+
+**Files:**
+- Modify: `frontend/src/components/screens/Library.tsx`
+- Modify: `frontend/src/components/screens/Library.test.tsx` (create if it doesn't already exist — check first)
+
+- [ ] **Step 1: Check for an existing Library test file**
+
+Run: `ls frontend/src/components/screens/Library.test.tsx 2>/dev/null || echo "no existing test file"`
+
+If it exists, read it fully before continuing — the test you add in Step 2 must follow its existing patterns (mocking of `@/lib/api`, `@/context/UserContext`, etc.) rather than inventing a new mocking style. If it doesn't exist, Step 2's test is the first one and establishes no prior convention to break.
+
+- [ ] **Step 2: Write the failing test for the drawer's summary link**
+
+```typescript
+// Add to frontend/src/components/screens/Library.test.tsx (creating the
+// file with this one test if none exists yet — match whatever mocking
+// setup a pre-existing file already uses instead of this skeleton if one
+// was found in Step 1)
+// @vitest-environment jsdom
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import React from "react";
+
+vi.mock("@/context/UserContext", () => ({
+  useUser: () => ({ userId: "u1", userReady: true }),
+}));
+
+const mockGetDocuments = vi.fn();
+vi.mock("@/lib/api", () => ({
+  getDocuments: (...args: unknown[]) => mockGetDocuments(...args),
+  getCourses: vi.fn().mockResolvedValue({ courses: [] }),
+  deleteDocument: vi.fn(),
+  scanDocumentConcepts: vi.fn(),
+  scanCourseConcepts: vi.fn(),
+}));
+
+import { Library } from "./Library";
+
+afterEach(cleanup);
+
+describe("Library — summary doc link", () => {
+  it("shows an Open summary link when the document has a summary doc, and renders the preview text", async () => {
+    mockGetDocuments.mockResolvedValue({
+      documents: [{
+        id: "d1", user_id: "u1", course_id: null, file_name: "Lecture 4.pdf",
+        category: "lecture_notes",
+        summary_doc_id: "sd1", summary_preview: "Mitosis overview.", summary_source_count: 1,
+        concept_notes: null, created_at: "2026-01-01T00:00:00Z", processed_at: null,
+      }],
+    });
+
+    render(<Library />);
+    await userEvent.click(await screen.findByTestId("library-doc-d1"));
+
+    const link = await screen.findByRole("link", { name: "Open summary" });
+    expect(link).toHaveAttribute("href", "/library/summaries/sd1");
+    expect(screen.getByText("Mitosis overview.")).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 3: Run the test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/screens/Library.test.tsx`
+Expected: FAIL — no "Open summary" link exists yet (the drawer still renders the old static `doc.summary` panel, which will also fail to compile once Task 19 already removed `summary` from the `Document` type — if `npm run typecheck` wasn't re-run since Task 19, run it now to see the pre-existing type errors this task fixes).
+
+- [ ] **Step 4: Apply the four edits**
+
+In `frontend/src/components/screens/Library.tsx`:
+
+**(a) Search filter (~line 120)** — filter on the preview field instead of the retired one:
+
+```typescript
+      if (q && !d.file_name.toLowerCase().includes(q) && !(d.summary_preview || "").toLowerCase().includes(q)) return false;
+```
+
+**(b) Grid card preview (~line 285-292)**:
+
+```typescript
+                      {d.summary_preview && (
+                        <div style={{
+                          fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5,
+                          display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
+                        }}>
+                          {d.summary_preview}
+                        </div>
+                      )}
+```
+
+**(c) List row preview (~line 334)**:
+
+```typescript
+                          {d.summary_preview || "—"}
+```
+
+**(d) Drawer panel (~line 540-545)** — replace the static summary block with a link to the editor:
+
+```typescript
+      {doc.summary_doc_id && (
+        <div style={{ marginBottom: 16 }}>
+          <div className="label-micro" style={{ marginBottom: 4 }}>Summary</div>
+          {doc.summary_preview && (
+            <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-dim)", marginBottom: 8 }}>
+              {doc.summary_preview}
+            </div>
+          )}
+          <Link href={`/library/summaries/${doc.summary_doc_id}`} className="btn btn--sm btn--primary">
+            Open summary
+          </Link>
+        </div>
+      )}
+```
+
+Add the import at the top of the file (alongside the other imports, e.g. right after the `"use client"` block's `React`/`dynamic` imports):
+
+```typescript
+import Link from "next/link";
+```
+
+- [ ] **Step 5: Add the multi-source delete warning**
+
+Around the existing delete button (~line 514-521, the `useConfirm`-backed `del` handler), change the confirm label to mention the summary when the document has one, and warn specifically about OTHER sources when `summary_source_count > 1` (spec section 2's "Delete-together behavior" — the warning is specific to the multi-source case, a single-source summary doc is just this document's own write-up and needs no extra caveat):
+
+```typescript
+  const del = useConfirm(async () => {
+    try {
+      await deleteDocument(doc.id, userId);
+      await onDeleted();
+    } catch (err) {
+      toast.error(`Delete failed: ${String(err)}`);
+    }
+  });
+
+  const deleteWarning = doc.summary_doc_id
+    ? doc.summary_source_count > 1
+      ? "Click again to confirm — this also removes its summary, which also used other sources"
+      : "Click again to confirm — this also removes its summary"
+    : "Click again to confirm";
+```
+
+Then in the delete button's JSX (~line 583-589), use `deleteWarning` instead of the inline literal:
+
+```typescript
+      <button
+        data-testid="library-detail-delete"
+        onClick={del.trigger}
+        className={`btn ${del.armed ? "btn--danger" : ""}`}
+        style={{ width: "100%", background: del.armed ? "var(--err-soft)" : undefined, color: del.armed ? "var(--err)" : undefined }}
+      >
+        <Icon name="x" size={13} /> {del.armed ? deleteWarning : "Delete document"}
+```
+
+- [ ] **Step 6: Run the test to verify it passes, then typecheck the whole frontend**
+
+Run: `cd frontend && npx vitest run src/components/screens/Library.test.tsx && npm run typecheck`
+Expected: PASS — and this is the point where the `Document.summary` → `summary_preview` type-rename from Task 19 fully resolves (no more type errors anywhere in the frontend).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend/src/components/screens/Library.tsx frontend/src/components/screens/Library.test.tsx
+git commit -m "feat(summary-docs): Library shows summary previews and links to the editor"
+```
