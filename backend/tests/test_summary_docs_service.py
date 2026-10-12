@@ -61,3 +61,85 @@ class TestPlaintextFromProsemirror:
     def test_truncates_to_max_chars(self):
         doc = prosemirror_doc_from_text("A" * 500)
         assert len(plaintext_from_prosemirror(doc, max_chars=50)) == 50
+
+
+from unittest.mock import MagicMock, patch
+
+from services.summary_docs_service import create_summary_doc, get_summary_doc
+
+
+class TestCreateSummaryDoc:
+    def test_inserts_doc_source_and_initial_version(self):
+        inserted_doc = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": "ciphertext", "created_at": "t0", "updated_at": "t0",
+        }
+        fake_tables = {
+            "summary_docs": MagicMock(insert=MagicMock(return_value=[inserted_doc])),
+            "summary_doc_sources": MagicMock(insert=MagicMock(return_value=[{}])),
+            "summary_doc_versions": MagicMock(insert=MagicMock(return_value=[{}])),
+        }
+        with patch(
+            "services.summary_docs_service.table",
+            side_effect=lambda name: fake_tables[name],
+        ):
+            result = create_summary_doc(
+                user_id="u1", primary_document_id="doc1",
+                seed_text="The main idea.",
+            )
+
+        assert result["id"] == "sd1"
+        assert result["content"] == {
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "The main idea."}]}],
+        }
+        fake_tables["summary_doc_sources"].insert.assert_called_once_with(
+            {"summary_doc_id": "sd1", "document_id": "doc1"}
+        )
+        version_call = fake_tables["summary_doc_versions"].insert.call_args[0][0]
+        assert version_call["summary_doc_id"] == "sd1"
+        assert version_call["trigger"] == "initial"
+
+
+class TestGetSummaryDoc:
+    def test_returns_none_when_not_owned(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = []
+            assert get_summary_doc("sd1", "u1") is None
+
+    def test_attaches_sources_and_pending_suggestions(self):
+        import json
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+        source_rows = [{"document_id": "doc1", "added_at": "t0"}]
+        file_rows = [{"id": "doc1", "file_name": "Lecture 4.pdf"}]
+        suggestion_rows = [{
+            "id": "sg1", "summary_doc_id": "sd1", "anchor_from": 0, "anchor_to": 5,
+            "instruction": "shorter", "original_text": "Hello", "proposed_text": "Hi",
+            "status": "pending", "created_at": "t0", "resolved_at": None,
+        }]
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = source_rows
+            elif name == "documents":
+                m.select.return_value = file_rows
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = suggestion_rows
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            result = get_summary_doc("sd1", "u1")
+
+        assert result["content"] == {"type": "doc", "content": []}
+        assert result["sources"] == [{"document_id": "doc1", "file_name": "Lecture 4.pdf", "added_at": "t0"}]
+        assert len(result["pending_suggestions"]) == 1
+        assert result["pending_suggestions"][0]["instruction"] == "shorter"
