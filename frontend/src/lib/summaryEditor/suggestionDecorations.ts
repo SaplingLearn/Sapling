@@ -88,14 +88,23 @@ export const SuggestionDecorations = Extension.create<Record<string, never>, Sug
                 }),
               );
               // Keying by suggestion.id lets ProseMirror reuse the card's
-              // DOM node (and its still-live onclick closures) across
-              // redraws instead of tearing it down on every keystroke
-              // elsewhere in the doc — without a key, a click could land
-              // on a node already removed by the next redraw and silently
-              // no-op. Safe to reuse across redraws here because a given
-              // id is only ever added once and later removed outright
-              // (resolved -> dropped from `pending`), never replaced
-              // in-place under the same id with different callbacks.
+              // DOM node (and its onclick closures) across redraws instead
+              // of tearing it down on every keystroke elsewhere in the doc
+              // — without a key, a click could land on a node already
+              // removed by the next redraw and silently no-op.
+              //
+              // Reuse-by-key means `toDOM` (and the onKeep/onUndo closures
+              // it captures) is called ONCE per id and never again, even
+              // if a later redraw passes a `pending` entry with the same
+              // id but freshly-built callbacks (see SummaryEditor.tsx,
+              // which does rebuild onKeep/onUndo on every `doc` change) —
+              // the first closures win for that id's whole lifetime. Only
+              // safe because those closures' captured values (doc.id,
+              // userId, editor) don't vary meaningfully across a single
+              // suggestion's pending lifetime today. If a future change
+              // makes them vary, reuse-by-key will keep firing the stale
+              // ones; bump the key (e.g. `${suggestion.id}:${version}`)
+              // if that ever becomes true.
               decorations.push(
                 Decoration.widget(suggestion.to, () => buildSuggestionCard(suggestion), {
                   key: suggestion.id,

@@ -78,9 +78,16 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
     if (userReady && userId) load();
   }, [userReady, userId, load]);
 
+  // Keyed on doc.id, not the doc object itself: `doc` is replaced wholesale
+  // after every Keep/Undo (setDoc merges in the mutation response), and
+  // re-running setContent then would stomp whatever the user typed in the
+  // editor between that mutation's request and response — the editor is
+  // already the source of truth for content once loaded once.
+  const loadedDocIdRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (editor && doc) {
+    if (editor && doc && loadedDocIdRef.current !== doc.id) {
       editor.commands.setContent(doc.content, false);
+      loadedDocIdRef.current = doc.id;
     }
   }, [editor, doc]);
 
@@ -105,6 +112,15 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
     async (s: SummaryDocSuggestion) => {
       if (!editor || !doc || !userId) return;
       if (s.anchor_from !== null && s.anchor_to !== null) {
+        // Known v1 gap (see the plan's "known simplification" note): this
+        // only catches THIS suggestion's own anchor going stale.
+        // anchor_from/anchor_to for every OTHER pending suggestion are
+        // static ints, never remapped through ProseMirror's transaction
+        // mapping as the doc changes — so keeping/editing ahead of a later
+        // suggestion's anchor can make ITS textBetween read the wrong
+        // (shifted) span and get dropped as "changed" even though it
+        // wasn't. Fails safe (never misapplies text), just a potentially
+        // confusing false positive with multiple suggestions in flight.
         const currentText = editor.state.doc.textBetween(s.anchor_from, s.anchor_to, " ");
         if (currentText !== (s.original_text ?? "")) {
           toast.info("This part changed since the suggestion was made — ask again.");
@@ -113,6 +129,13 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
         }
         editor.chain().insertContentAt({ from: s.anchor_from, to: s.anchor_to }, s.proposed_text).run();
       } else {
+        // Known v1 gap: unlike the anchored path above, a whole-doc
+        // suggestion has no captured "original text" to diff against (a
+        // whole-doc ask has no selection, so original_text is always
+        // null) — so this path has no staleness guard at all. Keeping a
+        // whole-doc suggestion always replaces the entire document with
+        // the agent's rewrite, discarding any edits made since the ask
+        // and any formatting split("\n\n") can't reconstruct.
         editor.commands.setContent(prosemirrorDocFromText(s.proposed_text));
       }
       const content = editor.getJSON() as Record<string, unknown>;
@@ -205,7 +228,7 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
         }}>
           <Link href="/library" className="btn btn--ghost btn--sm">← Back to Library</Link>
           <span className="label-micro" data-testid="summary-editor-save-state">
-            {saveState === "saving" ? "Saving…" : saveState === "error" ? "Having trouble saving — retrying" : "Saved"}
+            {saveState === "saving" ? "Saving…" : saveState === "error" ? "Couldn't save — keep typing to retry" : "Saved"}
           </span>
         </header>
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }} data-testid="summary-editor-content">
