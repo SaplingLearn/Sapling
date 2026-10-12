@@ -7,15 +7,18 @@ export function Pill({
   onClick,
   icon,
   color,
+  testId,
 }: {
   children: React.ReactNode;
   active?: boolean;
   onClick?: () => void;
   icon?: React.ReactNode;
   color?: string;
+  testId?: string;
 }) {
   return (
     <button
+      data-testid={testId}
       type="button"
       onClick={onClick}
       aria-pressed={active}

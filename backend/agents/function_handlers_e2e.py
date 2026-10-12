@@ -29,6 +29,8 @@ handlers here rather than growing parallel modules.
 
 from __future__ import annotations
 
+import json
+
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
 from agents._decision_fixtures import DECISION_ANSWERS
@@ -377,3 +379,19 @@ E2E_DECISION_ANSWERS = DECISION_ANSWERS
 register_function_handler(
     "decision", _structured_output({"answers": E2E_DECISION_ANSWERS})
 )
+
+
+def _topic_checklist_handler(messages, info) -> ModelResponse:
+    # Fixed course-fixture topics, with evidence IDs taken from the request so
+    # the production reference validator is exercised rather than bypassed.
+    payload = json.loads(_last_user_prompt_text(messages))
+    topics = []
+    for name in ("Recursion", "Variables and Types"):
+        source = next((s for s in payload["sources"] if s["text"] == name), None)
+        if source:
+            topics.append({"name": name, "description": f"Study {name.lower()} using your course materials.",
+                           "importance": 0.9, "source_ids": [source["id"]]})
+    return _structured_output({"topics": topics})(messages, info)
+
+
+register_function_handler("topic_checklist", _topic_checklist_handler)

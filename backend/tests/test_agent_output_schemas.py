@@ -60,6 +60,7 @@ _SKIP_PREFIX = "function_handlers"
 # output validation to retry; the streaming tutor's failure handling belongs
 # to chat_stream's rung ladder, never a hidden re-roll.
 EXPECTED_STRUCTURED_AGENTS = {
+    "topic_checklist_agent",
     "classifier_agent",
     "concept_describe_agent",
     "concept_extraction_agent",
