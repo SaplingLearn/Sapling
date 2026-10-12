@@ -38,6 +38,7 @@ from services.extraction_service import extract_text_from_file
 from services.summary_docs_service import (
     attach_summary_previews,
     create_summary_doc,
+    delete_summary_docs_for_document,
     plaintext_for_primary_document,
     plaintext_from_prosemirror,
 )
@@ -297,6 +298,12 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
+    # Spec "Delete-together behavior": the summary doc this document
+    # seeded goes away with it. A hard delete (not the soft-delete the
+    # `documents` row above just got) so the table's own ON DELETE CASCADE
+    # foreign keys clean up its sources/versions/suggestions in one
+    # statement (services/summary_docs_service.py::delete_summary_docs_for_document).
+    delete_summary_docs_for_document(document_id)
     return {"deleted": True}
 
 
