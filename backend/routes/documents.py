@@ -471,7 +471,10 @@ def _persist_document(
     task 14) — it seeds a new `summary_docs` row via
     `services.summary_docs_service.create_summary_doc` instead, and the
     returned row carries that doc's id/preview as ``summary_doc_id`` /
-    ``summary_preview``.
+    ``summary_preview``. That call is best-effort: the ``documents`` row is
+    already committed by the time it runs, so any exception is logged and
+    swallowed rather than 500ing an otherwise-successful upload, and
+    ``summary_doc_id``/``summary_preview`` come back ``None`` instead.
     ``request_id`` (when provided) is stored verbatim for idempotent
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
@@ -549,11 +552,23 @@ def _persist_document(
         raise RuntimeError("documents insert kept naming absent columns")
     full_row = dict(inserted[0] if inserted else row)
     full_row.pop("extracted_text", None)
-    summary_doc = create_summary_doc(
-        user_id=user_id, primary_document_id=full_row["id"], seed_text=summary or "",
-    )
-    full_row["summary_doc_id"] = summary_doc["id"]
-    full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
+    # Best-effort: the documents row above already landed, so a failure here
+    # (transient DB error, a migration not yet applied, an encryption failure)
+    # must not 500 an otherwise-successful upload. summary_doc_id/preview stay
+    # None — recoverable later via a manual re-drive — rather than raising.
+    try:
+        summary_doc = create_summary_doc(
+            user_id=user_id, primary_document_id=full_row["id"], seed_text=summary or "",
+        )
+        full_row["summary_doc_id"] = summary_doc["id"]
+        full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
+    except Exception:
+        logger.exception(
+            "create_summary_doc failed for document %s (best-effort)",
+            full_row["id"],
+        )
+        full_row["summary_doc_id"] = None
+        full_row["summary_preview"] = None
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
     # upload_document_sync and the streaming upload_document (see docstring);

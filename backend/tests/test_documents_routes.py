@@ -762,6 +762,29 @@ class TestUploadCreatesSummaryDoc:
             user_id="u1", primary_document_id="doc-1", seed_text="Plain English summary.",
         )
 
+    def test_create_summary_doc_failure_does_not_500_an_already_persisted_upload(self):
+        """The documents row above is already committed by the time
+        create_summary_doc runs — a failure there (transient DB error,
+        encryption failure, migration not yet applied) must degrade to a
+        documentless-but-successful upload, not a 500 that discards a row
+        that already landed (code review fix)."""
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", side_effect=RuntimeError("db hiccup")),
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["summary_doc_id"] is None
+        assert body["summary_preview"] is None
+
 
 # ── POST /api/documents/upload/sync — agent-failure → HTTP status (#151b) ───
 
