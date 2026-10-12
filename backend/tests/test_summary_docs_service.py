@@ -604,3 +604,65 @@ class TestUndoSuggestion:
         with patch("services.summary_docs_service.table") as mock_table:
             mock_table.return_value.select.return_value = []
             assert undo_suggestion("sd1", "u1", "sg1") is False
+
+
+from services.summary_docs_service import attach_summary_previews
+
+
+class TestAttachSummaryPreviews:
+    def test_attaches_preview_id_and_source_count(self):
+        from services.encryption import encrypt_json
+
+        content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Mitosis overview."}]}]}
+        docs_in = [{"id": "doc1"}, {"id": "doc2"}]
+        summary_rows = [
+            {"id": "sd1", "primary_document_id": "doc1", "content": encrypt_json(content)},
+        ]
+        source_rows = [
+            {"summary_doc_id": "sd1", "document_id": "doc1"},
+            {"summary_doc_id": "sd1", "document_id": "doc3"},
+        ]
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = summary_rows
+            elif name == "summary_doc_sources":
+                m.select.return_value = source_rows
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            attach_summary_previews(docs_in)
+
+        assert docs_in[0]["summary_doc_id"] == "sd1"
+        assert docs_in[0]["summary_preview"] == "Mitosis overview."
+        assert docs_in[0]["summary_source_count"] == 2
+        assert docs_in[1]["summary_doc_id"] is None
+        assert docs_in[1]["summary_preview"] is None
+        assert docs_in[1]["summary_source_count"] == 0
+
+    def test_empty_input_is_a_no_op(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            attach_summary_previews([])
+        mock_table.assert_not_called()
+
+    def test_degrades_preview_to_none_on_corrupted_content(self):
+        docs_in = [{"id": "doc1"}]
+        summary_rows = [
+            {"id": "sd1", "primary_document_id": "doc1", "content": "corrupted_ciphertext_bytes"},
+        ]
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = summary_rows
+            elif name == "summary_doc_sources":
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            attach_summary_previews(docs_in)
+
+        assert docs_in[0]["summary_doc_id"] == "sd1"
+        assert docs_in[0]["summary_preview"] is None
+        assert docs_in[0]["summary_source_count"] == 0

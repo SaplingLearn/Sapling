@@ -345,3 +345,60 @@ def undo_suggestion(summary_doc_id: str, user_id: str, suggestion_id: str) -> bo
         filters={"id": f"eq.{suggestion_id}"},
     )
     return True
+
+
+#: How much of a summary's plaintext to carry in list/search responses —
+#: matches the 3-line clamp the Library grid card renders.
+_PREVIEW_MAX_CHARS = 220
+
+
+def attach_summary_previews(docs: list[dict]) -> None:
+    """Mutate each dict in `docs` in place, adding `summary_doc_id`,
+    `summary_preview` (plaintext, truncated), and `summary_source_count`.
+
+    One query for summary_docs + one for summary_doc_sources, regardless of
+    how many documents are passed — the same per-request-batch shape as
+    routes/notes.py's `_course_meta` cache, not one query per document.
+    """
+    if not docs:
+        return
+    doc_ids = [d["id"] for d in docs]
+    in_clause = "in.(" + ",".join(doc_ids) + ")"
+    summary_rows = table("summary_docs").select(
+        "id,primary_document_id,content",
+        filters={"primary_document_id": in_clause},
+    ) or []
+    by_primary_doc = {r["primary_document_id"]: r for r in summary_rows}
+    summary_doc_ids = [r["id"] for r in summary_rows]
+
+    source_counts: dict[str, int] = {}
+    if summary_doc_ids:
+        sd_in_clause = "in.(" + ",".join(summary_doc_ids) + ")"
+        source_rows = table("summary_doc_sources").select(
+            "summary_doc_id,document_id",
+            filters={"summary_doc_id": sd_in_clause},
+        ) or []
+        for s in source_rows:
+            source_counts[s["summary_doc_id"]] = source_counts.get(s["summary_doc_id"], 0) + 1
+
+    for d in docs:
+        summary_row = by_primary_doc.get(d["id"])
+        if summary_row is None:
+            d["summary_doc_id"] = None
+            d["summary_preview"] = None
+            d["summary_source_count"] = 0
+            continue
+        d["summary_doc_id"] = summary_row["id"]
+        try:
+            content = decrypt_json(summary_row["content"])
+            d["summary_preview"] = plaintext_from_prosemirror(content, max_chars=_PREVIEW_MAX_CHARS)
+        except Exception:
+            # Same degrade-one-row-not-the-whole-list posture as
+            # list_versions (Task 6) — one corrupted summary doc must not
+            # break the Library list for every other document.
+            logger.warning(
+                "summary_docs content decrypt failed for id %s; degrading preview",
+                summary_row["id"],
+            )
+            d["summary_preview"] = None
+        d["summary_source_count"] = source_counts.get(summary_row["id"], 0)
