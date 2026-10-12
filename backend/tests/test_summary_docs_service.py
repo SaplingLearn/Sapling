@@ -666,3 +666,16 @@ class TestAttachSummaryPreviews:
         assert docs_in[0]["summary_doc_id"] == "sd1"
         assert docs_in[0]["summary_preview"] is None
         assert docs_in[0]["summary_source_count"] == 0
+
+
+from services.summary_docs_service import delete_summary_docs_for_document
+
+
+class TestDeleteSummaryDocsForDocument:
+    def test_deletes_the_summary_doc_row(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            delete_summary_docs_for_document("doc1")
+        mock_table.assert_called_once_with("summary_docs")
+        mock_table.return_value.delete.assert_called_once_with(
+            filters={"primary_document_id": "eq.doc1"}
+        )

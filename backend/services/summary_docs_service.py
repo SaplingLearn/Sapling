@@ -402,3 +402,21 @@ def attach_summary_previews(docs: list[dict]) -> None:
             )
             d["summary_preview"] = None
         d["summary_source_count"] = source_counts.get(summary_row["id"], 0)
+
+
+def delete_summary_docs_for_document(document_id: str) -> None:
+    """Hard-delete the summary doc this document primarily owns.
+
+    A real SQL DELETE (not the soft-delete `documents` uses) so the table's
+    ON DELETE CASCADE foreign keys (summary_doc_sources,
+    summary_doc_versions, summary_doc_suggestions) clean up everything
+    under it in one statement. Called from routes/documents.py's
+    delete_document route right after that route soft-deletes the
+    documents row — see the spec's "Delete-together behavior" decision. A
+    document that is only a SECONDARY source of some other summary doc is
+    unaffected: this only ever matches on `primary_document_id`, and
+    `summary_doc_sources.document_id`'s own FK (ON DELETE CASCADE on
+    `documents`) only fires on a hard delete, which the app never does to
+    a document that still has other owners.
+    """
+    table("summary_docs").delete(filters={"primary_document_id": f"eq.{document_id}"})
