@@ -541,3 +541,27 @@ def create_suggestion(
     row["original_text"] = original_text
     row["proposed_text"] = proposed_text
     return row
+
+
+def plaintext_for_primary_document(document_id: str) -> str | None:
+    """The plaintext of the summary doc this document seeded, for callers
+    (scan-concepts) that want the student's current write-up as context —
+    not capped to preview length, since this feeds a model prompt rather
+    than a UI card."""
+    rows = table("summary_docs").select(
+        "content", filters={"primary_document_id": f"eq.{document_id}"}, limit=1,
+    )
+    if not rows:
+        return None
+    try:
+        return plaintext_from_prosemirror(decrypt_json(rows[0]["content"]))
+    except Exception:
+        # Same degrade-not-crash posture as list_versions (Task 6) and
+        # attach_summary_previews (Task 8) — a corrupted summary doc must
+        # not break concept scanning; it just loses this one context input.
+        logger.warning(
+            "summary_docs content decrypt failed for primary_document_id %s; "
+            "degrading to no summary context",
+            document_id,
+        )
+        return None

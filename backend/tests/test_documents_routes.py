@@ -1517,3 +1517,26 @@ class TestEmptyExtractionGuard:
             r = _make_upload()
 
         assert r.status_code == 200
+
+
+# ── POST /api/documents/doc/{document_id}/scan-concepts ─────────────────────
+
+class TestScanDocumentConcepts:
+    def test_scan_reads_summary_doc_plaintext_not_documents_summary(self):
+        doc_row = {
+            "id": "doc1", "user_id": "u1", "offering_id": "off-1",
+            "file_name": "notes.pdf", "concept_notes": None,
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.offering_course_id", return_value="course-1"),
+            patch("routes.documents.plaintext_for_primary_document", return_value="Intro to sorting.") as mock_plain,
+            patch("routes.documents._scan_concepts_for_course", return_value={"concepts": [], "added": 0, "existing": 0}) as mock_scan,
+        ):
+            t.return_value.select.return_value = [doc_row]
+            r = client.post("/api/documents/doc/doc1/scan-concepts", json={"user_id": "u1"})
+
+        assert r.status_code == 200
+        mock_plain.assert_called_once_with("doc1")
+        assert mock_scan.call_args.kwargs["doc_summary"] == "Intro to sorting."

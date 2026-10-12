@@ -15,6 +15,7 @@ from services.summary_docs_service import (
     get_summary_doc,
     keep_suggestion,
     list_versions,
+    plaintext_for_primary_document,
     plaintext_from_prosemirror,
     prosemirror_doc_from_text,
     remove_source,
@@ -775,3 +776,27 @@ class TestBuildAskPrompt:
         assert confined != relaxed
         assert "ONLY rewrite the exact text above" in confined
         assert "may also lightly adjust" in relaxed
+
+
+class TestPlaintextForPrimaryDocument:
+    def test_returns_plaintext_of_the_docs_summary(self):
+        from services.encryption import encrypt_json
+
+        content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Intro to sorting."}]}]}
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = [{"content": encrypt_json(content)}]
+            result = plaintext_for_primary_document("doc1")
+        assert result == "Intro to sorting."
+        mock_table.return_value.select.assert_called_once_with(
+            "content", filters={"primary_document_id": "eq.doc1"}, limit=1,
+        )
+
+    def test_returns_none_when_no_summary_doc_exists(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = []
+            assert plaintext_for_primary_document("doc1") is None
+
+    def test_degrades_to_none_on_corrupted_content(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = [{"content": "corrupted_ciphertext_bytes"}]
+            assert plaintext_for_primary_document("doc1") is None

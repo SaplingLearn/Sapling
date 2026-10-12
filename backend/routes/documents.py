@@ -33,11 +33,12 @@ from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
-from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.encryption import encrypt_if_present, encrypt_json, decrypt_json
 from services.extraction_service import extract_text_from_file
 from services.summary_docs_service import (
     attach_summary_previews,
     create_summary_doc,
+    plaintext_for_primary_document,
     plaintext_from_prosemirror,
 )
 from services.calendar_service import save_assignments_to_db
@@ -1279,7 +1280,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,offering_id,file_name,summary,concept_notes",
+        "id,user_id,offering_id,file_name,concept_notes",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
@@ -1292,7 +1293,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 
-    doc_summary = decrypt_if_present(doc.get("summary"))
+    doc_summary = plaintext_for_primary_document(document_id)
     notes_raw = doc.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
