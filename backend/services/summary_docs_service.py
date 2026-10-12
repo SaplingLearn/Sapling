@@ -543,18 +543,33 @@ def create_suggestion(
     return row
 
 
+#: How much of a summary doc's plaintext to feed into the concept-scan
+#: prompt. Not the UI preview cap (_PREVIEW_MAX_CHARS) — this one bounds a
+#: model-prompt input, matching the per-source truncation
+#: create_suggestion's _source_texts already uses (and the 20_000-char
+#: precedent in scripts/backfill_document_shareability.py for the same
+#: "cap text going into an agent prompt" concern) — a student's summary
+#: doc can grow over a whole semester, and nothing caps its length at
+#: write time (update_content accepts whatever a client posts), so an
+#: uncapped read here would otherwise feed unbounded cost/latency into
+#: every scan-concepts call.
+_SCAN_CONTEXT_MAX_CHARS = 4000
+
+
 def plaintext_for_primary_document(document_id: str) -> str | None:
     """The plaintext of the summary doc this document seeded, for callers
-    (scan-concepts) that want the student's current write-up as context —
-    not capped to preview length, since this feeds a model prompt rather
-    than a UI card."""
+    (scan-concepts) that want the student's current write-up as context.
+    Capped at _SCAN_CONTEXT_MAX_CHARS — long enough to be a meaningful
+    signal, bounded so an unusually long summary doc can't blow out the
+    prompt."""
     rows = table("summary_docs").select(
         "content", filters={"primary_document_id": f"eq.{document_id}"}, limit=1,
     )
     if not rows:
         return None
     try:
-        return plaintext_from_prosemirror(decrypt_json(rows[0]["content"]))
+        content = decrypt_json(rows[0]["content"])
+        return plaintext_from_prosemirror(content, max_chars=_SCAN_CONTEXT_MAX_CHARS)
     except Exception:
         # Same degrade-not-crash posture as list_versions (Task 6) and
         # attach_summary_previews (Task 8) — a corrupted summary doc must

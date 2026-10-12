@@ -800,3 +800,13 @@ class TestPlaintextForPrimaryDocument:
         with patch("services.summary_docs_service.table") as mock_table:
             mock_table.return_value.select.return_value = [{"content": "corrupted_ciphertext_bytes"}]
             assert plaintext_for_primary_document("doc1") is None
+
+    def test_truncates_a_long_summary_for_the_scan_prompt(self):
+        from services.encryption import encrypt_json
+
+        long_text = "A" * 10_000
+        content = prosemirror_doc_from_text(long_text)
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = [{"content": encrypt_json(content)}]
+            result = plaintext_for_primary_document("doc1")
+        assert len(result) == 4000
