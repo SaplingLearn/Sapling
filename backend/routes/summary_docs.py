@@ -3,7 +3,11 @@
 Sync `def` handlers throughout, matching routes/documents.py — this
 feature extends the upload pipeline that module owns, and
 _persist_document (which creates the one summary doc an upload produces)
-is itself sync. Phase 2 (ask/keep/undo) is in Task 13.
+is itself sync. That includes the ask/keep/undo suggestion-review
+endpoints below, even though create_suggestion's docstring warns an
+`async def` caller to wrap it in `asyncio.to_thread(...)` — FastAPI runs
+sync handlers in a worker thread with no event loop already running, so
+`run_agent_sync`'s internal `asyncio.run()` is safe to call directly here.
 """
 from __future__ import annotations
 
