@@ -118,6 +118,10 @@ export function Library() {
       if (cat !== "all" && d.category !== cat) return false;
       if (courseFilter === "uncategorized" && d.course_id) return false;
       if (courseFilter !== "all" && courseFilter !== "uncategorized" && d.course_id !== courseFilter) return false;
+      // summary_preview is capped at ~220 chars (services/summary_docs_service.py),
+      // unlike the old documents.summary field this replaced, which held the
+      // full decrypted text — a search term appearing only later in a long
+      // summary no longer matches here. Accepted v1 tradeoff, not a bug.
       if (q && !d.file_name.toLowerCase().includes(q) && !(d.summary_preview || "").toLowerCase().includes(q)) return false;
       return true;
     });
