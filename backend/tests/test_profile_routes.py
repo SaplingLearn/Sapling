@@ -671,6 +671,42 @@ class TestAchievementProgress:
         assert r.status_code == 200
         assert r.json()["available"][0]["progress"] == {"current": 5, "target": 5}
 
+    def test_progress_false_skips_triggers_and_stats(self):
+        # The unlock watcher's poll: earned ids only, no per-trigger stat
+        # queries (each get_user_stat is one or more PostgREST round trips).
+        all_achs = [{
+            "id": "a1", "name": "Streak 7", "slug": "streak_7",
+            "description": "7 day streak", "icon": None,
+            "category": "activity", "rarity": "uncommon", "is_secret": False,
+        }, {
+            "id": "a2", "name": "First", "slug": "first",
+            "description": "First", "icon": None,
+            "category": "activity", "rarity": "common", "is_secret": False,
+        }]
+        read_tables = []
+
+        def table_side_effect(name):
+            read_tables.append(name)
+            m = MagicMock()
+            if name == "achievements":
+                m.select.return_value = all_achs
+            elif name == "user_achievements":
+                m.select.return_value = [{"achievement_id": "a2", "earned_at": "2026-01-01", "is_featured": False}]
+            else:
+                m.select.return_value = [{"achievement_id": "a1", "trigger_type": "login_streak", "trigger_threshold": 7}]
+            return m
+
+        with patch("routes.profile.table", side_effect=table_side_effect), \
+             patch("routes.profile.get_user_stat", return_value=3) as stat:
+            r = client.get(f"/api/profile/{USER_ID}/achievements?progress=false")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [e["achievement"]["id"] for e in body["earned"]] == ["a2"]
+        assert body["available"][0]["progress"] is None
+        stat.assert_not_called()
+        assert "achievement_triggers" not in read_tables
+
     def test_secret_locked_has_no_progress(self):
         all_achs = [{
             "id": "a1", "name": "Hidden", "slug": "hidden",

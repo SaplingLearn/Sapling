@@ -375,8 +375,11 @@ export function Hero({
         }}
       />
 
-      {/* Hero Content */}
-      <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
+      {/* Hero Content. `w-full` pins the box at its max width: sized to its
+          content, it swung between ~608 and ~886px every 30ms while the
+          wordmark scrambled, and every swing re-centred the whole column — a
+          measured CLS of 0.12 on desktop. */}
+      <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center w-full max-w-4xl px-6">
         {/* There is deliberately no legibility veil behind the copy.
             A blurred, washed plate used to sit here — `backdrop-filter:
             blur(4px)` plus a radial wash of the page colour — because the

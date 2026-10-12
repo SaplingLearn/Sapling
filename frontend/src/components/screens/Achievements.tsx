@@ -119,39 +119,44 @@ export function Achievements() {
     window.localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
   }, [toast]);
 
+  const lastLoadAt = React.useRef(0);
+
   const load = React.useCallback(async () => {
     if (!userId) return;
-    try {
-      const d = await fetchAchievements(userId);
-      const e = d.earned || [];
-      setEarned(e);
-      setAvailable(d.available || []);
-      setFeaturedIds(e.filter(u => u.is_featured).map(u => u.achievement.id));
-      detectUnlocks(e);
-    } catch (err) {
-      console.error("achievements load", err);
-    } finally {
-      setLoading(false);
-    }
-    // Fetched independently of the achievements list above: a failure here
-    // (or a slow response) must not block the earned/locked grids from
-    // loading, and must not blank the page — the hero + stat row simply
-    // don't render while `me` is null.
-    try {
-      const m = await fetchGamificationMe(userId);
-      setMe(m);
-    } catch (err) {
-      console.error("gamification me load", err);
-    }
+    lastLoadAt.current = Date.now();
+    // The two reads are independent and run in parallel. They used to run
+    // back to back, so the hero card waited on the achievements call — the
+    // heavy one, with its per-trigger progress counters. Each still settles
+    // on its own: a failure (or a slow response) in one must not block the
+    // other or blank the page — the hero + stat row simply don't render
+    // while `me` is null.
+    const achievements = fetchAchievements(userId)
+      .then((d) => {
+        const e = d.earned || [];
+        setEarned(e);
+        setAvailable(d.available || []);
+        setFeaturedIds(e.filter(u => u.is_featured).map(u => u.achievement.id));
+        detectUnlocks(e);
+      })
+      .catch((err) => console.error("achievements load", err))
+      .finally(() => setLoading(false));
+    const gamification = fetchGamificationMe(userId)
+      .then(setMe)
+      .catch((err) => console.error("gamification me load", err));
+    await Promise.all([achievements, gamification]);
   }, [userId, detectUnlocks]);
 
   React.useEffect(() => {
     if (userReady && userId) load();
   }, [userReady, userId, load]);
 
-  // Refetch on window focus to pick up unlocks from other tabs/sessions.
+  // Refetch on window focus to pick up unlocks from other tabs/sessions —
+  // at most once a minute, so alt-tabbing back and forth doesn't re-run the
+  // progress counters each time.
   React.useEffect(() => {
-    const onFocus = () => { if (userId) load(); };
+    const onFocus = () => {
+      if (userId && Date.now() - lastLoadAt.current > 60_000) load();
+    };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [userId, load]);

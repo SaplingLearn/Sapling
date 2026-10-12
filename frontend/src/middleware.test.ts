@@ -24,6 +24,19 @@ describe('middleware — /profile gating (#189)', () => {
   });
 
   it('lists /profile in config.matcher so middleware actually runs there', () => {
-    expect(config.matcher).toContain('/profile/:path*');
+    expect(config.matcher.map((m) => m.source)).toContain('/profile/:path*');
+  });
+
+  it('skips router prefetches on every protected route', () => {
+    // Each prefetch used to run the /api/auth/me round trip; see the note on
+    // `config` in middleware.ts.
+    for (const m of config.matcher) {
+      expect(m.missing).toEqual(
+        expect.arrayContaining([
+          { type: 'header', key: 'next-router-prefetch' },
+          { type: 'header', key: 'purpose', value: 'prefetch' },
+        ]),
+      );
+    }
   });
 });

@@ -61,6 +61,19 @@ mkdir -p "$OUT_DIR"
   GALLERY_SHOTS_DIR="$OUT_DIR" npx playwright test gallery-shots.spec.ts --reporter=list
 ) || die "capture failed — no partial screenshots were committed"
 
+# Playwright writes PNG only. The site serves WebP: at q85 a 1440x900 capture
+# is ~35-45 KB instead of ~450 KB, and Cloudflare serves /public as-is (no
+# image resizing binding), so the file on disk is the file every visitor
+# downloads. gallery.test.ts pins the .webp names.
+echo "▶ Converting to WebP …"
+"$VENV_PY" - "$OUT_DIR" <<'PY' || die "WebP conversion failed"
+import pathlib, sys
+from PIL import Image
+for png in sorted(pathlib.Path(sys.argv[1]).glob("*.png")):
+    Image.open(png).save(png.with_suffix(".webp"), "WEBP", quality=85, method=6)
+    png.unlink()
+PY
+
 echo
 echo "✓ Captured:"
 ls -la "$OUT_DIR" | tail -n +2

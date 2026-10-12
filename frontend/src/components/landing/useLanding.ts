@@ -343,17 +343,25 @@ export function useLanding(props: LandingProps) {
 
     const setters = [setHeroText0, setHeroText1, setHeroText2];
 
+    // prefers-reduced-motion: no 1.9s hold and no character scramble. The
+    // slots already hold their final text (seeded above), so the hero simply
+    // shows; globals.css's reduced-motion reset collapses the fades.
+    const reduceMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
     timers.push(
       setTimeout(() => {
         setHeroMounted(true);
         // the overlay fades over 700ms; drop it from the tree just after
-        timers.push(setTimeout(() => setIntroGone(true), 900));
+        timers.push(setTimeout(() => setIntroGone(true), reduceMotion ? 0 : 900));
+        if (reduceMotion) return;
         cascade.forEach((step) => {
           const run = () => scramble(setters[step.slot], step.text, step.durationMs);
           if (step.delayMs) timers.push(setTimeout(run, step.delayMs));
           else run();
         });
-      }, skipIntro ? 0 : INTRO_MS),
+      }, skipIntro || reduceMotion ? 0 : INTRO_MS),
     );
 
     return () => {

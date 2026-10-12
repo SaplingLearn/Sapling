@@ -26,7 +26,7 @@ const DIR = path.join(process.cwd(), 'public', 'gallery');
 describe('gallery screenshots', () => {
   it('has a captured screenshot for every gallery slot', () => {
     const missing = GALLERY_SHOTS.map((s) => s.slot).filter(
-      (slot) => !fs.existsSync(path.join(DIR, `${slot}.png`)),
+      (slot) => !fs.existsSync(path.join(DIR, `${slot}.webp`)),
     );
     expect(missing, `run \`make gallery-shots\` to capture: ${missing.join(', ')}`).toEqual([]);
   });
@@ -36,8 +36,8 @@ describe('gallery screenshots', () => {
     const orphans = fs.existsSync(DIR)
       ? fs
           .readdirSync(DIR)
-          .filter((f) => f.endsWith('.png'))
-          .map((f) => f.replace(/\.png$/, ''))
+          .filter((f) => /\.(png|webp)$/.test(f))
+          .map((f) => f.replace(/\.(png|webp)$/, ''))
           .filter((slot) => !slots.has(slot))
       : [];
     expect(orphans).toEqual([]);

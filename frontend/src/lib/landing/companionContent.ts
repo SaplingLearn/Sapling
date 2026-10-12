@@ -355,7 +355,7 @@ export const WIKI_DATA_FACTS = [
 /**
  * Product screenshots, keyed by wiki section id.
  *
- * The files are the twelve `/gallery/<slot>.png` captures at 1440x900 — the
+ * The files are the twelve `/gallery/<slot>.webp` captures at 1440x900 — the
  * same set the gallery uses, so this page borrows them rather than owning
  * any. Nothing new goes in `public/gallery/`: the orphan check in
  * gallery.test.ts pins that directory to exactly the GALLERY_SHOTS slots.

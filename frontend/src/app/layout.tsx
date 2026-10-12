@@ -23,6 +23,15 @@ import './globals.css';
  * the other three are variable, one file spanning their whole range.
  *
  * All four are SIL Open Font License 1.1, which permits redistribution.
+ *
+ * Preloading. next/font preloads every file of a family by default, which put
+ * 19 files (551 KB) at high priority on every route — on a throttled phone
+ * that competed with the JS the landing needs before its hero can show.
+ * Spectral (14 static files, ~300 KB) and Caveat (one note far down the
+ * landing) now load when CSS first uses them instead; `display: swap` and the
+ * metric-matched fallbacks below keep that from shifting layout. The two
+ * variable faces the first screen actually sets — DM Sans and Playfair — and
+ * JetBrains Mono stay preloaded.
  */
 const spectral = localFont({
   src: [
@@ -43,6 +52,7 @@ const spectral = localFont({
   ],
   variable: '--font-spectral',
   display: 'swap',
+  preload: false,
   fallback: ['Georgia', 'serif'],
   adjustFontFallback: 'Times New Roman',
 });
@@ -90,6 +100,7 @@ const caveat = localFont({
   weight: '400 700',
   variable: '--font-caveat',
   display: 'swap',
+  preload: false,
   fallback: ['cursive'],
   adjustFontFallback: false,
 });

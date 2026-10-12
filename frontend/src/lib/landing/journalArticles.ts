@@ -115,7 +115,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Founding',
     cat: 'founding',
     publishedAt: '2026-06-12',
-    art: { kind: 'photo', src: '/journal-founding.png' },
+    art: { kind: 'photo', src: '/journal-founding.jpg' },
     title: 'Why we built Sapling',
     deck:
       'Four students, one library table, and a nagging question: what if AI made you understand more, not less? The origin story, missteps included.',
@@ -170,7 +170,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Perspective',
     cat: 'perspective',
     publishedAt: '2026-05-04',
-    art: { kind: 'photo', src: '/journal-ai-homework.png' },
+    art: { kind: 'photo', src: '/journal-ai-homework.jpg' },
     title: 'AI shouldn’t do your homework',
     deck:
       'Our line in the sand on AI and education: guidance over answers, process over shortcuts, and why "just give me the solution" is the wrong deal.',

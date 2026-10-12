@@ -592,7 +592,7 @@ def set_featured_achievements(user_id: str, body: SetFeaturedAchievementsBody, r
 # ── Achievements ─────────────────────────────────────────────────────────────
 
 @router.get("/{user_id}/achievements")
-def get_achievements(user_id: str, request: Request):
+def get_achievements(user_id: str, request: Request, progress: bool = True):
     # `user_id` off the path is a claim, not an identity. This payload carries
     # per-user earned state and per-user progress counters (_progress_for runs
     # get_user_stat against `user_id`), so it is a self-only read like every
@@ -621,10 +621,15 @@ def get_achievements(user_id: str, request: Request):
         for r in earned_rows:
             earned_ids[r["achievement_id"]] = r
 
+    # `progress=false` is the unlock watcher's mode: it polls every minute per
+    # open tab and only diffs earned ids, while progress costs a trigger read
+    # plus up to ~20 sequential stat queries (get_user_stat). Skipping both
+    # turns ~30 round trips into 2. Locked entries then carry progress=None,
+    # which the type already allows (secret badges always do).
     # Fetch triggers once and group by achievement_id so we can surface progress.
     trigger_rows = table("achievement_triggers").select(
         "achievement_id,trigger_type,trigger_threshold",
-    )
+    ) if progress else []
     triggers_by_ach: dict = {}
     for t in trigger_rows or []:
         triggers_by_ach.setdefault(t["achievement_id"], []).append(t)

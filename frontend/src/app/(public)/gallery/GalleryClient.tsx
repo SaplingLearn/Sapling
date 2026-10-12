@@ -77,7 +77,7 @@ export default function GalleryClient() {
               }}
             >
               <ZoomableShot
-                src={`/gallery/${s.slot}.png`}
+                src={`/gallery/${s.slot}.webp`}
                 alt={`The ${s.title} screen in Sapling`}
                 title={s.title}
                 caption={s.body}

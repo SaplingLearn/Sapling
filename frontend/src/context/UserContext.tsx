@@ -4,16 +4,10 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { API_URL, getMe } from '@/lib/api';
 
-interface UserOption {
-  id: string;
-  name: string;
-}
-
 interface UserContextValue {
   userId: string;
   userName: string;
   avatarUrl: string;
-  users: UserOption[];
   userReady: boolean;
   isAuthenticated: boolean;
   isApproved: boolean;
@@ -37,7 +31,6 @@ export const UserContext = createContext<UserContextValue>({
   userId: '',
   userName: '',
   avatarUrl: '',
-  users: [],
   userReady: false,
   isAuthenticated: false,
   isApproved: false,
@@ -71,7 +64,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState('');
   const [userName, setUserName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [users, setUsers] = useState<UserOption[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [userReady, setUserReady] = useState(false);
@@ -156,20 +148,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/users`, { credentials: 'include' })
-      .then(r => r.json())
-      .then((data: { users: UserOption[] }) => {
-        const list = data.users ?? [];
-        setUsers(list);
-        setUserId(prev => {
-          const match = list.find(u => u.id === prev);
-          if (match) setUserName(match.name);
-          return prev;
-        });
-      })
-      .catch(() => {});
-  }, []);
+  // There used to be an unconditional GET /api/users here, on every page
+  // (public ones included). It downloaded every user's decrypted name into
+  // every browser, and nothing read the list; the only side effect, refreshing
+  // the current user's name, is already done by getMe() above and
+  // fetchProfileData below. Removed in the 2026-10 performance pass.
 
   // Shared teardown for "this client's identity is no longer valid": local
   // state plus the persisted localStorage copy. Used by signOut and by the
@@ -276,11 +259,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+      userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
       setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
     }),
-    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+    [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
      username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile, signOut]
   );
 

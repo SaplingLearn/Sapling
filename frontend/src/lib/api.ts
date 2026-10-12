@@ -217,11 +217,37 @@ export const updateCourseColor = (userId: string, courseId: string, color: strin
     { method: 'PATCH', body: JSON.stringify({ color }) }
   );
 
-export const describeConcept = (userId: string, concept: string, courseLabel?: string) =>
-  fetchJSON<{ description: string }>(
+/**
+ * Concept descriptions are one Gemini call each, not user-specific, and the
+ * same concept is asked for again on every Learn focus and Quiz home visit.
+ * Cache them for the page's lifetime: the promise is stored, so concurrent
+ * callers share one request, and a failure is evicted so the next call
+ * retries. Bounded so a long session cannot grow it without limit.
+ */
+const CONCEPT_DESCRIPTION_CACHE_MAX = 200;
+const conceptDescriptions = new Map<string, Promise<{ description: string }>>();
+
+export const describeConcept = (userId: string, concept: string, courseLabel?: string) => {
+  const key = `${userId}\u0000${concept.trim().toLowerCase()}\u0000${courseLabel ?? ''}`;
+  const hit = conceptDescriptions.get(key);
+  if (hit) return hit;
+  const request = fetchJSON<{ description: string }>(
     `/api/graph/${userId}/concept-description`,
     { method: 'POST', body: JSON.stringify({ concept, course_label: courseLabel ?? null }) }
   );
+  if (conceptDescriptions.size >= CONCEPT_DESCRIPTION_CACHE_MAX) {
+    // Map iterates in insertion order, so this drops the oldest entry.
+    conceptDescriptions.delete(conceptDescriptions.keys().next().value!);
+  }
+  conceptDescriptions.set(key, request);
+  request.catch(() => conceptDescriptions.delete(key));
+  return request;
+};
+
+/** Test-only: forget cached concept descriptions. */
+export function __clearConceptDescriptionCache() {
+  conceptDescriptions.clear();
+}
 
 // Manual add-concept (#330). Returns the CANONICAL node — freshly created,
 // or the dedup survivor when the (case/whitespace-insensitive) name already
@@ -1052,8 +1078,15 @@ export const equipCosmetic = (userId: string, slot: CosmeticType, cosmeticId: st
     body: JSON.stringify({ slot, cosmetic_id: cosmeticId }),
   });
 
-export const fetchAchievements = (userId: string) =>
-  fetchJSON<{ earned: UserAchievement[]; available: Achievement[] }>(`/api/profile/${userId}/achievements`);
+/**
+ * `progress: false` skips the per-trigger progress counters (~20 sequential
+ * DB reads server-side); locked entries then carry `progress: null`. The
+ * unlock watcher polls in that mode because it only diffs earned ids.
+ */
+export const fetchAchievements = (userId: string, opts: { progress?: boolean } = {}) =>
+  fetchJSON<{ earned: UserAchievement[]; available: Achievement[] }>(
+    `/api/profile/${userId}/achievements${opts.progress === false ? '?progress=false' : ''}`,
+  );
 
 export const fetchCosmetics = (userId: string) =>
   fetchJSON<{ cosmetics: Record<CosmeticType, UserCosmetic[]>; equipped: Record<string, any> }>(

@@ -163,7 +163,7 @@ function Shot({ section }: { section: string }) {
           is not: drawing the boundary around the one element that needs
           state keeps `metadata` exportable here. */}
       <ZoomableShot
-        src={`/gallery/${shot.slot}.png`}
+        src={`/gallery/${shot.slot}.webp`}
         alt={`The ${shot.title} screen in Sapling`}
         title={shot.title}
         caption={shot.caption}

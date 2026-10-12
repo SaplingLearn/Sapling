@@ -18,8 +18,11 @@ export function useAchievementUnlockWatcher(userId: string) {
     let cancelled = false;
 
     const check = async () => {
+      // A hidden tab has nobody to toast; the visibilitychange handler below
+      // catches up the moment it is shown again.
+      if (document.visibilityState === "hidden") return;
       try {
-        const { earned } = await fetchAchievements(userId);
+        const { earned } = await fetchAchievements(userId, { progress: false });
         if (cancelled) return;
         const current = new Set(earned.map((a: UserAchievement) => a.achievement.id));
 

@@ -96,14 +96,32 @@ export async function middleware(request: NextRequest) {
   return NextResponse.next()
 }
 
+// Router prefetches are excluded. Every <Link> in the side nav is prefetched
+// in production, and each prefetch used to run this whole function — including
+// the /api/auth/me round trip (4–9 DB reads) — so a cold shell load cost ~35-40
+// backend calls before the page did anything. Skipping them is safe: these
+// routes are static shells with no user data in the payload, the document
+// request and every non-prefetch navigation still run the gate, and the APIs
+// authenticate every call themselves. An unapproved user never holds a session
+// (auth.py issues none), so the approval check above is not a security boundary.
+// The matcher must be a static literal — Next parses it at build time, so the
+// `missing` list is repeated rather than shared through a constant.
 export const config = {
   matcher: [
-    '/dashboard/:path*', '/learn/:path*', '/quiz/:path*', '/study/:path*',
-    '/tree/:path*', '/library/:path*',
-    '/calendar/:path*', '/social/:path*',
-    '/settings/:path*', '/achievements/:path*',
-    '/admin/:path*',
-    '/gradebook/:path*', '/course-planner/:path*', '/notetaker/:path*',
-    '/profile/:path*'
-  ]
+    { source: '/dashboard/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/learn/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/quiz/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/study/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/tree/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/library/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/calendar/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/social/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/settings/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/achievements/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/admin/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/gradebook/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/course-planner/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/notetaker/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+    { source: '/profile/:path*', missing: [{ type: 'header', key: 'next-router-prefetch' }, { type: 'header', key: 'purpose', value: 'prefetch' }] },
+  ],
 }

@@ -9,6 +9,7 @@ import {
   listAttempts,
   submitQuiz,
 } from "./api";
+import { __clearConceptDescriptionCache } from "@/lib/api";
 
 const realFetch = globalThis.fetch;
 
@@ -29,6 +30,7 @@ function lastCall(): [string, RequestInit] {
 }
 
 beforeEach(() => {
+  __clearConceptDescriptionCache();
   globalThis.fetch = vi.fn() as unknown as typeof fetch;
   fetchMock().mockResolvedValue(jsonResponse({}));
 });
@@ -221,6 +223,23 @@ describe("describeConcept", () => {
     fetchMock().mockResolvedValue(jsonResponse({ description: "d" }));
     await describeConcept("u1", "Recursion");
     expect(JSON.parse(lastCall()[1].body as string).course_label).toBeNull();
+  });
+
+  it("asks once per concept and course, and retries after a failure", async () => {
+    const fetch = fetchMock();
+    fetch.mockResolvedValue(jsonResponse({ description: "cached" }));
+    const before = fetch.mock.calls.length;
+    const [a, b] = await Promise.all([
+      describeConcept("u2", "Graphs", "CS 112"),
+      describeConcept("u2", " graphs ", "CS 112"),
+    ]);
+    expect([a, b]).toEqual(["cached", "cached"]);
+    expect(fetch.mock.calls.length - before).toBe(1);
+
+    fetch.mockRejectedValueOnce(new Error("offline"));
+    await expect(describeConcept("u2", "Trees", "CS 112")).rejects.toThrow();
+    fetch.mockResolvedValue(jsonResponse({ description: "second try" }));
+    await expect(describeConcept("u2", "Trees", "CS 112")).resolves.toBe("second try");
   });
 });
 
