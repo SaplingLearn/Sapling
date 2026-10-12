@@ -44,6 +44,7 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    "summary_edit",
 ]
 
 
@@ -92,6 +93,9 @@ _DEFAULTS: dict[AgentTask, str] = {
     # vision-capable model, and transcription accuracy on handwritten
     # mathematics is exactly where the lite tier degrades → full Flash.
     "ocr_vision": "gemini-2.5-flash",
+    # Summary-doc "ask" edits — targeted prose rewrites the student reads
+    # immediately, same quality bar as study_guide → full Flash.
+    "summary_edit": "gemini-2.5-flash",
 }
 
 
