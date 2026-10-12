@@ -274,6 +274,24 @@ class TestDeleteDocument:
         assert r.status_code == 200
         mock_delete_sd.assert_called_once_with("doc1")
 
+    def test_delete_still_succeeds_when_summary_cascade_raises(self):
+        """The documents row above is already soft-deleted — the user-facing
+        delete already succeeded — so a failure in the best-effort summary-doc
+        cascade must not turn that success into a 500 (code review)."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch(
+                "routes.documents.delete_summary_docs_for_document",
+                side_effect=RuntimeError("db hiccup"),
+            ),
+        ):
+            t.return_value.select.return_value = [{"id": "doc1"}]
+            r = client.delete("/api/documents/doc/doc1?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"deleted": True}
+
 
 # ── PATCH /api/documents/doc/{document_id} ───────────────────────────────────
 

@@ -303,7 +303,19 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
     # `documents` row above just got) so the table's own ON DELETE CASCADE
     # foreign keys clean up its sources/versions/suggestions in one
     # statement (services/summary_docs_service.py::delete_summary_docs_for_document).
-    delete_summary_docs_for_document(document_id)
+    # Best-effort: the documents row above is already soft-deleted (the
+    # user-facing action already succeeded), so a failure here must not
+    # 500 an otherwise-successful delete — same posture as create_summary_doc
+    # (Task 14) for a secondary effect after a committed primary write. The
+    # only cost of a swallowed failure is a rare, recoverable orphaned
+    # summary_docs row pointing at a now-invisible document.
+    try:
+        delete_summary_docs_for_document(document_id)
+    except Exception:
+        logger.exception(
+            "delete_summary_docs_for_document failed for document %s (best-effort)",
+            document_id,
+        )
     return {"deleted": True}
 
 
