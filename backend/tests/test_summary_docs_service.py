@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from agents._providers import clear_function_handlers, model_for, register_function_handler
 from agents.summary_edit import summary_edit_agent
 from services.summary_docs_service import (
+    _build_ask_prompt,
     add_source,
     attach_summary_previews,
     create_suggestion,
@@ -730,9 +731,6 @@ class TestCreateSuggestion:
             return m
 
         with patch("services.summary_docs_service.table", side_effect=_select), \
-             patch("services.summary_docs_service.decrypt_if_present", side_effect=lambda v: {
-                 "ciphertext": None,  # overridden per-field below via real values
-             }.get(v, v)), \
              summary_edit_agent.override(model=model_for("summary_edit")):
             result = create_suggestion(
                 "sd1", "u1",
@@ -742,4 +740,38 @@ class TestCreateSuggestion:
             )
 
         assert result["status"] == "pending"
-        assert result["proposed_text"]
+        assert result["proposed_text"] == "Shorter version."
+
+
+class TestBuildAskPrompt:
+    def test_whole_doc_ask_uses_whole_document_framing(self):
+        prompt = _build_ask_prompt(
+            instruction="make it shorter",
+            selection_text=None,
+            doc_plaintext="Some long document text.",
+            sources=[],
+            allow_surrounding_edits=False,
+        )
+
+        assert "the whole document" in prompt
+        assert "highlighted section" not in prompt
+
+    def test_allow_surrounding_edits_changes_the_scope_instruction(self):
+        confined = _build_ask_prompt(
+            instruction="make it shorter",
+            selection_text="some text",
+            doc_plaintext="Some long document text.",
+            sources=[],
+            allow_surrounding_edits=False,
+        )
+        relaxed = _build_ask_prompt(
+            instruction="make it shorter",
+            selection_text="some text",
+            doc_plaintext="Some long document text.",
+            sources=[],
+            allow_surrounding_edits=True,
+        )
+
+        assert confined != relaxed
+        assert "ONLY rewrite the exact text above" in confined
+        assert "may also lightly adjust" in relaxed

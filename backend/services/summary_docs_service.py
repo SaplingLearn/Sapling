@@ -500,7 +500,14 @@ def create_suggestion(
     allow_surrounding_edits: bool = False,
 ) -> dict | None:
     """Run the summary_edit agent and store its output as a pending
-    suggestion. Returns None if the caller doesn't own this summary doc."""
+    suggestion. Returns None if the caller doesn't own this summary doc.
+
+    This function is sync and calls run_agent_sync, which raises RuntimeError
+    if invoked from a thread that already has a running event loop. An
+    `async def` route caller MUST wrap this call in
+    `asyncio.to_thread(create_suggestion, ...)` (the pattern used in
+    routes/documents.py / routes/admin_documents.py), not call it directly.
+    """
     doc = get_summary_doc(summary_doc_id, user_id)
     if doc is None:
         return None
