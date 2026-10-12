@@ -13,10 +13,13 @@ from pydantic import BaseModel
 from services.auth_guard import require_self
 from services.summary_docs_service import (
     add_source,
+    create_suggestion,
     get_summary_doc,
+    keep_suggestion,
     list_versions,
     remove_source,
     restore_version,
+    undo_suggestion,
     update_content,
 )
 
@@ -94,3 +97,49 @@ def post_restore(summary_doc_id: str, version_id: str, body: UserIdBody, request
     if doc is None:
         raise HTTPException(status_code=404, detail="Summary doc or version not found.")
     return doc
+
+
+class AskBody(BaseModel):
+    user_id: str
+    instruction: str
+    anchor_from: int | None = None
+    anchor_to: int | None = None
+    original_text: str | None = None
+    allow_surrounding_edits: bool = False
+
+
+@router.post("/{summary_doc_id}/ask")
+def post_ask(summary_doc_id: str, body: AskBody, request: Request):
+    require_self(body.user_id, request)
+    suggestion = create_suggestion(
+        summary_doc_id, body.user_id,
+        anchor_from=body.anchor_from, anchor_to=body.anchor_to,
+        instruction=body.instruction, original_text=body.original_text,
+        allow_surrounding_edits=body.allow_surrounding_edits,
+    )
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Summary doc not found.")
+    return suggestion
+
+
+class KeepSuggestionBody(BaseModel):
+    user_id: str
+    content: dict
+
+
+@router.post("/{summary_doc_id}/suggestions/{suggestion_id}/keep")
+def post_keep(summary_doc_id: str, suggestion_id: str, body: KeepSuggestionBody, request: Request):
+    require_self(body.user_id, request)
+    doc = keep_suggestion(summary_doc_id, body.user_id, suggestion_id, body.content)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Suggestion not found or already resolved.")
+    return doc
+
+
+@router.post("/{summary_doc_id}/suggestions/{suggestion_id}/undo")
+def post_undo(summary_doc_id: str, suggestion_id: str, body: UserIdBody, request: Request):
+    require_self(body.user_id, request)
+    ok = undo_suggestion(summary_doc_id, body.user_id, suggestion_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Suggestion not found or already resolved.")
+    return {"undone": True}
