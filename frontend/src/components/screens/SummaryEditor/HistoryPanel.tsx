@@ -2,6 +2,7 @@
 import React from "react";
 import { listSummaryDocVersions, restoreSummaryDocVersion } from "@/lib/api";
 import type { SummaryDocCore, SummaryDocVersion } from "@/lib/types";
+import { useToast } from "../../ToastProvider";
 
 const TRIGGER_LABELS: Record<string, string> = {
   initial: "Created",
@@ -18,13 +19,18 @@ export interface HistoryPanelProps {
 }
 
 export function HistoryPanel({ summaryDocId, userId, onDocChanged }: HistoryPanelProps) {
+  const toast = useToast();
   const [versions, setVersions] = React.useState<SummaryDocVersion[]>([]);
   const [restoringId, setRestoringId] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
-    const { versions: v } = await listSummaryDocVersions(summaryDocId, userId);
-    setVersions(v);
-  }, [summaryDocId, userId]);
+    try {
+      const { versions: v } = await listSummaryDocVersions(summaryDocId, userId);
+      setVersions(v);
+    } catch (err) {
+      toast.error(`Couldn't load the version history: ${String((err as Error)?.message || err)}`);
+    }
+  }, [summaryDocId, userId, toast]);
 
   React.useEffect(() => {
     load();
@@ -36,6 +42,8 @@ export function HistoryPanel({ summaryDocId, userId, onDocChanged }: HistoryPane
       const doc = await restoreSummaryDocVersion(summaryDocId, userId, versionId);
       onDocChanged(doc);
       await load();
+    } catch (err) {
+      toast.error(`Couldn't restore that version: ${String((err as Error)?.message || err)}`);
     } finally {
       setRestoringId(null);
     }
@@ -57,6 +65,7 @@ export function HistoryPanel({ summaryDocId, userId, onDocChanged }: HistoryPane
           <button
             type="button"
             className="btn btn--sm"
+            aria-label={`Restore version from ${new Date(v.created_at).toLocaleString()}`}
             disabled={restoringId === v.id}
             onClick={() => restore(v.id)}
           >

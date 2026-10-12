@@ -13,6 +13,24 @@ vi.mock("@/lib/api", () => ({
   restoreSummaryDocVersion: (...args: unknown[]) => mockRestore(...args),
 }));
 
+// HistoryPanel reads useToast from "../../ToastProvider" (relative to this
+// file, src/components/ToastProvider.tsx). The real hook throws outside a
+// mounted <ToastProvider>, which this test doesn't render — mock it the
+// same way SummaryEditor.test.tsx does, with a stable module-scope spy
+// object so useToast() returns the same reference across renders.
+const toastSpies = {
+  show: vi.fn(),
+  dismiss: vi.fn(),
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+};
+
+vi.mock("../../ToastProvider", () => ({
+  useToast: () => toastSpies,
+}));
+
 import { HistoryPanel } from "./HistoryPanel";
 
 afterEach(cleanup);

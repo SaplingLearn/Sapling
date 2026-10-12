@@ -2,6 +2,7 @@
 import React from "react";
 import { addSummaryDocSource, removeSummaryDocSource, getDocuments } from "@/lib/api";
 import type { SummaryDoc, Document as Doc } from "@/lib/types";
+import { useToast } from "../../ToastProvider";
 
 export interface SourcesPanelProps {
   doc: SummaryDoc;
@@ -10,11 +11,14 @@ export interface SourcesPanelProps {
 }
 
 export function SourcesPanel({ doc, userId, onDocChanged }: SourcesPanelProps) {
+  const toast = useToast();
   const [library, setLibrary] = React.useState<Doc[]>([]);
   const [busyId, setBusyId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    getDocuments(userId).then((r) => setLibrary(r.documents || []));
+    getDocuments(userId)
+      .then((r) => setLibrary(r.documents || []))
+      .catch(() => setLibrary([]));
   }, [userId]);
 
   const sourceIds = new Set(doc.sources.map((s) => s.document_id));
@@ -25,6 +29,8 @@ export function SourcesPanel({ doc, userId, onDocChanged }: SourcesPanelProps) {
     try {
       const updated = await addSummaryDocSource(doc.id, userId, documentId);
       onDocChanged(updated);
+    } catch (err) {
+      toast.error(`Couldn't add that source: ${String((err as Error)?.message || err)}`);
     } finally {
       setBusyId(null);
     }
@@ -35,6 +41,8 @@ export function SourcesPanel({ doc, userId, onDocChanged }: SourcesPanelProps) {
     try {
       const result = await removeSummaryDocSource(doc.id, userId, documentId);
       onDocChanged(result);
+    } catch (err) {
+      toast.error(`Couldn't remove that source: ${String((err as Error)?.message || err)}`);
     } finally {
       setBusyId(null);
     }

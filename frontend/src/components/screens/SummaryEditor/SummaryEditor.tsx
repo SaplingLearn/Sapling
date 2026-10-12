@@ -305,7 +305,18 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
           <HistoryPanel
             summaryDocId={doc.id}
             userId={userId!}
-            onDocChanged={(updated) => setDoc((prev) => (prev ? { ...prev, ...updated } : prev))}
+            onDocChanged={(updated) => {
+              // Unlike a Keep (which applies its new content straight into
+              // the editor before the save, so the on-screen state is
+              // already right), a restore mutates content on the server
+              // with no editor-side equivalent — doc.id doesn't change, so
+              // the loadedDocIdRef-guarded resync effect above deliberately
+              // won't pick this up. Push the restored content in directly,
+              // or the editor keeps showing the pre-restore text and the
+              // next autosave would silently overwrite the restore with it.
+              setDoc((prev) => (prev ? { ...prev, ...updated } : prev));
+              editor?.commands.setContent(updated.content, false);
+            }}
           />
         )}
       </aside>
