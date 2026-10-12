@@ -8,8 +8,13 @@ vi.mock("@/context/UserContext", () => ({
   useUser: () => ({ userId: "u1", userReady: true }),
 }));
 
+// Stable spies at module scope (not a fresh object per call) — matches
+// SummaryEditor.test.tsx's convention, so a toast-dependent useCallback
+// (e.g. runCourseScan) doesn't get a fresh dependency identity every
+// render and risk a re-render loop.
+const toastSpies = { success: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn(), show: vi.fn(), dismiss: vi.fn() };
 vi.mock("../ToastProvider", () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
+  useToast: () => toastSpies,
 }));
 
 const mockGetDocuments = vi.fn();
@@ -41,9 +46,14 @@ describe("Library — summary doc link", () => {
 
     const link = await screen.findByRole("link", { name: "Open summary" });
     expect(link).toHaveAttribute("href", "/library/summaries/sd1");
-    // The underlying grid card (behind the modal overlay) also renders the
-    // same preview text, so there are two matches in the DOM — assert at
-    // least one rather than a single unique match.
-    expect(screen.getAllByText("Mitosis overview.").length).toBeGreaterThan(0);
+    // The underlying grid card (behind the drawer) also renders the same
+    // preview text, so there are two matches in the DOM once the drawer is
+    // open — a bare getAllByText(...).length > 0 would pass even if the
+    // drawer itself rendered no preview at all (the grid card alone already
+    // satisfies it). Scope to the drawer's own summary block instead, by
+    // walking up from the link to its wrapper div (the one rendered by
+    // {doc.summary_doc_id && (<div>...<Link>Open summary</Link></div>)}),
+    // which is the one place that actually proves the drawer shows it.
+    expect(link.closest("div")).toHaveTextContent("Mitosis overview.");
   });
 });
