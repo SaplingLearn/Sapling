@@ -246,6 +246,9 @@ def test_the_documents_row_records_its_shareability():
         patch("routes.documents.table", side_effect=_table),
         patch("routes.documents.award_xp_safe"),
         patch("routes.documents.events_service.log_event"),
+        patch("routes.documents.create_summary_doc", return_value={
+            "id": "sd-stub", "content": {"type": "doc", "content": []},
+        }),
     ):
         _persist_document(
             user_id="u1", offering_id="off-1", filename="hw4.pdf",
@@ -315,6 +318,9 @@ class TestPersistRetry:
             patch("routes.documents.table", side_effect=_table),
             patch("routes.documents.award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             _persist_document(
                 user_id="u1", offering_id="off-1", filename="f.pdf",
@@ -516,6 +522,9 @@ class TestRetryDropsOnlyTheNamedColumn:
             patch("routes.documents.table", side_effect=_table),
             patch("routes.documents.award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             _persist_document(
                 user_id="u1", offering_id="off-1", filename="f.pdf",

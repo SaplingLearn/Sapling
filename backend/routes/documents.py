@@ -35,6 +35,7 @@ from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
+from services.summary_docs_service import create_summary_doc, plaintext_from_prosemirror
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
@@ -463,9 +464,14 @@ def _persist_document(
 
     Shared by both upload_document_sync and the streaming upload_document.
     The document keys on the OFFERING (0025), not the abstract course.
-    summary + concept_notes are encrypted at the insert boundary; the
-    returned row carries the plaintext shape so callers can pass it
-    straight back to the client without an extra decrypt step.
+    concept_notes is encrypted at the insert boundary; the returned row
+    carries the plaintext shape so callers can pass it straight back to the
+    client without an extra decrypt step. The orchestrator's summary abstract
+    no longer lands on ``documents.summary`` (library-summary-editor cutover,
+    task 14) — it seeds a new `summary_docs` row via
+    `services.summary_docs_service.create_summary_doc` instead, and the
+    returned row carries that doc's id/preview as ``summary_doc_id`` /
+    ``summary_preview``.
     ``request_id`` (when provided) is stored verbatim for idempotent
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
@@ -503,7 +509,6 @@ def _persist_document(
         "extracted_text": encrypt_if_present(extracted_text),
         "index_status": "pending",
         "index_attempts": 0,
-        "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
         "processed_at": now,
@@ -544,7 +549,11 @@ def _persist_document(
         raise RuntimeError("documents insert kept naming absent columns")
     full_row = dict(inserted[0] if inserted else row)
     full_row.pop("extracted_text", None)
-    full_row["summary"] = summary
+    summary_doc = create_summary_doc(
+        user_id=user_id, primary_document_id=full_row["id"], seed_text=summary or "",
+    )
+    full_row["summary_doc_id"] = summary_doc["id"]
+    full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
     # upload_document_sync and the streaming upload_document (see docstring);

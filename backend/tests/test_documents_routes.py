@@ -330,6 +330,9 @@ class TestUploadValidation:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("pdf text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -346,6 +349,9 @@ class TestUploadValidation:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("docx text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -362,6 +368,9 @@ class TestUploadValidation:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("pptx text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -466,6 +475,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
             patch("routes.documents.index_document") as idx,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [
@@ -487,6 +499,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [row]
             r = _make_upload(filename="notes.pdf")
@@ -497,7 +512,8 @@ class TestUploadDocumentOrchestrator:
         assert body["categories"] == []  # non-syllabus → empty grading buckets
 
     def test_persists_summary_plaintext_in_response(self):
-        """Response carries plaintext summary even though insert encrypts."""
+        """Response carries the summary doc's seeded preview, not the old
+        documents.summary field (removed in the library-summary-editor cutover)."""
         result = _make_orchestrator_result(
             summary_abstract="Plain English summary.",
         )
@@ -506,11 +522,17 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub",
+                "content": {"type": "doc", "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Plain English summary."}]},
+                ]},
+            }),
         ):
             t.return_value.insert.return_value = []
             r = _make_upload()
         assert r.status_code == 200
-        assert r.json()["summary"] == "Plain English summary."
+        assert r.json()["summary_preview"] == "Plain English summary."
 
     def test_persisted_row_contains_user_and_offering(self):
         """The documents row keys on the OFFERING (0025). The upload form
@@ -524,6 +546,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
@@ -553,6 +578,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "s1"}]
             r = _make_upload(filename="syllabus.pdf")
@@ -584,6 +612,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "s_pts"}]
             r = _make_upload(filename="syllabus.pdf")
@@ -609,6 +640,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "s2"}]
             r = _make_upload(filename="syllabus.pdf", course_id="c-7")
@@ -636,6 +670,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "a1"}]
             r = _make_upload(filename="pset.pdf", course_id="c-9")
@@ -660,6 +697,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "a2"}]
             r = _make_upload(filename="pset.pdf")
@@ -677,11 +717,50 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "l1"}]
             r = _make_upload()
         assert r.status_code == 200
         mock_apply.assert_not_called()
+
+
+class TestUploadCreatesSummaryDoc:
+    def test_persist_document_creates_a_summary_doc_and_stops_writing_documents_summary(self):
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        summary_doc = {
+            "id": "sd-1", "owner_user_id": "u1", "primary_document_id": "doc-1",
+            "content": {"type": "doc", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Plain English summary."}]},
+            ]},
+            "created_at": "t0", "updated_at": "t0",
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value=summary_doc) as mock_create,
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+
+        assert r.status_code == 200
+        body = r.json()
+        # documents.summary is no longer written — the insert row the mocked
+        # `table("documents").insert(...)` was called with must not carry it.
+        insert_call_kwargs = t.return_value.insert.call_args[0][0]
+        assert "summary" not in insert_call_kwargs
+        # The response carries the new summary-doc fields instead of `summary`.
+        assert body["summary_doc_id"] == "sd-1"
+        assert body["summary_preview"] == "Plain English summary."
+        assert "summary" not in body
+        mock_create.assert_called_once_with(
+            user_id="u1", primary_document_id="doc-1", seed_text="Plain English summary.",
+        )
 
 
 # ── POST /api/documents/upload/sync — agent-failure → HTTP status (#151b) ───
@@ -805,6 +884,9 @@ class TestUploadDocumentStreaming:
             cls_p, sum_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "stream-1"}]
             with client.stream(
@@ -845,6 +927,9 @@ class TestUploadDocumentStreaming:
             cls_p, sum_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll") as spawn,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "stream-1"}]
             with client.stream(
@@ -1307,6 +1392,9 @@ class TestEmptyExtractionGuard:
                 return_value=_make_orchestrator_result(category="other"),
             ),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d50", "file_name": "notes.pdf"}]
@@ -1366,6 +1454,9 @@ class TestEmptyExtractionGuard:
             ),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d9", "file_name": "notes.pdf"}]
