@@ -2421,6 +2421,11 @@ class TestPlaintextForPrimaryDocument:
         with patch("services.summary_docs_service.table") as mock_table:
             mock_table.return_value.select.return_value = []
             assert plaintext_for_primary_document("doc1") is None
+
+    def test_degrades_to_none_on_corrupted_content(self):
+        with patch("services.summary_docs_service.table") as mock_table:
+            mock_table.return_value.select.return_value = [{"content": "corrupted_ciphertext_bytes"}]
+            assert plaintext_for_primary_document("doc1") is None
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -2443,7 +2448,18 @@ def plaintext_for_primary_document(document_id: str) -> str | None:
     )
     if not rows:
         return None
-    return plaintext_from_prosemirror(decrypt_json(rows[0]["content"]))
+    try:
+        return plaintext_from_prosemirror(decrypt_json(rows[0]["content"]))
+    except Exception:
+        # Same degrade-not-crash posture as list_versions (Task 6) and
+        # attach_summary_previews (Task 8) — a corrupted summary doc must
+        # not break concept scanning; it just loses this one context input.
+        logger.warning(
+            "summary_docs content decrypt failed for primary_document_id %s; "
+            "degrading to no summary context",
+            document_id,
+        )
+        return None
 ```
 
 - [ ] **Step 4: Run the service test to verify it passes**
