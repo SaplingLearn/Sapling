@@ -17,6 +17,7 @@ is sync and calls into this module directly), not the async notes.py style.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from db.connection import table
@@ -25,6 +26,8 @@ from services.encryption import (
     decrypt_json,
     encrypt_json,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -232,12 +235,25 @@ def list_versions(summary_doc_id: str, user_id: str) -> list[dict] | None:
     ) or []
     out = []
     for r in rows:
-        content = decrypt_json(r["content"])
+        try:
+            content = decrypt_json(r["content"])
+        except Exception:
+            # decrypt_json re-raises when both decrypt AND plaintext
+            # parse fail (a genuinely corrupted row) — degrade that one
+            # row instead of 500ing the whole list. Match the pattern from
+            # routes/documents.py::list_documents.
+            logger.warning(
+                "content decrypt failed for summary_doc_version %s; degrading to placeholder",
+                r.get("id"),
+            )
+            preview = "[Could not load this version]"
+        else:
+            preview = plaintext_from_prosemirror(content, max_chars=160)
         out.append({
             "id": r["id"],
             "trigger": r["trigger"],
             "created_at": r["created_at"],
-            "preview": plaintext_from_prosemirror(content, max_chars=160),
+            "preview": preview,
         })
     return out
 
@@ -256,7 +272,18 @@ def restore_version(summary_doc_id: str, user_id: str, version_id: str) -> dict 
     )
     if not version_rows:
         return None
-    restored_content = decrypt_json(version_rows[0]["content"])
+    try:
+        restored_content = decrypt_json(version_rows[0]["content"])
+    except Exception:
+        # decrypt_json re-raises when both decrypt AND plaintext
+        # parse fail (a genuinely corrupted row) — degrade to None
+        # and let the route layer map this to a 404, matching the pattern
+        # of "not owned" and "version not found" failures.
+        logger.warning(
+            "content decrypt failed for summary_doc_version %s; returning None",
+            version_rows[0].get("id"),
+        )
+        return None
     _write_version(summary_doc_id, restored_content, "restored")
     rows = table("summary_docs").update(
         {"content": encrypt_json(restored_content), "updated_at": _now_iso()},

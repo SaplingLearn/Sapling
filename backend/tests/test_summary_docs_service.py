@@ -337,6 +337,72 @@ class TestListVersions:
             mock_table.return_value.select.return_value = []
             assert list_versions("sd1", "u1") is None
 
+    def test_degradation_on_corrupted_version_content(self):
+        from services.encryption import encrypt_json
+
+        content_good = {
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "Valid."}],
+                }
+            ],
+        }
+        doc_row = {
+            "id": "sd1",
+            "owner_user_id": "u1",
+            "primary_document_id": "doc1",
+            "content": encrypt_json(content_good),
+            "created_at": "t0",
+            "updated_at": "t0",
+        }
+        version_rows = [
+            {
+                "id": "v2",
+                "summary_doc_id": "sd1",
+                "content": encrypt_json(content_good),
+                "trigger": "edit",
+                "created_at": "t2",
+            },
+            {
+                "id": "v_corrupt",
+                "summary_doc_id": "sd1",
+                "content": "corrupted_ciphertext_bytes",
+                "trigger": "edit",
+                "created_at": "t1",
+            },
+            {
+                "id": "v1",
+                "summary_doc_id": "sd1",
+                "content": encrypt_json(content_good),
+                "trigger": "initial",
+                "created_at": "t0",
+            },
+        ]
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_versions":
+                m.select.return_value = version_rows
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            result = list_versions("sd1", "u1")
+
+        assert result is not None
+        assert len(result) == 3
+        # The corrupted version should show the placeholder preview
+        assert result[1]["id"] == "v_corrupt"
+        assert result[1]["preview"] == "[Could not load this version]"
+        # Other versions should still have valid previews
+        assert result[0]["id"] == "v2"
+        assert result[0]["preview"] == "Valid."
+        assert result[2]["id"] == "v1"
+        assert result[2]["preview"] == "Valid."
+
 
 class TestRestoreVersion:
     def test_restores_content_and_writes_a_new_version(self):
@@ -382,8 +448,12 @@ class TestRestoreVersion:
         from services.encryption import encrypt_json
 
         doc_row = {
-            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
-            "content": encrypt_json({"type": "doc", "content": []}), "created_at": "t0", "updated_at": "t0",
+            "id": "sd1",
+            "owner_user_id": "u1",
+            "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0",
+            "updated_at": "t0",
         }
 
         def _select(name):
@@ -396,3 +466,41 @@ class TestRestoreVersion:
 
         with patch("services.summary_docs_service.table", side_effect=_select):
             assert restore_version("sd1", "u1", "missing") is None
+
+    def test_returns_none_on_corrupted_version_content(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1",
+            "owner_user_id": "u1",
+            "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0",
+            "updated_at": "t0",
+        }
+        corrupted_version_row = {
+            "id": "v_corrupt",
+            "summary_doc_id": "sd1",
+            "content": "corrupted_ciphertext_bytes",
+            "trigger": "edit",
+            "created_at": "t1",
+        }
+
+        mock_tables: dict = {}
+
+        def _select(name):
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_versions":
+                m.select.return_value = [corrupted_version_row]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            result = restore_version("sd1", "u1", "v_corrupt")
+
+        # restore_version should return None when decryption fails, matching
+        # the behavior of "not owned" and "version not found" paths
+        assert result is None
