@@ -1188,6 +1188,27 @@ class TestAttachSummaryPreviews:
         with patch("services.summary_docs_service.table") as mock_table:
             attach_summary_previews([])
         mock_table.assert_not_called()
+
+    def test_degrades_preview_to_none_on_corrupted_content(self):
+        docs_in = [{"id": "doc1"}]
+        summary_rows = [
+            {"id": "sd1", "primary_document_id": "doc1", "content": "corrupted_ciphertext_bytes"},
+        ]
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = summary_rows
+            elif name == "summary_doc_sources":
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            attach_summary_previews(docs_in)
+
+        assert docs_in[0]["summary_doc_id"] == "sd1"
+        assert docs_in[0]["summary_preview"] is None
+        assert docs_in[0]["summary_source_count"] == 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1241,9 +1262,19 @@ def attach_summary_previews(docs: list[dict]) -> None:
             d["summary_preview"] = None
             d["summary_source_count"] = 0
             continue
-        content = decrypt_json(summary_row["content"])
         d["summary_doc_id"] = summary_row["id"]
-        d["summary_preview"] = plaintext_from_prosemirror(content, max_chars=_PREVIEW_MAX_CHARS)
+        try:
+            content = decrypt_json(summary_row["content"])
+            d["summary_preview"] = plaintext_from_prosemirror(content, max_chars=_PREVIEW_MAX_CHARS)
+        except Exception:
+            # Same degrade-one-row-not-the-whole-list posture as
+            # list_versions (Task 6) — one corrupted summary doc must not
+            # break the Library list for every other document.
+            logger.warning(
+                "summary_docs content decrypt failed for id %s; degrading preview",
+                summary_row["id"],
+            )
+            d["summary_preview"] = None
         d["summary_source_count"] = source_counts.get(summary_row["id"], 0)
 ```
 
