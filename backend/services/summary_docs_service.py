@@ -82,7 +82,7 @@ def create_summary_doc(*, user_id: str, primary_document_id: str, seed_text: str
     """Create the one summary doc an upload produces (#spec section 2).
 
     Called once per upload from routes/documents.py::_persist_document
-    (Task 15), which is itself sync — this stays sync rather than using
+    (Task 14), which is itself sync — this stays sync rather than using
     asyncio.to_thread so it can be called directly from that call site.
     """
     content = prosemirror_doc_from_text(seed_text)
