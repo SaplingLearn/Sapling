@@ -15,6 +15,8 @@ import {
 import type { SummaryDoc, SummaryDocSuggestion } from "@/lib/types";
 import { SuggestionMark } from "@/lib/summaryEditor/suggestionMark";
 import { SuggestionDecorations, type PendingSuggestionWidget } from "@/lib/summaryEditor/suggestionDecorations";
+import { SourcesPanel } from "./SourcesPanel";
+import { HistoryPanel } from "./HistoryPanel";
 
 function prosemirrorDocFromText(text: string): Record<string, unknown> {
   const paragraphs = text.split("\n\n").map((p) => p.trim()).filter(Boolean);
@@ -38,6 +40,7 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
   const { userId, userReady } = useUser();
   const toast = useToast();
   const [doc, setDoc] = React.useState<SummaryDoc | null>(null);
+  const [rightTab, setRightTab] = React.useState<"sources" | "history">("sources");
   const [pendingSuggestions, setPendingSuggestions] = React.useState<SummaryDocSuggestion[]>([]);
   const [saveState, setSaveState] = React.useState<SaveState>("idle");
   const [askTarget, setAskTarget] = React.useState<AskTarget>(null);
@@ -279,8 +282,32 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
           </div>
         </div>
       </div>
-      <aside style={{ width: 280, borderLeft: "1px solid var(--border)", flexShrink: 0, padding: 16 }}>
-        {/* Sources + History panels — wired in Task 22 */}
+      <aside style={{ width: 280, borderLeft: "1px solid var(--border)", flexShrink: 0, padding: 16, overflowY: "auto" }}>
+        <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+          <button
+            type="button"
+            className={`btn btn--sm ${rightTab === "sources" ? "btn--primary" : "btn--ghost"}`}
+            onClick={() => setRightTab("sources")}
+          >
+            Sources
+          </button>
+          <button
+            type="button"
+            className={`btn btn--sm ${rightTab === "history" ? "btn--primary" : "btn--ghost"}`}
+            onClick={() => setRightTab("history")}
+          >
+            History
+          </button>
+        </div>
+        {rightTab === "sources" ? (
+          <SourcesPanel doc={doc} userId={userId!} onDocChanged={setDoc} />
+        ) : (
+          <HistoryPanel
+            summaryDocId={doc.id}
+            userId={userId!}
+            onDocChanged={(updated) => setDoc((prev) => (prev ? { ...prev, ...updated } : prev))}
+          />
+        )}
       </aside>
     </div>
   );

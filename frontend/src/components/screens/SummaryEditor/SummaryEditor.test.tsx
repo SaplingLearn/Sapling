@@ -44,8 +44,13 @@ vi.mock("@/lib/api", () => ({
   addSummaryDocSource: vi.fn(),
   removeSummaryDocSource: vi.fn(),
   askSummaryDocAgent: vi.fn(),
-  listSummaryDocVersions: vi.fn(),
+  listSummaryDocVersions: vi.fn().mockResolvedValue({ versions: [] }),
   restoreSummaryDocVersion: vi.fn(),
+  // SourcesPanel (wired into the right rail in Task 22) calls this on mount
+  // to populate the "Add a source" list — without a resolved value here the
+  // panel's effect throws into an unhandled rejection and the whole tree
+  // unmounts before this test's own assertions ever run.
+  getDocuments: vi.fn().mockResolvedValue({ documents: [] }),
 }));
 
 import { SummaryEditor } from "./SummaryEditor";
