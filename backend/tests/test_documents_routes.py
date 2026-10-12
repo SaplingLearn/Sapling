@@ -786,6 +786,7 @@ class TestUploadCreatesSummaryDoc:
         # The response carries the new summary-doc fields instead of `summary`.
         assert body["summary_doc_id"] == "sd-1"
         assert body["summary_preview"] == "Plain English summary."
+        assert body["summary_source_count"] == 1
         assert "summary" not in body
         mock_create.assert_called_once_with(
             user_id="u1", primary_document_id="doc-1", seed_text="Plain English summary.",
@@ -813,6 +814,7 @@ class TestUploadCreatesSummaryDoc:
         body = r.json()
         assert body["summary_doc_id"] is None
         assert body["summary_preview"] is None
+        assert body["summary_source_count"] == 0
 
 
 # ── POST /api/documents/upload/sync — agent-failure → HTTP status (#151b) ───

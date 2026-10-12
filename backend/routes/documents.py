@@ -566,6 +566,11 @@ def _persist_document(
         )
         full_row["summary_doc_id"] = summary_doc["id"]
         full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
+        # A freshly created summary doc always has exactly one source (the
+        # document that just seeded it) — matches attach_summary_previews'
+        # field set (Task 15) so list/replay/fresh-upload responses carry
+        # the same shape.
+        full_row["summary_source_count"] = 1
     except Exception:
         logger.exception(
             "create_summary_doc failed for document %s (best-effort)",
@@ -573,6 +578,7 @@ def _persist_document(
         )
         full_row["summary_doc_id"] = None
         full_row["summary_preview"] = None
+        full_row["summary_source_count"] = 0
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
     # upload_document_sync and the streaming upload_document (see docstring);
