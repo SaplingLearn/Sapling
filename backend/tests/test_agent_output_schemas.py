@@ -73,6 +73,7 @@ EXPECTED_STRUCTURED_AGENTS = {
     "social_summary_agent",
     "study_guide_agent",
     "summary_agent",
+    "summary_edit_agent",
     "syllabus_extraction_agent",
 }
 EXPECTED_TEXT_AGENTS = {

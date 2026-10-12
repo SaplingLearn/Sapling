@@ -344,3 +344,25 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Library summary-doc editor "Ask" flow (Task 11) ────────────────────────
+#
+# services/summary_docs_service.py::create_suggestion drives summary_edit_agent
+# (tool-less, structured `SummaryEdit` output — a single `proposed_text`
+# field, see agents/summary_edit.py) directly via run_agent_sync, request-path
+# (awaited inline by the route that calls create_suggestion), so registering
+# it is correct — the same reasoning as concept_describe/concept_scan above.
+# Without a handler, function mode's dispatch would raise
+# UnregisteredHandlerError and the "Ask" flow would 500 in the browser lane.
+
+# SummaryEdit.proposed_text — asserted verbatim once a browser journey for
+# this flow exists. Keep in sync with any future spec that reads it.
+E2E_SUMMARY_EDIT_PROPOSAL = (
+    "This is the deterministic scripted rewrite for the E2E summary-edit "
+    "journey."
+)
+
+register_function_handler(
+    "summary_edit", _structured_output({"proposed_text": E2E_SUMMARY_EDIT_PROPOSAL})
+)

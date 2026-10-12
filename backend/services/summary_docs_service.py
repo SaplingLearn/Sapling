@@ -20,12 +20,18 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from agents._run import run_agent_sync
+from agents.deps import SaplingDeps
+from agents.summary_edit import summary_edit_agent
+from agents.usage import record_agent_usage
 from db.connection import table
 from services.encryption import (
     decrypt_if_present,
     decrypt_json,
+    encrypt_if_present,
     encrypt_json,
 )
+from services.prompt_safety import neutralize_delimiters, wrap_untrusted
 
 logger = logging.getLogger(__name__)
 
@@ -420,3 +426,111 @@ def delete_summary_docs_for_document(document_id: str) -> None:
     a document that still has other owners.
     """
     table("summary_docs").delete(filters={"primary_document_id": f"eq.{document_id}"})
+
+
+def _source_texts(summary_doc_id: str) -> list[tuple[str, str]]:
+    """(file_name, extracted_text) for every source document attached to
+    this summary doc — the raw material the agent can draw on, distinct
+    from the summary doc's OWN content."""
+    source_rows = table("summary_doc_sources").select(
+        "document_id", filters={"summary_doc_id": f"eq.{summary_doc_id}"},
+    ) or []
+    doc_ids = [s["document_id"] for s in source_rows]
+    if not doc_ids:
+        return []
+    in_clause = "in.(" + ",".join(doc_ids) + ")"
+    docs = table("documents").select(
+        "id,file_name,extracted_text", filters={"id": in_clause},
+    ) or []
+    return [
+        (d.get("file_name") or "Untitled", decrypt_if_present(d.get("extracted_text")) or "")
+        for d in docs
+    ]
+
+
+def _build_ask_prompt(
+    *,
+    instruction: str,
+    selection_text: str | None,
+    doc_plaintext: str,
+    sources: list[tuple[str, str]],
+    allow_surrounding_edits: bool,
+) -> str:
+    parts = [f"Instruction: {neutralize_delimiters(instruction)}"]
+    if selection_text:
+        parts.append(
+            "Text to rewrite (a highlighted section):\n"
+            + wrap_untrusted(selection_text, source="highlighted summary text")
+        )
+        # Spec section 3 "Suggestion scope": a per-request toggle, default
+        # off (confined to the highlight — the safer default). Only
+        # meaningful for a SELECTION ask; a whole-doc ask has no
+        # "surrounding text" to distinguish.
+        parts.append(
+            "You may ONLY rewrite the exact text above — do not change "
+            "anything outside it."
+            if not allow_surrounding_edits
+            else "You may also lightly adjust text immediately "
+            "surrounding the highlighted section if it improves flow, "
+            "but stay focused on the instruction."
+        )
+    else:
+        parts.append(
+            "Text to rewrite (the whole document, nothing was highlighted):\n"
+            + wrap_untrusted(doc_plaintext, source="the full summary document")
+        )
+    for file_name, text in sources:
+        if not text:
+            continue
+        parts.append(
+            f"Source document '{neutralize_delimiters(file_name)}':\n"
+            + wrap_untrusted(text[:4000], source=f"source document {file_name}")
+        )
+    return "\n\n".join(parts)
+
+
+def create_suggestion(
+    summary_doc_id: str,
+    user_id: str,
+    *,
+    anchor_from: int | None,
+    anchor_to: int | None,
+    instruction: str,
+    original_text: str | None,
+    allow_surrounding_edits: bool = False,
+) -> dict | None:
+    """Run the summary_edit agent and store its output as a pending
+    suggestion. Returns None if the caller doesn't own this summary doc."""
+    doc = get_summary_doc(summary_doc_id, user_id)
+    if doc is None:
+        return None
+    doc_plaintext = plaintext_from_prosemirror(doc["content"])
+    sources = _source_texts(summary_doc_id)
+    user_prompt = _build_ask_prompt(
+        instruction=instruction, selection_text=original_text,
+        doc_plaintext=doc_plaintext, sources=sources,
+        allow_surrounding_edits=allow_surrounding_edits,
+    )
+    deps = SaplingDeps(
+        user_id=user_id, course_id=None, supabase=None,
+        request_id="", feature="library",
+    )
+    result = record_agent_usage(
+        run_agent_sync(summary_edit_agent.run(user_prompt, deps=deps)),
+        feature="library", task="summary_edit", user_id=user_id,
+    )
+    proposed_text = result.output.proposed_text
+
+    inserted = table("summary_doc_suggestions").insert({
+        "summary_doc_id": summary_doc_id,
+        "anchor_from": anchor_from,
+        "anchor_to": anchor_to,
+        "instruction": encrypt_if_present(instruction),
+        "original_text": encrypt_if_present(original_text),
+        "proposed_text": encrypt_if_present(proposed_text),
+    })
+    row = dict(inserted[0])
+    row["instruction"] = instruction
+    row["original_text"] = original_text
+    row["proposed_text"] = proposed_text
+    return row

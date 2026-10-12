@@ -679,3 +679,80 @@ class TestDeleteSummaryDocsForDocument:
         mock_table.return_value.delete.assert_called_once_with(
             filters={"primary_document_id": "eq.doc1"}
         )
+
+
+# Append to backend/tests/test_summary_docs_service.py
+from agents._providers import clear_function_handlers, model_for, register_function_handler
+from agents.summary_edit import summary_edit_agent
+from services.summary_docs_service import create_suggestion
+
+
+def _scripted_summary_edit(proposed_text: str):
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    def _handler(messages, info):
+        return ModelResponse(parts=[
+            ToolCallPart(tool_name="final_result", args={"proposed_text": proposed_text}),
+        ])
+    return _handler
+
+
+class TestCreateSuggestion:
+    def setup_method(self):
+        clear_function_handlers()
+
+    def teardown_method(self):
+        clear_function_handlers()
+
+    def test_creates_a_pending_suggestion_from_the_agent_output(self, monkeypatch):
+        from services.encryption import encrypt_json
+
+        # summary_edit_agent is built at module-import time with whatever
+        # model `model_for("summary_edit")` returned THEN (real mode, by
+        # default, in the hermetic suite) — registering a function handler
+        # alone does nothing unless the agent is ALSO driven by a
+        # FunctionModel for this call. `.override()` swaps the model for
+        # just this `with` block (same pattern as
+        # tests/test_e2e_function_handlers.py), so this test needs no
+        # process-wide SAPLING_MODEL_MODE mutation that would leak into
+        # unrelated tests sharing this pytest process.
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        register_function_handler("summary_edit", _scripted_summary_edit("Shorter version."))
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Original long text."}]},
+            ]}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = []
+            elif name in ("documents", "summary_doc_suggestions"):
+                m.select.return_value = []
+                m.insert.return_value = [{
+                    "id": "sg1", "summary_doc_id": "sd1", "anchor_from": 0, "anchor_to": 20,
+                    "instruction": "ciphertext", "original_text": "ciphertext",
+                    "proposed_text": "ciphertext", "status": "pending",
+                    "created_at": "t0", "resolved_at": None,
+                }]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select), \
+             patch("services.summary_docs_service.decrypt_if_present", side_effect=lambda v: {
+                 "ciphertext": None,  # overridden per-field below via real values
+             }.get(v, v)), \
+             summary_edit_agent.override(model=model_for("summary_edit")):
+            result = create_suggestion(
+                "sd1", "u1",
+                anchor_from=0, anchor_to=20,
+                instruction="make it shorter",
+                original_text="Original long text.",
+            )
+
+        assert result["status"] == "pending"
+        assert result["proposed_text"]
