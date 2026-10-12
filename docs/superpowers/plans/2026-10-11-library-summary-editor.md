@@ -2504,3 +2504,144 @@ git commit -m "feat(summary-docs): deleting a document cascades to its summary d
 ```
 
 This completes the Stage 1 cutover (spec section 7): no code anywhere reads or writes `documents.summary` after this task. The column itself still physically exists — dropping it is the explicit Stage 2 follow-up, gated on green pytest + Playwright + e2e oracles against everything in this plan, and is NOT part of this plan (see the spec's rollout section).
+
+---
+
+## Part G — Backfill + oracle registration
+
+### Task 18: Backfill script + ciphertext oracle registration
+
+**Files:**
+- Create: `backend/scripts/backfill_summary_docs.py`
+- Modify: `backend/e2e_oracles/gather.py` (`_CIPHERTEXT_MANIFEST`, ~line 187)
+
+- [ ] **Step 1: Write the backfill script**
+
+```python
+"""
+Backfill summary_docs rows from existing documents.summary (one-time, #spec
+"Integration & cutover" stage 1). After this plan's upload-pipeline cutover
+(Task 14), documents.summary is never written again — but documents
+uploaded BEFORE this feature shipped still only have the old column, and
+without this script they would appear in the Library with no summary doc
+to open.
+
+Idempotent: skips any document that already has a summary_docs row (either
+from a previous run of this script, or because it was uploaded after the
+cutover and already got one the normal way). Safe to re-run.
+
+Run from backend/:
+    python scripts/backfill_summary_docs.py              # backfill every eligible document
+    python scripts/backfill_summary_docs.py --dry-run    # list only; write nothing
+
+Loads .env.staging without overriding what is already set — run it under
+`dotenv -f .env.<env> run -- ...` for any other environment (same
+convention as scripts/backfill_document_chunks.py), and check the project
+it prints first.
+"""
+import argparse
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+from dotenv import load_dotenv
+
+BASE = Path(__file__).parent.parent
+load_dotenv(BASE / ".env.staging")
+
+sys.path.insert(0, str(BASE))
+
+from db.connection import REST_URL, page_all, table  # noqa: E402
+from services.encryption import decrypt_if_present  # noqa: E402
+from services.summary_docs_service import create_summary_doc  # noqa: E402
+
+
+def _documents_with_summary() -> list[dict]:
+    return list(page_all(
+        table("documents"), "id,user_id,summary",
+        filters={"deleted_at": "is.null", "summary": "not.is.null"},
+        order="created_at,id",
+    ))
+
+
+def _already_backfilled_document_ids() -> set[str]:
+    rows = list(page_all(
+        table("summary_docs"), "primary_document_id",
+        filters={}, order="id",
+    ))
+    return {r["primary_document_id"] for r in rows}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Backfill summary_docs rows from documents.summary.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="List only; write nothing.")
+    args = parser.parse_args(argv)
+
+    print(f"Project: {urlparse(REST_URL).hostname}")
+    candidates = _documents_with_summary()
+    already_done = _already_backfilled_document_ids()
+    targets = [d for d in candidates if d["id"] not in already_done]
+    print(f"{len(targets)} document(s) to backfill, "
+          f"{len(candidates) - len(targets)} already have a summary doc.")
+
+    ok = fail = 0
+    for doc in targets:
+        doc_id = doc["id"]
+        print(f"  {doc_id[:8]} ...", end=" ", flush=True)
+        if args.dry_run:
+            print("(dry run)")
+            continue
+        try:
+            seed_text = decrypt_if_present(doc["summary"]) or ""
+            create_summary_doc(
+                user_id=doc["user_id"], primary_document_id=doc_id, seed_text=seed_text,
+            )
+            print("ok")
+            ok += 1
+        except Exception as e:
+            print(f"FAIL: {e}")
+            fail += 1
+
+    print(f"\nDone: {ok} ok, {fail} failed.")
+    if fail:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 2: Smoke-test it against the local stack**
+
+Run: `cd backend && python scripts/backfill_summary_docs.py --dry-run`
+Expected: prints the project hostname and a count line (`0 document(s) to backfill, ...` is fine on a fresh local DB with no pre-existing `documents.summary` rows — the point of this run is confirming the script imports and queries cleanly, not that it finds work).
+
+- [ ] **Step 3: Register the new encrypted columns with the ciphertext oracle**
+
+In `backend/e2e_oracles/gather.py`, add to `_CIPHERTEXT_MANIFEST` (~line 187), right after the existing `study_guides` entry since it is the nearest sibling (another JSONB-holding-encrypted-JSON column):
+
+```python
+    ("study_guides", "id", "content"),
+    ("summary_docs", "id", "content"),
+    ("summary_doc_versions", "id", "content"),
+    ("summary_doc_suggestions", "id", "instruction"),
+    ("summary_doc_suggestions", "id", "original_text"),
+    ("summary_doc_suggestions", "id", "proposed_text"),
+    ("room_summaries", "room_id", "summary"),
+```
+
+(i.e. insert the four new `summary_doc*` lines between the existing `study_guides` and `room_summaries` lines — do not reorder or remove anything else in the tuple.)
+
+- [ ] **Step 4: Run the oracle against the local stack (requires `make e2e-up` first)**
+
+Run: `cd backend && venv/bin/python -m e2e_oracles ciphertext` (or `python -m e2e_oracles ciphertext` depending on how the venv is activated locally)
+Expected: exit 0, no findings for the four new rows (once the local stack has at least one summary doc — upload a document through the UI first, or skip this verification until Task 23's Playwright journey creates one).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/scripts/backfill_summary_docs.py backend/e2e_oracles/gather.py
+git commit -m "feat(summary-docs): backfill script + register encrypted columns with the ciphertext oracle"
+```
