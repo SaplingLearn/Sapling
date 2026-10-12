@@ -3878,3 +3878,204 @@ Expected: PASS — and this is the point where the `Document.summary` → `summa
 git add frontend/src/components/screens/Library.tsx frontend/src/components/screens/Library.test.tsx
 git commit -m "feat(summary-docs): Library shows summary previews and links to the editor"
 ```
+
+---
+
+### Task 25: Fix the now-broken `frontend/e2e/upload.spec.ts` assertions
+
+**Files:**
+- Modify: `frontend/e2e/upload.spec.ts`
+
+The existing journey "upload → SSE → document appears in library and Postgres" asserts directly on `documents.summary` being non-empty ciphertext (Task 14 stopped writing that column, so this read-back now finds `NULL` and the test would fail). This is exactly the kind of regression the spec's cutover plan exists to catch — fixing it is this task, not a surprise discovered later.
+
+- [ ] **Step 1: Confirm the test currently fails against this plan's backend changes**
+
+Run (with the local E2E stack up — `make e2e-up`, then from `frontend/`): `npx playwright test upload.spec.ts -g "upload → SSE → document appears"`
+Expected: FAIL at `expect(doc.summary ?? "").not.toBe("")` — `doc.summary` is now `null`.
+
+- [ ] **Step 2: Update the query and assertions**
+
+In `frontend/e2e/upload.spec.ts`, replace the Postgres readback block (~line 165-190):
+
+```typescript
+  // ── Postgres readback (raw SQL) ───────────────────────────────────────
+  const docs = await queryRaw(
+    `SELECT d.id, d.user_id, d.offering_id, d.category, sd.content AS summary_content
+       FROM documents d
+       JOIN summary_docs sd ON sd.primary_document_id = d.id
+      WHERE d.file_name = $1
+        AND d.deleted_at IS NULL`,
+    [FIXTURE_NAME],
+  );
+  expect(docs).toHaveLength(1);
+  const doc = docs[0] as {
+    id: string;
+    user_id: string;
+    offering_id: string | null;
+    category: string;
+    summary_content: string | null;
+  };
+  expect(doc.user_id).toBe(USER_ACTIVE);
+  expect(doc.category).toBe(SCRIPTED_CATEGORY);
+  // Documents key on the offering (0025) — resolve_offering(create=True)
+  // must have attached one.
+  expect(doc.offering_id).toBeTruthy();
+  // summary_docs.content is encrypted at rest (library-summary-editor
+  // cutover, replacing the old documents.summary assertion here): present,
+  // but the stored value must be ciphertext, never the plaintext abstract.
+  expect(doc.summary_content ?? "").not.toBe("");
+  expect(String(doc.summary_content)).not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
+  expect(String(doc.summary_content)).not.toContain("gradient descent");
+```
+
+No other line in the file needs to change — the later `await expect(card).toContainText(SCRIPTED_ABSTRACT_SNIPPET)` assertion (the Library card's rendered preview) still passes unmodified, since the card now renders `summary_preview`, seeded from the same scripted abstract text, instead of the old `summary` field.
+
+- [ ] **Step 3: Run the journey against the local E2E stack**
+
+Run (stack already up from Step 1, from `frontend/`): `npx playwright test upload.spec.ts -g "upload → SSE → document appears"`
+Expected: PASS.
+
+- [ ] **Step 4: Tear down the stack and commit**
+
+Run: `make e2e-down` (repo root)
+
+```bash
+git add frontend/e2e/upload.spec.ts
+git commit -m "fix(e2e): upload journey asserts on summary_docs, not the retired documents.summary"
+```
+
+---
+
+### Task 26: New Playwright journey — the core summary-editor loop
+
+**Files:**
+- Create: `frontend/e2e/library-summary-editor.spec.ts`
+
+Covers: open the summary from the Library → highlight + ask → keep the suggestion → history records it and can restore → deleting the source document cascades. Runs against the deterministic function-mode stack, same as `upload.spec.ts` — the `summary_edit` task's scripted handler was registered in `backend/agents/function_handlers_e2e.py` back in Task 11.
+
+- [ ] **Step 1: Write the journey**
+
+```typescript
+/**
+ * Journey: the core editable-summary loop (library-summary-editor design,
+ * docs/superpowers/specs/2026-10-11-library-summary-editor-design.md).
+ *
+ * Reuses the same upload flow as upload.spec.ts to get a real document with
+ * a real summary doc, then drives: open the summary → highlight text →
+ * ask the agent → keep the suggestion → history shows it and can restore →
+ * deleting the source document cascades to the summary doc.
+ *
+ * Same determinism requirement as upload.spec.ts: SAPLING_MODEL_MODE=function
+ * SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up.
+ */
+import path from "node:path";
+
+import { queryRaw } from "./support/db";
+import { expect, test } from "./support/fixtures";
+import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
+
+const FIXTURE_PDF = path.join(__dirname, "fixtures", "upload-journey.pdf");
+const FIXTURE_NAME = "upload-journey.pdf";
+
+// Mirrors backend/agents/function_handlers_e2e.py's E2E_SUMMARY_EDIT_PROPOSAL
+// (added in Task 11) — keep in sync with that module.
+const SCRIPTED_SUMMARY_EDIT = "This is the deterministic scripted rewrite for the E2E summary-edit journey.";
+
+test("highlight, ask, keep, and restore an earlier version of a summary doc", async ({ page }) => {
+  const health = (await (await fetch(`${BACKEND_URL}/api/health`)).json()) as { model_mode?: string };
+  expect(
+    health.model_mode,
+    "Stack is not in deterministic model mode. Reboot it with:\n" +
+      "  SAPLING_MODEL_MODE=function " +
+      "SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up",
+  ).toBe("function");
+
+  // ── Upload, same as upload.spec.ts ────────────────────────────────────
+  await page.goto("/library");
+  const uploadButton = page.getByTestId("library-upload");
+  await expect(uploadButton).toBeEnabled();
+  await uploadButton.click();
+  await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
+  await expect(page.getByTestId("upload-modal-file-row-0")).toBeVisible();
+  await page.getByTestId("upload-modal-submit").click();
+  const doneButton = page.getByTestId("upload-modal-done");
+  await expect(doneButton).toBeVisible({ timeout: 60_000 });
+  await doneButton.click();
+  await expect(page.getByTestId("upload-modal")).toBeHidden();
+
+  const docs = await queryRaw(
+    `SELECT id FROM documents WHERE file_name = $1 AND deleted_at IS NULL`,
+    [FIXTURE_NAME],
+  );
+  const documentId = (docs[0] as { id: string }).id;
+
+  // ── Open the summary ───────────────────────────────────────────────────
+  const card = page.getByTestId(`library-doc-${documentId}`);
+  await card.click();
+  const openSummaryLink = page.getByRole("link", { name: "Open summary" });
+  await expect(openSummaryLink).toBeVisible();
+  await openSummaryLink.click();
+  await expect(page.getByTestId("summary-editor-content")).toBeVisible();
+
+  // ── Highlight the seeded paragraph and ask for a rewrite ──────────────
+  const editable = page.getByTestId("summary-editor-content").locator('[contenteditable="true"]');
+  await editable.click({ clickCount: 3 }); // triple-click selects the paragraph
+  await page.getByTestId("summary-editor-ask-input").fill("make this shorter");
+  await page.getByRole("button", { name: "Ask" }).click();
+
+  // ── The scripted suggestion appears; keep it ───────────────────────────
+  await expect(page.getByText(SCRIPTED_SUMMARY_EDIT)).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Keep it" }).click();
+  await expect(page.getByText(SCRIPTED_SUMMARY_EDIT)).toBeHidden();
+  await expect(editable).toContainText(SCRIPTED_SUMMARY_EDIT);
+
+  // ── History records the kept edit and can restore the original ────────
+  await page.getByRole("button", { name: "History" }).click();
+  await expect(page.getByText("AI edit kept")).toBeVisible();
+  await expect(page.getByText("Created")).toBeVisible();
+  const restoreButtons = page.getByRole("button", { name: "Bring this back" });
+  await restoreButtons.last().click(); // oldest entry = "Created" = the original text
+  await expect(editable).not.toContainText(SCRIPTED_SUMMARY_EDIT);
+
+  // ── Deleting the source document cascades to the summary doc ──────────
+  const summaryDocRows = await queryRaw(
+    `SELECT id FROM summary_docs WHERE primary_document_id = $1`,
+    [documentId],
+  );
+  expect(summaryDocRows).toHaveLength(1);
+
+  await page.goto("/library");
+  await card.click();
+  const deleteButton = page.getByTestId("library-detail-delete");
+  await deleteButton.click();
+  await deleteButton.click(); // two-click confirm (useConfirm)
+  await expect(card).toBeHidden();
+
+  const summaryDocRowsAfterDelete = await queryRaw(
+    `SELECT id FROM summary_docs WHERE primary_document_id = $1`,
+    [documentId],
+  );
+  expect(summaryDocRowsAfterDelete).toHaveLength(0);
+});
+```
+
+- [ ] **Step 2: Run the journey against the local E2E stack**
+
+Run: `SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up` (repo root), then from `frontend/`: `npx playwright test library-summary-editor.spec.ts`
+Expected: PASS.
+
+- [ ] **Step 3: Run the e2e oracles against the resulting state**
+
+Run (from `backend/`): `python -m e2e_oracles ciphertext`
+Expected: exit 0 — the `summary_docs`/`summary_doc_versions`/`summary_doc_suggestions` rows this journey created are real ciphertext, confirming Task 18's manifest registration actually catches a real row, not just an empty table.
+
+- [ ] **Step 4: Tear down the stack**
+
+Run: `make e2e-down` (repo root)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/e2e/library-summary-editor.spec.ts
+git commit -m "test(e2e): add the library-summary-editor core-loop journey"
+```
