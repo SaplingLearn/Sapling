@@ -24,6 +24,7 @@
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 import { FONT_MONO, FONT_SANS } from '@/lib/landing/fonts';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 /** Syllabus lines. The bold span is the concept a chip carries away. */
 const DOC_LINES: [string, string, string][] = [
@@ -87,8 +88,9 @@ const TILE_COUNT: React.CSSProperties = { fontFamily: "var(--font-playfair), 'Pl
 /** Underline that marks a concept inside the document. */
 const MARK: React.CSSProperties = { fontWeight: 600, color: '#33443B', boxShadow: 'inset 0 -4px 0 rgba(14,158,90,0.18)' };
 
-/** Kicker and heading. Rendered twice — pinned in the stage from tablet up,
- *  and in the phone intro that scrolls in ahead of the act. */
+/** Kicker and heading. Two placements — pinned in the stage from tablet up,
+ *  and in the phone intro that scrolls in ahead of the act — but only one is
+ *  ever in the document; see `ActIngest`. */
 function IngestHeading() {
   return (
     <FadeIn>
@@ -126,6 +128,9 @@ export function ActIngest({
   ingestSceneRef: React.RefObject<HTMLDivElement | null>;
   ingestStageRef: React.RefObject<HTMLDivElement | null>;
 }) {
+  // 641 → `(max-width: 640px)`, the breakpoint globals.css swaps the two
+  // placements at. False on the server and the hydrating render.
+  const isPhone = useIsMobile(641);
   return (
     <>
     {/* Phone only: globals.css shows this ≤640px and hides .ld-ingest-head.
@@ -133,11 +138,18 @@ export function ActIngest({
         scene drew at under half size. Here they scroll in ahead of the act,
         which then pins with the whole screen for the scene. It sits outside
         the section so the act's scrub progress, measured from the section's
-        own top, is untouched. */}
-    <div className="ld-ingest-intro" style={{ display: 'none', position: 'relative', padding: '12px 18px 0' }}>
-      <IngestHeading />
-      <p style={{ margin: '16px 0 0', color: '#61726A', fontSize: 14.5, lineHeight: 1.65 }}>{PITCH}</p>
-    </div>
+        own top, is untouched.
+
+        Mounted only on a phone, after hydration. Server-rendering both
+        placements put the heading and pitch into the crawled HTML twice; the
+        server now renders the tablet-up copy alone. The act sits several
+        screens below the fold, so a phone never sees the intro arrive. */}
+    {isPhone && (
+      <div className="ld-ingest-intro" style={{ display: 'none', position: 'relative', padding: '12px 18px 0' }}>
+        <IngestHeading />
+        <p style={{ margin: '16px 0 0', color: '#61726A', fontSize: 14.5, lineHeight: 1.65 }}>{PITCH}</p>
+      </div>
+    )}
 
     <section id="act-ingest" data-act="2" style={{ height: '320vh', position: 'relative' }}>
       {/* holds no clusters, but the element has to exist — see DragField */}

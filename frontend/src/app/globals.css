@@ -2448,6 +2448,11 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   57%,100% { transform:scale(1) rotate(3.2deg); opacity:1; } }
 @keyframes s1Bud    { 0%,29% { transform:scale(0); } 35%,100% { transform:scale(1); } }
 @keyframes s1Word   { 0%,2%  { opacity:0; transform:translateY(8px); } 14%,100% { opacity:1; transform:translateY(0); } }
+/* The intro overlay's LOADING readout is drawn from a data attribute, not
+   document text: the overlay is server-rendered so it covers the first paint,
+   and as text its "LOADING000" led every crawler's and LLM fetcher's extract
+   of the home page. See IntroOverlay.tsx. */
+.ld-intro-readout::before { content: attr(data-readout); }
 @keyframes s1Rule   { 0%,60% { transform:scaleX(0); } 74%,100% { transform:scaleX(1); } }
 
 /* ── Ambient / hero ────────────────────────────────────────────────── */

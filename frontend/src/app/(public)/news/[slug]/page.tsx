@@ -3,7 +3,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ArticleArt } from '@/components/journal/ArticleArt';
+import { JsonLd } from '@/components/seo/JsonLd';
+import { resolveSiteUrl } from '@/lib/deployGuard';
 import { ARTICLE, ACCENT, SERIF } from '@/lib/landing/companionType';
+import { pageMetadata } from '@/lib/seo/pageMetadata';
+import { articleImage, articleLd } from '@/lib/seo/structuredData';
 import {
   JOURNAL_ARTICLES,
   dateLabel,
@@ -16,7 +20,7 @@ import {
  * A Sapling Journal article.
  *
  * Companion-shell page on the warm paper palette, matching /news. Content
- * comes from `journalArticles.ts`; the six slugs are statically generated
+ * comes from `journalArticles.ts`; every slug is statically generated
  * and anything else is a real 404 (same rule as /careers/[slug], #187).
  *
  * The artwork band sits under the deck rather than above the title: at the
@@ -43,11 +47,17 @@ export async function generateMetadata({
   const { slug } = await params;
   const article = getArticle(slug);
   if (!article) return { title: 'Article not found' };
-  return {
+  return pageMetadata({
     title: `${article.title} — The Sapling Journal`,
     description: article.deck,
-    alternates: { canonical: `/news/${article.slug}` },
-  };
+    path: `/news/${article.slug}`,
+    openGraph: {
+      type: 'article',
+      publishedTime: article.publishedAt,
+      modifiedTime: article.updatedAt ?? article.publishedAt,
+      image: articleImage(article),
+    },
+  });
 }
 
 function Block({ block }: { block: ArticleBlock }) {
@@ -83,6 +93,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
 
   return (
     <CompanionShell current="/news">
+      <JsonLd data={articleLd(resolveSiteUrl(process.env), article)} />
       <div>
         <Link href="/news" className="cp-navlink" style={ARTICLE.eyebrow}>
           ← The Journal
@@ -90,7 +101,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
 
         <div style={{ marginTop: 26, display: 'flex', alignItems: 'center', gap: 14, lineHeight: 1 }}>
           <span style={{ ...ARTICLE.eyebrow, letterSpacing: '0.16em', color: ACCENT }}>{article.tag}</span>
-          <span style={{ ...ARTICLE.eyebrow, letterSpacing: '0.06em' }}>{dateLabel(article.publishedAt)}</span>
+          <time dateTime={article.publishedAt} style={{ ...ARTICLE.eyebrow, letterSpacing: '0.06em' }}>{dateLabel(article.publishedAt)}</time>
           <span style={ARTICLE.eyebrow}>{readTime(article.body)} READ</span>
         </div>
 

@@ -98,9 +98,15 @@ export function useLanding(props: LandingProps) {
 
   // ── discrete state ────────────────────────────────────────────────────
   const [heroMounted, setHeroMounted] = useState(false);
-  const [heroText0, setHeroText0] = useState('');
-  const [heroText1, setHeroText1] = useState('');
-  const [heroText2, setHeroText2] = useState('');
+  // Each slot starts at its cascade's FINAL text, not empty. The hero copy is
+  // invisible (opacity 0) until `heroMounted`, and the scramble overwrites it
+  // the moment it shows, so nobody sees the difference — but the server HTML
+  // now carries the real h1 ("Sapling") and tagline instead of a blank span,
+  // which is what crawlers and no-JS readers index.
+  const finalText = (slot: number) => cascade.find((step) => step.slot === slot)?.text ?? '';
+  const [heroText0, setHeroText0] = useState(() => finalText(0));
+  const [heroText1, setHeroText1] = useState(() => finalText(1));
+  const [heroText2, setHeroText2] = useState(() => finalText(2));
   /** Fake progress behind the intro overlay, 0..100. */
   const [loadPct, setLoadPct] = useState(0);
   /** True once the overlay has faded out and can leave the tree entirely. */

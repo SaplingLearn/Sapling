@@ -44,6 +44,12 @@ export interface JournalArticle {
   cat: ArticleCategory;
   /** ISO `YYYY-MM-DD`. Every rendered date derives from this. */
   publishedAt: string;
+  /**
+   * ISO `YYYY-MM-DD` of the last substantive edit. Optional: when absent the
+   * sitemap's lastmod and the Article schema's dateModified fall back to
+   * `publishedAt`. Set it when a post's content changes, not for typo fixes.
+   */
+  updatedAt?: string;
   art: ArticleArt;
   title: string;
   /** One-line standfirst under the title — the card excerpt, verbatim. */

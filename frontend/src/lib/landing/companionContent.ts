@@ -67,6 +67,11 @@ export const FAQ_GROUPS = [
   ]},
 ] as const;
 
+/** Every /faq row across all groups, in page order — what the FAQPage schema lists. */
+export const FAQ_ITEMS: { q: string; a: string }[] = FAQ_GROUPS.map(
+  (g) => g.items as readonly { q: string; a: string }[],
+).flat();
+
 export const GALLERY_SHOTS = [
   { slot:'shot-tree', route:'/tree', group:'Learn', cat:'learn', title:'Knowledge graph',
     body:'The whole course as nodes and edges, each ring showing mastery. Click any concept to see what it feeds.' },

@@ -1,4 +1,3 @@
-import type { Metadata } from 'next';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import {
   ABOUT_AWARDS,
@@ -7,6 +6,7 @@ import {
   TEAM_WAYS,
 } from '@/lib/landing/companionContent';
 import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
+import { pageMetadata } from '@/lib/seo/pageMetadata';
 
 /**
  * About Sapling.
@@ -36,12 +36,12 @@ import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
  * theirs; Recognition stays last because it closes on the byline.
  */
 
-export const metadata: Metadata = {
+export const metadata = pageMetadata({
   title: 'About',
   description:
     'The story behind Sapling: a student-built AI study partner from Boston University, recognized for reimagining how students learn through conversation and a living knowledge graph.',
-  alternates: { canonical: '/about' },
-};
+  path: '/about',
+});
 
 /**
  * Body copy shares one type ramp; only the stagger delay changes.

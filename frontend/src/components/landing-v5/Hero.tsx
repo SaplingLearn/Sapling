@@ -387,8 +387,9 @@ export function Hero({
             the panels their focus. Removed by request. If the dots ever need
             taming again, do it to the dots — thin the field behind the copy
             in the canvas — not with a plate over everything behind them. */}
-        {/* The wordmark scrambles in client-side, so the accessible name is
-            the only server-rendered trace of it — public-seo.spec pins that. */}
+        {/* The wordmark scrambles in client-side, but the server renders its
+            final text (useLanding seeds each slot with it) so the h1 is real
+            in the crawled HTML — public-seo.spec pins that. */}
         <h1 aria-label="Sapling" style={{
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',

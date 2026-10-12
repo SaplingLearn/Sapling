@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import { LEGAL_LAST_UPDATED, legalDateLabel } from "@/lib/legal";
+import { pageMetadata } from "@/lib/seo/pageMetadata";
 import { CompanionShell } from "@/components/companion/CompanionShell";
 import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
 
@@ -27,12 +28,12 @@ import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/c
  * are the pair a reader compares side by side.
  */
 
-export const metadata: Metadata = {
+export const metadata = pageMetadata({
   title: "Terms of Service",
   description:
     "The terms that govern your use of Sapling's AI study tools.",
-  alternates: { canonical: "/terms" },
-};
+  path: "/terms",
+});
 
 const RULE = "1px solid rgba(42,39,31,0.08)";
 /** Sized off the longest clause title ("6. Study Rooms and Social Features"). */
@@ -178,7 +179,7 @@ export default function TermsPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: May 3, 2026</span>
+              <time dateTime={LEGAL_LAST_UPDATED} style={META}>Last updated: {legalDateLabel()}</time>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>

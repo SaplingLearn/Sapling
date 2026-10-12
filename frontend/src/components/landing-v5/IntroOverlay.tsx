@@ -16,6 +16,12 @@
  * v5 adds the LOADING readout under the rule. It is honest about being
  * decorative: nothing is actually being measured, and the counter is
  * driven by `useLanding`'s ragged +4..+12 tick rather than real progress.
+ *
+ * The readout is painted by CSS (`.ld-intro-readout::before` reads
+ * `data-readout`), not rendered as text. The overlay has to be in the server
+ * HTML to cover the first paint, and as text "LOADING000" was the first thing
+ * in every crawler's and LLM fetcher's extract of the home page. Generated
+ * content looks identical and stays out of the document's text.
  */
 
 export function IntroOverlay({
@@ -98,9 +104,13 @@ export function IntroOverlay({
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         >
-          <span>LOADING</span>
+          <span className="ld-intro-readout" data-readout="LOADING" />
           {/* zero-padded to three digits so the lockup never reflows as it counts */}
-          <span style={{ color: '#61726A' }}>{String(Math.min(100, loadPct)).padStart(3, '0')}</span>
+          <span
+            className="ld-intro-readout"
+            data-readout={String(Math.min(100, loadPct)).padStart(3, '0')}
+            style={{ color: '#61726A' }}
+          />
         </div>
       </div>
     </div>

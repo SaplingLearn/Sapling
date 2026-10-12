@@ -24,6 +24,13 @@
  * one set wider than the viewport, re-measuring on resize. The duplicates are
  * `aria-hidden`, and only the first copy is reachable by keyboard.
  *
+ * The server renders ONE copy; the clones arrive on mount. They are a visual
+ * device, and rendering them on the server put every card's heading and copy
+ * into the crawled HTML two or more times. The first measurement runs in the
+ * mount effect, long before the rail (far below the fold) can be seen, and
+ * the marquee reads one set's width off `data-set-size`, so it never sees the
+ * single-copy frame either.
+ *
  * The card visuals live in galleryMinis.tsx, generated from the source.
  *
  * Below 900px the cards shrink again, via `--gal-scale` (set in globals.css
@@ -191,7 +198,9 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
  * a window resize or a `--gal-scale` breakpoint both change this.
  */
 function useTrackCopies(trackRef: React.RefObject<HTMLDivElement | null>, setSize: number): number {
-  const [copies, setCopies] = useState(2);
+  // 1 on the server and the hydrating render — see the header note; the
+  // effect below raises it to at least 2 straight away.
+  const [copies, setCopies] = useState(1);
   useEffect(() => {
     const track = trackRef.current;
     const wrap = track?.parentElement;

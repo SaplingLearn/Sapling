@@ -1,4 +1,3 @@
-import type { Metadata } from 'next';
 import { CompanionShell } from '@/components/companion/CompanionShell';
 import { ZoomableShot } from '@/components/companion/ZoomableShot';
 import { WikiRail } from './WikiRail';
@@ -11,6 +10,7 @@ import {
   WIKI_QUIZ_SPECS, WIKI_ROOM_SPECS, WIKI_SHOTS, WIKI_TIERS, WIKI_UPLOAD_SPECS,
 } from '@/lib/landing/companionContent';
 import { ARTICLE, DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
+import { pageMetadata } from '@/lib/seo/pageMetadata';
 
 /**
  * Wiki.
@@ -25,11 +25,12 @@ import { ARTICLE, DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
  * fourth grid.
  */
 
-export const metadata: Metadata = {
+export const metadata = pageMetadata({
   title: 'Wiki',
   description:
     'Exact definitions for the terms and numbers Sapling puts on screen. Every value here is the one the product actually uses.',
-};
+  path: '/wiki',
+});
 
 /**
  * One right edge, two measures, and the type scaled to each (#604).

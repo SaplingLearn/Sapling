@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import { LEGAL_LAST_UPDATED, legalDateLabel } from "@/lib/legal";
+import { pageMetadata } from "@/lib/seo/pageMetadata";
 import { CompanionShell } from "@/components/companion/CompanionShell";
 import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
 
@@ -19,12 +20,12 @@ import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/c
  * one text cell, so they share the clause measure and the clause left edge.
  */
 
-export const metadata: Metadata = {
+export const metadata = pageMetadata({
   title: "Privacy Policy",
   description:
     "How Sapling collects, protects, and uses your data — including document uploads, tutoring transcripts, and study analytics.",
-  alternates: { canonical: "/privacy" },
-};
+  path: "/privacy",
+});
 
 const RULE = "1px solid rgba(42,39,31,0.08)";
 /** Sized off the longest clause title ("4. How We Share Your Information"). */
@@ -208,7 +209,7 @@ export default function PrivacyPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: May 3, 2026</span>
+              <time dateTime={LEGAL_LAST_UPDATED} style={META}>Last updated: {legalDateLabel()}</time>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>
