@@ -75,14 +75,31 @@ export const SuggestionDecorations = Extension.create<Record<string, never>, Sug
           decorations(state) {
             const decorations: Decoration[] = [];
             for (const suggestion of extensionStorage.pending) {
-              if (suggestion.to > state.doc.content.size) continue;
+              if (
+                suggestion.from < 0 ||
+                suggestion.from > suggestion.to ||
+                suggestion.to > state.doc.content.size
+              ) {
+                continue;
+              }
               decorations.push(
                 Decoration.inline(suggestion.from, suggestion.to, {
                   class: "summary-suggestion-pending-range",
                 }),
               );
+              // Keying by suggestion.id lets ProseMirror reuse the card's
+              // DOM node (and its still-live onclick closures) across
+              // redraws instead of tearing it down on every keystroke
+              // elsewhere in the doc — without a key, a click could land
+              // on a node already removed by the next redraw and silently
+              // no-op. Safe to reuse across redraws here because a given
+              // id is only ever added once and later removed outright
+              // (resolved -> dropped from `pending`), never replaced
+              // in-place under the same id with different callbacks.
               decorations.push(
-                Decoration.widget(suggestion.to, () => buildSuggestionCard(suggestion)),
+                Decoration.widget(suggestion.to, () => buildSuggestionCard(suggestion), {
+                  key: suggestion.id,
+                }),
               );
             }
             return DecorationSet.create(state.doc, decorations);
