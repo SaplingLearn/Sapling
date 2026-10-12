@@ -154,10 +154,47 @@ export interface Document {
   course_id: string | null;
   file_name: string;
   category: 'syllabus' | 'lecture_notes' | 'slides' | 'reading' | 'assignment' | 'study_guide' | 'other';
-  summary: string | null;
+  summary_doc_id: string | null;
+  summary_preview: string | null;
+  summary_source_count: number;
   concept_notes: ConceptNote[] | null;
   created_at: string;
   processed_at: string | null;
+}
+
+export interface SummaryDocSource {
+  document_id: string;
+  file_name: string;
+  added_at: string;
+}
+
+export interface SummaryDocSuggestion {
+  id: string;
+  anchor_from: number | null;
+  anchor_to: number | null;
+  instruction: string;
+  original_text: string | null;
+  proposed_text: string;
+  status: 'pending' | 'kept' | 'undone';
+  created_at: string;
+}
+
+export interface SummaryDocVersion {
+  id: string;
+  trigger: string;
+  created_at: string;
+  preview: string;
+}
+
+export interface SummaryDoc {
+  id: string;
+  owner_user_id: string;
+  primary_document_id: string;
+  content: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  sources: SummaryDocSource[];
+  pending_suggestions: SummaryDocSuggestion[];
 }
 
 export type RarityTier = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
