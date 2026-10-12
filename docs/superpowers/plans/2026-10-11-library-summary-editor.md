@@ -526,8 +526,17 @@ class TestAddSource:
             "created_at": "t0", "updated_at": "t0",
         }
 
+        # Cache one mock per table name — `table(name)` is called more than
+        # once for "summary_doc_sources" (inside add_source, then again
+        # below when the test inspects call history), so a fresh
+        # MagicMock() per call (no cache) would hand the assertion a
+        # different, never-called mock.
+        mock_tables: dict = {}
+
         def _select(name):
-            m = MagicMock()
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
             if name == "summary_docs":
                 m.select.return_value = [doc_row]
             elif name == "summary_doc_sources":
@@ -541,13 +550,11 @@ class TestAddSource:
                 m.insert.return_value = [{}]
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_select) as mock_table:
+        with patch("services.summary_docs_service.table", side_effect=_select):
             result = add_source("sd1", "u1", "doc2")
 
         assert result is not None
-        insert_calls = [
-            c for c in mock_table("summary_doc_sources").insert.call_args_list
-        ]
+        insert_calls = mock_tables["summary_doc_sources"].insert.call_args_list
         assert insert_calls[-1][0][0] == {"summary_doc_id": "sd1", "document_id": "doc2"}
 
     def test_returns_none_when_not_owned(self):
@@ -566,8 +573,12 @@ class TestRemoveSource:
             "created_at": "t0", "updated_at": "t0",
         }
 
+        mock_tables: dict = {}
+
         def _select(name):
-            m = MagicMock()
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
             if name == "summary_docs":
                 m.select.return_value = [doc_row]
             elif name == "summary_doc_sources":
@@ -581,11 +592,11 @@ class TestRemoveSource:
                 m.insert.return_value = [{}]
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_select) as mock_table:
+        with patch("services.summary_docs_service.table", side_effect=_select):
             result = remove_source("sd1", "u1", "doc2")
 
         assert result is not None
-        mock_table("summary_doc_sources").delete.assert_called_with(
+        mock_tables["summary_doc_sources"].delete.assert_called_with(
             filters={"summary_doc_id": "eq.sd1", "document_id": "eq.doc2"}
         )
 
@@ -704,10 +715,10 @@ class TestUpdateContent:
 
         assert result["content"] == new_content
         enc.assert_called_once_with(new_content)
-        mock_table("summary_doc_versions")  # module-level `table` patched globally; no version call expected
-        assert "summary_doc_versions" not in [
-            c.args[0] for c in mock_table.call_args_list if c.args
-        ] or True  # update_content writes no version row (see Task header docstring)
+        # update_content writes no version row (see Task header docstring) —
+        # confirm `table("summary_doc_versions")` was never called.
+        called_names = [c.args[0] for c in mock_table.call_args_list if c.args]
+        assert "summary_doc_versions" not in called_names
 
     def test_returns_none_when_not_owned(self):
         with patch("services.summary_docs_service.table") as mock_table:
@@ -816,8 +827,17 @@ class TestRestoreVersion:
         }
         version_row = {"id": "v1", "summary_doc_id": "sd1", "content": encrypt_json(old_content), "trigger": "initial", "created_at": "t0"}
 
+        # Cache one mock per table name — `table(name)` is called more than
+        # once for "summary_docs"/"summary_doc_versions" during
+        # restore_version's own execution AND again below when the test
+        # inspects call history, so a fresh MagicMock() per call (no cache)
+        # would hand the assertion a different, never-called mock.
+        mock_tables: dict = {}
+
         def _select(name):
-            m = MagicMock()
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
             if name == "summary_docs":
                 m.select.return_value = [doc_row]
                 m.update.return_value = [{**doc_row, "content": encrypt_json(old_content)}]
@@ -828,11 +848,11 @@ class TestRestoreVersion:
                 m.select.return_value = []
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_select) as mock_table:
+        with patch("services.summary_docs_service.table", side_effect=_select):
             result = restore_version("sd1", "u1", "v1")
 
         assert result["content"] == old_content
-        version_insert = mock_table("summary_doc_versions").insert.call_args[0][0]
+        version_insert = mock_tables["summary_doc_versions"].insert.call_args[0][0]
         assert version_insert["trigger"] == "restored"
 
     def test_returns_none_for_unknown_version(self):
@@ -959,8 +979,18 @@ class TestKeepSuggestion:
         }
         suggestion_row = {"id": "sg1", "summary_doc_id": "sd1", "status": "pending"}
 
+        # Cache one mock per table name — see the note in Task 4/Task 6's
+        # tests: `table(name)` is called more than once for
+        # "summary_doc_suggestions"/"summary_doc_versions" (inside
+        # keep_suggestion, then again below for assertions), so a fresh
+        # MagicMock() per call would hand the assertion a different,
+        # never-called mock.
+        mock_tables: dict = {}
+
         def _select(name):
-            m = MagicMock()
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
             if name == "summary_docs":
                 m.select.return_value = [doc_row]
                 m.update.return_value = [{**doc_row, "content": encrypt_json(new_content)}]
@@ -973,13 +1003,13 @@ class TestKeepSuggestion:
                 m.select.return_value = []
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_select) as mock_table:
+        with patch("services.summary_docs_service.table", side_effect=_select):
             result = keep_suggestion("sd1", "u1", "sg1", new_content)
 
         assert result["content"] == new_content
-        suggestion_update = mock_table("summary_doc_suggestions").update.call_args[0][0]
+        suggestion_update = mock_tables["summary_doc_suggestions"].update.call_args[0][0]
         assert suggestion_update["status"] == "kept"
-        version_insert = mock_table("summary_doc_versions").insert.call_args[0][0]
+        version_insert = mock_tables["summary_doc_versions"].insert.call_args[0][0]
         assert version_insert["trigger"] == "ai_edit_kept"
 
     def test_returns_none_for_already_resolved_suggestion(self):
@@ -1011,8 +1041,12 @@ class TestUndoSuggestion:
             "content": encrypt_json({"type": "doc", "content": []}), "created_at": "t0", "updated_at": "t0",
         }
 
+        mock_tables: dict = {}
+
         def _select(name):
-            m = MagicMock()
+            if name not in mock_tables:
+                mock_tables[name] = MagicMock()
+            m = mock_tables[name]
             if name == "summary_docs":
                 m.select.return_value = [doc_row]
             elif name == "summary_doc_suggestions":
@@ -1020,9 +1054,9 @@ class TestUndoSuggestion:
                 m.update.return_value = [{}]
             return m
 
-        with patch("services.summary_docs_service.table", side_effect=_select) as mock_table:
+        with patch("services.summary_docs_service.table", side_effect=_select):
             assert undo_suggestion("sd1", "u1", "sg1") is True
-        update_call = mock_table("summary_doc_suggestions").update.call_args[0][0]
+        update_call = mock_tables["summary_doc_suggestions"].update.call_args[0][0]
         assert update_call["status"] == "undone"
 
     def test_returns_false_when_not_owned_or_not_pending(self):
