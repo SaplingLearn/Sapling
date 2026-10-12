@@ -8,7 +8,13 @@
 
 **Tech Stack:** FastAPI + Supabase (PostgREST) + Pydantic AI (backend), Next.js + TipTap/ProseMirror (frontend).
 
-**Deviation from the approved spec (flagging explicitly, not silently):** the spec's history section mentions periodic autosave-triggered restore points. This plan creates restore points only at the four discrete, meaningful triggers — `initial`, `ai_edit_kept`, `source_added`, `source_removed`, `restored` — and leaves plain autosave (typing) to update `summary_docs.content` without a new version row. A version per autosave tick would be non-deterministic to test and would flood history with noise; undo/redo already covers in-session typing safety. Revisit if real usage shows a gap.
+**Deviations from the approved spec (flagging explicitly, not silently):**
+
+1. **No autosave-triggered restore points.** The spec's history section mentions periodic autosave snapshots. This plan creates restore points only at the four discrete, meaningful triggers — `initial`, `ai_edit_kept`, `source_added`, `source_removed`, `restored` — and leaves plain autosave (typing) to update `summary_docs.content` without a new version row. A version per autosave tick would be non-deterministic to test and would flood history with noise; undo/redo already covers in-session typing safety.
+2. **No two-tab conflict detection.** The spec's error-handling section describes an optimistic `updated_at` check so a second open tab gets a "changed elsewhere, refresh" message instead of silently overwriting. This plan's `update_content` (Task 5) does a plain last-write-wins update. Single-user, single-tab is overwhelmingly the common case; the failure mode if it happens (silently losing a concurrent edit from another tab) is real but low-probability, and worth a focused follow-up rather than threading version-stamped concurrency control through this already-large plan.
+3. **The output-style preference is stored but not yet read anywhere.** Task 1 adds `user_settings.summary_style` (concise vs. detailed), matching the spec's "global default" decision, but no task in this plan reads it — not `create_suggestion`'s agent prompt (Task 11), and not the EXISTING `summary_agent` call in the upload pipeline for the initial seed. A follow-up should wire both reads in, plus a Settings-page UI control to actually change it (also deferred here for the same reason: threading it into `summary_agent`, a shared agent used by both upload routes, is a change to existing working code outside this plan's new-code surface, and a toggle with nothing yet reading it would be a settings control that does nothing). The column exists with a sensible default (`'concise'`), ready to wire up later.
+
+Revisit all three if real usage shows a gap.
 
 **Spec:** `docs/superpowers/specs/2026-10-11-library-summary-editor-design.md`
 
@@ -1526,13 +1532,30 @@ def _source_texts(summary_doc_id: str) -> list[tuple[str, str]]:
 
 
 def _build_ask_prompt(
-    *, instruction: str, selection_text: str | None, doc_plaintext: str, sources: list[tuple[str, str]],
+    *,
+    instruction: str,
+    selection_text: str | None,
+    doc_plaintext: str,
+    sources: list[tuple[str, str]],
+    allow_surrounding_edits: bool,
 ) -> str:
     parts = [f"Instruction: {neutralize_delimiters(instruction)}"]
     if selection_text:
         parts.append(
             "Text to rewrite (a highlighted section):\n"
             + wrap_untrusted(selection_text, source="highlighted summary text")
+        )
+        # Spec section 3 "Suggestion scope": a per-request toggle, default
+        # off (confined to the highlight — the safer default). Only
+        # meaningful for a SELECTION ask; a whole-doc ask has no
+        # "surrounding text" to distinguish.
+        parts.append(
+            "You may ONLY rewrite the exact text above — do not change "
+            "anything outside it."
+            if not allow_surrounding_edits
+            else "You may also lightly adjust text immediately "
+            "surrounding the highlighted section if it improves flow, "
+            "but stay focused on the instruction."
         )
     else:
         parts.append(
@@ -1557,6 +1580,7 @@ def create_suggestion(
     anchor_to: int | None,
     instruction: str,
     original_text: str | None,
+    allow_surrounding_edits: bool = False,
 ) -> dict | None:
     """Run the summary_edit agent and store its output as a pending
     suggestion. Returns None if the caller doesn't own this summary doc."""
@@ -1568,6 +1592,7 @@ def create_suggestion(
     user_prompt = _build_ask_prompt(
         instruction=instruction, selection_text=original_text,
         doc_plaintext=doc_plaintext, sources=sources,
+        allow_surrounding_edits=allow_surrounding_edits,
     )
     deps = SaplingDeps(
         user_id=user_id, course_id=None, supabase=None,
@@ -1883,6 +1908,7 @@ class TestAsk:
         mock_ask.assert_called_once_with(
             "sd1", "u1", anchor_from=0, anchor_to=5,
             instruction="make it shorter", original_text="Hello",
+            allow_surrounding_edits=False,
         )
 
     def test_whole_doc_ask_has_null_anchors(self, client):
@@ -1895,7 +1921,21 @@ class TestAsk:
         mock_ask.assert_called_once_with(
             "sd1", "u1", anchor_from=None, anchor_to=None,
             instruction="tighten this up", original_text=None,
+            allow_surrounding_edits=False,
         )
+
+    def test_allow_surrounding_edits_is_threaded_through(self, client):
+        with patch("routes.summary_docs.create_suggestion", return_value=_SUGGESTION) as mock_ask:
+            r = client.post(
+                "/api/summary-docs/sd1/ask",
+                json={
+                    "user_id": "u1", "instruction": "make it flow better",
+                    "anchor_from": 0, "anchor_to": 5, "original_text": "Hello",
+                    "allow_surrounding_edits": True,
+                },
+            )
+        assert r.status_code == 200
+        assert mock_ask.call_args.kwargs["allow_surrounding_edits"] is True
 
     def test_404_when_not_owned(self, client):
         with patch("routes.summary_docs.create_suggestion", return_value=None):
@@ -1960,6 +2000,7 @@ class AskBody(BaseModel):
     anchor_from: int | None = None
     anchor_to: int | None = None
     original_text: str | None = None
+    allow_surrounding_edits: bool = False
 
 
 @router.post("/{summary_doc_id}/ask")
@@ -1969,6 +2010,7 @@ def post_ask(summary_doc_id: str, body: AskBody, request: Request):
         summary_doc_id, body.user_id,
         anchor_from=body.anchor_from, anchor_to=body.anchor_to,
         instruction=body.instruction, original_text=body.original_text,
+        allow_surrounding_edits=body.allow_surrounding_edits,
     )
     if suggestion is None:
         raise HTTPException(status_code=404, detail="Summary doc not found.")
@@ -2001,7 +2043,7 @@ def post_undo(summary_doc_id: str, suggestion_id: str, body: UserIdBody, request
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd backend && python -m pytest tests/test_summary_docs_routes.py -v`
-Expected: PASS (14 tests).
+Expected: PASS (15 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -2613,12 +2655,62 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Smoke-test it against the local stack**
+- [ ] **Step 2: Write an idempotency test for the skip logic**
+
+```python
+# Create backend/tests/test_backfill_summary_docs.py
+"""Unit coverage for scripts/backfill_summary_docs.py's idempotency guard —
+the part most likely to regress silently (re-backfilling a document every
+run, duplicating its summary doc)."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+import backfill_summary_docs as script  # noqa: E402
+
+
+class TestAlreadyBackfilledDocumentIds:
+    def test_excludes_documents_that_already_have_a_summary_doc(self):
+        with patch.object(script, "table") as mock_table, \
+             patch.object(script, "page_all", return_value=[
+                 {"primary_document_id": "doc1"},
+                 {"primary_document_id": "doc2"},
+             ]):
+            result = script._already_backfilled_document_ids()
+        mock_table.assert_called_once_with("summary_docs")
+        assert result == {"doc1", "doc2"}
+
+
+class TestMainSkipsAlreadyBackfilled:
+    def test_second_run_backfills_nothing(self):
+        candidates = [
+            {"id": "doc1", "user_id": "u1", "summary": "ciphertext-a"},
+            {"id": "doc2", "user_id": "u1", "summary": "ciphertext-b"},
+        ]
+        with (
+            patch.object(script, "_documents_with_summary", return_value=candidates),
+            patch.object(script, "_already_backfilled_document_ids", return_value={"doc1", "doc2"}),
+            patch.object(script, "create_summary_doc") as mock_create,
+            patch("builtins.print"),
+        ):
+            script.main([])
+        mock_create.assert_not_called()
+```
+
+- [ ] **Step 3: Run the test to verify it passes**
+
+Run: `cd backend && python -m pytest tests/test_backfill_summary_docs.py -v`
+Expected: PASS (2 tests) — this confirms re-running the script is a safe no-op once every eligible document has been backfilled, without needing a real database.
+
+- [ ] **Step 4: Smoke-test the script against the local stack**
 
 Run: `cd backend && python scripts/backfill_summary_docs.py --dry-run`
 Expected: prints the project hostname and a count line (`0 document(s) to backfill, ...` is fine on a fresh local DB with no pre-existing `documents.summary` rows — the point of this run is confirming the script imports and queries cleanly, not that it finds work).
 
-- [ ] **Step 3: Register the new encrypted columns with the ciphertext oracle**
+- [ ] **Step 5: Register the new encrypted columns with the ciphertext oracle**
 
 In `backend/e2e_oracles/gather.py`, add to `_CIPHERTEXT_MANIFEST` (~line 187), right after the existing `study_guides` entry since it is the nearest sibling (another JSONB-holding-encrypted-JSON column):
 
@@ -2634,15 +2726,15 @@ In `backend/e2e_oracles/gather.py`, add to `_CIPHERTEXT_MANIFEST` (~line 187), r
 
 (i.e. insert the four new `summary_doc*` lines between the existing `study_guides` and `room_summaries` lines — do not reorder or remove anything else in the tuple.)
 
-- [ ] **Step 4: Run the oracle against the local stack (requires `make e2e-up` first)**
+- [ ] **Step 6: Run the oracle against the local stack (requires `make e2e-up` first)**
 
 Run: `cd backend && venv/bin/python -m e2e_oracles ciphertext` (or `python -m e2e_oracles ciphertext` depending on how the venv is activated locally)
-Expected: exit 0, no findings for the four new rows (once the local stack has at least one summary doc — upload a document through the UI first, or skip this verification until Task 23's Playwright journey creates one).
+Expected: exit 0, no findings for the four new rows (once the local stack has at least one summary doc — upload a document through the UI first, or skip this verification until Task 26's Playwright journey creates one).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/scripts/backfill_summary_docs.py backend/e2e_oracles/gather.py
+git add backend/scripts/backfill_summary_docs.py backend/tests/test_backfill_summary_docs.py backend/e2e_oracles/gather.py
 git commit -m "feat(summary-docs): backfill script + register encrypted columns with the ciphertext oracle"
 ```
 
@@ -2753,7 +2845,13 @@ export const removeSummaryDocSource = (summaryDocId: string, userId: string, doc
 export const askSummaryDocAgent = (
   summaryDocId: string,
   userId: string,
-  body: { instruction: string; anchor_from?: number | null; anchor_to?: number | null; original_text?: string | null },
+  body: {
+    instruction: string;
+    anchor_from?: number | null;
+    anchor_to?: number | null;
+    original_text?: string | null;
+    allow_surrounding_edits?: boolean;
+  },
 ) =>
   fetchJSON<SummaryDocSuggestion>(`/api/summary-docs/${summaryDocId}/ask`, {
     method: 'POST',
@@ -3162,6 +3260,10 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
   const [askTarget, setAskTarget] = React.useState<AskTarget>(null);
   const [askInstruction, setAskInstruction] = React.useState("");
   const [asking, setAsking] = React.useState(false);
+  // Spec section 3 "Suggestion scope" — only meaningful for a selection
+  // ask (a whole-doc ask has no "surrounding text" to protect), and
+  // defaults off (confined to the highlight, the safer default).
+  const [allowSurroundingEdits, setAllowSurroundingEdits] = React.useState(false);
   const autosaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const editor = useEditor({
@@ -3291,6 +3393,7 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
         anchor_from: askTarget?.from ?? null,
         anchor_to: askTarget?.to ?? null,
         original_text: askTarget?.text ?? null,
+        allow_surrounding_edits: askTarget ? allowSurroundingEdits : false,
       });
       setPendingSuggestions((prev) => [...prev, suggestion]);
       if (askTarget) {
@@ -3298,6 +3401,7 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
       }
       setAskInstruction("");
       setAskTarget(null);
+      setAllowSurroundingEdits(false);
     } catch (err) {
       toast.error(`Couldn't get a suggestion: ${String((err as Error)?.message || err)}`);
     } finally {
@@ -3335,26 +3439,38 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
             <EditorContent editor={editor} />
           </div>
         </div>
-        <div style={{ padding: "12px 24px", borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
-          <input
-            className="mock-input"
-            style={{ flex: 1 }}
-            placeholder={askTarget ? "Ask about the selected text…" : "Ask about this doc…"}
-            value={askInstruction}
-            onChange={(e) => setAskInstruction(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitAsk();
-            }}
-            data-testid="summary-editor-ask-input"
-          />
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            disabled={asking || !askInstruction.trim()}
-            onClick={submitAsk}
-          >
-            Ask
-          </button>
+        <div style={{ padding: "12px 24px", borderTop: "1px solid var(--border)" }}>
+          {askTarget && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={allowSurroundingEdits}
+                onChange={(e) => setAllowSurroundingEdits(e.target.checked)}
+              />
+              Let it adjust nearby text too, if that helps it flow
+            </label>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              className="mock-input"
+              style={{ flex: 1 }}
+              placeholder={askTarget ? "Ask about the selected text…" : "Ask about this doc…"}
+              value={askInstruction}
+              onChange={(e) => setAskInstruction(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitAsk();
+              }}
+              data-testid="summary-editor-ask-input"
+            />
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              disabled={asking || !askInstruction.trim()}
+              onClick={submitAsk}
+            >
+              Ask
+            </button>
+          </div>
         </div>
       </div>
       <aside style={{ width: 280, borderLeft: "1px solid var(--border)", flexShrink: 0, padding: 16 }}>
@@ -4036,6 +4152,11 @@ test("highlight, ask, keep, and restore an earlier version of a summary doc", as
   const restoreButtons = page.getByRole("button", { name: "Bring this back" });
   await restoreButtons.last().click(); // oldest entry = "Created" = the original text
   await expect(editable).not.toContainText(SCRIPTED_SUMMARY_EDIT);
+
+  // ── Sources tab lists the primary document with no remove control ─────
+  await page.getByRole("button", { name: "Sources" }).click();
+  await expect(page.getByText(FIXTURE_NAME)).toBeVisible();
+  await expect(page.getByRole("button", { name: `Remove ${FIXTURE_NAME}` })).toHaveCount(0);
 
   // ── Deleting the source document cascades to the summary doc ──────────
   const summaryDocRows = await queryRaw(
