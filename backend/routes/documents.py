@@ -42,6 +42,7 @@ from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from services.durable import workflow_id
+from services.document_deletion import purge_document
 from services.document_indexing import index_document
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
@@ -277,20 +278,21 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
     else:
         user_id = get_session_user_id(request)
     # Ensure the document belongs to the requesting user (and isn't already
-    # soft-deleted)
+    # soft-deleted). The columns are what purge_document needs to recompute
+    # the document's chunk ids.
     docs = table("documents").select(
-        "id",
+        "id,user_id,offering_id,category,extracted_text",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
-    # Soft delete (0025): stamp deleted_at; reads filter it out. The
-    # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
-    table("documents").update(
-        {"deleted_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
-    )
+    # Withdraw its retrieval chunks (private ones deleted, shared ones released
+    # by this contributor), then tombstone the row with its content cleared —
+    # see services/document_deletion.py. Still a soft delete (0025) at the row
+    # level, so the enrollments.syllabus_doc_id FK (ON DELETE SET NULL) and
+    # every `deleted_at is.null` reader keep working.
+    purge_document(docs[0], datetime.now(timezone.utc).isoformat())
     return {"deleted": True}
 
 

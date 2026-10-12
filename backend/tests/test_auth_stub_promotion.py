@@ -204,3 +204,33 @@ class TestExistingUserUnchanged:
             users_rows=[{"id": USER_ID, "is_approved": True}]
         )
         assert "/pending" not in response.headers["location"]
+
+
+class TestPendingDeletion:
+    """A users row still stamped `deleted_at` is a deletion that did not
+    finish (the route stamps before it deletes). Signing in again must finish
+    it and start a NEW account — never quietly restore the old one, which is
+    what happened when `deleted_at` was a stamp nothing read."""
+
+    def test_finishes_the_deletion_then_provisions_fresh(self, drive_callback, monkeypatch):
+        finished = []
+        monkeypatch.setattr(auth_module, "delete_account", finished.append)
+        response, mocks = drive_callback(
+            users_rows=[{"id": USER_ID, "is_approved": True, "deleted_at": "2026-10-01T00:00:00Z"}]
+        )
+        assert finished == [USER_ID]
+        assert response.status_code in (302, 307)
+        # took the NEW-account path (upsert), not the existing-user update
+        mocks["users"].upsert.assert_called_once()
+        mocks["users"].update.assert_not_called()
+
+    def test_a_deletion_that_cannot_finish_fails_the_sign_in(self, drive_callback, monkeypatch):
+        def boom(_uid):
+            raise RuntimeError("db down")
+        monkeypatch.setattr(auth_module, "delete_account", boom)
+        response, mocks = drive_callback(
+            users_rows=[{"id": USER_ID, "is_approved": True, "deleted_at": "2026-10-01T00:00:00Z"}]
+        )
+        assert "account_deleted" in response.headers["location"]
+        mocks["users"].upsert.assert_not_called()
+        mocks["users"].update.assert_not_called()

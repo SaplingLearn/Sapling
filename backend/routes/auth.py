@@ -41,6 +41,7 @@ from services import events_service
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
 from services.session_tokens import SESSION_COOKIE_NAME, mint_session
+from services.account_deletion import delete_account
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -466,7 +467,19 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     }
 
     # Determine user_id: check if this Google ID already exists
-    existing = table("users").select("id,is_approved", filters={"google_id": f"eq.{google_id}"})
+    existing = table("users").select("id,is_approved,deleted_at", filters={"google_id": f"eq.{google_id}"})
+    if existing and existing[0].get("deleted_at"):
+        # The account-delete route stamps deleted_at BEFORE it deletes, so a
+        # row still carrying the stamp is a deletion that did not finish.
+        # Finish it, then sign in as a brand-new account — signing back in
+        # must never restore deleted data (it used to: deleted_at was only a
+        # stamp and nothing read it).
+        try:
+            delete_account(existing[0]["id"])
+        except Exception:
+            logger.exception("Could not finish a pending account deletion for %s", existing[0]["id"])
+            return _fail_redirect("account_deleted")
+        existing = []
     if existing:
         user_id = existing[0]["id"]
         is_approved = existing[0]["is_approved"]

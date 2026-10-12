@@ -458,20 +458,39 @@ class TestEquipCosmetic:
 # ── DELETE /api/profile/{user_id}/account ──────────────────────────────────
 
 class TestDeleteAccount:
-    def test_soft_deletes_with_confirmation(self):
-        user_row = {"id": USER_ID}
+    def test_stamps_then_hard_deletes(self):
+        """Stamp deleted_at first (so a failed run is a pending deletion the
+        next sign-in finishes), then the real delete — it used to stop at the
+        stamp, which nothing read."""
+        calls = []
 
         def table_side_effect(name):
             m = MagicMock()
-            m.select.return_value = [user_row]
-            m.update.return_value = [{}]
+            m.update.side_effect = lambda *a, **k: calls.append(("stamp", name)) or [{}]
             return m
 
-        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
+        with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect), \
+             patch("routes.profile.hard_delete_account",
+                   side_effect=lambda uid: calls.append(("delete", uid)) or {"storage_complete": True}):
             r = client.request("DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"})
 
         assert r.status_code == 200
         assert r.json()["deleted"] is True
+        assert calls == [("stamp", "users"), ("delete", USER_ID)]
+
+    def test_blocked_deletion_is_a_409(self):
+        from services.account_deletion import AccountDeletionBlocked
+        with _mock_self(), patch("routes.profile.table"), \
+             patch("routes.profile.hard_delete_account", side_effect=AccountDeletionBlocked("audit")):
+            r = client.request("DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"})
+        assert r.status_code == 409
+
+    def test_a_failed_deletion_says_so(self):
+        with _mock_self(), patch("routes.profile.table"), \
+             patch("routes.profile.hard_delete_account", side_effect=RuntimeError("db down")):
+            r = client.request("DELETE", f"/api/profile/{USER_ID}/account", json={"confirmation": "DELETE"})
+        assert r.status_code == 500
+        assert "did not finish" in r.json()["detail"]
 
     def test_rejects_wrong_confirmation(self):
         with _mock_self(), patch("routes.profile.table") as t:

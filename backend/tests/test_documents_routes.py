@@ -195,32 +195,33 @@ class TestListDocuments:
 
 class TestDeleteDocument:
     def test_returns_deleted_true(self):
-        with patch("routes.documents.table") as t:
-            t.return_value.delete.return_value = None
+        with patch("routes.documents.table") as t, \
+             patch("routes.documents.purge_document") as purge:
+            t.return_value.select.return_value = [{"id": "d1", "user_id": "u1"}]
             r = client.delete("/api/documents/doc/d1")
 
         assert r.status_code == 200
         assert r.json() == {"deleted": True}
+        purge.assert_called_once()
 
-    def test_soft_deletes_with_correct_id(self):
-        """Delete is a soft delete (0025): it stamps deleted_at via an
-        update scoped to the document id, not a hard row removal."""
-        with patch("routes.documents.table") as t:
-            t.return_value.delete.return_value = None
+    def test_purges_the_owned_row(self):
+        """The route hands purge_document the owned row (with the columns it
+        needs to recompute chunk ids) and a deleted_at stamp."""
+        row = {"id": "my-doc-uuid", "user_id": "u1", "offering_id": "off-1",
+               "category": "slides", "extracted_text": "enc"}
+        with patch("routes.documents.table") as t, \
+             patch("routes.documents.purge_document") as purge:
+            t.return_value.select.return_value = [row]
             client.delete("/api/documents/doc/my-doc-uuid")
-            t.assert_called_with("documents")
-            # No hard delete fired.
-            t.return_value.delete.assert_not_called()
-            # A deleted_at stamp went out, scoped to the doc id.
-            update_args = t.return_value.update.call_args
-            assert "my-doc-uuid" in str(update_args)
-            payload = update_args[0][0]
-            assert payload.get("deleted_at") is not None
+        sel = t.return_value.select.call_args
+        assert "extracted_text" in sel.args[0]
+        assert purge.call_args.args[0] == row
+        assert purge.call_args.args[1]  # deleted_at stamp
 
     def test_delete_with_user_validation(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
-            t.return_value.select.return_value = [{"id": "d1"}]
-            t.return_value.delete.return_value = None
+        with _mock_validate_user(), patch("routes.documents.table") as t, \
+             patch("routes.documents.purge_document"):
+            t.return_value.select.return_value = [{"id": "d1", "user_id": "u1"}]
             r = client.delete("/api/documents/doc/d1?user_id=u1")
 
         assert r.status_code == 200

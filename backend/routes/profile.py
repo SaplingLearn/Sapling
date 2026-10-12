@@ -3,6 +3,7 @@ Profile routes — public profiles, settings, cosmetics, achievements, account m
 """
 
 import base64
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -28,9 +29,11 @@ from services.academics import school_peer_user_ids
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.storage_service import upload_avatar
+from services.account_deletion import AccountDeletionBlocked, delete_account as hard_delete_account
 from services.achievement_service import LOWER_IS_BETTER, get_user_stat
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # Identity columns that stay on `users` after the 0024 split.
@@ -769,11 +772,24 @@ def delete_account(user_id: str, body: DeleteAccountBody, request: Request):
     if body.confirmation != "DELETE":
         raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
 
+    # Stamp first: if the hard delete below fails part-way, the stamp marks
+    # the account as a pending deletion, and the next Google sign-in finishes
+    # it instead of restoring the account (routes/auth.py).
     table("users").update(
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{user_id}"},
     )
-    return {"deleted": True}
+    try:
+        report = hard_delete_account(user_id)
+    except AccountDeletionBlocked as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception:
+        logger.exception("Account deletion for %s did not finish", user_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Deletion did not finish. Try again; your account is marked for deletion.",
+        )
+    return {"deleted": True, "storage_complete": report.get("storage_complete", True)}
 
 
 # ── Data Export ──────────────────────────────────────────────────────────────

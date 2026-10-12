@@ -189,6 +189,32 @@ def delete_asset(path: str) -> None:
     httpx.delete(url, headers=_headers)
 
 
+def delete_objects(bucket: str, paths: list[str]) -> None:
+    """Delete objects by exact path (Storage's bulk delete). Raises on a
+    non-2xx so account deletion can report that it did not finish."""
+    if not paths:
+        return
+    resp = httpx.request(
+        "DELETE", f"{_storage_base}/{bucket}", json={"prefixes": paths}, headers=_headers,
+    )
+    resp.raise_for_status()
+
+
+def delete_folder(bucket: str, folder: str) -> int:
+    """Delete every object directly under `folder` in `bucket` (one level —
+    the layouts used here, `avatars/{user}/…` and `{user}/…`, are flat).
+    Returns how many were deleted."""
+    resp = httpx.post(
+        f"{_storage_base}/list/{bucket}",
+        json={"prefix": folder, "limit": 1000, "offset": 0},
+        headers=_headers,
+    )
+    resp.raise_for_status()
+    names = [o["name"] for o in resp.json() or [] if o.get("name")]
+    delete_objects(bucket, [f"{folder}/{n}" for n in names])
+    return len(names)
+
+
 # ── Achievement icons ────────────────────────────────────────────────────────
 #
 # Admins upload a 512x512 PNG/WebP/SVG for `achievements.icon_url` (0043).
