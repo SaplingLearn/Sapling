@@ -115,6 +115,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Founding',
     cat: 'founding',
     publishedAt: '2026-06-12',
+    updatedAt: '2026-10-12',
     art: { kind: 'photo', src: '/journal-founding.jpg' },
     title: 'Why we built Sapling',
     deck:
@@ -150,7 +151,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
       {
         t: 'p',
         text:
-          'Today you drop in your course materials (the syllabus, the slides, your notes) and Sapling builds that map. Every quiz answer, every flashcard rating, every tutoring exchange moves a mastery score on a real concept. The tutor asks before it tells, cites the slide it drew from, and never just hands over the solution. When you upload, your whole class benefits: one person’s lecture notes fill gaps in another’s slides.',
+          'Today you drop in your course materials (the syllabus, the slides, your notes) and Sapling builds that map. Every quiz answer, TeachBack explanation, and tutoring exchange can move a mastery score on a real concept. The tutor asks before it tells, grounds its answers in your course material, and is built not to just hand over the solution. When classmates share course material, everyone in the course benefits: one person’s handout fills a gap in another’s slides.',
       },
       {
         t: 'p',
@@ -170,6 +171,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Perspective',
     cat: 'perspective',
     publishedAt: '2026-05-04',
+    updatedAt: '2026-10-12',
     art: { kind: 'photo', src: '/journal-ai-homework.jpg' },
     title: 'AI shouldn’t do your homework',
     deck:
@@ -196,7 +198,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
         t: 'ul',
         items: [
           'The tutor guides instead of solving. In Socratic mode it asks the question that gets you to the answer; it will not shortcut the arrival.',
-          'Everything is grounded in your course. Answers cite the slide or page they came from, so you can check the source instead of trusting a vibe.',
+          'Everything is grounded in your course. The tutor draws on your own slides and readings rather than generic material from the internet, so what it says matches what your class covers.',
           'TeachBack inverts the desk entirely: you explain, and Sapling’s job is to find the step you skipped.',
           'Mastery moves on demonstrated understanding: quiz performance, explanations, recall over time. Reading something twice does not make the graph greener.',
         ],
@@ -213,6 +215,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Product',
     cat: 'product',
     publishedAt: '2026-04-18',
+    updatedAt: '2026-10-12',
     art: { kind: 'motif', motif: 'graph' },
     title: 'How the knowledge graph works',
     deck:
@@ -244,16 +247,14 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
       {
         t: 'p',
         text:
-          'Every node carries a mastery score from 0 to 100, rendered as a tier: mastered, learning, struggling, unexplored. The score moves on evidence (a quiz answer, a flashcard rating, a TeachBack explanation), and every change is kept as an append-only event, so your history is a trail, not a single overwritten number. Mastery can go down. Discovering a gap is information, and the map should say so.',
+          'Every node carries a mastery score from 0 to 100, rendered as a tier: mastered, learning, struggling, unexplored. The score moves on evidence (a quiz answer, a TeachBack explanation, a tutoring exchange), and every change is kept as an append-only event, so your history is a trail, not a single overwritten number. Mastery can go down. Discovering a gap is information, and the map should say so.',
       },
       { t: 'h2', text: 'What the graph drives' },
       {
         t: 'ul',
         items: [
           'Quiz targeting: questions aim at the concepts where mastery is low or stale, and every answer writes a delta back to the node it tested.',
-          'Review scheduling: spaced repetition draws cards from the lowest-mastery concepts first, walking edges to catch the upstream ideas a weak node depends on.',
           'Tutoring: a session on one concept pulls its neighbors into context, so explanations meet you where your actual gaps are.',
-          'Study guides: pick an exam, and the guide assembles from your own library, weighted toward your weakest reachable nodes.',
         ],
       },
       {
@@ -301,15 +302,21 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Research',
     cat: 'product',
     publishedAt: '2026-02-09',
+    updatedAt: '2026-10-12',
     art: { kind: 'motif', motif: 'spacing' },
     title: 'What spacing actually buys you',
     deck:
-      'Why ten minutes, one day, and four days are the intervals we shipped, and what happened when we tested longer gaps on our own courses.',
+      'Why we chose ten minutes, one day, and four days for Sapling’s review intervals, and what happened when we tested longer gaps on our own courses.',
     body: [
       {
         t: 'p',
         text:
-          'Spaced repetition has a century of evidence behind it and a dirty secret in practice: the schedule that maximizes retention per review is not the schedule real students keep. This is the story of how we picked Sapling’s intervals (ten minutes, one day, four days) and what we learned running the alternatives on our own coursework first.',
+          'Editor’s note, October 2026: the review scheduler this post describes has not shipped yet. Today Sapling records your Forgot, Hard, or Easy rating on each card, but it does not yet decide when a card comes back. The Wiki describes current behavior. The reasoning below is the plan.',
+      },
+      {
+        t: 'p',
+        text:
+          'Spaced repetition has a century of evidence behind it and a dirty secret in practice: the schedule that maximizes retention per review is not the schedule real students keep. This is the story of how we picked the intervals Sapling will use (ten minutes, one day, four days) and what we learned running the alternatives on our own coursework first.',
       },
       { t: 'h2', text: 'The theory, briefly' },
       {
@@ -326,18 +333,18 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
       {
         t: 'p',
         text:
-          'So the shipped intervals map to the three honest answers you can give a card. Forgot: ten minutes, because a failed recall wants another attempt while the correction is fresh. Hard: one day, long enough to force real retrieval, short enough that a shaky concept stays warm. Easy: four days, near the practical edge of forgetting inside a course schedule with exams on it.',
+          'So the intervals we chose map to the three honest answers you can give a card. Forgot: ten minutes, because a failed recall wants another attempt while the correction is fresh. Hard: one day, long enough to force real retrieval, short enough that a shaky concept stays warm. Easy: four days, near the practical edge of forgetting inside a course schedule with exams on it.',
       },
       { t: 'h2', text: 'Spacing with a map' },
       {
         t: 'p',
         text:
-          'The part classic flashcard apps cannot do: Sapling schedules against the graph, not just the clock. Review draws from your lowest-mastery concepts first and walks edges to pull in the upstream ideas a weak node depends on, because re-drilling memoization is wasted motion if the actual hole is recursion. Spacing decides when you see a card; the graph decides which card deserves the slot.',
+          'The part classic flashcard apps cannot do: the plan is for Sapling to schedule against the graph, not just the clock. Review would draw from your lowest-mastery concepts first and walks edges to pull in the upstream ideas a weak node depends on, because re-drilling memoization is wasted motion if the actual hole is recursion. Spacing decides when you see a card; the graph decides which card deserves the slot.',
       },
       {
         t: 'p',
         text:
-          'Ten minutes, a day, four days. Not the intervals of a lab study, but the intervals of a semester someone actually finishes. Sapling schedules; you show up.',
+          'Ten minutes, a day, four days. Not the intervals of a lab study, but the intervals of a semester someone actually finishes.',
       },
     ],
   },
@@ -346,10 +353,11 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
     tag: 'Release',
     cat: 'release',
     publishedAt: '2026-01-06',
+    updatedAt: '2026-10-12',
     art: { kind: 'motif', motif: 'syllabus' },
     title: 'Syllabus to semester in one upload',
     deck:
-      'Calendar extraction went from a manual paste to a single drop. Every exam, pset, and quiz dated and synced before week one is over.',
+      'Calendar extraction went from a manual paste to a single drop. Every exam, pset, and quiz dated before week one is over, ready to sync to Google Calendar.',
     body: [
       {
         t: 'p',
@@ -359,7 +367,7 @@ export const JOURNAL_ARTICLES: JournalArticle[] = [
       {
         t: 'p',
         text:
-          'Sapling reads the document, finds every dated commitment (exams, problem sets, quizzes, project milestones) and puts each one on your calendar with the right date, synced to Google Calendar if you have it connected. Grading weights come along for the ride: the same pass reads how your grade is composed, so the gradebook’s categories are ready before your first score exists.',
+          'Sapling reads the document, finds every dated commitment (exams, problem sets, quizzes, project milestones) and puts each one on your Sapling calendar with the right date, ready to sync to Google Calendar if you have it connected. Grading weights come along for the ride: the same pass reads how your grade is composed, so the gradebook’s categories are ready before your first score exists.',
       },
       {
         t: 'p',

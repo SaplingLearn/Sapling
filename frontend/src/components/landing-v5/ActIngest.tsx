@@ -106,7 +106,7 @@ function IngestHeading() {
 const PITCH = (
   <>
     Ask ChatGPT for practice and you get generic exercises off the internet, then an
-    empty box again. It forgets. Sapling works only from{' '}
+    empty box again. It forgets. Sapling works from{' '}
     <em style={{ fontStyle: 'normal', color: '#12201A', fontWeight: 600 }}>your class&rsquo;s</em>{' '}
     material: your professor&rsquo;s slides, the syllabus, lecture notes.
   </>
@@ -173,11 +173,10 @@ export function ActIngest({
                 {PITCH}
               </p>
               <p className="ld-ingest-p2" style={{ margin: 0, maxWidth: '52ch', color: '#61726A', fontSize: 14.5, lineHeight: 1.68 }}>
-                And every student who adds their documents makes the AI understand the course
-                better. One person&rsquo;s lecture notes fill a gap in another&rsquo;s slides, so the model
-                learns what this professor actually emphasizes, how they word questions, which
-                concepts they keep returning to. The more your class contributes, the sharper the
-                context gets for everyone in it.
+                And when classmates share course material, the tutor has more of the course to
+                draw on. One person&rsquo;s handout fills a gap in another&rsquo;s slides, so answers
+                reflect what this professor actually covers. Only documents identified as course
+                material are shared, not your own work or notes, and you can switch sharing off.
               </p>
             </div>
           </div>
@@ -297,7 +296,7 @@ export function ActIngest({
                         <b style={{ ...MONO, fontSize: 7, fontWeight: 400, color: '#0E9E5A' }}>B.</b>O(n)
                       </span>
                     </div>
-                    <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.14em', color: '#9AA5A0' }}>DIFFICULTY ADAPTS TO YOUR ANSWERS</span>
+                    <span style={{ ...MONO, fontSize: 6.5, letterSpacing: '0.14em', color: '#9AA5A0' }}>DIFFICULTY ADAPTS TO YOUR MASTERY</span>
                   </div>
                 </div>
               </div>

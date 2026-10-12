@@ -1,11 +1,13 @@
 'use client';
 
 /**
- * Feature lab · spaced repetition.
+ * Feature lab · flashcard review.
  *
  * Ported from the `isCards` branch of `FeatureLab.dc.html`. Click the card
- * (or press space) to flip it, then rate 1/2/3 and the interval follows:
- * 10 minutes, 1 day, 4 days.
+ * (or press space) to flip it, then rate it 1/2/3. The source also printed a
+ * review interval per rating ("next in 10 min / 1 day / 4 days"); the product
+ * has no review scheduler yet (wiki: "There is no review schedule yet"), so
+ * the demo no longer promises one.
  *
  * The keyboard shortcuts are part of the demo, not an accessibility
  * afterthought — the real review surface is driven the same way, and the hint
@@ -14,7 +16,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { LAB_TIER, MONO } from './LabShell';
-import { DECK, RATE_DUE, RATE_LABEL, RATE_TONE } from './labData';
+import { DECK, RATE_LABEL, RATE_TONE } from './labData';
 
 type RateKey = '1' | '2' | '3';
 const RATES: RateKey[] = ['1', '2', '3'];
@@ -82,7 +84,7 @@ export function CardsDemo() {
               <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 13px', borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
                 <span style={{ fontSize: 12.5, color: '#33443B', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.q}</span>
                 <span style={{ ...MONO, fontSize: 10.5, color: RATE_TONE[l.key] }}>
-                  {RATE_LABEL[l.key].toUpperCase()} · {RATE_DUE[l.key]}
+                  {RATE_LABEL[l.key].toUpperCase()}
                 </span>
               </div>
             ))}
@@ -127,7 +129,6 @@ export function CardsDemo() {
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: RATE_TONE[k] }}>
                     {RATE_LABEL[k]} <b style={{ ...MONO, fontSize: 10, color: '#9AA5A0', fontWeight: 400 }}>{k}</b>
                   </span>
-                  <span style={{ ...MONO, fontSize: 10, color: `${RATE_TONE[k]}cc` }}>next in {RATE_DUE[k]}</span>
                 </button>
               ))}
             </div>

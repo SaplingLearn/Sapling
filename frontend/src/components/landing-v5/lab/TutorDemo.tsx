@@ -11,6 +11,11 @@
  * Socratic answers a bad guess with a better question rather than the answer,
  * and TeachBack names the step you skipped. Switching mode resets the thread,
  * because the scripts do not share a position.
+ *
+ * The source also showed a "GROUNDED IN YOUR UPLOADS" row of citations
+ * (`lecture-07.pdf p. 12`) under expository answers. The real tutor does not
+ * cite files or pages — no filename or page reaches the model — so the demo
+ * no longer shows any.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -27,7 +32,6 @@ export function TutorDemo() {
   const [step, setStep] = useState(0);
   const [log, setLog] = useState<Msg[]>([]);
   const [thinking, setThinking] = useState(false);
-  const [sources, setSources] = useState<readonly string[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -38,7 +42,7 @@ export function TutorDemo() {
 
   const reset = () => {
     if (timer.current) clearTimeout(timer.current);
-    setStep(0); setLog([]); setThinking(false); setSources([]);
+    setStep(0); setLog([]); setThinking(false);
   };
 
   const switchMode = (m: Mode) => { setMode(m); reset(); };
@@ -49,13 +53,11 @@ export function TutorDemo() {
     if (!reply) return;
     setLog((l) => [...l, { text: reply.text, isBot: false }]);
     setThinking(true);
-    setSources([]);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       setThinking(false);
       setLog((l) => [...l, { text: reply.bot, isBot: true }]);
       setStep((s) => s + 1);
-      setSources(('sources' in reply && reply.sources) || ('sources' in T && T.sources) || []);
     }, 1500);
   };
 
@@ -117,19 +119,6 @@ export function TutorDemo() {
           </span>
         )}
 
-        {sources.length > 0 && !thinking && (
-          <div style={{ marginLeft: 35, display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.2em', color: '#9AA5A0' }}>GROUNDED IN YOUR UPLOADS</span>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {sources.map((src) => (
-                <span key={src} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #DCE7DE', ...MONO, fontSize: 9, color: '#33443B' }}>
-                  <span style={{ width: 5, height: 5, borderRadius: 99, background: '#0E9E5A' }} />
-                  {src}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <div style={{ flex: '0 0 auto', borderTop: '1px solid #ECE9DE', padding: '12px 22px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>

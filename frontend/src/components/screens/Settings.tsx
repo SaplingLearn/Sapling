@@ -546,7 +546,7 @@ export function Settings() {
               <div className="card" style={{ padding: "var(--pad-lg)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Export your data</div>
                 <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
-                  Download a JSON bundle of your sessions, notes, and knowledge graph.
+                  Download a JSON file of your profile, settings, roles, and achievements. For a complete copy of your data, email us.
                 </div>
                 <button
                   className="btn btn--sm"
@@ -580,7 +580,7 @@ export function Settings() {
               <div className="card" style={{ padding: "var(--pad-lg)", borderColor: "var(--err)" }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Delete account</div>
                 <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 12 }}>
-                  Permanently delete your account and all data. This cannot be undone.
+                  Permanently delete your account and the data tied to it, and withdraw any course material you shared. This cannot be undone.
                 </div>
                 <button className="btn btn--sm btn--danger" onClick={handleDelete}>Delete my account</button>
               </div>

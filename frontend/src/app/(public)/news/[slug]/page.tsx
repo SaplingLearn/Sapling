@@ -131,7 +131,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
 
         <div style={{ marginTop: 64, borderRadius: 16, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: '28px 30px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
           <p style={{ margin: 0, fontFamily: SERIF, fontSize: 17, lineHeight: 1.6, color: '#3f3b31', maxWidth: '46ch' }}>
-            One letter a month, written by the four of us. Get the next one in your inbox.
+            One letter a month, written by the team. Get the next one in your inbox.
           </p>
           <Link href="/#newsletter" className="cp-cta" style={{ background: '#1B6C42', color: '#fff', borderRadius: 8, padding: '12px 22px', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
             Get the Journal

@@ -98,7 +98,7 @@ export default function FaqClient() {
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>
               Definitions for the terms above live in the Wiki. Everything else, ask us in the beta
-              and one of the four of us will answer.
+              and one of us will answer.
             </p>
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>

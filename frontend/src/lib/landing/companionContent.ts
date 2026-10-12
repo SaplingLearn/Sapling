@@ -15,7 +15,7 @@ import {
 export const ABOUT_DIFFERENTIATORS = [
         'Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you\u2019ve clicked through.',
         'Three distinct teaching modes mean you\u2019re never locked into one way of learning.',
-        'Study rooms let you learn alongside classmates and see how your mastery compares, anonymously and collaboratively.',
+        'Study rooms let you learn alongside classmates and see where the group\u2019s understanding is strong and where it is thin.',
         'Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.',
       ] as const;
 
@@ -48,22 +48,22 @@ export const TEAM_WAYS = [
 
 export const FAQ_GROUPS = [
   { label: 'Academic integrity', items: [
-    { q:"Isn\u2019t using AI to study just cheating?", a:"No, because Sapling never hands you the answer. It guides you toward the understanding: Socratic questioning, explanations you have to apply yourself, and TeachBack, where you do the explaining. Using Sapling is like having a tutor, not a ghostwriter. The work, and the learning, is still yours." },
-    { q:"Will it just do my homework for me?", a:"It won't, by design. Answer engines hand over the solution; Sapling walks you through the process and adapts to how you learn. If you paste a homework problem, expect guiding questions, not a finished answer to copy." },
-    { q:"Are tools like Sapling allowed in my classes?", a:"Sapling is a study aid, the same category as flashcards, tutoring, or a study group. It doesn't produce submittable work. That said, every course sets its own rules, so check your syllabus." },
+    { q:"Isn\u2019t using AI to study just cheating?", a:"Not the way Sapling is built. It is designed to guide you toward the understanding rather than hand you the answer: Socratic questioning, explanations you have to apply yourself, and TeachBack, where you do the explaining. Using Sapling is like having a tutor, not a ghostwriter. The work, and the learning, is still yours." },
+    { q:"Will it just do my homework for me?", a:"It's designed not to. Answer engines hand over the solution; Sapling walks you through the process and adapts to how you learn. If you paste a homework problem, expect guiding questions rather than a finished answer to copy." },
+    { q:"Are tools like Sapling allowed in my classes?", a:"Sapling is a study aid, the same category as flashcards, tutoring, or a study group. It's built for studying, not for producing work to hand in. Every course sets its own rules on AI, so check your syllabus and follow it." },
     { q:"Won\u2019t I become dependent on the AI?", a:"We built Sapling to make you less dependent over time. Mastery only turns green when you can demonstrate understanding, and TeachBack literally requires you to explain concepts yourself. The goal is that you walk into the exam without us." },
   ]},
   { label: 'How it differs', items: [
-    { q:"How is this different from just using ChatGPT?", a:"A general chatbot forgets you the moment you close the tab. Sapling maps what you know, remembers what you struggled with, schedules reviews before you forget, and grounds itself in your actual course materials. It's a study system, not a conversation." },
-    { q:"What if the AI gets something wrong?", a:"It can, which is why Sapling grounds answers in your uploaded course materials and shows its reasoning instead of just a verdict. You stay the judge. Spot an error and flag it in one click, and the tutor corrects course." },
+    { q:"How is this different from just using ChatGPT?", a:"A general chatbot forgets you the moment you close the tab. Sapling maps what you know, remembers what you struggled with, and grounds itself in your actual course materials. It's a study system, not a conversation." },
+    { q:"What if the AI gets something wrong?", a:"It can. Sapling grounds answers in your uploaded course materials, but AI output can still be wrong, so check it against your notes and slides. You stay the judge: tell the tutor what looks wrong and it will work through it with you, or report it with the feedback button." },
     { q:"Do I have to upload anything to get value?", a:"You can start with a single syllabus and still get a full semester of dates plus a first pass at the concept graph. The more of your own material you add, the more the quizzes and guides look like your course rather than a generic one." },
     { q:"Does it work for every subject?", a:"It works wherever your course has readable material and named concepts, which covers most lecture-based courses. Heavily studio or performance-based courses get less out of it, and we would rather say that than oversell." },
   ]},
   { label: 'Access and data', items: [
     { q:"What does it cost?", a:"Nothing during beta. Beta testers get every feature free while we build, and a say in what we build next. Join the list and you're in line." },
-    { q:"What happens to my notes and documents?", a:"They stay yours. Uploads, notes, and messages are encrypted at rest with AES-256, used only to build your graph and study materials, and never sold or used to train outside models. Delete a document and its data goes with it." },
-    { q:"Can I study with people from my class?", a:"Yes. Study rooms put a live chat next to a shared graph, so the room can see which concepts nobody has locked down and turn any gap into a quiz everyone takes." },
-    { q:"When does the beta open?", a:"We are onboarding in small groups so we can actually read the feedback. Sign up and we will tell you which group you are in rather than leaving you on a silent list." },
+    { q:"What happens to my notes and documents?", a:"They stay yours. Document text, notes, and messages are encrypted at rest with AES-256-GCM. Sapling's AI runs on Google Gemini, and your content is never sold or used to train AI models. If Class Intel is on, passages from documents identified as course material can help answer classmates in the same course; your own work and notes stay private, and you can turn sharing off. Delete a document and its text and search data go with it. The Privacy Policy has the details." },
+    { q:"Can I study with people from my class?", a:"Yes. Study rooms put a live chat next to each member's graph, so the room can see which concepts nobody has locked down yet." },
+    { q:"When does the beta open?", a:"We are onboarding in small groups so we can actually read the feedback. Join the waitlist and we will email you when your group opens." },
   ]},
 ] as const;
 
@@ -78,25 +78,25 @@ export const GALLERY_SHOTS = [
   { slot:'shot-learn', route:'/learn', group:'Learn', cat:'learn', title:'AI tutor',
     body:'Socratic, expository, and TeachBack on the same concept, grounded in the documents you uploaded.' },
   { slot:'shot-quiz', route:'/quiz', group:'Learn', cat:'learn', title:'Adaptive quiz',
-    body:'Difficulty re-tunes after every answer, and each result writes back to the concept it tested.' },
+    body:'Pick a difficulty or let Sapling set it from your mastery, and each result writes back to the concept it tested.' },
   { slot:'shot-study', route:'/study', group:'Study', cat:'study', title:'Flashcard review',
-    body:'Rate your recall and the interval sets itself: ten minutes, one day, or four days.' },
+    body:'Flip each card and rate your recall: Forgot, Hard, or Easy.' },
   { slot:'shot-guide', route:'/study', group:'Study', cat:'study', title:'Study guide',
-    body:'Assembled from your own library for one exam, weighted toward the concepts you keep missing.' },
+    body:'Assembled from your own library for one exam, laid out in sections to review.' },
   { slot:'shot-notetaker', route:'/notetaker', group:'Study', cat:'study', title:'Notetaker',
     body:'Write normally. Sapling summarizes, extracts the concepts, and links them into your graph.' },
   { slot:'shot-library', route:'/library', group:'Study', cat:'study', title:'Library',
     body:'Everything you have dropped in, with the concepts, cards, and dates each document produced.' },
   { slot:'shot-social', route:'/social', group:'Together', cat:'together', title:'Study rooms',
-    body:'Live chat beside a shared graph, so the room can see exactly who is solid where.' },
+    body:'Live chat beside each member\u2019s graph, so the room can see who is solid where.' },
   { slot:'shot-achievements', route:'/achievements', group:'Together', cat:'together', title:'Achievements',
     body:'Streaks and milestones that track demonstrated understanding rather than time logged.' },
   { slot:'shot-calendar', route:'/calendar', group:'Semester', cat:'semester', title:'Calendar',
-    body:'One syllabus upload becomes every exam, pset, and quiz, dated and synced to Google Calendar.' },
+    body:'One syllabus upload becomes every exam, pset, and quiz, dated and ready to add to Google Calendar.' },
   { slot:'shot-gradebook', route:'/gradebook', group:'Semester', cat:'semester', title:'Gradebook',
     body:'Syllabus weights become categories, and every score rolls into a live grade and letter.' },
-  { slot:'shot-planner', route:'/course-planner', group:'Semester', cat:'semester', title:'Course planner',
-    body:'Map the degree, not just the term. Prerequisites carry across semesters.' },
+  { slot:'shot-planner', route:'/course-planner', group:'Semester', cat:'semester', title:'Course planner (coming soon)',
+    body:'Mapping a whole degree, with prerequisites carried across semesters, is still being built. This is the placeholder screen.' },
 ] as const;
 
 export const GALLERY_FILTERS = [
@@ -319,9 +319,10 @@ export const WIKI_ROOM_SPECS = [
 ] as const;
 
 export const WIKI_CLASS_TERMS = [
-  { term:'What it is', def:'A per-class rollup of the concepts people commonly get wrong, aggregated across students with no names attached.' },
-  { term:'Where it lands', def:'Quiz generation reads it, and the misconceptions become the tempting wrong answers. That is the whole of its reach today.' },
-  { term:'What it is not', def:'There is no screen for it. It is plumbing meant to make your quizzes sharper, not a dashboard about your class.' },
+  { term:'Misconceptions', def:'A per-class rollup of the concepts people commonly get wrong, aggregated across students with no names attached. Quiz generation reads it, and the misconceptions become the tempting wrong answers.' },
+  { term:'Shared course material', def:'Passages from documents that classmates in the same course uploaded. The tutor and quizzes search them alongside your own uploads, and may quote or paraphrase them. No names are attached.' },
+  { term:'What gets shared', def:'Only documents the classifier confidently identifies as course material, such as syllabi, slides, readings, and handouts, and only while the uploader\u2019s Class Intel setting is on. It is on by default. Documents identified as your own completed work or personal notes stay private.' },
+  { term:'Turning it off', def:'Use the Class Intel switch on the Learn screen. Your existing and future uploads become private to you. Deleting a document also withdraws its passages.' },
 ] as const;
 
 export const WIKI_ONBOARDING_SPECS = [
@@ -341,15 +342,15 @@ export const WIKI_ACHIEVEMENT_TERMS = [
  *  blanket encryption. */
 export const WIKI_DATA_FACTS = [
   { fact:'Sensitive columns are encrypted at rest with AES-256-GCM, with a fresh random nonce for every value and a tag that makes tampering detectable.',
-    detail:'Encrypted: your name and bio, your email, tutor and study-room messages, note titles and bodies, document summaries and extracted text, assignment points and notes, quiz questions and answers, flashcard fronts and backs.' },
+    detail:'Encrypted: your name and bio, your email, tutor and study-room messages, note titles and bodies, document summaries and extracted text, shared course passages, assignment points and notes, quiz questions and answers, flashcard fronts and backs, and study guides.' },
   { fact:'Some things are deliberately not encrypted, and you should know which.',
-    detail:'Concept names and mastery scores, note tags, your username and cosmetics, and generated study-guide text are stored in plain form. Access to them is scoped to you rather than hidden by encryption, so keep anything sensitive out of a tag.' },
-  { fact:'Your material builds your graph and your study tools. It is never sold, and never used to train outside models.',
-    detail:'Text is decrypted server-side, in flight, only to build the prompt for a study action you asked for.' },
-  { fact:'Deleting a document removes it from your library, but the concepts it planted stay on your tree.',
+    detail:'Concept names and mastery scores, note tags, file names, and your username and cosmetics are stored in plain form. Access to them is scoped to you rather than hidden by encryption, so keep anything sensitive out of a tag.' },
+  { fact:'Your material builds your graph and your study tools. It is never sold, and never used to train AI models.',
+    detail:'Text is decrypted server-side, in flight, to build the prompt for a study action you asked for, which runs on Google Gemini. With Class Intel on, passages from your course material are also decrypted to answer classmates in the same course.' },
+  { fact:'Deleting a document deletes its text and withdraws it from search and shared course material. The concepts it planted stay on your tree.',
     detail:'That is on purpose: they are yours now, and you may have studied them since. Remove one from the tree itself, where a node can be deleted directly.' },
-  { fact:'You can export everything Sapling holds on you, or delete your account outright.',
-    detail:'Both live in your profile settings.' },
+  { fact:'You can delete your account outright, and that deletes your data.',
+    detail:'It lives in Settings, under Data. Settings can also export your profile and settings; for a complete copy of everything, email us.' },
 ] as const;
 
 /**

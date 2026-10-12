@@ -59,7 +59,7 @@ export function Journal({
           </div>
           <p style={{ margin: 0, maxWidth: '56ch', color: '#61726A', fontSize: 15, lineHeight: 1.7 }}>
             Why we built it, where it&rsquo;s headed, and what we&rsquo;re learning about learning,
-            written by the four of us, once a month.
+            written by the team, once a month.
           </p>
         </FadeIn>
 
@@ -121,7 +121,7 @@ export function Journal({
               <div style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 24, fontWeight: 600, color: '#12201A' }}>
                 You&rsquo;re on the <em style={{ color: '#0C5638' }}>tree.</em>
               </div>
-              <p style={{ margin: '6px 0 0', fontSize: 14, color: '#4b5563', fontStyle: 'italic' }}>
+              <p role="status" style={{ margin: '6px 0 0', fontSize: 14, color: '#4b5563', fontStyle: 'italic' }}>
                 See you in the inbox · The Team
               </p>
             </div>
@@ -133,10 +133,14 @@ export function Journal({
                   onChange={(e) => onEmail(e.target.value)}
                   disabled={subscribing}
                   type="email"
+                  name="email"
+                  autoComplete="email"
                   placeholder="you@school.edu"
                   aria-label="Email address"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? 'journal-email-error' : 'journal-consent'}
                   className="ld-emailinput"
-                  style={{ width: 250, background: '#fdfcf9', border: '1px solid rgba(18,32,26,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, color: '#12201A', outline: 'none' }}
+                  style={{ width: 250, background: '#fdfcf9', border: '1px solid rgba(18,32,26,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, color: '#12201A' }}
                 />
                 <button
                   type="submit"
@@ -148,10 +152,19 @@ export function Journal({
                 </button>
               </form>
               {error && (
-                <p role="alert" style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: '#9c4b48', maxWidth: 330 }}>
+                <p id="journal-email-error" role="alert" style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: '#9c4b48', maxWidth: 330 }}>
                   {error}
                 </p>
               )}
+              {/* Consent and the way out, at the point of signup. One list
+                  carries both the Journal and the beta invite, so the line
+                  says so. */}
+              <p id="journal-consent" style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: '#33443B', maxWidth: 360 }}>
+                You&rsquo;ll get the Journal and your beta invite. Unsubscribe anytime from any
+                email. By joining you agree to the{' '}
+                <a href="/terms" style={{ color: '#0C5638', textDecoration: 'underline' }}>Terms</a> and{' '}
+                <a href="/privacy" style={{ color: '#0C5638', textDecoration: 'underline' }}>Privacy Policy</a>.
+              </p>
             </div>
           )}
         </FadeIn>

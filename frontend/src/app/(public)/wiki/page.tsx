@@ -470,7 +470,7 @@ export default function WikiPage() {
             <Section
               id="class"
               title="Class intelligence"
-              lede="The anonymised, class-wide layer. It is the least-finished thing in Sapling, so here is exactly how far it reaches."
+              lede="The class-wide layer: anonymised misconception counts, and the course material your classmates share. Here is exactly how far it reaches."
             >
               <TermRows rows={WIKI_CLASS_TERMS} />
             </Section>

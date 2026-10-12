@@ -53,14 +53,14 @@ const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrai
 
 /** Card copy, indexed by `data-tk`. Distinct from the lab panels' copy in content.ts. */
 const CARDS = [
-  { kicker: 'ADAPTIVE QUIZZES', title: <>Questions that <em style={{ color: '#0C5638', fontStyle: 'italic' }}>re-tune.</em></>, desc: 'Difficulty moves with every answer, and each result writes mastery back to your graph.' },
-  { kicker: 'SPACED REPETITION', title: <>Knows what to review, <em style={{ color: '#0C5638', fontStyle: 'italic' }}>and when.</em></>, desc: 'Forgot, Hard, Easy: ten minutes, a day, four days. Sapling schedules; you show up.' },
+  { kicker: 'ADAPTIVE QUIZZES', title: <>Questions aimed at <em style={{ color: '#0C5638', fontStyle: 'italic' }}>your gaps.</em></>, desc: 'Drawn from your weakest concepts, and each result writes mastery back to your graph.' },
+  { kicker: 'FLASHCARDS', title: <>Cards from your <em style={{ color: '#0C5638', fontStyle: 'italic' }}>own material.</em></>, desc: 'Generate decks from your documents, or import from Anki, a spreadsheet, or a link.' },
   { kicker: 'NOTETAKER', title: <>Notes that <em style={{ color: '#0C5638', fontStyle: 'italic' }}>think.</em></>, desc: 'Write normally. Sapling summarizes, pulls the concepts, and links them to your graph.' },
-  { kicker: 'STUDY GUIDES', title: <>Built from your <em style={{ color: '#0C5638', fontStyle: 'italic' }}>gaps.</em></>, desc: 'Pick a course and an exam. The guide is assembled from your own library, weighted to weak concepts.' },
+  { kicker: 'STUDY GUIDES', title: <>Built from your <em style={{ color: '#0C5638', fontStyle: 'italic' }}>library.</em></>, desc: 'Pick a course and an exam. The guide is assembled from your own uploaded material.' },
   { kicker: 'STUDY ROOMS', title: <>Learn <em style={{ color: '#0C5638', fontStyle: 'italic' }}>together.</em></>, desc: 'Live rooms with chat and a side-by-side graph that shows exactly who knows what.' },
   { kicker: 'GRADEBOOK', title: <>Know your <em style={{ color: '#0C5638', fontStyle: 'italic' }}>real grade.</em></>, desc: 'Syllabus weights become categories. Every score rolls into a live grade and letter.' },
-  { kicker: 'CALENDAR', title: <>A syllabus becomes a <em style={{ color: '#0C5638', fontStyle: 'italic' }}>semester.</em></>, desc: 'Upload once. Every exam, pset, and quiz is extracted, dated, and synced to Google Calendar.' },
-  { kicker: 'AI TUTOR', title: <>It asks. <em style={{ color: '#0C5638', fontStyle: 'italic' }}>You answer.</em></>, desc: 'Socratic, expository, or teachback. It never hands over the solution, it walks you to it.' },
+  { kicker: 'CALENDAR', title: <>A syllabus becomes a <em style={{ color: '#0C5638', fontStyle: 'italic' }}>semester.</em></>, desc: 'Upload once. Every exam, pset, and quiz is extracted and dated, ready to sync to Google Calendar.' },
+  { kicker: 'AI TUTOR', title: <>It asks. <em style={{ color: '#0C5638', fontStyle: 'italic' }}>You answer.</em></>, desc: 'Socratic, expository, or teachback. Built to walk you to the solution rather than hand it over.' },
 ];
 
 /** Track A drifts right, track B drifts left. */

@@ -1,5 +1,6 @@
 import { LEGAL_LAST_UPDATED, legalDateLabel } from "@/lib/legal";
 import { pageMetadata } from "@/lib/seo/pageMetadata";
+import { CONTACT_EMAIL } from "@/lib/contact";
 import { CompanionShell } from "@/components/companion/CompanionShell";
 import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
 
@@ -31,12 +32,12 @@ import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/c
 export const metadata = pageMetadata({
   title: "Terms of Service",
   description:
-    "The terms that govern your use of Sapling's AI study tools.",
+    "The terms for using Sapling: eligibility (18+), academic integrity, your rights in uploaded course materials, shared course material, takedowns, and AI output.",
   path: "/terms",
 });
 
 const RULE = "1px solid rgba(42,39,31,0.08)";
-/** Sized off the longest clause title ("6. Study Rooms and Social Features"). */
+/** Sized off the longest clause title ("3. Acceptable Use and Academic Integrity"). */
 const TITLE_COL = 220;
 const COL_GAP = 32;
 
@@ -85,61 +86,96 @@ function enter(i: number): React.CSSProperties {
   return { animation: "fadeUp 700ms ease both", animationDelay: `${Math.min(120 + i * 40, 640)}ms` };
 }
 
-const sections = [
+type Section = {
+  title: string;
+  body: string;
+  link?: { label: string; href: string };
+  bodySuffix?: string;
+  list?: string[];
+  bodyAfter?: string;
+};
+
+const MAIL = { label: CONTACT_EMAIL, href: `mailto:${CONTACT_EMAIL}` };
+
+const sections: Section[] = [
   {
     title: "1. Eligibility",
-    body: "Sapling is intended for use by students and individuals for personal educational purposes. As of the date above, access is limited to Boston University students and individuals invited to participate in our closed beta program; we may expand availability over time. By using the Service, you represent that you are at least 13 years of age. If you are under 18, you should have parental or guardian consent.",
+    body: "You must be at least 18 years old to use Sapling. Sapling's AI features run on Google's Gemini API, whose terms do not permit use by anyone under 18. Sapling is in a free closed beta. Access is currently limited to Boston University students and people we invite, and we may change who can join. Sapling is an independent student project. It is not affiliated with, sponsored by, or endorsed by Boston University or any other school.",
   },
   {
     title: "2. Your Account",
-    body: "You are responsible for maintaining the confidentiality of your account credentials. You agree not to share your account with others or use another person's account. You are responsible for all activity that occurs under your account.",
+    body: "You sign in with your Google account. Keep it secure and don't share your Sapling account or use someone else's. You are responsible for activity under your account.",
   },
   {
-    title: "3. Acceptable Use",
-    body: "You agree to use Sapling only for lawful, educational purposes. You may not:",
+    title: "3. Acceptable Use and Academic Integrity",
+    body: "Use Sapling lawfully and for your own learning. You may not:",
     list: [
-      "Upload content you do not have the right to share (e.g., copyrighted course materials you are not permitted to distribute)",
-      "Attempt to reverse-engineer, scrape, or abuse the Service's APIs",
-      "Use the Service to harass, impersonate, or harm other users",
-      "Attempt to circumvent any security or authentication measures",
+      "Upload material you don't have the right to use in this way (see Section 4)",
+      "Submit AI-generated content as your own work where your course or institution doesn't allow it. You are responsible for following your instructors' and your institution's academic integrity policies",
+      "Reverse-engineer, scrape, overload, or abuse Sapling's systems or APIs, or try to get around its security or sign-in",
+      "Use Sapling to harass, impersonate, or harm anyone, or to post unlawful content in study rooms",
     ],
   },
   {
-    title: "4. User Content",
-    body: "You retain ownership of any content you upload, including documents, syllabi, and notes. By uploading content to Sapling, you grant us a limited license to process and analyze that content solely for the purpose of providing the Service to you. We do not use your uploaded materials to train AI models.",
+    title: "4. Your Content and Course Materials",
+    body: "You keep ownership of everything you upload, including documents, syllabi, notes, and messages. You are responsible for having the right to upload it. Course materials such as slides, readings, and handouts usually belong to your instructor, your institution, or a publisher. Only upload materials you are permitted to use for your own study, and don't upload anything you were asked not to share.",
+    list: [
+      "To run Sapling, you give us a limited, non-exclusive license to store, process, and analyze your content, including sending it to our AI and infrastructure providers as described in the Privacy Policy.",
+      "If you leave Class Intel on and upload a document our system identifies as course material, you also allow us to use passages from it to answer questions and build quizzes for other students in the same course. You can withdraw this at any time by turning Class Intel off or deleting the document.",
+      "We do not use your content to train AI models.",
+    ],
   },
   {
-    title: "5. AI-Generated Content",
-    body: "Sapling uses Google Gemini to generate tutoring responses, quizzes, flashcards, and study guides. AI-generated content may occasionally be inaccurate or incomplete. You should not rely on it as a substitute for official course materials, instructors, or academic advisors. We make no guarantees about the accuracy of AI outputs.",
+    title: "5. Copyright Complaints and Takedowns",
+    body: "If you believe content on Sapling infringes your copyright or other rights, email ",
+    link: MAIL,
+    bodySuffix: " with: your contact details; the work you believe is infringed; enough information for us to find the material; a statement that you believe in good faith that the use is not authorized; and a statement that your notice is accurate and that you are the rights holder or authorized to act for them. We will remove material that infringes, and we may suspend accounts that repeatedly upload infringing content.",
   },
   {
-    title: "6. Study Rooms and Social Features",
-    body: "Study rooms are shared spaces. You are responsible for the messages you send and the conduct you engage in within rooms. We reserve the right to remove users who violate these terms.",
+    title: "6. AI-Generated Content",
+    body: "Sapling uses Google Gemini to generate tutoring responses, quizzes, flashcards, summaries, and study guides. AI output can be inaccurate or incomplete. Check it against your course materials, and don't rely on it in place of your instructors or academic advisors. We make no guarantees about the accuracy of AI output.",
   },
   {
-    title: "7. Intellectual Property",
-    body: "Sapling's software, branding, and design are the intellectual property of the Sapling team. You may not copy, reproduce, or distribute any part of the Service without explicit permission.",
+    title: "7. Third-Party Services",
+    body: "Sapling connects to services run by other companies, including Google (sign-in and Calendar) and, if you choose to connect it, Gradescope. Your use of those services is governed by their own terms. When you connect Gradescope, you authorize Sapling to sign in to it as you to read your courses and scores. Gradescope is not affiliated with Sapling.",
   },
   {
-    title: "8. Termination",
-    body: "We reserve the right to suspend or terminate your access to Sapling at any time, for any reason, including violation of these Terms.",
+    title: "8. Study Rooms and Social Features",
+    body: "Study rooms are shared spaces. You are responsible for what you post. We may remove content or members that violate these Terms.",
   },
   {
-    title: "9. Disclaimer of Warranties",
-    body: 'The Service is provided "as is" without warranties of any kind. We do not guarantee uninterrupted access, error-free operation, or that the Service will meet your specific academic needs.',
+    title: "9. The Beta",
+    body: "Sapling is free during the beta. Features may change, break, or be removed, and the service may be unavailable at times. If we introduce paid features, we will tell you before charging anything.",
   },
   {
-    title: "10. Limitation of Liability",
-    body: "To the fullest extent permitted by law, the Sapling team shall not be liable for any indirect, incidental, or consequential damages arising from your use of the Service.",
+    title: "10. Intellectual Property",
+    body: "Sapling's software, branding, and design belong to the Sapling team. You may not copy, reproduce, or distribute any part of the service without our permission, except as the law allows.",
   },
   {
-    title: "11. Changes to These Terms",
-    body: "We may update these Terms from time to time. Continued use of the Service after changes are posted constitutes acceptance of the revised Terms.",
+    title: "11. Ending Your Use",
+    body: "You can stop using Sapling and delete your account at any time in Settings. Deleting your account removes your data as described in the Privacy Policy. We may suspend or end your access if you violate these Terms or misuse the service, or if we shut the beta down.",
   },
   {
-    title: "12. Contact",
-    body: "For questions about these Terms, please email us at ",
-    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
+    title: "12. Disclaimer of Warranties",
+    body: 'Sapling is provided "as is" and "as available", without warranties of any kind. We do not guarantee uninterrupted access, error-free operation, or that Sapling will meet your academic needs.',
+  },
+  {
+    title: "13. Limitation of Liability",
+    body: "To the fullest extent permitted by law, the Sapling team is not liable for any indirect, incidental, special, or consequential damages, or for lost data or grades, arising from your use of Sapling.",
+  },
+  {
+    title: "14. Governing Law",
+    body: "These Terms are governed by the laws of the Commonwealth of Massachusetts, without regard to its conflict-of-laws rules.",
+  },
+  {
+    title: "15. Changes to These Terms",
+    body: "We may update these Terms. If a change is material, we will tell you in the app before it takes effect. Continuing to use Sapling after a change takes effect means you accept it.",
+  },
+  {
+    title: "16. Contact",
+    body: "Sapling is built and operated by the Sapling team. For questions about these Terms, takedown requests, or anything else, email ",
+    link: MAIL,
+    bodySuffix: ".",
   },
 ];
 
@@ -202,6 +238,7 @@ export default function TermsPage() {
                       {section.link.label}
                     </a>
                   )}
+                  {section.bodySuffix}
                 </p>
                 {section.list && (
                   <ul style={LIST}>
@@ -212,6 +249,9 @@ export default function TermsPage() {
                       </li>
                     ))}
                   </ul>
+                )}
+                {section.bodyAfter && (
+                  <p style={{ ...PROSE, marginTop: 16 }}>{section.bodyAfter}</p>
                 )}
               </div>
             </div>

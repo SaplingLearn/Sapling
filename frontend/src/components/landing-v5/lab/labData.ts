@@ -48,7 +48,6 @@ export const DECK = [
   { q:'When is a matrix diagonalizable?', a:'When its eigenvectors span the space — n independent eigenvectors for an n\u00d7n matrix.' },
 ];
 
-export const RATE_DUE = { '1':'10 min', '2':'1 day', '3':'4 days' };
 
 export const RATE_TONE = { '1':'#b25855', '2':'#c89b5e', '3':'#3a7d4e' };
 
@@ -131,7 +130,7 @@ export const GRAPH_EDGES = [ ['vs','det'], ['det','eig'], ['vs','eig'], ['eig','
 export const TUTOR = {
   socratic: {
     label:'SOCRATIC', topic:'AVL ROTATIONS', tone:'#0E9E5A',
-    blurb:'It never hands over the answer. Pick a reply and watch where it takes you.',
+    blurb:'Built to guide you rather than hand over the answer. Pick a reply and watch where it takes you.',
     open:'Before we touch rotations: what does an AVL tree promise about the heights of a node\u2019s two subtrees?',
     steps:[
       { replies:[
@@ -148,16 +147,15 @@ export const TUTOR = {
   },
   expository: {
     label:'EXPOSITORY', topic:'AVL ROTATIONS', tone:'#4FA574',
-    blurb:'Straight explanation, assembled from your own uploads and shown with its sources.',
+    blurb:'Straight explanation, assembled from your own uploads.',
     open:'An AVL tree keeps every node\u2019s balance factor in {\u22121, 0, +1}. When an insert pushes a node to \u00b12, exactly one of four rotations restores it in O(1): LL, LR, RL, RR.',
-    sources:['lecture-07.pdf p. 12', 'notes-wk4.md'],
     steps:[
       { replies:[
-          { text:'Show me the LL case', bot:'LL means the left child\u2019s left subtree is too tall. One right rotation: the left child rises to root, the old root becomes its right child, and the left child\u2019s right subtree reattaches as the old root\u2019s left.', sources:['lecture-07.pdf p. 13'] },
-          { text:'Why not just rebuild?', bot:'Rebuilding is O(n) per insert. Rotations touch three pointers, so they are O(1), and the height guarantee holds either way. Constant beats linear on every insert.', sources:['lecture-07.pdf p. 12'] },
-          { text:'How is this different from red-black?', bot:'AVL re-balances eagerly and stays more tightly balanced, so lookups are slightly faster. Red-black tolerates more skew and rotates less, so inserts are cheaper. Your syllabus compares them in week 5.', sources:['syllabus.pdf', 'notes-wk5.md'] }] },
+          { text:'Show me the LL case', bot:'LL means the left child\u2019s left subtree is too tall. One right rotation: the left child rises to root, the old root becomes its right child, and the left child\u2019s right subtree reattaches as the old root\u2019s left.' },
+          { text:'Why not just rebuild?', bot:'Rebuilding is O(n) per insert. Rotations touch three pointers, so they are O(1), and the height guarantee holds either way. Constant beats linear on every insert.' },
+          { text:'How is this different from red-black?', bot:'AVL re-balances eagerly and stays more tightly balanced, so lookups are slightly faster. Red-black tolerates more skew and rotates less, so inserts are cheaper. Your syllabus compares them in week 5.' }] },
       { replies:[
-          { text:'Give me a worked example', bot:'Insert 30, 20, 10. After 10, node 30 has balance +2 with the skew on its left-left. Right-rotate at 30: 20 becomes root, 10 its left child, 30 its right. Heights are 1 and 1.', sources:['lecture-07.pdf p. 14'] },
+          { text:'Give me a worked example', bot:'Insert 30, 20, 10. After 10, node 30 has balance +2 with the skew on its left-left. Right-rotate at 30: 20 becomes root, 10 its left child, 30 its right. Heights are 1 and 1.' },
           { text:'Quiz me instead', bot:'Then open the quiz surface from the rail. It will draw questions targeted at this node, since AVL rotations is your lowest-mastery concept in Trees.' }] },
     ],
   },

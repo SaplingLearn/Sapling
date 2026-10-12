@@ -164,8 +164,9 @@ export function SharedContextToggle({
           <strong style={{ color: "var(--text)", display: "block", marginBottom: 4 }}>
             Shared course context
           </strong>
-          Includes anonymized class-level patterns (common gaps, frequent questions). Disabling keeps the
-          tutor focused on only your individual state.
+          When on, passages from your uploads that Sapling identifies as course material (slides,
+          readings, handouts) can help answer classmates in the same course, without your name.
+          Your own work and notes stay private. Turning it off makes your uploads private to you.
         </div>
       )}
     </div>

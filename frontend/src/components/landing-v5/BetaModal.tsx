@@ -164,12 +164,12 @@ export function BetaModal({
         {/* ── left: brand + beta tester role ── */}
         <div className="hero-surface ld-beta-left" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Image src="/sapling-icon.svg" alt="Sapling" width={22} height={22} />
+            <Image src="/sapling-icon.svg" alt="" width={22} height={22} />
             <span style={{ fontFamily: SPECTRAL, fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
           </div>
 
           <div>
-            <div style={{ fontFamily: JETBRAINS, fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
+            <div style={{ fontFamily: JETBRAINS, fontSize: 10.5, color: '#4b5563', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
               Early access
             </div>
             <h2 style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
@@ -210,7 +210,7 @@ export function BetaModal({
                 <span style={{ fontSize: 11, color: '#9CA3AF', fontFamily: DM }}>@alexkim</span>
               </div>
             </div>
-            <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5, fontStyle: 'italic' }}>
+            <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#4b5563', lineHeight: 1.5, fontStyle: 'italic' }}>
               The first mark on your profile. A permanent record of showing up early.
             </p>
           </div>
@@ -220,10 +220,11 @@ export function BetaModal({
 
         {/* ── right: newsletter ── */}
         <div className="hero-surface ld-beta-right" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
-          <h1 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
+          {/* h2: the page behind the dialog already has the h1. */}
+          <h2 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
             Join the{' '}
             <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Waitlist</span>
-          </h1>
+          </h2>
           <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
             Leave your email and we&apos;ll let you in when your spot opens.
           </p>
@@ -240,12 +241,18 @@ export function BetaModal({
             ))}
           </div>
 
-          <form onSubmit={submit} className="ld-beta-form" style={{ marginTop: 'auto', paddingTop: 28 }}>
+          {/* noValidate: type="email" is for the mobile keyboard and autofill;
+              validation stays the inline, announced message below. */}
+          <form onSubmit={submit} noValidate className="ld-beta-form" style={{ marginTop: 'auto', paddingTop: 28 }}>
             <div style={{ position: 'relative', marginBottom: 10 }}>
               <input
                 ref={inputRef}
-                type="text"
+                type="email"
+                name="email"
+                autoComplete="email"
                 aria-label="Email address"
+                aria-invalid={localError || error ? true : undefined}
+                aria-describedby={localError || error ? 'beta-email-error' : 'beta-consent'}
                 placeholder="you@example.com"
                 value={email}
                 disabled={subscribing}
@@ -260,7 +267,7 @@ export function BetaModal({
                 }}
               />
               {(localError || error) && (
-                <p role="alert" style={{ margin: '6px 0 0', fontSize: 11.5, color: '#dc2626', fontFamily: DM }}>
+                <p id="beta-email-error" role="alert" style={{ margin: '6px 0 0', fontSize: 11.5, color: '#b91c1c', fontFamily: DM }}>
                   {localError || error}
                 </p>
               )}
@@ -281,8 +288,11 @@ export function BetaModal({
             >
               {subscribing ? 'Planting your node…' : <>Join the Waitlist <span style={{ opacity: 0.7 }}>→</span></>}
             </button>
-            <p style={{ margin: '12px 0 0', fontSize: 11.5, color: '#6b7280', textAlign: 'center', lineHeight: 1.5 }}>
-              You&apos;ll also get our occasional newsletter while you wait.
+            <p id="beta-consent" style={{ margin: '12px 0 0', fontSize: 11.5, color: '#4b5563', textAlign: 'center', lineHeight: 1.5 }}>
+              You&apos;ll also get the Journal, our monthly newsletter, while you wait. Unsubscribe
+              anytime from any email. By joining you agree to the{' '}
+              <a href="/terms" style={{ color: 'var(--brand-forest)', textDecoration: 'underline' }}>Terms</a> and{' '}
+              <a href="/privacy" style={{ color: 'var(--brand-forest)', textDecoration: 'underline' }}>Privacy Policy</a>.
             </p>
           </form>
         </div>

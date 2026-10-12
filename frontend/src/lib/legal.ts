@@ -5,7 +5,7 @@
  * "Last updated" line each prints, and their sitemap lastmod. Bump it with any
  * substantive change to either document.
  */
-export const LEGAL_LAST_UPDATED = '2026-05-03';
+export const LEGAL_LAST_UPDATED = '2026-10-12';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',

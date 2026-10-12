@@ -9,7 +9,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 
 const ERROR_COPY: Record<string, string> = {
-  not_approved: "Your account is pending approval. We'll email you once an admin lets you in.",
+  // No email goes out on approval (nothing in the backend sends mail), so the
+  // copy must not promise one.
+  not_approved: "Your account is pending approval. An admin reviews new accounts; try signing in again once you've been let in.",
+  account_deleted: "This account was being deleted and that didn't finish. Please try again, or contact us if it keeps happening.",
   invalid_domain: "Sign-in is limited to approved school accounts (@bu.edu).",
   google_not_configured: "Google sign-in is not configured on the server. Please contact support.",
   signin_failed: "Sign-in failed. Please try again.",
@@ -337,11 +340,17 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           </button>
         )}
 
-        <p style={{ margin: "16px 0 0", fontSize: 11.5, color: "#6b7280", textAlign: "center", lineHeight: 1.5 }}>
-          By signing in, you agree to the{" "}
-          <a href="/terms" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>terms</a>
+        {/* The age line is required, not decorative: Sapling runs on the
+            Gemini API, whose terms require users to be 18+ (see /terms §1).
+            The calendar line explains the Google permission screen that
+            follows, which asks for Calendar access. */}
+        <p data-testid="signin-consent" style={{ margin: "16px 0 0", fontSize: 11.5, color: "#4b5563", textAlign: "center", lineHeight: 1.5 }}>
+          By signing in, you confirm you are 18 or older and agree to the{" "}
+          <a href="/terms" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>Terms of Service</a>
           {" "}and{" "}
-          <a href="/privacy" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>privacy policy</a>.
+          <a href="/privacy" style={{ color: "var(--brand-forest)", textDecoration: "underline" }}>Privacy Policy</a>.
+          {" "}Google will also ask to let Sapling read and add calendar events, which it uses to put your
+          assignment dates on your calendar.
         </p>
       </HeroCard>
     </div>

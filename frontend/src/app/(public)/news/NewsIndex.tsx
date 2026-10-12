@@ -196,7 +196,7 @@ export default function NewsIndex() {
               The Sapling Journal
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>
-              One letter a month, written by the four of us. First issue lands with the beta.
+              One letter a month, written by the team. First issue lands with the beta.
             </p>
           </div>
           <Link href="/#newsletter" className="cp-cta" style={{ background: '#1B6C42', color: '#fff', borderRadius: 8, padding: '13px 24px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>

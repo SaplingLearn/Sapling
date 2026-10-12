@@ -1,5 +1,6 @@
 import { LEGAL_LAST_UPDATED, legalDateLabel } from "@/lib/legal";
 import { pageMetadata } from "@/lib/seo/pageMetadata";
+import { CONTACT_EMAIL } from "@/lib/contact";
 import { CompanionShell } from "@/components/companion/CompanionShell";
 import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/companionType";
 
@@ -23,12 +24,12 @@ import { ACCENT, BODY, DISPLAY, INK, MONO, MUTED, SERIF  } from "@/lib/landing/c
 export const metadata = pageMetadata({
   title: "Privacy Policy",
   description:
-    "How Sapling collects, protects, and uses your data — including document uploads, tutoring transcripts, and study analytics.",
+    "What Sapling collects, how Google Gemini processes it, when course material is shared with classmates, how Google user data is used, and how to delete it.",
   path: "/privacy",
 });
 
 const RULE = "1px solid rgba(42,39,31,0.08)";
-/** Sized off the longest clause title ("4. How We Share Your Information"). */
+/** Sized off the longest clause title ("4. Shared Course Material (Class Intel)"). */
 const TITLE_COL = 220;
 const COL_GAP = 32;
 
@@ -86,89 +87,132 @@ const sections = [
     title: "1. Information We Collect",
     subsections: [
       {
-        label: "Information you provide directly:",
+        label: "Information you provide:",
         list: [
-          "Account information (name, email address) via Google OAuth sign-in",
-          "Course names, syllabus text, and assignment information you paste or upload",
-          "Documents and PDFs you upload to your document library",
-          "Messages sent in study room chats",
-          "Feedback and bug reports you submit",
+          "Your Google account details when you sign in: name, email address, profile photo, and Google account ID",
+          "Your profile and onboarding answers: username, school, year, majors and minors, learning style, the courses you take, and optionally a bio and location",
+          "Documents you upload. We extract their text and do not keep the original file",
+          "Notes, tutoring conversations, study room messages and images, and gradebook entries",
+          "Your Gradescope login or session details, if you choose to connect Gradescope. If you connect through your school's single sign-on, your school password is used once to sign in and is not stored",
+          "Feedback and issue reports, including any screenshots you attach",
+          "Your email address, if you join the waitlist or subscribe to the Journal",
         ],
       },
       {
-        label: "Information generated through your use of the Service:",
+        label: "Information created as you use Sapling:",
         list: [
-          "Knowledge graph data (concepts studied, mastery scores, session history)",
-          "Quiz responses and performance data",
-          "Flashcard ratings and review history",
-          "Tutoring session transcripts",
+          "Your knowledge graph: concepts, mastery scores, and how they changed",
+          "Quiz questions, your answers and results; flashcards and your ratings; study guides; document summaries",
+          "XP, streaks, and achievements",
         ],
       },
       {
         label: "Information collected automatically:",
         list: [
-          "Basic usage data and session metadata to maintain and improve the Service",
+          "A session cookie that keeps you signed in, and short-lived cookies that protect the sign-in flow",
+          "Request logs kept by our hosting providers, which include the pages and API routes you request (these contain your user ID) and your IP address",
+          "Usage events and AI usage records, such as which feature ran and how many AI tokens it used. These do not contain the text of your messages or documents",
         ],
       },
     ],
+    bodyAfter: "We do not use advertising trackers or third-party analytics, and we do not sell your personal information.",
   },
   {
     title: "2. How We Use Your Information",
-    body: "We use the information we collect to:",
+    body: "We use your information to:",
     list: [
-      "Provide and personalize the Service, including updating your knowledge graph and generating AI content tailored to your performance",
-      "Enable study room and social features, including anonymized class-wide insights",
-      "Process and respond to feedback and issue reports",
-      "Maintain the security and integrity of the Service",
+      "Run Sapling for you: build your knowledge graph, and generate tutoring, quizzes, flashcards, summaries, and study guides from your own material",
+      "Improve answers for students in the same course through shared course material, as described in Section 4",
+      "Put assignment dates on your Google Calendar and sync grades from Gradescope, when you ask us to",
+      "Run study rooms and the social features you choose to use",
+      "Respond to your feedback, keep the service secure, and understand overall usage so we can fix and improve it",
     ],
   },
   {
-    title: "3. Google OAuth and Calendar",
-    body: "If you sign in with Google or connect your Google Calendar, we receive access tokens to authenticate you and, if you grant calendar access, to read and write assignment data. We do not access any Google data beyond what is necessary to provide the features you enable. You can revoke this access at any time through your Google account settings.",
-  },
-  {
-    title: "4. How We Share Your Information",
-    body: "We do not sell your personal data. We share information only in the following limited circumstances:",
+    title: "3. AI Processing",
+    body: "Sapling's AI features run on Google's Gemini API. When you use one, the content it needs (for example a document's text, your note, your recent conversation with the tutor, relevant course passages, and in some features your name or the names of study room members) is sent to Google to produce the response. We also send passages of your documents to Google to compute search embeddings, which are numerical representations used to find relevant material.",
     highlights: [
-      { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
-      { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
-      { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
+      { label: "No training on your content:", text: "we do not use your content to train AI models. We use Gemini as a paid API service, under which Google's terms say it does not use prompts or responses to improve its products. Google may keep them for a limited time to detect abuse." },
+      { label: "Accuracy:", text: "AI output can be wrong. See the Terms of Service." },
     ],
   },
   {
-    title: "5. Data Retention",
-    body: "We retain your data for as long as your account is active. You may request deletion of your account and associated data by submitting a request through the app's feedback tool.",
+    title: "4. Shared Course Material (Class Intel)",
+    body: "When you upload a document that Sapling's classifier confidently identifies as course material (a syllabus, slides, a reading, a handout), and your Class Intel setting is on, passages from that document are added to a pool for that course. The pool covers every section and term of the same course code. Sapling's tutor and quizzes for other students in that course can draw on those passages and may quote or paraphrase them. Your name is not attached to them.",
+    list: [
+      "Class Intel is on by default. You can turn it off with the Class Intel control on the Learn screen. Turning it off makes your existing and future uploads private to you.",
+      "Documents the classifier identifies as your own completed work or personal notes are always kept private. Classification is automated and can be wrong, so turn Class Intel off if you don't want any of your uploads shared.",
+      "Deleting a document withdraws its passages from the pool. A passage stays only if another student uploaded the identical text, because it is then their upload too.",
+    ],
   },
   {
-    title: "6. Security",
+    title: "5. Google User Data",
+    body: "When you sign in with Google, we receive your name, email address, profile photo, and Google account ID. We also ask for permission to read your Google Calendar events and to create events, so we can show your calendar alongside your assignments and add assignment dates to it. Calendar events we read are shown to you but not stored on our servers, and they are never sent to our AI provider. We store the Google sign-in tokens, encrypted, so the calendar features keep working.",
+    highlights: [
+      { label: "Limited Use:", text: "Sapling's use and transfer of information received from Google APIs to any other app will adhere to the Google API Services User Data Policy, including the Limited Use requirements. We use Google user data only to provide the features described here. We do not use it for advertising, we do not sell it, and we do not use it to train AI models. People on our team do not read it unless you ask us to, it is needed for security, or the law requires it." },
+      { label: "Revoking access:", text: "you can remove Sapling's access at any time at myaccount.google.com/permissions. Deleting your Sapling account also revokes our access." },
+    ],
+  },
+  {
+    title: "6. How We Share Information",
+    body: "We share information only in these cases:",
+    highlights: [
+      { label: "Service providers that run Sapling for us:", text: "Supabase (database and file storage), Google (Gemini AI, sign-in, and Calendar), Railway (backend hosting), Cloudflare (website hosting and delivery), and, when enabled, monitoring tools such as Pydantic Logfire that receive technical telemetry about errors and performance. They process data on our behalf and under their own terms." },
+      { label: "Gradescope:", text: "if you connect it, we sign in to Gradescope as you, using the details you provide, to read your courses and scores." },
+      { label: "Other students:", text: "study room members can see your display name, avatar, messages, and knowledge graph. Room summaries are written by AI and can mention members by name. Your profile (display name, username, avatar, and the achievements you choose to feature) is public by default, meaning anyone with the link can view it. In Settings you can limit it to your school or make it private. Course material may be shared as described in Section 4." },
+      { label: "Legal requirements:", text: "we may disclose information if the law requires it, or to protect the rights and safety of our users." },
+    ],
+  },
+  {
+    title: "7. Retention and Deletion",
+    body: "We keep your data while your account is active.",
+    highlights: [
+      { label: "Deleting a document:", text: "deletes its extracted text, summary, and notes, and withdraws its passages from search and from shared course material. Concepts it added to your knowledge graph stay until you remove them." },
+      { label: "Deleting your account:", text: "use Settings → Data → Delete my account. We delete your account and the data tied to it, withdraw your shared course material, revoke our Google access, and remove your avatar, chat images, and screenshots. A study room you created passes to another member, or is deleted if it is empty. We keep usage and AI-usage counts with your identity removed." },
+      { label: "Backups and logs:", text: "copies in our providers' backups and logs expire on their normal schedules." },
+      { label: "Export:", text: "Settings → Data → Export currently includes your profile, settings, roles, achievements, and cosmetics. For a complete copy of your data, email us and we will provide it." },
+      { label: "Journal and waitlist:", text: "your newsletter email is kept separately from your account. Unsubscribe with the link in any Journal email, or email us to remove it." },
+    ],
+  },
+  {
+    title: "8. Cookies and Local Storage",
+    body: "We use one essential session cookie (which lasts up to 30 days), short-lived cookies that secure the sign-in flow, and your browser's local storage for preferences and to remember who is signed in on that device. We do not use advertising or analytics cookies.",
+  },
+  {
+    title: "9. Security",
     body: "We take reasonable technical and organizational measures to protect your data:",
     highlights: [
-      { label: "In transit:", text: "traffic between your browser and our servers is encrypted using HTTPS/TLS." },
-      { label: "At rest (application layer):", text: "certain sensitive fields are encrypted by our backend using AES-256-GCM before they are written to the database. This currently covers your profile name, bio, and location; Google OAuth tokens; document summaries and AI-generated concept notes; tutoring chat messages; study room messages; tutoring session summaries; gradebook assignment scores and notes; and calendar assignment notes." },
-      { label: "At rest (storage layer):", text: "our database provider (Supabase) enforces access controls and applies its own encryption at rest at the storage layer." },
+      { label: "In transit:", text: "traffic between your browser and our servers is encrypted with HTTPS/TLS." },
+      { label: "At rest (application layer):", text: "our backend encrypts sensitive fields with AES-256-GCM before they are stored. These are your email address, name, bio, and location; Google and Gradescope credentials; document text, summaries, and notes; shared course passages; your notes; tutoring messages and session summaries; study room messages and summaries; quiz questions and answers; flashcards; study guides; gradebook scores and notes; and feedback and issue reports." },
+      { label: "Not encrypted at the application layer:", text: "concept names and mastery scores, note tags, file names, usernames, search embeddings, and job applications. Access to them is limited by our server's access controls." },
+      { label: "At rest (storage layer):", text: "our database provider (Supabase) applies its own access controls and encryption at rest." },
     ],
-    bodyAfter: "The encryption keys used for application-layer encryption are managed by Sapling, which means we — and the AI and infrastructure providers described in Section 4 — can technically decrypt your data when required to operate the Service. This is not end-to-end encryption. No system is completely secure, and we cannot guarantee absolute security.",
+    bodyAfter: "Sapling manages the application-layer encryption keys, so we, and the AI and infrastructure providers described above, can decrypt your data when that is needed to run the service. This is not end-to-end encryption. No system is completely secure, and we cannot guarantee absolute security.",
   },
   {
-    title: "7. Children's Privacy",
-    body: "Sapling is not directed at children under 13. We do not knowingly collect personal information from children under 13. If you believe a child under 13 has provided us with personal data, please email us at ",
-    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
-    bodySuffix: " and we will take steps to delete it.",
+    title: "10. Age Requirement",
+    body: "Sapling is for people 18 and older. Our AI provider's terms do not permit use by anyone under 18. If you believe someone under 18 is using Sapling, email us at ",
+    link: { label: CONTACT_EMAIL, href: `mailto:${CONTACT_EMAIL}` },
+    bodySuffix: " and we will delete the account.",
   },
   {
-    title: "8. Job Applicants",
-    body: "If you apply for a position at Sapling, we collect the information you submit through our application form, including your name, email address, phone number, LinkedIn profile URL, and resume. This data is used solely to evaluate your application and communicate with you about the hiring process. We do not share applicant data with third parties outside of our core infrastructure providers. If your application is unsuccessful, we may retain your information for up to 12 months in case a suitable role arises. You may request deletion of your applicant data at any time by emailing ",
-    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
+    title: "11. Your Choices and Rights",
+    body: "You can see and edit your profile in Settings, export what Settings offers, ask us for a full copy of your data, turn off Class Intel, revoke Google access, unsubscribe from the Journal, and delete documents or your whole account. Depending on where you live (for example California, the EU, or the UK), you may have additional rights to access, correct, delete, or restrict use of your information. Email us to exercise any of them. Your data is processed and stored in the United States.",
+  },
+  {
+    title: "12. Job Applicants",
+    body: "If you apply for a role, we collect what you submit through the application form: your name, email address, phone number, LinkedIn and portfolio links, and resume. We use it only to evaluate your application and contact you about it, and we store resumes in private storage. If your application is unsuccessful, we may keep it for up to 12 months in case another role fits. To delete it sooner, email ",
+    link: { label: CONTACT_EMAIL, href: `mailto:${CONTACT_EMAIL}` },
     bodySuffix: ".",
   },
   {
-    title: "9. Changes to This Policy",
-    body: "We may update this Privacy Policy from time to time. We will notify users of material changes by updating the date at the top of this page.",
+    title: "13. Changes to This Policy",
+    body: "We may update this policy. If a change materially affects how we use your data, we will tell you in the app before it takes effect, as well as updating the date at the top of this page.",
   },
   {
-    title: "10. Contact",
-    body: "If you have questions or concerns about this Privacy Policy, please email us at ",
-    link: { label: "careers@saplinglearn.com", href: "mailto:careers@saplinglearn.com" },
+    title: "14. Contact",
+    body: "Sapling is built and operated by the Sapling team, a group of students, and is not affiliated with or endorsed by Boston University. For privacy questions or requests, email ",
+    link: { label: CONTACT_EMAIL, href: `mailto:${CONTACT_EMAIL}` },
     bodySuffix: ".",
   },
 ];

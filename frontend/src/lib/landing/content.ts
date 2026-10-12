@@ -48,10 +48,10 @@ export const GAL: GalleryCard[] = [
     num: '04',
     kicker: 'Assessment',
     title: 'Quizzes that meet you where you struggle.',
-    desc: "Questions re-tune to your level after every answer, pressing where you're strong, slowing down where you're not.",
+    desc: "Questions come from the concepts you're weakest on, at a difficulty you pick or one set from your mastery.",
     bullets: [
-      { t: 'Difficulty re-tunes after every single answer.' },
-      { t: 'Missed concepts come back right before you’d forget them.' },
+      { t: 'Choose a difficulty, or let it adapt to your mastery.' },
+      { t: 'Every result writes mastery back to your graph.' },
       { t: 'Every question is grounded in your own course materials.' },
     ],
   },
@@ -59,12 +59,12 @@ export const GAL: GalleryCard[] = [
     kind: 'flashcards',
     num: '05',
     kicker: 'Recall',
-    title: 'Cards that know when you’ll forget.',
-    desc: 'Generate decks per course, or bring your own from anywhere. Spaced repetition schedules each card for the moment it matters.',
+    title: 'Cards from your own material.',
+    desc: 'Generate decks per course, or bring your own from anywhere, then review them with a quick recall rating.',
     bullets: [
       { t: 'Import from paste, CSV, Anki, a URL, even a photo of notes.' },
-      { t: 'Again / good / easy ratings set each card’s return date.' },
-      { t: 'Every rating feeds mastery back into your graph.' },
+      { t: 'Rate each card Forgot, Hard, or Easy as you review.' },
+      { t: 'Generated from the documents in your library.' },
     ],
   },
   {
@@ -75,7 +75,7 @@ export const GAL: GalleryCard[] = [
     desc: 'Write like you always do. Sapling extracts the concepts, links them back to the note, and can quiz you on the weakest one.',
     bullets: [
       { t: 'Autosaves while you type. No save button.' },
-      { t: 'Concepts are extracted and mapped as you write.' },
+      { t: 'Extract a note’s concepts into your graph in one click.' },
       { t: 'Ask questions answered from your own notes.' },
     ],
   },
@@ -83,12 +83,12 @@ export const GAL: GalleryCard[] = [
     kind: 'guide',
     num: '07',
     kicker: 'Exam Prep',
-    title: 'A study guide built from your gaps.',
-    desc: 'Before each exam, Sapling assembles a guide from your own uploaded materials, weighted toward the concepts you keep missing.',
+    title: 'A study guide built from your materials.',
+    desc: 'Before each exam, Sapling assembles a guide from your own uploaded materials, organized for review.',
     bullets: [
       { t: 'Generated per exam, from your actual uploads.' },
-      { t: 'Weighted by your miss history, not chapter order.' },
-      { t: 'Every section links back to its source.' },
+      { t: 'Laid out in sections you can work through.' },
+      { t: 'Rebuilt when you upload new material.' },
     ],
   },
   {
@@ -100,7 +100,7 @@ export const GAL: GalleryCard[] = [
     bullets: [
       { t: 'Live rooms with real-time chat.' },
       { t: 'Graphs side by side. See who’s solid where.' },
-      { t: 'Turn any gap into a shared quiz in one click.' },
+      { t: 'See which concepts the room has not locked down.' },
     ],
   },
   {
@@ -108,10 +108,10 @@ export const GAL: GalleryCard[] = [
     num: '09',
     kicker: 'Grade Calculator',
     title: 'Your real grade, always current.',
-    desc: 'Categories and weights straight from your syllabus, per-assignment scores, and a live course grade that never lies to you.',
+    desc: 'Categories and weights straight from your syllabus, per-assignment scores, and a live course grade.',
     bullets: [
       { t: 'Weights parsed from your syllabus automatically.' },
-      { t: 'Link Gradescope once. New scores pull themselves in.' },
+      { t: 'Link Gradescope and sync your scores in one click.' },
       { t: '“What do I need on the final” math, built in.' },
     ],
   },
@@ -123,8 +123,8 @@ export const GAL: GalleryCard[] = [
     desc: 'Every problem set, quiz, and midterm extracted from the syllabus and placed on your calendar automatically, before week one is over.',
     bullets: [
       { t: 'Whole-semester extraction from one paste.' },
-      { t: 'Assignments, exams, and office hours, all placed.' },
-      { t: 'Study blocks suggested around your weakest concepts.' },
+      { t: 'Assignments, quizzes, and exams, all placed.' },
+      { t: 'Study blocks suggested around upcoming due dates.' },
     ],
   },
   {
@@ -134,8 +134,8 @@ export const GAL: GalleryCard[] = [
     title: 'It asks. You answer.',
     desc: 'Three modes on the same concept. Socratic questions you toward it, expository explains it from your own materials, teachback makes you do the explaining.',
     bullets: [
-      { t: 'Never hands over the solution, by design.' },
-      { t: 'Grounded in your uploads, with the sources shown.' },
+      { t: 'Built to guide you, not to hand over the solution.' },
+      { t: 'Grounded in your uploaded course materials.' },
       { t: 'Teachback finds the gap you did not know you had.' },
     ],
   },
@@ -149,15 +149,15 @@ export interface Faq {
 export const FAQS: Faq[] = [
   {
     q: 'Isn’t using AI to study just cheating?',
-    a: 'No, because Sapling never hands you the answer. It guides you toward the understanding: Socratic questioning, explanations you have to apply yourself, and TeachBack, where you do the explaining. Using Sapling is like having a tutor, not a ghostwriter. The work, and the learning, is still yours.',
+    a: 'Not the way Sapling is built. It is designed to guide you toward the understanding rather than hand you the answer: Socratic questioning, explanations you have to apply yourself, and TeachBack, where you do the explaining. Using Sapling is like having a tutor, not a ghostwriter. The work, and the learning, is still yours.',
   },
   {
     q: 'Will it just do my homework for me?',
-    a: "It won't, by design. Answer engines hand over the solution; Sapling walks you through the process and adapts to how you learn. If you paste a homework problem, expect guiding questions, not a finished answer to copy.",
+    a: "It's designed not to. Answer engines hand over the solution; Sapling walks you through the process and adapts to how you learn. If you paste a homework problem, expect guiding questions rather than a finished answer to copy.",
   },
   {
     q: 'How is this different from just using ChatGPT?',
-    a: "A general chatbot forgets you the moment you close the tab. Sapling maps what you know, remembers what you struggled with, schedules reviews before you forget, and grounds itself in your actual course materials. It's a study system, not a conversation.",
+    a: "A general chatbot forgets you the moment you close the tab. Sapling maps what you know, remembers what you struggled with, and grounds itself in your actual course materials. It's a study system, not a conversation.",
   },
   {
     q: 'Won’t I become dependent on the AI?',
@@ -165,11 +165,11 @@ export const FAQS: Faq[] = [
   },
   {
     q: 'What happens to my notes and documents?',
-    a: 'They stay yours. Uploads, notes, and messages are encrypted at rest (AES-256), used only to build your graph and study materials, and never sold or used to train outside models. Delete a document and its data goes with it.',
+    a: "They stay yours. Document text, notes, and messages are encrypted at rest (AES-256-GCM). Sapling's AI runs on Google Gemini, and your content is never sold or used to train AI models. If Class Intel is on, passages from documents identified as course material can help answer classmates in the same course; your own work and notes stay private, and you can turn sharing off. Delete a document and its text and search data go with it.",
   },
   {
     q: 'Are tools like Sapling allowed in my classes?',
-    a: "Sapling is a study aid, the same category as flashcards, tutoring, or a study group. It doesn't produce submittable work. That said, every course sets its own rules, so check your syllabus; our stance on academic integrity is in the Journal.",
+    a: "Sapling is a study aid, the same category as flashcards, tutoring, or a study group. It's built for studying, not for producing work to hand in. Every course sets its own rules on AI, so check your syllabus and follow it; our stance on academic integrity is in the Journal.",
   },
   {
     q: 'What does it cost?',
@@ -177,7 +177,7 @@ export const FAQS: Faq[] = [
   },
   {
     q: 'What if the AI gets something wrong?',
-    a: 'It can, which is why Sapling grounds answers in your uploaded course materials and shows its reasoning instead of just a verdict. You stay the judge. Spot an error? Flag it in one click and the tutor corrects course.',
+    a: 'It can. Sapling grounds answers in your uploaded course materials, but AI output can still be wrong, so check it against your notes and slides. You stay the judge: tell the tutor what looks wrong and it will work through it with you, or report it with the feedback button.',
   },
 ];
 
