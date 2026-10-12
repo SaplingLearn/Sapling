@@ -108,7 +108,6 @@ class TestGetSummaryDoc:
             assert get_summary_doc("sd1", "u1") is None
 
     def test_attaches_sources_and_pending_suggestions(self):
-        import json
         from services.encryption import encrypt_json
 
         doc_row = {
