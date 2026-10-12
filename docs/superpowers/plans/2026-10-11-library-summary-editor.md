@@ -3381,3 +3381,292 @@ Expected: PASS.
 git add frontend/src/components/screens/SummaryEditor/SummaryEditor.tsx frontend/src/components/screens/SummaryEditor/SummaryEditor.test.tsx
 git commit -m "feat(summary-docs): add the SummaryEditor component with the Ask flow"
 ```
+
+---
+
+### Task 22: `SourcesPanel` + `HistoryPanel`, wired into the right rail
+
+**Files:**
+- Create: `frontend/src/components/screens/SummaryEditor/SourcesPanel.tsx`
+- Create: `frontend/src/components/screens/SummaryEditor/HistoryPanel.tsx`
+- Create: `frontend/src/components/screens/SummaryEditor/HistoryPanel.test.tsx`
+- Modify: `frontend/src/components/screens/SummaryEditor/SummaryEditor.tsx` (swap the empty `<aside>` stub for real tabs)
+
+- [ ] **Step 1: Write the failing test for `HistoryPanel`'s restore flow**
+
+```typescript
+// @vitest-environment jsdom
+// frontend/src/components/screens/SummaryEditor/HistoryPanel.test.tsx
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import React from "react";
+
+const mockListVersions = vi.fn();
+const mockRestore = vi.fn();
+
+vi.mock("@/lib/api", () => ({
+  listSummaryDocVersions: (...args: unknown[]) => mockListVersions(...args),
+  restoreSummaryDocVersion: (...args: unknown[]) => mockRestore(...args),
+}));
+
+import { HistoryPanel } from "./HistoryPanel";
+
+afterEach(cleanup);
+
+describe("HistoryPanel", () => {
+  it("lists versions and restores one on request", async () => {
+    mockListVersions.mockResolvedValue({
+      versions: [
+        { id: "v2", trigger: "ai_edit_kept", created_at: "2026-01-02T00:00:00Z", preview: "Shorter now." },
+        { id: "v1", trigger: "initial", created_at: "2026-01-01T00:00:00Z", preview: "Original text." },
+      ],
+    });
+    const restoredDoc = { id: "sd1" };
+    mockRestore.mockResolvedValue(restoredDoc);
+    const onDocChanged = vi.fn();
+
+    render(<HistoryPanel summaryDocId="sd1" userId="u1" onDocChanged={onDocChanged} />);
+
+    await waitFor(() => expect(screen.getByText("AI edit kept")).toBeInTheDocument());
+    expect(screen.getByText("Created")).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByText("Bring this back")[0]);
+
+    expect(mockRestore).toHaveBeenCalledWith("sd1", "u1", "v2");
+    await waitFor(() => expect(onDocChanged).toHaveBeenCalledWith(restoredDoc));
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/screens/SummaryEditor/HistoryPanel.test.tsx`
+Expected: FAIL — the component doesn't exist yet.
+
+- [ ] **Step 3: Write `HistoryPanel`**
+
+```typescript
+// frontend/src/components/screens/SummaryEditor/HistoryPanel.tsx
+"use client";
+import React from "react";
+import { listSummaryDocVersions, restoreSummaryDocVersion } from "@/lib/api";
+import type { SummaryDoc, SummaryDocVersion } from "@/lib/types";
+
+const TRIGGER_LABELS: Record<string, string> = {
+  initial: "Created",
+  ai_edit_kept: "AI edit kept",
+  source_added: "Source added",
+  source_removed: "Source removed",
+  restored: "Restored from an earlier version",
+};
+
+export interface HistoryPanelProps {
+  summaryDocId: string;
+  userId: string;
+  onDocChanged: (doc: SummaryDoc) => void;
+}
+
+export function HistoryPanel({ summaryDocId, userId, onDocChanged }: HistoryPanelProps) {
+  const [versions, setVersions] = React.useState<SummaryDocVersion[]>([]);
+  const [restoringId, setRestoringId] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    const { versions: v } = await listSummaryDocVersions(summaryDocId, userId);
+    setVersions(v);
+  }, [summaryDocId, userId]);
+
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  const restore = async (versionId: string) => {
+    setRestoringId(versionId);
+    try {
+      const doc = await restoreSummaryDocVersion(summaryDocId, userId, versionId);
+      onDocChanged(doc);
+      await load();
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  if (versions.length === 0) {
+    return <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No earlier versions yet.</p>;
+  }
+
+  return (
+    <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+      {versions.map((v) => (
+        <li key={v.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-xs)", padding: 10 }}>
+          <div className="label-micro">{TRIGGER_LABELS[v.trigger] ?? v.trigger}</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", margin: "2px 0 6px" }}>
+            {new Date(v.created_at).toLocaleString()}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 8 }}>{v.preview}</div>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={restoringId === v.id}
+            onClick={() => restore(v.id)}
+          >
+            Bring this back
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/components/screens/SummaryEditor/HistoryPanel.test.tsx`
+Expected: PASS.
+
+- [ ] **Step 5: Write `SourcesPanel`** (no dedicated test — it's a thin CRUD list over API calls already covered by the backend route tests; Task 26's Playwright journey exercises it end to end)
+
+```typescript
+// frontend/src/components/screens/SummaryEditor/SourcesPanel.tsx
+"use client";
+import React from "react";
+import { addSummaryDocSource, removeSummaryDocSource, getDocuments } from "@/lib/api";
+import type { SummaryDoc, Document as Doc } from "@/lib/types";
+
+export interface SourcesPanelProps {
+  doc: SummaryDoc;
+  userId: string;
+  onDocChanged: (doc: SummaryDoc) => void;
+}
+
+export function SourcesPanel({ doc, userId, onDocChanged }: SourcesPanelProps) {
+  const [library, setLibrary] = React.useState<Doc[]>([]);
+  const [busyId, setBusyId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    getDocuments(userId).then((r) => setLibrary(r.documents || []));
+  }, [userId]);
+
+  const sourceIds = new Set(doc.sources.map((s) => s.document_id));
+  const addable = library.filter((d) => !sourceIds.has(d.id));
+
+  const add = async (documentId: string) => {
+    setBusyId(documentId);
+    try {
+      const updated = await addSummaryDocSource(doc.id, userId, documentId);
+      onDocChanged(updated);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (documentId: string) => {
+    setBusyId(documentId);
+    try {
+      const result = await removeSummaryDocSource(doc.id, userId, documentId);
+      if ("sources" in result) onDocChanged(result);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div>
+      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        {doc.sources.map((s) => (
+          <li key={s.document_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {s.file_name}
+            </span>
+            {s.document_id !== doc.primary_document_id && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                aria-label={`Remove ${s.file_name}`}
+                disabled={busyId === s.document_id}
+                onClick={() => remove(s.document_id)}
+              >
+                ✕
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {addable.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div className="label-micro" style={{ marginBottom: 6 }}>Add a source</div>
+          {addable.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              className="btn btn--sm"
+              style={{ width: "100%", marginBottom: 4, justifyContent: "flex-start" }}
+              disabled={busyId === d.id}
+              onClick={() => add(d.id)}
+            >
+              + {d.file_name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 6: Wire both panels into `SummaryEditor`'s right rail**
+
+In `frontend/src/components/screens/SummaryEditor/SummaryEditor.tsx`:
+
+Add the imports:
+
+```typescript
+import { SourcesPanel } from "./SourcesPanel";
+import { HistoryPanel } from "./HistoryPanel";
+```
+
+Add a tab state near the other `useState` calls:
+
+```typescript
+const [rightTab, setRightTab] = React.useState<"sources" | "history">("sources");
+```
+
+Replace the empty `<aside>` stub with:
+
+```typescript
+<aside style={{ width: 280, borderLeft: "1px solid var(--border)", flexShrink: 0, padding: 16, overflowY: "auto" }}>
+  <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+    <button
+      type="button"
+      className={`btn btn--sm ${rightTab === "sources" ? "btn--primary" : "btn--ghost"}`}
+      onClick={() => setRightTab("sources")}
+    >
+      Sources
+    </button>
+    <button
+      type="button"
+      className={`btn btn--sm ${rightTab === "history" ? "btn--primary" : "btn--ghost"}`}
+      onClick={() => setRightTab("history")}
+    >
+      History
+    </button>
+  </div>
+  {rightTab === "sources" ? (
+    <SourcesPanel doc={doc} userId={userId!} onDocChanged={setDoc} />
+  ) : (
+    <HistoryPanel summaryDocId={doc.id} userId={userId!} onDocChanged={setDoc} />
+  )}
+</aside>
+```
+
+- [ ] **Step 7: Typecheck and run the full SummaryEditor test suite**
+
+Run: `cd frontend && npm run typecheck && npx vitest run src/components/screens/SummaryEditor`
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add frontend/src/components/screens/SummaryEditor/
+git commit -m "feat(summary-docs): add SourcesPanel and HistoryPanel to the editor's right rail"
+```
