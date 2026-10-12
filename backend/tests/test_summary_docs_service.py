@@ -1,9 +1,25 @@
 """Tests for services/summary_docs_service.py."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
+from agents._providers import clear_function_handlers, model_for, register_function_handler
+from agents.summary_edit import summary_edit_agent
 from services.summary_docs_service import (
+    add_source,
+    attach_summary_previews,
+    create_suggestion,
+    create_summary_doc,
+    delete_summary_docs_for_document,
+    get_summary_doc,
+    keep_suggestion,
+    list_versions,
     plaintext_from_prosemirror,
     prosemirror_doc_from_text,
+    remove_source,
+    restore_version,
+    undo_suggestion,
+    update_content,
 )
 
 
@@ -61,11 +77,6 @@ class TestPlaintextFromProsemirror:
     def test_truncates_to_max_chars(self):
         doc = prosemirror_doc_from_text("A" * 500)
         assert len(plaintext_from_prosemirror(doc, max_chars=50)) == 50
-
-
-from unittest.mock import MagicMock, patch
-
-from services.summary_docs_service import create_summary_doc, get_summary_doc
 
 
 class TestCreateSummaryDoc:
@@ -142,9 +153,6 @@ class TestGetSummaryDoc:
         assert result["sources"] == [{"document_id": "doc1", "file_name": "Lecture 4.pdf", "added_at": "t0"}]
         assert len(result["pending_suggestions"]) == 1
         assert result["pending_suggestions"][0]["instruction"] == "shorter"
-
-
-from services.summary_docs_service import add_source, remove_source
 
 
 class TestAddSource:
@@ -263,9 +271,6 @@ class TestRemoveSource:
         assert result == "primary"
 
 
-from services.summary_docs_service import update_content
-
-
 class TestUpdateContent:
     def test_updates_content_without_writing_a_version(self):
         new_content = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Edited."}]}]}
@@ -295,9 +300,6 @@ class TestUpdateContent:
         with patch("services.summary_docs_service.table") as mock_table:
             mock_table.return_value.update.return_value = []
             assert update_content("sd1", "u1", {"type": "doc", "content": []}) is None
-
-
-from services.summary_docs_service import list_versions, restore_version
 
 
 class TestListVersions:
@@ -506,9 +508,6 @@ class TestRestoreVersion:
         assert result is None
 
 
-from services.summary_docs_service import keep_suggestion, undo_suggestion
-
-
 class TestKeepSuggestion:
     def test_applies_content_marks_kept_and_writes_version(self):
         from services.encryption import encrypt_json
@@ -606,9 +605,6 @@ class TestUndoSuggestion:
             assert undo_suggestion("sd1", "u1", "sg1") is False
 
 
-from services.summary_docs_service import attach_summary_previews
-
-
 class TestAttachSummaryPreviews:
     def test_attaches_preview_id_and_source_count(self):
         from services.encryption import encrypt_json
@@ -668,9 +664,6 @@ class TestAttachSummaryPreviews:
         assert docs_in[0]["summary_source_count"] == 0
 
 
-from services.summary_docs_service import delete_summary_docs_for_document
-
-
 class TestDeleteSummaryDocsForDocument:
     def test_deletes_the_summary_doc_row(self):
         with patch("services.summary_docs_service.table") as mock_table:
@@ -679,12 +672,6 @@ class TestDeleteSummaryDocsForDocument:
         mock_table.return_value.delete.assert_called_once_with(
             filters={"primary_document_id": "eq.doc1"}
         )
-
-
-# Append to backend/tests/test_summary_docs_service.py
-from agents._providers import clear_function_handlers, model_for, register_function_handler
-from agents.summary_edit import summary_edit_agent
-from services.summary_docs_service import create_suggestion
 
 
 def _scripted_summary_edit(proposed_text: str):
