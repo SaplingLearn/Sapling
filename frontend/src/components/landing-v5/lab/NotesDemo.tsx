@@ -87,7 +87,7 @@ export function NotesDemo() {
             value={title}
             onChange={(e) => { setTitle(e.target.value); touchSave(); }}
             aria-label="Note title"
-            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 600, color: '#12201A', padding: 0 }}
+            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 22, fontWeight: 600, color: '#12201A', padding: 0 }}
           />
           <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.16em', whiteSpace: 'nowrap', color: saved ? '#3a7d4e' : '#9AA5A0' }}>
             {saved ? 'SAVED' : 'SAVING…'}
@@ -99,7 +99,7 @@ export function NotesDemo() {
           onChange={(e) => { setBody(e.target.value); touchSave(); }}
           aria-label="Note body"
           spellCheck={false}
-          style={{ flex: 1, minHeight: 190, resize: 'none', border: '1px solid #E8E5DA', borderRadius: 12, background: '#FDFCF9', padding: '14px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 14, lineHeight: 1.8, color: '#33443B', outline: 'none' }}
+          style={{ flex: 1, minHeight: 190, resize: 'none', border: '1px solid #E8E5DA', borderRadius: 12, background: '#FDFCF9', padding: '14px 16px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, lineHeight: 1.8, color: '#33443B', outline: 'none' }}
         />
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

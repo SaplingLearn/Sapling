@@ -15,9 +15,9 @@
  * 672px did.
  */
 
-export const MONO = "'JetBrains Mono',monospace";
-export const SERIF = "'Spectral',Georgia,serif";
-export const DISPLAY = "'Playfair Display',Georgia,serif";
+export const MONO = "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace";
+export const SERIF = "var(--font-spectral), 'Spectral', Georgia, serif";
+export const DISPLAY = "var(--font-playfair), 'Playfair Display', Georgia, serif";
 
 /** Ink on the paper palette. */
 export const INK = '#1a1814';

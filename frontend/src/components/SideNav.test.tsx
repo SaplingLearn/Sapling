@@ -121,12 +121,35 @@ describe("SideNav — interactive row height floor", () => {
   // rail is allowed to sit at. A future tightening pass must not cross it.
   const MIN_HIT_TARGET = 36;
 
+  /**
+   * The smallest height a row can ever resolve to.
+   *
+   * The rail's rows are sized `clamp(36px, 4.3vh, 38px)` so they hold their
+   * pitch on a tall window and give it up on a short one. jsdom does no
+   * viewport maths, so the style is read back as that literal string, and a
+   * bare `parseFloat` on it is NaN — which fails this check for the wrong
+   * reason while a genuine regression below the floor would fail it for the
+   * right one, indistinguishably.
+   *
+   * A clamp's first argument IS its floor, so that is what gets asserted.
+   * This deliberately reads the smallest possible value rather than the one a
+   * particular viewport would produce: the invariant is that no window, however
+   * short, can push a row under 36px.
+   */
+  function smallestHeight(minHeight: string): number {
+    const clamped = minHeight.match(/^\s*clamp\(\s*([\d.]+)px/);
+    return parseFloat(clamped ? clamped[1] : minHeight || "0");
+  }
+
   it("keeps every expanded nav row at or above the 36px floor", () => {
     const rail = renderRail(false);
     const rows = navRows(rail);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      const min = parseFloat(row.style.minHeight || "0");
+      const min = smallestHeight(row.style.minHeight);
+      // Guards the helper itself: an unparseable value must fail loudly here
+      // rather than slip through as a NaN comparison below.
+      expect(Number.isFinite(min)).toBe(true);
       expect(min).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
     }
   });
@@ -134,7 +157,8 @@ describe("SideNav — interactive row height floor", () => {
   it("keeps every collapsed nav row at or above the 36px floor", () => {
     const rail = renderRail(true);
     for (const row of navRows(rail)) {
-      const min = parseFloat(row.style.minHeight || "0");
+      const min = smallestHeight(row.style.minHeight);
+      expect(Number.isFinite(min)).toBe(true);
       expect(min).toBeGreaterThanOrEqual(MIN_HIT_TARGET);
     }
   });

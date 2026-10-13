@@ -12,19 +12,37 @@
  * original two full-size rails stacked past any normal viewport height, and
  * keeping both rows was chosen over one bigger rail.
  *
- * Each track lists its cards TWICE. That duplication is the loop: the marquee
- * translates by exactly half the track width and wraps, so the second copy is
- * already in place when the first scrolls out. Removing it leaves a visible
- * gap on every cycle. The duplicates are `aria-hidden`, and only the first
- * copy is reachable by keyboard.
+ * Each track lists its cards at least TWICE. That duplication is the loop:
+ * the marquee translates by exactly one set's width and wraps, so the next
+ * copy is already in place when the current one scrolls out. Two copies is
+ * only enough while the viewport is narrower than one set — on a screen wide
+ * enough to show more than a full set at once (an ultrawide or a multi-monitor
+ * span), two copies run out before the wrap comes back around, and the track
+ * reads as cards popping in out of empty space instead of drifting in from
+ * the edge. `useTrackCopies` measures the real rendered set width against the
+ * wrap's width and renders however many copies keep the track always at least
+ * one set wider than the viewport, re-measuring on resize. The duplicates are
+ * `aria-hidden`, and only the first copy is reachable by keyboard.
  *
  * The card visuals live in galleryMinis.tsx, generated from the source.
+ *
+ * Below 900px the cards shrink again, via `--gal-scale` (set in globals.css
+ * per breakpoint) driving a CSS `transform: scale()` on `.ld-galcard` — see
+ * `SLOT`/`CARD` below. Scaling the whole card, rather than resizing its
+ * width and leaving the illustration pane's height fixed, is what keeps the
+ * eight animated minis proportional instead of squashed at narrow widths
+ * (#624); it also keeps the marquee's own transform, hit-testing, and FLIP
+ * open untouched, since `getBoundingClientRect()` already reports the
+ * scaled, on-screen box. `SLOT` mirrors that scale into a real layout size
+ * so the marquee's width/gap measurements — and the wrap seam they depend
+ * on — stay correct at every width.
  */
 
+import { useEffect, useState } from 'react';
 import { GALLERY_MINIS } from './galleryMinis';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
 
 /** Card copy, indexed by `data-tk`. Distinct from the lab panels' copy in content.ts. */
 const CARDS = [
@@ -56,37 +74,144 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.27, s: { right: '7.0%', top: '57.4%', width: 8, height: 8, background: '#2E7D52', opacity: 0.46, boxShadow: '0 0 20px #2E7D5266', animation: 'nodeFloatA 13s ease-in-out -4s infinite' } },
 ];
 
+/**
+ * Natural (desktop, scale 1) card footprint. All eight cards measure the
+ * same height — the description copy was written to a consistent length —
+ * so it's safe to fix it here rather than measure post-render. Card size
+ * and pane size (166, matching the source) are fixed — they don't grow to
+ * fit content; oversized minis get shrunk to fit instead (`MINI_FIT`).
+ */
+const CARD_W = 372;
+const MINI_H = 166;
+const CARD_H = 314;
+
+/**
+ * Scale factor for a mini too tall for the pane, keyed by `CARDS` index.
+ *
+ * Most minis fit the 166px pane and never engage its `overflow: hidden`. The
+ * AI Tutor mini — three chat bubbles plus a hint row — does not, and was
+ * losing its hint row and "NEVER THE ANSWER" tag to the clip (#624). It gets
+ * a uniform `transform: scale()` instead, both axes together, because
+ * squashing height alone would distort the bubbles.
+ *
+ * The SOURCE BOX IS INFLATED BY 1/scale ON BOTH AXES, and that is the part
+ * worth reading twice. A uniform scale shrinks width as much as height, so a
+ * wrapper left at `width: 100%` came back 12% narrow: the tutor preview sat
+ * 304px wide in a 346px pane with 21px of white down either side, visibly
+ * smaller and differently framed from the seven beside it. Inflating first
+ * means the scaled result lands at exactly the pane's size.
+ *
+ * Inflating the width is also why the factor is 0.94 rather than the 0.883
+ * this started at. A wider source box wraps the bubble text less, so the mini
+ * needs ~176px rather than 188, and needs less shrinking to fit — the
+ * preview now reads at nearly the same size as its neighbours. Measured, not
+ * chosen: at scale 1 the content spills 24px past the box and at 0.96 it
+ * spills 3.
+ *
+ * Both axes inflate as PERCENTAGES, which is why neither is written as
+ * `MINI_H / fit`. A percentage resolves against the pane's content box; the
+ * constant is its border box, and the 1px border between them left the mini
+ * a pixel proud of the frame it was supposed to sit inside.
+ */
+const MINI_FIT: Partial<Record<number, number>> = {
+  7: 0.93,
+};
+
 const CARD: React.CSSProperties = {
-  flex: '0 0 auto', width: 372, borderRadius: 20, background: '#FDFCF9',
+  width: CARD_W, height: CARD_H, borderRadius: 20, background: '#FDFCF9',
   border: '1px solid #E8E5DA', boxShadow: '0 6px 18px -6px rgba(18,32,26,0.14)',
   padding: '12px 12px 18px', display: 'flex', flexDirection: 'column',
   position: 'relative', overflow: 'hidden', cursor: 'pointer', userSelect: 'none',
+  transformOrigin: 'top left',
   transition: 'transform 320ms cubic-bezier(0.22,1,0.36,1)',
+};
+
+/**
+ * The flex item the marquee actually measures. It's sized in lockstep with
+ * `--gal-scale` (set per breakpoint in globals.css) so `offsetWidth` always
+ * matches what's on screen; the card inside is scaled with a CSS transform
+ * rather than shrunk via width, so the illustration, type, and every
+ * keyframe animation shrink together instead of the illustration getting
+ * squashed against a fixed-height pane (the mistake the v4 grove cards
+ * made — see the note above `.landing-dc .gal-rail` in globals.css).
+ */
+const SLOT: React.CSSProperties = {
+  flex: '0 0 auto',
+  width: `calc(${CARD_W}px * var(--gal-scale, 1))`,
+  height: `calc(${CARD_H}px * var(--gal-scale, 1))`,
 };
 
 function Card({ i, ghost }: { i: number; ghost: boolean }) {
   const c = CARDS[i];
+  const fit = MINI_FIT[i];
   return (
-    <article
-      data-tk={i}
-      aria-hidden={ghost || undefined}
-      style={CARD}
-      className="ld-galcard"
-    >
-      <div aria-hidden="true" style={{ position: 'relative', height: 166, borderRadius: 13, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EBF1EC' }}>
-        {GALLERY_MINIS[i]}
-      </div>
-      <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
-        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#0C5638' }}>{c.kicker}</span>
-        <h3 style={{ margin: '10px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
-          {c.title}
-        </h3>
-        <p style={{ margin: '9px 0 0', fontSize: 12.5, lineHeight: 1.6, color: '#61726A', maxWidth: '40ch', textWrap: 'pretty' }}>
-          {c.desc}
-        </p>
-      </div>
-    </article>
+    <div style={SLOT}>
+      <article
+        data-tk={i}
+        aria-hidden={ghost || undefined}
+        style={CARD}
+        className="ld-galcard"
+      >
+        <div aria-hidden="true" style={{ position: 'relative', height: MINI_H, borderRadius: 13, overflow: 'hidden', background: '#FDFCF9', border: '1px solid #EBF1EC' }}>
+          {fit ? (
+            <div
+              style={{
+                width: `${100 / fit}%`, height: `${100 / fit}%`,
+                transform: `scale(${fit})`, transformOrigin: 'top left',
+              }}
+            >
+              {GALLERY_MINIS[i]}
+            </div>
+          ) : (
+            GALLERY_MINIS[i]
+          )}
+        </div>
+        <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
+          <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#0C5638' }}>{c.kicker}</span>
+          <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
+            {c.title}
+          </h3>
+          <p style={{ margin: '9px 0 0', fontSize: 12.5, lineHeight: 1.6, color: '#61726A', maxWidth: '40ch', textWrap: 'pretty' }}>
+            {c.desc}
+          </p>
+        </div>
+      </article>
+    </div>
   );
+}
+
+/**
+ * How many times `order` must repeat in the track so it never runs out of
+ * content under the visible width — see the note above `Track`.
+ *
+ * Measures the real rendered width of one set (first `setSize` children)
+ * against the wrap's (the mask container's) clientWidth, and keeps enough
+ * copies that the track stays at least one set wider than the viewport, the
+ * invariant `marquee.ts`'s wrap math depends on. Re-measures on resize, since
+ * a window resize or a `--gal-scale` breakpoint both change this.
+ */
+function useTrackCopies(trackRef: React.RefObject<HTMLDivElement | null>, setSize: number): number {
+  const [copies, setCopies] = useState(2);
+  useEffect(() => {
+    const track = trackRef.current;
+    const wrap = track?.parentElement;
+    if (!track || !wrap) return;
+    const measure = () => {
+      const kids = track.children;
+      if (kids.length < setSize) return;
+      const gap = parseFloat(getComputedStyle(track).columnGap) || 0;
+      let setW = 0;
+      for (let i = 0; i < setSize; i++) setW += (kids[i] as HTMLElement).offsetWidth + gap;
+      if (setW <= 0) return;
+      const needed = Math.max(2, Math.ceil(wrap.clientWidth / setW) + 1);
+      setCopies((c) => (c === needed ? c : needed));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [trackRef, setSize]);
+  return copies;
 }
 
 function Track({
@@ -97,18 +222,95 @@ function Track({
   label: string;
   onOpen: (i: number, el: HTMLElement | null) => void;
 }) {
+  const copies = useTrackCopies(trackRef, order.length);
   return (
     <div
       ref={trackRef}
       aria-label={label}
+      // read by `marquee.ts` to measure one set's width regardless of how
+      // many copies are currently rendered
+      data-set-size={order.length}
       onClick={(e) => {
         const card = (e.target as HTMLElement).closest<HTMLElement>('[data-tk]');
         if (card) onOpen(Number(card.dataset.tk), card);
       }}
-      style={{ display: 'flex', gap: 26, width: 'max-content', willChange: 'transform', cursor: 'grab', touchAction: 'pan-y' }}
+      style={{ display: 'flex', gap: 'calc(26px * var(--gal-scale, 1))', width: 'max-content', willChange: 'transform', cursor: 'grab', touchAction: 'pan-y' }}
     >
-      {order.map((i) => <Card key={`a${i}`} i={i} ghost={false} />)}
-      {order.map((i) => <Card key={`b${i}`} i={i} ghost />)}
+      {Array.from({ length: copies }, (_, c) => order.map((i) => (
+        <Card key={`${c}-${i}`} i={i} ghost={c > 0} />
+      )))}
+    </div>
+  );
+}
+
+/**
+ * The margin note pointing down at the rails.
+ *
+ * The cards open the feature lab on click, and nothing in the section says
+ * so: they drift, which reads as decoration, and a drifting thing is the last
+ * thing a visitor tries to click. This is the nudge — deliberately in a hand,
+ * off the grid, and tilted, so it reads as someone's annotation ON the page
+ * rather than as another element OF it. Straighten it and it stops being an
+ * aside and starts being a label nobody believes.
+ *
+ * The arrow is one open curve with two barbs rather than a filled head: a
+ * solid triangle reads as UI iconography, which is the register this is
+ * trying to step out of.
+ *
+ * Hidden below 900px via `.ld-handnote` (globals.css) — the header column and
+ * the rails stack there, so "down and to the left" stops pointing at the
+ * cards and the note would land on the copy it is meant to sit beside.
+ */
+function HandNote() {
+  return (
+    <div
+      className="ld-handnote"
+      style={{
+        position: 'relative', flex: '0 0 auto', paddingBottom: 6,
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "var(--font-caveat), cursive",
+          fontSize: 27, fontWeight: 600, lineHeight: 1.15, color: '#0C5638',
+          transform: 'rotate(-4.5deg)', transformOrigin: '100% 100%',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        click to demo the features!
+      </span>
+      <svg
+        aria-hidden="true"
+        width="80"
+        height="92"
+        viewBox="0 0 80 92"
+        fill="none"
+        style={{ marginTop: 18, overflow: 'visible' }}
+      >
+        {/* The sweep sits in the middle third of the line, and is centred on
+            its own INK rather than on its box.
+            Two separate things had to be fixed to get here. Centring the
+            <svg> is not centring the stroke: the curve used to start at x=104
+            of a 118-wide viewBox, so a perfectly centred box still hung it
+            under the last word. And even once the ink was centred, a sweep
+            spanning nearly the whole sentence still READ as coming from the
+            right, because its mass is diagonal — the eye takes the high end
+            as the origin. Narrowing it to the middle band fixes that: the ink
+            runs x=16..64, whose midpoint is the viewBox centre, so the line
+            drops out of the middle of the sentence and falls away short. */}
+        <path
+          d="M64 8 C60 34, 50 50, 36 62 C29 68, 23 72, 16 78"
+          stroke="#0C5638"
+          strokeWidth="2.1"
+          strokeLinecap="round"
+          opacity="0.85"
+        />
+        {/* two barbs straddling the incoming direction, drawn slightly uneven
+            so the head looks written rather than constructed */}
+        <path d="M16 78 L34 73" stroke="#0C5638" strokeWidth="2.1" strokeLinecap="round" opacity="0.85" />
+        <path d="M16 78 L24 61" stroke="#0C5638" strokeWidth="2.1" strokeLinecap="round" opacity="0.85" />
+      </svg>
     </div>
   );
 }
@@ -135,7 +337,7 @@ export function Gallery({
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             And much more
           </span>
-          <h2 style={{ margin: '16px 0 0', fontFamily: "'Playfair Display',serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
+          <h2 style={{ margin: '16px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
             The rest of the <em style={{ color: '#0C5638' }}>grove.</em>
           </h2>
           <p style={{ margin: '14px 0 0', color: '#61726A', fontSize: 14, lineHeight: 1.65, maxWidth: '62ch' }}>
@@ -144,6 +346,13 @@ export function Gallery({
             talks you through what you missed, and a gradebook and calendar that keep the semester
             honest. Each one writes back to the same graph.
           </p>
+        </FadeIn>
+
+        {/* the right end of the header row, bottom-aligned: the note lands in
+            the gap between the copy and the first rail, which is the only
+            place its arrow can point at cards without covering any */}
+        <FadeIn>
+          <HandNote />
         </FadeIn>
       </div>
 

@@ -13,10 +13,15 @@
  * so the hierarchy is doing the work, not decoration.
  */
 :root {
-  --font-display: 'Playfair Display', 'Spectral', georgia, serif;
-  --font-serif: 'Spectral', 'Playfair Display', georgia, serif;
-  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  /* Each role leads with the loader's variable, not the human family name.
+     `next/font/local` registers every face under a generated name, so a bare
+     'Playfair Display' matches nothing and silently renders Times — see
+     lib/landing/fonts.ts. The human names stay behind the variable as a
+     courtesy to anyone who has the font installed. */
+  --font-display: var(--font-playfair), 'Playfair Display', var(--font-spectral), 'Spectral', georgia, serif;
+  --font-serif: var(--font-spectral), 'Spectral', var(--font-playfair), 'Playfair Display', georgia, serif;
+  --font-sans: var(--font-dm-sans), 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
   --brand-forest: #1B6C42;
@@ -2352,6 +2357,56 @@ input[type="reset"]:disabled {
      the viewport corner — when a window is narrowed after the page loaded. */
   .landing-dc .drag-shell    { display: none !important; }
 }
+
+/* The gallery's handwritten "click to demo the features!" note.
+   Its whole meaning is positional — an arrow sweeping down-left onto the
+   first rail of cards. Once the header row wraps, the note is no longer
+   beside the rails and the arrow points at the body copy instead, so it
+   comes off rather than lying about where to click. */
+@media (max-width: 899px) {
+  /* `!important` for the same reason the two rules above carry it: the note
+     sets `display: flex` inline, and an inline declaration outranks any
+     stylesheet rule without it. */
+  .landing-dc .ld-handnote { display: none !important; }
+}
+
+/* ── Wiki contents rail ────────────────────────────────────────────
+   The rail is a fixed 190px column beside the article. That holds until the
+   window is narrow enough for 190px to be most of it: at 390px wide the
+   rail took 190 and left the reference itself 112px, so the page whose job
+   is showing you exact definitions had them wrapping two words to a line.
+
+   Under 900px the grid collapses to one column and the rail stops being a
+   sidebar: static rather than sticky, unbounded rather than capped, and its
+   five groups flow as a wrapping row above the article. Nothing scrolls
+   inside it at any width — on a short window the page scrolls, which is what
+   a reader expects; a scrollbar inside a sticky box is one most people never
+   find. `!important` throughout because every one of these properties is set
+   inline on the element (see WikiRail.tsx).
+
+   The `max-height` half of the query matters as much as the width half. The
+   rail's height is set by its eighteen entries, not by the window's width,
+   so a wide-but-short window — 960x560, a half-height window on a laptop —
+   keeps the sidebar and cannot fit it however far the clamps in WikiRail.tsx
+   squeeze. Below 580px tall the same collapse applies at any width: measured,
+   600px tall is the shortest window the column still fits. */
+@media (max-width: 899px), (max-height: 580px) {
+  .wiki-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .wiki-rail {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 18px 28px !important;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(42, 39, 31, 0.12);
+  }
+  /* Each group keeps its own label-over-links stack; the groups are what
+     wrap, so the contents still read as five named sets rather than one
+     undifferentiated run of eighteen links. */
+  .wiki-rail > div { min-width: 132px; }
+}
 /* The grove's cards keep one size at every viewport height.
    Two `max-height` rules used to tighten them in steps — the demo pane to
    124px under 1020px of viewport, 110px under 880px — so the header and both
@@ -2474,12 +2529,31 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .hero-info p  { font-size:12.5px !important; }
 }
 
+/* Gallery card responsive scale (#624). `--gal-scale` drives a uniform
+   `transform: scale()` on `.ld-galcard` (see Gallery.tsx's `CARD`/`SLOT`) so
+   the illustration, type, and every keyframe animation shrink together —
+   not the width-only resize that left the v4 grove cards squashed (see the
+   note above `.landing-dc .gal-rail`). One card fully visible plus a peek
+   of the next is what both breakpoints are tuned for. */
+.landing-v5 #gallery { --gal-scale: 1; }
+@media (max-width: 899px) {
+  .landing-v5 #gallery { --gal-scale: 0.84; }
+}
+@media (max-width: 599px) {
+  .landing-v5 #gallery { --gal-scale: 0.68; }
+}
+
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). */
 .landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
 
-/* Gallery + feature lab hover states. */
-.landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
+/* Gallery + feature lab hover states.
+   `.ld-galcard` carries a base `transform: scale(var(--gal-scale))` for the
+   responsive shrink (#624), so the hover rule has to restate that scale
+   alongside the lift — replacing it outright would snap the card back to
+   full size the instant a cursor lands on it. */
+.landing-v5 .ld-galcard        { transform: scale(var(--gal-scale, 1)); }
+.landing-v5 .ld-galcard:hover  { transform: scale(var(--gal-scale, 1)) translateY(-5px); }
 .landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
 .landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
 .landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
@@ -2701,7 +2775,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes labSpin { to { transform:rotate(360deg); } }
 @keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
 
-.landing-v5 .ld-labprimary:hover { background: #0C5638; }
+/* The rest state is now #0C5638, so hover lifts to the bright green the
+   room's Send button already uses rather than repeating the base colour. */
+.landing-v5 .ld-labprimary:hover { background: #0E9E5A; }
 .landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
 .landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
 .landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }

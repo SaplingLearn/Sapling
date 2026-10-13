@@ -22,6 +22,7 @@
 import Image from 'next/image';
 
 import type { ArticleArt as Art, ArtMotif } from '@/lib/landing/journalArticles';
+import { FONT_MONO, FONT_SANS } from '@/lib/landing/fonts';
 
 const GROUND = 'radial-gradient(ellipse 80% 70% at 45% 45%, #EAF1EC 0%, #E2ECE5 60%, #D8E5DD 100%)';
 
@@ -47,7 +48,7 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
           position: 'absolute',
           left: '5%',
           top: '6%',
-          fontFamily: "'JetBrains Mono',monospace",
+          fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace",
           fontSize: 9.5,
           letterSpacing: '0.18em',
           color: GREEN_DEEP,
@@ -73,22 +74,22 @@ function GraphMotif({ ls }: MotifProps) {
       <circle cx="118" cy="76" r="15" fill="none" stroke={HAIRLINE} strokeWidth="2.6" />
       <circle cx="118" cy="76" r="15" fill="none" stroke={GREEN} strokeWidth="2.6" strokeLinecap="round" strokeDasharray="58 94" transform="rotate(-90 118 76)" />
       <circle cx="118" cy="76" r="9" fill={GREEN} />
-      <text x="118" y="79" textAnchor="middle" fontFamily="JetBrains Mono" fontSize={7 * ls} fill="#061710">112</text>
+      <text x="118" y="79" textAnchor="middle" style={{ fontFamily: FONT_MONO }} fontSize={7 * ls} fill="#061710">112</text>
       <circle cx="62" cy="44" r="10" fill="none" stroke={HAIRLINE} strokeWidth="2.2" />
       <circle cx="62" cy="44" r="10" fill="none" stroke={GREEN_MID} strokeWidth="2.2" strokeLinecap="round" strokeDasharray="38 25" transform="rotate(-90 62 44)" />
       <circle cx="62" cy="44" r="5.5" fill={GREEN_MID} />
-      <text x="62" y="26" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={INK}>Trees</text>
+      <text x="62" y="26" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={INK}>Trees</text>
       <circle cx="54" cy="108" r="10" fill="none" stroke={HAIRLINE} strokeWidth="2.2" />
       <circle cx="54" cy="108" r="10" fill="none" stroke={GREEN} strokeWidth="2.2" strokeLinecap="round" strokeDasharray="55 8" transform="rotate(-90 54 108)" />
       <circle cx="54" cy="108" r="5.5" fill={GREEN} />
-      <text x="54" y="130" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={INK}>Sorting</text>
+      <text x="54" y="130" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={INK}>Sorting</text>
       <circle cx="182" cy="50" r="10" fill="none" stroke={HAIRLINE} strokeWidth="2.2" />
       <circle cx="182" cy="50" r="10" fill="none" stroke={CORAL} strokeWidth="2.2" strokeLinecap="round" strokeDasharray="16 47" transform="rotate(-90 182 50)" />
       <circle cx="182" cy="50" r="5" fill={CORAL} />
-      <text x="182" y="32" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={INK}>Recursion</text>
+      <text x="182" y="32" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={INK}>Recursion</text>
       <circle cx="176" cy="116" r="9" fill="none" stroke="rgba(18,32,26,0.10)" strokeWidth="2" />
       <circle cx="176" cy="116" r="4.5" fill="#9a9a9a" />
-      <text x="176" y="137" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={MUTED}>DP</text>
+      <text x="176" y="137" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={MUTED}>DP</text>
     </Frame>
   );
 }
@@ -116,9 +117,9 @@ function SpacingMotif({ ls }: MotifProps) {
       <line x1="76" y1="118" x2="76" y2="124" stroke="rgba(12,86,56,0.35)" />
       <line x1="138" y1="118" x2="138" y2="124" stroke="rgba(12,86,56,0.35)" />
       <line x1="220" y1="118" x2="220" y2="124" stroke="rgba(12,86,56,0.35)" />
-      <text x="76" y="135" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={INK}>10 min</text>
-      <text x="138" y="135" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={INK}>1 day</text>
-      <text x="218" y="135" textAnchor="middle" fontFamily="DM Sans" fontSize={7.5 * ls} fill={INK}>4 days</text>
+      <text x="76" y="135" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={INK}>10 min</text>
+      <text x="138" y="135" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={INK}>1 day</text>
+      <text x="218" y="135" textAnchor="middle" style={{ fontFamily: FONT_SANS }} fontSize={7.5 * ls} fill={INK}>4 days</text>
     </Frame>
   );
 }
@@ -143,7 +144,7 @@ function TeachBackMotif({ ls }: MotifProps) {
         <g key={row.label}>
           <circle cx="160" cy={row.y} r="8" fill={row.tint} />
           <path d={row.mark} transform={`translate(160 ${row.y})`} fill="none" stroke={row.stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          <text x="175" y={row.y + 3} fontFamily="DM Sans" fontSize={8.5 * ls} fill={INK}>{row.label}</text>
+          <text x="175" y={row.y + 3} style={{ fontFamily: FONT_SANS }} fontSize={8.5 * ls} fill={INK}>{row.label}</text>
         </g>
       ))}
     </Frame>
@@ -222,7 +223,7 @@ function CanopyMotif({ ls }: MotifProps) {
         <g key={state.label}>
           <circle cx="157" cy={state.y} r="7.5" fill={state.tint} />
           <circle cx="157" cy={state.y} r="3" fill={state.dot} />
-          <text x="172" y={state.y + 3} fontFamily="DM Sans" fontSize={8.5 * ls} fill={INK}>{state.label}</text>
+          <text x="172" y={state.y + 3} style={{ fontFamily: FONT_SANS }} fontSize={8.5 * ls} fill={INK}>{state.label}</text>
         </g>
       ))}
     </Frame>
