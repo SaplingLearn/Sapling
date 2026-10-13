@@ -145,6 +145,23 @@ def test_live_priorities_and_manual_checkmark_do_not_raise_mastery(state):
     assert svc.set_reviewed("u", "course", recursion["id"], False)["topics"][0]["checked"] is False
 
 
+def test_seeded_mastery_without_study_history_needs_review_only_after_checking(state):
+    db, _ = state
+    db["graph_nodes"][0].update(mastery_score=0.25, times_studied=0, last_studied_at=None)
+    original = copy.deepcopy(db["graph_nodes"])
+    initial = svc.refresh_checklist("u", "course")["topics"][0]
+    assert initial["name"] == "Recursion" and initial["status"] == "not_started"
+    assert initial["checked"] is False and initial["mastery_score"] == 0.25
+
+    reviewed = svc.set_reviewed("u", "course", initial["id"], True)["topics"][0]
+    assert reviewed["checked"] is True and reviewed["status"] == "needs_review"
+    assert reviewed["review_reasons"] == ["Weak mastery"]
+    assert svc.get_checklist("u", "course")["topics"][0]["checked"] is True
+    unchecked = svc.set_reviewed("u", "course", initial["id"], False)["topics"][0]
+    assert unchecked["checked"] is False and unchecked["status"] == "not_started"
+    assert db["graph_nodes"] == original
+
+
 def test_seven_day_review_boundary_and_unstudied_topics(state):
     db, _ = state
     db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-05T12:00:00Z")

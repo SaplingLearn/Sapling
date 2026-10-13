@@ -10,10 +10,12 @@ test("course checklist persists study checks without manufacturing mastery", asy
   await page.getByTestId("topic-checklist-toggle").click();
   const checkbox = page.getByTestId(`topic-checklist-check-${recursionId}`);
   await expect(checkbox).toBeEnabled();
-  await expect(page.getByTestId(`topic-checklist-topic-${recursionId}`)).toContainText("Needs review");
+  await expect(page.getByTestId(`topic-checklist-topic-${recursionId}`)).toContainText("Not started");
   await checkbox.check();
   await expect(checkbox).toBeChecked();
   await expect(checkbox).toBeEnabled();
+
+  await expect(page.getByTestId(`topic-checklist-topic-${recursionId}`)).toContainText("Needs review");
 
   const cache = await queryRaw("SELECT content FROM topic_checklists");
   expect(cache).toHaveLength(1);
