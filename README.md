@@ -349,6 +349,7 @@ Copy the `.env.example` files (see Local Setup). Never commit real `.env` files.
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_CONCEPTS` | — | Override concept-extraction-agent model (default `gemini-2.5-flash`) |
+| `SAPLING_MODEL_TOPIC_CHECKLIST` | — | Override Topic Checklist generation model (default `gemini-2.5-flash`) |
 | `SAPLING_MODEL_SYLLABUS` | — | Override syllabus-extraction-agent model (default `gemini-2.5-flash`) |
 | `SAPLING_MODEL_QUIZ` | — | Override quiz-generation-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_CHAT_TUTOR` | — | Override chat-tutor-agent model (default `gemini-2.5-pro`) |
