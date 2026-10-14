@@ -130,7 +130,16 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
           setPendingSuggestions((prev) => prev.filter((p) => p.id !== s.id));
           return;
         }
-        editor.chain().insertContentAt({ from: s.anchor_from, to: s.anchor_to }, s.proposed_text).run();
+        // insertContentAt inherits the stored marks active at the insertion
+        // point — since the replaced range carries suggestionMark, the
+        // inserted text would otherwise keep the "pending" highlight
+        // forever. Select exactly what was inserted and strip the mark.
+        editor
+          .chain()
+          .insertContentAt({ from: s.anchor_from, to: s.anchor_to }, s.proposed_text)
+          .setTextSelection({ from: s.anchor_from, to: s.anchor_from + s.proposed_text.length })
+          .unsetSuggestionMark()
+          .run();
       } else {
         // Known v1 gap: unlike the anchored path above, a whole-doc
         // suggestion has no captured "original text" to diff against (a
