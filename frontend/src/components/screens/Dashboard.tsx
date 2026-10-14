@@ -635,7 +635,8 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - now();
+          // /upcoming filters due_date >= today, so it is never null here.
+          const diffMs = new Date(a.due_date as string).getTime() - now();
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";
@@ -828,7 +829,8 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
         )}
         {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - now();
+          // /upcoming filters due_date >= today, so it is never null here.
+          const diffMs = new Date(a.due_date as string).getTime() - now();
           const hours = diffMs / (1000 * 60 * 60);
           const days = Math.ceil(diffMs / 86400000);
           let chipClass = "chip--info";

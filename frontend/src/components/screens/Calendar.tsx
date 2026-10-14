@@ -62,7 +62,8 @@ function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function dueLabel(date: string) {
+function dueLabel(date: string | null) {
+  if (!date) return { label: "no date", cls: "chip--info" };
   const nowMs = now();
   const due = new Date(date).getTime();
   const diffMs = due - nowMs;
@@ -163,6 +164,8 @@ export function Calendar() {
   const byDate = React.useMemo(() => {
     const map = new Map<string, Assignment[]>();
     for (const a of assignments) {
+      // Gradebook/Gradescope items may have no due date; they only show in the list view.
+      if (!a.due_date) continue;
       const k = a.due_date.slice(0, 10);
       const arr = map.get(k) || [];
       arr.push(a);
@@ -216,7 +219,7 @@ export function Calendar() {
     }
     const rows = [
       ["Title", "Course", "Type", "Due Date", "Notes"],
-      ...ids.map(a => [a.title, a.course_code || a.course_name || "", a.assignment_type || "", a.due_date, a.notes || ""]),
+      ...ids.map(a => [a.title, a.course_code || a.course_name || "", a.assignment_type || "", a.due_date || "", a.notes || ""]),
     ];
     const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -894,7 +897,7 @@ function AssignmentTable({
                         style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12 }}
                       />
                     ) : (
-                      a.due_date
+                      a.due_date || "No date"
                     )}
                   </td>
                   <td style={{ padding: 10, display: "flex", gap: 4 }}>

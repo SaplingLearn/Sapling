@@ -241,3 +241,35 @@ describe("Calendar — load failure (#185)", () => {
     expect(screen.getByText("Problem Set 4")).toBeInTheDocument();
   });
 });
+
+describe("Calendar — undated assignments", () => {
+  // Gradebook and Gradescope items can carry due_date = null (0012 dropped
+  // NOT NULL). The month grid used to call `due_date.slice` on every row and
+  // crashed the whole page into the error boundary on load.
+  const undated = {
+    assignments: [
+      {
+        id: "a-nodate",
+        title: "Participation",
+        course_id: "c-1",
+        due_date: null,
+        assignment_type: "other",
+        notes: "",
+      },
+    ],
+  } as never;
+
+  it("renders the month grid instead of crashing", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce(undated);
+    render(<Calendar />);
+    await waitFor(() => expect(screen.getByText("Mon")).toBeInTheDocument());
+  });
+
+  it("lists the undated item in the table with a 'No date' label", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce(undated);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Participation");
+    expect(screen.getByText("No date")).toBeInTheDocument();
+  });
+});
