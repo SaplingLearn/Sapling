@@ -703,8 +703,11 @@ function AssignmentTable({
     const copy = [...assignments];
     copy.sort((a, b) => {
       let cmp = 0;
-      if (sortKey === "due_date") cmp = (a.due_date || "").localeCompare(b.due_date || "");
-      else if (sortKey === "title") cmp = (a.title || "").localeCompare(b.title || "");
+      if (sortKey === "due_date") {
+        // Undated rows sort last in both directions, so skip the asc/desc flip.
+        if (!a.due_date || !b.due_date) return Number(!a.due_date) - Number(!b.due_date);
+        cmp = a.due_date.localeCompare(b.due_date);
+      } else if (sortKey === "title") cmp = (a.title || "").localeCompare(b.title || "");
       else if (sortKey === "course") cmp = (a.course_code || a.course_name || "").localeCompare(b.course_code || b.course_name || "");
       else if (sortKey === "type") cmp = (a.assignment_type || "").localeCompare(b.assignment_type || "");
       return sortDir === "asc" ? cmp : -cmp;
@@ -772,7 +775,8 @@ function AssignmentTable({
       await updateAssignment(editing, userId, {
         title: draft.title,
         course_id: draft.course_id ?? "",
-        due_date: (draft.due_date || "").slice(0, 10),
+        // An empty date input means "no date": send null, never "" (invalid for a DATE column).
+        due_date: draft.due_date ? draft.due_date.slice(0, 10) : null,
         assignment_type: draft.assignment_type || undefined,
         notes: draft.notes || undefined,
       });

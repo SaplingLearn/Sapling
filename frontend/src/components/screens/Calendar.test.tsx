@@ -107,7 +107,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Calendar } from "./Calendar";
-import { getAllAssignments } from "@/lib/api";
+import { getAllAssignments, updateAssignment } from "@/lib/api";
 
 afterEach(() => {
   cleanup();
@@ -271,5 +271,39 @@ describe("Calendar — undated assignments", () => {
     clickView("Table");
     await screen.findByText("Participation");
     expect(screen.getByText("No date")).toBeInTheDocument();
+  });
+
+  it("sorts undated rows last in both directions", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({
+      assignments: [
+        { id: "a-late", title: "Late essay", due_date: "2026-04-01" },
+        { id: "a-nodate", title: "Participation", due_date: null },
+        { id: "a-early", title: "Early quiz", due_date: "2026-03-20" },
+      ],
+    } as never);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Participation");
+    const titles = () =>
+      screen.getAllByRole("row").slice(1).map((r) => r.querySelector("strong")?.textContent);
+
+    expect(titles()).toEqual(["Early quiz", "Late essay", "Participation"]);
+    fireEvent.click(screen.getByRole("button", { name: "Toggle sort direction" }));
+    expect(titles()).toEqual(["Late essay", "Early quiz", "Participation"]);
+  });
+
+  it("saving an edit to an undated row sends due_date null, never an empty string", async () => {
+    // Initial load, then the reload after a successful save.
+    vi.mocked(getAllAssignments).mockResolvedValueOnce(undated).mockResolvedValueOnce(undated);
+    vi.mocked(updateAssignment).mockResolvedValueOnce({ updated: true } as never);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Participation");
+
+    fireEvent.click(screen.getByTitle("Edit"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateAssignment).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(updateAssignment).mock.calls[0][2]).toMatchObject({ due_date: null });
   });
 });

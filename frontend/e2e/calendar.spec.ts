@@ -11,8 +11,8 @@
  * The undated row is created the way real users create one — the gradebook
  * "add assignment" modal with only a title — and DB truth confirms it really
  * is NULL before the calendar is opened. Then the calendar must render its
- * month grid (no error boundary) and list the item in the Table view as
- * "No date".
+ * month grid (no error boundary), list the item in the Table view as
+ * "No date", and save an edit to it without inventing a date.
  *
  * Test-mode clock note: the e2e frontend runs with the frozen clock
  * 2026-03-11; the Spring 2026 chip is selected explicitly anyway.
@@ -59,4 +59,23 @@ test("an assignment with no due date does not crash the calendar", async ({ page
   const row = page.getByRole("row").filter({ hasText: TITLE });
   await expect(row).toBeVisible();
   await expect(row.getByText("No date", { exact: true })).toBeVisible();
+
+  // Editing the undated row must save: the empty date input used to go out
+  // as due_date "", which the DATE column rejects, so every save failed.
+  await row.getByTitle("Edit").click();
+  await page
+    .getByRole("cell", { name: TITLE, exact: true })
+    .getByRole("textbox")
+    .fill(`${TITLE} (edited)`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Assignment updated.")).toBeVisible();
+  await expect
+    .poll(async () => {
+      const rows = await queryRaw(
+        `SELECT due_date FROM assignments WHERE title = $1`,
+        [`${TITLE} (edited)`],
+      );
+      return rows.map((r) => r.due_date);
+    })
+    .toEqual([null]);
 });

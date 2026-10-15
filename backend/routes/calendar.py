@@ -372,6 +372,10 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
 
     ALLOWED = {"title", "due_date", "assignment_type"}  # course_id no longer settable here
     patch = {k: v for k, v in body.items() if k in ALLOWED}
+    # A cleared date input arrives as "": that means "no date" (the column is
+    # nullable since 0012), and "" is not a valid DATE literal for PostgREST.
+    if patch.get("due_date") == "":
+        patch["due_date"] = None
     if not patch:
         return {"updated": False}
     table("assignments").update(
