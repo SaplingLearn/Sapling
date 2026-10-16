@@ -40,13 +40,20 @@ toggle is an open product question.
    (0 = no idea, 1 = certain; for yes/no, `|2·P(yes) − 1|`). Callers never
    know which backend answered.
 
-2. **Backends chosen by env, default `off`.** `SAPLING_DECISIONS_BACKEND` is
-   `off | flash_lite | jev`, and the **code default is `off`**, so merging
-   this changes no production behaviour and no cost until an operator opts
-   in. For the tutor router this env var is now an OVERRIDE: unset (and
-   outside function mode), the per-student `decision_router` feature flag
-   (`off` | `jev` | `jev_shadow`, ADR 0029) picks the router's backends, so
-   Jev can be rolled out from /admin without a deploy.
+2. **Backends chosen by the caller, default `off`.** `decide()` takes
+   `backend` (`off | flash_lite | jev`) and `shadow`, both defaulting to
+   `off`. The tutor router picks them per student from the
+   `decision_router` feature flag (ADR 0029: `off` | `jev` | `jev_shadow`,
+   via `decisions.router_backends`, resolved in a worker thread so the flag
+   store's blocking read never runs on the event loop). The flag defaults to
+   `off`, so merging this changes no production behaviour and no cost until
+   an admin turns it on; `SAPLING_FLAG_DECISION_ROUTER=off` is the env kill
+   switch, as for every flag. (An earlier draft selected backends with a
+   bespoke `SAPLING_DECISIONS_BACKEND`/`_SHADOW` env pair; the codebase rule
+   is that features are gated by flags, never new env vars, so it went.)
+   Under `SAPLING_MODEL_MODE=function` any on backend runs as the scripted
+   `function` backend with no shadow — the E2E lane switches the flag on via
+   its env override and never dials Jev or Gemini.
    - `flash_lite`: a Pydantic AI agent (`agents/decision.py`) on a new
      `decision` slot in `agents/_providers.py` (default
      `gemini-2.5-flash-lite`, overridable via `SAPLING_MODEL_DECISION`), so it
@@ -63,13 +70,13 @@ toggle is an open product question.
      so switching later costs no reconfiguration. The default model is the
      pinned `jev-1.13.0`, not the `jev-latest` alias, as the vendor advises
      once thresholds are tuned.
-   - `function`: automatic under `SAPLING_MODEL_MODE=function` unless the
-     backend is explicitly `off`. It is the same agent on the FunctionModel,
-     answered by the `decision` handler in `agents/function_handlers_e2e.py`
-     (and `function_handlers_showcase.py`). ADR 0019 unchanged: Jev is never
-     dialled from the deterministic lane. `function` may also be set
-     explicitly (backend or shadow); outside function mode it resolves to
-     `off` with a one-time warning, never to a live model.
+   - `function`: what any on backend runs as under
+     `SAPLING_MODEL_MODE=function` (an off flag stays off). It is the same
+     agent on the FunctionModel, answered by the `decision` handler in
+     `agents/function_handlers_e2e.py` (and `function_handlers_showcase.py`).
+     ADR 0019 unchanged: Jev is never dialled from the deterministic lane.
+     Outside function mode `function` resolves to `off` with a one-time
+     warning, never to a live model.
 
 3. **Degradation, never failure.** Jev degrades to `flash_lite` on a missing
    key (without a network call), a timeout (`SAPLING_DECISIONS_JEV_TIMEOUT_MS`,
@@ -100,12 +107,12 @@ toggle is an open product question.
    `llm_usage` under the caller's `request_id` (explicit, since the router
    runs outside the request contextvar), with `provider="typesafe"` for Jev,
    priced in `services/llm_pricing.py` (input only). `llm_usage.cost_usd` is
-   NUMERIC(18,10) (migration `20260927220057`, consolidated with the PostHog opt-out column and shipped in #677): a Jev token is $0.000000042,
+   NUMERIC(18,10) (migration `20261016063803_llm_cost_precision.sql`, shipped with this seam): a Jev token is $0.000000042,
    and the old 6dp column rounded decision-sized costs (a sub-12-token call
    to $0). Any served `jev-*` id without an exact price entry is priced at
    the family rate, so a vendor version bump never NULL-costs a call.
 
-5. **Shadow mode for the #642 acceptance.** `SAPLING_DECISIONS_SHADOW` runs a
+5. **Shadow mode for the #642 acceptance.** A shadow backend (the flag's `jev_shadow` variant) runs a
    second backend concurrently and records its answers plus per-key agreement
    on the same event. The shadow never falls back and never feeds the answer —
    except that when a Jev primary degrades to flash_lite and the shadow IS

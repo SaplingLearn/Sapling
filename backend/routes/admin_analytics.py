@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from db.connection import table
 from services.auth_guard import require_admin
+from services.events_service import SYSTEM_CATEGORY
 from services.llm_pricing import COST_SCALE
 
 logger = logging.getLogger("sapling.admin_analytics")
@@ -183,6 +184,12 @@ def _resolve_range(from_: str | None, to: str | None) -> tuple[str, str]:
     return from_iso, to_iso
 
 
+#: Usage rollups count what users DID. Server-emitted rows about their
+#: requests (category "system", e.g. decision.made per routed chat turn) are
+#: excluded, or every routed turn would count twice toward a user's activity.
+_NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
+
+
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
     extra_filters: dict | None = None,
@@ -290,7 +297,10 @@ def usage_summary(
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
-    rows, truncated = _scan_range("events", "event_type,user_id,created_at", from_iso, to_iso)
+    rows, truncated = _scan_range(
+        "events", "event_type,user_id,created_at", from_iso, to_iso,
+        extra_filters=_NOT_SYSTEM,
+    )
 
     by_type: dict[str, int] = defaultdict(int)
     users: set[str] = set()
@@ -328,6 +338,7 @@ def usage_by_user(
 
     event_rows, events_truncated = _scan_range(
         "events", "user_id,category,created_at", from_iso, to_iso,
+        extra_filters=_NOT_SYSTEM,
     )
     usage_rows, usage_truncated = _scan_range(
         "llm_usage", "user_id,cost_usd,total_tokens,created_at", from_iso, to_iso,

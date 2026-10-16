@@ -11,12 +11,13 @@ and :func:`decide` returns one :class:`Answer` per key, each with a
 confidence in [0, 1] (0 = no idea, 1 = certain — TypeSafe's convention, which
 every backend is normalised to).
 
-Backends (``SAPLING_DECISIONS_BACKEND``):
+Backends — the caller names them (``decide(..., backend=, shadow=)``); the
+one caller today, the tutor router, gets them from the ``decision_router``
+feature flag through :func:`router_backends` (ADR 0029):
 
     off         the default. :func:`decide` does no work and answers every key
-                with its safe default; callers can check :func:`enabled` and
-                skip building state at all. Nothing about production cost or
-                behaviour changes until an operator opts in.
+                with its safe default. Nothing about production cost or
+                behaviour changes until an admin turns the flag on.
     flash_lite  the `decision` Pydantic AI agent (agents/decision.py) on the
                 `decision` model slot — gemini-2.5-flash-lite unless
                 SAPLING_MODEL_DECISION overrides it.
@@ -26,17 +27,18 @@ Backends (``SAPLING_DECISIONS_BACKEND``):
                 safe defaults. A state that cannot fit Jev's 32k budget even
                 after truncation goes to flash_lite only if it fits that
                 agent's own token budget; otherwise straight to defaults.
-    function    automatic under SAPLING_MODEL_MODE=function (unless the backend
-                is explicitly `off`): the same agent on the FunctionModel,
-                answered by the handler registered for task "decision"
-                (agents/function_handlers_e2e.py). Jev is never dialled in
-                function mode. May also be set explicitly; outside function
-                mode it means `off` (warned once) — never a live model.
+    function    under SAPLING_MODEL_MODE=function every non-off backend runs
+                as this: the same agent on the FunctionModel, answered by the
+                handler registered for task "decision"
+                (agents/function_handlers_e2e.py). Jev and Gemini are never
+                dialled in function mode. Outside function mode `function`
+                means `off` (warned once) — never a live model.
 
-``SAPLING_DECISIONS_SHADOW`` (off|flash_lite|jev) runs a second backend
-alongside the primary and records both, with per-key agreement, on the one
-``decision.made`` event — the #642 shadow-mode acceptance. The shadow never
-falls back (that would just re-run the primary) and never feeds the answer.
+A ``shadow`` backend (the flag's ``jev_shadow`` variant: flash_lite next to a
+Jev primary) runs alongside the primary and records both, with per-key
+agreement, on the one ``decision.made`` event — the #642 shadow-mode
+acceptance. The shadow never falls back (that would just re-run the primary)
+and never feeds the answer.
 
 Contract, in the order it matters:
 
@@ -72,18 +74,15 @@ logger = logging.getLogger("sapling.decisions")
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
-BACKEND_ENV = "SAPLING_DECISIONS_BACKEND"
-SHADOW_ENV = "SAPLING_DECISIONS_SHADOW"
 FLOOR_ENV = "SAPLING_DECISIONS_CONFIDENCE_FLOOR"
 TIMEOUT_ENV = "SAPLING_DECISIONS_TIMEOUT_MS"
 JEV_TIMEOUT_ENV = "SAPLING_DECISIONS_JEV_TIMEOUT_MS"
 
 OFF, FLASH_LITE, JEV, FUNCTION = "off", "flash_lite", "jev", "function"
-#: `function` is accepted so the name the docs use works, but it only EXISTS
-#: under SAPLING_MODEL_MODE=function (the scripted FunctionModel). In any other
-#: mode it resolves to `off` with a one-time warning — never to a live model:
-#: an operator who wrote "function" did not ask for Gemini to be billed.
-_CONFIGURABLE = (OFF, FLASH_LITE, JEV, FUNCTION)
+#: `function` only EXISTS under SAPLING_MODEL_MODE=function (the scripted
+#: FunctionModel). In any other mode it resolves to `off` with a one-time
+#: warning — never to a live model.
+_BACKENDS = (OFF, FLASH_LITE, JEV, FUNCTION)
 
 #: TypeSafe's own "solid default" floor (docs.typesafe.ai/confidence).
 DEFAULT_CONFIDENCE_FLOOR = 0.5
@@ -105,23 +104,6 @@ def _warn_once(key: str, msg: str, *args: Any) -> None:
         logger.warning(msg, *args)
 
 
-#: Spellings of an explicit "off" — the operator kill switch.
-_OFF_WORDS = ("off", "none", "false", "0", "disabled")
-
-
-def _read_backend(env: str, default: str) -> str:
-    raw = (os.getenv(env) or default).strip().lower()
-    if raw in ("", *_OFF_WORDS):
-        return OFF
-    if raw not in _CONFIGURABLE:
-        _warn_once(
-            f"{env}={raw}",
-            "%s=%r is not one of %s; treating it as 'off'", env, raw, _CONFIGURABLE,
-        )
-        return OFF
-    return raw
-
-
 def _read_float(env: str, default: float) -> float:
     try:
         value = float(os.getenv(env) or default)
@@ -136,58 +118,28 @@ def _model_mode() -> str:
     return model_mode()
 
 
-def configured_backend() -> str:
-    """The backend :func:`decide` will try first, after the function-mode rule.
+def _effective(backend: str | None, *, role: str) -> str:
+    """The backend that will actually run for a requested name.
 
-    Function mode is automatic: under SAPLING_MODEL_MODE=function every
-    non-off backend becomes `function`, and an UNSET backend does too, so the
-    E2E lane exercises the seam without its own knob. Only an explicit `off`
-    (the operator's kill switch, in every mode) disables it there: an unknown
-    value — a typo — warns and still runs `function`, rather than silently
-    switching the router off in the one lane that checks it.
-    """
-    if _model_mode() == "function":
-        raw = (os.getenv(BACKEND_ENV) or "").strip().lower()
-        if raw in _OFF_WORDS:
-            return OFF
-        if raw and raw not in _CONFIGURABLE:
-            _warn_once(f"{BACKEND_ENV}={raw}",
-                       "%s=%r is not one of %s; function mode uses 'function'",
-                       BACKEND_ENV, raw, _CONFIGURABLE)
-        return FUNCTION
-    return _outside_function_mode(BACKEND_ENV, _read_backend(BACKEND_ENV, OFF))
-
-
-def _outside_function_mode(env: str, backend: str) -> str:
-    """`function` names the scripted backend, which only exists in function
-    mode; anywhere else it is `off` (warned once), never a live model."""
-    if backend != FUNCTION:
-        return backend
-    _warn_once(
-        f"{env}=function",
-        "%s=function only applies under SAPLING_MODEL_MODE=function; treating it as 'off'",
-        env,
-    )
-    return OFF
-
-
-def shadow_backend() -> str:
-    """The shadow backend, or `off`. Never runs in function mode (the lane is
-    deterministic; a second scripted answer compares nothing), and never when
-    it would duplicate the primary."""
-    if _model_mode() == "function":
+    Function mode never dials a live model: every non-off backend becomes
+    `function` (and a shadow is dropped — a second scripted answer compares
+    nothing). Outside function mode `function` is `off`, and an unknown name
+    is `off` too, each warned once."""
+    name = (backend or OFF).strip().lower()
+    if name not in _BACKENDS:
+        _warn_once(f"{role}={name}", "decision %s %r is not one of %s; treating it as 'off'",
+                   role, name, _BACKENDS)
         return OFF
-    shadow = _outside_function_mode(SHADOW_ENV, _read_backend(SHADOW_ENV, OFF))
-    primary = configured_backend()
-    if primary == OFF or shadow == primary:
+    if name == OFF:
         return OFF
-    return shadow
-
-
-def enabled() -> bool:
-    """True when :func:`decide` would call a backend. Callers use it to skip
-    building state entirely on the default (off) path."""
-    return configured_backend() != OFF
+    if _model_mode() == "function":
+        return FUNCTION if role == "backend" else OFF
+    if name == FUNCTION:
+        _warn_once(f"{role}=function",
+                   "decision %s 'function' only applies under SAPLING_MODEL_MODE=function; "
+                   "treating it as 'off'", role)
+        return OFF
+    return name
 
 
 #: decision_router flag variant -> (primary, shadow) backends (#620/#672).
@@ -201,14 +153,17 @@ _FLAG_BACKENDS = {
 def router_backends(user_id: str | None) -> tuple[str, str]:
     """The tutor router's (primary, shadow) backends for this student.
 
-    Function mode and an explicitly-set SAPLING_DECISIONS_BACKEND keep the
-    env-driven behaviour (the E2E lane and the operator emergency override);
-    otherwise the `decision_router` feature flag decides (ADR 0029).
+    The `decision_router` feature flag decides (ADR 0029; its generic
+    ``SAPLING_FLAG_DECISION_ROUTER`` env override is the kill switch). Under
+    SAPLING_MODEL_MODE=function an on variant runs the scripted `function`
+    backend with no shadow, so the E2E lane exercises the seam without ever
+    dialling Jev or Gemini. Reads the flag store on a cache miss: call it off
+    the event loop.
     """
-    if _model_mode() == "function" or (os.getenv(BACKEND_ENV) or "").strip():
-        return configured_backend(), shadow_backend()
     from services.feature_flags import flag_variant
-    return _FLAG_BACKENDS.get(flag_variant("decision_router", user_id), (OFF, OFF))
+
+    primary, shadow = _FLAG_BACKENDS.get(flag_variant("decision_router", user_id), (OFF, OFF))
+    return _effective(primary, role="backend"), _effective(shadow, role="shadow")
 
 
 def confidence_floor() -> float:
@@ -445,6 +400,25 @@ def _all_defaults(questions: Sequence[Question], reason: str) -> dict[str, Answe
 # ── Backend: the decision agent (flash_lite / function) ────────────────────
 
 
+class _Prompt:
+    """The decision agent's prompt for one :func:`decide` call, serialised at
+    most once however many times the budget check and the agent ask for it
+    (the shadow pre-check, the Jev fallback check and the run itself)."""
+
+    __slots__ = ("_state", "_questions", "_text")
+
+    def __init__(self, state: Any, questions: Sequence[Question]) -> None:
+        self._state = state
+        self._questions = questions
+        self._text: str | None = None
+
+    @property
+    def text(self) -> str:
+        if self._text is None:
+            self._text = _agent_prompt(self._state, self._questions)
+        return self._text
+
+
 def _agent_prompt(state: Any, questions: Sequence[Question]) -> str:
     specs: list[dict] = []
     for q in questions:
@@ -469,7 +443,7 @@ def _agent_prompt(state: Any, questions: Sequence[Question]) -> str:
 
 
 async def _run_agent(
-    state: Any,
+    prompt: _Prompt,
     questions: Sequence[Question],
     *,
     feature: str,
@@ -482,7 +456,7 @@ async def _run_agent(
 
     try:
         result = await asyncio.wait_for(
-            decision_agent.run(_agent_prompt(state, questions), usage_limits=WORKER_LIMITS),
+            decision_agent.run(prompt.text, usage_limits=WORKER_LIMITS),
             timeout=agent_timeout_s(),
         )
     except asyncio.TimeoutError as exc:
@@ -526,7 +500,7 @@ async def _run_agent(
 _AGENT_OUTPUT_RESERVE = 1_000
 
 
-def _agent_budget_fits(state: Any, questions: Sequence[Question]) -> bool:
+def _agent_budget_fits(prompt: _Prompt) -> bool:
     """Whether the decision agent can answer ``state`` inside WORKER_LIMITS.
 
     The threshold: the prompt, estimated with Jev's pessimistic ~3
@@ -543,7 +517,7 @@ def _agent_budget_fits(state: Any, questions: Sequence[Question]) -> bool:
     if limit is None:
         return True
     requests = WORKER_LIMITS.request_limit or 1
-    prompt_tokens = typesafe_client.tokens_for_chars(len(_agent_prompt(state, questions)))
+    prompt_tokens = typesafe_client.tokens_for_chars(len(prompt.text))
     return (prompt_tokens + _AGENT_OUTPUT_RESERVE) * requests <= limit
 
 
@@ -671,7 +645,10 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
         s = _clamp(ans.get("score"), 0.0, len(keys) - 1)
         if s is None:
             return None
-        index = int(round(s))
+        # Half-up, consistently: Python's round() is banker's rounding (0.5
+        # -> 0 but 1.5 -> 2), which would bias exact midpoints toward even
+        # levels. s is clamped to [0, n-1], so floor(s + 0.5) stays in range.
+        index = math.floor(s + 0.5)
     named = {keys[i]: v for i, v in sorted(by_index.items())} or None
     return (keys[index], conf, None, named)
 
@@ -688,8 +665,8 @@ async def _run_jev(
     if _model_mode() != "real":
         # The #439 rule, applied to our other model vendor: nothing below the
         # model seam dials a real model outside real mode. (Function mode never
-        # gets here — configured_backend() maps it to `function` — so this is
-        # the belt-and-braces for any future non-real mode.)
+        # gets here — _effective() maps it to `function` — so this is the
+        # belt-and-braces for any future non-real mode.)
         raise _BackendFailed("jev_model_mode")
     wire = {q.key: _jev_question(q) for q in questions}
     longest = max(
@@ -741,6 +718,7 @@ async def _answer_with(
     user_id: str | None,
     request_id: str | None,
     allow_fallback: bool,
+    prompt: _Prompt | None = None,
 ) -> DecisionResult:
     """Run one backend (with Jev → flash_lite fallback when allowed) and
     resolve its answers. Never raises."""
@@ -748,6 +726,8 @@ async def _answer_with(
     floor = confidence_floor()
     fallback_reason: str | None = None
     served = backend
+    if prompt is None:
+        prompt = _Prompt(state, questions)
 
     def done(answers: dict[str, Answer], model: str | None) -> DecisionResult:
         return DecisionResult(
@@ -783,7 +763,7 @@ async def _answer_with(
                 return done(_resolve(questions, jev_raws, floor), model)
             if not allow_fallback or (
                 fallback_reason == "jev_state_over_budget"
-                and not _agent_budget_fits(state, questions)
+                and not _agent_budget_fits(prompt)
             ):
                 # No fallback wanted — or none that could succeed: a state
                 # too big for Jev is, at today's limits, too big for the
@@ -793,7 +773,7 @@ async def _answer_with(
                 return done(_all_defaults(questions, "no_backend"), None)
             served = FLASH_LITE
         # flash_lite and function share the agent path; the mode picks the model.
-        raws, model = await _run_agent(state, questions, feature=feature, user_id=user_id,
+        raws, model = await _run_agent(prompt, questions, feature=feature, user_id=user_id,
                                        request_id=request_id)
         return done(_resolve(questions, raws, floor), model)
     except _BackendFailed as exc:
@@ -845,7 +825,7 @@ async def _primary_with_shadow(
     the primary's answer, and the shadow is recorded as
     ``shadow_same_as_served`` with no agreement.
     """
-    if shadow_name == FLASH_LITE and not _agent_budget_fits(state, questions):
+    if shadow_name == FLASH_LITE and not _agent_budget_fits(common["prompt"]):
         # A doomed shadow (the #672 over-budget case: a state too big for Jev
         # is too big for the agent too). The primary runs alone and with its
         # own fallback rules, which send it to defaults for the same reason.
@@ -943,7 +923,7 @@ def emit(
                        "decision event extra %r collides with a core field; dropped", key)
         payload = {**(extra or {}), **core}
         events_service.log_event(
-            "decision.made", category="usage", user_id=user_id,
+            "decision.made", category=events_service.SYSTEM_CATEGORY, user_id=user_id,
             request_id=request_id, payload=payload,
         )
         _span(payload)
@@ -984,8 +964,8 @@ async def decide(
     request_id: str | None = None,
     truncatable: Sequence[str] = (),
     event_extra: Mapping[str, Any] | None = None,
-    backend: str | None = None,
-    shadow: str | None = None,
+    backend: str = OFF,
+    shadow: str = OFF,
 ) -> DecisionResult:
     """Answer ``questions`` about ``state``. Never raises; see the module doc.
 
@@ -993,11 +973,11 @@ async def decide(
     three accepted shapes). ``truncatable`` names top-level list-valued keys
     that may lose their OLDEST items to fit Jev's 32k budget.
 
-    ``backend``/``shadow`` override :func:`configured_backend` /
-    :func:`shadow_backend` for callers (like the tutor router, #620/#672)
-    that resolve their own backends per user rather than once per process.
-    When the two resolve equal, the shadow is dropped (comparing a backend
-    with itself is not a shadow run).
+    ``backend``/``shadow`` name the backends (the tutor router resolves them
+    per student with :func:`router_backends`); both default to off. Function
+    mode runs any non-off backend as `function` with no shadow, and a shadow
+    equal to the primary is dropped (comparing a backend with itself is not a
+    shadow run).
 
     With a shadow configured, both backends run concurrently and this awaits
     both — latency is the slower of the two. A primary that degrades onto the
@@ -1009,15 +989,15 @@ async def decide(
     Emits exactly one ``decision.made`` event (``event_extra`` is merged into
     its payload) unless the backend is off.
     """
-    primary_backend = backend if backend is not None else configured_backend()
+    primary_backend = _effective(backend, role="backend")
     if primary_backend == OFF:
         return DecisionResult(
             answers=_all_defaults(questions, "no_backend"),
             backend="none", requested=OFF, latency_ms=0,
         )
     common = dict(truncatable=truncatable, feature=feature, user_id=user_id,
-                  request_id=request_id)
-    shadow_name = shadow if shadow is not None else shadow_backend()
+                  request_id=request_id, prompt=_Prompt(state, questions))
+    shadow_name = _effective(shadow, role="shadow")
     if shadow_name == primary_backend:
         shadow_name = OFF
     try:
@@ -1043,7 +1023,7 @@ async def decide(
 
 
 def defaults_result(
-    questions: Sequence[Question], *, reason: str, requested: str | None = None,
+    questions: Sequence[Question], *, reason: str, requested: str = OFF,
     latency_ms: int = 0,
 ) -> DecisionResult:
     """An all-defaults result, for callers whose own guard (e.g. a timeout
@@ -1051,7 +1031,7 @@ def defaults_result(
     return DecisionResult(
         answers=_all_defaults(questions, "no_backend"),
         backend="none",
-        requested=requested or configured_backend(),
+        requested=requested,
         latency_ms=latency_ms,
         fallback_reason=reason,
     )

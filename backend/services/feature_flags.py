@@ -56,8 +56,9 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
       for slug, label in NAV_FEATURES),
     # #672 (ADR 0027): which decision-seam backends the observe-only tutor
     # router runs for a student. Server-only: the router acts on nothing, so
-    # the client has no use for it. SAPLING_DECISIONS_BACKEND (set) and
-    # function mode override it — see `decisions.router_backends`.
+    # the client has no use for it. SAPLING_FLAG_DECISION_ROUTER is its env
+    # kill switch like any flag's; under SAPLING_MODEL_MODE=function an on
+    # variant runs the scripted backend (`decisions.router_backends`).
     FlagDef("decision_router", ("off", "jev", "jev_shadow"),
             "Tutor turn router on the Jev decision seam (ADR 0027). jev_shadow "
             "also runs flash-lite to measure agreement.", False),
@@ -193,37 +194,6 @@ def rollout_bucket(key: str, user_id: str) -> float:
     return int(digest[:8], 16) % 10000 / 100
 
 
-#: (primary, shadow) backends -> the decision_router variant that runs them.
-_ROUTER_VARIANTS = {
-    ("off", "off"): "off",
-    ("jev", "off"): "jev",
-    ("jev", "flash_lite"): "jev_shadow",
-}
-
-
-def _legacy_router_override() -> Resolution | None:
-    """Function mode or an explicit SAPLING_DECISIONS_BACKEND makes
-    `decisions.router_backends` ignore the `decision_router` flag (#672), so
-    report the variant the router will ACTUALLY run. A backend pair no
-    variant names (flash_lite, function) reads as "off" with the pair in the
-    detail."""
-    from services import decisions  # decisions imports this module lazily too
-
-    if decisions._model_mode() == "function":
-        detail = "SAPLING_MODEL_MODE=function"
-    elif (os.getenv(decisions.BACKEND_ENV) or "").strip():
-        detail = f"{decisions.BACKEND_ENV} (legacy)"
-    else:
-        return None
-    backends = (decisions.configured_backend(), decisions.shadow_backend())
-    variant = _ROUTER_VARIANTS.get(backends)
-    if variant is None:
-        return Resolution("off", "env_override",
-                          f"{detail}: router runs {backends[0]!r}"
-                          + (f" + shadow {backends[1]!r}" if backends[1] != "off" else ""))
-    return Resolution(variant, "env_override", detail)
-
-
 def explain(key: str, user_id: str | None, *, fresh: bool = False,
             _snapshot: Snapshot | Exception | None = None) -> Resolution:
     """`_snapshot`: a snapshot (or the error reading it) already taken by a
@@ -234,11 +204,6 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False,
         _warn_once(f"unregistered:{key}", "feature flag %r is not registered; off", key)
         return Resolution("off", "fail_closed", "unregistered flag")
     off = fd.variants[0]
-
-    if key == "decision_router":
-        legacy = _legacy_router_override()
-        if legacy is not None:
-            return legacy
 
     env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
     if env:

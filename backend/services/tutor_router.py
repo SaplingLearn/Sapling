@@ -18,18 +18,16 @@ before anything trusts it. Which way the model-selection question in #640 goes
 NOT decided here; the served model tier rides on the event so either can be
 costed.
 
-**No waiting on the decision.** :func:`observe_tutor_turn` schedules the
-decision as a fire-and-forget task on the running loop and returns without
-awaiting it; the task has its own timeout backstop and can never raise into
-the turn. The only synchronous work is resolving which backends run (the
-``decision_router`` flag), which is a cache hit except on a snapshot or
-roles-cache miss. With the seam off (the default), it returns before building
-any state.
-
-Which backends run is per-student: :func:`decisions.router_backends` resolves
-the ``decision_router`` feature flag (off | jev | jev_shadow) unless an
-operator has set ``SAPLING_DECISIONS_BACKEND`` or the process is in function
-mode, in which case that env-driven behaviour wins instead.
+**No waiting on the decision, and no blocking I/O on the loop.**
+:func:`observe_tutor_turn` builds a small clipped state and schedules a
+fire-and-forget task, returning without awaiting it. Everything else happens
+in that task: resolving which backends run — the per-student
+``decision_router`` feature flag (off | jev | jev_shadow,
+:func:`decisions.router_backends`), whose store read is a blocking PostgREST
+call on a cache miss — runs in a worker thread, bounded by
+``FLAG_RESOLVE_TIMEOUT_S``; then the decision, under its own timeout
+backstop. The task can never raise into the turn. With the flag off (the
+default) it ends after the flag read and emits nothing.
 
 Only student-authored chat turns are routed (``/chat`` and ``/chat/stream``),
 and only once they are PERSISTED — exactly one decision per saved student
@@ -131,6 +129,10 @@ QUESTIONS: tuple[decisions.Question, ...] = (
 #: (asyncio keeps only weak references to tasks).
 _inflight: set[asyncio.Task] = set()
 
+#: Longest the router waits on the decision_router flag read (a thread-pool
+#: PostgREST call on a cache miss) before treating the flag as off.
+FLAG_RESOLVE_TIMEOUT_S = 5.0
+
 
 async def drain_inflight() -> None:
     """Wait for the scheduled decisions (app shutdown), so a turn persisted
@@ -142,7 +144,9 @@ async def drain_inflight() -> None:
     if not tasks:
         return
     try:
-        await asyncio.wait(tasks, timeout=decisions.worst_case_s() + 2.0)
+        await asyncio.wait(
+            tasks, timeout=FLAG_RESOLVE_TIMEOUT_S + decisions.worst_case_s() + 2.0,
+        )
     except Exception:
         logger.debug("tutor router drain failed", exc_info=True)
 
@@ -215,6 +219,31 @@ async def _route(state: dict, *, user_id: str | None, request_id: str | None,
         return result
 
 
+async def _resolve_backends(user_id: str | None) -> tuple[str, str]:
+    """`decisions.router_backends` off the event loop: its flag read is a
+    synchronous httpx call whenever the snapshot or roles cache misses (every
+    time, on the E2E stack, whose TTLs are 0). Off on timeout or error."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(decisions.router_backends, user_id),
+            timeout=FLAG_RESOLVE_TIMEOUT_S,
+        )
+    except Exception as exc:
+        logger.warning("tutor router flag read failed (%s); not routing this turn",
+                       type(exc).__name__)
+        logger.debug("tutor router flag read detail", exc_info=True)
+        return decisions.OFF, decisions.OFF
+
+
+async def _observe(state: dict, *, user_id: str | None, request_id: str | None,
+                   extra: dict) -> decisions.DecisionResult | None:
+    primary, shadow = await _resolve_backends(user_id)
+    if primary == decisions.OFF:
+        return None
+    return await _route(state, user_id=user_id, request_id=request_id, extra=extra,
+                        primary=primary, shadow=shadow)
+
+
 def observe_tutor_turn(
     *,
     user_id: str,
@@ -243,18 +272,13 @@ def observe_tutor_turn(
     e.g. any non-real model mode, is ``default``), and ``tutor_model`` the
     served model name.
 
-    Returns the scheduled task (tests await it) or None when the seam is off
-    or scheduling failed. Never raises, and never waits on the decision: the
-    caller's turn runs exactly as it would without this call. It is not
-    I/O-free, though — resolving the per-student ``decision_router`` flag
-    (:func:`decisions.router_backends`) can read the flag snapshot and the
-    student's roles from the DB on a cache miss, synchronously, before the
-    task is scheduled.
+    Returns the scheduled task (tests await it; its result is None when the
+    flag is off for this student) or None when scheduling failed. Never
+    raises, never blocks, and never waits on the decision: the caller's turn
+    runs exactly as it would without this call. No I/O here — the flag read
+    happens in the task, in a worker thread.
     """
     try:
-        primary, shadow = decisions.router_backends(user_id)
-        if primary == decisions.OFF:
-            return None
         state = build_state(message, history)
         extra = {
             "session_id": session_id,
@@ -265,8 +289,7 @@ def observe_tutor_turn(
             "history_messages": len(state["recent_conversation"]),
         }
         task = asyncio.get_running_loop().create_task(
-            _route(state, user_id=user_id, request_id=request_id, extra=extra,
-                   primary=primary, shadow=shadow),
+            _observe(state, user_id=user_id, request_id=request_id, extra=extra),
             name="tutor-router",
         )
         _inflight.add(task)

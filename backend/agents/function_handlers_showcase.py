@@ -284,8 +284,9 @@ register_function_handler("note_chat", _note_chat_handler)
 
 # ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────
 #
-# Function mode turns the decision seam on automatically, so the observe-only
-# tutor router runs on every chat turn of a screenshot session too. Nothing it
+# The showcase lane boots through scripts/e2e-up.sh, which switches the
+# `decision_router` flag on in function mode, so the observe-only tutor router
+# runs on every chat turn of a screenshot session too. Nothing it
 # answers is rendered; it is registered so those turns stay quiet (no handled
 # UnregisteredHandlerError warning per turn). The E2E module's answers, shared
 # through the side-effect-free agents/_decision_fixtures.py (importing the E2E

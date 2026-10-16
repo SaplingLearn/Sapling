@@ -73,6 +73,8 @@ class _FakeTable:
             return sval <= target
         if op == "like":
             return fnmatch.fnmatch(sval, target)
+        if op == "neq":
+            return value is not None and sval != target  # SQL: NULL <> x is not true
         raise AssertionError(f"unsupported op in test fake: {op}")
 
     def _filtered(self, filters):
@@ -129,6 +131,25 @@ def test_usage_summary_counts(seeded):
     assert by_type["quiz.completed"] == 2
     assert by_type["document.upload"] == 1
     assert "auth.login" not in by_type
+
+
+def test_usage_rollups_exclude_system_events(seeded):
+    """#672 review: decision.made is server-emitted (category "system"), one
+    per routed chat turn; counting it would double a student's activity."""
+    seeded["events"].append({
+        "event_type": "decision.made", "category": "system", "user_id": "u2",
+        "request_id": "r9", "payload": {}, "created_at": "2026-07-15T12:00:00+00:00",
+    })
+    seeded["events"].append({
+        "event_type": "decision.made", "category": "system", "user_id": "u-only-system",
+        "request_id": "r10", "payload": {}, "created_at": "2026-07-15T12:00:00+00:00",
+    })
+    body = client.get(f"{BASE}/usage/summary", params=RANGE).json()
+    assert body["total_events"] == 5 and body["distinct_active_users"] == 2
+    assert "decision.made" not in {row["event_type"] for row in body["by_event_type"]}
+    users = {u["user_id"]: u for u in client.get(f"{BASE}/usage/by-user", params=RANGE).json()["users"]}
+    assert "u-only-system" not in users
+    assert "system" not in users["u2"]["by_category"]
 
 
 # ── /usage/by-user ───────────────────────────────────────────────────────────

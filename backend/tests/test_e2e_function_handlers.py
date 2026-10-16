@@ -599,13 +599,14 @@ def _run_router_decision():
         return asyncio.run(decisions.decide(
             tutor_router.build_state("What is recursion?", []),
             tutor_router.QUESTIONS, feature=tutor_router.FEATURE,
+            # What the router runs in function mode with the flag on.
+            backend=decisions.JEV,
         ))
 
 
 def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
-    monkeypatch.delenv("SAPLING_DECISIONS_BACKEND", raising=False)
 
     result = _run_router_decision()
 
@@ -625,7 +626,6 @@ def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):
     one that gets missed)."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_showcase")
-    monkeypatch.delenv("SAPLING_DECISIONS_BACKEND", raising=False)
     sys.modules.pop("agents.function_handlers_showcase", None)
     try:
         result = _run_router_decision()

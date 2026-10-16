@@ -350,9 +350,10 @@ register_function_handler("note_chat", _note_chat_handler)
 # ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────
 #
 # services/decisions.py runs the `decision` agent on the FunctionModel whenever
-# SAPLING_MODEL_MODE=function (the `function` backend is automatic there), and
-# the observe-only tutor router (services/tutor_router.py) calls it once per
-# student chat turn. Request-path (scheduled from the chat routes on the
+# SAPLING_MODEL_MODE=function and the `decision_router` flag is on (any on
+# variant runs the `function` backend there; scripts/e2e-up.sh switches the
+# flag on for the lane), and the observe-only tutor router
+# (services/tutor_router.py) calls it once per student chat turn. Request-path (scheduled from the chat routes on the
 # request's own loop, not a post-response BackgroundTask), so it is registered
 # — unregistered, every tutor turn would log a handled
 # UnregisteredHandlerError and emit an all-defaults decision.

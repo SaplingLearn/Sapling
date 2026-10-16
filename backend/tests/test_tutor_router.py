@@ -41,7 +41,7 @@ DISRUPTIVE = [
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    for var in (decisions.BACKEND_ENV, decisions.SHADOW_ENV, decisions.FLOOR_ENV,
+    for var in (decisions.FLOOR_ENV,
                 decisions.TIMEOUT_ENV, decisions.JEV_TIMEOUT_ENV, "SAPLING_MODEL_MODE",
                 "SAPLING_FLAG_DECISION_ROUTER"):
         monkeypatch.delenv(var, raising=False)
@@ -50,6 +50,13 @@ def _clean_env(monkeypatch):
     from services import feature_flags
     monkeypatch.setattr(feature_flags, "read_config",
                         lambda: feature_flags.Snapshot(flags={}, targets={}))
+
+
+def _flash_lite(monkeypatch):
+    """Route with the flash_lite backend (the decision agent, overridable
+    with a FunctionModel) — what the flag would pick is tested separately."""
+    monkeypatch.setattr(decisions, "router_backends",
+                        lambda user_id: (decisions.FLASH_LITE, decisions.OFF))
 
 
 def _model(answers, *, delay=0.0, calls=None):
@@ -122,21 +129,82 @@ def test_build_state_keeps_a_short_clipped_tail():
 # ── Scheduling ────────────────────────────────────────────────────────────
 
 
-def test_off_schedules_nothing():
+def test_off_decides_nothing_and_emits_nothing(sink):
+    """The flag's off default: the task reads the flag and ends — no
+    decision, no event."""
     async def run():
-        return _observe()
+        task = _observe()
+        assert task is not None
+        return await task
 
     assert asyncio.run(run()) is None
+    assert _decision_events(sink) == []
 
 
 def test_scheduling_never_raises_even_without_a_loop(monkeypatch):
-    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+    _flash_lite(monkeypatch)
     # No running loop here: create_task can't be reached; must not raise.
     assert _observe() is None
 
 
+def test_the_flag_is_read_off_the_event_loop(monkeypatch):
+    """#672 review: router_backends reads the flag store (a blocking httpx
+    PostgREST call on a cache miss — every call on the E2E stack, TTL 0).
+    It must run in a worker thread, never on the loop's thread."""
+    import threading
+
+    seen: dict = {}
+
+    def router_backends(user_id):
+        seen["thread"] = threading.get_ident()
+        return decisions.OFF, decisions.OFF
+
+    monkeypatch.setattr(decisions, "router_backends", router_backends)
+
+    async def run():
+        seen["loop"] = threading.get_ident()
+        return await _observe()
+
+    assert asyncio.run(run()) is None
+    assert seen["thread"] != seen["loop"]
+
+
+def test_observe_does_no_flag_io_before_returning(monkeypatch):
+    """observe_tutor_turn itself only schedules: the flag read happens later,
+    inside the task."""
+    calls: list = []
+    monkeypatch.setattr(decisions, "router_backends",
+                        lambda user_id: calls.append(user_id) or (decisions.OFF, decisions.OFF))
+
+    async def run():
+        task = _observe()
+        assert calls == [], "no flag read before the task runs"
+        await task
+        return calls
+
+    assert asyncio.run(run()) == ["u1"]
+
+
+def test_a_hung_flag_read_is_off_not_a_stuck_router(monkeypatch, sink):
+    import threading
+
+    release = threading.Event()
+    monkeypatch.setattr(tutor_router, "FLAG_RESOLVE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(decisions, "router_backends",
+                        lambda user_id: release.wait(5) and (decisions.JEV, decisions.OFF))
+
+    async def run():
+        return await _observe()
+
+    try:
+        assert asyncio.run(run()) is None
+    finally:
+        release.set()
+    assert _decision_events(sink) == []
+
+
 def test_routed_turn_is_fire_and_forget_and_emits_one_event(monkeypatch, sink):
-    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+    _flash_lite(monkeypatch)
     answers = [dict(a, value=v) for a, v in zip(
         DISRUPTIVE, ["yes", "no", "medium", "no", "no"])]
 
@@ -164,7 +232,7 @@ def test_routed_turn_is_fire_and_forget_and_emits_one_event(monkeypatch, sink):
 
 
 def test_backstop_timeout_emits_defaults(monkeypatch, sink):
-    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+    _flash_lite(monkeypatch)
     monkeypatch.setattr(decisions, "worst_case_s", lambda: -0.95)  # backstop = 50ms
 
     async def hang(*a, **k):
@@ -186,7 +254,7 @@ def test_backstop_timeout_emits_defaults(monkeypatch, sink):
 def test_router_error_still_emits_one_decision(monkeypatch, sink, caplog):
     """#672 review: an unexpected failure in the router task left NO event, so
     one-decision-per-persisted-turn silently broke on the error path."""
-    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+    _flash_lite(monkeypatch)
 
     async def broken(*a, **k):
         raise RuntimeError("bug in the seam")
@@ -210,9 +278,8 @@ def test_router_error_still_emits_one_decision(monkeypatch, sink, caplog):
 @pytest.mark.parametrize("failure,reason", [("hang", "router_timeout"),
                                             ("raise", "router_error")])
 def test_flag_driven_failure_logs_the_backend_it_requested(monkeypatch, sink, failure, reason):
-    """On the flag path configured_backend() is "off", so a defaults row that
-    fell back to it would log `requested: "off"` for a turn that asked for
-    jev."""
+    """A defaults row from the router's own backstop/error path logs the
+    backend the turn requested (jev, from the flag), not "off"."""
     monkeypatch.setattr(decisions, "worst_case_s", lambda: -0.95)  # backstop = 50ms
 
     async def broken(*a, **k):
@@ -232,19 +299,11 @@ def test_flag_driven_failure_logs_the_backend_it_requested(monkeypatch, sink, fa
     assert event["payload"]["requested"] == "jev"
 
 
-def test_flag_off_by_default_schedules_nothing():
-    """No env, no stored config: the decision_router flag's "off" default
-    means no state is built and no task is scheduled."""
-    with patch("services.tutor_router.build_state") as build:
-        assert _observe() is None
-    assert not build.called
-
-
 def test_shutdown_drains_an_inflight_decision(monkeypatch, sink):
     """#672 review: the lifespan closes the Jev client and stops the events
     worker after the router tasks; draining first keeps a turn persisted just
     before shutdown from losing its decision.made row."""
-    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+    _flash_lite(monkeypatch)
 
     async def run():
         with decision_agent.override(model=_model(DISRUPTIVE, delay=0.05)):
@@ -259,13 +318,15 @@ def test_shutdown_drains_an_inflight_decision(monkeypatch, sink):
 
 
 def test_function_mode_routes_with_the_e2e_handler(monkeypatch, sink):
-    """The E2E lane's shape: function mode, no backend env, the env-named
-    handlers module — the router runs and every key is answered above floor."""
+    """The E2E lane's shape: function mode, the flag switched on through its
+    env override (scripts/e2e-up.sh), the env-named handlers module — the
+    router runs the scripted backend and every key is answered above floor."""
     import sys
 
     import agents._providers as providers
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FLAG_DECISION_ROUTER", "jev")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     monkeypatch.setattr(providers, "_ENV_HANDLERS_LOADED", False)
     providers.clear_function_handlers()
@@ -339,7 +400,7 @@ class _RouterSpy:
 
 @pytest.fixture
 def router_on(monkeypatch):
-    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+    _flash_lite(monkeypatch)
 
 
 def test_json_chat_routes_the_turn_once_after_persisting(router_on):
@@ -436,6 +497,36 @@ def test_successful_stream_is_one_decision_with_the_served_model(router_on, sink
     assert usage[0]["request_id"] is not None
 
 
+def test_streamed_turn_usage_row_carries_the_request_id(router_on):
+    """#672 review: the stream's on_usage hook recorded chat_tutor usage
+    without request_id; it runs inside the SSE generator, so the row could
+    not be joined to the turn — or to the turn's decision.made."""
+    from services.agent_events import SaplingEvent
+
+    async def fake_stream(**kwargs):
+        kwargs["on_usage"](_served_by("streamed", "gemini-2.5-pro"))
+        extra = kwargs["on_complete"]("streamed", {}, [])
+        yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
+
+    usage_calls: list = []
+    spy = _RouterSpy()
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=MagicMock()),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
+        patch("routes.learn.record_agent_usage",
+              side_effect=lambda rr, **kw: usage_calls.append(kw) or rr),
+    ):
+        r = _post_stream()
+    assert r.status_code == 200
+    (kw,) = spy.calls
+    (usage,) = [c for c in usage_calls if c.get("feature") == "chat_tutor"]
+    assert usage["request_id"] is not None
+    assert usage["request_id"] == kw["request_id"] == r.headers["X-Request-ID"]
+
+
 def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):
     """The stream's server-side Rung-1 fallback runs the JSON pipeline, which
     persists the turn — one decision, labelled with the tier that actually
@@ -494,16 +585,10 @@ def test_failed_json_turn_routes_nothing(router_on):
     assert spy.calls == []
 
 
-def test_off_schedules_nothing_at_the_persist_point():
+def test_off_decides_nothing_at_the_persist_point(sink):
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("reply"))
-    scheduled: list = []
-    real_observe = tutor_router.observe_tutor_turn
-
-    def spy(**kw):
-        scheduled.append(real_observe(**kw))
-        return scheduled[-1]
-
+    spy = _RouterSpy()
     with (
         patch("routes.learn.table", side_effect=_table_factory),
         patch("routes.learn.agent_for_mode", return_value=agent),
@@ -511,7 +596,9 @@ def test_off_schedules_nothing_at_the_persist_point():
     ):
         r = _post_chat()
     assert r.status_code == 200
-    assert scheduled == [None], "off: the router is asked, and schedules nothing"
+    assert len(spy.calls) == 1, "the route always hands the persisted turn over"
+    assert spy.replay() == [None], "off: the router decides nothing"
+    assert _decision_events(sink) == []
 
 
 def test_the_seam_switch_is_read_once_per_turn(router_on, monkeypatch):
@@ -534,12 +621,15 @@ def test_the_seam_switch_is_read_once_per_turn(router_on, monkeypatch):
 
     monkeypatch.setattr(decisions, "router_backends", router_backends)
     monkeypatch.setattr(tutor_router, "_route", no_route)
+    spy = _RouterSpy()
     with (
         patch("routes.learn.table", side_effect=_table_factory),
         patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn.observe_tutor_turn", side_effect=spy),
     ):
         r = _post_chat()
     assert r.status_code == 200
+    spy.replay()
     assert len(reads) == 1
 
 
@@ -677,10 +767,8 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
     with the router OFF."""
 
     def run_turn(backend: str | None):
-        if backend is None:
-            monkeypatch.delenv(decisions.BACKEND_ENV, raising=False)
-        else:
-            monkeypatch.setenv(decisions.BACKEND_ENV, backend)
+        monkeypatch.setattr(decisions, "router_backends",
+                            lambda user_id: (backend or decisions.OFF, decisions.OFF))
         agent = MagicMock()
         retrieve = MagicMock(return_value=[])
         agent.run = AsyncMock(return_value=run_result("same reply"))

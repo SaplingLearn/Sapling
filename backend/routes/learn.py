@@ -1195,8 +1195,12 @@ async def chat_stream(body: ChatBody, request: Request):
     def _usage(run_result) -> None:
         # #118: streaming turns report usage via the final AgentRunResultEvent,
         # surfaced by stream_agent_turn's on_usage hook after the run completes.
+        # request_id is explicit: this runs inside the SSE generator, after
+        # RequestIDMiddleware has reset the contextvar, so the implicit lookup
+        # would orphan the row from its turn (and from the turn's decision.made).
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            request_id=request_id,
         )
         ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
 
@@ -1305,9 +1309,11 @@ async def start_session_stream(body: StartSessionBody, request: Request):
 
     def _usage(run_result) -> None:
         # #118: same hook as /chat/stream — the opener runs the same
-        # chat_tutor agent, so it rolls up under the same feature/task.
+        # chat_tutor agent, so it rolls up under the same feature/task. Explicit
+        # request_id, as in /chat/stream: the contextvar is gone by now.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            request_id=request_id,
         )
 
     async def event_stream():

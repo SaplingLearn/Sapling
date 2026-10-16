@@ -62,10 +62,16 @@ JEV_OK = {
 }
 
 
+#: The backends the tests' decide() calls run with (decide takes them from its
+#: caller — in production the tutor router's decision_router flag).
+_CFG = {"backend": "off", "shadow": "off"}
+
+
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    _CFG.update(backend="off", shadow="off")
     for var in (
-        decisions.BACKEND_ENV, decisions.SHADOW_ENV, decisions.FLOOR_ENV,
+        decisions.FLOOR_ENV,
         decisions.TIMEOUT_ENV, decisions.JEV_TIMEOUT_ENV, "SAPLING_MODEL_MODE",
         typesafe_client.API_KEY_ENV, typesafe_client.BASE_URL_ENV, typesafe_client.MODEL_ENV,
     ):
@@ -115,15 +121,21 @@ def _jev_transport(handler_or_body, *, seen: list | None = None, status: int = 2
 
 
 def _use_jev(monkeypatch, transport, *, key="tsk_test"):
-    monkeypatch.setenv(decisions.BACKEND_ENV, "jev")
+    _CFG["backend"] = "jev"
     if key:
         monkeypatch.setenv(typesafe_client.API_KEY_ENV, key)
     monkeypatch.setattr(typesafe_client, "_transport_override", transport)
 
 
+def _decide_raw(state, questions, **kw):
+    kw.setdefault("backend", _CFG["backend"])
+    kw.setdefault("shadow", _CFG["shadow"])
+    return decisions.decide(state, questions, **kw)
+
+
 def _decide(**kw):
-    return asyncio.run(decisions.decide(STATE, QUESTIONS, feature="test", user_id="u1",
-                                        request_id="req-1", **kw))
+    return asyncio.run(_decide_raw(STATE, QUESTIONS, feature="test", user_id="u1",
+                                   request_id="req-1", **kw))
 
 
 def _decision_events(sink):
@@ -140,9 +152,17 @@ def _usage_rows(sink):
 
 
 class TestConfiguration:
+    """decide() runs the backends its caller names (the tutor router's come
+    from the decision_router flag — tests/test_decision_router_flag.py).
+    There is no env var that picks a backend."""
+
     def test_default_is_off(self):
-        assert decisions.configured_backend() == "off"
-        assert decisions.enabled() is False
+        import inspect
+
+        params = inspect.signature(decisions.decide).parameters
+        assert params["backend"].default == "off"
+        assert params["shadow"].default == "off"
+        assert not hasattr(decisions, "BACKEND_ENV") and not hasattr(decisions, "SHADOW_ENV")
 
     def test_off_decides_nothing_and_emits_nothing(self, sink):
         calls: list = []
@@ -156,60 +176,28 @@ class TestConfiguration:
         assert all(a.defaulted for a in result.answers.values())
         assert _decision_events(sink) == []
 
-    def test_function_mode_turns_the_seam_on_automatically(self, monkeypatch):
+    def test_function_mode_never_dials_a_live_backend(self, monkeypatch):
         monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-        assert decisions.configured_backend() == "function"
-        # Any configured backend becomes the function backend: Jev is never
-        # dialled from the deterministic lane.
-        monkeypatch.setenv(decisions.BACKEND_ENV, "jev")
-        assert decisions.configured_backend() == "function"
+        for name in ("jev", "flash_lite", "function"):
+            assert decisions._effective(name, role="backend") == "function", name
+            assert decisions._effective(name, role="shadow") == "off", name
+        assert decisions._effective("off", role="backend") == "off"
 
-    def test_explicit_off_wins_in_function_mode(self, monkeypatch):
-        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-        monkeypatch.setenv(decisions.BACKEND_ENV, "off")
-        assert decisions.configured_backend() == "off"
+    def test_function_outside_function_mode_is_off_never_a_live_model(self):
+        assert decisions._effective("function", role="backend") == "off"
+        assert decisions._effective("function", role="shadow") == "off"
 
-    def test_function_is_a_configurable_backend_in_function_mode(self, monkeypatch):
-        """#672 review: the documented name must work — it used to fall
-        through _read_backend's allow-list to 'off' and DISABLE the seam."""
-        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-        monkeypatch.setenv(decisions.BACKEND_ENV, "function")
-        assert decisions.configured_backend() == "function"
-        assert decisions.enabled() is True
+    def test_unknown_backend_is_off(self):
+        assert decisions._effective("gpt-9", role="backend") == "off"
 
-    def test_a_typo_does_not_switch_function_mode_off(self, monkeypatch):
-        """#672 review: in function mode only an explicit `off` disables the
-        seam; a typo warned and returned `off`, silently killing the router
-        in the one lane that checks it."""
-        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-        for value in ("flsh_lite", "Function ", "jevv"):
-            monkeypatch.setenv(decisions.BACKEND_ENV, value)
-            assert decisions.configured_backend() == "function", value
-        for value in ("off", "OFF", "disabled", "false", "0", "none"):
-            monkeypatch.setenv(decisions.BACKEND_ENV, value)
-            assert decisions.configured_backend() == "off", value
-
-    def test_function_outside_function_mode_is_off_never_a_live_model(self, monkeypatch):
-        monkeypatch.setenv(decisions.BACKEND_ENV, "function")
-        assert decisions.configured_backend() == "off"
-        assert decisions.enabled() is False
-        monkeypatch.setenv(decisions.BACKEND_ENV, "jev")
-        monkeypatch.setenv(decisions.SHADOW_ENV, "function")
-        assert decisions.shadow_backend() == "off"
-
-    def test_unknown_backend_is_off(self, monkeypatch):
-        monkeypatch.setenv(decisions.BACKEND_ENV, "gpt-9")
-        assert decisions.configured_backend() == "off"
-
-    def test_shadow_rules(self, monkeypatch):
-        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
-        assert decisions.shadow_backend() == "off", "no shadow without a primary"
-        monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
-        assert decisions.shadow_backend() == "off", "shadow == primary is a no-op"
-        monkeypatch.setenv(decisions.BACKEND_ENV, "jev")
-        assert decisions.shadow_backend() == "flash_lite"
-        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-        assert decisions.shadow_backend() == "off", "never shadow in function mode"
+    def test_shadow_equal_to_the_primary_is_dropped(self, monkeypatch, sink):
+        calls: list = []
+        _CFG.update(backend="flash_lite", shadow="flash_lite")
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
+            _decide()
+        assert len(calls) == 1, "shadow == primary is not a second run"
+        (event,) = _decision_events(sink)
+        assert "shadow" not in event["payload"]
 
 
 # ── flash_lite backend ────────────────────────────────────────────────────
@@ -218,7 +206,7 @@ class TestConfiguration:
 class TestFlashLiteBackend:
     @pytest.fixture(autouse=True)
     def _flash(self, monkeypatch):
-        monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+        _CFG["backend"] = "flash_lite"
 
     def test_answers_are_typed_and_applied(self, sink):
         calls: list = []
@@ -313,7 +301,7 @@ class TestFlashLiteBackend:
         answers = [dict(a) for a in DISRUPTIVE]
         answers[2]["confidence"] = 1.02
         with decision_agent.override(model=_agent_model(answers)):
-            result = asyncio.run(decisions.decide(
+            result = asyncio.run(_decide_raw(
                 {"m": "x"}, tutor_router.QUESTIONS, feature="test"))
         assert result.backend == "flash_lite", result.fallback_reason
         assert not any(a.defaulted for a in result.answers.values())
@@ -640,7 +628,7 @@ class TestJevBackend:
         _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
         when = datetime.datetime(2026, 9, 27, 5, 0, tzinfo=datetime.timezone.utc)
         ident = uuid.UUID("12345678-1234-5678-1234-567812345678")
-        result = asyncio.run(decisions.decide(
+        result = asyncio.run(_decide_raw(
             {"message": "m", "at": when, "id": ident}, QUESTIONS, feature="test"))
         assert result.backend == "jev" and result.fallback_reason is None
         assert seen[0].headers["content-type"] == "application/json"
@@ -694,7 +682,7 @@ class TestJevBackend:
         # ~40k tokens of history under the pessimistic 3-chars/token estimate.
         history = [f"turn-{i} " + "x" * 3000 for i in range(40)]
         state = {"message": "latest", "history": history}
-        result = asyncio.run(decisions.decide(
+        result = asyncio.run(_decide_raw(
             state, QUESTIONS, feature="test", truncatable=("history",),
         ))
         assert result.backend == "jev"
@@ -768,7 +756,7 @@ class TestJevBackend:
         _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
         state = {"message": "y" * 150_000}
         with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
-            result = asyncio.run(decisions.decide(state, QUESTIONS, feature="test"))
+            result = asyncio.run(_decide_raw(state, QUESTIONS, feature="test"))
         assert seen == [] and calls == []
         assert result.backend == "none"
         assert result.fallback_reason == "jev_state_over_budget"
@@ -776,10 +764,10 @@ class TestJevBackend:
 
     def test_over_jev_budget_still_falls_back_when_the_agent_can_fit_it(self, monkeypatch):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))
-        monkeypatch.setattr(decisions, "_agent_budget_fits", lambda state, qs: True)
+        monkeypatch.setattr(decisions, "_agent_budget_fits", lambda prompt: True)
         state = {"message": "y" * 150_000}
         with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
-            result = asyncio.run(decisions.decide(state, QUESTIONS, feature="test"))
+            result = asyncio.run(_decide_raw(state, QUESTIONS, feature="test"))
         assert result.backend == "flash_lite"
         assert result.fallback_reason == "jev_state_over_budget"
 
@@ -790,8 +778,8 @@ class TestJevBackend:
         small = {"message": "hi"}
         # ~3 chars/token: a prompt of this many chars is past one request's share.
         big = {"message": "y" * (per_request * 3)}
-        assert decisions._agent_budget_fits(small, QUESTIONS) is True
-        assert decisions._agent_budget_fits(big, QUESTIONS) is False
+        assert decisions._agent_budget_fits(decisions._Prompt(small, QUESTIONS)) is True
+        assert decisions._agent_budget_fits(decisions._Prompt(big, QUESTIONS)) is False
 
     def test_fit_state_estimates_from_lengths_without_building_strings(self, monkeypatch):
         """#672 review: fits() built a throwaway "x" * chars string per check."""
@@ -808,10 +796,47 @@ class TestJevBackend:
 # ── Shadow mode + the event ───────────────────────────────────────────────
 
 
+class TestScoreFallbackRounding:
+    """#672 review: the expected-level fallback used round() — banker's
+    rounding — so 0.5 went DOWN to level 0 but 1.5 went UP to level 2."""
+
+    @pytest.mark.parametrize("score,level", [
+        (0.0, "calm"), (0.49, "calm"), (0.5, "frustrated"), (1.0, "frustrated"),
+        (1.49, "frustrated"), (1.5, "angry"), (2.0, "angry"),
+    ])
+    def test_midpoints_round_half_up(self, score, level):
+        mood = next(q for q in QUESTIONS if q.key == "mood")
+        parsed = decisions._parse_jev_answer(mood, {"score": score, "confidence": 0.9})
+        assert parsed is not None and parsed[0] == level
+
+
+class TestPromptSerialisedOnce:
+    """#672 review: the agent prompt was re-serialised for the shadow
+    pre-check, the Jev fallback check and the run itself."""
+
+    def test_one_serialisation_per_decision(self, monkeypatch):
+        calls: list = []
+        real = decisions._agent_prompt
+
+        def counting(state, questions):
+            calls.append(1)
+            return real(state, questions)
+
+        monkeypatch.setattr(decisions, "_agent_prompt", counting)
+        # Jev fails (no key) -> fallback check + flash_lite shadow pre-check +
+        # the agent run: three readers, one serialisation.
+        _use_jev(monkeypatch, _jev_transport(JEV_OK), key=None)
+        _CFG["shadow"] = "flash_lite"
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
+            result = _decide()
+        assert result.backend == "flash_lite"
+        assert len(calls) == 1
+
+
 class TestShadowAndEvent:
     def test_shadow_runs_both_and_logs_agreement(self, monkeypatch, sink):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))
-        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        _CFG["shadow"] = "flash_lite"
         shadow_answers = [
             {"key": "urgent", "value": "yes", "confidence": 0.9},     # agrees
             {"key": "team", "value": "billing", "confidence": 0.9},   # disagrees
@@ -835,7 +860,7 @@ class TestShadowAndEvent:
         own backend. Comparing flash_lite with itself would inflate agreement
         and bill Gemini twice: the shadow's answer serves instead, once."""
         _use_jev(monkeypatch, _jev_transport({"e": 1}, status=503))
-        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        _CFG["shadow"] = "flash_lite"
         calls: list = []
         with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
             result = _decide()
@@ -851,7 +876,7 @@ class TestShadowAndEvent:
 
     def test_an_off_list_shadow_answer_disagrees(self, monkeypatch, sink):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))
-        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        _CFG["shadow"] = "flash_lite"
         shadow_answers = [
             {"key": "urgent", "value": "perhaps", "confidence": 0.9},   # off-list
             {"key": "team", "value": "technical", "confidence": 0.9},   # agrees
@@ -865,7 +890,7 @@ class TestShadowAndEvent:
 
     def test_degraded_primary_with_a_failing_shadow_ends_in_defaults(self, monkeypatch):
         _use_jev(monkeypatch, _jev_transport({"e": 1}, status=503))
-        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        _CFG["shadow"] = "flash_lite"
         with decision_agent.override(model=_agent_model(raises=RuntimeError("down"))):
             result = _decide()
         assert result.backend == "none"
@@ -879,10 +904,10 @@ class TestShadowAndEvent:
         seen: list = []
         calls: list = []
         _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
-        monkeypatch.setenv(decisions.SHADOW_ENV, "flash_lite")
+        _CFG["shadow"] = "flash_lite"
         state = {"message": "y" * 150_000}
         with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS, calls=calls)):
-            result = asyncio.run(decisions.decide(state, QUESTIONS, feature="test"))
+            result = asyncio.run(_decide_raw(state, QUESTIONS, feature="test"))
         assert seen == [] and calls == [], "neither Jev nor the agent was called"
         assert result.fallback_reason == "jev_state_over_budget"
         (event,) = _decision_events(sink)
@@ -893,8 +918,8 @@ class TestShadowAndEvent:
 
     def test_shadow_never_falls_back(self, monkeypatch, sink):
         """A failing Jev SHADOW must not quietly run flash_lite a second time."""
-        monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
-        monkeypatch.setenv(decisions.SHADOW_ENV, "jev")
+        _CFG["backend"] = "flash_lite"
+        _CFG["shadow"] = "jev"
         monkeypatch.setenv(typesafe_client.API_KEY_ENV, "tsk_test")
         monkeypatch.setattr(typesafe_client, "_transport_override",
                             _jev_transport({"e": 1}, status=503))
@@ -914,7 +939,7 @@ class TestShadowAndEvent:
                   "fallback_reason": "forged", "requested": "forged",
                   "session_id": "s1"}
         with caplog.at_level("WARNING", logger="sapling.decisions"):
-            asyncio.run(decisions.decide(STATE, QUESTIONS, feature="test",
+            asyncio.run(_decide_raw(STATE, QUESTIONS, feature="test",
                                          event_extra=forged))
         (event,) = _decision_events(sink)
         p = event["payload"]
@@ -926,12 +951,12 @@ class TestShadowAndEvent:
 
     def test_event_payload_is_enum_only_and_never_carries_state(self, monkeypatch, sink):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))
-        asyncio.run(decisions.decide(
+        asyncio.run(_decide_raw(
             STATE, QUESTIONS, feature="test", user_id="u1", request_id="req-1",
             event_extra={"session_id": "s1"},
         ))
         (event,) = _decision_events(sink)
-        assert event["category"] == "usage"
+        assert event["category"] == "system", "server-emitted, not the student's activity"
         assert event["event_type"] in events_service.EVENT_TAXONOMY
         assert event["user_id"] == "u1" and event["request_id"] == "req-1"
         p = event["payload"]

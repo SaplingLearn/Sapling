@@ -94,8 +94,9 @@ mechanism instead, before that pattern repeats a third time.
    #620 originally shipped three other first flags; this PR was rebased
    off the PostHog/Jev chain so it could land on its own, and each returns
    with the PR that owns its feature: `decision_router` (`off` | `jev` |
-   `jev_shadow`, server-only; the ADR 0027 router backend, with
-   `SAPLING_DECISIONS_BACKEND` as an override above it), `product_analytics`
+   `jev_shadow`, server-only; the ADR 0027 router backend — the bespoke
+   `SAPLING_DECISIONS_BACKEND` env var it replaced is gone, so the generic
+   `SAPLING_FLAG_DECISION_ROUTER` is its env kill switch), `product_analytics`
    (`off` | `on`; gates PostHog capture end to end, ADR 0028) and
    `learning_loop` (#673). The migration already seeds `product_analytics`
    `on` so that analytics stays on wherever it was on before flags; until
