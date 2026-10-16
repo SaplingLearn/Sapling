@@ -1,25 +1,19 @@
 // @vitest-environment jsdom
 /**
- * Task 7: the admin "Feature flags" tab (`FeatureFlagsTab` in ./FeatureFlags).
+ * The admin "Feature flags" tab (`FeatureFlagsTab` in ./FeatureFlags, #620).
  *
  * What's pinned here:
- *   - the flag list renders a row per flag (`flag-row-{key}`), expanding to
- *     an editor on click;
- *   - a default/rollout change is gated behind the two-click `useConfirm`
- *     pattern used elsewhere in this codebase (real hook, not mocked, so
- *     the confirm mechanics themselves are exercised, per the Social
- *     friends-panel precedent) — the first click arms the Save button, and
- *     only the second click calls `adminUpdateFlag`;
- *   - the per-student "explain" lookup calls `adminExplainFlag` and renders
- *     `"<variant> (<step>: <detail>)"`.
- *
- * Note: the task brief drafted a promise-based `useConfirm(): (opts) =>
- * Promise<boolean>` mock, but the real `frontend/src/lib/useConfirm.ts` is a
- * synchronous arm/trigger hook (see every other `useConfirm` call site in
- * this repo). This file exercises the real hook instead of inventing a
- * second confirm mechanism.
+ *   - flags render grouped like the nav, a row per flag (`flag-row-{key}`),
+ *     in Visible/Hidden words — never the raw "on"/"off" of a hide flag;
+ *   - the row switch changes the everyone-default only after a confirm
+ *     dialog that states the scope (design spec §7);
+ *   - clicking a row opens the right-hand panel; default/rollout edits are
+ *     staged, the footer states their scope, and only Save calls
+ *     `adminUpdateFlag` (Discard drops them);
+ *   - overrides add/remove immediately; the student check renders the
+ *     explain answer in words.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -49,6 +43,12 @@ const FLAG = {
   client_visible: true, default_variant: "off", rollout_percent: 0, rollout_variant: null,
   updated_at: null, updated_by: null, updated_by_name: null, targets: [],
 };
+const LIBRARY = { ...FLAG, key: "hide_library", description: "Hide Library from the nav." };
+
+const openPanel = async () => {
+  fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+  return screen.findByTestId("flag-panel-hide_quiz");
+};
 
 describe("FeatureFlagsTab", () => {
   afterEach(cleanup);
@@ -56,61 +56,91 @@ describe("FeatureFlagsTab", () => {
   beforeEach(() => {
     Object.values(api).forEach((f) => f.mockReset());
     Object.values(toastSpies).forEach((f) => f.mockReset());
-    api.adminListFlags.mockResolvedValue({ flags: [FLAG] });
+    api.adminListFlags.mockResolvedValue({ flags: [LIBRARY, FLAG] });
     api.adminListRoles.mockResolvedValue({ roles: [{ id: "r-admin", name: "Admin" }] });
-    api.adminFetchUsers.mockResolvedValue({ users: [], total: 0, page: 1, page_size: 8 });
+    api.adminFetchUsers.mockResolvedValue({ users: [], total: 0, page: 1, page_size: 6 });
   });
 
-  it("lists flags", async () => {
+  it("groups flags like the nav and speaks Visible/Hidden", async () => {
     render(<FeatureFlagsTab />);
     expect(await screen.findByTestId("flag-row-hide_quiz")).toBeTruthy();
+    const learn = screen.getByRole("region", { name: "Learn" });
+    expect(within(learn).getByTestId("flag-row-hide_quiz")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Organize" })).getByTestId("flag-row-hide_library")).toBeTruthy();
+    expect(screen.getByTestId("flag-state-hide_quiz").textContent).toBe("Visible");
+    expect(screen.getByTestId("flag-toggle-hide_quiz").getAttribute("aria-checked")).toBe("true");
   });
 
-  it("requires a confirming second click before saving a default change, and states the scope while armed", async () => {
+  it("the row switch saves only after the confirm dialog, which states the scope", async () => {
     api.adminUpdateFlag.mockResolvedValue({ flag: { ...FLAG, default_variant: "on" } });
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
-    fireEvent.change(screen.getByTestId("flag-default-hide_quiz"), { target: { value: "on" } });
+    fireEvent.click(await screen.findByTestId("flag-toggle-hide_quiz"));
 
-    // Not armed yet: no scope text, no save.
-    expect(screen.queryByTestId("flag-save-scope-hide_quiz")).toBeNull();
-
-    const save = screen.getByTestId("flag-save-hide_quiz");
-    fireEvent.click(save);
     expect(api.adminUpdateFlag).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("flag-panel-hide_quiz")).toBeNull(); // the switch doesn't open the row
+    expect(screen.getByTestId("flag-save-scope-hide_quiz").textContent).toContain("Quiz becomes Hidden for everyone");
 
-    // Armed: the scope text states the transition and who it applies to.
-    const scope = screen.getByTestId("flag-save-scope-hide_quiz");
-    expect(scope.textContent).toContain("off → on");
-    expect(scope.textContent).toContain("rollout 0% → 0%");
-    expect(scope.textContent).toContain("every student without a user or role rule");
+    fireEvent.click(screen.getByTestId("flag-confirm-hide_quiz"));
+    await waitFor(() => expect(api.adminUpdateFlag).toHaveBeenCalledWith("hide_quiz", { default_variant: "on" }));
+    expect((await screen.findByTestId("flag-state-hide_quiz")).textContent).toBe("Hidden");
+  });
 
-    fireEvent.click(save);
+  it("cancelling the confirm dialog saves nothing", async () => {
+    render(<FeatureFlagsTab />);
+    fireEvent.click(await screen.findByTestId("flag-toggle-hide_quiz"));
+    fireEvent.click(screen.getByTestId("flag-cancel-hide_quiz"));
+    expect(screen.queryByTestId("flag-save-scope-hide_quiz")).toBeNull();
+    expect(api.adminUpdateFlag).not.toHaveBeenCalled();
+  });
+
+  it("flipping the default to what a rollout serves ends that rollout", async () => {
+    api.adminListFlags.mockResolvedValue({ flags: [{ ...FLAG, rollout_percent: 25, rollout_variant: "on" }] });
+    api.adminUpdateFlag.mockResolvedValue({ flag: { ...FLAG, default_variant: "on" } });
+    render(<FeatureFlagsTab />);
+    fireEvent.click(await screen.findByTestId("flag-toggle-hide_quiz"));
+    expect(screen.getByTestId("flag-save-scope-hide_quiz").textContent).toContain("rollout ends");
+    fireEvent.click(screen.getByTestId("flag-confirm-hide_quiz"));
     await waitFor(() => expect(api.adminUpdateFlag).toHaveBeenCalledWith(
       "hide_quiz", { default_variant: "on", rollout_percent: 0, rollout_variant: null }));
   });
 
-  it("does not save without the confirming second click, even with the scope shown", async () => {
+  it("panel edits are staged: the footer states the scope and only Save writes", async () => {
+    api.adminUpdateFlag.mockResolvedValue({ flag: { ...FLAG, rollout_percent: 25, rollout_variant: "on" } });
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
-    fireEvent.change(screen.getByTestId("flag-default-hide_quiz"), { target: { value: "on" } });
+    await openPanel();
+
+    expect(screen.queryByTestId("flag-save-hide_quiz")).toBeNull(); // nothing to save yet
+    fireEvent.click(screen.getByTestId("flag-rollout-preset-hide_quiz-25"));
+    expect(screen.getByTestId("flag-save-scope-hide_quiz").textContent).toContain("Hidden for 25% of students");
+    expect(api.adminUpdateFlag).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByTestId("flag-save-hide_quiz"));
+    await waitFor(() => expect(api.adminUpdateFlag).toHaveBeenCalledWith(
+      "hide_quiz", { default_variant: "off", rollout_percent: 25, rollout_variant: "on" }));
+  });
+
+  it("Discard drops staged edits", async () => {
+    render(<FeatureFlagsTab />);
+    await openPanel();
+    fireEvent.click(screen.getByTestId("flag-default-hide_quiz-on"));
     expect(screen.getByTestId("flag-save-scope-hide_quiz")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("flag-discard-hide_quiz"));
+    expect(screen.queryByTestId("flag-save-scope-hide_quiz")).toBeNull();
     expect(api.adminUpdateFlag).not.toHaveBeenCalled();
   });
 
-  it("explains a student's variant", async () => {
+  it("explains a student's variant in words", async () => {
     api.adminExplainFlag.mockResolvedValue({ variant: "on", step: "role", detail: "r-admin" });
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+    await openPanel();
     fireEvent.change(screen.getByTestId("flag-explain-input-hide_quiz"), { target: { value: "u1" } });
     fireEvent.keyDown(screen.getByTestId("flag-explain-input-hide_quiz"), { key: "Enter" });
     expect((await screen.findByTestId("flag-explain-result-hide_quiz")).textContent)
-      .toContain("on (role: r-admin)");
+      .toContain("Hidden: from the Admin role override");
     expect(api.adminExplainFlag).toHaveBeenCalledWith("hide_quiz", "u1");
   });
 
-  it("adds and removes a rule", async () => {
+  it("adds and removes an override", async () => {
     const withTarget = {
       ...FLAG,
       targets: [{ target_type: "role" as const, target_id: "r-admin", label: "Admin", variant: "on" }],
@@ -119,7 +149,7 @@ describe("FeatureFlagsTab", () => {
     api.adminDeleteFlagTarget.mockResolvedValue({ flag: FLAG });
 
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+    await openPanel();
     fireEvent.change(screen.getByTestId("flag-target-role-hide_quiz"), { target: { value: "r-admin" } });
     fireEvent.click(screen.getByTestId("flag-target-add-hide_quiz"));
     await waitFor(() => expect(api.adminUpsertFlagTarget).toHaveBeenCalledWith(

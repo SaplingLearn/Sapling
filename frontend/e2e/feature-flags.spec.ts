@@ -42,10 +42,10 @@ test("admin sets a user rule on hide_quiz and the student gets it (#620)", async
   const after = await page.request.get(`${FRONTEND_URL}/api/flags`);
   expect((await after.json()).flags.hide_quiz).toBe("on");
 
-  // The explain box names the rule.
+  // The student check names the rule, in words.
   await admin.getByTestId("flag-explain-input-hide_quiz").fill(USER_ACTIVE);
   await admin.getByTestId("flag-explain-input-hide_quiz").press("Enter");
-  await expect(admin.getByTestId("flag-explain-result-hide_quiz")).toContainText("on (user");
+  await expect(admin.getByTestId("flag-explain-result-hide_quiz")).toContainText("Hidden: this student has their own override");
   await adminCtx.close();
 });
 
