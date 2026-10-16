@@ -150,6 +150,23 @@ _FLAG_BACKENDS = {
 }
 
 
+class FlagUnreadable(RuntimeError):
+    """The decision_router flag could not be resolved: the flag store is
+    unreadable. Distinct from "off" so the router can record the gap."""
+
+
+ROUTER_FLAG = "decision_router"
+
+
+def _backends_for(resolution: Any) -> tuple[str, str]:
+    from services.feature_flags import STORE_UNREADABLE
+
+    if resolution.step == "fail_closed" and resolution.detail == STORE_UNREADABLE:
+        raise FlagUnreadable(STORE_UNREADABLE)
+    primary, shadow = _FLAG_BACKENDS.get(resolution.variant, (OFF, OFF))
+    return _effective(primary, role="backend"), _effective(shadow, role="shadow")
+
+
 def router_backends(user_id: str | None) -> tuple[str, str]:
     """The tutor router's (primary, shadow) backends for this student.
 
@@ -157,13 +174,42 @@ def router_backends(user_id: str | None) -> tuple[str, str]:
     ``SAPLING_FLAG_DECISION_ROUTER`` env override is the kill switch). Under
     SAPLING_MODEL_MODE=function an on variant runs the scripted `function`
     backend with no shadow, so the E2E lane exercises the seam without ever
-    dialling Jev or Gemini. Reads the flag store on a cache miss: call it off
-    the event loop.
+    dialling Jev or Gemini. May read the flag store (bounded — see
+    feature_flags.STORE_TIMEOUT_S) on a cold cache: call it off the event
+    loop, or try :func:`router_backends_cached` first. Raises
+    :class:`FlagUnreadable` when the store cannot be read.
     """
-    from services.feature_flags import flag_variant
+    from services.feature_flags import explain
 
-    primary, shadow = _FLAG_BACKENDS.get(flag_variant("decision_router", user_id), (OFF, OFF))
-    return _effective(primary, role="backend"), _effective(shadow, role="shadow")
+    return _backends_for(explain(ROUTER_FLAG, user_id))
+
+
+def router_backends_cached(user_id: str | None) -> tuple[str, str] | None:
+    """:func:`router_backends` without I/O — safe on the event loop — or None
+    when the flag cache is cold for this student. Raises
+    :class:`FlagUnreadable` inside the store's unreadable window."""
+    from services.feature_flags import cached_explain
+
+    resolution = cached_explain(ROUTER_FLAG, user_id)
+    return None if resolution is None else _backends_for(resolution)
+
+
+#: Env vars an earlier draft used to pick the backends. They do nothing now.
+_REMOVED_ENV = ("SAPLING_DECISIONS_BACKEND", "SAPLING_DECISIONS_SHADOW")
+
+
+def warn_removed_env() -> None:
+    """Startup: a deployment that still sets the old backend env vars gets
+    one WARNING per var naming the replacement, instead of silently running
+    with the flag's default."""
+    for name in _REMOVED_ENV:
+        if (os.getenv(name) or "").strip():
+            _warn_once(
+                f"removed:{name}",
+                "%s is set but no longer does anything: the tutor router's decision "
+                "backends come from the `decision_router` feature flag (set it in "
+                "/admin, or SAPLING_FLAG_DECISION_ROUTER=off|jev|jev_shadow)", name,
+            )
 
 
 def confidence_floor() -> float:
@@ -646,9 +692,11 @@ def _parse_jev_answer(q: Question, ans: Any) -> _Raw | None:
         if s is None:
             return None
         # Half-up, consistently: Python's round() is banker's rounding (0.5
-        # -> 0 but 1.5 -> 2), which would bias exact midpoints toward even
-        # levels. s is clamped to [0, n-1], so floor(s + 0.5) stays in range.
-        index = math.floor(s + 0.5)
+        # -> 0 but 1.5 -> 2), and floor(s + 0.5) is not float-safe (the sum
+        # 0.49999999999999994 + 0.5 rounds to 1.0). Compare the fractional
+        # part instead. s is clamped to [0, n-1], so the index stays in range.
+        whole = math.floor(s)
+        index = whole + (1 if s - whole >= 0.5 else 0)
     named = {keys[i]: v for i, v in sorted(by_index.items())} or None
     return (keys[index], conf, None, named)
 

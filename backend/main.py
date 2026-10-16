@@ -119,6 +119,10 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    # #672: the decision seam's backends moved from env vars to the
+    # decision_router flag; say so if a deployment still sets the old ones.
+    from services import decisions
+    decisions.warn_removed_env()
     yield
     await stop_sweeper()
     # Let in-flight tutor-router decisions finish first: each one emits a

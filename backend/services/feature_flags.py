@@ -80,6 +80,24 @@ class Snapshot:
     targets: dict[str, list[dict]]   # key -> feature_flag_targets rows
 
 
+#: Every resolver read of the flag store (the snapshot, a user's roles) is
+#: bounded by this — not the connection's 30 s default — and a failed read
+#: marks the store unreadable for STORE_UNREADABLE_TTL_S, during which
+#: resolution fails closed WITHOUT another read. An outage therefore costs
+#: each process one bounded wait per window, not one hung read per call (the
+#: tutor router and the PostHog worker resolve per item).
+STORE_TIMEOUT_S = 2.5
+STORE_UNREADABLE_TTL_S = 30.0
+#: Resolution.detail when the store could not be read — the one signal a
+#: caller may key on to tell "unreadable" from a real or invalid answer.
+STORE_UNREADABLE = "flag store unreadable"
+
+
+class StoreUnreadable(RuntimeError):
+    """The flag store is (still) unreadable; raised by the snapshot/roles
+    reads inside the negative-cache window."""
+
+
 SNAPSHOT_TTL_ENV = "FEATURE_FLAGS_SNAPSHOT_TTL_S"
 ROLES_TTL_ENV = "FEATURE_FLAGS_ROLES_TTL_S"
 DEFAULT_SNAPSHOT_TTL_S = 30.0
@@ -93,6 +111,8 @@ _snapshot: tuple[float, Snapshot] | None = None
 _generation = 0
 _roles: dict[str, tuple[float, tuple[tuple[str, int], ...]]] = {}
 _warned: set[str] = set()
+#: monotonic time until which the store counts as unreadable (0 = readable).
+_store_down_until = 0.0
 
 
 def _ttl(env: str, default: float) -> float:
@@ -118,10 +138,11 @@ def _warn_once(key: str, msg: str, *args, **kwargs) -> None:
 
 
 def clear_feature_flags_cache() -> None:
-    global _snapshot, _generation
+    global _snapshot, _generation, _store_down_until
     with _lock:
         _snapshot = None
         _generation += 1
+        _store_down_until = 0.0  # a write just went through: read again
 
 
 def clear_user_roles_cache(user_id: str | None = None) -> None:
@@ -132,19 +153,20 @@ def clear_user_roles_cache(user_id: str | None = None) -> None:
             _roles.pop(user_id, None)
 
 
-def read_config() -> Snapshot:
+def read_config(*, timeout: float | None = None) -> Snapshot:
     """Uncached read of every flag row and rule (admin API + cache fill).
     Paged in a total order: offset paging over an unordered select can skip
-    or repeat a row at a page boundary."""
+    or repeat a row at a page boundary. ``timeout`` bounds each page read
+    (the resolver passes STORE_TIMEOUT_S; the admin API keeps the default)."""
     flags = list(page_all(
         table("feature_flags"),
         "key,default_variant,rollout_percent,rollout_variant,updated_at,updated_by",
-        order="key",
+        order="key", timeout=timeout,
     ))
     targets = list(page_all(
         table("feature_flag_targets"),
         "flag_key,target_type,target_id,variant,created_at,created_by",
-        order="flag_key,target_type,target_id",
+        order="flag_key,target_type,target_id", timeout=timeout,
     ))
     by_key: dict[str, list[dict]] = {}
     for t in targets:
@@ -159,7 +181,13 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
         generation = _generation
         if not fresh and _snapshot and time.monotonic() - _snapshot[0] < ttl:
             return _snapshot[1]
-    snap = read_config()  # raises on failure: callers fail closed, nothing cached
+        if not fresh and time.monotonic() < _store_down_until:
+            raise StoreUnreadable("flag store unreadable (cached)")
+    try:
+        snap = read_config(timeout=STORE_TIMEOUT_S)
+    except Exception:
+        _mark_store_down()  # callers fail closed; nothing re-reads for a while
+        raise
     with _lock:
         if generation == _generation:  # no clear landed while we were reading
             _snapshot = (time.monotonic(), snap)
@@ -169,15 +197,34 @@ def _get_snapshot(fresh: bool = False) -> Snapshot:
     return snap
 
 
+def _mark_store_down() -> None:
+    global _store_down_until
+    with _lock:
+        _store_down_until = time.monotonic() + STORE_UNREADABLE_TTL_S
+
+
+def _roles_cached(user_id: str) -> bool:
+    with _lock:
+        hit = _roles.get(user_id)
+        return bool(hit and time.monotonic() - hit[0] < roles_ttl_s())
+
+
 def _user_roles(user_id: str) -> tuple[tuple[str, int], ...]:
     now = time.monotonic()
     with _lock:
         hit = _roles.get(user_id)
         if hit and now - hit[0] < roles_ttl_s():
             return hit[1]
-    rows = table("user_roles").select(
-        "role_id,roles!inner(display_priority)", filters={"user_id": f"eq.{user_id}"},
-    ) or []
+        if now < _store_down_until:
+            raise StoreUnreadable("flag store unreadable (cached)")
+    try:
+        rows = table("user_roles").select(
+            "role_id,roles!inner(display_priority)", filters={"user_id": f"eq.{user_id}"},
+            timeout=STORE_TIMEOUT_S,
+        ) or []
+    except Exception:
+        _mark_store_down()
+        raise
     out = tuple(
         (str(r["role_id"]), int(((r.get("roles") or {}).get("display_priority")) or 0))
         for r in rows
@@ -243,7 +290,33 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False,
     except Exception:
         _warn_once(f"store:{key}", "feature flag store unreadable; %r fails closed", key,
                    exc_info=True)
-        return Resolution(off, "fail_closed", "flag store unreadable")
+        return Resolution(off, "fail_closed", STORE_UNREADABLE)
+
+
+def cached_explain(key: str, user_id: str | None) -> Resolution | None:
+    """:func:`explain` without any I/O, or None when answering would need a
+    store read (a cold snapshot, or a role lookup this user has no fresh
+    cache entry for). Safe on an event loop. Inside the unreadable window it
+    answers — fail closed — without a read."""
+    fd = REGISTRY.get(key)
+    if fd is None:
+        return explain(key, user_id)  # unregistered: answered without I/O
+    env = (os.getenv(f"SAPLING_FLAG_{key.upper()}") or "").strip().lower()
+    if env in fd.variants:
+        return explain(key, user_id)  # the env override wins before any read
+    with _lock:
+        cached = _snapshot
+        down = time.monotonic() < _store_down_until
+    if cached is not None and time.monotonic() - cached[0] < snapshot_ttl_s():
+        snap = cached[1]
+        if user_id and not _roles_cached(user_id) and any(
+            t["target_type"] == "role" for t in snap.targets.get(key, [])
+        ):
+            return None  # would need this user's roles
+        return explain(key, user_id, _snapshot=snap)
+    if down:
+        return Resolution(fd.variants[0], "fail_closed", STORE_UNREADABLE)
+    return None
 
 
 def flag_variant(key: str, user_id: str | None) -> str:

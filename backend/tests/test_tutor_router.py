@@ -24,7 +24,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from agents.decision import decision_agent
 from main import app
-from services import decisions, events_service, tutor_router
+from services import decisions, events_service, feature_flags, tutor_router
 from tests.agent_run_fakes import run_result
 
 client = TestClient(app)
@@ -47,9 +47,8 @@ def _clean_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     # Hermetic flag store: no stored config, so `decision_router` resolves to
     # its "off" default instead of reading whatever DB .env points at.
-    from services import feature_flags
     monkeypatch.setattr(feature_flags, "read_config",
-                        lambda: feature_flags.Snapshot(flags={}, targets={}))
+                        lambda **k: feature_flags.Snapshot(flags={}, targets={}))
 
 
 def _flash_lite(monkeypatch):
@@ -170,8 +169,8 @@ def test_the_flag_is_read_off_the_event_loop(monkeypatch):
 
 
 def test_observe_does_no_flag_io_before_returning(monkeypatch):
-    """observe_tutor_turn itself only schedules: the flag read happens later,
-    inside the task."""
+    """On a cold cache observe_tutor_turn only schedules: the flag read
+    happens later, inside the task."""
     calls: list = []
     monkeypatch.setattr(decisions, "router_backends",
                         lambda user_id: calls.append(user_id) or (decisions.OFF, decisions.OFF))
@@ -185,22 +184,38 @@ def test_observe_does_no_flag_io_before_returning(monkeypatch):
     assert asyncio.run(run()) == ["u1"]
 
 
-def test_a_hung_flag_read_is_off_not_a_stuck_router(monkeypatch, sink):
-    import threading
+def test_an_unreadable_flag_store_records_the_gap(monkeypatch, sink):
+    """#672 review: a store outage is not "off" — the turn gets one
+    decision.made with all defaults and fallback_reason=flag_unreadable."""
 
-    release = threading.Event()
-    monkeypatch.setattr(tutor_router, "FLAG_RESOLVE_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(decisions, "router_backends",
-                        lambda user_id: release.wait(5) and (decisions.JEV, decisions.OFF))
+    def down(**k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(feature_flags, "read_config", down)
 
     async def run():
         return await _observe()
 
-    try:
-        assert asyncio.run(run()) is None
-    finally:
-        release.set()
-    assert _decision_events(sink) == []
+    result = asyncio.run(run())
+    assert (result.fallback_reason, result.requested, result.backend) == (
+        "flag_unreadable", "none", "none")
+    (event,) = _decision_events(sink)
+    assert event["payload"]["fallback_reason"] == "flag_unreadable"
+    assert event["payload"]["session_id"] == "s1"
+
+
+def test_a_warm_off_flag_schedules_nothing(monkeypatch):
+    """With the flag cache warm and the flag off, observe_tutor_turn answers
+    inline: no state, no task, no thread hop."""
+
+    async def run():
+        feature_flags.explain("decision_router", "u1")  # warms the snapshot
+        with patch("services.tutor_router.build_state") as build, \
+             patch("asyncio.to_thread") as hop:
+            assert _observe() is None
+        return build.called, hop.called
+
+    assert asyncio.run(run()) == (False, False)
 
 
 def test_routed_turn_is_fire_and_forget_and_emits_one_event(monkeypatch, sink):
@@ -292,7 +307,8 @@ def test_flag_driven_failure_logs_the_backend_it_requested(monkeypatch, sink, fa
     async def run():
         return await _observe()
 
-    with patch("services.feature_flags.flag_variant", return_value="jev"):
+    with patch("services.feature_flags.explain",
+               return_value=feature_flags.Resolution("jev", "default", "")):
         result = asyncio.run(run())
     assert (result.fallback_reason, result.requested) == (reason, "jev")
     (event,) = _decision_events(sink)
@@ -525,6 +541,38 @@ def test_streamed_turn_usage_row_carries_the_request_id(router_on):
     (usage,) = [c for c in usage_calls if c.get("feature") == "chat_tutor"]
     assert usage["request_id"] is not None
     assert usage["request_id"] == kw["request_id"] == r.headers["X-Request-ID"]
+
+
+@pytest.mark.parametrize("path", ["/api/learn/chat/stream", "/api/learn/start-session/stream"])
+def test_streamed_continuation_usage_row_carries_the_request_id(router_on, path):
+    """#672 review: the textless-turn continuation runs inside the SSE
+    generator (the contextvar is gone), so its llm_usage row needs the turn's
+    request_id passed explicitly — on both streamed routes."""
+    from services.agent_events import SaplingEvent
+
+    async def fake_stream(**kwargs):
+        await kwargs["continuation"](_served_by("", "gemini-2.5-pro"))
+        yield SaplingEvent(type="error", step="reply", message="stop.", data={})
+
+    agent = MagicMock()
+    agent.run = AsyncMock(return_value=run_result("finished"))
+    usage_calls: list = []
+    body = ({"session_id": "s1", "user_id": "user_andres", "message": "Hi", "mode": "socratic"}
+            if path.endswith("chat/stream") else
+            {"user_id": "user_andres", "topic": "Recursion", "mode": "socratic"})
+    with (
+        patch("routes.learn.stream_agent_turn", fake_stream),
+        patch("routes.learn.table", side_effect=_table_factory),
+        patch("routes.learn.agent_for_mode", return_value=agent),
+        patch("routes.learn._consume_pending"),
+        patch("routes.learn.record_agent_usage",
+              side_effect=lambda rr, **kw: usage_calls.append(kw) or rr),
+    ):
+        r = client.post(path, json=body)
+    assert r.status_code == 200
+    (usage,) = [c for c in usage_calls if c.get("feature") == "chat_tutor_continuation"]
+    assert usage["request_id"] is not None
+    assert usage["request_id"] == r.headers["X-Request-ID"]
 
 
 def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):

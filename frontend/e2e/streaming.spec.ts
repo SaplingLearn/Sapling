@@ -277,8 +277,9 @@ test("a stream that dies before persisting, retried via the JSON rung, is one tu
   // the first token" shape the client retries through POST /api/learn/chat,
   // which persists. One student turn: one persisted pair, one decision.
   //
-  // Needs the decision seam ON: automatic under SAPLING_MODEL_MODE=function
-  // unless SAPLING_DECISIONS_BACKEND=off (scripts/e2e-up.sh keeps it on).
+  // Needs the decision seam ON: the `decision_router` flag, which
+  // scripts/e2e-up.sh switches on in function mode through its env override
+  // (SAPLING_FLAG_DECISION_ROUTER, default jev; `off` would skip the seam).
   let streamReachedBackend = 0;
   await page.route("**/api/learn/chat/stream", async route => {
     const cookie = (await page.context().cookies())

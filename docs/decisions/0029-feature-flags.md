@@ -46,7 +46,17 @@ mechanism instead, before that pattern repeats a third time.
    value that isn't one of the flag's own variants (stored or from the env),
    and any exception reading the DB (a network blip, a missing table) all
    collapse to `variants[0]` — which every registry entry defines as `"off"`.
-   There is no separate "unknown" state a caller has to handle. The **admin
+   There is no separate "unknown" state a caller has to handle (a caller
+   that wants to tell an outage apart can compare `Resolution.detail` with
+   `STORE_UNREADABLE`, as the tutor router does). Resolver reads are
+   **bounded** (`STORE_TIMEOUT_S`, 2.5 s, not the connection's 30 s) and a
+   failed read marks the store unreadable for `STORE_UNREADABLE_TTL_S`
+   (30 s, cleared by any admin write): inside that window every resolution
+   fails closed without another read, so an outage costs one bounded wait
+   per process per window — not one hung read per call on the per-item
+   paths (#672's router, #677's PostHog worker). `cached_explain` answers
+   from the caches alone (None when it would need a read), for callers on an
+   event loop. The **admin
    API is the deliberate exception**: `list_flags`/`update_flag`/
    `upsert_target`/`delete_target` call the uncached `read_config()` directly
    and let a DB failure raise into a 500, rather than showing an admin a

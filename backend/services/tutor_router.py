@@ -18,16 +18,18 @@ before anything trusts it. Which way the model-selection question in #640 goes
 NOT decided here; the served model tier rides on the event so either can be
 costed.
 
-**No waiting on the decision, and no blocking I/O on the loop.**
-:func:`observe_tutor_turn` builds a small clipped state and schedules a
-fire-and-forget task, returning without awaiting it. Everything else happens
-in that task: resolving which backends run — the per-student
-``decision_router`` feature flag (off | jev | jev_shadow,
-:func:`decisions.router_backends`), whose store read is a blocking PostgREST
-call on a cache miss — runs in a worker thread, bounded by
-``FLAG_RESOLVE_TIMEOUT_S``; then the decision, under its own timeout
-backstop. The task can never raise into the turn. With the flag off (the
-default) it ends after the flag read and emits nothing.
+**No waiting on the decision, and no blocking I/O on the loop.** Which
+backends run is the per-student ``decision_router`` feature flag (off | jev
+| jev_shadow). :func:`observe_tutor_turn` resolves it INLINE when the flag
+cache is warm (no I/O, :func:`decisions.router_backends_cached`) and, when it
+is off, returns before building any state or scheduling anything. Otherwise
+it schedules a fire-and-forget task and returns without awaiting it; on a
+cold cache the task reads the flag in a worker thread (the store read is a
+blocking PostgREST call, bounded by feature_flags.STORE_TIMEOUT_S), then
+runs the decision under its own timeout backstop. The task can never raise
+into the turn. When the flag store is unreadable the turn still gets one
+``decision.made`` — all defaults, ``fallback_reason="flag_unreadable"`` — so
+the dataset shows the gap instead of silently skipping turns.
 
 Only student-authored chat turns are routed (``/chat`` and ``/chat/stream``),
 and only once they are PERSISTED — exactly one decision per saved student
@@ -129,9 +131,8 @@ QUESTIONS: tuple[decisions.Question, ...] = (
 #: (asyncio keeps only weak references to tasks).
 _inflight: set[asyncio.Task] = set()
 
-#: Longest the router waits on the decision_router flag read (a thread-pool
-#: PostgREST call on a cache miss) before treating the flag as off.
-FLAG_RESOLVE_TIMEOUT_S = 5.0
+#: Stands for "the flag store could not be read" in place of a backend pair.
+_UNREADABLE = ("unreadable", "unreadable")
 
 
 async def drain_inflight() -> None:
@@ -144,9 +145,9 @@ async def drain_inflight() -> None:
     if not tasks:
         return
     try:
-        await asyncio.wait(
-            tasks, timeout=FLAG_RESOLVE_TIMEOUT_S + decisions.worst_case_s() + 2.0,
-        )
+        from services.feature_flags import STORE_TIMEOUT_S
+
+        await asyncio.wait(tasks, timeout=STORE_TIMEOUT_S + decisions.worst_case_s() + 2.0)
     except Exception:
         logger.debug("tutor router drain failed", exc_info=True)
 
@@ -219,25 +220,37 @@ async def _route(state: dict, *, user_id: str | None, request_id: str | None,
         return result
 
 
-async def _resolve_backends(user_id: str | None) -> tuple[str, str]:
-    """`decisions.router_backends` off the event loop: its flag read is a
-    synchronous httpx call whenever the snapshot or roles cache misses (every
-    time, on the E2E stack, whose TTLs are 0). Off on timeout or error."""
+def _cached_backends(user_id: str | None) -> tuple[str, str] | None:
+    """The backends from a warm flag cache (no I/O), _UNREADABLE inside the
+    store's unreadable window, or None when the cache is cold."""
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(decisions.router_backends, user_id),
-            timeout=FLAG_RESOLVE_TIMEOUT_S,
-        )
-    except Exception as exc:
-        logger.warning("tutor router flag read failed (%s); not routing this turn",
-                       type(exc).__name__)
-        logger.debug("tutor router flag read detail", exc_info=True)
-        return decisions.OFF, decisions.OFF
+        return decisions.router_backends_cached(user_id)
+    except decisions.FlagUnreadable:
+        return _UNREADABLE
+
+
+def _read_backends(user_id: str | None) -> tuple[str, str]:
+    """The cold-cache read, in a worker thread (bounded by the flag store's
+    own timeout)."""
+    try:
+        return decisions.router_backends(user_id)
+    except decisions.FlagUnreadable:
+        return _UNREADABLE
 
 
 async def _observe(state: dict, *, user_id: str | None, request_id: str | None,
-                   extra: dict) -> decisions.DecisionResult | None:
-    primary, shadow = await _resolve_backends(user_id)
+                   extra: dict,
+                   backends: tuple[str, str] | None) -> decisions.DecisionResult | None:
+    if backends is None:
+        backends = await asyncio.to_thread(_read_backends, user_id)
+    if backends == _UNREADABLE:
+        # Not "off": the student may well be routed. Record the gap.
+        result = decisions.defaults_result(QUESTIONS, reason="flag_unreadable",
+                                           requested="none")
+        decisions.emit(result, feature=FEATURE, user_id=user_id,
+                       request_id=request_id, extra=extra)
+        return result
+    primary, shadow = backends
     if primary == decisions.OFF:
         return None
     return await _route(state, user_id=user_id, request_id=request_id, extra=extra,
@@ -273,12 +286,16 @@ def observe_tutor_turn(
     served model name.
 
     Returns the scheduled task (tests await it; its result is None when the
-    flag is off for this student) or None when scheduling failed. Never
+    flag turned out off for this student), or None when the flag is known
+    off from the cache (nothing is scheduled) or scheduling failed. Never
     raises, never blocks, and never waits on the decision: the caller's turn
-    runs exactly as it would without this call. No I/O here — the flag read
-    happens in the task, in a worker thread.
+    runs exactly as it would without this call. No I/O here — a cold flag
+    read happens in the task, in a worker thread.
     """
     try:
+        backends = _cached_backends(user_id)
+        if backends is not None and backends[0] == decisions.OFF:
+            return None  # known off without I/O: no state, no task, no thread hop
         state = build_state(message, history)
         extra = {
             "session_id": session_id,
@@ -289,7 +306,8 @@ def observe_tutor_turn(
             "history_messages": len(state["recent_conversation"]),
         }
         task = asyncio.get_running_loop().create_task(
-            _observe(state, user_id=user_id, request_id=request_id, extra=extra),
+            _observe(state, user_id=user_id, request_id=request_id, extra=extra,
+                     backends=backends),
             name="tutor-router",
         )
         _inflight.add(task)

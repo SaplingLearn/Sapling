@@ -122,12 +122,72 @@ def test_unregistered_key_is_off():
     assert ff.flag_on("no_such_flag", "u1") is False
 
 
-def test_store_failure_fails_closed_and_is_not_cached():
+def test_store_failure_fails_closed_and_is_cached_briefly():
+    """#672 review: an unreadable store is remembered for
+    STORE_UNREADABLE_TTL_S — every caller fails closed without another
+    (hung) read — and read again once the window passes or a write clears."""
     with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
         r = ff.explain(KEY, "u1")
-    assert (r.variant, r.step) == ("off", "fail_closed")
+    assert (r.variant, r.step, r.detail) == ("off", "fail_closed", ff.STORE_UNREADABLE)
+    reads = {"n": 0}
+    good = _tables(flags=[_row("on")])
+
+    def counting(name):
+        reads["n"] += 1
+        return good(name)
+
+    with patch("services.feature_flags.table", side_effect=counting):
+        assert ff.flag_variant(KEY, "u1") == "off"  # inside the window: no read
+        assert reads["n"] == 0
+        ff._store_down_until = 0.0  # the window passes
+        assert ff.flag_variant(KEY, "u1") == "on"
+    ff.clear_feature_flags_cache()
+    assert ff._store_down_until == 0.0
+
+
+def test_store_reads_are_bounded():
+    seen: list = []
+
+    def factory(name):
+        m = MagicMock()
+
+        def swc(*a, **k):
+            seen.append(k.get("timeout"))
+            return [], 0
+
+        m.select_with_count.side_effect = swc
+        return m
+
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.explain(KEY, "u1")
+    assert seen and all(t == ff.STORE_TIMEOUT_S for t in seen)
+
+
+def test_cached_explain_never_reads():
+    with patch("services.feature_flags.table", side_effect=AssertionError("I/O")):
+        assert ff.cached_explain(KEY, "u1") is None  # cold
     with patch("services.feature_flags.table", side_effect=_tables(flags=[_row("on")])):
-        assert ff.flag_variant(KEY, "u1") == "on"  # retried, not a cached failure
+        ff.explain(KEY, "u1")  # warms the snapshot
+    with patch("services.feature_flags.table", side_effect=AssertionError("I/O")):
+        r = ff.cached_explain(KEY, "u1")
+    assert (r.variant, r.step) == ("on", "default")
+
+
+def test_cached_explain_inside_the_unreadable_window_fails_closed():
+    with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
+        ff.explain(KEY, "u1")
+    with patch("services.feature_flags.table", side_effect=AssertionError("I/O")):
+        r = ff.cached_explain(KEY, "u1")
+    assert (r.step, r.detail) == ("fail_closed", ff.STORE_UNREADABLE)
+
+
+def test_cached_explain_cold_roles_is_none():
+    targets = [{"flag_key": KEY, "target_type": "role", "target_id": "r1", "variant": "on"}]
+    with patch("services.feature_flags.table",
+               side_effect=_tables(flags=[_row("off")], targets=targets, roles=[])):
+        ff.explain(KEY, "other")  # warms the snapshot only for `other`'s roles
+    with patch("services.feature_flags.table", side_effect=AssertionError("I/O")):
+        assert ff.cached_explain(KEY, "u1") is None
 
 
 def test_snapshot_is_cached_until_cleared():
@@ -329,6 +389,7 @@ def test_store_outage_warns_again_after_a_recovery(caplog):
         with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
             ff.flag_variant(KEY, "u1")
             ff.flag_variant(KEY, "u1")  # same outage: warned once
+        ff._store_down_until = 0.0  # the unreadable window passes
         with patch("services.feature_flags.table", side_effect=_tables(flags=[_row()])):
             ff.flag_variant(KEY, "u1")  # recovered
         ff.clear_feature_flags_cache()

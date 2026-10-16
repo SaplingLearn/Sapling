@@ -246,7 +246,9 @@ _CONTINUATION_INSTRUCTIONS = (
 _CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
 
 
-async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
+async def _continuation_text(
+    agent, run_result, run_kwargs: dict, *, request_id: str | None = None,
+) -> str | None:
     """Finish a turn the model abandoned after its tools ran (#646).
 
     Roughly 25-40% of gemini-2.5-flash-lite turns end with no text part once
@@ -300,6 +302,9 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             feature="chat_tutor_continuation",
             task="chat_tutor",
             user_id=getattr(carried.get("deps"), "user_id", None),
+            # Explicit: on the streamed path this runs inside the SSE
+            # generator, after the request contextvar is gone.
+            request_id=request_id,
         )
     return _new_run_text(result).strip() or None
 
@@ -667,6 +672,7 @@ async def _start_session_agent(
     session_id: str | None = None,
     *,
     model_pref: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """Core start-session pipeline on chat_tutor_agent: _prepare_chat_run
     (empty history) -> agent.run -> record_agent_usage -> stash
@@ -700,7 +706,10 @@ async def _start_session_agent(
     if session_id is None:
         session_id = str(uuid.uuid4())
 
-    request_id = current_request_id() or str(uuid.uuid4())
+    # `request_id`: the streaming route's Rung-1 fallback passes the turn's
+    # own (this then runs inside the SSE generator, where the request
+    # contextvar is gone and a fresh uuid would orphan the usage rows).
+    request_id = request_id or current_request_id() or str(uuid.uuid4())
 
     # Use abstract course_id from body, or resolve it from the topic. The graph
     # + shared context key on this abstract id; the session row keys on the
@@ -729,6 +738,7 @@ async def _start_session_agent(
         result = record_agent_usage(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            request_id=request_id,
         )
         # str — chat_tutor agents return plain Markdown. Safe to read
         # `.output` directly here (no `_new_run_text` narrowing): this call
@@ -747,7 +757,7 @@ async def _start_session_agent(
             # opener's tool results are in its messages just like a chat
             # turn's.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs)
+                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
             except Exception:
                 logger.warning(
                     "Continuation after a textless session greeting failed",
@@ -949,6 +959,7 @@ async def _chat_via_agent(
         result = record_agent_usage(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+            request_id=request_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
         # puts `message_history` into `run_kwargs`, so a textless model
@@ -975,7 +986,7 @@ async def _chat_via_agent(
             # have already run. Fire regardless of whether writes landed:
             # nothing else will re-run, so there is no better answer waiting.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs)
+                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
             except Exception:
                 # Second model call; a failure here must degrade to the
                 # pre-#646 behaviour, never surface as its own error.
@@ -1214,7 +1225,7 @@ async def chat_stream(body: ChatBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1305,7 +1316,8 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # on_complete/nonstream_fallback executes per turn — see
         # stream_agent_turn's docstring). model_pref="fast" (D2): the
         # second chance runs on the fast tier.
-        return await _start_session_agent(body, session_id, model_pref="fast")
+        return await _start_session_agent(body, session_id, model_pref="fast",
+                                          request_id=request_id)
 
     def _usage(run_result) -> None:
         # #118: same hook as /chat/stream — the opener runs the same
@@ -1326,7 +1338,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1649,6 +1661,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     result = record_agent_usage(
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        request_id=request_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's
@@ -1662,7 +1675,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         # (#646) — an action turn has no fallback rung at all, so the
         # alternative is failing work the tools already did.
         try:
-            rescued = await _continuation_text(agent, result, run_kwargs)
+            rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
         except Exception:
             logger.warning(
                 "Continuation after a textless action turn failed", exc_info=True

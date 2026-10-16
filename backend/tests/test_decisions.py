@@ -801,7 +801,10 @@ class TestScoreFallbackRounding:
     rounding — so 0.5 went DOWN to level 0 but 1.5 went UP to level 2."""
 
     @pytest.mark.parametrize("score,level", [
-        (0.0, "calm"), (0.49, "calm"), (0.5, "frustrated"), (1.0, "frustrated"),
+        (0.0, "calm"), (0.49, "calm"),
+        # floor(s + 0.5) gets this one wrong: the float sum rounds to 1.0.
+        (0.49999999999999994, "calm"),
+        (0.5, "frustrated"), (1.0, "frustrated"),
         (1.49, "frustrated"), (1.5, "angry"), (2.0, "angry"),
     ])
     def test_midpoints_round_half_up(self, score, level):
