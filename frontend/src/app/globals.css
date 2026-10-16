@@ -1008,7 +1008,7 @@ body { font-size: 14px; line-height: 1.5; }
 .field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* ── Admin: feature flags (#620) ─────────────────────────────────────── */
-.flags { display: flex; flex-direction: column; gap: 28px; max-width: 1040px; }
+.flags { display: flex; flex-direction: column; gap: 28px; }
 .flags__intro { display: flex; align-items: center; gap: 10px; color: var(--text-dim); font-size: var(--fs-md); }
 .flags__intro p { margin: 0; }
 .flags__empty { padding: 32px; text-align: center; color: var(--text-muted); }
