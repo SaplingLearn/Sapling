@@ -65,7 +65,8 @@ ruff==0.15.18
 # >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
 # the #646 continuation appends run-level `run(instructions=...)` (added in
 # 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
-# requirements.lock pins the tested version (1.107.0).
+# requirements.lock pins 1.107.0, which is what CI installs; a local venv may
+# be older (the #707 work was run locally on 1.89.1). Both are above the floor.
 pydantic-ai-slim[google]>=1.11.1,<2
 logfire[fastapi]>=2.0
 sse-starlette>=2.0

@@ -37,7 +37,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agents.chat_tutor import _PROMPTS, TutorMode, agent_for_mode
 from agents.deps import SaplingDeps
-from routes.learn import _CONTINUATION_INSTRUCTIONS, _continuation_text
+from routes.learn import (
+    _CONTINUATION_INSTRUCTIONS,
+    _CONTINUATION_NUDGE,
+    _continuation_text,
+    _new_run_text,
+)
 from tests.agent_run_fakes import FakeRunResult
 
 MODES = get_args(TutorMode)
@@ -142,22 +147,35 @@ def test_history_turn_stream_carries_rules(mode):
 
 
 class _TextlessThenRescued:
-    """The real #646 shape: a tool call, its return, then a response with NO
-    text — followed by the continuation, which is the only request made with
-    no tools available."""
+    """The two real #646 shapes, then the continuation (the only request
+    made with no tools available).
+
+    * `call_tool=True`: a tool call, its return, then a response with NO
+      text — the Flash-Lite shape the rung was built for.
+    * `call_tool=False`: a bare-newline reply with no tool call at all — the
+      gemini-2.5-pro / start-session-greeting shape, which also reaches the
+      continuation, so the notice must not claim tool results exist."""
 
     __name__ = "textless_then_rescued"
 
-    def __init__(self):
+    def __init__(self, call_tool: bool):
+        self.call_tool = call_tool
         self.first_run_seen: list[str] = []
         self.continuation_seen: list[str] = []
+        self.continuation_user_prompt: str | None = None
 
     def __call__(self, messages, info: AgentInfo) -> ModelResponse:
         seen = _prompt_seen(messages, info)
         if not info.function_tools:
             self.continuation_seen.append(seen)
+            last = messages[-1]
+            self.continuation_user_prompt = next(
+                p.content for p in last.parts if isinstance(p, UserPromptPart)
+            )
             return ModelResponse(parts=[TextPart(content=RESCUED_REPLY)])
         self.first_run_seen.append(seen)
+        if not self.call_tool:
+            return ModelResponse(parts=[TextPart(content="\n")])
         tool_ran = any(
             isinstance(p, ToolReturnPart) for m in messages for p in m.parts
         )
@@ -173,14 +191,17 @@ def _stub_update_mastery(concept: str) -> str:
     return "mastery recorded"
 
 
+@pytest.mark.parametrize("call_tool", [True, False], ids=["after_tools", "no_tool_call"])
 @pytest.mark.parametrize("mode", MODES)
-def test_textless_continuation_carries_rules_and_no_tools_notice(mode):
+def test_textless_continuation_carries_rules_and_no_tools_notice(mode, call_tool):
     """#646: the continuation reruns on `run_result.all_messages()` of a
     history-bearing turn. It must still carry the tutor's rules, AND — since
     those rules demand a mastery call every turn while the continuation is
-    handed no tools — it must say plainly that no tools exist on this pass."""
+    handed no tools — it must say plainly that no tools exist on this pass.
+    The directive lives in the instructions; the user turn is only the
+    minimal `_CONTINUATION_NUDGE` trigger."""
     agent = agent_for_mode(mode)
-    model = _TextlessThenRescued()
+    model = _TextlessThenRescued(call_tool)
     run_kwargs = {"deps": _deps(), "message_history": _history()}
     stub = Tool(_stub_update_mastery, name="update_mastery_tool")
     with agent.override(model=FunctionModel(model)):
@@ -188,12 +209,13 @@ def test_textless_continuation_carries_rules_and_no_tools_notice(mode):
             first = asyncio.run(agent.run("and the step size?", **run_kwargs))
         text = asyncio.run(_continuation_text(agent, first, run_kwargs))
 
-    # Premise: the first run really was textless after a real tool round trip.
-    assert len(model.first_run_seen) == 2, "expected tool call, then a textless reply"
-    assert not any(
-        isinstance(p, TextPart) for m in first.new_messages()
-        if isinstance(m, ModelResponse) for p in m.parts
+    # Premise: the first run really produced no reply of its own.
+    assert len(model.first_run_seen) == (2 if call_tool else 1)
+    assert _new_run_text(first).strip() == ""
+    tool_returned = any(
+        isinstance(p, ToolReturnPart) for m in first.new_messages() for p in m.parts
     )
+    assert tool_returned is call_tool
     for seen in model.first_run_seen:
         _assert_rules(seen, mode)
         assert _CONTINUATION_INSTRUCTIONS not in seen, (
@@ -210,6 +232,29 @@ def test_textless_continuation_carries_rules_and_no_tools_notice(mode):
     assert seen.index(_CONTINUATION_INSTRUCTIONS) > seen.index(_PROMPTS[mode]), (
         "the notice must follow (and so override) the tutor's tool rules"
     )
+    assert model.continuation_user_prompt == _CONTINUATION_NUDGE
+
+
+def test_continuation_wording_is_true_in_every_case():
+    """Pins the wording decisions in `_CONTINUATION_INSTRUCTIONS` (#707 review).
+
+    * The notice reaches turns where NO tool ran, so it may refer to tool
+      results only conditionally — never assert that results or data exist.
+    * "Not a function call" must not become "plain text": the tutor asks for
+      LaTeX, mermaid and plot blocks, and the rescued reply keeps them.
+    * One place to edit: the nudge is a bare trigger, the instructions carry
+      every directive (and name the nudge so the model can discount it)."""
+    notice = _CONTINUATION_INSTRUCTIONS.lower()
+    assert "no tools are available" in notice
+    assert "update_mastery_tool" in notice
+    assert "if tool results" in notice
+    for unconditional in ("have already run", "results are in the conversation"):
+        assert unconditional not in notice, unconditional
+    assert "plain text" not in notice
+    assert "formatting" in notice
+    assert f'"{_CONTINUATION_NUDGE}"' in _CONTINUATION_INSTRUCTIONS
+    assert len(_CONTINUATION_NUDGE.split()) <= 3, "the nudge is a trigger, not a directive"
+    assert "tool" not in _CONTINUATION_NUDGE.lower()
 
 
 # ── Through the real GoogleModel ──────────────────────────────────────────
@@ -224,18 +269,23 @@ class _Sent(Exception):
 
 
 def _intercepting_google_model(monkeypatch):
-    """A real `GoogleModel` whose genai client raises `_Sent(kwargs)` instead
-    of sending. (The autouse hermetic LLM guard backs this up: if the
-    intercept ever missed, the transport would raise, not reach Gemini.)"""
+    """A real `GoogleModel` whose genai calls raise `_Sent(kwargs)` instead
+    of sending.
+
+    The patch is on the `AsyncModels` CLASS, not on one client's instance, so
+    it holds however the model reaches its client — including a provider that
+    builds a fresh client per access (as `_LoopSafeGoogleModel` resolves one
+    per event loop). The autouse hermetic LLM guard backs this up: if the
+    intercept ever missed, the transport would raise, not reach Gemini."""
+    from google.genai.models import AsyncModels
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-    provider = GoogleProvider(api_key="test-key-never-sent")
-
-    async def _capture(**kwargs):
+    async def _capture(self, **kwargs):
         raise _Sent(kwargs)
 
-    monkeypatch.setattr(provider.client.aio.models, "generate_content", _capture)
+    monkeypatch.setattr(AsyncModels, "generate_content", _capture)
+    provider = GoogleProvider(api_key="test-key-never-sent")
     return GoogleModel("gemini-2.5-flash-lite", provider=provider)
 
 
@@ -300,3 +350,6 @@ def test_continuation_gemini_request_has_notice_and_no_tools(monkeypatch):
     assert system.count(_PROMPTS["socratic"]) == 1
     assert system.count(_CONTINUATION_INSTRUCTIONS) == 1
     assert system.index(_CONTINUATION_INSTRUCTIONS) > system.index(_PROMPTS["socratic"])
+    contents = sent.value.kwargs["contents"]
+    assert _texts(contents[-1]) == _CONTINUATION_NUDGE, "the user turn is the bare trigger"
+    assert _CONTINUATION_INSTRUCTIONS not in _texts(contents)

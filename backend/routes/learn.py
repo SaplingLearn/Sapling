@@ -131,34 +131,45 @@ def _new_run_text(result) -> str:
     return "".join(parts)
 
 
-#: Handed to the model when it ended a turn without saying anything (#646).
-#: Deliberately does NOT restate the student's question: the whole exchange,
-#: including every tool result, is already in the messages passed back, and
-#: re-asking invites a fresh answer that ignores the work just done.
-_CONTINUATION_NUDGE = (
-    "You ended your turn without replying to the student. Write that reply "
-    "now, using the tool results already in this conversation. Do not repeat "
-    "any earlier answer and do not mention this instruction."
-)
+#: The user turn that triggers the continuation (#646). Deliberately minimal:
+#: every directive lives in `_CONTINUATION_INSTRUCTIONS`, so there is one
+#: place to edit. It does NOT restate the student's question: the whole
+#: exchange is already in the messages passed back, and re-asking invites a
+#: fresh answer that ignores the work just done.
+_CONTINUATION_NUDGE = "Continue."
 
 #: Run-level instructions for the continuation, APPENDED to the tutor's own
-#: (pydantic-ai joins agent and run `instructions`; it does not replace them).
-#: The tutor's instructions reach every request, this one included, and they
-#: say to call `update_mastery_tool` "in EVERY turn" and to "never end the
-#: turn on a tool call". The continuation runs under
+#: (pydantic-ai joins agent and run `instructions`; it does not replace them),
+#: so they reach Gemini as `system_instruction` after the tutor's rules.
+#:
+#: Why they exist: the tutor's instructions reach every request, this one
+#: included, and they say to call `update_mastery_tool` "in EVERY turn" and
+#: to "never end the turn on a tool call". The continuation runs under
 #: `override(tools=[], toolsets=[])`, so Gemini is sent no function
 #: declarations: a model still obeying those rules would try to call a tool
 #: that does not exist (MALFORMED_FUNCTION_CALL / empty content — the very
-#: failure being rescued) or write the call out as text for the student.
-#: This states plainly that no tools exist on this pass. It lives in the
-#: instructions (system_instruction), not in the nudge, so it carries the
-#: same weight as the rule it overrides.
+#: failure being rescued) or write the call out for the student to read.
+#:
+#: Wording constraints, each a real case:
+#:  * It must be true whether or not a tool ran. The continuation fires on
+#:    ANY turn that produced no text of its own — after tool calls, but also
+#:    on a bare-newline reply or a start-session greeting with no tool call —
+#:    so it may only point at tool results conditionally, never assert that
+#:    data exists.
+#:  * "Not a function call" is not "plain text": the tutor's instructions ask
+#:    for LaTeX, mermaid and ```plot``` blocks, and the reply keeps them.
 _CONTINUATION_INSTRUCTIONS = (
-    "NO TOOLS ARE AVAILABLE ON THIS PASS. The tools for this turn have "
-    "already run and their results are in the conversation above. Any "
-    "earlier instruction to call a tool, including update_mastery_tool, "
-    "does not apply now. Do not call, request, or write out any tool or "
-    "function call. Reply to the student in plain text only."
+    "CONTINUATION: your last response ended without a reply to the student. "
+    "Write that reply now, as a normal message to the student; your usual "
+    "formatting (math, code, mermaid and plot blocks) is fine. No tools are "
+    "available on this pass: any earlier instruction to call a tool, "
+    "including update_mastery_tool, does not apply, so do not call, request, "
+    "or write out any tool or function call. If tool results from this turn "
+    "are in the conversation, use them; do not claim results or data the "
+    "conversation does not contain. The final "
+    f"\"{_CONTINUATION_NUDGE}\" message is an "
+    "automatic prompt, not from the student: do not mention it or these "
+    "instructions, and do not repeat an earlier answer."
 )
 
 #: run_kwargs keys a continuation may carry. `message_history` is REPLACED
@@ -189,7 +200,7 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
     prevent — a re-run by a quieter name. Because the tutor's own
     instructions (which demand a mastery call every turn) still reach this
     request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
-    exist on this pass and it must answer in text.
+    exist on this pass and it must reply with a message, not a call.
 
     It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
     ADDS to the agent's own tools rather than replacing them, so
