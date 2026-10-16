@@ -7,9 +7,12 @@
  * request is built from a header allowlist and never carries the student's
  * `sapling_session` cookie or IP — see src/lib/ingestProxy.ts for the full
  * reason. Not an open relay: only the endpoints the SDK config uses, only
- * with a `sapling_session` that verifies (never forwarded), bodies capped at
- * MAX_INGEST_BODY_BYTES, and only events for this deployment's project key.
+ * with a `sapling_session` that verifies (never forwarded), only plain
+ * (un-encoded) bodies, capped at MAX_INGEST_BODY_BYTES, and only events for
+ * this deployment's project key.
  */
+import type { NextRequest } from "next/server";
+
 import {
   MAX_INGEST_BODY_BYTES,
   downstreamResponseHeaders,
@@ -18,11 +21,11 @@ import {
   isAllowedIngestRequest,
   isImmutableAsset,
   readCappedBody,
-  sessionTokenFrom,
+  requestEncodingOk,
   upstreamRequestHeaders,
   upstreamTarget,
 } from "@/lib/ingestProxy";
-import { verifySession } from "@/lib/sessionToken";
+import { SESSION_COOKIE_NAME, verifySession } from "@/lib/sessionToken";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +34,8 @@ function projectKey(): string {
   return process.env.NEXT_PUBLIC_POSTHOG_KEY ?? "";
 }
 
-async function proxy(request: Request): Promise<Response> {
+async function proxy(request: NextRequest): Promise<Response> {
+  // The raw URL (not nextUrl): the traversal checks want the path as sent.
   const { pathname, search } = new URL(request.url);
   const target = upstreamTarget(pathname, search);
   if (!target || !isAllowedIngestRequest(request.method, target.path)) {
@@ -39,7 +43,7 @@ async function proxy(request: Request): Promise<Response> {
   }
   // Not an open relay: analytics only runs for signed-in students, so the
   // session must verify (local HMAC + expiry, as middleware.ts does).
-  const token = sessionTokenFrom(request.headers);
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!token || !(await verifySession(token))) return new Response(null, { status: 403 });
 
   const init: RequestInit = {
@@ -47,6 +51,8 @@ async function proxy(request: Request): Promise<Response> {
     headers: upstreamRequestHeaders(request.headers),
   };
   if (request.method === "POST") {
+    // The body is checked as plain UTF-8 JSON below; an encoded one is refused.
+    if (!requestEncodingOk(request.headers)) return new Response(null, { status: 415 });
     const declared = Number(request.headers.get("content-length") ?? "0");
     if (declared > MAX_INGEST_BODY_BYTES) return new Response(null, { status: 413 });
     const body = await readCappedBody(request.body, MAX_INGEST_BODY_BYTES);

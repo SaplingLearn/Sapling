@@ -556,15 +556,17 @@ domain id here.
 Added with the PostHog frontend integration (the `analytics.spec.ts`
 journey reaches `/settings` by clicking the side nav's "Settings" link — a
 role locator, since `SideNav.tsx` is not a testid surface — checks the
-opt-out renders inactive, and asserts the E2E build sends no analytics).
+opt-out shows the account's saved setting, and asserts the E2E build sends
+no analytics).
 
 | testid | element |
 | --- | --- |
 | `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
-| `settings-analytics` | the Data tab's "Product analytics" card root |
-| `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — PATCHes `analytics_opt_out` to the account (opt-out stops capture first, opt-in saves first); **disabled** when analytics is not running in this build (no key, local mode, the E2E/test build), under Do Not Track / GPC, until the account answer has loaded, and while a save is in flight |
-| `settings-analytics-note` | the status line under it ("isn't running in Sapling right now…" / DNT / "…until your saved setting has loaded" / "Off for this visit only…" / "…couldn't start in this browser…" / "Saved to your account…") |
-| `settings-analytics-retry` | "Retry saving" inside the note, shown only after an opt-out whose account save failed (off for this visit only) — re-sends `analytics_opt_out: true` |
+| `settings-analytics` | the Data tab's "Product analytics" card root (its description lists everything PostHog receives: pageviews, product events, AI-generation records, server error reports — all keyed to the Sapling account ID) |
+| `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — shows and PATCHes the account's `analytics_opt_out`, which governs both the browser's pageviews and the backend's PostHog mirror (opt-out stops capture first, opt-in saves first). Usable whenever the account answer has loaded — also in a build that sends no pageviews (no key, local mode, the E2E/test build), with the `product_analytics` flag off, and under Do Not Track / GPC. **Disabled** only until that answer has loaded (or after a failed read) and while a save is in flight |
+| `settings-analytics-note` | the status line under it ("Loading your saved setting…" / "We couldn't load your saved setting…" / "No choice is saved to your account yet…" / "On — saved to your account…" (+ DNT/GPC or "Page views couldn't start in this browser…" variants) / "Off — saved to your account…" / "Off in this browser for this visit only…") |
+| `settings-analytics-reload` | "Try again" inside the note, shown only after the account read failed — re-reads the settings (`lib/accountSettings.ts`) |
+| `settings-analytics-retry` | "Retry saving" inside the note, shown only after an opt-out whose account save failed (off in this browser for this visit only) — re-sends `analytics_opt_out: true` |
 | `settings-toggle-${key}` | a Notifications-tab switch (the same `Toggle`) — `key` is the `user_settings` field it PATCHes: `notification_email` / `notification_push` / `notification_in_app` / `activity_status_visible` |
 
 ### `adminfb`

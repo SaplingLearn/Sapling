@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { verifySession } from '@/lib/sessionToken'
+import { SESSION_COOKIE_NAME, verifySession } from '@/lib/sessionToken'
 import { resolveFrontendEnv, detectHostConfigMismatch } from '@/lib/deployGuard'
 import { isAppShellRoute } from '@/lib/appRoutes'
 
@@ -64,7 +64,7 @@ export async function middleware(request: NextRequest) {
     return redirectToSignin(request, 'env_misconfig')
   }
 
-  const token = request.cookies.get('sapling_session')?.value
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value
   if (!token) return redirectToSignin(request)
 
   const session = await verifySession(token)
@@ -78,7 +78,7 @@ export async function middleware(request: NextRequest) {
     try {
       res = await fetch(
         `${API_URL}/api/auth/me?user_id=${encodeURIComponent(session.userId)}`,
-        { signal: controller.signal, headers: { Cookie: `sapling_session=${token}` } },
+        { signal: controller.signal, headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` } },
       )
     } finally {
       clearTimeout(timeout)

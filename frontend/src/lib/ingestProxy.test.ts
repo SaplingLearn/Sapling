@@ -12,7 +12,7 @@ import {
   ingestTokensOk,
   isAllowedIngestRequest,
   readCappedBody,
-  sessionTokenFrom,
+  requestEncodingOk,
   isImmutableAsset,
   normalisedIngestPath,
   upstreamRequestHeaders,
@@ -122,6 +122,7 @@ describe("header allowlists", () => {
         "x-forwarded-for": "203.0.113.9",
         "cf-connecting-ip": "203.0.113.9",
         "content-type": "text/plain",
+        "content-encoding": "identity",
         "user-agent": "UA/1.0",
         "if-none-match": '"etag-1"',
         "if-modified-since": "Sat, 26 Sep 2026 16:47:13 GMT",
@@ -136,6 +137,8 @@ describe("header allowlists", () => {
     expect(up.get("x-forwarded-for")).toBeNull();
     expect(up.get("cf-connecting-ip")).toBeNull();
     expect(up.get("content-type")).toBe("text/plain");
+    // The body that goes up is the plain one the proxy checked.
+    expect(up.get("content-encoding")).toBeNull();
     expect(up.get("user-agent")).toBe("UA/1.0");
   });
 
@@ -174,14 +177,14 @@ describe("relay guards", () => {
     }
   });
 
-  it("sessionTokenFrom reads a non-empty sapling_session, by exact name", () => {
-    const h = (cookie?: string) => new Headers(cookie ? { cookie } : {});
-    expect(sessionTokenFrom(h("sapling_session=abc"))).toBe("abc");
-    expect(sessionTokenFrom(h("a=1; sapling_session=abc.def=; b=2"))).toBe("abc.def=");
-    expect(sessionTokenFrom(h())).toBeNull();
-    expect(sessionTokenFrom(h("sapling_session="))).toBeNull();
-    expect(sessionTokenFrom(h("xsapling_session=abc"))).toBeNull();
-    expect(sessionTokenFrom(h("sapling_session_old=abc"))).toBeNull();
+  it("requestEncodingOk: only an absent or identity Content-Encoding passes", () => {
+    const h = (encoding?: string) => new Headers(encoding === undefined ? {} : { "content-encoding": encoding });
+    expect(requestEncodingOk(h())).toBe(true);
+    expect(requestEncodingOk(h("identity"))).toBe(true);
+    expect(requestEncodingOk(h(" Identity "))).toBe(true);
+    for (const e of ["gzip", "br", "deflate", "x-gzip", "identity, gzip", "zstd"]) {
+      expect(requestEncodingOk(h(e)), e).toBe(false);
+    }
   });
 
   it("readCappedBody returns a body under the cap and refuses one over it", async () => {

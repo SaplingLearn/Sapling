@@ -4,6 +4,7 @@ import type { NextConfig } from "next";
 // foot of this file for why it is not simply invoked.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
+import { TRAILING_SLASH_REDIRECT } from "./src/lib/trailingSlashRedirect";
 
 // Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
 // branch exists to fail the build when DEPLOY_ENV disagrees with explicit
@@ -116,18 +117,10 @@ const nextConfig: NextConfig = {
     return [
       { source: "/auth", destination: "/", permanent: false },
       // Stand-in for the trailing-slash redirect `skipTrailingSlashRedirect`
-      // turns off (see above): `/about/` → `/about` and `/api/foo/` →
-      // `/api/foo`, exactly as Next's built-in redirect did, for every path
-      // except `/ingest/*` (PostHog's endpoints need the slash).
-      // Split into a first segment + `:rest*` on purpose: OpenNext compiles the
-      // destination with path-to-regexp, which rejects a single param whose
-      // value contains a "/" (a `/:path(.*)/` form 500s on /news/<slug>/).
-      // Verified under `next start` AND the OpenNext worker (`wrangler dev`).
-      {
-        source: "/:first((?!ingest/)[^/]+)/:rest*/",
-        destination: "/:first/:rest*",
-        permanent: true,
-      },
+      // turns off (see above): Next's `trailingSlash: false` built-in, for
+      // every path except `/ingest/*` (PostHog's endpoints need the slash).
+      // The rule and why it is shaped that way: src/lib/trailingSlashRedirect.ts.
+      TRAILING_SLASH_REDIRECT,
     ];
   },
   async headers() {

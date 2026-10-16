@@ -129,26 +129,29 @@ export function isAllowedIngestRequest(method: string, path: string): boolean {
   return false;
 }
 
-/**
- * Analytics only ever runs for a signed-in student, so a caller must present
- * a VALID `sapling_session`: the route checks it with `verifySession()`
- * (src/lib/sessionToken.ts) — the same local HMAC + expiry check
- * middleware.ts runs, no backend call. The cookie is never forwarded — see
- * upstreamRequestHeaders.
+/*
+ * Analytics only ever runs for a signed-in student, so the route requires a
+ * VALID session cookie (`request.cookies.get(SESSION_COOKIE_NAME)`, the
+ * constant in src/lib/sessionToken.ts) and checks it with `verifySession()`
+ * — the same local HMAC + expiry check middleware.ts runs, no backend call.
+ * The cookie is never forwarded — see upstreamRequestHeaders.
  */
-export const SESSION_COOKIE_NAME = "sapling_session";
 
-/** The raw `sapling_session` cookie value, or null. */
-export function sessionTokenFrom(headers: Headers): string | null {
-  const cookie = headers.get("cookie") ?? "";
-  for (const part of cookie.split(";")) {
-    const [name, ...rest] = part.trim().split("=");
-    if (name === SESSION_COOKIE_NAME) {
-      const value = rest.join("=");
-      return value.length > 0 ? value : null;
-    }
-  }
-  return null;
+/**
+ * posthog-js runs with `disable_compression` (src/lib/analytics.ts), so an
+ * event body is never content-encoded. The proxy reads the body as UTF-8
+ * JSON to check its project key, so a body that claims an encoding
+ * (`Content-Encoding: gzip`, …) is refused (415) rather than inspected as
+ * plain text and forwarded with a header that no longer describes what was
+ * checked. Only an absent header or `identity` passes.
+ */
+export function requestEncodingOk(headers: Headers): boolean {
+  const encoding = headers.get("content-encoding");
+  if (encoding === null) return true;
+  return encoding
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .every((e) => e === "" || e === "identity");
 }
 
 /** Largest request body forwarded upstream; a posthog-js request is far smaller. */
@@ -247,11 +250,12 @@ export function ingestTokensOk(tokens: string[] | null, projectKey: string): boo
 /**
  * Request headers worth forwarding. Everything else is dropped. The two
  * conditional headers let a browser revalidating a cached SDK bundle get a
- * 304 from PostHog instead of the whole file again.
+ * 304 from PostHog instead of the whole file again. `content-encoding` is
+ * not among them: the only body that gets this far is plain (identity —
+ * requestEncodingOk), and that is what goes upstream.
  */
 const FORWARD_REQUEST_HEADERS = [
   "accept",
-  "content-encoding",
   "content-type",
   "if-modified-since",
   "if-none-match",

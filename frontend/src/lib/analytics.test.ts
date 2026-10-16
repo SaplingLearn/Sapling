@@ -17,9 +17,12 @@ import {
   beginAccountRead,
   buildPosthogConfig,
   chooseAnalytics,
+  failAccountRead,
   gatedBeforeSend,
   getAnalyticsState,
+  MAX_ACCOUNT_READ_FAILURES,
   needsAccountRead,
+  pageviewsMayRun,
   resumeAnalytics,
   isAnalyticsConfigured,
   readAnalyticsEnv,
@@ -104,7 +107,7 @@ afterEach(() => {
 });
 
 describe("build gating", () => {
-  it("no key, local mode or the test build → unavailable, never loaded", async () => {
+  it("no key, local mode or the test build → posthog-js never loads, but the account switch still works", async () => {
     for (const env of [
       {},
       { NEXT_PUBLIC_POSTHOG_KEY: "   " },
@@ -113,8 +116,16 @@ describe("build gating", () => {
     ]) {
       setup(env);
       expect(isAnalyticsConfigured()).toBe(false);
+      expect(pageviewsMayRun()).toBe(false);
       await signIn("u-1", false);
-      expect(getAnalyticsState()).toBe("unavailable");
+      // The account preference also governs the backend mirror (#677): the
+      // switch shows it and can change it, whatever this build sends.
+      expect(getAnalyticsState()).toBe("on");
+      expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+      const save = vi.fn(ok);
+      expect(await chooseAnalytics("u-1", false, save)).toBe("saved");
+      expect(save).toHaveBeenCalledWith(true);
+      expect(getAnalyticsState()).toBe("off");
       expect(load).not.toHaveBeenCalled();
     }
     expect(analyticsDisabledReason({ ...ENV, NEXT_PUBLIC_TEST_MODE: "true" })).toBe("test_mode");
@@ -212,11 +223,11 @@ describe("only signed-in students whose account says false", () => {
     expect(gatedBeforeSend(event("$pageview"))).toBeNull();
   });
 
-  it("account false: loaded, identified by UUID alone in `loaded`, events pass", async () => {
-    await signIn("3f1c-uuid", false);
+  it("account false: loaded, identified by the account id alone in `loaded`, events pass", async () => {
+    await signIn("user_1038427", false);
     expect(getAnalyticsState()).toBe("on");
     expect(load).toHaveBeenCalledTimes(1);
-    expect(ph.identify.mock.calls).toEqual([["3f1c-uuid"]]);
+    expect(ph.identify.mock.calls).toEqual([["user_1038427"]]);
     expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
   });
 
@@ -227,21 +238,59 @@ describe("only signed-in students whose account says false", () => {
     expect(gatedBeforeSend(event("$pageview"))).toBeNull();
   });
 
-  it("a missing field or a failed read (no answer): unknown, never loaded", async () => {
+  it("a missing field: `unset` — never loaded, never re-read, and the switch can still save a choice", async () => {
     await signIn("u-1", undefined);
-    expect(getAnalyticsState()).toBe("unknown");
-    beginAccountRead("u-1"); // the read that then fails never answers
-    expect(getAnalyticsState()).toBe("unknown");
-    expect(load).not.toHaveBeenCalled();
-  });
-
-  it("DNT / GPC: always off — never loaded, even when the account says false", async () => {
-    setGpc(true);
-    await signIn("u-1", false);
-    expect(getAnalyticsState()).toBe("browser_blocked");
+    expect(getAnalyticsState()).toBe("unset");
     expect(load).not.toHaveBeenCalled();
     expect(gatedBeforeSend(event("$pageview"))).toBeNull();
-    expect(await chooseAnalytics("u-1", true, ok)).toBe("failed");
+    expect(needsAccountRead("u-1")).toBe(false); // an answer: no re-read loop
+    expect(await chooseAnalytics("u-1", true, ok)).toBe("saved");
+    await __analyticsLoadedForTests();
+    expect(getAnalyticsState()).toBe("on");
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed read: `unreadable`, never loaded, retried within a bounded budget", async () => {
+    let gen = beginAccountRead("u-1");
+    expect(getAnalyticsState()).toBe("unknown"); // loading
+    failAccountRead(gen, "u-1");
+    expect(getAnalyticsState()).toBe("unreadable");
+    expect(load).not.toHaveBeenCalled();
+    expect(await chooseAnalytics("u-1", true, ok)).toBe("failed"); // nothing to show yet
+    for (let i = 1; i < MAX_ACCOUNT_READ_FAILURES; i++) {
+      expect(needsAccountRead("u-1")).toBe(true);
+      gen = beginAccountRead("u-1");
+      expect(getAnalyticsState()).toBe("unknown"); // retrying reads as loading
+      failAccountRead(gen, "u-1");
+    }
+    expect(needsAccountRead("u-1")).toBe(false); // budget spent: no more automatic reads
+    // …but any later read that does answer (Settings' own, "Try again") applies.
+    applyAccountAnalytics(beginAccountRead("u-1"), "u-1", false);
+    await __analyticsLoadedForTests();
+    expect(getAnalyticsState()).toBe("on");
+  });
+
+  it("a stale failure (overtaken by another read or a sign-out) is ignored", () => {
+    const gen = beginAccountRead("u-1");
+    applyAccountAnalytics(beginAccountRead("u-1"), "u-1", true);
+    failAccountRead(gen, "u-1");
+    expect(getAnalyticsState()).toBe("off");
+  });
+
+  it("DNT / GPC: posthog-js never loads, but the account choice still shows and saves", async () => {
+    setGpc(true);
+    expect(pageviewsMayRun()).toBe(false);
+    await signIn("u-1", false);
+    expect(getAnalyticsState()).toBe("on_browser_blocked");
+    expect(load).not.toHaveBeenCalled();
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+    const save = vi.fn(ok);
+    expect(await chooseAnalytics("u-1", false, save)).toBe("saved");
+    expect(save).toHaveBeenCalledWith(true);
+    expect(getAnalyticsState()).toBe("off");
+    expect(await chooseAnalytics("u-1", true, ok)).toBe("saved");
+    expect(getAnalyticsState()).toBe("on_browser_blocked");
+    expect(load).not.toHaveBeenCalled();
   });
 
   it("never touches posthog-js's own (persisted) opt-out / opt-in", async () => {
@@ -338,37 +387,81 @@ describe("a failed posthog-js load", () => {
     expect(getAnalyticsState()).toBe("on");
     expect(ph.identify.mock.calls).toEqual([["u-1"]]);
   });
+
+  it("init that returns without calling `loaded` is a failed start, not a hang", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const silent = fakePosthog();
+    silent.init.mockImplementation(() => {}); // never runs `loaded`
+    let attempts = 0;
+    __resetAnalyticsForTests({
+      env: ENV,
+      load: async () => {
+        attempts += 1;
+        return (attempts === 1 ? silent : ph) as unknown as PostHog;
+      },
+    });
+    setProductAnalyticsFlag(true);
+    await signIn("u-1", false);
+    expect(await __analyticsLoadedForTests()).toBeNull(); // settled — `loading` cleared
+    expect(getAnalyticsState()).toBe("on_not_running");
+    // Not stuck: the next entry into the shell tries again.
+    resumeAnalytics();
+    await __analyticsLoadedForTests();
+    expect(attempts).toBe(2);
+    expect(getAnalyticsState()).toBe("on");
+    expect(ph.identify.mock.calls).toEqual([["u-1"]]);
+  });
+
+  it("not running is only reported where pageviews should run", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    __resetAnalyticsForTests({
+      env: ENV,
+      load: async () => {
+        throw new Error("chunk blocked");
+      },
+    });
+    setProductAnalyticsFlag(true);
+    await signIn("u-1", false);
+    expect(getAnalyticsState()).toBe("on_not_running");
+    setProductAnalyticsFlag(false); // an admin turns pageviews off
+    expect(getAnalyticsState()).toBe("on");
+  });
 });
 
 describe("the product_analytics admin flag (#620/#677)", () => {
   it("never starts posthog-js while the flag is off", async () => {
     setProductAnalyticsFlag(false);
-    await signIn("3f1c-uuid", false); // the account says on
+    await signIn("user_1038427", false); // the account says on
     expect(load).not.toHaveBeenCalled();
     expect(gatedBeforeSend(event("$pageview"))).toBeNull();
 
     setProductAnalyticsFlag(true);
     await __analyticsLoadedForTests();
     expect(load).toHaveBeenCalledTimes(1);
-    expect(ph.identify.mock.calls).toEqual([["3f1c-uuid"]]);
+    expect(ph.identify.mock.calls).toEqual([["user_1038427"]]);
     expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
   });
 
-  it("never reports on while the flag is off, whatever the account says", async () => {
+  it("the switch shows the account whatever the flag says; the flag only gates pageviews", async () => {
     setProductAnalyticsFlag(false);
-    await signIn("3f1c-uuid", false); // the account says on
-    expect(getAnalyticsState()).toBe("unavailable");
-    setProductAnalyticsFlag(true);
+    expect(pageviewsMayRun()).toBe(false);
+    await signIn("user_1038427", false); // the account says on
     expect(getAnalyticsState()).toBe("on");
+    expect(gatedBeforeSend(event("$pageview"))).toBeNull();
+    expect(load).not.toHaveBeenCalled();
+    setProductAnalyticsFlag(true);
+    expect(pageviewsMayRun()).toBe(true);
+    await __analyticsLoadedForTests();
+    expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
     setProductAnalyticsFlag(false); // an admin switches it off mid-visit
-    expect(getAnalyticsState()).toBe("unavailable");
+    expect(getAnalyticsState()).toBe("on");
     expect(gatedBeforeSend(event("$pageview"))).toBeNull();
   });
 
   it("a reset puts the flag back to off (fail-closed default)", async () => {
     __resetAnalyticsForTests({ env: ENV, load: load as unknown as () => Promise<PostHog> });
+    expect(pageviewsMayRun()).toBe(false);
     await signIn("u-1", false);
-    expect(getAnalyticsState()).toBe("unavailable");
     expect(load).not.toHaveBeenCalled();
   });
 });
@@ -471,9 +564,13 @@ describe("Settings choices (chooseAnalytics)", () => {
     expect(getAnalyticsState()).toBe("off");
   });
 
-  it("refused before the account has answered (the switch is disabled then)", async () => {
+  it("refused before the account has answered, or for anyone but the signed-in student", async () => {
     beginAccountRead("u-1");
     expect(await chooseAnalytics("u-1", true, ok)).toBe("failed");
+    stopAnalytics();
+    expect(await chooseAnalytics("u-1", true, ok)).toBe("failed");
+    await signIn("u-1", true);
+    expect(await chooseAnalytics("u-2", true, ok)).toBe("failed");
   });
 
   it("notifies subscribers", async () => {

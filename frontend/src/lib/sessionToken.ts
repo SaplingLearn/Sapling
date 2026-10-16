@@ -1,3 +1,9 @@
+/**
+ * The HttpOnly session cookie this module's tokens travel in — the frontend
+ * twin of backend services/session_tokens.py `SESSION_COOKIE_NAME`.
+ */
+export const SESSION_COOKIE_NAME = 'sapling_session';
+
 export const SESSION_MAX_AGE = 2592000; // 30 days
 
 function getSecret(): string {

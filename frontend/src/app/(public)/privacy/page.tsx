@@ -107,7 +107,7 @@ const sections = [
         label: "Information collected automatically:",
         list: [
           "Basic usage data and session metadata to maintain and improve the Service",
-          "Product analytics, only inside the app while you are signed in and have not turned it off: which pages of the app you visit, tied to a pseudonymous ID rather than your name or email. We do not record what you click or type, or the content of your notes, documents and messages. Analytics stores nothing in your browser (no cookies or local storage)",
+          "Product analytics, only while you are signed in and have not turned it off: the pages of the app you view; actions you take in the app, such as signing in, starting or finishing a quiz, messaging the tutor or uploading a document, with details like scores, counts and the IDs of the items involved; for each AI response we generate for you, the AI model used, the number of tokens processed and the cost; and reports of errors on our servers. Each record is tied to your Sapling account ID, not your name or email. We do not record what you type, or the text of your notes, documents, messages or AI responses. Analytics stores nothing in your browser (no cookies or local storage)",
         ],
       },
     ],
@@ -131,7 +131,7 @@ const sections = [
     body: "We do not sell your personal data. We share information only in the following limited circumstances:",
     highlights: [
       { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
-      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. Analytics runs only inside the app for signed-in users who have not turned it off; nothing is collected on our public pages, during sign-in, or while you are signed out. PostHog receives a pseudonymous user ID and which pages of the app you view. It does not receive your name, email address, IP address, what you click or type, or the content of your notes, documents or messages, we do not record your screen, and analytics stores nothing in your browser (no cookies or local storage). You can turn product analytics off at any time under Settings → Data; the choice is saved to your account and applies wherever you sign in. We also honour your browser's Do Not Track and Global Privacy Control signals." },
+      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. For signed-in users who have not turned analytics off, PostHog receives: the pages of the app you view, sent from your browser (never from our public pages or sign-in screens); records of actions you take in the app, sent from our servers; for each AI response we generate for you, the AI model, the number of tokens processed, the cost and a request reference, but never your prompt or the AI's reply; and reports of errors on our servers, showing the type of error and where in our code it happened, without the error message. All of it is tied to your Sapling account ID, which is based on your Google account's ID number. Nothing is sent for anyone who is signed out. PostHog does not receive your name, email address, IP address, what you type, or the content of your notes, documents or messages; we do not record your screen, and analytics stores nothing in your browser (no cookies or local storage). You can turn product analytics off at any time under Settings → Data. The choice is saved to your account, applies wherever you sign in, and stops all of the above from then on. We also honour your browser's Do Not Track and Global Privacy Control signals." },
       { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
       { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
     ],
@@ -210,7 +210,7 @@ export default function PrivacyPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: September 26, 2026</span>
+              <span style={META}>Last updated: October 16, 2026</span>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>

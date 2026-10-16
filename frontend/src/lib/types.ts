@@ -272,8 +272,11 @@ export interface UserSettings {
   accent_color: string | null;
   profile_visibility: string;
   activity_status_visible: boolean;
-  // Product-analytics opt-out (PostHog), account-wide. Optional: a backend
-  // that predates the column omits it, which reads as "not opted out".
+  // Product-analytics opt-out (PostHog), account-wide: governs the browser's
+  // pageviews AND the backend's mirror (#677). The backend always sends it;
+  // it stays optional only so a response without it is handled explicitly:
+  // lib/analytics.ts treats it as `unset` — nothing starts in the browser,
+  // the Settings switch stays usable (shown off), and it is not re-read.
   analytics_opt_out?: boolean;
 }
 

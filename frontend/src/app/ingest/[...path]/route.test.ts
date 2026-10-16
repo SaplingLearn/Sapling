@@ -1,16 +1,24 @@
 /**
- * The /ingest route handler: streams the batch upstream (no buffering),
+ * The /ingest route handler: forwards the (capped, checked) batch upstream,
  * never forwards the student's cookie or IP, refuses traversal, marks
  * versioned SDK bundles immutable — and is not an open relay: only the
- * SDK's own endpoints, only with a `sapling_session` that verifies, bodies
- * capped at 1 MiB, and only events for this deployment's project key.
+ * SDK's own endpoints, only with a `sapling_session` that verifies, only
+ * un-encoded bodies capped at 1 MiB, and only events for this deployment's
+ * project key.
  */
 import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
 
 import { MAX_INGEST_BODY_BYTES } from "@/lib/ingestProxy";
 import { signSession } from "@/lib/sessionToken";
 
-import { GET, HEAD, POST } from "./route";
+import * as route from "./route";
+
+// Next hands route handlers a NextRequest (the session is read off
+// `request.cookies`); the tests build plain Requests and wrap them the same way.
+const GET = (r: Request) => route.GET(new NextRequest(r));
+const HEAD = (r: Request) => route.HEAD(new NextRequest(r));
+const POST = (r: Request) => route.POST(new NextRequest(r));
 
 type Call = { url: string; init: RequestInit & { duplex?: string } };
 
@@ -172,6 +180,56 @@ describe("not an open relay", () => {
       expect(res.status).toBe(400);
     }
     expect(calls).toHaveLength(0);
+  });
+
+  it("415 for a body that declares a Content-Encoding — nothing is inspected or forwarded", async () => {
+    const calls = stubUpstream(() => new Response("x"));
+    for (const encoding of ["gzip", "br", "deflate", "identity, gzip"]) {
+      const res = await POST(
+        new Request("https://saplinglearn.com/ingest/e/", {
+          method: "POST",
+          body: EVENT,
+          headers: { ...SESSION, "content-type": "application/json", "content-encoding": encoding },
+        }),
+      );
+      expect(res.status, encoding).toBe(415);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("an explicit identity encoding passes, and no Content-Encoding goes upstream", async () => {
+    const calls = stubUpstream(() => new Response("ok"));
+    const res = await POST(
+      new Request("https://saplinglearn.com/ingest/e/", {
+        method: "POST",
+        body: EVENT,
+        headers: { ...SESSION, "content-type": "application/json", "content-encoding": "identity" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((calls[0].init.headers as Headers).get("content-encoding")).toBeNull();
+    expect(new TextDecoder().decode(calls[0].init.body as Uint8Array)).toBe(EVENT);
+  });
+
+  it("reads the session cookie by exact name among others (request.cookies)", async () => {
+    const calls = stubUpstream(() => new Response("ok"));
+    const token = SESSION.cookie.split("sapling_session=")[1];
+    for (const cookie of [
+      `a=1; sapling_session=${token}; b=2`,
+      `xsapling_session=junk; sapling_session=${token}`,
+    ]) {
+      const res = await POST(
+        new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body: EVENT, headers: { cookie } }),
+      );
+      expect(res.status, cookie).toBe(200);
+    }
+    for (const cookie of [`xsapling_session=${token}`, `sapling_session_old=${token}`]) {
+      const res = await POST(
+        new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body: EVENT, headers: { cookie } }),
+      );
+      expect(res.status, cookie).toBe(403);
+    }
+    expect(calls).toHaveLength(2);
   });
 
   it("413 when Content-Length declares more than the cap — upstream never called", async () => {

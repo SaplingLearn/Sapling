@@ -9,9 +9,12 @@
  * is the browser-level proof: walk the public landing page, the authed shell
  * and a REAL client-side navigation (a click on the shell's own nav link —
  * the `history_change` path posthog-js would capture a pageview on), and
- * assert the browser never requested the /ingest proxy or any PostHog host —
- * then check the Settings → Data opt-out renders disabled, because there is
- * nothing running to opt out of.
+ * assert the browser never requested the /ingest proxy or any PostHog host.
+ * The Settings → Data opt-out still renders USABLE, showing the account's
+ * saved `analytics_opt_out` (the seed leaves the column default, false → on):
+ * the same setting governs the backend's PostHog mirror (#677), so it is not
+ * tied to whether this build sends pageviews. It is not toggled here — that
+ * would PATCH the shared seed user.
  */
 import type { Request } from "@playwright/test";
 
@@ -22,7 +25,7 @@ function isAnalyticsRequest(req: Request): boolean {
   return url.pathname.startsWith("/ingest") || /(^|\.)posthog\.com$/.test(url.hostname);
 }
 
-test("the E2E build sends no analytics and shows the opt-out as inactive", async ({ page }) => {
+test("the E2E build sends no analytics, and the opt-out still shows the account setting", async ({ page }) => {
   const analytics: string[] = [];
   page.on("request", (req) => {
     if (isAnalyticsRequest(req)) analytics.push(`${req.method()} ${req.url()}`);
@@ -49,9 +52,9 @@ test("the E2E build sends no analytics and shows the opt-out as inactive", async
   await page.getByTestId("settings-tab-data").click();
   const toggle = page.getByTestId("settings-analytics-toggle");
   await expect(toggle).toBeVisible();
-  await expect(toggle).toBeDisabled();
-  await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await expect(page.getByTestId("settings-analytics-note")).toContainText("isn't running");
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("settings-analytics-note")).toContainText("saved to your account");
   await page.waitForLoadState("networkidle");
 
   // posthog-js is a lazy chunk behind the gate: it must never even load.

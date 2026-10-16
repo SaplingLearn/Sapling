@@ -1,16 +1,26 @@
 /**
- * Product analytics (PostHog) — the ONLY module that talks to posthog-js.
+ * Product analytics (PostHog), browser side — the ONLY module that talks to
+ * posthog-js, and the owner of the student's account preference as this page
+ * knows it.
+ *
+ * Two senders share ONE account preference (`user_settings.analytics_opt_out`):
+ * this module's pageviews, and the backend's mirror (#677: product events,
+ * `$ai_generation` records and server error reports — backend
+ * services/posthog_client.py), which reads the same column on its own. So the
+ * Settings switch governs BOTH, and is usable whenever the account answer is
+ * known — whether or not this build sends pageviews.
  *
  * The model is deliberately small:
  *
- * - **Only signed-in students who have not opted out, only inside the app
- *   shell.** posthog-js is not even loaded on public/marketing pages,
- *   `/auth/*`, onboarding, or for anyone signed out. On the first shell page
- *   of a page load the UserProvider reads the student's account preference
- *   (`user_settings.analytics_opt_out`); only an explicit `false` loads and
- *   starts posthog-js. `true`, a missing field, or a failed read leaves it
- *   off (fail closed). The capture gate also checks the LIVE route
- *   (lib/appRoutes.ts), so a navigation out of the shell sends nothing.
+ * - **Pageviews only from signed-in students who have not opted out, only
+ *   inside the app shell.** posthog-js is not even loaded on public/marketing
+ *   pages, `/auth/*`, onboarding, or for anyone signed out. The account
+ *   preference is read through `lib/accountSettings.ts` (one shared GET per
+ *   student, used by both the UserProvider and the Settings screen); only an
+ *   explicit `false` loads and starts posthog-js. `true`, a missing field, or
+ *   a failed read leaves it off (fail closed). The capture gate also checks
+ *   the LIVE route (lib/appRoutes.ts), so a navigation out of the shell sends
+ *   nothing.
  * - **Pageviews only.** `$pageview` + `$pageleave`. Click autocapture,
  *   rageclicks, dead clicks, heatmaps, web vitals, session recording,
  *   exception capture — all OFF. Product usage comes from backend events.
@@ -22,17 +32,19 @@
  *   across full page loads; that trade is accepted.
  * - **A capture gate** (`gatedBeforeSend`) drops every event unless capture
  *   is allowed right now, so opting out or leaving the shell stops it at once.
- * - **An admin switch gates all of the above.** `setProductAnalyticsFlag`
+ * - **An admin switch gates the pageviews.** `setProductAnalyticsFlag`
  *   (called by `FlagsProvider` off `GET /api/flags`'s `product_analytics`
- *   flag, #620/ADR 0029) must be turned on before anything starts. It
- *   defaults to off, so a page that hasn't heard from `/api/flags` yet — or
- *   never will — runs no analytics: the same fail-closed posture as the
- *   account preference.
- * - **Do Not Track / Global Privacy Control means off**, always.
- * - **Pseudonymous.** `identify` carries the user's UUID and nothing else — no
- *   name, email or person properties — and runs in posthog-js's `loaded` hook,
- *   before its initial `$pageview`, so that one pageview is already the
- *   student's.
+ *   flag, #620/ADR 0029 — the same flag the backend mirror checks per
+ *   student) must be on before posthog-js starts, or before the UserProvider
+ *   reads the preference for it. It defaults to off, so a page that hasn't
+ *   heard from `/api/flags` yet — or never will — sends no pageviews: the
+ *   same fail-closed posture as the account preference.
+ * - **Do Not Track / Global Privacy Control means no pageviews**, always.
+ * - **Identified by the Sapling account id, nothing else.** `identify`
+ *   carries `users.id` — `user_<Google account id>`, an account identifier,
+ *   not a random or per-service one — and no name, email or person
+ *   properties. It runs in posthog-js's `loaded` hook, before its initial
+ *   `$pageview`, so that one pageview is already the student's.
  * - **No credentials in URLs.** The `/auth/callback` handoff params are masked
  *   by posthog-js AT THE SOURCE (`custom_personal_data_properties`), and
  *   `before_send` strips every query string and fragment from every URL
@@ -53,9 +65,11 @@
  *   `src/app/ingest/[...path]/route.ts`. `NEXT_PUBLIC_POSTHOG_HOST` may only
  *   move it to another same-origin path — never to an external host that
  *   would bypass the proxy.
- * - **Inert unless configured.** No `NEXT_PUBLIC_POSTHOG_KEY`, local UI mode
- *   (`NEXT_PUBLIC_LOCAL_MODE`) or the E2E/test build (`NEXT_PUBLIC_TEST_MODE`)
- *   → none of the above ever runs.
+ * - **Pageviews inert unless configured.** No `NEXT_PUBLIC_POSTHOG_KEY`,
+ *   local UI mode (`NEXT_PUBLIC_LOCAL_MODE`) or the E2E/test build
+ *   (`NEXT_PUBLIC_TEST_MODE`) → posthog-js never loads and the UserProvider
+ *   reads nothing for it. The account preference — and so the Settings
+ *   switch — still works, because it governs the backend mirror too.
  *
  * NEXT_PUBLIC_* values are inlined at BUILD time, so each one is read with a
  * literal `process.env.NEXT_PUBLIC_…` expression below.
@@ -252,32 +266,39 @@ export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
 // ── state ───────────────────────────────────────────────────────────────────
 
 /**
- * What the Settings switch shows, and what the gate lets through:
- * - `unavailable`: analytics is not running here at all — this build runs
- *   none (no key, local/test mode), or the admin `product_analytics` flag is
- *   off for this student (#620; also while it has not loaded yet)
- * - `browser_blocked`: Do Not Track / Global Privacy Control is on
- * - `unknown`: nobody signed in, or their account answer has not arrived (or
- *   the read failed) — nothing is captured, the switch is disabled
+ * What the Settings switch shows. The account preference governs both this
+ * browser's pageviews AND the backend's mirror (product events, AI-generation
+ * records, error reports), so the switch follows the ACCOUNT, not whether
+ * this build sends pageviews:
+ * - `unknown`: nobody signed in, or their account answer has not arrived yet
+ *   — the switch is disabled (it would otherwise guess)
+ * - `unreadable`: the last account read failed — disabled; the read is
+ *   retried (lib/accountSettings.ts, the UserProvider)
+ * - `unset`: the account answered without the field (a backend that predates
+ *   it) — nothing starts here (fail closed), but the switch is usable, shown
+ *   off, so choosing saves an explicit answer; the field is not re-read
  * - `on` / `off`: the signed-in student's account preference
+ * - `on_browser_blocked`: on, but Do Not Track / Global Privacy Control is
+ *   set, so this browser sends no pageviews
+ * - `on_not_running`: on, pageviews should run here, but posthog-js could
+ *   not be loaded or initialised (a blocker, a failed chunk)
  * - `off_unsaved`: the student switched it off, but saving that to their
- *   account failed — off for this visit only, retry offered
- * - `on_not_running`: the account says on, but posthog-js could not be
- *   loaded here (a blocker, a failed chunk) — nothing is being collected
+ *   account failed — off in this browser for this visit only, retry offered
  */
 export type AnalyticsState =
-  | "unavailable"
-  | "browser_blocked"
   | "unknown"
+  | "unreadable"
+  | "unset"
   | "on"
+  | "on_browser_blocked"
+  | "on_not_running"
   | "off"
-  | "off_unsaved"
-  | "on_not_running";
+  | "off_unsaved";
 
 /**
  * #620: the admin `product_analytics` switch (FlagsProvider →
- * setProductAnalyticsFlag). Off until `/api/flags` answers, so analytics
- * fails closed for the whole page load until the flag is known.
+ * setProductAnalyticsFlag). Off until `/api/flags` answers, so pageviews
+ * fail closed for the whole page load until the flag is known.
  */
 let productAnalyticsFlag = false;
 
@@ -292,11 +313,23 @@ export type PosthogLoader = () => Promise<PostHog>;
 const defaultLoader: PosthogLoader = () => import("posthog-js").then((m) => m.default);
 let load: PosthogLoader = defaultLoader;
 
-/** The account answer for `currentUser` on this page load. */
-let account: "unknown" | "on" | "off" = "unknown";
+/**
+ * The account answer for `currentUser` on this page load: not read yet (or
+ * being read), the last read failed, answered without the field, or the
+ * preference itself.
+ */
+let account: "unknown" | "unreadable" | "unset" | "on" | "off" = "unknown";
 /** An opt-out whose account save failed: off for this visit only. */
 let offUnsaved = false;
 let currentUser: string | null = null;
+/**
+ * Failed account reads for `currentUser` since its last answer. The
+ * UserProvider retries a failed read on later shell navigations only while
+ * this is under MAX_ACCOUNT_READ_FAILURES — bounded, never a loop. (Settings
+ * always reads on mount, so opening it is one more try regardless.)
+ */
+let failedReads = 0;
+export const MAX_ACCOUNT_READ_FAILURES = 3;
 /**
  * Bumped by every new account read, sign-out, and a toggle both before AND
  * after its save. An account read issued under an older generation is stale
@@ -309,7 +342,10 @@ let toggleInFlight = false;
 /** The live client, once loaded and initialised. */
 let client: PostHog | null = null;
 let loading: Promise<PostHog | null> | null = null;
-/** The last load attempt failed (the chunk was blocked, init threw). */
+/**
+ * The last load attempt failed: the chunk was blocked, init threw, or init
+ * returned without ever calling `loaded`.
+ */
 let loadFailed = false;
 
 /** Where capture may happen: the signed-in app shell only. Injectable for tests. */
@@ -333,26 +369,33 @@ function currentPathIsAppRoute(): boolean {
   return typeof window !== "undefined" && isAppRoute(window.location.pathname);
 }
 
-/**
- * Whether this build runs analytics at all (a key, not local/test mode).
- * Callers use it to skip work — like reading the account preference — that
- * only matters when it does.
- */
+/** Whether this build sends pageviews at all (a key, not local/test mode). */
 export function isAnalyticsConfigured(): boolean {
   return analyticsDisabledReason(env) === null;
 }
 
+/**
+ * Whether this browser would send pageviews for a student whose account says
+ * on: configured, the admin flag on, no DNT/GPC. The UserProvider reads the
+ * account preference for analytics only while this holds (Settings reads it
+ * for itself either way).
+ */
+export function pageviewsMayRun(): boolean {
+  return isAnalyticsConfigured() && productAnalyticsFlag && !browserSignalsDoNotTrack();
+}
+
 export function getAnalyticsState(): AnalyticsState {
-  if (!isAnalyticsConfigured() || !productAnalyticsFlag) return "unavailable";
-  if (browserSignalsDoNotTrack()) return "browser_blocked";
+  if (currentUser === null) return "unknown";
   if (account === "off") return offUnsaved ? "off_unsaved" : "off";
-  if (account === "on" && loadFailed && !client) return "on_not_running";
-  return account;
+  if (account !== "on") return account;
+  if (browserSignalsDoNotTrack()) return "on_browser_blocked";
+  if (pageviewsMayRun() && loadFailed && !client) return "on_not_running";
+  return "on";
 }
 
 /** The server render never knows the browser's state. */
 export function getServerAnalyticsState(): AnalyticsState {
-  return "unavailable";
+  return "unknown";
 }
 
 export function subscribeAnalytics(listener: () => void): () => void {
@@ -364,13 +407,7 @@ export function subscribeAnalytics(listener: () => void): () => void {
 
 /** Capture is allowed right now: admin flag on, configured, no DNT/GPC, account on, on an app route. */
 function captureAllowed(): boolean {
-  return (
-    productAnalyticsFlag &&
-    isAnalyticsConfigured() &&
-    !browserSignalsDoNotTrack() &&
-    account === "on" &&
-    currentPathIsAppRoute()
-  );
+  return pageviewsMayRun() && account === "on" && currentPathIsAppRoute();
 }
 
 /**
@@ -402,6 +439,12 @@ export function gatedBeforeSend(event: CaptureResult | null): CaptureResult | nu
  * app route with the account on. A failed load is not retried here; the
  * next call (the next time the student enters the shell) tries again — one
  * attempt per call, never a loop.
+ *
+ * posthog-js runs `loaded` synchronously inside `init`. If `init` returns
+ * without having run it (an SDK that declined to initialise, an instance
+ * already initialised elsewhere), there is no client to capture with: that is
+ * a failed start — `loading` is cleared and the state says `on_not_running`
+ * — never a permanent "on" with nothing behind it.
  */
 function ensureStarted(): void {
   if (!captureAllowed()) return;
@@ -420,6 +463,9 @@ function ensureStarted(): void {
           identify();
         },
       });
+      if (client !== ph) throw new Error("posthog-js init returned without calling `loaded`");
+      loading = null; // settled: `client` is the guard from here on
+      notify();
       return ph;
     })
     .catch((err) => {
@@ -432,7 +478,7 @@ function ensureStarted(): void {
     });
 }
 
-/** identify(uuid) — only while capture is allowed, resetting first if someone else was. */
+/** identify(account id) — only while capture is allowed, resetting first if someone else was. */
 function identify(): void {
   if (!client || !currentUser || !captureAllowed()) return;
   if (client.get_distinct_id() === currentUser) return;
@@ -440,23 +486,31 @@ function identify(): void {
   client.identify(currentUser);
 }
 
-// ── the UserProvider's side ─────────────────────────────────────────────────
+// ── the account reads' side (lib/accountSettings.ts) ────────────────────────
 
-/** Whether `userId`'s account preference still has to be read this page load. */
+/**
+ * Whether the UserProvider should (re)read `userId`'s account preference: not
+ * read yet this page load, or the last read failed and the retry budget
+ * (MAX_ACCOUNT_READ_FAILURES) is not spent. An answer — including one
+ * without the field (`unset`) — is never re-read.
+ */
 export function needsAccountRead(userId: string): boolean {
-  return currentUser !== userId || account === "unknown";
+  if (currentUser !== userId || account === "unknown") return true;
+  return account === "unreadable" && failedReads < MAX_ACCOUNT_READ_FAILURES;
 }
 
 /**
- * A signed-in student is on an app route and their account preference is
- * about to be read. Returns the generation to hand back to
- * applyAccountAnalytics.
+ * `userId`'s account preference is about to be read. Returns the generation
+ * to hand back to applyAccountAnalytics / failAccountRead.
  */
 export function beginAccountRead(userId: string): number {
   generation += 1;
   if (currentUser !== userId) {
     account = "unknown";
     offUnsaved = false;
+    failedReads = 0;
+  } else if (account === "unreadable") {
+    account = "unknown"; // retrying: "loading", not "failed"
   }
   currentUser = userId;
   notify();
@@ -466,13 +520,23 @@ export function beginAccountRead(userId: string): number {
 /**
  * The account answered. Ignored if anything (a toggle, a sign-out, another
  * read) happened since `gen` was issued. Only an explicit `false` turns
- * analytics on; `true` is off; anything else (a missing field) stays unknown.
+ * pageviews on; `true` is off; a missing field is `unset` — off here, but an
+ * answer (the switch is usable and it is not re-read).
  */
 export function applyAccountAnalytics(gen: number, userId: string, optOut: unknown): void {
   if (gen !== generation || userId !== currentUser) return;
-  account = optOut === false ? "on" : optOut === true ? "off" : "unknown";
+  account = optOut === false ? "on" : optOut === true ? "off" : "unset";
   offUnsaved = false;
+  failedReads = 0;
   ensureStarted();
+  notify();
+}
+
+/** The read issued as `gen` failed: `unreadable`, and one more spent retry. */
+export function failAccountRead(gen: number, userId: string): void {
+  if (gen !== generation || userId !== currentUser) return;
+  account = "unreadable";
+  failedReads += 1;
   notify();
 }
 
@@ -487,6 +551,7 @@ export function stopAnalytics(): void {
   generation += 1;
   account = "unknown";
   offUnsaved = false;
+  failedReads = 0;
   currentUser = null;
   // Forget the in-memory identity, so a later sign-in on this same page is a
   // different person, never merged. Nothing persisted to forget.
@@ -497,22 +562,25 @@ export function stopAnalytics(): void {
 // ── the Settings switch's side ──────────────────────────────────────────────
 
 /**
- * A choice made on the Settings switch. Opting OUT stops capture at once,
- * then saves `analytics_opt_out: true`; if that save fails capture stays off
- * for this visit (`off_unsaved`, retry offered). Opting IN saves `false`
- * FIRST and only then starts capture — and reports `saved` whenever the save
- * succeeded, but applies it only if the same student is still signed in.
- * One toggle at a time (`busy` otherwise); the generation is bumped before
- * and after the save, so no account read begun before or during the toggle
- * can overwrite its result.
+ * A choice made on the Settings switch. It is saved to the account whether
+ * or not this browser sends pageviews (no key, the admin flag off, DNT/GPC):
+ * the same `analytics_opt_out` governs the backend mirror. Opting OUT stops
+ * capture here at once, then saves `analytics_opt_out: true`; if that save
+ * fails capture stays off here for this visit (`off_unsaved`, retry offered).
+ * Opting IN saves `false` FIRST and only then starts capture (where it may
+ * run) — and reports `saved` whenever the save succeeded, but applies it only
+ * if the same student is still signed in. Refused until the account has
+ * answered (the switch is disabled then). One toggle at a time (`busy`
+ * otherwise); the generation is bumped before and after the save, so no
+ * account read begun before or during the toggle can overwrite its result.
  */
 export async function chooseAnalytics(
   userId: string,
   enabled: boolean,
   save: (optOut: boolean) => Promise<unknown>,
 ): Promise<"saved" | "failed" | "busy"> {
-  if (!isAnalyticsConfigured() || browserSignalsDoNotTrack() || userId !== currentUser) return "failed";
-  if (account === "unknown") return "failed";
+  if (userId !== currentUser) return "failed";
+  if (account === "unknown" || account === "unreadable") return "failed";
   if (toggleInFlight) return "busy";
   toggleInFlight = true;
   generation += 1;
@@ -558,6 +626,7 @@ export function __resetAnalyticsForTests(
   productAnalyticsFlag = false;
   account = "unknown";
   offUnsaved = false;
+  failedReads = 0;
   currentUser = null;
   generation = 0;
   toggleInFlight = false;
