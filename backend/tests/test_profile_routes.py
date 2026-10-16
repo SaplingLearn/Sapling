@@ -318,7 +318,9 @@ class TestUpdateProfile:
                     return [{"user_id": USER_ID, "name": None}] if insert_calls else []
 
                 m.select.side_effect = _select
-                m.insert.side_effect = lambda payload: insert_calls.append(payload) or [{}]
+                # Race-safe create (#674): ON CONFLICT DO NOTHING, never a blind INSERT.
+                m.insert.side_effect = AssertionError("blind INSERT races (#674)")
+                m.upsert.side_effect = lambda payload, **kw: insert_calls.append((payload, kw)) or [{}]
                 m.update.return_value = [{}]
             elif name == "user_settings":
                 m.select.return_value = [{"user_id": USER_ID}]
@@ -332,7 +334,9 @@ class TestUpdateProfile:
         assert r.status_code == 200
         # A user_profiles row was inserted because none existed.
         assert insert_calls, "expected a user_profiles row to be created when missing"
-        assert insert_calls[0] == {"user_id": USER_ID}
+        assert insert_calls[0] == (
+            {"user_id": USER_ID}, {"on_conflict": "user_id", "ignore_duplicates": True}
+        )
 
 
 # ── GET /api/profile/{user_id}/settings ────────────────────────────────────
@@ -1195,3 +1199,105 @@ class TestFeaturedAchievementsStatusFilter:
 
         assert r.status_code == 200
         assert "achievements.status" not in (captured["filters"] or {})
+
+
+# ── #674: first-load settings create must be race-safe ─────────────────────
+
+
+class _RacingSettingsTable:
+    """A `user_settings` table shared by two concurrent first loads: both
+    SELECTs see no row (the barrier holds them until both have read), then
+    both try to create it. A plain INSERT of an existing PK raises the same
+    409 PostgREST returns; the upsert is idempotent on `user_id`."""
+
+    def __init__(self):
+        import threading
+        self.rows: dict[str, dict] = {}
+        self.first_reads = threading.Barrier(2, timeout=5)
+        self.lock = threading.Lock()
+        self.reads = 0
+
+    def select(self, cols, filters=None):
+        uid = filters["user_id"].removeprefix("eq.")
+        with self.lock:
+            self.reads += 1
+            first_two = self.reads <= 2
+        # Snapshot BEFORE the barrier: both first reads must observe the
+        # pre-write state, or the slower thread can see the winner's row and
+        # the race never happens.
+        with self.lock:
+            snapshot = [dict(self.rows[uid])] if uid in self.rows else []
+        if first_two:
+            self.first_reads.wait()
+        return snapshot
+
+    def insert(self, data):
+        import httpx
+        with self.lock:
+            if data["user_id"] in self.rows:
+                req = httpx.Request("POST", "http://pg/rest/v1/user_settings")
+                raise httpx.HTTPStatusError(
+                    "409 Conflict", request=req, response=httpx.Response(409, request=req)
+                )
+            self.rows[data["user_id"]] = dict(data)
+        return [data]
+
+    def upsert(self, data, on_conflict="id", *, ignore_duplicates=False):
+        assert on_conflict == "user_id", "keyed on user_id"
+        # A merge would DO UPDATE the winner's row (firing its updated_at
+        # trigger); the create must be DO NOTHING.
+        assert ignore_duplicates, "get-or-create must not merge into an existing row"
+        with self.lock:
+            self.rows.setdefault(data["user_id"], dict(data))
+        return [data]
+
+
+def test_concurrent_first_loads_both_get_settings_674():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from routes import profile
+
+    fake = _RacingSettingsTable()
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: profile._get_or_create_settings(USER_ID), range(2)))
+
+    assert results == [{"user_id": USER_ID}, {"user_id": USER_ID}]
+    assert list(fake.rows) == [USER_ID]
+
+
+def test_existing_settings_row_is_not_rewritten_674():
+    from routes import profile
+
+    fake = _RacingSettingsTable()
+    fake.rows[USER_ID] = {"user_id": USER_ID, "profile_visibility": "private"}
+    fake.reads = 2  # past the barrier: a plain single read
+    fake.upsert = MagicMock(side_effect=AssertionError("must not write when the row exists"))
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        assert profile._get_or_create_settings(USER_ID)["profile_visibility"] == "private"
+
+
+def test_concurrent_first_profile_loads_both_succeed_674():
+    """Same race on the sibling user_profiles create (reached from the public
+    profile GET, export, and both profile PATCH paths)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from routes import profile
+
+    fake = _RacingSettingsTable()
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: profile._get_or_create_profile(USER_ID), range(2)))
+
+    assert [r["user_id"] for r in results] == [USER_ID, USER_ID]
+    assert list(fake.rows) == [USER_ID]
+
+
+def test_upsert_ignore_duplicates_sends_do_nothing_resolution():
+    import db.connection as dbconn
+
+    for flag, expected in ((True, "resolution=ignore-duplicates"), (False, "resolution=merge-duplicates")):
+        dbconn._client.post.reset_mock()
+        dbconn.table("user_settings").upsert({"user_id": USER_ID}, on_conflict="user_id", ignore_duplicates=flag)
+        prefer = dbconn._client.post.call_args.kwargs["headers"]["Prefer"]
+        assert expected in prefer, prefer
