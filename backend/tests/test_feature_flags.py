@@ -352,3 +352,67 @@ def test_nav_flags_match_the_frontend_nav_list():
     assert frontend == backend == {f"hide_{slug}" for slug, _ in ff.NAV_FEATURES}
     assert all(ff.REGISTRY[k].client_visible and ff.REGISTRY[k].variants == ("off", "on")
                for k in backend)
+
+
+class TestDecisionRouterLegacyOverride:
+    """Spec §4 step 1: SAPLING_DECISIONS_BACKEND / function mode bypass the
+    flag in `decisions.router_backends`, so explain() must say so too."""
+
+    RK = "decision_router"
+
+    @pytest.fixture(autouse=True)
+    def _real_mode(self, monkeypatch):
+        for var in ("SAPLING_MODEL_MODE", "SAPLING_DECISIONS_BACKEND",
+                    "SAPLING_DECISIONS_SHADOW", "SAPLING_FLAG_DECISION_ROUTER"):
+            monkeypatch.delenv(var, raising=False)
+
+    def _explain(self):
+        # The store is down: a legacy override must never need it.
+        with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
+            return ff.explain(self.RK, "u1")
+
+    @pytest.mark.parametrize("backend,shadow,variant", [
+        ("off", None, "off"),
+        ("jev", None, "jev"),
+        ("jev", "flash_lite", "jev_shadow"),
+    ])
+    def test_env_backend_maps_to_the_variant_the_router_runs(
+            self, monkeypatch, backend, shadow, variant):
+        monkeypatch.setenv("SAPLING_DECISIONS_BACKEND", backend)
+        if shadow:
+            monkeypatch.setenv("SAPLING_DECISIONS_SHADOW", shadow)
+        r = self._explain()
+        assert (r.variant, r.step) == (variant, "env_override")
+        assert r.detail == "SAPLING_DECISIONS_BACKEND (legacy)"
+
+    def test_unmappable_env_backend_is_off_with_the_backend_named(self, monkeypatch):
+        monkeypatch.setenv("SAPLING_DECISIONS_BACKEND", "flash_lite")
+        r = self._explain()
+        assert (r.variant, r.step) == ("off", "env_override")
+        assert r.detail.startswith("SAPLING_DECISIONS_BACKEND (legacy)")
+        assert "flash_lite" in r.detail
+
+    def test_function_mode(self, monkeypatch):
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        r = self._explain()
+        assert (r.variant, r.step) == ("off", "env_override")
+        assert r.detail.startswith("SAPLING_MODEL_MODE=function")
+        assert "function" in r.detail.removeprefix("SAPLING_MODEL_MODE=function")
+
+    def test_legacy_beats_the_flag_env_override(self, monkeypatch):
+        """router_backends never consults the flag when the legacy env is
+        set, so SAPLING_FLAG_DECISION_ROUTER is not what the router runs."""
+        monkeypatch.setenv("SAPLING_DECISIONS_BACKEND", "off")
+        monkeypatch.setenv("SAPLING_FLAG_DECISION_ROUTER", "jev")
+        assert self._explain().variant == "off"
+
+    def test_no_legacy_env_uses_the_flag(self):
+        with patch("services.feature_flags.table",
+                   side_effect=_tables(flags=[{**_row("jev"), "key": self.RK}])):
+            r = ff.explain(self.RK, "u1")
+        assert (r.variant, r.step) == ("jev", "default")
+
+    def test_other_flags_ignore_the_legacy_env(self, monkeypatch):
+        monkeypatch.setenv("SAPLING_DECISIONS_BACKEND", "jev")
+        with patch("services.feature_flags.table", side_effect=_tables(flags=[_row("on")])):
+            assert ff.explain(KEY, "u1").step == "default"

@@ -43,7 +43,10 @@ toggle is an open product question.
 2. **Backends chosen by env, default `off`.** `SAPLING_DECISIONS_BACKEND` is
    `off | flash_lite | jev`, and the **code default is `off`**, so merging
    this changes no production behaviour and no cost until an operator opts
-   in.
+   in. For the tutor router this env var is now an OVERRIDE: unset (and
+   outside function mode), the per-student `decision_router` feature flag
+   (`off` | `jev` | `jev_shadow`, ADR 0029) picks the router's backends, so
+   Jev can be rolled out from /admin without a deploy.
    - `flash_lite`: a Pydantic AI agent (`agents/decision.py`) on a new
      `decision` slot in `agents/_providers.py` (default
      `gemini-2.5-flash-lite`, overridable via `SAPLING_MODEL_DECISION`), so it

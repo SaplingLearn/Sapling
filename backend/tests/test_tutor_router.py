@@ -42,8 +42,14 @@ DISRUPTIVE = [
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     for var in (decisions.BACKEND_ENV, decisions.SHADOW_ENV, decisions.FLOOR_ENV,
-                decisions.TIMEOUT_ENV, decisions.JEV_TIMEOUT_ENV, "SAPLING_MODEL_MODE"):
+                decisions.TIMEOUT_ENV, decisions.JEV_TIMEOUT_ENV, "SAPLING_MODEL_MODE",
+                "SAPLING_FLAG_DECISION_ROUTER"):
         monkeypatch.delenv(var, raising=False)
+    # Hermetic flag store: no stored config, so `decision_router` resolves to
+    # its "off" default instead of reading whatever DB .env points at.
+    from services import feature_flags
+    monkeypatch.setattr(feature_flags, "read_config",
+                        lambda: feature_flags.Snapshot(flags={}, targets={}))
 
 
 def _model(answers, *, delay=0.0, calls=None):
@@ -201,27 +207,77 @@ def test_router_error_still_emits_one_decision(monkeypatch, sink, caplog):
     assert loud and all(r.exc_info is None for r in loud), "WARN, no traceback"
 
 
+@pytest.mark.parametrize("failure,reason", [("hang", "router_timeout"),
+                                            ("raise", "router_error")])
+def test_flag_driven_failure_logs_the_backend_it_requested(monkeypatch, sink, failure, reason):
+    """On the flag path configured_backend() is "off", so a defaults row that
+    fell back to it would log `requested: "off"` for a turn that asked for
+    jev."""
+    monkeypatch.setattr(decisions, "worst_case_s", lambda: -0.95)  # backstop = 50ms
+
+    async def broken(*a, **k):
+        if failure == "hang":
+            await asyncio.sleep(5)
+        raise RuntimeError("bug in the seam")
+
+    monkeypatch.setattr(decisions, "decide", broken)
+
+    async def run():
+        return await _observe()
+
+    with patch("services.feature_flags.flag_variant", return_value="jev"):
+        result = asyncio.run(run())
+    assert (result.fallback_reason, result.requested) == (reason, "jev")
+    (event,) = _decision_events(sink)
+    assert event["payload"]["requested"] == "jev"
+
+
+def test_flag_off_by_default_schedules_nothing():
+    """No env, no stored config: the decision_router flag's "off" default
+    means no state is built and no task is scheduled."""
+    with patch("services.tutor_router.build_state") as build:
+        assert _observe() is None
+    assert not build.called
+
+
+def test_shutdown_drains_an_inflight_decision(monkeypatch, sink):
+    """#672 review: the lifespan closes the Jev client and stops the events
+    worker after the router tasks; draining first keeps a turn persisted just
+    before shutdown from losing its decision.made row."""
+    monkeypatch.setenv(decisions.BACKEND_ENV, "flash_lite")
+
+    async def run():
+        with decision_agent.override(model=_model(DISRUPTIVE, delay=0.05)):
+            task = _observe()
+            assert task is not None and not task.done()
+            await tutor_router.drain_inflight()
+            return task
+
+    task = asyncio.run(run())
+    assert task.done()
+    assert len(_decision_events(sink)) == 1
+
+
 def test_function_mode_routes_with_the_e2e_handler(monkeypatch, sink):
     """The E2E lane's shape: function mode, no backend env, the env-named
     handlers module — the router runs and every key is answered above floor."""
     import sys
 
     import agents._providers as providers
-    from agents._providers import clear_function_handlers, model_for
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     monkeypatch.setattr(providers, "_ENV_HANDLERS_LOADED", False)
-    clear_function_handlers()
+    providers.clear_function_handlers()
     sys.modules.pop("agents.function_handlers_e2e", None)
     try:
         async def run():
             return await _observe()
 
-        with decision_agent.override(model=model_for("decision")):
+        with decision_agent.override(model=providers.model_for("decision")):
             result = asyncio.run(run())
     finally:
-        clear_function_handlers()
+        providers.clear_function_handlers()
         sys.modules.pop("agents.function_handlers_e2e", None)
 
     assert result.backend == "function"
@@ -460,19 +516,23 @@ def test_off_schedules_nothing_at_the_persist_point():
 
 def test_the_seam_switch_is_read_once_per_turn(router_on, monkeypatch):
     """#672 review: learn.py re-checked decisions.enabled() before calling
-    observe_tutor_turn, which checks it itself. One owner: the router."""
+    observe_tutor_turn, which checks it itself. One owner: the router.
+
+    The router's on/off check is `decisions.router_backends()` (which also
+    resolves the decision_router flag's backends); the "one owner" property
+    is what this test pins."""
     agent = MagicMock()
     agent.run = AsyncMock(return_value=run_result("reply"))
     reads: list = []
 
-    def enabled():
+    def router_backends(user_id):
         reads.append(1)
-        return True
+        return (decisions.JEV, decisions.OFF)
 
     async def no_route(*a, **k):
         return None
 
-    monkeypatch.setattr(decisions, "enabled", enabled)
+    monkeypatch.setattr(decisions, "router_backends", router_backends)
     monkeypatch.setattr(tutor_router, "_route", no_route)
     with (
         patch("routes.learn.table", side_effect=_table_factory),
@@ -582,7 +642,7 @@ def test_router_failure_cannot_fail_the_turn():
     with (
         patch("routes.learn.table", side_effect=_table_factory),
         patch("routes.learn.agent_for_mode", return_value=agent),
-        patch("services.tutor_router.decisions.enabled", side_effect=RuntimeError("boom")),
+        patch("services.tutor_router.decisions.router_backends", side_effect=RuntimeError("boom")),
     ):
         r = _post_chat()
     assert r.status_code == 200 and r.json()["reply"] == "reply"

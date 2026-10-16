@@ -121,6 +121,11 @@ async def _lifespan(_app: FastAPI):
     start_sweeper()
     yield
     await stop_sweeper()
+    # Let in-flight tutor-router decisions finish first: each one emits a
+    # decision.made row through the Jev client and the events worker closed
+    # below (bounded by the router's own backstop).
+    from services import tutor_router
+    await tutor_router.drain_inflight()
     # The decision seam's pooled Jev client (#642) for this loop.
     await typesafe_client.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch

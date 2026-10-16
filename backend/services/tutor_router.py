@@ -18,10 +18,18 @@ before anything trusts it. Which way the model-selection question in #640 goes
 NOT decided here; the served model tier rides on the event so either can be
 costed.
 
-**Zero added latency.** :func:`observe_tutor_turn` schedules the decision as a
-fire-and-forget task on the running loop and returns immediately; the task has
-its own timeout backstop and can never raise into the turn. With the seam off
-(the default), it returns before building any state.
+**No waiting on the decision.** :func:`observe_tutor_turn` schedules the
+decision as a fire-and-forget task on the running loop and returns without
+awaiting it; the task has its own timeout backstop and can never raise into
+the turn. The only synchronous work is resolving which backends run (the
+``decision_router`` flag), which is a cache hit except on a snapshot or
+roles-cache miss. With the seam off (the default), it returns before building
+any state.
+
+Which backends run is per-student: :func:`decisions.router_backends` resolves
+the ``decision_router`` feature flag (off | jev | jev_shadow) unless an
+operator has set ``SAPLING_DECISIONS_BACKEND`` or the process is in function
+mode, in which case that env-driven behaviour wins instead.
 
 Only student-authored chat turns are routed (``/chat`` and ``/chat/stream``),
 and only once they are PERSISTED — exactly one decision per saved student
@@ -124,6 +132,21 @@ QUESTIONS: tuple[decisions.Question, ...] = (
 _inflight: set[asyncio.Task] = set()
 
 
+async def drain_inflight() -> None:
+    """Wait for the scheduled decisions (app shutdown), so a turn persisted
+    just before shutdown still gets its ``decision.made`` row: main.py calls
+    this before closing the pooled Jev client and stopping the events worker,
+    either of which would otherwise lose it. Bounded by the router's own
+    backstop (each task already gives up at that point). Never raises."""
+    tasks = [t for t in _inflight if not t.done()]
+    if not tasks:
+        return
+    try:
+        await asyncio.wait(tasks, timeout=decisions.worst_case_s() + 2.0)
+    except Exception:
+        logger.debug("tutor router drain failed", exc_info=True)
+
+
 def _message_text(msg: Any) -> tuple[str, str] | None:
     """(speaker, text) for a pydantic-ai message, or None if it has no text."""
     if isinstance(msg, ModelRequest):
@@ -154,14 +177,14 @@ def build_state(message: str, history: list | None) -> dict:
 
 
 async def _route(state: dict, *, user_id: str | None, request_id: str | None,
-                 extra: dict) -> decisions.DecisionResult:
+                 extra: dict, primary: str, shadow: str) -> decisions.DecisionResult:
     backstop = decisions.worst_case_s() + 1.0
     try:
         return await asyncio.wait_for(
             decisions.decide(
                 state, QUESTIONS, feature=FEATURE, user_id=user_id,
                 request_id=request_id, truncatable=("recent_conversation",),
-                event_extra=extra,
+                event_extra=extra, backend=primary, shadow=shadow,
             ),
             timeout=backstop,
         )
@@ -169,7 +192,8 @@ async def _route(state: dict, *, user_id: str | None, request_id: str | None,
         # decide() owns its own per-backend timeouts; this is the backstop,
         # and when it fires decide() never emitted — so emit here.
         result = decisions.defaults_result(
-            QUESTIONS, reason="router_timeout", latency_ms=int(backstop * 1000),
+            QUESTIONS, reason="router_timeout", requested=primary,
+            latency_ms=int(backstop * 1000),
         )
         decisions.emit(result, feature=FEATURE, user_id=user_id,
                        request_id=request_id, extra=extra)
@@ -183,7 +207,9 @@ async def _route(state: dict, *, user_id: str | None, request_id: str | None,
         logger.warning("tutor router task failed (%s); logging defaults",
                        type(exc).__name__)
         logger.debug("tutor router failure detail", exc_info=True)
-        result = decisions.defaults_result(QUESTIONS, reason="router_error")
+        result = decisions.defaults_result(
+            QUESTIONS, reason="router_error", requested=primary,
+        )
         decisions.emit(result, feature=FEATURE, user_id=user_id,
                        request_id=request_id, extra=extra)
         return result
@@ -218,11 +244,16 @@ def observe_tutor_turn(
     served model name.
 
     Returns the scheduled task (tests await it) or None when the seam is off
-    or scheduling failed. Never raises, never blocks: the caller's turn runs
-    exactly as it would without this call.
+    or scheduling failed. Never raises, and never waits on the decision: the
+    caller's turn runs exactly as it would without this call. It is not
+    I/O-free, though — resolving the per-student ``decision_router`` flag
+    (:func:`decisions.router_backends`) can read the flag snapshot and the
+    student's roles from the DB on a cache miss, synchronously, before the
+    task is scheduled.
     """
     try:
-        if not decisions.enabled():
+        primary, shadow = decisions.router_backends(user_id)
+        if primary == decisions.OFF:
             return None
         state = build_state(message, history)
         extra = {
@@ -234,7 +265,8 @@ def observe_tutor_turn(
             "history_messages": len(state["recent_conversation"]),
         }
         task = asyncio.get_running_loop().create_task(
-            _route(state, user_id=user_id, request_id=request_id, extra=extra),
+            _route(state, user_id=user_id, request_id=request_id, extra=extra,
+                   primary=primary, shadow=shadow),
             name="tutor-router",
         )
         _inflight.add(task)

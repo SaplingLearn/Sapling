@@ -464,6 +464,27 @@ class TestJevBackend:
         assert str(seen[0].url) == "https://proxy.example/typesafe/v1/systemone"
         assert json.loads(seen[0].content)["model"] == "jev-latest"
 
+    @pytest.mark.parametrize("url", ["http://proxy.example/typesafe", "ftp://api.typesafe.ai"])
+    def test_non_https_base_url_never_sends_the_key(self, monkeypatch, url):
+        """#672 review: the bearer key and the student's text must not leave
+        in cleartext — a plain-http base URL degrades without a call."""
+        seen: list = []
+        _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
+        monkeypatch.setenv(typesafe_client.BASE_URL_ENV, url)
+        with decision_agent.override(model=_agent_model(GOOD_AGENT_ANSWERS)):
+            result = _decide()
+        assert seen == [], "insecure base URL → no HTTP call"
+        assert result.requested == "jev" and result.backend == "flash_lite"
+        assert result.fallback_reason == "jev_insecure_base_url"
+
+    def test_loopback_http_base_url_is_allowed(self, monkeypatch):
+        seen: list[httpx.Request] = []
+        _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))
+        monkeypatch.setenv(typesafe_client.BASE_URL_ENV, "http://127.0.0.1:8787")
+        result = _decide()
+        assert result.backend == "jev"
+        assert str(seen[0].url) == "http://127.0.0.1:8787/v1/systemone"
+
     def test_missing_key_falls_back_to_flash_lite_without_a_call(self, monkeypatch, sink):
         seen: list = []
         _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen), key=None)

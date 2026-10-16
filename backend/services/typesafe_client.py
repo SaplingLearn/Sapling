@@ -89,6 +89,26 @@ def base_url() -> str:
     return (os.getenv(BASE_URL_ENV) or DEFAULT_BASE_URL).strip().rstrip("/")
 
 
+#: Hosts a plain-http base URL may name: a local mock/proxy, never the wire.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _evaluate_url() -> str:
+    """The evaluate endpoint, refusing to send the bearer key (and the
+    student's text) in cleartext: ``TYPESAFE_BASE_URL`` must be https, except
+    for a loopback host. Raises ``JevError("insecure_base_url")`` otherwise,
+    which the seam treats like any other Jev failure (degrade, no call)."""
+    url = base_url()
+    try:
+        parsed = httpx.URL(url)
+    except Exception as exc:
+        raise JevError("insecure_base_url") from exc
+    if parsed.scheme == "https" or (parsed.scheme == "http"
+                                    and parsed.host in _LOOPBACK_HOSTS):
+        return url + EVALUATE_PATH
+    raise JevError("insecure_base_url")
+
+
 def model_name() -> str:
     return (os.getenv(MODEL_ENV) or DEFAULT_MODEL).strip()
 
@@ -177,6 +197,8 @@ async def aclose_clients() -> None:
             try:
                 await client.aclose()
             except Exception:
+                # Shutdown is best-effort: a client that fails to close is
+                # dropped anyway, and this must never fail the lifespan exit.
                 pass
 
 
@@ -198,6 +220,7 @@ async def evaluate(
     key = api_key()
     if not key:
         raise JevError("no_key")
+    url = _evaluate_url()
     body = {"state": state, "model": model or model_name(), "questions": questions}
     # Serialized exactly as the budget estimate and the agent prompt are
     # (decisions._fit_state / _agent_prompt): default=str, so a datetime or
@@ -211,7 +234,7 @@ async def evaluate(
         # bytes can satisfy every per-phase timeout and still blow the budget.
         resp = await asyncio.wait_for(
             client.post(
-                base_url() + EVALUATE_PATH,
+                url,
                 content=payload,
                 headers={"Authorization": f"Bearer {key}",
                          "Content-Type": "application/json"},
