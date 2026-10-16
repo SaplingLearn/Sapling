@@ -1,6 +1,6 @@
 /**
- * Journey: a first-ever /settings load creates the settings row without a
- * 500 (#674).
+ * Smoke journey: a first-ever /settings load answers 200 and leaves exactly
+ * one settings row (#674).
  *
  * Settings.tsx loads `GET /api/profile/{id}/settings` and
  * `GET /api/profile/{id}` in parallel (Promise.all). Both reach
@@ -8,11 +8,19 @@
  * `user_settings` row both SELECTs came back empty, both INSERTed, and the
  * loser's PostgREST 409 surfaced as a 500 (the logscan oracle's finding on
  * the first journey that opened /settings). The fix is an ON CONFLICT DO
- * NOTHING create, so both calls must now answer 200 and exactly one row must
- * exist afterwards.
+ * NOTHING create.
+ *
+ * This is NOT the regression guard for that race. Whether the two requests
+ * actually interleave inside the server is down to timing, so this journey
+ * can stay green against the pre-fix code. The deterministic guard is the
+ * barrier test in backend/tests/test_profile_routes.py
+ * (`test_concurrent_first_loads_both_get_settings_674` and its
+ * `_get_or_create_profile` sibling), which forces both first reads to finish
+ * before either create runs. This journey only checks the first-load path
+ * end to end through the real stack and DB.
  *
  * The seeded USER_ACTIVE has no `user_settings` row after the per-test reset,
- * which is what makes this the race's first-load path — the precondition is
+ * which is what makes this the first-load path. The precondition is
  * asserted, so a seed change that pre-creates the row fails loudly here
  * instead of silently turning this into a warm-load test.
  */
@@ -29,7 +37,7 @@ const settingsRows = async () =>
     )[0].n,
   );
 
-test("first /settings load answers 200 on both parallel profile calls (#674)", async ({
+test("smoke: first /settings load answers 200 on both parallel profile calls (#674)", async ({
   page,
 }) => {
   expect(await settingsRows(), "precondition: no user_settings row yet").toBe(0);
