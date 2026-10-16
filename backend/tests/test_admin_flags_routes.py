@@ -233,3 +233,19 @@ def test_role_target_stores_the_canonical_id():
     assert r.status_code == 200
     assert list(db.targets) == [("hide_quiz", "role", ROLE)]
     assert r.json()["flag"]["targets"][0]["label"] == "Beta"
+
+
+def test_upsert_ignore_duplicates_sends_do_nothing_resolution():
+    """The flag-row ensure (PUT targets) upserts with ignore_duplicates=True;
+    db.connection must translate that into PostgREST's DO NOTHING, not reject
+    it — the mocked route tests above never reach the real connection."""
+    import db.connection as dbconn
+
+    with patch.object(dbconn, "_client") as client_mock:
+        for flag, expected in ((True, "resolution=ignore-duplicates"),
+                               (False, "resolution=merge-duplicates")):
+            client_mock.post.reset_mock()
+            dbconn.table("feature_flags").upsert({"key": "hide_quiz"}, on_conflict="key",
+                                                 ignore_duplicates=flag)
+            prefer = client_mock.post.call_args.kwargs["headers"]["Prefer"]
+            assert expected in prefer, prefer
