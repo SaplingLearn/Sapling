@@ -50,8 +50,7 @@ Trigger: user loads any path.
    - `GET ${NEXT_PUBLIC_API_URL}/api/auth/me?user_id=...` with a 3-second `AbortController` timeout (`middleware.ts:87-98`). Returns `{is_approved, onboarding_completed, ...}`.
    - If `is_approved === true`: `NextResponse.next()` — render the page.
 3. Client-side, `UserProvider` (`UserContext.tsx:72-94`) reads `localStorage.sapling_user` (seeded on first sign-in by `setActiveUser`) and populates `userId`/`userName`/`avatarUrl` synchronously for the first paint. `userReady` becomes `true` after the localStorage read — pages use `userReady` to gate data fetches so they don't fire with an empty user id.
-4. A second effect in `UserProvider` calls `fetch /api/users` (`UserContext.tsx:97-113`) to re-sync the live user list and overwrite `userName` with the backend-truthful name.
-5. `fetchProfileData(userId)` (`UserContext.tsx:115-129`) calls `GET /api/auth/me?user_id=` and populates `username`, `roles`, `equippedCosmetics`, `featuredRole`, `isAdmin`.
+4. `fetchProfileData(userId)` calls `GET /api/auth/me?user_id=` and populates `username`, `roles`, `equippedCosmetics`, `featuredRole`, `isAdmin`, and the backend-truthful `userName` (persisted back to `localStorage.sapling_user`). A `/me` answer for a different `user_id` than the client holds is treated as a stale identity and cleared. (The old `/api/users` roster fetch is gone; the endpoint was deleted because it returned every user's decrypted name.)
 
 Edge cases:
 - **Expired cookie** (`exp < now`): `verifySession` returns `null` → middleware redirects to `${API_URL}/api/auth/google`. Effectively indistinguishable from "never signed in" from the user's perspective.
@@ -122,10 +121,9 @@ File: `src/context/UserContext.tsx`. Wrapped around the entire app in `app/layou
 
 | Prop | Type | Source |
 |---|---|---|
-| `userId` | `string` | localStorage → backend `/api/users` |
-| `userName` | `string` | localStorage → backend `/api/users` |
+| `userId` | `string` | localStorage → backend `/api/auth/me` |
+| `userName` | `string` | localStorage → backend `/api/auth/me` |
 | `avatarUrl` | `string` | localStorage |
-| `users` | `UserOption[]` | backend `/api/users` |
 | `userReady` | `boolean` | `true` after localStorage read completes |
 | `isAuthenticated` | `boolean` | localStorage presence / `setActiveUser` |
 | `isApproved` | `boolean` | `confirmApproved()` after callback; not live-synced on mount (relies on middleware to gate) |
@@ -142,7 +140,7 @@ File: `src/context/UserContext.tsx`. Wrapped around the entire app in `app/layou
 ### 4.2 Behavior quirks worth preserving in a rebuild
 
 - **`userReady` gating.** Every page that fetches per-user data does `if (!userReady || !userId) return` before calling its API. This guards against a SSR/CSR race where the page would fetch with `userId === ''` and get garbage/404. Any rebuild must preserve an equivalent "don't fetch until hydrated" mechanism.
-- **Name reconciliation.** After localStorage populates `userName`, a second pass from `/api/users` overwrites it (`UserContext.tsx:97-113`). This prevents a stale greeting if the user renamed themselves from another browser.
+- **Name reconciliation.** After localStorage populates `userName`, `fetchProfileData` overwrites it with `/api/auth/me`'s name and persists it. This prevents a stale greeting if the user's name changed from another browser.
 - **`isApproved` is set once, not polled.** The client-side `isApproved` flag is only set to `true` by `confirmApproved()` in `/signin/callback`. Middleware is the authority for ongoing approval. Don't add client polling — rely on middleware.
 - **Local-mode shortcut.** When `NEXT_PUBLIC_LOCAL_MODE=true`, `UserContext` populates with `LOCAL_USER` and skips the backend. All `lib/api.ts` calls are routed through `handleLocalRequest` (`lib/localData.ts`) — fake in-memory data. Keep this path around for offline dev unless you replace it with something better (Storybook mocks, MSW, etc.).
 
@@ -172,7 +170,6 @@ Indirect: any page that calls `useUser()` — basically all in-scope pages.
 | `GET ${API_URL}/api/auth/google` | Hard redirect | Navbar Sign In / `/signin` retry / `OnboardingFlow` step 0 / middleware fallback |
 | `GET ${API_URL}/api/auth/google/callback` | Browser (from Google) | Google consent screen → backend → `/signin/callback` |
 | `GET ${API_URL}/api/auth/me?user_id=` | Frontend fetch | Middleware (every protected nav), `UserContext.fetchProfileData`, `/api/auth/session` fallback, `/signin/callback` onboarding branch |
-| `GET ${API_URL}/api/users` | Frontend fetch | `UserContext` mount |
 | `POST /api/auth/session` (Next route) | Frontend fetch | `/signin` (localStorage re-exchange), `/signin/callback` |
 | `DELETE /api/auth/session` (Next route) | Frontend fetch | `UserContext.signOut` |
 

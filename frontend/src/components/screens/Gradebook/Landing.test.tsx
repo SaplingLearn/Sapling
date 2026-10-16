@@ -9,7 +9,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GradebookCourseSummary } from "@/lib/types";
 
@@ -114,6 +114,7 @@ const chipLabels = () =>
 
 beforeEach(() => {
   mockUser.userId = "u1";
+  mockUser.userReady = true;
   mockedGetSummary.mockResolvedValue({ courses: [], gpa: null, semester: "" });
   mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS });
   mockedGetGpa.mockResolvedValue({ gpa: null, courses: [], semester: null, scope: "cumulative" });
@@ -229,6 +230,35 @@ describe("GradebookLanding semester chips", () => {
     expect(screen.queryByText("Spring 2026")).toBeNull();
   });
 
+  it("shows no demo chips while the user's identity is still resolving", async () => {
+    // UserContext starts at { userId: '', userReady: false } and hydrates a
+    // tick later. The landing used to treat that '' as "logged out" and put
+    // the demo chips up; a click on one was then overwritten when the real
+    // terms landed (the gradebook.spec.ts chip-race journey).
+    mockUser.userId = "";
+    mockUser.userReady = false;
+    let resolveCourses!: (v: { courses: EnrolledCourse[] }) => void;
+    mockedGetCourses.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCourses = resolve;
+      }),
+    );
+
+    const { rerender } = render(<GradebookLanding />);
+    mockUser.userId = "u1";
+    mockUser.userReady = true;
+    rerender(<GradebookLanding />);
+
+    // Terms in flight: nothing clickable, and certainly not the demo terms.
+    await waitFor(() => expect(mockedGetCourses).toHaveBeenCalledWith("u1"));
+    expect(screen.queryByRole("button", { name: "Spring 2026" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Fall 2025" })).toBeNull();
+
+    resolveCourses({ courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")] });
+    await screen.findByRole("button", { name: "Fall 2024" });
+    expect(chipLabels()).toEqual(["Spring 2025", "Fall 2024"]);
+  });
+
   it("still previews the sample semesters when logged out", async () => {
     mockUser.userId = null;
 
@@ -285,6 +315,67 @@ describe("GradebookLanding term GPA + term-aware card links (#139)", () => {
 
     const card = await screen.findByRole("link", { name: /bio/i });
     expect(card.getAttribute("href")).toBe("/gradebook/bio?semester=Fall%202024");
+  });
+
+  it("drops a slower summary for a term the user already clicked away from", async () => {
+    // Spring's summary is still in flight when the user picks Fall; Fall's
+    // answers first. Spring's late answer must not repaint Fall's chip with
+    // Spring's courses.
+    mockedGetCourses.mockResolvedValue({
+      courses: [course("bio", "Spring 2025"), course("psy", "Fall 2024")],
+    });
+    let releaseSpring: () => void = () => {};
+    mockedGetSummary.mockImplementation((_uid, term) => {
+      if (term === "Spring 2025") {
+        return new Promise((resolve) => {
+          releaseSpring = () =>
+            resolve({ courses: [summaryCourse("bio", "Spring 2025")], gpa: null, semester: "Spring 2025" });
+        });
+      }
+      return Promise.resolve({ courses: [summaryCourse("psy", "Fall 2024")], gpa: null, semester: "Fall 2024" });
+    });
+
+    render(<GradebookLanding />);
+
+    await waitFor(() => expect(mockedGetSummary).toHaveBeenCalledWith("u1", "Spring 2025"));
+    fireEvent.click(screen.getByRole("button", { name: "Fall 2024" }));
+    await screen.findByRole("link", { name: /psy/i });
+
+    await act(async () => {
+      releaseSpring();
+    });
+
+    expect(screen.queryByRole("link", { name: /bio/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /psy/i })).toBeInTheDocument();
+  });
+
+  it("never applies a previous identity's terms that land after it changed", async () => {
+    // u1's course list is still in flight when the identity changes (a stale
+    // session cleared, an account switch). u2's terms land first; u1's late
+    // answer must not replace u2's chips or selection.
+    let releaseU1: () => void = () => {};
+    mockedGetCourses.mockImplementation((uid) => {
+      if (uid === "u1") {
+        return new Promise((resolve) => {
+          releaseU1 = () => resolve({ courses: [course("bio", "Spring 2025")] });
+        });
+      }
+      return Promise.resolve({ courses: [course("psy", "Fall 2024")] });
+    });
+
+    const { rerender } = render(<GradebookLanding />);
+    await waitFor(() => expect(mockedGetCourses).toHaveBeenCalledWith("u1"));
+
+    mockUser.userId = "u2";
+    rerender(<GradebookLanding />);
+    await screen.findByRole("button", { name: "Fall 2024" });
+
+    await act(async () => {
+      releaseU1();
+    });
+
+    expect(chipLabels()).toEqual(["Fall 2024"]);
+    expect(mockedGetSummary).not.toHaveBeenCalledWith("u2", "Spring 2025");
   });
 
   it("opens the transcript modal from the Transcript button", async () => {

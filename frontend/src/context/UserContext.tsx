@@ -4,16 +4,10 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { API_URL, getMe } from '@/lib/api';
 
-interface UserOption {
-  id: string;
-  name: string;
-}
-
 interface UserContextValue {
   userId: string;
   userName: string;
   avatarUrl: string;
-  users: UserOption[];
   userReady: boolean;
   isAuthenticated: boolean;
   isApproved: boolean;
@@ -37,7 +31,6 @@ export const UserContext = createContext<UserContextValue>({
   userId: '',
   userName: '',
   avatarUrl: '',
-  users: [],
   userReady: false,
   isAuthenticated: false,
   isApproved: false,
@@ -71,7 +64,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState('');
   const [userName, setUserName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
-  const [users, setUsers] = useState<UserOption[]>([]);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [userReady, setUserReady] = useState(false);
@@ -156,21 +148,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/users`, { credentials: 'include' })
-      .then(r => r.json())
-      .then((data: { users: UserOption[] }) => {
-        const list = data.users ?? [];
-        setUsers(list);
-        setUserId(prev => {
-          const match = list.find(u => u.id === prev);
-          if (match) setUserName(match.name);
-          return prev;
-        });
-      })
-      .catch(() => {});
-  }, []);
-
   // Shared teardown for "this client's identity is no longer valid": local
   // state plus the persisted localStorage copy. Used by signOut and by the
   // #191 stale-identity reconciliation in fetchProfileData.
@@ -213,6 +190,29 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const data = await res.json();
+      // /me answers for whoever owns the session cookie and ignores
+      // ?user_id=. A different user_id means this client's identity (e.g. a
+      // localStorage copy from another account on a shared browser) is not
+      // the session's: the same stale-identity case as a 401 above.
+      if (data.user_id && data.user_id !== uid) {
+        clearStaleClientAuth();
+        if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
+          window.location.replace('/?error=session_expired');
+        }
+        return;
+      }
+      // /me is the source of truth for the display name (it may have changed
+      // since this browser signed in, e.g. from another device). Persist the
+      // confirmed name so the next page load boots with it.
+      if (data.name) {
+        setUserName(data.name);
+        try {
+          const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
+          if (saved && saved.id === uid && saved.name !== data.name) {
+            localStorage.setItem('sapling_user', JSON.stringify({ ...saved, name: data.name }));
+          }
+        } catch {}
+      }
       setUsername(data.username ?? null);
       setRoles(data.roles ?? []);
       setEquippedCosmetics(data.equipped_cosmetics ?? {});
@@ -276,11 +276,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+      userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
       setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
     }),
-    [userId, userName, avatarUrl, users, userReady, isAuthenticated, isApproved,
+    [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
      username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile, signOut]
   );
 
