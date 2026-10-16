@@ -35,11 +35,15 @@ class SupabaseTable:
         order: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        timeout: Optional[float] = None,
     ) -> list:
         """Read rows. Pass `limit`/`offset` to page — PostgREST caps a
         response at `max_rows` (1000) and answers 206 Partial Content,
         which is a 2xx, so an unpaged read over that many rows truncates
-        silently."""
+        silently.
+
+        `timeout` (seconds) overrides the client-wide 30 s for this one read,
+        for a caller that would rather fail fast than wait."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -49,7 +53,8 @@ class SupabaseTable:
             params["limit"] = str(limit)
         if offset is not None:
             params["offset"] = str(offset)
-        r = _client.get(self.url, params=params)
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _client.get(self.url, params=params, **kw)
         r.raise_for_status()
         return r.json()
 
@@ -60,8 +65,10 @@ class SupabaseTable:
         order: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        timeout: Optional[float] = None,
     ) -> tuple[list, int]:
-        """Like select(), but also returns total row count via Content-Range."""
+        """Like select(), but also returns total row count via Content-Range.
+        `timeout` as in select()."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -72,7 +79,8 @@ class SupabaseTable:
         if offset is not None:
             params["offset"] = str(offset)
         headers = {"Prefer": "count=exact"}
-        r = _client.get(self.url, params=params, headers=headers)
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _client.get(self.url, params=params, headers=headers, **kw)
         r.raise_for_status()
         rows = r.json()
         total = 0
@@ -195,6 +203,7 @@ def page_all(
     filters: Optional[dict] = None,
     order: str,
     page: int = MAX_ROWS,
+    timeout: Optional[float] = None,
 ) -> Iterator[dict]:
     """Yield EVERY row matching `filters`, paging past `MAX_ROWS`.
 
@@ -222,6 +231,9 @@ def page_all(
     such as `id`). Offset paging over a non-deterministic sort lets Postgres
     return rows in a different order for page N and N+1, silently skipping or
     duplicating rows across the boundary.
+
+    `timeout` bounds each page's read (see `SupabaseTable.select`); omitted,
+    the handle's call is unchanged (fakes need not accept it).
     """
     if page > MAX_ROWS:
         # Above the cap every page comes back short by construction, so the
@@ -233,9 +245,10 @@ def page_all(
         )
     seen = 0
     offset = 0
+    extra = {"timeout": timeout} if timeout is not None else {}
     while True:
         rows, total = handle.select_with_count(
-            columns, filters=filters, order=order, limit=page, offset=offset,
+            columns, filters=filters, order=order, limit=page, offset=offset, **extra,
         )
         rows = rows or []
         yield from rows

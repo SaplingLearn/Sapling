@@ -197,6 +197,18 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
 if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
   echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
 fi
+# The deterministic lane exercises the typed decision seam (#640, ADR 0027).
+# The tutor router runs whatever the `decision_router` feature flag says
+# (ADR 0029) and the flag is off by default — no stored config on this stack —
+# so switch it on through its generic env override, respecting a value the
+# caller exported (`off` skips the seam). Under function mode an on variant
+# runs the scripted `function` backend; Gemini/Jev are never dialled. Function
+# mode is detected the same way as the check above: the shell first, then
+# backend/.env.
+MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
+if [ "$MODEL_MODE" = "function" ]; then
+  export SAPLING_FLAG_DECISION_ROUTER="${SAPLING_FLAG_DECISION_ROUTER:-jev}"
+fi
 
 mkdir -p "$E2E_DIR"
 

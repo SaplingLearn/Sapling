@@ -42,6 +42,7 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services import typesafe_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -118,8 +119,19 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    # #672: the decision seam's backends moved from env vars to the
+    # decision_router flag; say so if a deployment still sets the old ones.
+    from services import decisions
+    decisions.warn_removed_env()
     yield
     await stop_sweeper()
+    # Let in-flight tutor-router decisions finish first: each one emits a
+    # decision.made row through the Jev client and the events worker closed
+    # below (bounded by the router's own backstop).
+    from services import tutor_router
+    await tutor_router.drain_inflight()
+    # The decision seam's pooled Jev client (#642) for this loop.
+    await typesafe_client.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
