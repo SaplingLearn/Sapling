@@ -99,7 +99,8 @@ toggle is an open product question.
    in the Jev path. `decide()` never raises.
 
 4. **Observable by construction.** Each call emits one `decision.made` event
-   (registered in `EVENT_TAXONOMY`, category `usage`) with backend, requested
+   (registered in `EVENT_TAXONOMY`, category `system` — server-emitted, so
+   the admin usage rollups exclude it) with backend, requested
    backend, fallback reason, model, latency, and per key the applied value,
    **raw** value and confidence. The event carries no state text. The same
    fields go to a Logfire log. An off-list answer shows as `raw: "<invalid>"`
@@ -120,7 +121,8 @@ toggle is an open product question.
    Gemini call, not two) and the shadow is logged `shadow_same_as_served`
    with `agree: null`, never a self-comparison. An off-list answer on
    either side counts as disagreement, not unknown.
-   Switching Jev on after the agreement review is one env var.
+   Switching Jev on after the agreement review is one `decision_router`
+   flag change in /admin (variant `jev`).
 
 6. **Tutor router, observe-only.** `services/tutor_router.py` asks five
    questions per student chat turn (`needs_retrieval`, `needs_rewrite`,
@@ -160,9 +162,13 @@ toggle is an open product question.
   Jev does not train on customer requests (zero data retention is an
   enterprise option). Review this before enabling `jev` in production.
 - (−) The Jev client was built from the public docs (docs.typesafe.ai/api,
-  /models, /confidence, /sdk/python constants) without a live call, because no
-  key existed yet. The tests replay recorded-shape payloads. The first staging
-  run with a key is the real schema check.
+  /models, /confidence, /sdk/python constants) before a key existed. One live
+  check has since run (2026-09-26, five hand-written tutor turns through
+  `decide()` with a real key): the wire format matched the docs (`jev-1.13.0`,
+  `noul` answers without a confidence, score answers with
+  `{score, confidence, legend, probabilities}`, ~653 input tokens per routed
+  turn) and the parser needed no change. The tests still replay
+  recorded-shape payloads; production volume is the remaining check.
 - (−) The flash-lite backend's confidences are self-reported, not calibrated.
   They are comparable in shape to Jev's but not in meaning, which is part of
   what the shadow comparison is for.

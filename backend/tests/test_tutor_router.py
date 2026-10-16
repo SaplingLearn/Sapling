@@ -178,7 +178,7 @@ def test_observe_does_no_flag_io_before_returning(monkeypatch):
     async def run():
         task = _observe()
         assert calls == [], "no flag read before the task runs"
-        await task
+        assert await task is None, "the flag read off: nothing decided"
         return calls
 
     assert asyncio.run(run()) == ["u1"]
