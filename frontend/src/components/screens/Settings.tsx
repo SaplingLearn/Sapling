@@ -726,7 +726,8 @@ export function Settings() {
  * student's account (`analytics_opt_out`, read by the UserProvider on the
  * first app page of each page load; src/lib/analytics.ts). The switch is
  * disabled until that answer has arrived, while a save is in flight, under
- * Do Not Track / GPC, and in a build that runs no analytics — so it never
+ * Do Not Track / GPC, and wherever analytics is not running (a build with
+ * none, or the admin `product_analytics` flag off, #620) — so it never
  * implies a choice it cannot honour. After a failed opt-out save it shows
  * "off for this visit only" with a retry, never "saved".
  */
@@ -748,7 +749,7 @@ function AnalyticsPreference({
   const resolved = on || state === "off" || state === "off_unsaved";
   const note =
     state === "unavailable"
-      ? "Analytics isn't running in this version of Sapling, so nothing is being collected."
+      ? "Analytics isn't running in Sapling right now, so nothing is being collected."
       : state === "browser_blocked"
         ? "Your browser's Do Not Track or Global Privacy Control setting is on, so nothing is collected."
         : state === "unknown"

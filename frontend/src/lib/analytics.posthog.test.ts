@@ -31,6 +31,7 @@ import {
   buildPosthogConfig,
   chooseAnalytics,
   scrubEvent,
+  setProductAnalyticsFlag,
   stopAnalytics,
 } from "./analytics";
 
@@ -83,6 +84,9 @@ beforeEach(() => {
       return ph;
     },
   });
+  // #620/#677: the reset puts the admin `product_analytics` flag back to its
+  // fail-closed off; these tests exercise the real SDK once it is on.
+  setProductAnalyticsFlag(true);
 });
 
 afterEach(() => {

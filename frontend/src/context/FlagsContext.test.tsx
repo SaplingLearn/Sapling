@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchFlags = vi.fn();
 vi.mock("@/lib/flags", () => ({ fetchFlags: () => fetchFlags() }));
+const setProductAnalyticsFlag = vi.fn();
+vi.mock("@/lib/analytics", () => ({ setProductAnalyticsFlag: (on: boolean) => setProductAnalyticsFlag(on) }));
 let pathname = "/dashboard";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 let user = { userId: "u1", isAuthenticated: true, userReady: true };
@@ -22,7 +24,7 @@ function MapProbe() {
 
 describe("FlagsProvider/useFlag", () => {
   beforeEach(() => {
-    fetchFlags.mockReset();
+    fetchFlags.mockReset(); setProductAnalyticsFlag.mockReset();
     pathname = "/dashboard"; user = { userId: "u1", isAuthenticated: true, userReady: true };
   });
   afterEach(() => {
@@ -50,6 +52,42 @@ describe("FlagsProvider/useFlag", () => {
     render(<FlagsProvider><Probe /></FlagsProvider>);
     expect(fetchFlags).not.toHaveBeenCalled();
     expect(screen.getByTestId("v").textContent).toBe("off");
+  });
+
+  it("product_analytics drives the analytics switch (#677)", async () => {
+    fetchFlags.mockResolvedValue({ product_analytics: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
+  });
+
+  it("an absent or off product_analytics keeps analytics off", async () => {
+    fetchFlags.mockResolvedValue({ hide_quiz: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(screen.getByTestId("v").textContent).toBe("on"));
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+    expect(setProductAnalyticsFlag).not.toHaveBeenCalledWith(true);
+  });
+
+  it("a failed flag fetch turns analytics off", async () => {
+    fetchFlags.mockRejectedValue(new Error("down"));
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenCalledTimes(2));
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+  });
+
+  it("drops the previous user's analytics flag as soon as a switch refetches", async () => {
+    fetchFlags.mockResolvedValueOnce({ product_analytics: "on" });
+    const { rerender } = render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
+    let second!: (v: Record<string, string>) => void;
+    fetchFlags.mockReturnValueOnce(new Promise((r) => { second = r; }));
+    user = { userId: "u2", isAuthenticated: true, userReady: true };
+    rerender(<FlagsProvider><Probe /></FlagsProvider>);
+    // u2's flags are still in flight: u1's "on" must not stay in force.
+    await waitFor(() => expect(fetchFlags).toHaveBeenCalledTimes(2));
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+    second({ product_analytics: "on" });
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
   });
 
   it("ignores a stale response after a user switch", async () => {

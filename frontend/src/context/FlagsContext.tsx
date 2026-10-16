@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { isAppShellRoute } from "@/lib/appRoutes";
 import { fetchFlags, type FlagMap } from "@/lib/flags";
+import { setProductAnalyticsFlag } from "@/lib/analytics";
 
 /** Every registered flag's variants[0] is "off" (backend REGISTRY). */
 const OFF = "off";
@@ -27,7 +28,7 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
     const who = isAuthenticated && userId ? userId : null;
     if (who && (!onAppRoute || loadedFor === who)) return;
     const gen = ++generation.current;
-    // Signed out: clear, no request. Signed in: fetch this
+    // Signed out: clear and stop analytics, no request. Signed in: fetch this
     // student's flags. Both settle through the same staleness guard (`gen`),
     // so a response overtaken by a user switch or a sign-out is ignored.
     // Wrapped in an inner async function (never called directly from the
@@ -35,6 +36,9 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
     // synchronously in the effect — react-hooks/set-state-in-effect.
     void (async () => {
       setFlags(null);
+      // The previous user's analytics flag must not stay in force while this
+      // user's flags are in flight: off until this refetch settles.
+      setProductAnalyticsFlag(false);
       let f: FlagMap = {};
       if (who) {
         try {
@@ -46,6 +50,9 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
       if (gen !== generation.current) return;
       setFlags(who ? f : null);
       setLoadedFor(who);
+      // #677/#675: product_analytics gates posthog-js (fail-closed: an error
+      // above leaves `f` empty, so it stays off).
+      setProductAnalyticsFlag(who !== null && f.product_analytics === "on");
     })();
   }, [userReady, isAuthenticated, userId, onAppRoute, loadedFor]);
 
