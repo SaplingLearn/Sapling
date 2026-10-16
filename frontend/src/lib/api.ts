@@ -1139,6 +1139,46 @@ export const adminCreateRole = (payload: {
 export const adminDeleteRole = (roleId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' });
 
+// Admin — feature flags (#620, ADR 0029)
+export type AdminFlagTarget = { target_type: 'user' | 'role'; target_id: string; label: string; variant: string };
+export type AdminFlag = {
+  key: string; description: string; variants: string[]; client_visible: boolean;
+  default_variant: string; rollout_percent: number; rollout_variant: string | null;
+  updated_at: string | null; updated_by: string | null; updated_by_name: string | null;
+  targets: AdminFlagTarget[];
+};
+
+export const adminListFlags = () => fetchJSON<{ flags: AdminFlag[] }>('/api/admin/flags');
+
+export const adminUpdateFlag = (
+  key: string,
+  body: { default_variant?: string; rollout_percent?: number; rollout_variant?: string | null },
+) =>
+  fetchJSON<{ flag: AdminFlag }>(`/api/admin/flags/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+
+export const adminUpsertFlagTarget = (
+  key: string,
+  body: { target_type: 'user' | 'role'; target_id: string; variant: string },
+) =>
+  fetchJSON<{ flag: AdminFlag }>(`/api/admin/flags/${encodeURIComponent(key)}/targets`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+
+export const adminDeleteFlagTarget = (key: string, type: 'user' | 'role', id: string) =>
+  fetchJSON<{ flag: AdminFlag }>(
+    `/api/admin/flags/${encodeURIComponent(key)}/targets/${type}/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+
+export const adminExplainFlag = (key: string, userId: string) =>
+  fetchJSON<{ variant: string; step: string; detail: string }>(
+    `/api/admin/flags/${encodeURIComponent(key)}/explain?user_id=${encodeURIComponent(userId)}`,
+  );
+
 export const adminListRoleCosmetics = (roleId: string) =>
   fetchJSON<{ links: { role_id: string; cosmetic_id: string }[] }>(
     `/api/admin/roles/${encodeURIComponent(roleId)}/cosmetics`,

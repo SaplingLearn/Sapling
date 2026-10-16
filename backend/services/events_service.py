@@ -65,6 +65,7 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+flag.changed                  audit     key, field, before, after
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -164,6 +165,8 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # while their uploads stay in classmates' retrieval, with nothing saying
     # so. Rare and per-user, so category="error" is affordable on the feed.
     "rag.visibility_resync_failed",
+    # #620: admin feature-flag change (audit).
+    "flag.changed",
 })
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink

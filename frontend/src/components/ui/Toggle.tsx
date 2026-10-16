@@ -9,16 +9,20 @@ export function Toggle<T extends string>({
   value,
   onChange,
   size = "md",
+  testid,
 }: {
   options: { value: T; label: React.ReactNode; title?: string }[];
   value: T;
   onChange: (v: T) => void;
   size?: "sm" | "md";
+  /** Container testid; each option gets `${testid}-${value}`. */
+  testid?: string;
 }) {
   const pad = size === "sm" ? "5px 12px" : "7px 15px";
   const fs = size === "sm" ? 12 : 13;
   return (
     <div
+      data-testid={testid}
       style={{
         display: "inline-flex",
         background: "var(--bg-soft)",
@@ -37,6 +41,7 @@ export function Toggle<T extends string>({
             onClick={() => onChange(o.value)}
             title={o.title}
             aria-pressed={on}
+            data-testid={testid ? `${testid}-${o.value}` : undefined}
             style={{
               padding: pad,
               fontSize: fs,

@@ -3,6 +3,7 @@ import React from 'react';
 import localFont from 'next/font/local';
 import { resolveSiteUrl } from '@/lib/deployGuard';
 import { UserProvider } from '@/context/UserContext';
+import { FlagsProvider } from '@/context/FlagsContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './globals.css';
@@ -139,7 +140,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ErrorBoundary>
           <ToastProvider>
-            <UserProvider>{children}</UserProvider>
+            <UserProvider>
+              <FlagsProvider>{children}</FlagsProvider>
+            </UserProvider>
           </ToastProvider>
         </ErrorBoundary>
       </body>
