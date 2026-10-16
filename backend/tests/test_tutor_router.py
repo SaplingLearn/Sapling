@@ -368,7 +368,11 @@ def test_function_mode_routes_with_the_e2e_handler(monkeypatch, sink):
 
 def _table_factory(name):
     mock = MagicMock()
-    mock.select.return_value = [{"offering_id": "off1"}] if name == "sessions" else []
+    # The sessions row answers both reads: the turn's offering, and the
+    # ownership check (services.tutor_sessions) that it is the caller's.
+    mock.select.return_value = (
+        [{"offering_id": "off1", "user_id": "user_andres"}] if name == "sessions" else []
+    )
     mock.insert.return_value = []
     mock.update.return_value = []
     return mock
