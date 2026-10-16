@@ -11,6 +11,8 @@ Every route that takes a session id now goes through
 `routes.learn._require_session_owner` first. It answers 404, not 403, for
 a session that is missing OR owned by someone else, so ids can't be probed.
 """
+import threading
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -398,24 +400,253 @@ class TestRequireSessionOwner:
         assert call.kwargs["filters"] == {"id": f"eq.{SESSION}"}
 
 
-def test_a_lost_pop_race_does_not_materialise_the_session_twice():
-    """CodeRabbit on #709: two concurrent owner requests both read the pending
-    payload; only the one whose pop returns it inserts the session row."""
+# ── Concurrent materialisation of one pending session ────────────────────────
+#
+# CodeRabbit on #709: /mode-switch is a sync route, so FastAPI runs it in the
+# threadpool and two of the owner's requests for one pending session can
+# overlap. The loser must not return from `_ensure_session_ready` until the
+# winner has inserted the `sessions` row and the initial assistant message;
+# otherwise its own `save_message` hits the `messages.session_id` foreign key
+# before the row exists.
+#
+# Threads are sequenced with events, never sleeps: the winner parks inside
+# `sessions.insert` until the test releases it, and the test releases it only
+# once the loser has either finished (the bug) or reached the per-session
+# lock (the fix). Every wait carries a timeout so a regression fails instead
+# of hanging the suite.
 
-    class _LostRace(dict):
-        def pop(self, key, default=None):  # the other request popped it first
-            super().pop(key, default)
-            return default
+RACE = "sess-race"
+_WAIT = 5  # seconds; a failure bound only, never a synchronisation point
 
-    pending = _LostRace(
-        {"s-race": {"user_id": OWNER, "mode": "socratic", "topic": "t",
-                    "assistant_reply": "hi", "graph_update": {}}}
-    )
-    tables = _Tables()
+
+def _race_payload():
+    return {
+        "user_id": OWNER, "mode": "socratic", "topic": "Race topic",
+        "course_id": "c1", "offering_id": "off1",
+        "assistant_reply": "Welcome!", "graph_update": {},
+    }
+
+
+@pytest.fixture
+def race_pending():
+    from routes.learn import PENDING_SESSIONS
+    PENDING_SESSIONS[RACE] = _race_payload()
+    yield PENDING_SESSIONS
+    PENDING_SESSIONS.pop(RACE, None)
+
+
+def _lock_registry() -> dict:
+    from services import tutor_sessions
+    return getattr(tutor_sessions, "_MATERIALIZATION_LOCKS", {})
+
+
+def _observed_lock(on_loser_arrival):
+    """Wrap `materialization_lock` so the test learns when the loser thread
+    has reached it. ``create=True`` on the patch keeps this test runnable
+    against code that has no lock at all (the regression it pins)."""
     from routes import learn
 
-    with patch("routes.learn.table", side_effect=tables), \
-         patch("routes.learn.PENDING_SESSIONS", pending):
-        learn._consume_pending("s-race", OWNER)
+    real_lock = getattr(learn, "materialization_lock", None)
+
+    @contextmanager
+    def lock(session_id):
+        if threading.current_thread().name == "loser":
+            on_loser_arrival()
+        with real_lock(session_id):
+            yield
+
+    return lock
+
+
+def _fk_tables(row_inserted, *, sessions_insert):
+    """`_Tables` whose `messages.insert` records a foreign-key violation when
+    the session row is not there yet."""
+    tables = _Tables(session_owner=None)  # no row until the winner inserts it
+    tables("sessions").insert.side_effect = sessions_insert
+    violations: list[str] = []
+
+    def messages_insert(row):
+        if not row_inserted.is_set():
+            violations.append(row["content"])
+        return []
+
+    tables("messages").insert.side_effect = messages_insert
+    return tables, violations
+
+
+def _mode_switch_like(session_id, errors):
+    """The two steps /mode-switch takes after the ownership check."""
+    from routes import learn
+
+    def run():
+        try:
+            learn._ensure_session_ready(session_id, OWNER)
+            learn.save_message(session_id, "assistant", "Switching modes.")
+        except Exception as e:  # surfaced to the test thread below
+            errors.append(e)
+
+    return run
+
+
+def test_losing_request_waits_for_the_winner_to_materialise_the_session(race_pending):
+    from services.tutor_sessions import session_owned_by
+
+    insert_started = threading.Event()
+    release_insert = threading.Event()
+    row_inserted = threading.Event()
+    loser_progress = threading.Event()
+
+    def sessions_insert(row):
+        insert_started.set()
+        assert release_insert.wait(_WAIT), "test never released the winner"
+        row_inserted.set()
+        return []
+
+    tables, violations = _fk_tables(row_inserted, sessions_insert=sessions_insert)
+    winner_errors: list = []
+    loser_errors: list = []
+    loser_body = _mode_switch_like(RACE, loser_errors)
+
+    def loser_run():
+        try:
+            loser_body()
+        finally:
+            loser_progress.set()
+
+    with (
+        patch("routes.learn.table", side_effect=tables),
+        patch("services.tutor_sessions.table", side_effect=tables),
+        patch("routes.learn.events_service.log_event") as log_event,
+        patch(
+            "routes.learn.materialization_lock",
+            _observed_lock(loser_progress.set),
+            create=True,
+        ),
+    ):
+        winner = threading.Thread(
+            target=_mode_switch_like(RACE, winner_errors), name="winner"
+        )
+        winner.start()
+        assert insert_started.wait(_WAIT), "winner never reached sessions.insert"
+        # Mid-materialisation the session must still read as the owner's,
+        # or a concurrent request's ownership check would 404 in the gap.
+        owned_mid_flight = session_owned_by(RACE, OWNER)
+
+        loser = threading.Thread(target=loser_run, name="loser")
+        loser.start()
+        # Loser has either finished (no lock: the bug) or reached the lock.
+        assert loser_progress.wait(_WAIT), "loser never made progress"
+        release_insert.set()
+        winner.join(_WAIT)
+        loser.join(_WAIT)
+
+    assert not winner.is_alive() and not loser.is_alive(), "a request hung"
+    assert winner_errors == [] and loser_errors == []
+    assert violations == [], (
+        f"messages written before the session row existed: {violations}"
+    )
+    tables.mocks["sessions"].insert.assert_called_once()
+    written = [c.args[0]["content"] for c in tables.mocks["messages"].insert.call_args_list]
+    assert len(written) == 3, written  # greeting + each request's own reply
+    log_event.assert_called_once()  # one session.started
+    assert owned_mid_flight, "pending session vanished before its row existed"
+    assert RACE not in race_pending
+    assert _lock_registry() == {}, "per-session lock leaked"
+
+
+def test_failed_materialisation_stays_pending_and_does_not_hang_waiters(race_pending):
+    """The winner's insert fails while the loser waits: the loser must not
+    hang, the session must not be reported ready, and the loser retries the
+    materialisation itself."""
+
+    insert_started = threading.Event()
+    release_insert = threading.Event()
+    row_inserted = threading.Event()
+    loser_progress = threading.Event()
+    attempts: list[int] = []
+
+    def sessions_insert(row):
+        attempts.append(1)
+        if len(attempts) == 1:
+            insert_started.set()
+            assert release_insert.wait(_WAIT)
+            raise RuntimeError("db unavailable")
+        row_inserted.set()
+        return []
+
+    tables, violations = _fk_tables(row_inserted, sessions_insert=sessions_insert)
+    winner_errors: list = []
+    loser_errors: list = []
+    loser_body = _mode_switch_like(RACE, loser_errors)
+
+    def loser_run():
+        try:
+            loser_body()
+        finally:
+            loser_progress.set()
+
+    with (
+        patch("routes.learn.table", side_effect=tables),
+        patch("routes.learn.events_service.log_event"),
+        patch("routes.learn.materialization_lock", _observed_lock(loser_progress.set)),
+    ):
+        winner = threading.Thread(
+            target=_mode_switch_like(RACE, winner_errors), name="winner"
+        )
+        winner.start()
+        assert insert_started.wait(_WAIT)
+        loser = threading.Thread(target=loser_run, name="loser")
+        loser.start()
+        assert loser_progress.wait(_WAIT)
+        release_insert.set()
+        winner.join(_WAIT)
+        loser.join(_WAIT)
+
+    assert not winner.is_alive() and not loser.is_alive(), "a waiter hung"
+    assert [type(e) for e in winner_errors] == [RuntimeError]
+    assert loser_errors == []
+    assert violations == []
+    assert len(attempts) == 2, "the waiter retries the failed materialisation"
+    assert RACE not in race_pending
+    assert _lock_registry() == {}
+
+
+def test_failure_after_the_row_insert_retries_without_a_duplicate_row(race_pending):
+    """If the greeting write fails after the row went in, the entry stays
+    pending (the session is not ready: its greeting is missing) and the next
+    request writes only the greeting, not a second `sessions` row."""
+    from routes import learn
+
+    tables = _Tables(session_owner=None)
+    tables("messages").insert.side_effect = [RuntimeError("write failed"), []]
+    with (
+        patch("routes.learn.table", side_effect=tables),
+        patch("routes.learn.events_service.log_event") as log_event,
+    ):
+        with pytest.raises(RuntimeError):
+            learn._ensure_session_ready(RACE, OWNER)
+        assert RACE in race_pending, "a failed materialisation is not 'ready'"
+        learn._ensure_session_ready(RACE, OWNER)
+
+    tables.mocks["sessions"].insert.assert_called_once()
+    assert tables.mocks["messages"].insert.call_count == 2
+    log_event.assert_called_once()
+    assert RACE not in race_pending
+    assert _lock_registry() == {}
+
+
+def test_ready_session_takes_no_lock():
+    """Fast path: a session that is no longer pending never touches the
+    per-session lock registry."""
+    from routes import learn
+
+    tables = _Tables()
+    lock = MagicMock(side_effect=AssertionError("lock taken for a ready session"))
+    with (
+        patch("routes.learn.table", side_effect=tables),
+        patch("routes.learn.materialization_lock", lock),
+    ):
+        learn._ensure_session_ready(SESSION, OWNER)
+    assert not lock.called
     assert not tables.touched("sessions", "insert")
     assert not tables.touched("messages", "insert")

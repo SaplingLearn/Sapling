@@ -30,6 +30,7 @@ from services.streak_service import touch_streak_safe
 from services.tutor_sessions import (
     PENDING_SESSIONS,
     SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
+    materialization_lock,
     require_session_owner,
     session_owned_by,
 )
@@ -431,46 +432,71 @@ def _consume_pending(session_id: str, user_id: str) -> None:
     """If session was started lazily, persist session row + first assistant message before user/chat.
 
     Callers run _require_session_owner first; the user check here is a
-    second line of defence and runs BEFORE the pop, so a mismatched caller
-    can never destroy the owner's pending session.
+    second line of defence and runs before anything is written, so a
+    mismatched caller can never destroy or claim the owner's pending session.
+
+    Concurrency (CodeRabbit on #709): sync routes such as /mode-switch run in
+    FastAPI's threadpool, so two of the owner's requests can arrive while the
+    session is still pending. Materialisation is serialised per session id by
+    ``materialization_lock``; the pending entry is removed only AFTER the
+    session row and the initial assistant message are written. So:
+
+    - a request that finds no pending entry can rely on the row existing
+      (the lock-free fast path below — no lock for a ready session);
+    - a request that loses the race waits on the lock, then finds the entry
+      gone and returns, and only then writes its own messages (no FK
+      failure on ``messages.session_id``);
+    - ownership checks keep seeing the pending entry throughout, so a
+      concurrent request is never 404'd in a gap between "no longer
+      pending" and "row inserted";
+    - if materialisation fails, the entry stays pending (never wrongly
+      ready), the lock is released for the next request to retry, and
+      ``_row_inserted`` keeps a retry from inserting the row twice.
+
+    Async callers (/chat, /chat/stream, /action) call this on the event
+    loop; at worst they wait out one in-flight materialisation of the same
+    session, whose writes do not need the loop.
     """
-    pending = PENDING_SESSIONS.get(session_id)
-    if pending is None:
+    if session_id not in PENDING_SESSIONS:
         return
-    if pending["user_id"] != user_id:
-        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
-    # Sync routes run in a threadpool: two of the owner's requests can both read
-    # the payload above. Only the one whose pop returns it materialises the row;
-    # the other finds it already done (no duplicate-key insert).
-    if PENDING_SESSIONS.pop(session_id, None) is None:
-        return
+    with materialization_lock(session_id):
+        pending = PENDING_SESSIONS.get(session_id)
+        if pending is None:
+            return  # another request materialised (or discarded) it while we waited
+        if pending["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
-    # Sessions key on the offering (0025). The pending payload carries the
-    # offering id (resolved at start-session) alongside the abstract course id.
-    session_data = {
-        "id": session_id,
-        "user_id": user_id,
-        "mode": pending["mode"],
-        "topic": pending["topic"],
-    }
-    if pending.get("offering_id"):
-        session_data["offering_id"] = pending["offering_id"]
+        if not pending.get("_row_inserted"):
+            # Sessions key on the offering (0025). The pending payload carries
+            # the offering id (resolved at start-session) alongside the
+            # abstract course id.
+            session_data = {
+                "id": session_id,
+                "user_id": user_id,
+                "mode": pending["mode"],
+                "topic": pending["topic"],
+            }
+            if pending.get("offering_id"):
+                session_data["offering_id"] = pending["offering_id"]
 
-    table("sessions").insert(session_data)
-    # #117: session.started once the lazy session row actually materializes.
-    # The topic is free text -> content= (fingerprint only), never payload.
-    events_service.log_event(
-        "session.started",
-        category="usage",
-        user_id=user_id,
-        payload={
-            "session_id": session_id,
-            "mode": pending["mode"],
-            "offering_id": pending.get("offering_id"),
-        },
-        content=pending["topic"],
-    )
-    save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+            table("sessions").insert(session_data)
+            pending["_row_inserted"] = True
+            # #117: session.started once the lazy session row actually
+            # materializes. The topic is free text -> content= (fingerprint
+            # only), never payload.
+            events_service.log_event(
+                "session.started",
+                category="usage",
+                user_id=user_id,
+                payload={
+                    "session_id": session_id,
+                    "mode": pending["mode"],
+                    "offering_id": pending.get("offering_id"),
+                },
+                content=pending["topic"],
+            )
+        save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        PENDING_SESSIONS.pop(session_id, None)
 
 
 def _ensure_session_ready(session_id: str, user_id: str) -> None:
@@ -1165,8 +1191,14 @@ def end_session(body: EndSessionBody, request: Request):
     else:
         body.user_id = get_session_user_id(request)
     _require_session_owner(body.session_id, body.user_id)
+    # Discard under the materialisation lock so a concurrent first turn can't
+    # insert the row after we drop the entry; if it materialised while we
+    # waited, fall through and end the real session.
+    discarded = False
     if body.session_id in PENDING_SESSIONS:
-        PENDING_SESSIONS.pop(body.session_id, None)
+        with materialization_lock(body.session_id):
+            discarded = PENDING_SESSIONS.pop(body.session_id, None) is not None
+    if discarded:
         empty = {
             "concepts_covered": [],
             "mastery_changes": [],
@@ -1320,8 +1352,12 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
 
     _require_session_owner(session_id, body.user_id)
     if session_id in PENDING_SESSIONS:
-        PENDING_SESSIONS[session_id]["topic"] = topic
-        return {"updated": True, "session": {"id": session_id, "topic": topic}}
+        with materialization_lock(session_id):
+            pending = PENDING_SESSIONS.get(session_id)
+            if pending is not None:
+                pending["topic"] = topic
+                return {"updated": True, "session": {"id": session_id, "topic": topic}}
+        # Materialised while we waited: rename the real row below.
 
     table("sessions").update(
         {"topic": topic},
@@ -1342,8 +1378,10 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
     if not session_owned_by(session_id, user_id):
         return {"deleted": True}
     if session_id in PENDING_SESSIONS:
-        PENDING_SESSIONS.pop(session_id, None)
-        return {"deleted": True}
+        with materialization_lock(session_id):
+            if PENDING_SESSIONS.pop(session_id, None) is not None:
+                return {"deleted": True}
+        # Materialised while we waited: delete the real row below.
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}

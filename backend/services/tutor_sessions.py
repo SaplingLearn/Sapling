@@ -12,6 +12,10 @@ pending between start-session and the first chat turn: it has no
 """
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from fastapi import HTTPException
 
 from db.connection import table
@@ -20,6 +24,40 @@ from db.connection import table
 PENDING_SESSIONS: dict[str, dict] = {}
 
 SESSION_NOT_FOUND = "Session not found"
+
+# Per-session locks serialising every pending -> materialised/discarded
+# transition. PENDING_SESSIONS is a plain module dict, so it is per-process:
+# a pending session is only ever visible to the worker that started it, and a
+# per-process lock is exactly the right scope (no cross-worker locking).
+# Each entry is [lock, holders]; it exists only while some request holds or
+# waits on it, so the registry is bounded by in-flight requests.
+_MATERIALIZATION_LOCKS: dict[str, list] = {}
+_MATERIALIZATION_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def materialization_lock(session_id: str) -> Iterator[None]:
+    """Hold ``session_id``'s materialisation lock for the ``with`` body.
+
+    Sync tutor routes run in FastAPI's threadpool, so two requests for one
+    pending session can overlap. Whoever holds this lock is the only one
+    allowed to read-then-act on that session's PENDING_SESSIONS entry; the
+    others wait, then re-check. The entry is dropped when the last holder or
+    waiter leaves, including on an exception.
+    """
+    with _MATERIALIZATION_LOCKS_GUARD:
+        entry = _MATERIALIZATION_LOCKS.get(session_id)
+        if entry is None:
+            entry = _MATERIALIZATION_LOCKS[session_id] = [threading.Lock(), 0]
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _MATERIALIZATION_LOCKS_GUARD:
+            entry[1] -= 1
+            if entry[1] == 0:
+                del _MATERIALIZATION_LOCKS[session_id]
 
 
 def session_owned_by(
