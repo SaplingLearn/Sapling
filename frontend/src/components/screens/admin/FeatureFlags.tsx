@@ -1,26 +1,31 @@
 "use client";
 import React from "react";
 
+import Dialog from "@/components/Dialog";
+import { Icon } from "@/components/Icon";
 import { AdminTableSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
-import { useConfirm } from "@/lib/useConfirm";
-import {
-  adminListFlags, adminUpdateFlag, adminUpsertFlagTarget, adminDeleteFlagTarget,
-  adminExplainFlag, adminListRoles, adminFetchUsers, type AdminFlag,
-} from "@/lib/api";
-import type { AdminUserListItem } from "@/lib/types";
+import { Switch } from "@/components/ui/Switch";
+import { InfoTip, Tooltip } from "@/components/ui/Tooltip";
+import { adminListFlags, adminListRoles, adminUpdateFlag, type AdminFlag } from "@/lib/api";
+
+import { FlagPanel } from "./FlagPanel";
+import { changeSummary, flagMeta, groupFlags, relativeTime, rolloutPhrase, switchFor, variantLabel } from "./flagLabels";
 
 /**
- * Admin "Feature flags" tab (#620, ADR 0029). Lists every flag from the
- * static registry (`GET /api/admin/flags`), and expands a row into an
- * editor for the default variant, a percent rollout, and per-user/per-role
- * override rules, plus a one-off "what would student X see" lookup.
+ * Admin "Feature flags" tab (#620, ADR 0029).
+ *
+ * The list is grouped like the nav. Each row carries a switch for the
+ * everyone-default (confirmed in a dialog that states the scope, spec §7);
+ * everything else — gradual rollout, role/student overrides, "what would
+ * student X see" — lives in a right-hand panel opened from the row.
  */
 export function FeatureFlagsTab() {
   const toast = useToast();
   const [flags, setFlags] = React.useState<AdminFlag[] | null>(null);
-  const [open, setOpen] = React.useState<string | null>(null);
   const [roles, setRoles] = React.useState<{ id: string; name: string }[]>([]);
+  const [openKey, setOpenKey] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState<{ flag: AdminFlag; next: string } | null>(null);
 
   React.useEffect(() => {
     adminListFlags().then(
@@ -30,274 +35,202 @@ export function FeatureFlagsTab() {
     adminListRoles().then((r) => setRoles(r.roles), () => setRoles([]));
   }, [toast]);
 
+  const replace = React.useCallback(
+    (f: AdminFlag) => setFlags((all) => (all ?? []).map((x) => (x.key === f.key ? f : x))),
+    [],
+  );
+
   if (!flags) return <AdminTableSkeleton />;
 
-  const replace = (f: AdminFlag) => setFlags((all) => (all ?? []).map((x) => (x.key === f.key ? f : x)));
+  const openFlag = flags.find((f) => f.key === openKey) ?? null;
 
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-      <thead>
-        <tr style={{ background: "var(--bg-subtle)" }}>
-          {["Flag", "Default", "Rollout", "Rules", "Last change"].map((h) => (
-            <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {flags.map((f) => (
-          <React.Fragment key={f.key}>
-            <tr
-              data-testid={`flag-row-${f.key}`}
-              onClick={() => setOpen(open === f.key ? null : f.key)}
-              style={{ cursor: "pointer", borderTop: "1px solid var(--border)" }}
-            >
-              <td style={{ padding: "10px 16px" }}>
-                <strong>{f.key}</strong>
-                <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 2 }}>{f.description}</div>
-              </td>
-              <td style={{ padding: "10px 16px" }}>{f.default_variant}</td>
-              <td style={{ padding: "10px 16px" }}>
-                {f.rollout_percent > 0 ? `${f.rollout_percent}% → ${f.rollout_variant}` : "—"}
-              </td>
-              <td style={{ padding: "10px 16px" }}>{f.targets.length}</td>
-              <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                {f.updated_at ? `${f.updated_by_name ?? f.updated_by ?? ""} · ${new Date(f.updated_at).toLocaleString()}` : "—"}
-              </td>
-            </tr>
-            {open === f.key && (
-              <tr>
-                <td colSpan={5} style={{ padding: 0, borderTop: "1px dashed var(--border)", background: "var(--bg-subtle)" }}>
-                  <FlagEditor flag={f} roles={roles} onSaved={replace} />
-                </td>
-              </tr>
-            )}
-          </React.Fragment>
-        ))}
-        {flags.length === 0 && (
-          <tr><td colSpan={5} style={{ padding: 28, textAlign: "center", color: "var(--text-muted)" }}>No flags defined.</td></tr>
-        )}
-      </tbody>
-    </table>
+    <div className="flags">
+      <div className="flags__intro">
+        <p>
+          Hide a feature from the nav for everyone, roll it out to a share of students, or override it for a
+          role or a single student.
+        </p>
+        <InfoTip
+          label="How flags resolve"
+          content={
+            <>
+              <strong>Who wins, in order:</strong> a student&apos;s own override, then a role override, then the
+              gradual rollout, then the everyone default. Saved changes reach every server within 30 seconds.
+            </>
+          }
+        />
+      </div>
+
+      {flags.length === 0 && (
+        <div className="card flags__empty">No flags defined.</div>
+      )}
+
+      {groupFlags(flags).map(({ group, flags: inGroup }) => (
+        <section key={group} className="flags__group" aria-labelledby={`flags-group-${group}`}>
+          <h3 id={`flags-group-${group}`} className="label-micro flags__group-title">{group}</h3>
+          <div className="card flags__list">
+            {inGroup.map((f) => (
+              <FlagRow
+                key={f.key}
+                flag={f}
+                onOpen={() => setOpenKey(f.key)}
+                onToggle={(next) => setPending({ flag: f, next })}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+
+      <FlagPanel
+        flag={openFlag}
+        roles={roles}
+        onClose={() => setOpenKey(null)}
+        onSaved={replace}
+      />
+
+      <ConfirmDefault
+        pending={pending}
+        onCancel={() => setPending(null)}
+        onSaved={(f) => { replace(f); setPending(null); }}
+      />
+    </div>
   );
 }
 
-function FlagEditor({ flag, roles, onSaved }: {
-  flag: AdminFlag; roles: { id: string; name: string }[]; onSaved: (f: AdminFlag) => void;
+function FlagRow({ flag, onOpen, onToggle }: {
+  flag: AdminFlag; onOpen: () => void; onToggle: (nextVariant: string) => void;
+}) {
+  const { title, hideFlag } = flagMeta(flag.key);
+  const sw = switchFor(flag);
+  const rollout = rolloutPhrase(flag, flag.rollout_percent, flag.rollout_variant);
+  const overrides = flag.targets.length;
+
+  return (
+    <div className="flag-row" data-testid={`flag-row-${flag.key}`} onClick={onOpen}>
+      <div className="flag-row__main">
+        <div className="flag-row__title">{title}</div>
+        <div className="flag-row__desc">{flag.description}</div>
+      </div>
+
+      <div className="flag-row__chips">
+        {rollout && (
+          <Tooltip content={`Rolling out: ${rollout}. The rest get the everyone default.`}>
+            <span className="chip chip--warn" tabIndex={0}>{flag.rollout_percent}% rollout</span>
+          </Tooltip>
+        )}
+        {overrides > 0 && (
+          <Tooltip
+            content={flag.targets
+              .map((t) => `${t.target_type === "role" ? "Role" : "Student"} ${t.label}: ${variantLabel(flag, t.variant)}`)
+              .join(" · ")}
+          >
+            <span className="chip chip--info" tabIndex={0}>
+              {overrides} override{overrides === 1 ? "" : "s"}
+            </span>
+          </Tooltip>
+        )}
+      </div>
+
+      <div className="flag-row__changed">
+        {flag.updated_at ? (
+          <Tooltip
+            content={`Changed by ${flag.updated_by_name ?? flag.updated_by ?? "unknown"} on ${new Date(flag.updated_at).toLocaleString()}`}
+          >
+            <span tabIndex={0}>{relativeTime(flag.updated_at)}</span>
+          </Tooltip>
+        ) : (
+          <Tooltip content="Never changed: running on its built-in default.">
+            <span tabIndex={0}>Never changed</span>
+          </Tooltip>
+        )}
+      </div>
+
+      <div className="flag-row__state" onClick={(e) => e.stopPropagation()}>
+        <span className="flag-row__state-label" data-testid={`flag-state-${flag.key}`}>
+          {variantLabel(flag, flag.default_variant)}
+        </span>
+        {sw && (
+          <Tooltip
+            content={hideFlag
+              ? `${sw.checked ? "Hide" : "Show"} ${title} for everyone without an override`
+              : `Turn ${title} ${sw.checked ? "off" : "on"} for everyone without an override`}
+          >
+            <Switch
+              checked={sw.checked}
+              label={hideFlag ? `${title} visible to everyone` : `${title} on for everyone`}
+              testid={`flag-toggle-${flag.key}`}
+              onChange={(c) => onToggle(sw.variantWhen(c))}
+            />
+          </Tooltip>
+        )}
+      </div>
+
+      <Tooltip content="Rollout, overrides and student check">
+        <button
+          type="button"
+          className="flag-row__open btn btn--ghost btn--sm"
+          aria-label={`Configure ${title}`}
+          data-testid={`flag-open-${flag.key}`}
+          onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        >
+          <Icon name="chev" size={14} />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+/** The row switch's confirm step: states who the change reaches (spec §7). */
+function ConfirmDefault({ pending, onCancel, onSaved }: {
+  pending: { flag: AdminFlag; next: string } | null;
+  onCancel: () => void;
+  onSaved: (f: AdminFlag) => void;
 }) {
   const toast = useToast();
-  const [def, setDef] = React.useState(flag.default_variant);
-  const [pct, setPct] = React.useState(flag.rollout_percent);
-  const [rv, setRv] = React.useState<string | null>(flag.rollout_variant);
-  const [ruleType, setRuleType] = React.useState<"user" | "role">("role");
-  const [ruleId, setRuleId] = React.useState("");
-  const [ruleVariant, setRuleVariant] = React.useState(flag.variants[flag.variants.length - 1] ?? flag.variants[0]);
-  const [userQuery, setUserQuery] = React.useState("");
-  const [userHits, setUserHits] = React.useState<AdminUserListItem[]>([]);
-  const [explainId, setExplainId] = React.useState("");
-  const [explained, setExplained] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  if (!pending) return null;
+  const { flag, next } = pending;
+  const { title } = flagMeta(flag.key);
+  // A rollout that would now serve the new default means nothing; end it.
+  const endsRollout = flag.rollout_percent > 0 && flag.rollout_variant === next;
+  const body = endsRollout
+    ? { default_variant: next, rollout_percent: 0, rollout_variant: null }
+    : { default_variant: next };
+  const summary = changeSummary(flag, {
+    def: next,
+    pct: endsRollout ? 0 : flag.rollout_percent,
+    rv: endsRollout ? null : flag.rollout_variant,
+  });
 
-  // A chosen rollout variant that stops being valid (e.g. the default just
-  // changed to match it) is cleared rather than silently saved anyway.
-  React.useEffect(() => {
-    if (rv !== null && rv === def) setRv(null);
-  }, [def, rv]);
-
-  const actuallySave = React.useCallback(() => {
-    void (async () => {
-      try {
-        const r = await adminUpdateFlag(flag.key, {
-          default_variant: def,
-          rollout_percent: pct,
-          rollout_variant: pct > 0 ? rv : null,
-        });
-        onSaved(r.flag);
-        toast.success("Flag saved");
-      } catch (err) {
-        toast.error(`Couldn't save: ${String(err)}`);
-      }
-    })();
-  }, [flag.key, def, pct, rv, onSaved, toast]);
-  const saveConfirm = useConfirm(actuallySave);
-
-  // Shown only while the Save button is armed (spec §7: the confirm step
-  // must state the scope of a default/rollout change before it applies).
-  const rolloutAfter = pct > 0 ? `${pct}% ${rv ?? "…"}` : `${pct}%`;
-  const saveScopeText = `Default ${flag.default_variant} → ${def}; rollout ${flag.rollout_percent}% → ${rolloutAfter}. `
-    + `Applies to every student without a user or role rule.`;
-
-  const addRule = async () => {
-    if (!ruleId) return;
+  const confirm = async () => {
+    setSaving(true);
     try {
-      const r = await adminUpsertFlagTarget(flag.key, { target_type: ruleType, target_id: ruleId, variant: ruleVariant });
+      const r = await adminUpdateFlag(flag.key, body);
       onSaved(r.flag);
-      setRuleId("");
-      setUserQuery("");
-      setUserHits([]);
-      toast.success("Rule added");
+      toast.success(`${title}: ${variantLabel(flag, next)} for everyone`);
     } catch (err) {
-      toast.error(`Couldn't add rule: ${String(err)}`);
-    }
-  };
-
-  const removeRule = async (type: "user" | "role", id: string) => {
-    try {
-      const r = await adminDeleteFlagTarget(flag.key, type, id);
-      onSaved(r.flag);
-    } catch (err) {
-      toast.error(`Couldn't remove rule: ${String(err)}`);
-    }
-  };
-
-  const searchUsers = async (q: string) => {
-    setUserQuery(q);
-    setRuleId("");
-    if (q.trim().length < 2) {
-      setUserHits([]);
-      return;
-    }
-    try {
-      const r = await adminFetchUsers({ q, page_size: 8 });
-      setUserHits(r.users);
-    } catch {
-      setUserHits([]);
-    }
-  };
-
-  const explain = async () => {
-    if (!explainId.trim()) return;
-    try {
-      const r = await adminExplainFlag(flag.key, explainId.trim());
-      setExplained(`${r.variant} (${r.step}${r.detail ? `: ${r.detail}` : ""})`);
-    } catch (err) {
-      toast.error(`Couldn't check that student: ${String(err)}`);
+      toast.error(`Couldn't save: ${String(err)}`);
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <div style={{ display: "grid", gap: 14, padding: "14px 16px" }}>
-      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", alignItems: "center", gap: 6 }}>
-          Default
-          <select data-testid={`flag-default-${flag.key}`} value={def} onChange={(e) => setDef(e.target.value)}>
-            {flag.variants.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </label>
-        <label style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", alignItems: "center", gap: 6 }}>
-          Rollout
-          <input
-            data-testid={`flag-rollout-${flag.key}`}
-            type="range" min={0} max={100} value={pct}
-            onChange={(e) => setPct(Number(e.target.value))}
-          />
-          <span style={{ minWidth: 32 }}>{pct}%</span>
-        </label>
-        <select
-          data-testid={`flag-rollout-variant-${flag.key}`}
-          value={rv ?? ""}
-          disabled={pct === 0}
-          onChange={(e) => setRv(e.target.value || null)}
+    <Dialog open onClose={onCancel} size="sm" title={`Make ${title} ${variantLabel(flag, next).toLowerCase()}?`}>
+      <p className="flags__confirm-text" data-testid={`flag-save-scope-${flag.key}`}>{summary}</p>
+      <div className="flags__confirm-actions">
+        <button type="button" className="btn" data-testid={`flag-cancel-${flag.key}`} onClick={onCancel}>Cancel</button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          data-testid={`flag-confirm-${flag.key}`}
+          disabled={saving}
+          onClick={() => void confirm()}
         >
-          <option value="">variant…</option>
-          {flag.variants.filter((v) => v !== def).map((v) => <option key={v} value={v}>{v}</option>)}
-        </select>
-        <button data-testid={`flag-save-${flag.key}`} onClick={saveConfirm.trigger}>
-          {saveConfirm.armed ? "Click again to save" : "Save"}
+          {saving ? "Saving…" : `Make ${variantLabel(flag, next).toLowerCase()}`}
         </button>
       </div>
-
-      {saveConfirm.armed && (
-        <div data-testid={`flag-save-scope-${flag.key}`} style={{ fontSize: 12, color: "var(--warn)" }}>
-          {saveScopeText}
-        </div>
-      )}
-
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 6 }}>Rules</div>
-        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-          <tbody>
-            {flag.targets.map((t) => (
-              <tr key={`${t.target_type}-${t.target_id}`} data-testid={`flag-target-row-${flag.key}-${t.target_type}-${t.target_id}`}>
-                <td style={{ padding: "4px 8px 4px 0" }}>{t.target_type}</td>
-                <td style={{ padding: "4px 8px" }}>{t.label}</td>
-                <td style={{ padding: "4px 8px" }}>{t.variant}</td>
-                <td style={{ padding: "4px 0" }}>
-                  <button
-                    data-testid={`flag-target-remove-${flag.key}-${t.target_type}-${t.target_id}`}
-                    onClick={() => removeRule(t.target_type, t.target_id)}
-                  >
-                    Remove
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {flag.targets.length === 0 && (
-              <tr><td colSpan={4} style={{ color: "var(--text-muted)", padding: "4px 0" }}>No rules yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-          <select
-            data-testid={`flag-target-type-${flag.key}`}
-            value={ruleType}
-            onChange={(e) => {
-              setRuleType(e.target.value as "user" | "role");
-              setRuleId("");
-              setUserQuery("");
-              setUserHits([]);
-            }}
-          >
-            <option value="role">role</option>
-            <option value="user">user</option>
-          </select>
-          {ruleType === "role" ? (
-            <select data-testid={`flag-target-role-${flag.key}`} value={ruleId} onChange={(e) => setRuleId(e.target.value)}>
-              <option value="">pick a role…</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-          ) : (
-            <span style={{ position: "relative" }}>
-              <input
-                data-testid={`flag-target-user-search-${flag.key}`}
-                placeholder="search students…"
-                value={userQuery}
-                onChange={(e) => searchUsers(e.target.value)}
-              />
-              {userHits.length > 0 && (
-                <ul style={{ position: "absolute", background: "var(--bg)", zIndex: 10, listStyle: "none", padding: 4, margin: 0, border: "1px solid var(--border)" }}>
-                  {userHits.map((u) => (
-                    <li key={u.id}>
-                      <button
-                        data-testid={`flag-target-user-result-${flag.key}-${u.id}`}
-                        onClick={() => { setRuleId(u.id); setUserQuery(u.name || u.email || u.id); setUserHits([]); }}
-                      >
-                        {u.name || u.email || u.id}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </span>
-          )}
-          <select data-testid={`flag-target-variant-${flag.key}`} value={ruleVariant} onChange={(e) => setRuleVariant(e.target.value)}>
-            {flag.variants.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-          <button data-testid={`flag-target-add-${flag.key}`} onClick={addRule} disabled={!ruleId}>Add rule</button>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input
-          data-testid={`flag-explain-input-${flag.key}`}
-          placeholder="check a student (user id)…"
-          value={explainId}
-          onChange={(e) => setExplainId(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") void explain(); }}
-        />
-        <button data-testid={`flag-explain-check-${flag.key}`} onClick={() => void explain()}>Check</button>
-        {explained && <span data-testid={`flag-explain-result-${flag.key}`}>{explained}</span>}
-      </div>
-    </div>
+    </Dialog>
   );
 }
