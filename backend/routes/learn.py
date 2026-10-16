@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
@@ -419,19 +420,10 @@ def _elapsed_minutes(started_at_iso: str) -> int:
         return 0
 
 
-def _require_session_owner(session_id: str, user_id: str | None) -> None:
-    """404 unless ``session_id`` is ``user_id``'s tutor session (pending or
-    materialised). Every route that takes a session id calls this before any
-    history load, message write, model call or event: ``require_self`` only
-    proves the caller IS ``user_id``, not that the session is theirs. The rule
-    lives in services/tutor_sessions.py so non-tutor routes share it."""
-    require_session_owner(session_id, user_id)
-
-
 def _consume_pending(session_id: str, user_id: str) -> None:
     """If session was started lazily, persist session row + first assistant message before user/chat.
 
-    Callers run _require_session_owner first; the user check here is a
+    Callers run require_session_owner first; the user check here is a
     second line of defence and runs before anything is written, so a
     mismatched caller can never destroy or claim the owner's pending session.
 
@@ -450,12 +442,21 @@ def _consume_pending(session_id: str, user_id: str) -> None:
       concurrent request is never 404'd in a gap between "no longer
       pending" and "row inserted";
     - if materialisation fails, the entry stays pending (never wrongly
-      ready), the lock is released for the next request to retry, and
-      ``_row_inserted`` keeps a retry from inserting the row twice.
+      ready) and the lock is released for the next request to retry.
 
-    Async callers (/chat, /chat/stream, /action) call this on the event
-    loop; at worst they wait out one in-flight materialisation of the same
-    session, whose writes do not need the loop.
+    The row write is an upsert that ignores a duplicate id, so a retry is
+    safe even when an earlier attempt committed the row but its response was
+    lost (timeout, dropped connection). Two markers on the pending payload:
+
+    - ``_row_may_exist`` is set BEFORE the first write attempt. From then on
+      end-session / rename / delete must treat the session as possibly
+      having a ``sessions`` row and act on the DB too, not just on memory.
+    - ``_row_written`` is set once a write has returned. It guards the
+      ``session.started`` event against double-logging when a later step
+      (the greeting write) fails and the request is retried.
+
+    Sync code: the async routes call it through ``_consume_pending_off_loop``
+    so the lock wait and the network writes never block the event loop.
     """
     if session_id not in PENDING_SESSIONS:
         return
@@ -466,7 +467,7 @@ def _consume_pending(session_id: str, user_id: str) -> None:
         if pending["user_id"] != user_id:
             raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
-        if not pending.get("_row_inserted"):
+        if not pending.get("_row_written"):
             # Sessions key on the offering (0025). The pending payload carries
             # the offering id (resolved at start-session) alongside the
             # abstract course id.
@@ -479,8 +480,9 @@ def _consume_pending(session_id: str, user_id: str) -> None:
             if pending.get("offering_id"):
                 session_data["offering_id"] = pending["offering_id"]
 
-            table("sessions").insert(session_data)
-            pending["_row_inserted"] = True
+            pending["_row_may_exist"] = True
+            table("sessions").upsert(session_data, on_conflict="id", ignore_duplicates=True)
+            pending["_row_written"] = True
             # #117: session.started once the lazy session row actually
             # materializes. The topic is free text -> content= (fingerprint
             # only), never payload.
@@ -499,8 +501,29 @@ def _consume_pending(session_id: str, user_id: str) -> None:
         PENDING_SESSIONS.pop(session_id, None)
 
 
+async def _consume_pending_off_loop(session_id: str, user_id: str) -> None:
+    """`_consume_pending` for the async routes (/chat, /chat/stream, /action).
+
+    The slow path takes a blocking threading lock (possibly held by a
+    threadpool request mid-insert) and makes sync network writes, so it runs
+    in the threadpool; doing it inline would freeze every request on this
+    worker's event loop for as long as the insert takes. A session that is
+    not pending takes the inline fast path and never leaves the loop.
+    """
+    if session_id not in PENDING_SESSIONS:
+        return
+    await run_in_threadpool(_consume_pending, session_id, user_id)
+
+
+def _session_row_may_exist(pending: dict | None) -> bool:
+    """True when the session has (or may have) a ``sessions`` row: it is not
+    pending at all, or materialisation already attempted the row write."""
+    return pending is None or bool(pending.get("_row_may_exist"))
+
+
 def _ensure_session_ready(session_id: str, user_id: str) -> None:
-    """For action/mode-switch: materialize lazy session if still pending."""
+    """For /mode-switch (a sync route, already in the threadpool): materialize
+    the lazy session if still pending."""
     _consume_pending(session_id, user_id)
 
 
@@ -968,8 +991,8 @@ async def _chat_turn_json(
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
-    _require_session_owner(body.session_id, body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
     )
@@ -986,8 +1009,8 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
-    _require_session_owner(body.session_id, body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
 
     request_id = (
         getattr(request.state, "request_id", None)
@@ -1190,22 +1213,25 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
-    _require_session_owner(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    empty = {
+        "concepts_covered": [],
+        "mastery_changes": [],
+        "new_connections": [],
+        "time_spent_minutes": 0,
+        "recommended_next": [],
+    }
     # Discard under the materialisation lock so a concurrent first turn can't
-    # insert the row after we drop the entry; if it materialised while we
-    # waited, fall through and end the real session.
-    discarded = False
+    # insert the row after we drop the entry. A pending session whose row was
+    # never attempted has nothing in the DB to end. One whose materialisation
+    # attempted the row (and then failed, say on the greeting) may have a
+    # row, so it is ended in the DB too, as is one that materialised while
+    # we waited.
+    popped = None
     if body.session_id in PENDING_SESSIONS:
         with materialization_lock(body.session_id):
-            discarded = PENDING_SESSIONS.pop(body.session_id, None) is not None
-    if discarded:
-        empty = {
-            "concepts_covered": [],
-            "mastery_changes": [],
-            "new_connections": [],
-            "time_spent_minutes": 0,
-            "recommended_next": [],
-        }
+            popped = PENDING_SESSIONS.pop(body.session_id, None)
+    if popped is not None and not _session_row_may_exist(popped):
         return {"summary": empty}
 
     session_rows = table("sessions").select(
@@ -1213,6 +1239,8 @@ def end_session(body: EndSessionBody, request: Request):
         filters={"id": f"eq.{body.session_id}"},
     )
     if not session_rows:
+        if popped is not None:
+            return {"summary": empty}  # the attempted row write never landed
         raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     session = session_rows[0]
 
@@ -1350,14 +1378,18 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     if not topic or len(topic) > 120:
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
-    _require_session_owner(session_id, body.user_id)
+    require_session_owner(session_id, body.user_id)
     if session_id in PENDING_SESSIONS:
         with materialization_lock(session_id):
             pending = PENDING_SESSIONS.get(session_id)
             if pending is not None:
+                # Rename the copy a later materialisation will write...
                 pending["topic"] = topic
-                return {"updated": True, "session": {"id": session_id, "topic": topic}}
-        # Materialised while we waited: rename the real row below.
+                if not _session_row_may_exist(pending):
+                    return {"updated": True, "session": {"id": session_id, "topic": topic}}
+                # ...and, since an earlier attempt may already have written
+                # the row (the retry's upsert won't overwrite it), the row too.
+        # Otherwise it materialised while we waited: rename the real row.
 
     table("sessions").update(
         {"topic": topic},
@@ -1379,9 +1411,11 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
         return {"deleted": True}
     if session_id in PENDING_SESSIONS:
         with materialization_lock(session_id):
-            if PENDING_SESSIONS.pop(session_id, None) is not None:
-                return {"deleted": True}
-        # Materialised while we waited: delete the real row below.
+            popped = PENDING_SESSIONS.pop(session_id, None)
+        if popped is not None and not _session_row_may_exist(popped):
+            return {"deleted": True}
+        # A row may exist (an attempted materialisation, or one that finished
+        # while we waited): delete it too. Both deletes are no-ops if not.
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
@@ -1390,9 +1424,12 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
 @router.get("/sessions/{session_id}/resume")
 def resume_session(session_id: str, request: Request):
     user_id = get_session_user_id(request)
-    _require_session_owner(session_id, user_id)
-    if session_id in PENDING_SESSIONS:
-        p = PENDING_SESSIONS[session_id]
+    require_session_owner(session_id, user_id)
+    # .get(), not `in` + [...]: a concurrent first turn or delete can drop the
+    # entry in between. Gone means it materialised (or was discarded): read
+    # the DB below.
+    p = PENDING_SESSIONS.get(session_id)
+    if p is not None:
         now = datetime.now(timezone.utc).isoformat()
         return {
             "session": {
@@ -1520,8 +1557,8 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 @router.post("/action")
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
-    _require_session_owner(body.session_id, body.user_id)
-    _ensure_session_ready(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
     )
@@ -1530,7 +1567,7 @@ async def action(body: ActionBody, request: Request):
 @router.post("/mode-switch")
 def mode_switch(body: ModeSwitchBody, request: Request):
     require_self(body.user_id, request)
-    _require_session_owner(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(

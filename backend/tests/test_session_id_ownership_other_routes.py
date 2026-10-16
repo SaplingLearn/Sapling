@@ -2,11 +2,12 @@
 rule as routes/learn.py (services/tutor_sessions.py).
 
 - POST /api/flashcards/generate reads and decrypts `sessions.summary_json`
-  into the prompt. A missing or foreign session id is a 404, decided BEFORE
-  anything is read or decrypted.
+  into the prompt. The summary is optional enrichment: a missing, foreign or
+  unreadable session id is dropped (cards are generated without it), and
+  that is decided BEFORE anything of the session is read or decrypted.
 - POST /api/feedback stores `session_id` on the row. A session id the
-  caller doesn't own is dropped (stored NULL) instead of failing the
-  user's feedback.
+  caller doesn't own, or whose ownership lookup fails, is dropped (stored
+  NULL) instead of failing the user's feedback.
 """
 from unittest.mock import MagicMock, patch
 
@@ -93,16 +94,30 @@ def _summary_read(flash) -> bool:
     return bool(m and m.select.called)
 
 
-@pytest.mark.parametrize("owner", [OWNER, None], ids=["foreign", "missing"])
-def test_generate_with_foreign_or_missing_session_is_404_before_summary_read(flash, owner):
-    with patch("services.tutor_sessions.table", side_effect=_sessions_table(owner)):
-        r = _generate(INTRUDER if owner else OWNER, SESSION)
-    assert r.status_code == 404, r.text
-    assert r.json()["detail"] == "Session not found"
+def _assert_generated_without_session_context(r, flash):
+    assert r.status_code == 200, r.text
     assert not _summary_read(flash), "must not read another student's session summary"
     assert not flash["decrypt_json"].called, "must not decrypt another student's summary"
-    assert not flash["generate"].called, "no model call"
-    assert not flash["tables"].mocks.get("flashcards", MagicMock()).insert.called
+    flash["generate"].assert_called_once()
+    context = flash["generate"].call_args.kwargs["context"]
+    assert "Recursion" not in context, "a foreign session's summary reached the prompt"
+
+
+@pytest.mark.parametrize("owner", [OWNER, None], ids=["foreign", "missing"])
+def test_generate_with_foreign_or_missing_session_drops_the_session_context(flash, owner):
+    """A stale or foreign session id must not fail generation (the summary is
+    optional), and the foreign session's summary is never read or used."""
+    with patch("services.tutor_sessions.table", side_effect=_sessions_table(owner)):
+        r = _generate(INTRUDER if owner else OWNER, SESSION)
+    _assert_generated_without_session_context(r, flash)
+
+
+def test_generate_drops_the_session_context_when_the_ownership_lookup_fails(flash):
+    st = _sessions_table(OWNER)
+    st.sessions.select.side_effect = RuntimeError("sessions lookup down")
+    with patch("services.tutor_sessions.table", side_effect=st):
+        r = _generate(OWNER, SESSION)
+    _assert_generated_without_session_context(r, flash)
 
 
 def test_generate_with_own_session_uses_its_summary(flash):
@@ -123,12 +138,13 @@ def test_generate_without_session_id_skips_the_check(flash):
     assert not st.sessions.select.called
 
 
-def test_generate_with_someone_elses_pending_session_is_404(flash, pending_for_owner):
+def test_generate_with_someone_elses_pending_session_drops_the_context(
+    flash, pending_for_owner
+):
     with patch("services.tutor_sessions.table", side_effect=_sessions_table(None)):
         r = _generate(INTRUDER, PENDING)
-    assert r.status_code == 404
+    _assert_generated_without_session_context(r, flash)
     assert PENDING in PENDING_SESSIONS
-    assert not _summary_read(flash)
 
 
 def test_generate_with_own_pending_session_works(flash, pending_for_owner):
@@ -168,6 +184,17 @@ def test_feedback_drops_foreign_or_missing_session_id(owner):
     assert len(rows) == 1
     assert rows[0]["session_id"] is None
     assert rows[0]["rating"] == 4
+
+
+def test_feedback_drops_the_session_link_when_the_ownership_lookup_fails():
+    """A transient `sessions` lookup failure must not 500 the submission."""
+    st = _sessions_table(OWNER)
+    st.sessions.select.side_effect = RuntimeError("sessions lookup down")
+    with patch("services.tutor_sessions.table", side_effect=st):
+        r, rows = _feedback(OWNER, SESSION)
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert len(rows) == 1
+    assert rows[0]["session_id"] is None
 
 
 def test_feedback_drops_pending_session_id(pending_for_owner):

@@ -17,7 +17,7 @@ from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
-from services.tutor_sessions import require_session_owner
+from services.tutor_sessions import session_owned_by
 from services.flashcard_import_service import (
     dedup_against_existing,
     check_rate_limit,
@@ -223,12 +223,22 @@ def generate(body: GenerateFlashcardsBody, request: Request):
 
     # 1. Session summary (optional extra context). require_self only proves
     #    the caller is body.user_id; the session must ALSO be theirs, or this
-    #    decrypts a classmate's tutor summary into the prompt. 404 for a
-    #    missing or foreign id, decided before anything is read.
+    #    decrypts a classmate's tutor summary into the prompt. The summary is
+    #    optional enrichment, so a missing, foreign or unreadable session id
+    #    is dropped (generate without it) rather than failing the request —
+    #    and the ownership decision comes before anything of it is read.
     context = ""
     if body.session_id:
-        require_session_owner(body.session_id, body.user_id)
-        context = _get_session_summary(body.session_id)
+        try:
+            owned = session_owned_by(body.session_id, body.user_id)
+        except Exception:
+            logger.warning(
+                "Flashcard session-ownership lookup failed; generating without session context",
+                exc_info=True,
+            )
+            owned = False
+        if owned:
+            context = _get_session_summary(body.session_id)
 
     # 2. Library documents for this course (term-scoped when a semester is
     #    selected, #141)

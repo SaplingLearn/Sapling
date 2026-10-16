@@ -36,10 +36,20 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
     # FKs (users / sessions), which the session / request body satisfy.
     # Link the row to a tutor session only if that session is the caller's.
     # An unowned (or missing, or still-pending — no row yet for the FK) id is
-    # dropped rather than failing the feedback.
+    # dropped rather than failing the feedback, and so is the link when the
+    # ownership lookup itself fails: the feedback is what matters.
     session_id = body.session_id
-    if session_id and not session_owned_by(session_id, user_id, allow_pending=False):
-        session_id = None
+    if session_id:
+        try:
+            owned = session_owned_by(session_id, user_id, allow_pending=False)
+        except Exception:
+            logger.warning(
+                "Feedback session-ownership lookup failed; dropping the session link",
+                exc_info=True,
+            )
+            owned = False
+        if not owned:
+            session_id = None
     table("feedback").insert({
         "id": str(uuid.uuid4()),
         "user_id": user_id,

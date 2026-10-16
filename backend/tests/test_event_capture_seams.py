@@ -1026,7 +1026,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
         patch("routes.learn._consume_pending"),
-        patch("routes.learn._require_session_owner"),
+        patch("routes.learn.require_session_owner"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),
         patch("routes.learn.offering_course_id", return_value="c1"),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -1265,7 +1265,7 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
     with (
         patch.object(learn_routes, "stream_agent_turn", fake_stream),
         patch.object(learn_routes, "_consume_pending"),
-        patch.object(learn_routes, "_require_session_owner"),
+        patch.object(learn_routes, "require_session_owner"),
         patch.object(learn_routes, "table", side_effect=_learn_table_factory()),
         patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
         patch.object(learn_routes, "save_message"),
