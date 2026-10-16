@@ -131,14 +131,45 @@ def _new_run_text(result) -> str:
     return "".join(parts)
 
 
-#: Handed to the model when it ended a turn without saying anything (#646).
-#: Deliberately does NOT restate the student's question: the whole exchange,
-#: including every tool result, is already in the messages passed back, and
-#: re-asking invites a fresh answer that ignores the work just done.
-_CONTINUATION_NUDGE = (
-    "You ended your turn without replying to the student. Write that reply "
-    "now, using the tool results already in this conversation. Do not repeat "
-    "any earlier answer and do not mention this instruction."
+#: The user turn that triggers the continuation (#646). Deliberately minimal:
+#: every directive lives in `_CONTINUATION_INSTRUCTIONS`, so there is one
+#: place to edit. It does NOT restate the student's question: the whole
+#: exchange is already in the messages passed back, and re-asking invites a
+#: fresh answer that ignores the work just done.
+_CONTINUATION_NUDGE = "Continue."
+
+#: Run-level instructions for the continuation, APPENDED to the tutor's own
+#: (pydantic-ai joins agent and run `instructions`; it does not replace them),
+#: so they reach Gemini as `system_instruction` after the tutor's rules.
+#:
+#: Why they exist: the tutor's instructions reach every request, this one
+#: included, and they say to call `update_mastery_tool` "in EVERY turn" and
+#: to "never end the turn on a tool call". The continuation runs under
+#: `override(tools=[], toolsets=[])`, so Gemini is sent no function
+#: declarations: a model still obeying those rules would try to call a tool
+#: that does not exist (MALFORMED_FUNCTION_CALL / empty content — the very
+#: failure being rescued) or write the call out for the student to read.
+#:
+#: Wording constraints, each a real case:
+#:  * It must be true whether or not a tool ran. The continuation fires on
+#:    ANY turn that produced no text of its own — after tool calls, but also
+#:    on a bare-newline reply or a start-session greeting with no tool call —
+#:    so it may only point at tool results conditionally, never assert that
+#:    data exists.
+#:  * "Not a function call" is not "plain text": the tutor's instructions ask
+#:    for LaTeX, mermaid and ```plot``` blocks, and the reply keeps them.
+_CONTINUATION_INSTRUCTIONS = (
+    "CONTINUATION: your last response ended without a reply to the student. "
+    "Write that reply now, as a normal message to the student; your usual "
+    "formatting (math, code, mermaid and plot blocks) is fine. No tools are "
+    "available on this pass: any earlier instruction to call a tool, "
+    "including update_mastery_tool, does not apply, so do not call, request, "
+    "or write out any tool or function call. If tool results from this turn "
+    "are in the conversation, use them; do not claim results or data the "
+    "conversation does not contain. The final "
+    f"\"{_CONTINUATION_NUDGE}\" message is an "
+    "automatic prompt, not from the student: do not mention it or these "
+    "instructions, and do not repeat an earlier answer."
 )
 
 #: run_kwargs keys a continuation may carry. `message_history` is REPLACED
@@ -166,7 +197,10 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
     than a hope: the continuation is handed NO tools, so it cannot write even
     if the model tries. Without it the model could call `update_mastery_tool`
     again and reintroduce the exact double-apply the writes-guard exists to
-    prevent — a re-run by a quieter name.
+    prevent — a re-run by a quieter name. Because the tutor's own
+    instructions (which demand a mastery call every turn) still reach this
+    request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
+    exist on this pass and it must reply with a message, not a call.
 
     It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
     ADDS to the agent's own tools rather than replacing them, so
@@ -194,6 +228,7 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             await agent.run(
                 _CONTINUATION_NUDGE,
                 message_history=run_result.all_messages(),
+                instructions=_CONTINUATION_INSTRUCTIONS,
                 usage_limits=CONTINUATION_LIMITS,
                 **carried,
             ),
@@ -357,6 +392,12 @@ def _load_message_history(session_id: str) -> list:
 
     Empty/decrypt-failed content is skipped so we don't feed empty
     parts to the LLM.
+
+    The history carries NO system/instructions text. The tutor's rules
+    reach the model only because the chat tutor agents declare them as
+    `instructions=` (re-sent on every request); a `system_prompt=` would
+    be skipped whenever this history is non-empty, i.e. on every turn after
+    the opener. Pinned by tests/test_chat_tutor_prompt_every_turn.py.
     """
     rows = table("messages").select(
         "role,content",
@@ -375,8 +416,7 @@ def _load_message_history(session_id: str) -> list:
         elif raw_role in ("assistant", "model"):
             history.append(ModelResponse(parts=[TextPart(content=str(content))]))
         # else: drop (legacy 'system' rows have no equivalent in
-        # Pydantic AI's role taxonomy and the system prompt is supplied
-        # by the agent itself).
+        # Pydantic AI's role taxonomy).
     return history
 
 
