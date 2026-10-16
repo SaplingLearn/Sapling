@@ -61,7 +61,11 @@ def _is_fk_violation(exc: httpx.HTTPStatusError) -> bool:
     return isinstance(body, dict) and body.get("code") == _FK_VIOLATION
 
 
-def _get_or_create_row(name: str, columns: str, user_id: str) -> list:
+def _missing_users_row() -> HTTPException:
+    return HTTPException(status_code=404, detail="User not found")
+
+
+def _get_or_create_row(name: str, columns: str, user_id: str) -> dict:
     """Read the 1:1 `user_id`-keyed row of `name`, creating it if missing.
 
     Race-safe (#674): Settings.tsx loads /settings and the public profile in
@@ -72,15 +76,23 @@ def _get_or_create_row(name: str, columns: str, user_id: str) -> list:
     The upsert's own representation is the row when this call inserted it;
     only a lost race (DO NOTHING returns `[]`) needs a second read.
 
-    Both tables FK to `users`. A session whose user row is gone (a cookie
-    that outlived a deleted account, the #285 class) violates that FK, which
-    DO NOTHING does not absorb. That is a 404 like every other missing-user
-    path here (`_get_user_or_404`, `/api/auth/me`), not a 500.
+    Both tables FK to `users` with ON DELETE CASCADE. A session whose `users`
+    row is missing (hard-deleted, e.g. a cookie that outlived a manually
+    removed row, the #285 class) violates that FK, which DO NOTHING does not
+    absorb. That is a 404 like every other missing-user path here
+    (`_get_user_or_404`, `/api/auth/me`), not a 500. The same holds when the
+    re-read after a lost race finds nothing: the row existed a moment ago, so
+    it vanished, which a cascade from a hard-deleted `users` row explains.
+    Serving a made-up `{"user_id": ...}` there would be a 200 with a fixed
+    ETag for a row that does not exist.
+
+    The app's own account deletion is a SOFT delete (`users.deleted_at`); a
+    soft-deleted user still has the row, so none of this fires for them.
     """
     filters = {"user_id": f"eq.{user_id}"}
     rows = table(name).select(columns, filters=filters)
     if rows:
-        return rows
+        return rows[0]
     try:
         rows = table(name).upsert(
             {"user_id": user_id},
@@ -90,19 +102,19 @@ def _get_or_create_row(name: str, columns: str, user_id: str) -> list:
         )
     except httpx.HTTPStatusError as exc:
         if _is_fk_violation(exc):
-            raise HTTPException(status_code=404, detail="User not found") from exc
+            raise _missing_users_row() from exc
         raise
     if rows:
-        return rows
-    return table(name).select(columns, filters=filters)
+        return rows[0]
+    rows = table(name).select(columns, filters=filters)
+    if not rows:
+        raise _missing_users_row()
+    return rows[0]
 
 
 def _get_or_create_profile(user_id: str) -> dict:
     """Return the decrypted user_profiles row, creating it if missing."""
-    rows = _get_or_create_row("user_profiles", _PROFILE_COLS, user_id)
-    if not rows:
-        return {"user_id": user_id}
-    row = rows[0]
+    row = _get_or_create_row("user_profiles", _PROFILE_COLS, user_id)
     for col in _PROFILE_ENCRYPTED:
         row[col] = decrypt_if_present(row.get(col))
     return row
@@ -137,10 +149,7 @@ _SETTINGS_COLS = (
 
 
 def _get_or_create_settings(user_id: str) -> dict:
-    rows = _get_or_create_row("user_settings", _SETTINGS_COLS, user_id)
-    if not rows:
-        return {"user_id": user_id}
-    return rows[0]
+    return _get_or_create_row("user_settings", _SETTINGS_COLS, user_id)
 
 
 def _get_user_roles(user_id: str) -> list:

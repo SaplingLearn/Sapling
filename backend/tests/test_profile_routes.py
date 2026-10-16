@@ -303,7 +303,8 @@ class TestUpdateProfile:
         # A user with no user_profiles row yet should get one created before the
         # update lands (ensure-row semantics).
         user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
-        profile_selects = []
+        profile_row: list = []  # the user_profiles table: empty until the upsert
+        events = []
         insert_calls = []
 
         def table_side_effect(name):
@@ -311,18 +312,20 @@ class TestUpdateProfile:
             if name == "users":
                 m.select.return_value = [user_row]
             elif name == "user_profiles":
-                # First select(s) return empty (no row) → insert; then return a row.
                 def _select(*args, **kwargs):
-                    profile_selects.append(True)
-                    # After an insert has happened, the row exists.
-                    return [{"user_id": USER_ID, "name": None}] if insert_calls else []
+                    events.append("select")
+                    return list(profile_row)
+
+                def _upsert(payload, **kw):
+                    events.append("upsert")
+                    insert_calls.append((payload, kw))
+                    profile_row.append({"user_id": USER_ID, "name": None})
+                    return list(profile_row)
 
                 m.select.side_effect = _select
                 # Race-safe create (#674): ON CONFLICT DO NOTHING, never a blind INSERT.
                 m.insert.side_effect = AssertionError("blind INSERT races (#674)")
-                m.upsert.side_effect = lambda payload, **kw: insert_calls.append((payload, kw)) or [
-                    {"user_id": USER_ID, "name": None}
-                ]
+                m.upsert.side_effect = _upsert
                 m.update.return_value = [{}]
             elif name == "user_settings":
                 m.select.return_value = [{"user_id": USER_ID}]
@@ -336,8 +339,12 @@ class TestUpdateProfile:
         from routes.profile import _PROFILE_COLS
 
         assert r.status_code == 200
-        # A user_profiles row was inserted because none existed.
-        assert insert_calls, "expected a user_profiles row to be created when missing"
+        # update_profile ensures the row twice (via _get_user_or_404, then
+        # before the update). The first ensure finds nothing and creates it,
+        # using the upsert's returned row with no re-select; the second finds
+        # the row, so exactly one create and one select per ensure.
+        assert events == ["select", "upsert", "select"]
+        assert len(insert_calls) == 1
         assert insert_calls[0] == (
             {"user_id": USER_ID},
             {"on_conflict": "user_id", "ignore_duplicates": True, "columns": _PROFILE_COLS},
@@ -1243,16 +1250,14 @@ class _SettingsTable:
         self.rows: dict[str, dict] = {}
         self.lock = threading.Lock()
         self.first_reads = threading.Barrier(2, timeout=5) if racing else None
-        self.reads = 0
         self.selects = 0
         self.upsert_columns: list = []
 
     def select(self, cols, filters=None):
         uid = filters["user_id"].removeprefix("eq.")
         with self.lock:
-            self.reads += 1
             self.selects += 1
-            hold = self.first_reads is not None and self.reads <= 2
+            hold = self.first_reads is not None and self.selects <= 2
             # Snapshot BEFORE the barrier: both first reads must observe the
             # pre-write state, or the slower thread can see the winner's row
             # and the race never happens.
@@ -1338,9 +1343,10 @@ def test_uncontended_create_uses_the_upsert_row_without_a_second_select_674():
 
 @pytest.mark.parametrize("helper", ["_get_or_create_settings", "_get_or_create_profile"])
 def test_missing_users_row_fk_violation_is_404_not_500(helper):
-    """A session that outlived its `users` row (#285 class): the create hits
-    the FK to users. PostgREST returns that as a 409 too, which DO NOTHING does
-    not absorb; it must be a 404, like _get_user_or_404."""
+    """A session whose `users` row is missing (hard-deleted; #285 class): the
+    create hits the FK to users. PostgREST returns that as a 409 too, which DO
+    NOTHING does not absorb; it must be a 404, like _get_user_or_404. (The
+    app's own account deletion is a soft delete that keeps the row.)"""
     from routes import profile
 
     fake = _SettingsTable()
@@ -1352,7 +1358,34 @@ def test_missing_users_row_fk_violation_is_404_not_500(helper):
     assert exc.value.status_code == 404
 
 
-def test_settings_get_for_a_deleted_user_answers_404():
+@pytest.mark.parametrize("helper", ["_get_or_create_settings", "_get_or_create_profile"])
+def test_lost_race_with_an_empty_reread_is_404_not_a_made_up_row(helper):
+    """DO NOTHING returned [] (the row existed), yet the re-read finds nothing:
+    the row vanished, e.g. cascaded away by a hard-deleted `users` row. That
+    is a 404, never a synthesized {"user_id": ...} served as a 200."""
+    from routes import profile
+
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(return_value=[])
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with pytest.raises(HTTPException) as exc:
+            getattr(profile, helper)(USER_ID)
+
+    assert exc.value.status_code == 404
+    assert fake.selects == 2
+
+
+def test_settings_get_for_a_lost_race_with_vanished_row_answers_404():
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(return_value=[])
+    with _mock_self(), patch("routes.profile.table", side_effect=lambda name: fake):
+        r = client.get(f"/api/profile/{USER_ID}/settings")
+
+    assert r.status_code == 404
+    assert "etag" not in {k.lower() for k in r.headers}
+
+
+def test_settings_get_for_a_hard_deleted_users_row_answers_404():
     fake = _SettingsTable()
     fake.upsert = MagicMock(side_effect=_pg_error(409, {"code": "23503"}))
     with _mock_self(), patch("routes.profile.table", side_effect=lambda name: fake):
@@ -1383,18 +1416,48 @@ def test_other_create_errors_still_propagate(err):
             profile._get_or_create_settings(USER_ID)
 
 
-def test_upsert_columns_projects_the_representation():
-    """`columns=` becomes PostgREST's `select=` on the upsert POST; omitted,
-    no projection is sent."""
+@pytest.mark.parametrize(
+    ("helper", "table_name", "cols"),
+    [
+        ("_get_or_create_settings", "user_settings", "_SETTINGS_COLS"),
+        ("_get_or_create_profile", "user_profiles", "_PROFILE_COLS"),
+    ],
+)
+def test_get_or_create_sends_do_nothing_on_the_wire(helper, table_name, cols):
+    """End to end through the real db.connection (only its httpx client is
+    faked): the create the profile helpers issue must reach PostgREST as an
+    ON CONFLICT (user_id) DO NOTHING (`Prefer: resolution=ignore-duplicates`),
+    projected to the columns the SELECT reads. The fakes above only see the
+    kwargs; this pins what actually goes out."""
+    import db.connection as dbconn
+    from routes import profile
+
+    def _resp(payload):
+        r = MagicMock()
+        r.json.return_value = payload
+        r.raise_for_status.return_value = None
+        return r
+
+    with patch.object(dbconn, "_client") as http:
+        http.get.return_value = _resp([])  # no row yet
+        http.post.return_value = _resp([{"user_id": USER_ID}])
+        getattr(profile, helper)(USER_ID)
+
+    assert http.post.call_count == 1
+    call = http.post.call_args
+    assert call.args[0].endswith(f"/{table_name}")
+    prefer = call.kwargs["headers"]["Prefer"]
+    assert "resolution=ignore-duplicates" in prefer, prefer
+    assert "resolution=merge-duplicates" not in prefer, prefer
+    assert call.kwargs["params"] == {"on_conflict": "user_id", "select": getattr(profile, cols)}
+    assert call.kwargs["json"] == {"user_id": USER_ID}
+
+
+def test_upsert_without_columns_sends_no_projection():
+    """Other upsert callers (no `columns=`) keep PostgREST's full
+    representation: no `select=` is added."""
     import db.connection as dbconn
 
     with patch.object(dbconn, "_client") as client_mock:
-        dbconn.table("user_settings").upsert(
-            {"user_id": USER_ID}, on_conflict="user_id", ignore_duplicates=True, columns="user_id,theme"
-        )
-        assert client_mock.post.call_args.kwargs["params"] == {
-            "on_conflict": "user_id",
-            "select": "user_id,theme",
-        }
         dbconn.table("user_settings").upsert({"user_id": USER_ID}, on_conflict="user_id")
         assert client_mock.post.call_args.kwargs["params"] == {"on_conflict": "user_id"}
