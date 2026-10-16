@@ -66,7 +66,6 @@ with a token set does send.
 
 from __future__ import annotations
 
-import collections
 import logging
 import os
 import queue
@@ -84,6 +83,9 @@ _client: Any = None
 _client_lock = threading.Lock()
 
 _NO_TOKEN = "POSTHOG_PROJECT_TOKEN is unset"
+
+#: Values of the deprecated POSTHOG_DISABLED that still mean "off".
+_LEGACY_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 # ── Gate ────────────────────────────────────────────────────────────────────
@@ -177,12 +179,15 @@ def initialize_posthog() -> bool:
     — never the client itself: nothing outside this module sends directly.
     """
     global _client
-    if (os.getenv("POSTHOG_DISABLED") or "").strip():
+    if (os.getenv("POSTHOG_DISABLED") or "").strip().lower() in _LEGACY_TRUTHY:
+        # Deprecated, but a deployment that still sets it meant "off": honour
+        # that (no client, no capture) rather than silently start sending.
         logger.warning(
-            "POSTHOG_DISABLED is set but is ignored: the runtime switch is the "
-            "product_analytics feature flag (/admin, or SAPLING_FLAG_PRODUCT_ANALYTICS=off); "
-            "an unset POSTHOG_PROJECT_TOKEN turns PostHog off entirely",
+            "POSTHOG_DISABLED is deprecated: PostHog stays off for this process, but "
+            "use SAPLING_FLAG_PRODUCT_ANALYTICS=off (or the product_analytics flag in "
+            "/admin, or an unset POSTHOG_PROJECT_TOKEN) instead",
         )
+        return False
     reason = disabled_reason()
     if reason is not None:
         logger.info("PostHog disabled: %s", reason)
@@ -619,6 +624,8 @@ _EXCEPTION_SUMMARY = "_exception_summary"
 #: make the request path (or the queue) do unbounded work.
 _MAX_CHAIN = 10
 _MAX_FRAMES = 200
+#: This backend's directory: frames under it are the app's own (in_app).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: Lines of source context either side of a frame's line (the SDK's default).
 _CONTEXT_LINES = 5
 
@@ -636,9 +643,17 @@ def _exception_summary(exc: BaseException) -> list[dict]:
         seen.add(id(cur))
         etype = type(cur)
         # The INNERMOST frames are kept on truncation: the raise site (and
-        # what led into it) is what grouping and debugging need.
-        frames: collections.deque = collections.deque(maxlen=_MAX_FRAMES)
+        # what led into it) is what grouping and debugging need. Count first,
+        # skip the outer excess, and build dicts only for the kept tail.
+        depth = 0
         tb = cur.__traceback__
+        while tb is not None:
+            depth += 1
+            tb = tb.tb_next
+        tb = cur.__traceback__
+        for _ in range(max(0, depth - _MAX_FRAMES)):
+            tb = tb.tb_next
+        frames = []
         while tb is not None:
             code = tb.tb_frame.f_code
             frames.append({
@@ -652,7 +667,7 @@ def _exception_summary(exc: BaseException) -> list[dict]:
         out.append({
             "type": etype.__name__,
             "module": None if module == "builtins" else module,
-            "frames": list(frames),
+            "frames": frames,
         })
         if cur.__cause__ is not None:
             cur = cur.__cause__
@@ -664,30 +679,20 @@ def _exception_summary(exc: BaseException) -> list[dict]:
 
 
 def _relative_filename(module: str | None, path: str) -> str:
-    """What the SDK's ``filename_for_module`` produces — the path relative to
-    the frame's top-level package (``services/foo.py``,
-    ``fastapi/routing.py``) — but never an absolute server path: when the
-    module cannot place it, the bare file name."""
-    rel = path
-    try:
-        from posthog.exception_utils import filename_for_module
-
-        rel = filename_for_module(module, path) or path
-    except Exception:
-        pass
-    if not os.path.isabs(rel):
-        return rel
-    # The SDK gives up (returns the absolute path) for a namespace package
-    # such as `services` (no __init__.py, so no __file__). Derive the same
-    # answer from the dotted name when the path ends with it.
+    """The frame's file relative to its own package — ``services/foo.py``,
+    ``fastapi/routing.py`` — derived from the DOTTED MODULE NAME alone
+    (``a/b/c.py``, or ``a/b/__init__.py`` for a package) and accepted only if
+    the real path ends with it. Anything else is the bare file name, so no
+    directory that is not the module's own package path (a server prefix, a
+    vendored copy's parents) can ever be sent."""
     base = os.path.basename(path)
-    parts = (module or "").split(".") if module else []
-    if base == "__init__.py" and parts:
+    parts = [p for p in (module or "").split(".") if p]
+    if not parts:
+        return base
+    if base == "__init__.py":
         candidate = os.path.join(*parts, base)
-    elif len(parts) > 1:
-        candidate = os.path.join(*parts[:-1], base)
     else:
-        candidate = base
+        candidate = os.path.join(*parts[:-1], base)
     return candidate if path.endswith(os.sep + candidate) else base
 
 
@@ -706,12 +711,11 @@ def _exception_list(summary: list[dict]) -> list[dict]:
             path, lineno = f["path"], f["lineno"]
             lines = linecache.getlines(path)
             idx = lineno - 1
-            # Module-relative, never the server's absolute path.
-            filename = _relative_filename(f["module"], path)
             frames.append({
                 "platform": "python",
-                "filename": filename,
-                "abs_path": filename,
+                # The REAL path for now: in_app is decided from it below.
+                "filename": path,
+                "abs_path": os.path.abspath(path),
                 "function": f["function"],
                 "module": f["module"],
                 "lineno": lineno,
@@ -726,7 +730,17 @@ def _exception_list(summary: list[dict]) -> list[dict]:
             "value": _REDACTED,
             "stacktrace": {"frames": frames, "type": "raw"},
         })
-    values = handle_in_app({"exception": {"values": values}})["exception"]["values"]
+    # in_app from the real path (site-packages / dist-packages -> False, this
+    # project -> True), THEN swap in the module-relative name: never the
+    # server's absolute path on the wire.
+    values = handle_in_app(
+        {"exception": {"values": values}}, project_root=_PROJECT_ROOT,
+    )["exception"]["values"]
+    for exc in values:
+        for frame in exc["stacktrace"]["frames"]:
+            frame["in_app"] = bool(frame.get("in_app"))
+            rel = _relative_filename(frame.get("module"), frame["filename"])
+            frame["filename"] = frame["abs_path"] = rel
     scrubbed = _scrub_event({"properties": {"$exception_list": values}})
     if scrubbed is None:
         raise ValueError("exception scrub failed")  # the worker drops the item

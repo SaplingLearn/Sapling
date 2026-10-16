@@ -148,7 +148,9 @@ Anything that forwards spans or exception state is on the student-data path.
    deploy, and `SAPLING_FLAG_PRODUCT_ANALYTICS=off` is its env kill switch.
    (An earlier draft also had a bespoke `POSTHOG_DISABLED` env gate re-read
    on every submit; the flag plus "no token, no client" cover every case it
-   served, and the codebase rule is flags, not new env vars.) Like an unset
+   served, and the codebase rule is flags, not new env vars. It is
+   deprecated: a truthy leftover still fails CLOSED — no client is built —
+   with a startup WARNING naming `SAPLING_FLAG_PRODUCT_ANALYTICS=off`.) Like an unset
    token, it stops capture, never erasure.
 9. **Account deletion deletes the PostHog person** (`bulk_delete` with
    `delete_events`) as a post-response BackgroundTask. Needs

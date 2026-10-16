@@ -18,6 +18,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.testclient import TestClient
@@ -184,7 +185,8 @@ class TestGate:
 
     def test_there_is_no_posthog_disabled_env_gate(self):
         """The runtime switch is the product_analytics flag (CLAUDE.md: never
-        gate with a new env var); a leftover POSTHOG_DISABLED does nothing."""
+        gate with a new env var); the pure gate ignores POSTHOG_DISABLED (a
+        truthy leftover only stops initialize_posthog — tested there)."""
         assert _gate({**_ON_ENV, "POSTHOG_DISABLED": "1"}) is None
 
 
@@ -1847,6 +1849,37 @@ class TestExceptionPayloadAtEnqueue:
             "services.posthog_client", posthog_client.__file__) == "services/posthog_client.py"
         assert SECRET not in json.dumps(props, default=str)
 
+    def test_in_app_is_decided_from_the_real_path(self):
+        """#677 final review: the relative name must not hide site-packages
+        from the SDK's in_app marking."""
+        import fastapi
+
+        lib = os.path.join(os.path.dirname(fastapi.__file__), "routing.py")
+        app = os.path.abspath(posthog_client.__file__)
+        exc_list = posthog_client._exception_list([{
+            "type": "ValueError", "module": None,
+            "frames": [
+                {"path": lib, "lineno": 1, "function": "handle", "module": "fastapi.routing"},
+                {"path": app, "lineno": 1, "function": "f", "module": "services.posthog_client"},
+            ],
+        }])
+        lib_frame, app_frame = exc_list[0]["stacktrace"]["frames"]
+        if "site-packages" in lib or "dist-packages" in lib:
+            assert lib_frame["in_app"] is False
+        assert app_frame["in_app"] is True
+        assert lib_frame["filename"] == lib_frame["abs_path"] == "fastapi/routing.py"
+        assert app_frame["filename"] == "services/posthog_client.py"
+
+    def test_relative_filename_never_leaks_a_server_prefix(self):
+        f = posthog_client._relative_filename
+        assert f("services.foo", "/srv/app/backend/services/foo.py") == "services/foo.py"
+        assert f("services", "/srv/app/backend/services/__init__.py") == "services/__init__.py"
+        # The module's package path does not match the file's: basename only.
+        assert f("json.zzz", "/srv/app/vendor/other/zzz.py") == "zzz.py"
+        assert f("json.zzz", "srv/app/vendor/json/zzz.py") == "json/zzz.py"
+        assert f(None, "/srv/app/secret/thing.py") == "thing.py"
+        assert f("thing", "/srv/app/secret/thing.py") == "thing.py"
+
     def test_truncation_keeps_the_innermost_frames(self, fake_client, monkeypatch):
         monkeypatch.setattr(posthog_client, "_MAX_FRAMES", 5)
 
@@ -2132,12 +2165,34 @@ class TestNoRawClientApi:
     def test_initialize_returns_a_bool_not_the_client(self):
         assert posthog_client.initialize_posthog() is False  # pytest: gate is off
 
-    def test_a_leftover_posthog_disabled_warns_once_at_startup(self, monkeypatch, caplog):
-        monkeypatch.setenv("POSTHOG_DISABLED", "1")
-        with caplog.at_level(logging.WARNING, "sapling.posthog"):
-            posthog_client.initialize_posthog()
+    @pytest.mark.parametrize("value", ["1", "true", "YES", " On "])
+    def test_a_truthy_legacy_posthog_disabled_fails_closed(self, value, monkeypatch, caplog):
+        """#677 final review: a deployment that still sets it meant "off"."""
+        monkeypatch.setenv("POSTHOG_DISABLED", value)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)  # else on
+        monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
+        with patch("posthog.Posthog") as ctor, caplog.at_level(logging.WARNING, "sapling.posthog"):
+            assert posthog_client.initialize_posthog() is False
+        ctor.assert_not_called()
         (msg,) = [r.getMessage() for r in caplog.records if "POSTHOG_DISABLED" in r.getMessage()]
-        assert "ignored" in msg and "SAPLING_FLAG_PRODUCT_ANALYTICS=off" in msg
+        assert "deprecated" in msg and "SAPLING_FLAG_PRODUCT_ANALYTICS=off" in msg
+
+    @pytest.mark.parametrize("value", [None, "", "0", "false", "off", "no"])
+    def test_a_falsy_or_unset_posthog_disabled_does_nothing(self, value, monkeypatch, caplog):
+        if value is None:
+            monkeypatch.delenv("POSTHOG_DISABLED", raising=False)
+        else:
+            monkeypatch.setenv("POSTHOG_DISABLED", value)
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
+        monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
+        try:
+            with patch("posthog.Posthog") as ctor, \
+                 caplog.at_level(logging.WARNING, "sapling.posthog"):
+                assert posthog_client.initialize_posthog() is True
+            ctor.assert_called_once()
+        finally:
+            posthog_client.set_client_for_tests(None)
+        assert not any("POSTHOG_DISABLED" in r.getMessage() for r in caplog.records)
 
 
 class TestProductAnalyticsFlag:
@@ -2222,7 +2277,7 @@ class TestProductAnalyticsFlag:
 
         def slow_then_fail(**k):
             reads.append(k.get("timeout"))
-            raise TimeoutError("read timed out")  # what a bounded read does
+            raise httpx.ReadTimeout("read timed out")  # what a bounded read does
 
         monkeypatch.setattr(feature_flags, "read_config", slow_then_fail)
         for _ in range(20):
@@ -2236,7 +2291,7 @@ class TestProductAnalyticsFlag:
 
         def down(**k):
             reads.append(1)
-            raise TimeoutError("read timed out")
+            raise httpx.ReadTimeout("read timed out")
 
         monkeypatch.setattr(feature_flags, "read_config", down)
         for _ in range(50):
