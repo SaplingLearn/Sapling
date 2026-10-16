@@ -335,6 +335,11 @@ class UpdateSettingsBody(BaseModel):
     accent_color: Optional[str] = None
     # #72: Class Intel opt-out (user_settings.share_class_context, 0037)
     share_class_context: Optional[bool] = None
+    # ADR 0028: third-party (PostHog) analytics opt-out
+    # (user_settings.analytics_opt_out) — the student's own choice, written by
+    # the Settings → Data switch only. Do Not Track / Global Privacy Control
+    # are honoured per request and are deliberately NOT persisted here.
+    analytics_opt_out: Optional[bool] = None
 
 
 class EquipCosmeticBody(BaseModel):
