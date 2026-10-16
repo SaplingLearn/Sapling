@@ -46,7 +46,10 @@ from agents.tools.graph_read import (
 TutorMode = Literal["socratic", "expository", "teachback"]
 
 
-# ── System prompts (one per mode) ──────────────────────────────────────────
+# ── Instructions (one per mode) ────────────────────────────────────────────
+#
+# Passed to the agent as `instructions=`, never `system_prompt=` — see
+# `_build_agent` for why that kwarg must not be "tidied" back.
 
 # #150: academic-integrity parity with the legacy prompt
 # (prompts/preamble.txt) — held out of #149 for this issue. Compact form
@@ -145,8 +148,8 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All seven tools are registered on every mode. The system prompt steers
-# WHEN to call them; the surface stays uniform so a Pro-tier model can
+# All seven tools are registered on every mode. The mode's instructions
+# steer WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
 
 

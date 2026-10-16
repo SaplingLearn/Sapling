@@ -141,6 +141,26 @@ _CONTINUATION_NUDGE = (
     "any earlier answer and do not mention this instruction."
 )
 
+#: Run-level instructions for the continuation, APPENDED to the tutor's own
+#: (pydantic-ai joins agent and run `instructions`; it does not replace them).
+#: The tutor's instructions reach every request, this one included, and they
+#: say to call `update_mastery_tool` "in EVERY turn" and to "never end the
+#: turn on a tool call". The continuation runs under
+#: `override(tools=[], toolsets=[])`, so Gemini is sent no function
+#: declarations: a model still obeying those rules would try to call a tool
+#: that does not exist (MALFORMED_FUNCTION_CALL / empty content — the very
+#: failure being rescued) or write the call out as text for the student.
+#: This states plainly that no tools exist on this pass. It lives in the
+#: instructions (system_instruction), not in the nudge, so it carries the
+#: same weight as the rule it overrides.
+_CONTINUATION_INSTRUCTIONS = (
+    "NO TOOLS ARE AVAILABLE ON THIS PASS. The tools for this turn have "
+    "already run and their results are in the conversation above. Any "
+    "earlier instruction to call a tool, including update_mastery_tool, "
+    "does not apply now. Do not call, request, or write out any tool or "
+    "function call. Reply to the student in plain text only."
+)
+
 #: run_kwargs keys a continuation may carry. `message_history` is REPLACED
 #: (the continuation's history is the failed run's own messages),
 #: `usage_limits` is REPLACED by CONTINUATION_LIMITS (a second call in one
@@ -166,7 +186,10 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
     than a hope: the continuation is handed NO tools, so it cannot write even
     if the model tries. Without it the model could call `update_mastery_tool`
     again and reintroduce the exact double-apply the writes-guard exists to
-    prevent — a re-run by a quieter name.
+    prevent — a re-run by a quieter name. Because the tutor's own
+    instructions (which demand a mastery call every turn) still reach this
+    request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
+    exist on this pass and it must answer in text.
 
     It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
     ADDS to the agent's own tools rather than replacing them, so
@@ -194,6 +217,7 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             await agent.run(
                 _CONTINUATION_NUDGE,
                 message_history=run_result.all_messages(),
+                instructions=_CONTINUATION_INSTRUCTIONS,
                 usage_limits=CONTINUATION_LIMITS,
                 **carried,
             ),
