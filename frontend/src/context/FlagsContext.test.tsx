@@ -12,7 +12,7 @@ vi.mock("@/context/UserContext", () => ({ useUser: () => user }));
 import { FlagsProvider, useFlag } from "./FlagsContext";
 
 function Probe() {
-  return <span data-testid="v">{useFlag("learning_loop")}</span>;
+  return <span data-testid="v">{useFlag("hide_quiz")}</span>;
 }
 
 describe("FlagsProvider/useFlag", () => {
@@ -29,7 +29,7 @@ describe("FlagsProvider/useFlag", () => {
     fetchFlags.mockReturnValue(new Promise((r) => { resolve = r; }));
     render(<FlagsProvider><Probe /></FlagsProvider>);
     expect(screen.getByTestId("v").textContent).toBe("off");
-    resolve({ learning_loop: "on" });
+    resolve({ hide_quiz: "on" });
     await waitFor(() => expect(screen.getByTestId("v").textContent).toBe("on"));
   });
 
@@ -50,11 +50,11 @@ describe("FlagsProvider/useFlag", () => {
   it("ignores a stale response after a user switch", async () => {
     let first!: (v: Record<string, string>) => void;
     fetchFlags.mockReturnValueOnce(new Promise((r) => { first = r; }))
-      .mockResolvedValueOnce({ learning_loop: "off" });
+      .mockResolvedValueOnce({ hide_quiz: "off" });
     const { rerender } = render(<FlagsProvider><Probe /></FlagsProvider>);
     user = { userId: "u2", isAuthenticated: true, userReady: true };
     rerender(<FlagsProvider><Probe /></FlagsProvider>);
-    first({ learning_loop: "on" });
+    first({ hide_quiz: "on" });
     await waitFor(() => expect(fetchFlags).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("v").textContent).toBe("off");
   });

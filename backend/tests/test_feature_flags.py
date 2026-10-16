@@ -5,7 +5,12 @@ import pytest
 
 from services import feature_flags as ff
 
-KEY = "learning_loop"  # registry: ("off", "on"), client_visible
+KEY = "hide_quiz"  # registry: ("off", "on"), client_visible
+
+
+def _paged(rows):
+    """select_with_count as `page_all` calls it: one page, then the end."""
+    return lambda *a, **k: ((rows or []) if not k.get("offset") else [], len(rows or []))
 
 
 def _tables(flags=None, targets=None, roles=None, fail=False):
@@ -14,10 +19,11 @@ def _tables(flags=None, targets=None, roles=None, fail=False):
         m = MagicMock()
         if fail:
             m.select.side_effect = RuntimeError("db down")
+            m.select_with_count.side_effect = RuntimeError("db down")
         elif name == "feature_flags":
-            m.select.side_effect = lambda *a, **k: (flags or []) if not k.get("offset") else []
+            m.select_with_count.side_effect = _paged(flags)
         elif name == "feature_flag_targets":
-            m.select.side_effect = lambda *a, **k: (targets or []) if not k.get("offset") else []
+            m.select_with_count.side_effect = _paged(targets)
         elif name == "user_roles":
             m.select.return_value = roles or []
         else:
@@ -143,21 +149,23 @@ def test_snapshot_is_cached_until_cleared():
 
 
 def test_env_override(monkeypatch):
-    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "on")
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_QUIZ", "on")
     with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
         r = ff.explain(KEY, "u1")
     assert (r.variant, r.step) == ("on", "env_override")
-    monkeypatch.setenv("SAPLING_FLAG_LEARNING_LOOP", "banana")
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_QUIZ", "banana")
     with patch("services.feature_flags.table", side_effect=_tables(flags=[_row("off")])):
         assert ff.flag_variant(KEY, "u1") == "off"
 
 
-def test_resolved_client_flags_only_client_visible():
+def test_resolved_client_flags_only_client_visible(monkeypatch):
+    monkeypatch.setitem(ff.REGISTRY, "server_only",
+                        ff.FlagDef("server_only", ("off", "on"), "test", False))
     with patch("services.feature_flags.table", side_effect=_tables()):
         out = ff.resolved_client_flags("u1")
     visible = {k for k, fd in ff.REGISTRY.items() if fd.client_visible}
     assert set(out) == visible
-    assert "decision_router" not in out
+    assert "server_only" not in out
 
 
 def test_require_flag_404_when_off():
@@ -169,3 +177,141 @@ def test_require_flag_404_when_off():
         with pytest.raises(HTTPException) as e:
             dep(req)
     assert e.value.status_code == 404
+
+
+# ── Final-review fixes (#620) ───────────────────────────────────────────────
+
+
+def test_config_reads_page_in_a_stable_order():
+    """Offset paging over an unordered select can skip or repeat rows at a
+    page boundary; both tables page through `page_all` with a total order."""
+    handles: dict[str, MagicMock] = {}
+    base = _tables(flags=[_row("on")])
+
+    def factory(name):
+        handles[name] = base(name)
+        return handles[name]
+
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.read_config()
+    assert handles["feature_flags"].select_with_count.call_args.kwargs["order"] == "key"
+    assert (handles["feature_flag_targets"].select_with_count.call_args.kwargs["order"]
+            == "flag_key,target_type,target_id")
+
+
+def test_config_read_pages_past_max_rows():
+    rows = [{"flag_key": KEY, "target_type": "user", "target_id": f"u{i}", "variant": "on"}
+            for i in range(1500)]
+
+    def factory(name):
+        m = MagicMock()
+        if name == "feature_flag_targets":
+            m.select_with_count.side_effect = lambda *a, **k: (
+                rows[k["offset"]:k["offset"] + k["limit"]], len(rows))
+        else:
+            m.select_with_count.side_effect = _paged([])
+        return m
+
+    with patch("services.feature_flags.table", side_effect=factory):
+        snap = ff.read_config()
+    assert len(snap.targets[KEY]) == 1500
+
+
+def test_snapshot_ttl_zero_always_reads_fresh(monkeypatch):
+    monkeypatch.setenv("FEATURE_FLAGS_SNAPSHOT_TTL_S", "0")
+    calls = {"n": 0}
+    base = _tables(flags=[_row("on")])
+
+    def counting(name):
+        if name == "feature_flags":
+            calls["n"] += 1
+        return base(name)
+
+    with patch("services.feature_flags.table", side_effect=counting):
+        ff.flag_variant(KEY, "u1")
+        ff.flag_variant(KEY, "u1")
+    assert calls["n"] == 2
+
+
+def test_snapshot_ttl_is_read_at_call_time(monkeypatch):
+    """The E2E stack exports 0; a bad value falls back to the 30 s default."""
+    monkeypatch.setenv("FEATURE_FLAGS_SNAPSHOT_TTL_S", "banana")
+    assert ff.snapshot_ttl_s() == 30.0
+    monkeypatch.setenv("FEATURE_FLAGS_SNAPSHOT_TTL_S", "-5")
+    assert ff.snapshot_ttl_s() == 30.0
+    monkeypatch.setenv("FEATURE_FLAGS_SNAPSHOT_TTL_S", "0")
+    assert ff.snapshot_ttl_s() == 0.0
+    monkeypatch.delenv("FEATURE_FLAGS_SNAPSHOT_TTL_S")
+    assert ff.snapshot_ttl_s() == 30.0
+    assert ff.roles_ttl_s() == 60.0
+
+
+def test_roles_ttl_zero_always_reads_fresh(monkeypatch):
+    monkeypatch.setenv("FEATURE_FLAGS_ROLES_TTL_S", "0")
+    targets = [{"flag_key": KEY, "target_type": "role", "target_id": "r1", "variant": "on"}]
+    calls = {"n": 0}
+    base = _tables(flags=[_row()], targets=targets,
+                   roles=[{"role_id": "r1", "roles": {"display_priority": 1}}])
+
+    def counting(name):
+        if name == "user_roles":
+            calls["n"] += 1
+        return base(name)
+
+    with patch("services.feature_flags.table", side_effect=counting):
+        assert ff.flag_variant(KEY, "u1") == "on"
+        assert ff.flag_variant(KEY, "u1") == "on"
+    assert calls["n"] == 2
+
+
+def test_roles_are_cached_by_default():
+    targets = [{"flag_key": KEY, "target_type": "role", "target_id": "r1", "variant": "on"}]
+    calls = {"n": 0}
+    base = _tables(flags=[_row()], targets=targets,
+                   roles=[{"role_id": "r1", "roles": {"display_priority": 1}}])
+
+    def counting(name):
+        if name == "user_roles":
+            calls["n"] += 1
+        return base(name)
+
+    with patch("services.feature_flags.table", side_effect=counting):
+        ff.flag_variant(KEY, "u1")
+        ff.flag_variant(KEY, "u1")
+    assert calls["n"] == 1
+
+
+def test_clear_during_an_in_flight_read_is_not_overwritten():
+    """An admin write that clears the cache WHILE a read is in flight must
+    win: the read began before the write, so its (stale) fill is dropped."""
+    calls = {"n": 0}
+    stale, fresh = _tables(flags=[_row("off")]), _tables(flags=[_row("on")])
+
+    def factory(name):
+        if name == "feature_flags":
+            calls["n"] += 1
+            if calls["n"] == 1:
+                ff.clear_feature_flags_cache()  # the write lands mid-read
+                return stale(name)
+            return fresh(name)
+        return (stale if calls["n"] == 1 else fresh)(name)
+
+    with patch("services.feature_flags.table", side_effect=factory):
+        assert ff.flag_variant(KEY, "u1") == "off"  # that read's own answer stands
+        assert ff.flag_variant(KEY, "u1") == "on"   # ...but it was never cached
+    assert calls["n"] == 2
+
+
+def test_store_outage_warns_again_after_a_recovery(caplog):
+    with caplog.at_level("WARNING", logger="sapling.feature_flags"):
+        with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
+            ff.flag_variant(KEY, "u1")
+            ff.flag_variant(KEY, "u1")  # same outage: warned once
+        with patch("services.feature_flags.table", side_effect=_tables(flags=[_row()])):
+            ff.flag_variant(KEY, "u1")  # recovered
+        ff.clear_feature_flags_cache()
+        with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
+            ff.flag_variant(KEY, "u1")  # a later outage is news again
+    unreadable = [r for r in caplog.records if "unreadable" in r.getMessage()]
+    assert len(unreadable) == 2
+

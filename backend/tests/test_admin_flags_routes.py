@@ -1,13 +1,22 @@
 """#620 admin flags API: auth, validation, audit + event, cache clear."""
 from unittest.mock import MagicMock, patch
 
+import httpx
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
+from services.feature_flags import REGISTRY
 
 client = TestClient(app)
 ADMIN = "admin_1"
+ROLE = "0b6f3c1e-8a5d-4c2e-9f7a-1d2e3f4a5b6c"  # roles.id is a UUID
+
+
+def _paged(rows_fn):
+    """select_with_count as `feature_flags.read_config` pages it."""
+    return lambda *a, **k: (([] if k.get("offset") else rows_fn()), 0)
 
 
 class _DB:
@@ -17,7 +26,8 @@ class _DB:
         self.flags: dict[str, dict] = {}
         self.targets: dict[tuple, dict] = {}
         self.users = {"u1"}
-        self.roles = {"r-admin": {"id": "r-admin", "name": "Admin", "display_priority": 100}}
+        self.roles = {"r-admin": {"id": "r-admin", "name": "Admin", "display_priority": 100},
+                      ROLE: {"id": ROLE, "name": "Beta", "display_priority": 10}}
 
     def table(self, name):
         db = self
@@ -37,8 +47,10 @@ class _DB:
                 db.flags[row["key"]] = {**cur, **row}
                 return [db.flags[row["key"]]]
             m.upsert.side_effect = upsert
+            m.select_with_count.side_effect = _paged(lambda: [dict(v) for v in db.flags.values()])
         elif name == "feature_flag_targets":
             m.select.side_effect = lambda *a, **k: [] if k.get("offset") else [dict(v) for v in db.targets.values()]
+            m.select_with_count.side_effect = _paged(lambda: [dict(v) for v in db.targets.values()])
             m.upsert.side_effect = lambda row, **k: db.targets.__setitem__(
                 (row["flag_key"], row["target_type"], row["target_id"]), row) or [row]
 
@@ -52,9 +64,17 @@ class _DB:
                 [{"id": k["filters"]["id"].removeprefix("eq.")}]
                 if k["filters"]["id"].removeprefix("eq.") in db.users else [])
         elif name == "roles":
-            m.select.side_effect = lambda *a, **k: (
-                [r for r in db.roles.values()
-                 if not (k.get("filters") or {}).get("id") or r["id"] == k["filters"]["id"].removeprefix("eq.")])
+            def roles_select(*a, **k):
+                wanted = (k.get("filters") or {}).get("id", "").removeprefix("eq.")
+                if not wanted:
+                    return list(db.roles.values())
+                if wanted.startswith("not-a-uuid"):  # PostgREST: 22P02 -> 400
+                    req = httpx.Request("GET", "http://rest/roles")
+                    raise httpx.HTTPStatusError(
+                        "400", request=req, response=httpx.Response(400, request=req))
+                # uuid equality is case-insensitive; the DB answers canonical
+                return [r for r in db.roles.values() if r["id"] == wanted.lower()]
+            m.select.side_effect = roles_select
         elif name == "user_roles":
             m.select.return_value = []
         return m
@@ -93,24 +113,24 @@ def test_list_includes_every_registered_flag():
     r, _ = _run(db, lambda: client.get("/api/admin/flags"))
     assert r.status_code == 200
     keys = {f["key"] for f in r.json()["flags"]}
-    assert keys == {"decision_router", "learning_loop", "product_analytics"}
-    ll = next(f for f in r.json()["flags"] if f["key"] == "learning_loop")
+    assert keys == set(REGISTRY)
+    ll = next(f for f in r.json()["flags"] if f["key"] == "hide_quiz")
     assert ll["default_variant"] == "off" and ll["variants"] == ["off", "on"]
 
 
 def test_patch_validates_and_audits():
     db = _DB()
-    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/learning_loop",
+    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/hide_quiz",
                                             json={"default_variant": "banana"}))
-    assert r.status_code == 422 and "learning_loop" not in db.flags
-    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/learning_loop",
+    assert r.status_code == 422 and "hide_quiz" not in db.flags
+    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/hide_quiz",
                                             json={"rollout_percent": 20}))
     assert r.status_code == 422  # rollout_variant required when percent > 0
-    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/learning_loop",
+    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/hide_quiz",
                                             json={"rollout_percent": 20, "rollout_variant": "on"}))
     assert r.status_code == 200
-    assert db.flags["learning_loop"]["rollout_percent"] == 20
-    assert db.flags["learning_loop"]["updated_by"] == ADMIN
+    assert db.flags["hide_quiz"]["rollout_percent"] == 20
+    assert db.flags["hide_quiz"]["updated_by"] == ADMIN
     audit, event = mocks[5], mocks[6]
     assert audit.call_args.kwargs["action"] == "flag.update"
     assert event.call_args.args[0] == "flag.changed"
@@ -125,17 +145,17 @@ def test_unknown_flag_404():
 
 def test_target_upsert_requires_existing_user_and_valid_variant():
     db = _DB()
-    r, _ = _run(db, lambda: client.put("/api/admin/flags/learning_loop/targets",
+    r, _ = _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
                                       json={"target_type": "user", "target_id": "ghost", "variant": "on"}))
     assert r.status_code == 404 and not db.targets
-    r, _ = _run(db, lambda: client.put("/api/admin/flags/learning_loop/targets",
+    r, _ = _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
                                       json={"target_type": "user", "target_id": "u1", "variant": "maybe"}))
     assert r.status_code == 422 and not db.targets
-    r, _ = _run(db, lambda: client.put("/api/admin/flags/learning_loop/targets",
+    r, _ = _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
                                       json={"target_type": "user", "target_id": "u1", "variant": "on"}))
     assert r.status_code == 200
-    assert "learning_loop" in db.flags  # parent row created for the FK, default off
-    assert db.flags["learning_loop"]["default_variant"] == "off"
+    assert "hide_quiz" in db.flags  # parent row created for the FK, default off
+    assert db.flags["hide_quiz"]["default_variant"] == "off"
     view = r.json()["flag"]
     assert view["targets"] == [{"target_type": "user", "target_id": "u1",
                                 "label": "Student One", "variant": "on"}]
@@ -143,16 +163,73 @@ def test_target_upsert_requires_existing_user_and_valid_variant():
 
 def test_target_delete_and_explain():
     db = _DB()
-    _run(db, lambda: client.put("/api/admin/flags/learning_loop/targets",
+    _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
                                json={"target_type": "role", "target_id": "r-admin", "variant": "on"}))
-    r, _ = _run(db, lambda: client.get("/api/admin/flags/learning_loop/explain?user_id=u1"))
+    r, _ = _run(db, lambda: client.get("/api/admin/flags/hide_quiz/explain?user_id=u1"))
     assert r.json() == {"variant": "off", "step": "default", "detail": "stored default"}
-    r, _ = _run(db, lambda: client.delete("/api/admin/flags/learning_loop/targets/role/r-admin"))
+    r, _ = _run(db, lambda: client.delete("/api/admin/flags/hide_quiz/targets/role/r-admin"))
     assert r.status_code == 200 and not db.targets
 
 
 def test_writes_clear_the_resolver_cache():
     db = _DB()
     with patch("services.feature_flags.clear_feature_flags_cache") as clear:
-        _run(db, lambda: client.patch("/api/admin/flags/learning_loop", json={"default_variant": "on"}))
+        _run(db, lambda: client.patch("/api/admin/flags/hide_quiz", json={"default_variant": "on"}))
     assert clear.called
+
+
+# ── Final-review fixes (#620) ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("PATCH", "/api/admin/flags/hide_quiz", {"default_variant": "on"}),
+    ("PUT", "/api/admin/flags/hide_quiz/targets",
+     {"target_type": "user", "target_id": "u1", "variant": "on"}),
+    ("DELETE", "/api/admin/flags/hide_quiz/targets/user/u1", None),
+    ("GET", "/api/admin/flags/hide_quiz/explain?user_id=u1", None),
+])
+def test_every_route_is_admin_only(method, path, body):
+    db = _DB()
+    with patch("routes.admin_flags.require_admin",
+               side_effect=HTTPException(status_code=403, detail="Forbidden")), \
+         patch("routes.admin_flags.table", side_effect=db.table), \
+         patch("services.feature_flags.table", side_effect=db.table):
+        r = client.request(method, path, json=body)
+    assert r.status_code == 403
+    assert not db.flags and not db.targets
+
+
+def test_explain_unregistered_key_404():
+    db = _DB()
+    r, _ = _run(db, lambda: client.get("/api/admin/flags/no_such_flag/explain?user_id=u1"))
+    assert r.status_code == 404
+
+
+def test_role_target_unknown_role_404():
+    db = _DB()
+    missing = "7c1d2e3f-0000-4000-8000-000000000000"
+    r, _ = _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
+                                      json={"target_type": "role", "target_id": missing,
+                                            "variant": "on"}))
+    assert r.status_code == 404 and not db.targets
+
+
+def test_role_target_non_uuid_is_404_not_500():
+    """PostgREST answers 400 (22P02) to `id=eq.<not a uuid>` on a uuid column."""
+    db = _DB()
+    r, _ = _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
+                                      json={"target_type": "role", "target_id": "not-a-uuid",
+                                            "variant": "on"}))
+    assert r.status_code == 404 and not db.targets
+
+
+def test_role_target_stores_the_canonical_id():
+    """An upper-case UUID matches the role, but the rule must be stored under
+    the id the resolver compares against (user_roles.role_id, lower case)."""
+    db = _DB()
+    r, _ = _run(db, lambda: client.put("/api/admin/flags/hide_quiz/targets",
+                                      json={"target_type": "role", "target_id": ROLE.upper(),
+                                            "variant": "on"}))
+    assert r.status_code == 200
+    assert list(db.targets) == [("hide_quiz", "role", ROLE)]
+    assert r.json()["flag"]["targets"][0]["label"] == "Beta"

@@ -23,3 +23,21 @@ CREATE TABLE IF NOT EXISTS feature_flag_targets (
 -- PostHog analytics stays ON once keys are set; admins can switch it off.
 INSERT INTO feature_flags (key, default_variant) VALUES ('product_analytics', 'on')
 ON CONFLICT (key) DO NOTHING;
+
+-- Backend-only. The backend reaches PostgREST with the service_role key
+-- (db/connection.py: SUPABASE_SERVICE_KEY), but Supabase's default privileges
+-- grant anon and authenticated full DML on every new public table, and the
+-- frontend ships the anon key -- so without this, anyone holding it could flip
+-- a flag or add themselves a rule. Guarded because those roles are Supabase's:
+-- a plain Postgres has none of them, and an unguarded REVOKE naming one aborts
+-- the whole migration. Same idiom as 20260921063714_document_index_status.sql.
+DO $$
+DECLARE
+    r TEXT;
+BEGIN
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('REVOKE ALL ON feature_flags, feature_flag_targets FROM %I', r);
+        END IF;
+    END LOOP;
+END $$;

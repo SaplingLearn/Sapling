@@ -45,7 +45,7 @@ vi.mock("@/components/ToastProvider", () => ({ useToast: () => toastSpies }));
 import { FeatureFlagsTab } from "./FeatureFlags";
 
 const FLAG = {
-  key: "learning_loop", description: "AI learning loop (#673).", variants: ["off", "on"],
+  key: "hide_quiz", description: "Hide Quiz from the nav; its pages redirect to /dashboard.", variants: ["off", "on"],
   client_visible: true, default_variant: "off", rollout_percent: 0, rollout_variant: null,
   updated_at: null, updated_by: null, updated_by_name: null, targets: [],
 };
@@ -63,51 +63,51 @@ describe("FeatureFlagsTab", () => {
 
   it("lists flags", async () => {
     render(<FeatureFlagsTab />);
-    expect(await screen.findByTestId("flag-row-learning_loop")).toBeTruthy();
+    expect(await screen.findByTestId("flag-row-hide_quiz")).toBeTruthy();
   });
 
   it("requires a confirming second click before saving a default change, and states the scope while armed", async () => {
     api.adminUpdateFlag.mockResolvedValue({ flag: { ...FLAG, default_variant: "on" } });
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-learning_loop"));
-    fireEvent.change(screen.getByTestId("flag-default-learning_loop"), { target: { value: "on" } });
+    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+    fireEvent.change(screen.getByTestId("flag-default-hide_quiz"), { target: { value: "on" } });
 
     // Not armed yet: no scope text, no save.
-    expect(screen.queryByTestId("flag-save-scope-learning_loop")).toBeNull();
+    expect(screen.queryByTestId("flag-save-scope-hide_quiz")).toBeNull();
 
-    const save = screen.getByTestId("flag-save-learning_loop");
+    const save = screen.getByTestId("flag-save-hide_quiz");
     fireEvent.click(save);
     expect(api.adminUpdateFlag).not.toHaveBeenCalled();
 
     // Armed: the scope text states the transition and who it applies to.
-    const scope = screen.getByTestId("flag-save-scope-learning_loop");
+    const scope = screen.getByTestId("flag-save-scope-hide_quiz");
     expect(scope.textContent).toContain("off → on");
     expect(scope.textContent).toContain("rollout 0% → 0%");
     expect(scope.textContent).toContain("every student without a user or role rule");
 
     fireEvent.click(save);
     await waitFor(() => expect(api.adminUpdateFlag).toHaveBeenCalledWith(
-      "learning_loop", { default_variant: "on", rollout_percent: 0, rollout_variant: null }));
+      "hide_quiz", { default_variant: "on", rollout_percent: 0, rollout_variant: null }));
   });
 
   it("does not save without the confirming second click, even with the scope shown", async () => {
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-learning_loop"));
-    fireEvent.change(screen.getByTestId("flag-default-learning_loop"), { target: { value: "on" } });
-    fireEvent.click(screen.getByTestId("flag-save-learning_loop"));
-    expect(screen.getByTestId("flag-save-scope-learning_loop")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+    fireEvent.change(screen.getByTestId("flag-default-hide_quiz"), { target: { value: "on" } });
+    fireEvent.click(screen.getByTestId("flag-save-hide_quiz"));
+    expect(screen.getByTestId("flag-save-scope-hide_quiz")).toBeTruthy();
     expect(api.adminUpdateFlag).not.toHaveBeenCalled();
   });
 
   it("explains a student's variant", async () => {
     api.adminExplainFlag.mockResolvedValue({ variant: "on", step: "role", detail: "r-admin" });
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-learning_loop"));
-    fireEvent.change(screen.getByTestId("flag-explain-input-learning_loop"), { target: { value: "u1" } });
-    fireEvent.keyDown(screen.getByTestId("flag-explain-input-learning_loop"), { key: "Enter" });
-    expect((await screen.findByTestId("flag-explain-result-learning_loop")).textContent)
+    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+    fireEvent.change(screen.getByTestId("flag-explain-input-hide_quiz"), { target: { value: "u1" } });
+    fireEvent.keyDown(screen.getByTestId("flag-explain-input-hide_quiz"), { key: "Enter" });
+    expect((await screen.findByTestId("flag-explain-result-hide_quiz")).textContent)
       .toContain("on (role: r-admin)");
-    expect(api.adminExplainFlag).toHaveBeenCalledWith("learning_loop", "u1");
+    expect(api.adminExplainFlag).toHaveBeenCalledWith("hide_quiz", "u1");
   });
 
   it("adds and removes a rule", async () => {
@@ -119,15 +119,15 @@ describe("FeatureFlagsTab", () => {
     api.adminDeleteFlagTarget.mockResolvedValue({ flag: FLAG });
 
     render(<FeatureFlagsTab />);
-    fireEvent.click(await screen.findByTestId("flag-row-learning_loop"));
-    fireEvent.change(screen.getByTestId("flag-target-role-learning_loop"), { target: { value: "r-admin" } });
-    fireEvent.click(screen.getByTestId("flag-target-add-learning_loop"));
+    fireEvent.click(await screen.findByTestId("flag-row-hide_quiz"));
+    fireEvent.change(screen.getByTestId("flag-target-role-hide_quiz"), { target: { value: "r-admin" } });
+    fireEvent.click(screen.getByTestId("flag-target-add-hide_quiz"));
     await waitFor(() => expect(api.adminUpsertFlagTarget).toHaveBeenCalledWith(
-      "learning_loop", { target_type: "role", target_id: "r-admin", variant: "on" }));
+      "hide_quiz", { target_type: "role", target_id: "r-admin", variant: "on" }));
 
-    expect(await screen.findByTestId("flag-target-row-learning_loop-role-r-admin")).toBeTruthy();
+    expect(await screen.findByTestId("flag-target-row-hide_quiz-role-r-admin")).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId("flag-target-remove-learning_loop-role-r-admin"));
-    await waitFor(() => expect(api.adminDeleteFlagTarget).toHaveBeenCalledWith("learning_loop", "role", "r-admin"));
+    fireEvent.click(screen.getByTestId("flag-target-remove-hide_quiz-role-r-admin"));
+    await waitFor(() => expect(api.adminDeleteFlagTarget).toHaveBeenCalledWith("hide_quiz", "role", "r-admin"));
   });
 });

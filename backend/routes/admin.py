@@ -30,7 +30,8 @@ from models import (
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements, grant_linked_cosmetics
-from services.feature_flags import clear_user_roles_cache
+from routes.admin_flags import record_flag_change
+from services.feature_flags import clear_feature_flags_cache, clear_user_roles_cache
 from services.users_search import paginate_users
 from services.encryption import decrypt_if_present
 from services.profiles import get_display_names
@@ -97,6 +98,8 @@ def update_role(role_id: str, request: Request, body: dict = {}):
         raise HTTPException(status_code=400, detail="No valid fields to update")
     table("roles").update(updates, filters={"id": f"eq.{role_id}"})
     log_admin_action(actor_id=actor, action="role.update", target_type="role", target_id=role_id, payload=updates)
+    # display_priority rides in every holder's cached roles (#620 role rules).
+    clear_user_roles_cache()
     return {"updated": True}
 
 
@@ -194,6 +197,15 @@ def delete_role(role_id: str, request: Request):
         raise HTTPException(status_code=409, detail="Cannot delete the admin role.")
     table("roles").delete(filters={"id": f"eq.{role_id}"})
     log_admin_action(actor_id=actor, action="role.delete", target_type="role", target_id=role_id)
+    # #620: a role's flag rules name it by id with no FK, so they would
+    # outlive it. Remove them, each audited like an admin rule delete.
+    removed = table("feature_flag_targets").delete(
+        filters={"target_type": "eq.role", "target_id": f"eq.{role_id}"},
+    ) or []
+    for rule in removed:
+        record_flag_change(actor, rule["flag_key"], f"role:{role_id}", rule.get("variant"), None)
+    clear_feature_flags_cache()
+    clear_user_roles_cache()
     return {"deleted": True}
 
 
