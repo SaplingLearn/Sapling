@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
@@ -27,15 +28,22 @@ from services.profiles import get_display_name
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
+from services.tutor_sessions import (
+    PENDING_SESSIONS,
+    SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
+    materialization_lock,
+    require_session_owner,
+    session_owned_by,
+)
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Lazy sessions: start-session does not write to DB until the user sends their first chat message.
-# Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
-PENDING_SESSIONS: dict[str, dict] = {}
+# Lazy sessions: start-session does not write to DB until the user sends their
+# first chat message. PENDING_SESSIONS (session_id -> pending payload) lives in
+# services/tutor_sessions.py so other routes can share the ownership rule.
 
 MODE_DISPLAY_NAMES = {
     "socratic": "Socratic (question-based)",
@@ -453,43 +461,109 @@ def _elapsed_minutes(started_at_iso: str) -> int:
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
-    """If session was started lazily, persist session row + first assistant message before user/chat."""
+    """If session was started lazily, persist session row + first assistant message before user/chat.
+
+    Callers run require_session_owner first; the user check here is a
+    second line of defence and runs before anything is written, so a
+    mismatched caller can never destroy or claim the owner's pending session.
+
+    Concurrency (CodeRabbit on #709): sync routes such as /mode-switch run in
+    FastAPI's threadpool, so two of the owner's requests can arrive while the
+    session is still pending. Materialisation is serialised per session id by
+    ``materialization_lock``; the pending entry is removed only AFTER the
+    session row and the initial assistant message are written. So:
+
+    - a request that finds no pending entry can rely on the row existing
+      (the lock-free fast path below — no lock for a ready session);
+    - a request that loses the race waits on the lock, then finds the entry
+      gone and returns, and only then writes its own messages (no FK
+      failure on ``messages.session_id``);
+    - ownership checks keep seeing the pending entry throughout, so a
+      concurrent request is never 404'd in a gap between "no longer
+      pending" and "row inserted";
+    - if materialisation fails, the entry stays pending (never wrongly
+      ready) and the lock is released for the next request to retry.
+
+    The row write is an upsert that ignores a duplicate id, so a retry is
+    safe even when an earlier attempt committed the row but its response was
+    lost (timeout, dropped connection). Two markers on the pending payload:
+
+    - ``_row_may_exist`` is set BEFORE the first write attempt. From then on
+      end-session / rename / delete must treat the session as possibly
+      having a ``sessions`` row and act on the DB too, not just on memory.
+    - ``_row_written`` is set once a write has returned. It guards the
+      ``session.started`` event against double-logging when a later step
+      (the greeting write) fails and the request is retried.
+
+    Sync code: the async routes call it through ``_consume_pending_off_loop``
+    so the lock wait and the network writes never block the event loop.
+    """
     if session_id not in PENDING_SESSIONS:
         return
-    pending = PENDING_SESSIONS.pop(session_id)
-    if pending["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
-    
-    # Sessions key on the offering (0025). The pending payload carries the
-    # offering id (resolved at start-session) alongside the abstract course id.
-    session_data = {
-        "id": session_id,
-        "user_id": user_id,
-        "mode": pending["mode"],
-        "topic": pending["topic"],
-    }
-    if pending.get("offering_id"):
-        session_data["offering_id"] = pending["offering_id"]
+    with materialization_lock(session_id):
+        pending = PENDING_SESSIONS.get(session_id)
+        if pending is None:
+            return  # another request materialised (or discarded) it while we waited
+        if pending["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
-    table("sessions").insert(session_data)
-    # #117: session.started once the lazy session row actually materializes.
-    # The topic is free text -> content= (fingerprint only), never payload.
-    events_service.log_event(
-        "session.started",
-        category="usage",
-        user_id=user_id,
-        payload={
-            "session_id": session_id,
-            "mode": pending["mode"],
-            "offering_id": pending.get("offering_id"),
-        },
-        content=pending["topic"],
-    )
-    save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        if not pending.get("_row_written"):
+            # Sessions key on the offering (0025). The pending payload carries
+            # the offering id (resolved at start-session) alongside the
+            # abstract course id.
+            session_data = {
+                "id": session_id,
+                "user_id": user_id,
+                "mode": pending["mode"],
+                "topic": pending["topic"],
+            }
+            if pending.get("offering_id"):
+                session_data["offering_id"] = pending["offering_id"]
+
+            pending["_row_may_exist"] = True
+            table("sessions").upsert(session_data, on_conflict="id", ignore_duplicates=True)
+            pending["_row_written"] = True
+            # #117: session.started once the lazy session row actually
+            # materializes. The topic is free text -> content= (fingerprint
+            # only), never payload.
+            events_service.log_event(
+                "session.started",
+                category="usage",
+                user_id=user_id,
+                payload={
+                    "session_id": session_id,
+                    "mode": pending["mode"],
+                    "offering_id": pending.get("offering_id"),
+                },
+                content=pending["topic"],
+            )
+        save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        PENDING_SESSIONS.pop(session_id, None)
+
+
+async def _consume_pending_off_loop(session_id: str, user_id: str) -> None:
+    """`_consume_pending` for the async routes (/chat, /chat/stream, /action).
+
+    The slow path takes a blocking threading lock (possibly held by a
+    threadpool request mid-insert) and makes sync network writes, so it runs
+    in the threadpool; doing it inline would freeze every request on this
+    worker's event loop for as long as the insert takes. A session that is
+    not pending takes the inline fast path and never leaves the loop.
+    """
+    if session_id not in PENDING_SESSIONS:
+        return
+    await run_in_threadpool(_consume_pending, session_id, user_id)
+
+
+def _session_row_may_exist(pending: dict | None) -> bool:
+    """True when the session has (or may have) a ``sessions`` row: it is not
+    pending at all, or materialisation already attempted the row write."""
+    return pending is None or bool(pending.get("_row_may_exist"))
 
 
 def _ensure_session_ready(session_id: str, user_id: str) -> None:
-    """For action/mode-switch: materialize lazy session if still pending."""
+    """For /mode-switch (a sync route, already in the threadpool): materialize
+    the lazy session if still pending."""
     _consume_pending(session_id, user_id)
 
 
@@ -957,7 +1031,8 @@ async def _chat_turn_json(
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
     )
@@ -974,7 +1049,8 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
 
     request_id = (
         getattr(request.state, "request_id", None)
@@ -1177,18 +1253,25 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
+    require_session_owner(body.session_id, body.user_id)
+    empty = {
+        "concepts_covered": [],
+        "mastery_changes": [],
+        "new_connections": [],
+        "time_spent_minutes": 0,
+        "recommended_next": [],
+    }
+    # Discard under the materialisation lock so a concurrent first turn can't
+    # insert the row after we drop the entry. A pending session whose row was
+    # never attempted has nothing in the DB to end. One whose materialisation
+    # attempted the row (and then failed, say on the greeting) may have a
+    # row, so it is ended in the DB too, as is one that materialised while
+    # we waited.
+    popped = None
     if body.session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[body.session_id]
-        if body.user_id and pending["user_id"] != body.user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        PENDING_SESSIONS.pop(body.session_id, None)
-        empty = {
-            "concepts_covered": [],
-            "mastery_changes": [],
-            "new_connections": [],
-            "time_spent_minutes": 0,
-            "recommended_next": [],
-        }
+        with materialization_lock(body.session_id):
+            popped = PENDING_SESSIONS.pop(body.session_id, None)
+    if popped is not None and not _session_row_may_exist(popped):
         return {"summary": empty}
 
     session_rows = table("sessions").select(
@@ -1196,7 +1279,9 @@ def end_session(body: EndSessionBody, request: Request):
         filters={"id": f"eq.{body.session_id}"},
     )
     if not session_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
+        if popped is not None:
+            return {"summary": empty}  # the attempted row write never landed
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     session = session_rows[0]
 
     table("sessions").update(
@@ -1333,20 +1418,18 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     if not topic or len(topic) > 120:
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
+    require_session_owner(session_id, body.user_id)
     if session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[session_id]
-        if pending["user_id"] != body.user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        pending["topic"] = topic
-        return {"updated": True, "session": {"id": session_id, "topic": topic}}
-
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
-    if not owner_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if owner_rows[0].get("user_id") != body.user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        with materialization_lock(session_id):
+            pending = PENDING_SESSIONS.get(session_id)
+            if pending is not None:
+                # Rename the copy a later materialisation will write...
+                pending["topic"] = topic
+                if not _session_row_may_exist(pending):
+                    return {"updated": True, "session": {"id": session_id, "topic": topic}}
+                # ...and, since an earlier attempt may already have written
+                # the row (the retry's upsert won't overwrite it), the row too.
+        # Otherwise it materialised while we waited: rename the real row.
 
     table("sessions").update(
         {"topic": topic},
@@ -1361,18 +1444,18 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
         require_self(user_id, request)
     else:
         user_id = get_session_user_id(request)
-    if session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[session_id]
-        if pending["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        PENDING_SESSIONS.pop(session_id, None)
+    # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
+    # no-op 200 — nothing is deleted, and the answer never says whether the id
+    # exists. A second delete (another tab, a double click) still succeeds.
+    if not session_owned_by(session_id, user_id):
         return {"deleted": True}
-    # Verify the session belongs to the authenticated user before deleting
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
-    )
-    if owner_rows and owner_rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+    if session_id in PENDING_SESSIONS:
+        with materialization_lock(session_id):
+            popped = PENDING_SESSIONS.pop(session_id, None)
+        if popped is not None and not _session_row_may_exist(popped):
+            return {"deleted": True}
+        # A row may exist (an attempted materialisation, or one that finished
+        # while we waited): delete it too. Both deletes are no-ops if not.
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
@@ -1381,10 +1464,12 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
 @router.get("/sessions/{session_id}/resume")
 def resume_session(session_id: str, request: Request):
     user_id = get_session_user_id(request)
-    if session_id in PENDING_SESSIONS:
-        p = PENDING_SESSIONS[session_id]
-        if p["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
+    require_session_owner(session_id, user_id)
+    # .get(), not `in` + [...]: a concurrent first turn or delete can drop the
+    # entry in between. Gone means it materialised (or was discarded): read
+    # the DB below.
+    p = PENDING_SESSIONS.get(session_id)
+    if p is not None:
         now = datetime.now(timezone.utc).isoformat()
         return {
             "session": {
@@ -1411,9 +1496,7 @@ def resume_session(session_id: str, request: Request):
         filters={"id": f"eq.{session_id}"},
     )
     if not session_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session_rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
     # Expose the abstract course id (derived from the offering) for the
     # frontend, alongside the stored offering id.
@@ -1514,7 +1597,8 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 @router.post("/action")
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
-    _ensure_session_ready(body.session_id, body.user_id)
+    require_session_owner(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
     )
@@ -1523,6 +1607,7 @@ async def action(body: ActionBody, request: Request):
 @router.post("/mode-switch")
 def mode_switch(body: ModeSwitchBody, request: Request):
     require_self(body.user_id, request)
+    require_session_owner(body.session_id, body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(
