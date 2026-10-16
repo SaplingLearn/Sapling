@@ -127,7 +127,12 @@ Anything that forwards spans or exception state is on the student-data path.
    token — so `scripts/e2e-up.sh` and `scripts/explore.sh` export
    `POSTHOG_DISABLED=1` explicitly, and blank `POSTHOG_PERSONAL_API_KEY`
    (erasure is not gated by the kill switch, §9). Local dev with a token
-   sends.
+   sends. Above all of this sits the `product_analytics` feature flag
+   (ADR 0029, `off` | `on`, seeded `on`): the worker resolves it per
+   student just before the consent read and sends nothing for a student it
+   is off for (an unreadable flag store reads as off). It is the admin's
+   switch, editable from /admin without a deploy; like the kill switch it
+   stops capture, never erasure.
 9. **Account deletion deletes the PostHog person** (`bulk_delete` with
    `delete_events`) as a post-response BackgroundTask. Needs
    `POSTHOG_PERSONAL_API_KEY` (scope `person:write`) + `POSTHOG_PROJECT_ID`;

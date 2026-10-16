@@ -22,7 +22,7 @@ import pytest
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.testclient import TestClient
 
-from services import analytics_consent, events_service, posthog_client
+from services import analytics_consent, events_service, feature_flags, posthog_client
 from services.analytics_consent import Consent
 
 # The shape production actually issues (routes/auth.py: f"user_{google_id}").
@@ -99,6 +99,18 @@ def consent_db(monkeypatch):
         _PRIVACY_SIGNAL_CTX.reset(signal_token)
         _REQUEST_CTX.reset(scope_token)
         analytics_consent.clear_analytics_consent_cache()
+
+
+_REAL_FLAG_ON = feature_flags.flag_on
+
+
+@pytest.fixture(autouse=True)
+def product_analytics_on(monkeypatch):
+    """The hermetic DB has no `feature_flags` row, so `product_analytics`
+    resolves to its off default (#620); every other test in this module is
+    about delivery once the admin switch is on, so default it to on here.
+    ``TestProductAnalyticsFlag`` exercises the real gating."""
+    monkeypatch.setattr(feature_flags, "flag_on", lambda key, user_id: True)
 
 
 @pytest.fixture
@@ -948,6 +960,20 @@ class TestErrorEvents:
         events_service.flush_now()
         assert [r["event_type"] for r in sink] == ["error.4xx"]
 
+    def test_flag_changed_is_not_mirrored(self, fake_client, sink):
+        """#620: flag.changed's `field` names a rule target — `user:<another
+        student's id>` — under a key no id filter can know."""
+        other = "b" * 32
+        events_service.log_event(
+            "flag.changed", category="audit", user_id=USER_ID,
+            payload={"key": "product_analytics", "field": f"user:{other}",
+                     "before": None, "after": "on"},
+        )
+        _drain()
+        fake_client.capture.assert_not_called()
+        events_service.flush_now()
+        assert [r["event_type"] for r in sink] == ["flag.changed"]  # our row is kept
+
     def test_5xx_path_is_the_matched_template(self, fake_client, sink):
         """Through the middleware: the mirrored path/route are the matched
         route template, never the raw path (which embeds an id)."""
@@ -1079,6 +1105,46 @@ class TestPathTemplating:
         events_service.flush_now()
         rows = [x for x in sink if x["event_type"] == "auth.permission_denied"]
         assert rows[0]["payload"]["route"] == f"/api/profile/{OTHER_USER}/settings"
+
+    @pytest.mark.parametrize("prefix,route_path,request_path,expected", [
+        ("/api/profile", "/{user_id}/settings", f"/api/profile/{OTHER_USER}/settings",
+         "/api/profile/{user_id}/settings"),
+        ("/api/flags", "", "/api/flags", "/api/flags"),
+        ("/api", "/terms/{term_id}/offerings", "/api/terms/t9/offerings",
+         "/api/terms/{term_id}/offerings"),
+        ("/api/x", "/{rest:path}", f"/api/x/{OTHER_USER}/y", "/api/x/{rest}"),
+    ])
+    def test_route_template_is_the_full_mounted_template(
+        self, prefix, route_path, request_path, expected,
+    ):
+        """The template must carry the router's mount prefix whichever way
+        the installed FastAPI exposes an included route (copied with the
+        prefix baked in before 0.138; the original, prefix-less route under
+        `_IncludedRouter` from 0.138) — asserted on what a real request
+        resolves to, not on how the framework stores it."""
+        from fastapi import APIRouter
+
+        from services.request_context import route_template_of
+
+        seen: list = []
+        router = APIRouter()
+
+        @router.get(route_path)
+        def endpoint(request: Request):
+            seen.append(route_template_of(request.scope))
+            return {}
+
+        app = FastAPI()
+        app.include_router(router, prefix=prefix)
+        assert TestClient(app).get(request_path).status_code == 200
+        assert seen == [expected]
+        assert OTHER_USER not in seen[0]
+
+    def test_route_template_without_a_matched_route(self):
+        from services.request_context import route_template_of
+
+        assert route_template_of({"path": "/api/nope"}) is None
+        assert route_template_of(None) is None
 
     def test_user_id_keys_never_ride_in_properties(self, fake_client, sink):
         events_service.log_event(
@@ -2056,3 +2122,49 @@ class TestNoRawClientApi:
 
     def test_initialize_returns_a_bool_not_the_client(self):
         assert posthog_client.initialize_posthog() is False  # pytest: gate is off
+
+
+class TestProductAnalyticsFlag:
+    """#620/#677: `product_analytics` gates the worker's delivery, after the
+    disabled_reason() re-check and before the consent read."""
+
+    def _deliver_with(self, monkeypatch, flag):
+        sent = []
+
+        class _C:
+            def capture(self, *a, **k):
+                sent.append(a)
+
+        monkeypatch.setattr(posthog_client, "_client", _C())
+        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
+        monkeypatch.setattr(posthog_client, "_distinct_id_for", lambda actor: actor)
+        monkeypatch.setattr(feature_flags, "flag_on", flag)
+        item = posthog_client._Item(name="x", properties={}, actor="u1", captured_at=0.0)
+        posthog_client._deliver(item)
+        return sent
+
+    def test_worker_drops_when_flag_off(self, monkeypatch):
+        asked = []
+
+        def off(key, user_id):
+            asked.append((key, user_id))
+            return False
+
+        assert self._deliver_with(monkeypatch, off) == []
+        assert asked == [("product_analytics", "u1")]
+
+    def test_worker_sends_when_flag_on(self, monkeypatch):
+        assert len(self._deliver_with(monkeypatch, lambda k, u: True)) == 1
+
+    def test_unreadable_flag_store_sends_nothing(self, monkeypatch):
+        """No stored config (or an outage) resolves to the off default."""
+        def down():
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(feature_flags, "read_config", down)
+        # The real resolver, not this module's autouse stub.
+        assert _REAL_FLAG_ON("product_analytics", "u1") is False
+
+    def test_registered_off_first_and_client_visible(self):
+        fd = feature_flags.REGISTRY["product_analytics"]
+        assert fd.variants == ("off", "on") and fd.client_visible

@@ -63,6 +63,12 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("decision_router", ("off", "jev", "jev_shadow"),
             "Tutor turn router on the Jev decision seam (ADR 0027). jev_shadow "
             "also runs flash-lite to measure agreement.", False),
+    # #677 (ADR 0028): PostHog product analytics, end to end — the backend
+    # worker drops every capture for a student it resolves "off" for, and the
+    # frontend (#675) never starts posthog-js. The #620 migration seeds it
+    # "on", so analytics stays on wherever it already was.
+    FlagDef("product_analytics", ("off", "on"),
+            "PostHog product analytics, frontend + backend (ADR 0028).", True),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

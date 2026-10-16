@@ -100,10 +100,67 @@ _REQUEST_CTX: contextvars.ContextVar[RequestView | None] = contextvars.ContextVa
 
 
 def route_template_of(scope: dict | None) -> str | None:
-    """The matched route template (`/api/profile/{user_id}`) for a scope."""
+    """The matched route's FULL mounted template (`/api/profile/{user_id}`)
+    for a scope.
+
+    ``scope["route"]`` is not enough on its own across FastAPI versions.
+    Before 0.138, ``include_router(prefix=...)`` copied every route with the
+    prefix baked in, so its ``path_format`` was the full template. From 0.138
+    (``_IncludedRouter``) the scope carries the ORIGINAL route, whose
+    ``path_format`` is relative to its router (`/{user_id}/settings`), and the
+    prefix lives only in FastAPI's private scope state.
+
+    So the prefix is recovered from the request path instead, using only the
+    route's public pattern: the split of the path whose remainder the route
+    fully matches WITH the parameter values routing bound
+    (``scope["path_params"]``). That is exactly the router's (literal) mount
+    prefix on 0.138, and the empty string before it, where the pattern
+    already covers the whole path. Everything the route templates stays
+    templated, so no path parameter value — e.g. another user's id — lands
+    in the result. Without an agreeing split, the shortest matching prefix
+    is used (it only ever shortens the literal part); with no match at all,
+    the route's own template is returned unchanged.
+    """
     route = (scope or {}).get("route")
-    template = getattr(route, "path_format", None) or getattr(route, "path", None)
-    return template if isinstance(template, str) and template else None
+    template = getattr(route, "path_format", None)
+    if not isinstance(template, str):
+        template = getattr(route, "path", None)
+    if not isinstance(template, str):
+        return None
+    pattern = getattr(route, "path_regex", None)
+    path = (scope or {}).get("path")
+    if pattern is not None and isinstance(path, str):
+        root = (scope or {}).get("root_path") or ""
+        if root and path.startswith(root):
+            path = path[len(root):]
+        # Every "/" boundary, plus the end (a route declared as "" under its
+        # router's prefix matches an empty remainder).
+        splits = [*(j for j, ch in enumerate(path) if ch == "/"), len(path)]
+        matches = [(i, m) for i in splits if (m := pattern.fullmatch(path[i:]))]
+        # Prefer the split whose captured parameters are the ones routing
+        # actually bound (a `{rest:path}` parameter matches at several
+        # splits; only the real one agrees with scope["path_params"]).
+        bound = (scope or {}).get("path_params") or {}
+        convertors = getattr(route, "param_convertors", None) or {}
+        for i, m in matches:
+            if _agrees(m.groupdict(), bound, convertors):
+                return (path[:i] + template) or None
+        if matches:
+            return (path[:matches[0][0]] + template) or None
+    return template or None
+
+
+def _agrees(captured: dict, bound: dict, convertors: dict) -> bool:
+    for key, raw in captured.items():
+        if key not in bound:
+            continue
+        try:
+            value = convertors[key].convert(raw) if key in convertors else raw
+        except Exception:
+            return False
+        if value != bound[key]:
+            return False
+    return True
 
 
 def current_route_template() -> str | None:
