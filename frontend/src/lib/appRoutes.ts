@@ -1,14 +1,14 @@
 /**
  * Route classification: which paths are the signed-in app shell
  * (`src/app/(shell)/*`) as opposed to public/marketing pages, `/auth/*`,
- * onboarding and the rest.
+ * onboarding and the rest. FlagsProvider uses it to fetch flags only inside
+ * the shell (#620).
  *
- * The ONE list: middleware.ts (auth gating), app/robots.ts (disallow), the
- * UserProvider (where a cleared session leaves no usable UI) and product
- * analytics (which runs only inside the shell) all import it. Pure constants
- * and string checks only — middleware.ts runs on the edge runtime.
- * (middleware.ts's `config.matcher` must stay a literal for Next's static
- * analysis; middleware.test.ts pins it to this list.)
+ * NOT yet the only copy: middleware.ts (its literal `config.matcher`),
+ * app/robots.ts and UserContext.tsx (a plain-prefix match) each still keep
+ * their own list, so a new shell route must be added to all of them. The
+ * PostHog frontend PR (#675) consolidates them onto this module.
+ * Pure constants and string checks only, so the edge runtime can import it.
  */
 export const SHELL_PREFIXES = [
   "/dashboard", "/learn", "/quiz", "/study", "/tree",

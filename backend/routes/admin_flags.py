@@ -117,13 +117,25 @@ def update_flag(key: str, body: FlagPatch, request: Request):
     fd = _def(key)
     _check(fd, body.default_variant, "default_variant")
     _check(fd, body.rollout_variant, "rollout_variant")
-    current = feature_flags.read_config().flags.get(key) or {}
+    row = feature_flags.read_config().flags.get(key) or {}
+    # The flag's EFFECTIVE configuration (an unconfigured flag is default
+    # variants[0], rollout 0%), so the audit diff below never logs a
+    # "None -> 0" change that changed nothing.
+    current = {
+        "default_variant": row.get("default_variant") or fd.variants[0],
+        "rollout_percent": row.get("rollout_percent") or 0,
+        "rollout_variant": row.get("rollout_variant"),
+    }
+    # A field the body leaves out keeps its value; an explicit null
+    # rollout_variant CLEARS it (the editor sends null for a 0% rollout), so a
+    # stale variant can never come back with a later percentage.
+    sent = body.model_fields_set
     merged = {
-        "default_variant": body.default_variant or current.get("default_variant") or fd.variants[0],
+        "default_variant": body.default_variant or current["default_variant"],
         "rollout_percent": body.rollout_percent if body.rollout_percent is not None
-        else (current.get("rollout_percent") or 0),
-        "rollout_variant": body.rollout_variant if body.rollout_variant is not None
-        else current.get("rollout_variant"),
+        else current["rollout_percent"],
+        "rollout_variant": body.rollout_variant if "rollout_variant" in sent
+        else current["rollout_variant"],
     }
     if merged["rollout_percent"] > 0 and not merged["rollout_variant"]:
         raise HTTPException(status_code=422, detail="rollout_variant is required when rollout_percent > 0")
@@ -133,8 +145,8 @@ def update_flag(key: str, body: FlagPatch, request: Request):
         on_conflict="key",
     )
     for field in ("default_variant", "rollout_percent", "rollout_variant"):
-        if current.get(field) != merged[field]:
-            record_flag_change(actor, key, field, current.get(field), merged[field])
+        if current[field] != merged[field]:
+            record_flag_change(actor, key, field, current[field], merged[field])
     feature_flags.clear_feature_flags_cache()
     return {"flag": _view(fd, feature_flags.read_config())}
 

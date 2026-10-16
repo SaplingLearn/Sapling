@@ -168,6 +168,28 @@ def test_resolved_client_flags_only_client_visible(monkeypatch):
     assert "server_only" not in out
 
 
+def test_resolved_client_flags_reads_the_store_once_even_when_it_is_down(monkeypatch):
+    """One outage = one store read for the whole map, not one per flag; every
+    flag fails closed, and an env override still wins."""
+    monkeypatch.setenv("SAPLING_FLAG_HIDE_TREE", "on")
+    factory = _tables(fail=True)
+    calls = []
+    with patch("services.feature_flags.table",
+               side_effect=lambda name: calls.append(name) or factory(name)):
+        out = ff.resolved_client_flags("u1")
+    assert calls.count("feature_flags") == 1
+    assert out["hide_tree"] == "on"
+    assert {v for k, v in out.items() if k != "hide_tree"} == {"off"}
+
+
+def test_resolved_client_flags_matches_per_flag_resolution():
+    rows = [_row("on"), {**_row("off", 100, "on"), "key": "hide_tree"}]
+    with patch("services.feature_flags.table", side_effect=_tables(flags=rows)):
+        out = ff.resolved_client_flags("u1")
+        assert out == {k: ff.flag_variant(k, "u1") for k in out}
+    assert out["hide_quiz"] == "on" and out["hide_tree"] == "on"
+
+
 def test_require_flag_404_when_off():
     from fastapi import HTTPException
     dep = ff.require_flag(KEY)

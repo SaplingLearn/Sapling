@@ -186,7 +186,11 @@ def rollout_bucket(key: str, user_id: str) -> float:
     return int(digest[:8], 16) % 10000 / 100
 
 
-def explain(key: str, user_id: str | None, *, fresh: bool = False) -> Resolution:
+def explain(key: str, user_id: str | None, *, fresh: bool = False,
+            _snapshot: Snapshot | Exception | None = None) -> Resolution:
+    """`_snapshot`: a snapshot (or the error reading it) already taken by a
+    caller resolving many flags at once, so one outage costs one store read,
+    not one per flag. The env override still wins over it."""
     fd = REGISTRY.get(key)
     if fd is None:
         _warn_once(f"unregistered:{key}", "feature flag %r is not registered; off", key)
@@ -206,7 +210,9 @@ def explain(key: str, user_id: str | None, *, fresh: bool = False) -> Resolution
         return Resolution(off, "fail_closed", f"invalid stored variant {v!r} ({step})")
 
     try:
-        snap = _get_snapshot(fresh)
+        if isinstance(_snapshot, Exception):
+            raise _snapshot
+        snap = _snapshot if _snapshot is not None else _get_snapshot(fresh)
         row = snap.flags.get(key)
         if user_id:
             rules = snap.targets.get(key, [])
@@ -242,7 +248,15 @@ def flag_on(key: str, user_id: str | None) -> bool:
 
 
 def resolved_client_flags(user_id: str | None) -> dict[str, str]:
-    return {k: flag_variant(k, user_id) for k, fd in REGISTRY.items() if fd.client_visible}
+    """Every client-visible flag from ONE snapshot read. Resolving them one by
+    one would retry the store per flag during an outage — 11 timeouts in a
+    row on GET /api/flags, while NavFeatureGate keeps flagged pages veiled."""
+    try:
+        snap: Snapshot | Exception = _get_snapshot()
+    except Exception as exc:
+        snap = exc
+    return {k: explain(k, user_id, _snapshot=snap).variant
+            for k, fd in REGISTRY.items() if fd.client_visible}
 
 
 def require_flag(key: str):

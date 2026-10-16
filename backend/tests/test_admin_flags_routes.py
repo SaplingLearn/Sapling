@@ -137,6 +137,36 @@ def test_patch_validates_and_audits():
     assert event.call_args.kwargs["category"] == "audit"
 
 
+def test_patch_explicit_null_clears_rollout_variant():
+    """The editor sends rollout_variant=null; it must clear, not be ignored,
+    and a percentage without a variant is still refused."""
+    db = _DB()
+    _run(db, lambda: client.patch("/api/admin/flags/hide_quiz",
+                                  json={"rollout_percent": 20, "rollout_variant": "on"}))
+    r, _ = _run(db, lambda: client.patch("/api/admin/flags/hide_quiz", json={
+        "default_variant": "on", "rollout_percent": 20, "rollout_variant": None}))
+    assert r.status_code == 422
+    r, _ = _run(db, lambda: client.patch("/api/admin/flags/hide_quiz", json={
+        "default_variant": "on", "rollout_percent": 0, "rollout_variant": None}))
+    assert r.status_code == 200
+    assert db.flags["hide_quiz"]["rollout_variant"] is None
+    # Leaving the field out keeps it.
+    _run(db, lambda: client.patch("/api/admin/flags/hide_quiz",
+                                  json={"rollout_percent": 10, "rollout_variant": "on"}))
+    _run(db, lambda: client.patch("/api/admin/flags/hide_quiz", json={"rollout_percent": 30}))
+    assert db.flags["hide_quiz"]["rollout_variant"] == "on"
+
+
+def test_first_patch_audits_only_real_changes():
+    db = _DB()
+    r, mocks = _run(db, lambda: client.patch("/api/admin/flags/hide_quiz", json={
+        "default_variant": "on", "rollout_percent": 0, "rollout_variant": None}))
+    assert r.status_code == 200
+    event = mocks[6]
+    fields = [c.kwargs["payload"]["field"] for c in event.call_args_list]
+    assert fields == ["default_variant"]
+
+
 def test_unknown_flag_404():
     db = _DB()
     r, _ = _run(db, lambda: client.patch("/api/admin/flags/nope", json={"default_variant": "on"}))
