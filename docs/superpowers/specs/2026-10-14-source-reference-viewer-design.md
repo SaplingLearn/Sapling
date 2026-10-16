@@ -14,7 +14,7 @@ This matters most for content OCR text loses or garbles — diagrams, equations,
 
 **Opening a source.** Clicking a source in the right rail's **Sources** tab opens it as a new tab alongside **Sources** and **History**, in a split pane: the source on the left, the summary editor on the right (unchanged). Clicking that tab again (or switching to Sources/History) closes the split and returns to the plain summary view.
 
-**PDF sources** render page-by-page (`pdfjs-dist`). A "circle" tool lets the student drag a rectangular region over any part of a page; releasing the drag crops that region out of the rendered page as an image and attaches it as a pending **reference** chip near the Ask input, replacing/joining whatever summary-text selection may also be active.
+**PDF sources** render page-by-page (`pdfjs-dist`). A freeform "circle" (lasso) tool lets the student draw an irregular outline over any part of a page; releasing the drag crops that region — masked to the drawn outline, not just its bounding box — out of the rendered page as an image, and attaches it as a pending **reference** chip near the Ask input, replacing/joining whatever summary-text selection may also be active.
 
 **DOCX/PPTX sources** have no rasterization pipeline (see §8, deferred) and show their already-stored `extracted_text` instead, as read-only selectable text. Selecting a range attaches that text as the reference, same chip UI, same downstream flow — just a text snippet instead of an image.
 
@@ -43,7 +43,7 @@ No changes to `summary_docs`, `summary_doc_sources`, `summary_doc_versions`, or 
 ## 5. Frontend
 
 - **`SourcesPanel`**: clicking a source (instead of being inert) opens it as a new tab; the tab bar grows from {Sources, History} to {Sources, History, `<filename>`} while open, closable by re-clicking.
-- **New component** `SourceViewer` (PDF path): renders pages via `pdfjs-dist`, overlays a drag-to-select rectangle tool, crops the selected region from the rendered `<canvas>` on drag-release (`canvas.getContext('2d').getImageData`/`toBlob` over the selection bounds), and surfaces the crop to the parent via a callback — no separate state management beyond "there is a pending reference."
+- **New component** `SourceViewer` (PDF path): renders pages via `pdfjs-dist`, overlays a freeform lasso tool (tracks pointer-move points into a polygon path while dragging). On release: compute the polygon's bounding box, then mask it to the drawn outline via the standard canvas clip-path technique (`ctx.save()` → trace the polygon with `beginPath`/`lineTo` → `ctx.clip()` → draw the bounding-box region → `ctx.restore()`) before exporting with `toBlob`, filling the area outside the outline (but inside the bounding box) white rather than leaving it transparent, for simplest/most robust image encoding. Surfaces the crop to the parent via a callback — no separate state management beyond "there is a pending reference."
 - **New component** `SourceTextViewer` (DOCX/PPTX path): plain scrollable text with native text selection; selection becomes the reference via the browser Selection API, same callback shape as `SourceViewer` (string instead of image blob) so `SummaryEditor` doesn't need to know which kind it got.
 - **`SummaryEditor`**: gains a "reference" chip (next to the existing `askTarget` summary-highlight chip) showing what's attached and a way to clear it; `submitAsk` includes the reference (image blob as multipart/base64, or text) and forces `anchor_from`/`anchor_to` to `null` whenever a reference is attached, even if summary text also happens to be selected — the reference path is always whole-doc.
 
@@ -62,8 +62,8 @@ No changes to `summary_docs`, `summary_doc_sources`, `summary_doc_versions`, or 
 
 - DOCX/PPTX visual rendering (rasterization/conversion to page images) — text-select is the v1 fallback for these formats; a future task could add conversion (e.g. LibreOffice headless → PDF) if this gap is actually felt.
 - Backfilling original files for documents uploaded before this ships — the bytes are gone; not recoverable.
-- Freeform/lasso circling — v1 is a rectangular drag-select region ("circle" is the student-facing verb, not the literal shape).
 - Multi-page selection in one crop — a circled region is scoped to a single rendered page.
+- Freeform lasso editing/undo mid-draw (e.g. backing up a point) — releasing the pointer always commits the drawn path as-is; starting over means drawing again.
 - Persisting the circled crop beyond the single ask request.
 
 ## 9. Key decisions (for future reference)
@@ -71,6 +71,7 @@ No changes to `summary_docs`, `summary_doc_sources`, `summary_doc_versions`, or 
 | Decision | Choice |
 |---|---|
 | What the AI sees from a circled PDF region | An image crop of the rendered page (multimodal), not just underlying text — the point is catching diagrams/equations OCR loses |
+| Circle tool shape | Freeform lasso, masked to the drawn outline via canvas clip-path — not a plain bounding-box rectangle |
 | DOCX/PPTX fallback | Text-select on extracted text, not image rendering (no rasterization pipeline exists; not building one now) |
 | Insertion point for new content | Agent decides, via the existing whole-doc suggestion path — no new anchor/cursor-position mechanism |
 | Viewer placement | Split pane (source left, summary right), opened as a closable tab next to Sources/History |
