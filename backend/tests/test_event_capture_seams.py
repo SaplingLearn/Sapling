@@ -120,6 +120,9 @@ def test_event_taxonomy_is_pinned():
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.
         "rag.visibility_resync_failed",
+        # #620: admin feature-flag change (audit). Emit coverage lives in
+        # test_admin_flags_routes.py.
+        "flag.changed",
     })
 
 

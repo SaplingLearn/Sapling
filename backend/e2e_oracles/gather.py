@@ -384,3 +384,34 @@ def run_ragstore(args: argparse.Namespace) -> tuple[list[Finding], int]:
             )
 
     return findings, 0
+
+
+def flag_findings(flags: list[dict], targets: list[dict]) -> list[Finding]:
+    """#620: every stored variant must be one of its registry flag's variants."""
+    from services.feature_flags import REGISTRY
+
+    out: list[Finding] = []
+    for f in flags:
+        fd = REGISTRY.get(f["key"])
+        for field in ("default_variant", "rollout_variant"):
+            v = f.get(field)
+            if fd and v is not None and v not in fd.variants:
+                out.append(Finding("flags", f"{f['key']}.{field}={v!r} is not a registered variant",
+                                   {"key": f["key"], "field": field, "value": v}))
+    for t in targets:
+        fd = REGISTRY.get(t["flag_key"])
+        if fd and t["variant"] not in fd.variants:
+            out.append(Finding("flags", f"{t['flag_key']} rule {t['target_type']}:{t['target_id']} "
+                                        f"has unregistered variant {t['variant']!r}",
+                               {"key": t["flag_key"], "target": f"{t['target_type']}:{t['target_id']}",
+                                "value": t["variant"]}))
+    return out
+
+
+def run_flags(args: argparse.Namespace) -> tuple[list[Finding], int]:
+    """`flags`: no stored flag variant falls outside the registry (#620)."""
+    conn = _db_conn()
+    flags = conn.execute("select key, default_variant, rollout_variant from feature_flags").fetchall()
+    targets = conn.execute(
+        "select flag_key, target_type, target_id, variant from feature_flag_targets").fetchall()
+    return flag_findings([dict(r) for r in flags], [dict(r) for r in targets]), 0

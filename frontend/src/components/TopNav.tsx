@@ -29,48 +29,10 @@ import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
+import type { NavSection } from "@/lib/navFeatures";
+import { useVisibleNavSections } from "@/lib/useNavSections";
 
-type NavItem = { href: string; label: string; icon: string };
-type NavGroup = { label: string; items: NavItem[] };
-
-// Mirrors SideNav's SECTIONS verbatim. Kept duplicated rather than
-// imported so the two shells stay independent — TopNav and SideNav are
-// alternative skins, not parent/child, and the routing data is small
-// enough that the duplication isn't a maintenance burden.
-const GROUPS: NavGroup[] = [
-  {
-    label: "Learn",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: "home"  },
-      { href: "/learn",     label: "Tutor",     icon: "brain" },
-      { href: "/quiz",      label: "Quiz",      icon: "flask" },
-      { href: "/tree",      label: "Tree",      icon: "tree"  },
-      { href: "/study",     label: "Study",     icon: "bolt"  },
-    ],
-  },
-  {
-    label: "Organize",
-    items: [
-      { href: "/library",  label: "Library",  icon: "book" },
-      { href: "/calendar", label: "Calendar", icon: "cal"  },
-    ],
-  },
-  {
-    label: "Community",
-    items: [
-      { href: "/social",       label: "Social",       icon: "users"  },
-      { href: "/achievements", label: "Achievements", icon: "trophy" },
-    ],
-  },
-  {
-    label: "Tools",
-    items: [
-      { href: "/gradebook",      label: "Grades",         icon: "star"    },
-      { href: "/notetaker",      label: "Notetaker",      icon: "pencil"  },
-      { href: "/course-planner", label: "Course Planner", icon: "planner" },
-    ],
-  },
-];
+type NavGroup = NavSection;
 
 export const TOP_NAV_HEIGHT = 56;
 
@@ -87,6 +49,7 @@ export function TopNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const isMobile = useIsMobile();
+  const groups = useVisibleNavSections();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const mobileRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -157,7 +120,7 @@ export function TopNav() {
               />
             ))}
           </button>
-          {mobileOpen && <MobilePanel pathname={pathname} />}
+          {mobileOpen && <MobilePanel pathname={pathname} groups={groups} />}
         </div>
       )}
 
@@ -201,7 +164,7 @@ export function TopNav() {
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}
-      {!isMobile && <DesktopGroups pathname={pathname} />}
+      {!isMobile && <DesktopGroups pathname={pathname} groups={groups} />}
 
       <div style={{ marginLeft: isMobile ? "auto" : 0, display: "flex", alignItems: "center", gap: 8 }}>
         {isAuthenticated && (
@@ -273,7 +236,7 @@ export function TopNav() {
  * sub-pixel cursor moves, so the delay tolerates jitter as the cursor
  * travels from label to item.
  */
-function DesktopGroups({ pathname }: { pathname: string }) {
+function DesktopGroups({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
   const [openIndex, setOpenIndex] = React.useState<number | null>(null);
   const closeTimer = React.useRef<number | null>(null);
 
@@ -335,7 +298,7 @@ function DesktopGroups({ pathname }: { pathname: string }) {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-      {GROUPS.map((g, i) => (
+      {groups.map((g, i) => (
         <NavGroupTrigger
           key={g.label}
           group={g}
@@ -505,7 +468,7 @@ function NavGroupTrigger({
   );
 }
 
-function MobilePanel({ pathname }: { pathname: string }) {
+function MobilePanel({ pathname, groups }: { pathname: string; groups: NavGroup[] }) {
   return (
     <div
       style={{
@@ -516,7 +479,7 @@ function MobilePanel({ pathname }: { pathname: string }) {
         zIndex: 100,
       }}
     >
-      {GROUPS.map((g, i) => (
+      {groups.map((g, i) => (
         <React.Fragment key={g.label}>
           {i > 0 && <div style={{ height: 1, background: "var(--border)", margin: "6px 8px" }} aria-hidden />}
           <div

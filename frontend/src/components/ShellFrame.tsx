@@ -8,6 +8,7 @@ import { FeedbackFlow } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { AtmosphericBackdrop } from "./AtmosphericBackdrop";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
+import { NavFeatureGate } from "./NavFeatureGate";
 import { useLayoutPref } from "@/lib/useLayoutPref";
 import { useIsMobile } from "@/lib/useIsMobile";
 
@@ -58,7 +59,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             zIndex: 1,
           }}
         >
-          {children}
+          <NavFeatureGate>{children}</NavFeatureGate>
         </main>
         <FloatingActions />
         <Suspense fallback={null}>
@@ -98,7 +99,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           zIndex: 1,
         }}
       >
-        {children}
+        <NavFeatureGate>{children}</NavFeatureGate>
       </main>
       <FloatingActions />
       <Suspense fallback={null}>
