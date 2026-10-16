@@ -115,8 +115,11 @@ Anything that forwards spans or exception state is on the student-data path.
    rule. The handler is async, so the request path does no file I/O: it
    takes a plain frame SUMMARY (each chained exception's type and module, and
    its frames' file/line/function/module, read off the traceback — no
-   linecache, no message, no locals), and the worker builds the SDK-shaped
-   `$exception_list` from it (source context via linecache) and scrubs it.
+   linecache, no message, no locals; on a very deep stack the INNERMOST
+   frames are kept, raise site included), and the worker builds the
+   SDK-shaped `$exception_list` from it (source context via linecache,
+   module-relative file names like `services/foo.py` — never the server's
+   absolute paths) and scrubs it.
    The queue never holds the exception, its traceback or its frames, which
    would keep every local (decrypted content) alive while the item waits. `capture_exception_code_variables` and autocapture are off,
    and `before_send` scrubs again. The handler runs outside
@@ -136,9 +139,12 @@ Anything that forwards spans or exception state is on the student-data path.
    `product_analytics` feature flag** (ADR 0029, `off` | `on`, seeded `on`):
    the worker resolves it per student just before the consent read and sends
    nothing — including items already queued — for a student it is off for.
-   The read is bounded (2 s) and an unreadable or slow flag store is cached
-   as off for 30 s, so an outage cannot stall the worker (or the flush before
-   an erasure) for 30 s per item. It is editable from /admin without a
+   The read is the feature-flag resolver's own (ADR 0029): a warm cache
+   answers with no I/O, a cold one is bounded (`STORE_TIMEOUT_S`), and an
+   unreadable store is remembered as off for `STORE_UNREADABLE_TTL_S` — so an
+   outage cannot stall the worker (or the flush before an erasure) for 30 s
+   per item. One student's invalid stored variant fails closed for that
+   student's items only; only a store-read failure is an outage. It is editable from /admin without a
    deploy, and `SAPLING_FLAG_PRODUCT_ANALYTICS=off` is its env kill switch.
    (An earlier draft also had a bespoke `POSTHOG_DISABLED` env gate re-read
    on every submit; the flag plus "no token, no client" cover every case it

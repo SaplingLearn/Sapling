@@ -149,6 +149,12 @@ _SETTINGS_COLS = (
     "featured_role_id,featured_achievement_ids,updated_at"
 )
 
+#: Folded into the GET /settings ETag; bump it whenever the body's SHAPE
+#: changes (here: analytics_opt_out joined _SETTINGS_COLS, ADR 0028). An
+#: unchanged tag over a changed shape would 304 a browser's pre-deploy cached
+#: body — without the new field — for as long as the row's updated_at holds.
+_SETTINGS_ETAG_VERSION = "2"
+
 
 def _get_or_create_settings(user_id: str) -> dict:
     return _get_or_create_row("user_settings", _SETTINGS_COLS, user_id)
@@ -467,7 +473,7 @@ def get_settings(user_id: str, request: Request):
     settings = _get_or_create_settings(user_id)
     # user_settings.updated_at is bumped on every patch → a clean single-source
     # ETag. A matching If-None-Match returns 304 without re-serializing.
-    etag = make_etag("settings", user_id, settings.get("updated_at"))
+    etag = make_etag("settings", _SETTINGS_ETAG_VERSION, user_id, settings.get("updated_at"))
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified

@@ -111,8 +111,6 @@ def product_analytics_on(monkeypatch):
     about delivery once the admin switch is on, so default it to on here.
     ``TestProductAnalyticsFlag`` exercises the real gating."""
     monkeypatch.setattr(posthog_client, "_product_analytics_on", lambda actor: True)
-    monkeypatch.setattr(posthog_client, "_flag_down_until", 0.0)
-    monkeypatch.setattr(posthog_client, "_flag_reader", None)
 
 
 @pytest.fixture
@@ -1840,7 +1838,34 @@ class TestExceptionPayloadAtEnqueue:
         assert all(e["value"] == "[redacted]" for e in exc_list)
         frame = exc_list[0]["stacktrace"]["frames"][-1]
         assert frame["function"] == "outer" and frame["context_line"]
+        # Module-relative, never the server's absolute path (#677 delta review).
+        for e in exc_list:
+            for f in e["stacktrace"]["frames"]:
+                assert not os.path.isabs(f["filename"]) and not os.path.isabs(f["abs_path"]), f
+        assert frame["filename"].endswith("test_posthog_seam.py")
+        assert posthog_client._relative_filename(
+            "services.posthog_client", posthog_client.__file__) == "services/posthog_client.py"
         assert SECRET not in json.dumps(props, default=str)
+
+    def test_truncation_keeps_the_innermost_frames(self, fake_client, monkeypatch):
+        monkeypatch.setattr(posthog_client, "_MAX_FRAMES", 5)
+
+        def recurse(n):
+            if n == 0:
+                raise ValueError("deep")
+            return recurse(n - 1)
+
+        def raise_site():
+            recurse(20)
+
+        try:
+            raise_site()
+        except ValueError as exc:
+            summary = posthog_client._exception_summary(exc)
+        frames = summary[0]["frames"]
+        assert len(frames) == 5
+        assert frames[-1]["function"] == "recurse"
+        assert frames[-1]["lineno"] == recurse.__code__.co_firstlineno + 2  # the raise
 
 
 class TestMigrationHeader:
@@ -1997,6 +2022,35 @@ class TestRuntimeKillSwitch:
         assert fake_client.capture.call_count == 2
 
 
+class TestSettingsEtagVersion:
+    """#677 delta review: GET /settings gained analytics_opt_out, so a body a
+    browser cached before the deploy must not 304 as current."""
+
+    def test_differs_from_the_pre_change_formula(self):
+        from main import app
+        from services.http_cache import make_etag
+
+        stamp = "2026-09-27T00:00:00Z"
+        row = {"user_id": USER_ID, "updated_at": stamp, "analytics_opt_out": False}
+
+        def table_side_effect(name):
+            m = MagicMock()
+            m.select.return_value = [row] if name == "user_settings" else []
+            return m
+
+        with patch("routes.profile.require_self"), \
+             patch("routes.profile.table", side_effect=table_side_effect):
+            client = TestClient(app)
+            r = client.get(f"/api/profile/{USER_ID}/settings")
+            assert r.status_code == 200
+            old = make_etag("settings", USER_ID, stamp)
+            assert r.headers["etag"] != old
+            stale = client.get(f"/api/profile/{USER_ID}/settings",
+                               headers={"If-None-Match": old})
+        assert stale.status_code == 200, "a pre-deploy cached body is not current"
+        assert "analytics_opt_out" in stale.json()
+
+
 class TestRequestContextIsNarrow:
     """The contextvar holds the request's state dict + a route accessor —
     never the ASGI scope with its headers and cookies."""
@@ -2078,6 +2132,13 @@ class TestNoRawClientApi:
     def test_initialize_returns_a_bool_not_the_client(self):
         assert posthog_client.initialize_posthog() is False  # pytest: gate is off
 
+    def test_a_leftover_posthog_disabled_warns_once_at_startup(self, monkeypatch, caplog):
+        monkeypatch.setenv("POSTHOG_DISABLED", "1")
+        with caplog.at_level(logging.WARNING, "sapling.posthog"):
+            posthog_client.initialize_posthog()
+        (msg,) = [r.getMessage() for r in caplog.records if "POSTHOG_DISABLED" in r.getMessage()]
+        assert "ignored" in msg and "SAPLING_FLAG_PRODUCT_ANALYTICS=off" in msg
+
 
 class TestProductAnalyticsFlag:
     """#620/#677: `product_analytics` gates the worker's delivery, before the
@@ -2117,71 +2178,75 @@ class TestProductAnalyticsFlag:
 
     def test_unreadable_flag_store_sends_nothing(self, monkeypatch):
         """No stored config (or an outage) resolves to the off default."""
-        def down():
+        def down(**k):
             raise RuntimeError("db down")
 
         monkeypatch.setattr(feature_flags, "read_config", down)
         assert posthog_client._product_analytics_on("u1") is False
 
+    def test_one_students_invalid_variant_skips_only_that_student(self, monkeypatch):
+        """#677 delta review: a fail_closed answer from ONE student's invalid
+        stored rule must not switch PostHog off for everyone."""
+        snap = feature_flags.Snapshot(
+            flags={"product_analytics": {"key": "product_analytics", "default_variant": "on",
+                                         "rollout_percent": 0, "rollout_variant": None}},
+            targets={"product_analytics": [{"flag_key": "product_analytics",
+                                            "target_type": "user", "target_id": "u-bad",
+                                            "variant": "banana"}]},
+        )
+        monkeypatch.setattr(feature_flags, "read_config", lambda **k: snap)
+        assert posthog_client._product_analytics_on("u-bad") is False
+        assert posthog_client._product_analytics_on("u-good") is True
+        assert posthog_client._product_analytics_on("u-bad") is False
+
+    def test_a_warm_flag_cache_starts_no_thread(self, monkeypatch):
+        import threading
+
+        snap = feature_flags.Snapshot(
+            flags={"product_analytics": {"key": "product_analytics", "default_variant": "on",
+                                         "rollout_percent": 0, "rollout_variant": None}},
+            targets={},
+        )
+        monkeypatch.setattr(feature_flags, "read_config", lambda **k: snap)
+        posthog_client._product_analytics_on("u1")  # warms the snapshot
+        before = threading.active_count()
+        for _ in range(50):
+            assert posthog_client._product_analytics_on("u1") is True
+        assert threading.active_count() == before
+
     def test_a_hung_flag_store_costs_one_bounded_wait_per_window(self, monkeypatch):
         """#677 review: the worker's flag read could block 30 s (the
-        connection's default timeout) on every queued item during an outage."""
-        import threading
+        connection's default timeout) on every queued item during an outage.
+        The bound and the negative cache live in feature_flags now."""
+        reads: list = []
 
-        release = threading.Event()
-        calls: list = []
+        def slow_then_fail(**k):
+            reads.append(k.get("timeout"))
+            raise TimeoutError("read timed out")  # what a bounded read does
 
-        def hang(key, user_id):
-            calls.append(user_id)
-            release.wait(5)
-            return feature_flags.Resolution("on", "default", "")
-
-        monkeypatch.setattr(feature_flags, "explain", hang)
-        monkeypatch.setattr(posthog_client, "_FLAG_TIMEOUT_S", 0.05)
-        try:
-            started = time.monotonic()
-            for _ in range(20):
-                assert posthog_client._product_analytics_on("u1") is False
-            assert time.monotonic() - started < 1.0, "one bounded wait, then the cached failure"
-            assert calls == ["u1"], "the failure is cached: no read per item"
-        finally:
-            release.set()
-
-    def test_a_fail_closed_answer_is_cached_too(self, monkeypatch):
-        calls: list = []
-
-        def unreadable(key, user_id):
-            calls.append(user_id)
-            return feature_flags.Resolution("off", "fail_closed", "flag store unreadable")
-
-        monkeypatch.setattr(feature_flags, "explain", unreadable)
-        for _ in range(5):
+        monkeypatch.setattr(feature_flags, "read_config", slow_then_fail)
+        for _ in range(20):
             assert posthog_client._product_analytics_on("u1") is False
-        assert calls == ["u1"]
-        monkeypatch.setattr(posthog_client, "_flag_down_until", 0.0)  # the window passes
-        monkeypatch.setattr(feature_flags, "explain",
-                            lambda k, u: feature_flags.Resolution("on", "default", ""))
-        assert posthog_client._product_analytics_on("u1") is True
+        assert reads == [feature_flags.STORE_TIMEOUT_S], "one bounded read, then the cache"
 
-    def test_flush_before_erasure_stays_bounded_while_the_flag_store_hangs(
+    def test_flush_before_erasure_stays_bounded_while_the_flag_store_is_down(
         self, fake_client, monkeypatch, sink,
     ):
-        import threading
+        reads: list = []
 
-        release = threading.Event()
-        monkeypatch.setattr(feature_flags, "explain",
-                            lambda k, u: release.wait(5) and None)
-        monkeypatch.setattr(posthog_client, "_FLAG_TIMEOUT_S", 0.05)
-        try:
-            for _ in range(50):
-                events_service.log_event("note.created", category="usage", user_id=USER_ID)
-            started = time.monotonic()
-            posthog_client.flush(timeout_seconds=3)
-            assert time.monotonic() - started < 2.0
-            assert posthog_client._queue.unfinished_tasks == 0
-            fake_client.capture.assert_not_called()
-        finally:
-            release.set()
+        def down(**k):
+            reads.append(1)
+            raise TimeoutError("read timed out")
+
+        monkeypatch.setattr(feature_flags, "read_config", down)
+        for _ in range(50):
+            events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        started = time.monotonic()
+        posthog_client.flush(timeout_seconds=3)
+        assert time.monotonic() - started < 2.0
+        assert posthog_client._queue.unfinished_tasks == 0
+        assert len(reads) == 1
+        fake_client.capture.assert_not_called()
 
     def test_registered_off_first_and_client_visible(self):
         fd = feature_flags.REGISTRY["product_analytics"]

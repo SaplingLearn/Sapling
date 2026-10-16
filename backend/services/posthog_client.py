@@ -66,6 +66,7 @@ with a token set does send.
 
 from __future__ import annotations
 
+import collections
 import logging
 import os
 import queue
@@ -176,6 +177,12 @@ def initialize_posthog() -> bool:
     — never the client itself: nothing outside this module sends directly.
     """
     global _client
+    if (os.getenv("POSTHOG_DISABLED") or "").strip():
+        logger.warning(
+            "POSTHOG_DISABLED is set but is ignored: the runtime switch is the "
+            "product_analytics feature flag (/admin, or SAPLING_FLAG_PRODUCT_ANALYTICS=off); "
+            "an unset POSTHOG_PROJECT_TOKEN turns PostHog off entirely",
+        )
     reason = disabled_reason()
     if reason is not None:
         logger.info("PostHog disabled: %s", reason)
@@ -318,55 +325,6 @@ def _work() -> None:
 
 _SKIP = object()
 
-#: The worker's product_analytics read (a flag-store PostgREST call on a cache
-#: miss, with the connection's 30 s default timeout) is bounded by this...
-_FLAG_TIMEOUT_S = 2.0
-#: ...and an unreadable/slow store is remembered as "off" for this long, so an
-#: outage costs one bounded wait per window, not one 30 s read per queued item
-#: (and flush() before an account-deletion bulk_delete stays bounded).
-_FLAG_FAILURE_TTL_S = 30.0
-_flag_down_until = 0.0
-_flag_reader: threading.Thread | None = None
-
-
-def _product_analytics_on(actor: str) -> bool:
-    """The ``product_analytics`` flag for ``actor`` (#620/ADR 0029), from the
-    worker thread. Off when the store is unreadable or slower than
-    :data:`_FLAG_TIMEOUT_S`; either failure is cached for
-    :data:`_FLAG_FAILURE_TTL_S`. A read still hung from an earlier timeout
-    is not stacked on: until it ends, the answer is off. Never raises."""
-    global _flag_down_until, _flag_reader
-    if time.monotonic() < _flag_down_until:
-        return False
-    if _flag_reader is not None and _flag_reader.is_alive():
-        return False
-    from services.feature_flags import explain
-
-    box: dict = {}
-
-    def read() -> None:
-        try:
-            box["res"] = explain("product_analytics", actor)
-        except Exception as exc:  # explain fails closed itself; belt and braces
-            box["err"] = exc
-
-    reader = threading.Thread(target=read, name="posthog-flag-read", daemon=True)
-    _flag_reader = reader
-    reader.start()
-    reader.join(_FLAG_TIMEOUT_S)
-    res = box.get("res")
-    if reader.is_alive() or res is None or res.step == "fail_closed":
-        # Timed out, raised, or explain() could not read the store (its
-        # fail_closed answer is not cached there): off, and remembered.
-        _flag_down_until = time.monotonic() + _FLAG_FAILURE_TTL_S
-        logger.warning(
-            "PostHog: product_analytics flag unreadable (%s); not sending for %.0fs",
-            "timeout" if reader.is_alive() else (res.detail if res else "error"),
-            _FLAG_FAILURE_TTL_S,
-        )
-        return False
-    return res.variant == "on"
-
 
 def _distinct_id_for(actor: str) -> Any:
     """The distinct_id to send under, or ``_SKIP``. Runs on the worker; may
@@ -374,6 +332,24 @@ def _distinct_id_for(actor: str) -> Any:
     from services.analytics_consent import Consent, consent_for
 
     return actor if consent_for(actor) is Consent.ALLOWED else _SKIP
+
+
+def _product_analytics_on(actor: str) -> bool:
+    """The ``product_analytics`` flag for ``actor`` (#620/ADR 0029), on the
+    worker. A warm flag cache answers with no I/O; a cold one does one read
+    bounded by feature_flags.STORE_TIMEOUT_S, and an unreadable store is
+    remembered there for STORE_UNREADABLE_TTL_S — so an outage costs one
+    bounded wait per window, never a hung read per queued item (and flush()
+    before an erasure stays bounded). Anything but "on" — including ONE
+    student's invalid stored variant (fail_closed) — skips that item only.
+    Never raises."""
+    try:
+        from services.feature_flags import explain
+
+        return explain("product_analytics", actor).variant == "on"
+    except Exception:  # explain fails closed itself; belt and braces
+        logger.debug("product_analytics flag read failed; not sending", exc_info=True)
+        return False
 
 
 def _deliver(item: _Item) -> None:
@@ -659,12 +635,14 @@ def _exception_summary(exc: BaseException) -> list[dict]:
     while cur is not None and id(cur) not in seen and len(out) < _MAX_CHAIN:
         seen.add(id(cur))
         etype = type(cur)
-        frames = []
+        # The INNERMOST frames are kept on truncation: the raise site (and
+        # what led into it) is what grouping and debugging need.
+        frames: collections.deque = collections.deque(maxlen=_MAX_FRAMES)
         tb = cur.__traceback__
-        while tb is not None and len(frames) < _MAX_FRAMES:
+        while tb is not None:
             code = tb.tb_frame.f_code
             frames.append({
-                "filename": code.co_filename,
+                "path": code.co_filename,
                 "lineno": tb.tb_lineno,
                 "function": code.co_name,
                 "module": tb.tb_frame.f_globals.get("__name__"),
@@ -674,7 +652,7 @@ def _exception_summary(exc: BaseException) -> list[dict]:
         out.append({
             "type": etype.__name__,
             "module": None if module == "builtins" else module,
-            "frames": frames,
+            "frames": list(frames),
         })
         if cur.__cause__ is not None:
             cur = cur.__cause__
@@ -683,6 +661,34 @@ def _exception_summary(exc: BaseException) -> list[dict]:
         else:
             cur = None
     return out
+
+
+def _relative_filename(module: str | None, path: str) -> str:
+    """What the SDK's ``filename_for_module`` produces — the path relative to
+    the frame's top-level package (``services/foo.py``,
+    ``fastapi/routing.py``) — but never an absolute server path: when the
+    module cannot place it, the bare file name."""
+    rel = path
+    try:
+        from posthog.exception_utils import filename_for_module
+
+        rel = filename_for_module(module, path) or path
+    except Exception:
+        pass
+    if not os.path.isabs(rel):
+        return rel
+    # The SDK gives up (returns the absolute path) for a namespace package
+    # such as `services` (no __init__.py, so no __file__). Derive the same
+    # answer from the dotted name when the path ends with it.
+    base = os.path.basename(path)
+    parts = (module or "").split(".") if module else []
+    if base == "__init__.py" and parts:
+        candidate = os.path.join(*parts, base)
+    elif len(parts) > 1:
+        candidate = os.path.join(*parts[:-1], base)
+    else:
+        candidate = base
+    return candidate if path.endswith(os.sep + candidate) else base
 
 
 def _exception_list(summary: list[dict]) -> list[dict]:
@@ -697,13 +703,15 @@ def _exception_list(summary: list[dict]) -> list[dict]:
     for exc in summary:
         frames = []
         for f in exc["frames"]:
-            filename, lineno = f["filename"], f["lineno"]
-            lines = linecache.getlines(filename)
+            path, lineno = f["path"], f["lineno"]
+            lines = linecache.getlines(path)
             idx = lineno - 1
+            # Module-relative, never the server's absolute path.
+            filename = _relative_filename(f["module"], path)
             frames.append({
                 "platform": "python",
                 "filename": filename,
-                "abs_path": os.path.abspath(filename),
+                "abs_path": filename,
                 "function": f["function"],
                 "module": f["module"],
                 "lineno": lineno,
