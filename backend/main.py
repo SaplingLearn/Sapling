@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
+from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification, summary_docs
 from routes.profile import router as profile_router
 from routes.admin_flags import router as admin_flags_router
 from routes.flags import router as flags_router
@@ -281,6 +281,7 @@ app.include_router(social.router,      prefix="/api/social")
 app.include_router(extract.router,     prefix="/api/extract")
 app.include_router(auth.router,        prefix="/api/auth")
 app.include_router(documents.router,   prefix="/api/documents")
+app.include_router(summary_docs.router, prefix="/api/summary-docs")
 app.include_router(flashcards.router,  prefix="/api/flashcards")
 app.include_router(study_guide.router, prefix="/api/study-guide")
 app.include_router(feedback.router,    prefix="/api")

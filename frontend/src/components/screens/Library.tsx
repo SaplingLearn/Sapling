@@ -2,6 +2,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { Icon } from "../Icon";
@@ -117,7 +118,11 @@ export function Library() {
       if (cat !== "all" && d.category !== cat) return false;
       if (courseFilter === "uncategorized" && d.course_id) return false;
       if (courseFilter !== "all" && courseFilter !== "uncategorized" && d.course_id !== courseFilter) return false;
-      if (q && !d.file_name.toLowerCase().includes(q) && !(d.summary || "").toLowerCase().includes(q)) return false;
+      // summary_preview is capped at ~220 chars (services/summary_docs_service.py),
+      // unlike the old documents.summary field this replaced, which held the
+      // full decrypted text — a search term appearing only later in a long
+      // summary no longer matches here. Accepted v1 tradeoff, not a bug.
+      if (q && !d.file_name.toLowerCase().includes(q) && !(d.summary_preview || "").toLowerCase().includes(q)) return false;
       return true;
     });
   }, [documents, cat, courseFilter, query]);
@@ -282,12 +287,12 @@ export function Library() {
                           {courseLabel ? `${courseLabel} · ` : ""}{new Date(d.created_at).toLocaleDateString()}
                         </div>
                       </div>
-                      {d.summary && (
+                      {d.summary_preview && (
                         <div style={{
                           fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5,
                           display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
                         }}>
-                          {d.summary}
+                          {d.summary_preview}
                         </div>
                       )}
                     </button>
@@ -331,7 +336,7 @@ export function Library() {
                           fontSize: 11, color: "var(--text-muted)",
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                         }}>
-                          {d.summary || "—"}
+                          {d.summary_preview || "—"}
                         </div>
                       </div>
                       <span className="chip" style={{ textTransform: "capitalize", flexShrink: 0 }}>
@@ -520,6 +525,12 @@ function DetailPanel({
     }
   });
 
+  const deleteWarning = doc.summary_doc_id
+    ? doc.summary_source_count > 1
+      ? "Click again to confirm — this also removes its summary, which also used other sources"
+      : "Click again to confirm — this also removes its summary"
+    : "Click again to confirm";
+
   const container: React.CSSProperties = embedded
     ? { padding: 20 }
     : { width: 360, borderLeft: "1px solid var(--border)", padding: 20, background: "var(--bg-subtle)", overflowY: "auto", flexShrink: 0 };
@@ -537,10 +548,17 @@ function DetailPanel({
         Uploaded {new Date(doc.created_at).toLocaleDateString()}
       </div>
 
-      {doc.summary && (
+      {doc.summary_doc_id && (
         <div style={{ marginBottom: 16 }}>
           <div className="label-micro" style={{ marginBottom: 4 }}>Summary</div>
-          <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-dim)" }}>{doc.summary}</div>
+          {doc.summary_preview && (
+            <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-dim)", marginBottom: 8 }}>
+              {doc.summary_preview}
+            </div>
+          )}
+          <Link href={`/library/summaries/${doc.summary_doc_id}`} className="btn btn--sm btn--primary">
+            Open summary
+          </Link>
         </div>
       )}
 
@@ -586,7 +604,7 @@ function DetailPanel({
         className={`btn ${del.armed ? "btn--danger" : ""}`}
         style={{ width: "100%", background: del.armed ? "var(--err-soft)" : undefined, color: del.armed ? "var(--err)" : undefined }}
       >
-        <Icon name="x" size={13} /> {del.armed ? "Click again to confirm" : "Delete document"}
+        <Icon name="x" size={13} /> {del.armed ? deleteWarning : "Delete document"}
       </button>
     </aside>
   );

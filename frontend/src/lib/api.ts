@@ -12,6 +12,7 @@ import type {
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
+  SummaryDoc, SummaryDocCore, SummaryDocSuggestion, SummaryDocVersion,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -800,6 +801,70 @@ export const scanDocumentConcepts = (documentId: string, userId: string) =>
 
 export const scanCourseConcepts = (courseId: string, userId: string) =>
   fetchJSON<ScanConceptsResponse>(`/api/documents/course/${courseId}/scan-concepts`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+// Summary docs (editable library summaries)
+
+export const getSummaryDoc = (summaryDocId: string, userId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}?user_id=${encodeURIComponent(userId)}`);
+
+export const updateSummaryDocContent = (summaryDocId: string, userId: string, content: Record<string, unknown>) =>
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, content }),
+  });
+
+export const addSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/sources`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, document_id: documentId }),
+  });
+
+export const removeSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
+  fetchJSON<SummaryDoc>(
+    `/api/summary-docs/${summaryDocId}/sources/${documentId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+export const askSummaryDocAgent = (
+  summaryDocId: string,
+  userId: string,
+  body: {
+    instruction: string;
+    anchor_from?: number | null;
+    anchor_to?: number | null;
+    original_text?: string | null;
+    allow_surrounding_edits?: boolean;
+  },
+) =>
+  fetchJSON<SummaryDocSuggestion>(`/api/summary-docs/${summaryDocId}/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...body }),
+  });
+
+export const keepSummaryDocSuggestion = (
+  summaryDocId: string, userId: string, suggestionId: string, content: Record<string, unknown>,
+) =>
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/keep`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, content }),
+  });
+
+export const undoSummaryDocSuggestion = (summaryDocId: string, userId: string, suggestionId: string) =>
+  fetchJSON<{ undone: boolean }>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/undo`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const listSummaryDocVersions = (summaryDocId: string, userId: string) =>
+  fetchJSON<{ versions: SummaryDocVersion[] }>(
+    `/api/summary-docs/${summaryDocId}/versions?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const restoreSummaryDocVersion = (summaryDocId: string, userId: string, versionId: string) =>
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}/versions/${versionId}/restore`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });

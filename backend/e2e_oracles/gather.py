@@ -211,6 +211,11 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("flashcards", "id", "front"),
     ("flashcards", "id", "back"),
     ("study_guides", "id", "content"),
+    ("summary_docs", "id", "content"),
+    ("summary_doc_versions", "id", "content"),
+    ("summary_doc_suggestions", "id", "instruction"),
+    ("summary_doc_suggestions", "id", "original_text"),
+    ("summary_doc_suggestions", "id", "proposed_text"),
     ("room_summaries", "room_id", "summary"),
     # ADR 0025 / #484. UNIFORM across the table — document and catalog rows
     # alike — which is exactly what makes it assertable here: "chunk_text is

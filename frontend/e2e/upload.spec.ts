@@ -55,6 +55,12 @@ const FIXTURE_NAME = "upload-journey.pdf";
 // output this journey asserts on. Keep in sync with that module.
 const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
+// The Library card's rendered text is `summary_preview`, truncated to 220
+// chars (services/summary_docs_service.py::_PREVIEW_MAX_CHARS) — and
+// SCRIPTED_ABSTRACT_SNIPPET sits at char 223 of E2E_DOC_ABSTRACT, just past
+// that cutoff. Use a snippet from the abstract's opening clause instead,
+// which is always inside the preview window.
+const SCRIPTED_ABSTRACT_PREVIEW_SNIPPET = "gradient descent as an iterative optimization procedure";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
 
 /**
@@ -164,10 +170,11 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   // ── Postgres readback (raw SQL) ───────────────────────────────────────
   const docs = await queryRaw(
-    `SELECT id, user_id, offering_id, category, summary
-       FROM documents
-      WHERE file_name = $1
-        AND deleted_at IS NULL`,
+    `SELECT d.id, d.user_id, d.offering_id, d.category, sd.content AS summary_content
+       FROM documents d
+       JOIN summary_docs sd ON sd.primary_document_id = d.id
+      WHERE d.file_name = $1
+        AND d.deleted_at IS NULL`,
     [FIXTURE_NAME],
   );
   expect(docs).toHaveLength(1);
@@ -176,18 +183,19 @@ test("upload → SSE → document appears in library and Postgres", async ({
     user_id: string;
     offering_id: string | null;
     category: string;
-    summary: string | null;
+    summary_content: string | null;
   };
   expect(doc.user_id).toBe(USER_ACTIVE);
   expect(doc.category).toBe(SCRIPTED_CATEGORY);
   // Documents key on the offering (0025) — resolve_offering(create=True)
   // must have attached one.
   expect(doc.offering_id).toBeTruthy();
-  // `documents.summary` is column-encrypted at rest: present, but the
-  // stored value must be ciphertext, never the plaintext abstract.
-  expect(doc.summary ?? "").not.toBe("");
-  expect(doc.summary ?? "").not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
-  expect(doc.summary ?? "").not.toContain("gradient descent");
+  // summary_docs.content is encrypted at rest (library-summary-editor
+  // cutover, replacing the old documents.summary assertion here): present,
+  // but the stored value must be ciphertext, never the plaintext abstract.
+  expect(doc.summary_content ?? "").not.toBe("");
+  expect(String(doc.summary_content)).not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
+  expect(String(doc.summary_content)).not.toContain("gradient descent");
 
   // Phase-3 side effect: the scripted concepts were merged into the
   // course knowledge graph (plaintext columns — safe to assert exactly).
@@ -210,9 +218,10 @@ test("upload → SSE → document appears in library and Postgres", async ({
   const card = page.getByTestId(`library-doc-${doc.id}`);
   await expect(card).toBeVisible();
   await expect(card).toContainText(FIXTURE_NAME);
-  // The card renders the decrypted summary — the encryption round-trip
-  // (encrypt at persist, decrypt at read) closed correctly.
-  await expect(card).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
+  // The card renders the decrypted, truncated summary preview — the
+  // encryption round-trip (encrypt at persist, decrypt at read) closed
+  // correctly.
+  await expect(card).toContainText(SCRIPTED_ABSTRACT_PREVIEW_SNIPPET);
 
   // ── Library course filter matches the seeded course (#435) ────────────
   // Regression: GET /api/documents/user/{id} used to return offering_id but

@@ -33,8 +33,15 @@ from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
-from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.encryption import encrypt_if_present, encrypt_json, decrypt_json
 from services.extraction_service import extract_text_from_file
+from services.summary_docs_service import (
+    attach_summary_previews,
+    create_summary_doc,
+    delete_summary_docs_for_document,
+    plaintext_for_primary_document,
+    plaintext_from_prosemirror,
+)
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
@@ -237,7 +244,7 @@ def list_documents(user_id: str, request: Request):
     require_self(user_id, request)
     _validate_user(user_id)
     docs = table("documents").select(
-        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        "id,user_id,offering_id,file_name,category,concept_notes,created_at,processed_at",
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
@@ -247,7 +254,6 @@ def list_documents(user_id: str, request: Request):
     # list_sessions offering_to_course pattern), not once per row.
     offering_to_course: dict[str, str | None] = {}
     for d in docs:
-        d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
             try:
@@ -266,6 +272,7 @@ def list_documents(user_id: str, request: Request):
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = offering_course_id(off_id)
         d["course_id"] = offering_to_course.get(off_id)
+    attach_summary_previews(docs)
     return {"documents": docs}
 
 
@@ -291,6 +298,24 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
+    # Spec "Delete-together behavior": the summary doc this document
+    # seeded goes away with it. A hard delete (not the soft-delete the
+    # `documents` row above just got) so the table's own ON DELETE CASCADE
+    # foreign keys clean up its sources/versions/suggestions in one
+    # statement (services/summary_docs_service.py::delete_summary_docs_for_document).
+    # Best-effort: the documents row above is already soft-deleted (the
+    # user-facing action already succeeded), so a failure here must not
+    # 500 an otherwise-successful delete — same posture as create_summary_doc
+    # (Task 14) for a secondary effect after a committed primary write. The
+    # only cost of a swallowed failure is a rare, recoverable orphaned
+    # summary_docs row pointing at a now-invisible document.
+    try:
+        delete_summary_docs_for_document(document_id)
+    except Exception:
+        logger.exception(
+            "delete_summary_docs_for_document failed for document %s (best-effort)",
+            document_id,
+        )
     return {"deleted": True}
 
 
@@ -360,7 +385,7 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     """
     try:
         rows = table("documents").select(
-            "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+            "id,user_id,offering_id,file_name,category,concept_notes,created_at,processed_at",
             filters={
                 "user_id": f"eq.{user_id}",
                 "request_id": f"eq.{request_id}",
@@ -376,13 +401,13 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     if not isinstance(first, dict):
         return None
     row = dict(first)
-    row["summary"] = decrypt_if_present(row.get("summary"))
     notes_raw = row.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
             row["concept_notes"] = decrypt_json(notes_raw)
         except Exception:
             row["concept_notes"] = []
+    attach_summary_previews([row])
     return row
 
 
@@ -463,9 +488,17 @@ def _persist_document(
 
     Shared by both upload_document_sync and the streaming upload_document.
     The document keys on the OFFERING (0025), not the abstract course.
-    summary + concept_notes are encrypted at the insert boundary; the
-    returned row carries the plaintext shape so callers can pass it
-    straight back to the client without an extra decrypt step.
+    concept_notes is encrypted at the insert boundary; the returned row
+    carries the plaintext shape so callers can pass it straight back to the
+    client without an extra decrypt step. The orchestrator's summary abstract
+    no longer lands on ``documents.summary`` (library-summary-editor cutover,
+    task 14) — it seeds a new `summary_docs` row via
+    `services.summary_docs_service.create_summary_doc` instead, and the
+    returned row carries that doc's id/preview as ``summary_doc_id`` /
+    ``summary_preview``. That call is best-effort: the ``documents`` row is
+    already committed by the time it runs, so any exception is logged and
+    swallowed rather than 500ing an otherwise-successful upload, and
+    ``summary_doc_id``/``summary_preview`` come back ``None`` instead.
     ``request_id`` (when provided) is stored verbatim for idempotent
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
@@ -503,7 +536,6 @@ def _persist_document(
         "extracted_text": encrypt_if_present(extracted_text),
         "index_status": "pending",
         "index_attempts": 0,
-        "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
         "processed_at": now,
@@ -544,7 +576,29 @@ def _persist_document(
         raise RuntimeError("documents insert kept naming absent columns")
     full_row = dict(inserted[0] if inserted else row)
     full_row.pop("extracted_text", None)
-    full_row["summary"] = summary
+    # Best-effort: the documents row above already landed, so a failure here
+    # (transient DB error, a migration not yet applied, an encryption failure)
+    # must not 500 an otherwise-successful upload. summary_doc_id/preview stay
+    # None — recoverable later via a manual re-drive — rather than raising.
+    try:
+        summary_doc = create_summary_doc(
+            user_id=user_id, primary_document_id=full_row["id"], seed_text=summary or "",
+        )
+        full_row["summary_doc_id"] = summary_doc["id"]
+        full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
+        # A freshly created summary doc always has exactly one source (the
+        # document that just seeded it) — matches attach_summary_previews'
+        # field set (Task 15) so list/replay/fresh-upload responses carry
+        # the same shape.
+        full_row["summary_source_count"] = 1
+    except Exception:
+        logger.exception(
+            "create_summary_doc failed for document %s (best-effort)",
+            full_row["id"],
+        )
+        full_row["summary_doc_id"] = None
+        full_row["summary_preview"] = None
+        full_row["summary_source_count"] = 0
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
     # upload_document_sync and the streaming upload_document (see docstring);
@@ -1245,7 +1299,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,offering_id,file_name,summary,concept_notes",
+        "id,user_id,offering_id,file_name,concept_notes",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
@@ -1258,7 +1312,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 
-    doc_summary = decrypt_if_present(doc.get("summary"))
+    doc_summary = plaintext_for_primary_document(document_id)
     notes_raw = doc.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
