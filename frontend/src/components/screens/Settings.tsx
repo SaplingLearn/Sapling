@@ -12,7 +12,6 @@ import { SettingsFormSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import {
-  fetchSettings,
   updateSettings,
   deleteAccount,
   updateProfile,
@@ -27,24 +26,60 @@ import {
 } from "@/lib/api";
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
+import { readAccountSettings } from "@/lib/accountSettings";
+import {
+  getAnalyticsState,
+  getServerAnalyticsState,
+  chooseAnalytics,
+  subscribeAnalytics,
+  type AnalyticsState,
+} from "@/lib/analytics";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+/**
+ * The settings on/off switch: a real `<button role="switch">`, so it is
+ * focusable, keyboard-operable and announces its state. Name it with
+ * `ariaLabelledBy` (the id of its visible label).
+ */
+function Toggle({
+  on,
+  onChange,
+  disabled = false,
+  ariaLabelledBy,
+  testId,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  ariaLabelledBy?: string;
+  testId?: string;
+}) {
   return (
-    <div
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-labelledby={ariaLabelledBy}
+      data-testid={testId}
+      disabled={disabled}
       onClick={() => onChange(!on)}
       style={{
+        flexShrink: 0,
         width: 36,
         height: 20,
+        padding: 0,
+        border: "none",
         borderRadius: "var(--r-full)",
         background: on ? "var(--accent)" : "var(--bg-soft)",
         position: "relative",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
         transition: "all var(--dur) var(--ease)",
       }}
     >
-      <div
+      <span
+        aria-hidden
         style={{
           position: "absolute",
           top: 2,
@@ -57,7 +92,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
           transition: "all var(--dur) var(--ease)",
         }}
       />
-    </div>
+    </button>
   );
 }
 
@@ -84,8 +119,11 @@ export function Settings() {
     // Seed those fields from the public profile as a fallback so the inputs
     // reflect what's actually stored. The profile fetch is best-effort — a
     // failure there must not block settings from loading.
+    // readAccountSettings shares one in-flight GET with the UserProvider's
+    // analytics read and feeds `analytics_opt_out` to the analytics switch
+    // below (lib/accountSettings.ts), so the form and the switch agree.
     Promise.all([
-      fetchSettings(userId),
+      readAccountSettings(userId),
       fetchPublicProfile(userId).catch(() => null),
     ])
       .then(([s, profile]) => {
@@ -117,6 +155,32 @@ export function Settings() {
       console.error("settings save", err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Product analytics. The account flag is the single source of truth, for
+  // this browser's pageviews and the backend's PostHog mirror alike, so it
+  // is saved whether or not this browser sends anything. Opting out stops
+  // capture here at once, then saves; opting in saves FIRST and only then
+  // starts capture. The switch is disabled while a save is in flight, so
+  // toggles cannot overlap (chooseAnalytics also refuses).
+  const [analyticsSaving, setAnalyticsSaving] = React.useState(false);
+  const setAnalyticsPreference = async (enabled: boolean) => {
+    if (!userId || analyticsSaving) return;
+    setAnalyticsSaving(true);
+    try {
+      const result = await chooseAnalytics(userId, enabled, (optOut) =>
+        updateSettings(userId, { analytics_opt_out: optOut }),
+      );
+      if (result === "failed") {
+        toast.error(
+          enabled
+            ? "Couldn't turn product analytics back on. Please try again."
+            : "Couldn't save that to your account, so it's off in this browser for this visit only — retry from Settings → Data.",
+        );
+      }
+    } finally {
+      setAnalyticsSaving(false);
     }
   };
 
@@ -533,8 +597,13 @@ export function Settings() {
                     borderBottom: "1px solid var(--border)",
                   }}
                 >
-                  <div style={{ fontSize: 13 }}>{label}</div>
-                  <Toggle on={Boolean(settings[key])} onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)} />
+                  <div style={{ fontSize: 13 }} id={`settings-toggle-${key}-label`}>{label}</div>
+                  <Toggle
+                    on={Boolean(settings[key])}
+                    onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
+                    ariaLabelledBy={`settings-toggle-${key}-label`}
+                    testId={`settings-toggle-${key}`}
+                  />
                 </div>
               ))}
             </div>
@@ -571,6 +640,17 @@ export function Settings() {
                 </button>
               </div>
 
+              <AnalyticsPreference
+                onChange={(enabled) => void setAnalyticsPreference(enabled)}
+                onRetry={() => void setAnalyticsPreference(false)}
+                onReload={() => {
+                  // Feeds the switch through lib/accountSettings.ts; a failure
+                  // shows as `unreadable` again, with this button.
+                  if (userId) readAccountSettings(userId).catch(() => {});
+                }}
+                saving={analyticsSaving}
+              />
+
               <div
                 className="h-serif"
                 style={{ fontSize: 18, margin: "28px 0 12px", color: "var(--err)" }}
@@ -600,6 +680,7 @@ export function Settings() {
           {tabs.map((t) => (
             <button
               key={t}
+              data-testid={`settings-tab-${t}`}
               onClick={() => setTab(t)}
               style={{
                 display: "block",
@@ -648,6 +729,113 @@ export function Settings() {
         <PreviewModal profile={preview} onClose={() => setPreviewOpen(false)} />
       )}
     </FullHeightScreen>
+  );
+}
+
+/** The status line under the analytics switch, per state — what is actually true. */
+const ANALYTICS_NOTES: Record<AnalyticsState, string> = {
+  unknown: "Loading your saved setting…",
+  unreadable: "We couldn't load your saved setting, so we can't show it yet.",
+  unset:
+    "No choice is saved to your account yet, so this browser sends no page views. Switch it on to share usage data.",
+  on: "On — saved to your account, so it applies wherever you sign in. Nothing about it is stored in your browser.",
+  on_browser_blocked:
+    "On — saved to your account. Your browser's Do Not Track or Global Privacy Control signal is on, so this browser sends no page views; switch this off to opt out of everything, wherever you sign in.",
+  on_not_running:
+    "On — saved to your account. Page views couldn't start in this browser (a blocker may have stopped them).",
+  off: "Off — saved to your account, so none of this is shared, wherever you sign in.",
+  off_unsaved:
+    "Off in this browser for this visit only — we couldn't save it to your account, so our servers may still share usage data, and it will be back on next visit.",
+};
+
+/**
+ * Product-analytics opt-out (PostHog). It follows the signed-in student's
+ * ACCOUNT (`analytics_opt_out`), which governs both this browser's pageviews
+ * and the backend's own PostHog mirror (#677) — so the switch is usable as
+ * soon as the account has answered, whether or not this build sends
+ * pageviews, the admin `product_analytics` flag is on, or DNT/GPC is set
+ * (src/lib/analytics.ts). It is disabled only until that answer arrives (with
+ * a "Try again" after a failed read) and while a save is in flight. After a
+ * failed opt-out save it shows "off in this browser for this visit only"
+ * with a retry, never "saved".
+ */
+function AnalyticsPreference({
+  onChange,
+  onRetry,
+  onReload,
+  saving,
+}: {
+  onChange: (enabled: boolean) => void;
+  onRetry: () => void;
+  onReload: () => void;
+  saving: boolean;
+}) {
+  const state = React.useSyncExternalStore(
+    subscribeAnalytics,
+    getAnalyticsState,
+    getServerAnalyticsState,
+  );
+  const on = state === "on" || state === "on_browser_blocked" || state === "on_not_running";
+  const loaded = state !== "unknown" && state !== "unreadable";
+
+  return (
+    <div className="card" data-testid="settings-analytics" style={{ padding: "var(--pad-lg)", marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }} id="settings-analytics-label">
+            Product analytics
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
+            Share how you use Sapling with PostHog, our analytics provider, so we can see what to
+            improve: the app pages you view, actions you take (like starting a quiz, messaging the
+            tutor or uploading a document), the AI model, token counts and cost behind each AI
+            response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
+            never your name or email, and never what you type or the text of your notes, documents,
+            messages or AI replies. Turning it off stops all of this from then on.{" "}
+            <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
+            {ANALYTICS_NOTES[state]}
+            {state === "unreadable" && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  data-testid="settings-analytics-reload"
+                  onClick={onReload}
+                  style={{ marginLeft: 4 }}
+                >
+                  Try again
+                </button>
+              </>
+            )}
+            {state === "off_unsaved" && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  data-testid="settings-analytics-retry"
+                  disabled={saving}
+                  onClick={onRetry}
+                  style={{ marginLeft: 4 }}
+                >
+                  Retry saving
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <Toggle
+          on={on}
+          onChange={onChange}
+          disabled={!loaded || saving}
+          ariaLabelledBy="settings-analytics-label"
+          testId="settings-analytics-toggle"
+        />
+      </div>
+    </div>
   );
 }
 
