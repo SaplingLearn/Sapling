@@ -4,9 +4,8 @@
 - Date: 2026-09-28
 - Relates to: #620 (this epic), #673 (the AI learning loop, whose in-flight
   `user_settings.learning_loop_beta` column this decision replaces),
-  ADR 0027 (the typed decision seam, whose `decision_router` variants this
-  flag now drives), ADR 0028 (PostHog, whose capture is now gated by
-  `product_analytics`)
+  ADR 0027 (the typed decision seam, whose `decision_router` flag lands with
+  it), ADR 0028 (PostHog, whose `product_analytics` flag lands with it)
 - Supersedes: none
 
 ## Context
@@ -77,24 +76,30 @@ mechanism instead, before that pattern repeats a third time.
    values (no ticket-status-driven rollout, no flag read from a Canopy doc).
    Flags are operated exclusively from `/admin`; revisit only if a real
    workflow needs it.
-7. **The three first flags**, all declared in `REGISTRY` today:
-   - `decision_router` (`off` | `jev` | `jev_shadow`, not client-visible) —
-     the tutor turn router's backend (ADR 0027). Replaces
-     `SAPLING_DECISIONS_BACKEND` as the *normal* way to turn Jev on for a
-     cohort; the env var still exists as a layer above the flag (§
-     Consequences).
-   - `learning_loop` (`off` | `on`, client-visible) — #673's AI learning
-     loop, gated by `flag_on("learning_loop", user_id)` instead of a
-     `user_settings` column (see the #673 follow-up comment).
-   - `product_analytics` (`off` | `on`, client-visible) — gates PostHog
-     capture end to end, backend (`posthog_client._deliver`, re-checked on
-     the worker thread, right beside the existing consent check) and
-     frontend (`FlagsProvider` calls `setProductAnalyticsFlag` from the same
-     `GET /api/flags` response that feeds `useFlag`). Seeded `on` by the
-     migration itself (`INSERT ... ON CONFLICT DO NOTHING`), so PostHog
-     stays on by default wherever it was already on before flags existed;
-     an admin can switch it off per-student, by role, or globally without a
-     deploy.
+7. **The first flags hide main-nav features.** One `hide_<feature>` flag
+   per app-shell destination except Dashboard (`hide_tutor`, `hide_quiz`,
+   `hide_tree`, `hide_study`, `hide_library`, `hide_calendar`,
+   `hide_social`, `hide_achievements`, `hide_grades`, `hide_notetaker`,
+   `hide_course_planner`; `off` | `on`, client-visible), generated from
+   `feature_flags.NAV_FEATURES`. `on` hides: the destination leaves both nav
+   skins (`frontend/src/lib/navFeatures.ts`, the one list SideNav and TopNav
+   render) and `NavFeatureGate` sends its routes to `/dashboard`. The
+   polarity is deliberate — `off` is the fail-closed answer, so an
+   unreadable flag store leaves every feature *visible* rather than
+   emptying the nav. Until a student's flags have loaded, flagged nav rows
+   are held back and a flagged route's page is mounted but invisible, so a
+   hidden feature never flashes before it disappears. The backend APIs stay
+   up: this hides surfaces, it is not an access control. A test pins the
+   frontend list to the registry.
+   #620 originally shipped three other first flags; this PR was rebased
+   off the PostHog/Jev chain so it could land on its own, and each returns
+   with the PR that owns its feature: `decision_router` (`off` | `jev` |
+   `jev_shadow`, server-only; the ADR 0027 router backend, with
+   `SAPLING_DECISIONS_BACKEND` as an override above it), `product_analytics`
+   (`off` | `on`; gates PostHog capture end to end, ADR 0028) and
+   `learning_loop` (#673). The migration already seeds `product_analytics`
+   `on` so that analytics stays on wherever it was on before flags; until
+   that flag is registered the row is inert.
 8. **The admin confirm step states the scope of the change.** Saving a
    default/rollout change in the Feature Flags admin tab goes through the
    repo's existing two-click `useConfirm` (no new confirmation component),
@@ -110,7 +115,8 @@ mechanism instead, before that pattern repeats a third time.
    `backend/tests/integration/conftest.py::_TRUNCATE_DENYLIST` and
    `frontend/e2e/support/db.ts::TRUNCATE_DENYLIST` omit them on purpose).
    They are restored instead: `db/seed_local_rich.py::seed_feature_flags`
-   re-upserts the `product_analytics=on` baseline after every reset. The
+   re-upserts the migration's `product_analytics=on` baseline row after
+   every reset. The
    reset writes the DB directly, so it cannot clear the backend's
    per-process snapshot or roles cache: on its own it would leave the
    backend answering from the previous journey's rules for up to 30 s (and a
@@ -134,19 +140,3 @@ mechanism instead, before that pattern repeats a third time.
   a key it doesn't have a `FlagDef` for). This is deliberate friction: a
   flag's variants and client-visibility are a code-review-able contract, not
   something an admin can invent from the UI.
-- **`SAPLING_DECISIONS_*` becomes an optional override, not the primary
-  switch.** `services/decisions.py::router_backends` still checks
-  `SAPLING_DECISIONS_BACKEND` (and function mode) first, and when either is
-  set it keeps the old fully env-driven behavior (`configured_backend()` /
-  `shadow_backend()`) — this is what keeps the E2E lane's `function` value
-  and an operator's emergency override working unchanged. Only when
-  `SAPLING_DECISIONS_BACKEND` is unset does `decision_router`'s flag
-  resolution run. The env var therefore now sits *above* the flag rather
-  than being the only lever; day-to-day rollout should use the flag, and the
-  env var should be reserved for the E2E seam and genuine incidents.
-- **Analytics now needs `product_analytics=on` in addition to the existing
-  ADR 0028 gates** (a project token, consent, no DNT/GPC, not a test/E2E
-  run). The migration seeds it `on` so this is a no-op for existing
-  deployments; a fresh environment that never runs the migration's seed row
-  (or whose row is later deleted) fails closed to no analytics, matching the
-  rest of the system's default-off posture.

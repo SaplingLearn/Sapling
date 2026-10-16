@@ -6,43 +6,10 @@ import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
+import type { NavItem } from "@/lib/navFeatures";
+import { useVisibleNavSections } from "@/lib/useNavSections";
 
-type Entry = { href: string; label: string; icon: string };
-
-const SECTIONS: { label: string; items: Entry[] }[] = [
-  {
-    label: "Learn",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: "home" },
-      { href: "/learn",     label: "Tutor",     icon: "brain" },
-      { href: "/quiz",      label: "Quiz",      icon: "flask" },
-      { href: "/tree",      label: "Tree",      icon: "tree" },
-      { href: "/study",     label: "Study",     icon: "bolt" },
-    ],
-  },
-  {
-    label: "Organize",
-    items: [
-      { href: "/library",  label: "Library",  icon: "book" },
-      { href: "/calendar", label: "Calendar", icon: "cal" },
-    ],
-  },
-  {
-    label: "Community",
-    items: [
-      { href: "/social",       label: "Social",       icon: "users" },
-      { href: "/achievements", label: "Achievements", icon: "trophy" },
-    ],
-  },
-  {
-    label: "Tools",
-    items: [
-      { href: "/gradebook",      label: "Grades",         icon: "star" },
-      { href: "/notetaker",      label: "Notetaker",      icon: "pencil" },
-      { href: "/course-planner", label: "Course Planner", icon: "planner" },
-    ],
-  },
-];
+type Entry = NavItem;
 
 export const SIDE_NAV_EXPANDED = 232;
 export const SIDE_NAV_COLLAPSED = 64;
@@ -142,6 +109,7 @@ export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
+  const sections = useVisibleNavSections();
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
@@ -238,7 +206,7 @@ export function SideNav() {
           gap: NAV_GAP,
         }}
       >
-      {SECTIONS.map((section, i) => (
+      {sections.map((section, i) => (
         <React.Fragment key={section.label}>
           {/* Header slot. Wide: the group label. Narrow: a hairline (none
               above the first group — the logo rule already does that job).
@@ -414,6 +382,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
   return (
     <Link
       href={entry.href}
+      data-testid={`nav-link-${entry.href.slice(1)}`}
       title={collapsed ? entry.label : undefined}
       aria-label={collapsed ? entry.label : undefined}
       style={{

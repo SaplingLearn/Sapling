@@ -315,3 +315,18 @@ def test_store_outage_warns_again_after_a_recovery(caplog):
     unreadable = [r for r in caplog.records if "unreadable" in r.getMessage()]
     assert len(unreadable) == 2
 
+
+
+def test_nav_flags_match_the_frontend_nav_list():
+    """The hide_* flags and frontend/src/lib/navFeatures.ts name the same set:
+    a flag the nav never reads is a dead /admin switch, and a nav flag the
+    registry lacks resolves to "off" forever (unregistered → fail-closed)."""
+    import re
+    from pathlib import Path
+
+    nav = Path(__file__).resolve().parents[2] / "frontend/src/lib/navFeatures.ts"
+    frontend = set(re.findall(r'flag: "(hide_[a-z_]+)"', nav.read_text()))
+    backend = {k for k in ff.REGISTRY if k.startswith("hide_")}
+    assert frontend == backend == {f"hide_{slug}" for slug, _ in ff.NAV_FEATURES}
+    assert all(ff.REGISTRY[k].client_visible and ff.REGISTRY[k].variants == ("off", "on")
+               for k in backend)

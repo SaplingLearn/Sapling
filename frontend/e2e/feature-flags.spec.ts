@@ -48,3 +48,28 @@ test("admin sets a user rule on hide_quiz and the student gets it (#620)", async
   await expect(admin.getByTestId("flag-explain-result-hide_quiz")).toContainText("on (user");
   await adminCtx.close();
 });
+
+test("hiding a feature drops it from the nav and redirects its route (#620)", async ({ browser, page }) => {
+  await page.goto(`${FRONTEND_URL}/dashboard`);
+  await expect(page.getByTestId("nav-link-quiz")).toBeVisible();
+
+  // Hide Quiz for everyone, through the API the /admin tab uses.
+  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
+  const adminCtx = await browser.newContext({ storageState: adminState });
+  const res = await adminCtx.request.patch(`${FRONTEND_URL}/api/admin/flags/hide_quiz`, {
+    data: { default_variant: "on", rollout_percent: 0, rollout_variant: null },
+  });
+  expect(res.ok()).toBeTruthy();
+  await adminCtx.close();
+
+  // Flags load once per page load: a fresh load picks the change up.
+  await page.reload();
+  await expect(page.getByTestId("nav-link-tree")).toBeVisible();
+  await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
+
+  // A typed URL (and anything below it) lands on the dashboard.
+  await page.goto(`${FRONTEND_URL}/quiz`);
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByTestId("app-shell")).toBeVisible();
+  await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
+});

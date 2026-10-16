@@ -50,12 +50,10 @@ against the client-visible subset served at `GET /api/flags`. Reads are
 served from a 30 s per-process snapshot cache that every admin write clears
 on its own process (other replicas catch up within the TTL;
 `FEATURE_FLAGS_SNAPSHOT_TTL_S` / `FEATURE_FLAGS_ROLES_TTL_S` tune it, and the
-E2E stack sets both to 0). Three flags
-exist today: `decision_router` (the ADR 0027 tutor-router backend, replacing
-`SAPLING_DECISIONS_BACKEND` as the normal rollout lever — the env var still
-overrides it, for the E2E seam and incidents), `learning_loop` (#673), and
-`product_analytics` (gates PostHog capture end to end, ADR 0028; seeded
-`on`). The admin API itself is the one place that does NOT fail closed on a
+E2E stack sets both to 0). The flags today are one `hide_<feature>` per
+main-nav destination (all but Dashboard): `on` drops it from both nav skins
+(`frontend/src/lib/navFeatures.ts`) and `NavFeatureGate` redirects its routes
+to `/dashboard`; `off`, the fail-closed answer, leaves it visible. The admin API itself is the one place that does NOT fail closed on a
 DB error — it raises, so a broken flag store shows up as an error rather
 than a deceptively healthy "off".
 

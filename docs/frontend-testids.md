@@ -298,6 +298,8 @@ never collide in the DOM.
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
 | `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
+| `nav-link-<route>` | a SideNav destination row (`SideNav.tsx` `NavLink`), `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`); a feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0 |
+| `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
 
 ### `social`
 

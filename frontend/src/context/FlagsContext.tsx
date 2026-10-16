@@ -9,9 +9,10 @@ import { fetchFlags, type FlagMap } from "@/lib/flags";
 /** Every registered flag's variants[0] is "off" (backend REGISTRY). */
 const OFF = "off";
 
-const FlagsContext = createContext<{ flags: FlagMap | null; onAppRoute: boolean }>({
+const FlagsContext = createContext<{ flags: FlagMap | null; onAppRoute: boolean; ready: boolean }>({
   flags: null,
   onAppRoute: false,
+  ready: true,
 });
 
 export function FlagsProvider({ children }: { children: React.ReactNode }) {
@@ -48,7 +49,12 @@ export function FlagsProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [userReady, isAuthenticated, userId, onAppRoute, loadedFor]);
 
-  return <FlagsContext.Provider value={{ flags, onAppRoute }}>{children}</FlagsContext.Provider>;
+  // Ready = this user's answer is in (an error counts: it reads all-off).
+  // Signed out there is nothing to wait for.
+  const who = isAuthenticated && userId ? userId : null;
+  const ready = userReady && (who === null || (loadedFor === who && flags !== null));
+
+  return <FlagsContext.Provider value={{ flags, onAppRoute, ready }}>{children}</FlagsContext.Provider>;
 }
 
 /** The variant of `key` for this student; "off" until loaded, on error, off-shell. */
@@ -56,4 +62,18 @@ export function useFlag(key: string): string {
   const { flags, onAppRoute } = useContext(FlagsContext);
   if (!onAppRoute || !flags) return OFF;
   return flags[key] ?? OFF;
+}
+
+const NO_FLAGS: FlagMap = {};
+
+/**
+ * Every client-visible flag at once, plus whether they have loaded — for
+ * callers that must not act on the "off" placeholder (NavFeatureGate would
+ * otherwise show a hidden feature's page while flags are in flight). Off the
+ * app shell (and outside a provider) there is nothing to load: ready, empty.
+ */
+export function useFlagMap(): { flags: FlagMap; ready: boolean } {
+  const { flags, onAppRoute, ready } = useContext(FlagsContext);
+  if (!onAppRoute) return { flags: NO_FLAGS, ready: true };
+  return { flags: flags ?? NO_FLAGS, ready };
 }
