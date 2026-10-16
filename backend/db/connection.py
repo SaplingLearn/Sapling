@@ -43,8 +43,7 @@ class SupabaseTable:
         silently.
 
         `timeout` (seconds) overrides the client-wide 30 s for this one read,
-        for a caller that would rather fail fast than wait (the PostHog
-        consent worker, ADR 0028)."""
+        for a caller that would rather fail fast than wait."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -54,10 +53,8 @@ class SupabaseTable:
             params["limit"] = str(limit)
         if offset is not None:
             params["offset"] = str(offset)
-        if timeout is not None:
-            r = _client.get(self.url, params=params, timeout=timeout)
-        else:
-            r = _client.get(self.url, params=params)
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _client.get(self.url, params=params, **kw)
         r.raise_for_status()
         return r.json()
 
@@ -71,7 +68,7 @@ class SupabaseTable:
         timeout: Optional[float] = None,
     ) -> tuple[list, int]:
         """Like select(), but also returns total row count via Content-Range.
-        `timeout` as in select() (the feature-flag store read, ADR 0029)."""
+        `timeout` as in select()."""
         params: dict = {"select": columns}
         if filters:
             params.update(filters)
@@ -82,10 +79,8 @@ class SupabaseTable:
         if offset is not None:
             params["offset"] = str(offset)
         headers = {"Prefer": "count=exact"}
-        if timeout is not None:
-            r = _client.get(self.url, params=params, headers=headers, timeout=timeout)
-        else:
-            r = _client.get(self.url, params=params, headers=headers)
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _client.get(self.url, params=params, headers=headers, **kw)
         r.raise_for_status()
         rows = r.json()
         total = 0
@@ -250,8 +245,8 @@ def page_all(
         )
     seen = 0
     offset = 0
+    extra = {"timeout": timeout} if timeout is not None else {}
     while True:
-        extra = {"timeout": timeout} if timeout is not None else {}
         rows, total = handle.select_with_count(
             columns, filters=filters, order=order, limit=page, offset=offset, **extra,
         )

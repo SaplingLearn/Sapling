@@ -184,24 +184,44 @@ def test_observe_does_no_flag_io_before_returning(monkeypatch):
     assert asyncio.run(run()) == ["u1"]
 
 
-def test_an_unreadable_flag_store_records_the_gap(monkeypatch, sink):
-    """#672 review: a store outage is not "off" — the turn gets one
-    decision.made with all defaults and fallback_reason=flag_unreadable."""
+def test_an_unreadable_flag_store_skips_the_turn_without_a_row(monkeypatch, sink, caplog):
+    """#672 final review: no decision.made during a blip (it would cover
+    students the router never routes); a WARNING instead."""
+    import httpx
 
     def down(**k):
-        raise RuntimeError("db down")
+        raise httpx.ConnectError("db down")
 
     monkeypatch.setattr(feature_flags, "read_config", down)
 
     async def run():
         return await _observe()
 
-    result = asyncio.run(run())
-    assert (result.fallback_reason, result.requested, result.backend) == (
-        "flag_unreadable", "none", "none")
-    (event,) = _decision_events(sink)
-    assert event["payload"]["fallback_reason"] == "flag_unreadable"
-    assert event["payload"]["session_id"] == "s1"
+    with caplog.at_level("WARNING", logger="sapling.tutor_router"):
+        assert asyncio.run(run()) is None
+    assert _decision_events(sink) == []
+    assert any("unreadable" in r.getMessage() for r in caplog.records)
+
+
+def test_any_cold_read_failure_ends_the_task_cleanly(monkeypatch, sink, caplog):
+    """#672 final review: an unexpected error in the cold read (e.g. the
+    executor already shut down at lifespan teardown) must not escape the
+    fire-and-forget task as "Task exception was never retrieved"."""
+    def boom(user_id):
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(decisions, "router_backends", boom)
+
+    async def run():
+        task = _observe()
+        result = await task
+        return task, result
+
+    with caplog.at_level("WARNING", logger="sapling.tutor_router"):
+        task, result = asyncio.run(run())
+    assert result is None and task.exception() is None
+    assert any("RuntimeError" in r.getMessage() for r in caplog.records)
+    assert _decision_events(sink) == []
 
 
 def test_a_warm_off_flag_schedules_nothing(monkeypatch):

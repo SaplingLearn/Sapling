@@ -50,13 +50,18 @@ mechanism instead, before that pattern repeats a third time.
    that wants to tell an outage apart can compare `Resolution.detail` with
    `STORE_UNREADABLE`, as the tutor router does). Resolver reads are
    **bounded** (`STORE_TIMEOUT_S`, 2.5 s, not the connection's 30 s) and a
-   failed read marks the store unreadable for `STORE_UNREADABLE_TTL_S`
-   (30 s, cleared by any admin write): inside that window every resolution
-   fails closed without another read, so an outage costs one bounded wait
-   per process per window — not one hung read per call on the per-item
-   paths (#672's router, #677's PostHog worker). `cached_explain` answers
-   from the caches alone (None when it would need a read), for callers on an
-   event loop. The **admin
+   failed SNAPSHOT read (an httpx transport/timeout/status error) marks the
+   store unreadable for `STORE_UNREADABLE_TTL_S` (30 s, cleared by any admin
+   write or a successful read): inside that window every resolution fails
+   closed without another read, so an outage costs one bounded wait per
+   process per window — not one hung read per call on the per-item paths
+   (#672's router, #677's PostHog worker). One user's failed roles read
+   fails closed for that user only and marks nothing; any non-store
+   exception (a malformed row) is logged as itself and fails that flag
+   closed without the unreadable label. An admin `fresh` read keeps the
+   normal timeout and never marks the store down. `cached_explain` answers
+   from the caches alone (None when it would need a read; the roles it
+   checked are the ones it uses), for callers on an event loop. The **admin
    API is the deliberate exception**: `list_flags`/`update_flag`/
    `upsert_target`/`delete_target` call the uncached `read_config()` directly
    and let a DB failure raise into a 500, rather than showing an admin a

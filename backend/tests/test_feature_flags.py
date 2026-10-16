@@ -1,6 +1,7 @@
 """#620 resolver: precedence, fail-closed, caching, rollout stability."""
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from services import feature_flags as ff
@@ -18,8 +19,8 @@ def _tables(flags=None, targets=None, roles=None, fail=False):
     def factory(name):
         m = MagicMock()
         if fail:
-            m.select.side_effect = RuntimeError("db down")
-            m.select_with_count.side_effect = RuntimeError("db down")
+            m.select.side_effect = httpx.ConnectError("db down")
+            m.select_with_count.side_effect = httpx.ConnectError("db down")
         elif name == "feature_flags":
             m.select_with_count.side_effect = _paged(flags)
         elif name == "feature_flag_targets":
@@ -179,6 +180,96 @@ def test_cached_explain_inside_the_unreadable_window_fails_closed():
     with patch("services.feature_flags.table", side_effect=AssertionError("I/O")):
         r = ff.cached_explain(KEY, "u1")
     assert (r.step, r.detail) == ("fail_closed", ff.STORE_UNREADABLE)
+
+
+def test_cached_explain_never_reads_roles_that_expire_mid_check(monkeypatch):
+    """#672 final review: the roles entry is resolved ONCE in cached_explain
+    and handed to explain(), so expiring between the check and the use
+    cannot turn into a blocking read on the event loop."""
+    targets = [{"flag_key": KEY, "target_type": "role", "target_id": "r1", "variant": "on"}]
+    roles = [{"role_id": "r1", "roles": {"display_priority": 1}}]
+    with patch("services.feature_flags.table",
+               side_effect=_tables(flags=[_row("off")], targets=targets, roles=roles)):
+        assert ff.flag_variant(KEY, "u1") == "on"  # warms snapshot + u1's roles
+    # The entry expires right after cached_explain's own check: monotonic
+    # jumps past the roles TTL on every read after the first few.
+    base = ff.time.monotonic()
+    calls = {"n": 0}
+
+    def jumping():
+        calls["n"] += 1
+        return base if calls["n"] <= 3 else base + ff.roles_ttl_s() + 1
+
+    def no_io(user_id):
+        raise AssertionError("explain re-read the roles: blocking I/O on the loop")
+
+    monkeypatch.setattr(ff, "_user_roles", no_io)
+    monkeypatch.setattr(ff.time, "monotonic", jumping)
+    r = ff.cached_explain(KEY, "u1")
+    monkeypatch.undo()
+    assert (r.variant, r.step) == ("on", "role")
+
+
+def test_one_users_roles_read_failure_does_not_mark_the_store_down():
+    targets = [{"flag_key": KEY, "target_type": "role", "target_id": "r1", "variant": "on"}]
+    good = _tables(flags=[_row("off")], targets=targets)
+
+    def roles_fail(name):
+        m = good(name)
+        if name == "user_roles":
+            m.select.side_effect = httpx.ReadTimeout("slow")
+        return m
+
+    with patch("services.feature_flags.table", side_effect=roles_fail):
+        r = ff.explain(KEY, "u1")
+    assert (r.variant, r.step) == ("off", "fail_closed")
+    assert ff._store_down_until == 0.0, "one user's roles read is not an outage"
+    with patch("services.feature_flags.table", side_effect=good):
+        assert ff.flag_variant(KEY, "u2") == "off"  # resolved normally, not "unreadable"
+        assert ff.explain(KEY, "u2").step == "default"
+
+
+def test_a_data_bug_is_not_labelled_store_unreadable(caplog):
+    """#672 final review: a malformed target row (KeyError) is a bug, not an
+    outage — logged as itself, failing closed without the unreadable label."""
+    bad_targets = [{"flag_key": KEY, "target_type": "user", "variant": "on"}]  # no target_id
+    with caplog.at_level("ERROR", logger="sapling.feature_flags"):
+        with patch("services.feature_flags.table",
+                   side_effect=_tables(flags=[_row("on")], targets=bad_targets)):
+            r = ff.explain(KEY, "u1")
+    assert (r.variant, r.step) == ("off", "fail_closed")
+    assert r.detail != ff.STORE_UNREADABLE and "KeyError" in r.detail
+    assert ff._store_down_until == 0.0
+    assert any("KeyError" in rec.getMessage() for rec in caplog.records)
+
+
+def test_the_admin_fresh_read_keeps_the_default_timeout_and_never_marks_down():
+    seen: list = []
+
+    def factory(name):
+        m = MagicMock()
+
+        def swc(*a, **k):
+            seen.append(k.get("timeout"))
+            raise httpx.ConnectError("down")
+
+        m.select_with_count.side_effect = swc
+        return m
+
+    with patch("services.feature_flags.table", side_effect=factory):
+        r = ff.explain(KEY, "u1", fresh=True)
+    assert r.detail == ff.STORE_UNREADABLE
+    assert seen == [None], "the admin path keeps the connection's normal timeout"
+    assert ff._store_down_until == 0.0
+
+
+def test_a_fresh_read_that_succeeds_clears_the_unreadable_mark():
+    with patch("services.feature_flags.table", side_effect=_tables(fail=True)):
+        ff.explain(KEY, "u1")
+    assert ff._store_down_until > 0
+    with patch("services.feature_flags.table", side_effect=_tables(flags=[_row("on")])):
+        assert ff.explain(KEY, "u1", fresh=True).variant == "on"
+    assert ff._store_down_until == 0.0
 
 
 def test_cached_explain_cold_roles_is_none():

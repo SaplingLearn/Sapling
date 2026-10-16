@@ -27,9 +27,9 @@ it schedules a fire-and-forget task and returns without awaiting it; on a
 cold cache the task reads the flag in a worker thread (the store read is a
 blocking PostgREST call, bounded by feature_flags.STORE_TIMEOUT_S), then
 runs the decision under its own timeout backstop. The task can never raise
-into the turn. When the flag store is unreadable the turn still gets one
-``decision.made`` — all defaults, ``fallback_reason="flag_unreadable"`` — so
-the dataset shows the gap instead of silently skipping turns.
+into the turn. When the flag store is unreadable the turn is not routed: a
+WARNING, and no ``decision.made`` row (a row per turn during a blip would
+cover students the router never routes and pollute the dataset).
 
 Only student-authored chat turns are routed (``/chat`` and ``/chat/stream``),
 and only once they are PERSISTED — exactly one decision per saved student
@@ -131,9 +131,6 @@ QUESTIONS: tuple[decisions.Question, ...] = (
 #: (asyncio keeps only weak references to tasks).
 _inflight: set[asyncio.Task] = set()
 
-#: Stands for "the flag store could not be read" in place of a backend pair.
-_UNREADABLE = ("unreadable", "unreadable")
-
 
 async def drain_inflight() -> None:
     """Wait for the scheduled decisions (app shutdown), so a turn persisted
@@ -220,36 +217,25 @@ async def _route(state: dict, *, user_id: str | None, request_id: str | None,
         return result
 
 
-def _cached_backends(user_id: str | None) -> tuple[str, str] | None:
-    """The backends from a warm flag cache (no I/O), _UNREADABLE inside the
-    store's unreadable window, or None when the cache is cold."""
-    try:
-        return decisions.router_backends_cached(user_id)
-    except decisions.FlagUnreadable:
-        return _UNREADABLE
-
-
-def _read_backends(user_id: str | None) -> tuple[str, str]:
-    """The cold-cache read, in a worker thread (bounded by the flag store's
-    own timeout)."""
-    try:
-        return decisions.router_backends(user_id)
-    except decisions.FlagUnreadable:
-        return _UNREADABLE
-
-
 async def _observe(state: dict, *, user_id: str | None, request_id: str | None,
                    extra: dict,
                    backends: tuple[str, str] | None) -> decisions.DecisionResult | None:
     if backends is None:
-        backends = await asyncio.to_thread(_read_backends, user_id)
-    if backends == _UNREADABLE:
-        # Not "off": the student may well be routed. Record the gap.
-        result = decisions.defaults_result(QUESTIONS, reason="flag_unreadable",
-                                           requested="none")
-        decisions.emit(result, feature=FEATURE, user_id=user_id,
-                       request_id=request_id, extra=extra)
-        return result
+        # Cold flag cache: one bounded store read, in a worker thread. A
+        # fire-and-forget task must never end in an unretrieved exception
+        # (the E2E logscan oracle flags those), so ANY failure here — an
+        # unreadable store, the executor already shut down at lifespan
+        # teardown, a bug — is a WARNING and the turn is simply not routed.
+        try:
+            backends = await asyncio.to_thread(decisions.router_backends, user_id)
+        except decisions.FlagUnreadable:
+            logger.warning("tutor router: decision_router flag unreadable; turn not routed")
+            return None
+        except Exception as exc:
+            logger.warning("tutor router flag read failed (%s); turn not routed",
+                           type(exc).__name__)
+            logger.debug("tutor router flag read detail", exc_info=True)
+            return None
     primary, shadow = backends
     if primary == decisions.OFF:
         return None
@@ -293,7 +279,11 @@ def observe_tutor_turn(
     read happens in the task, in a worker thread.
     """
     try:
-        backends = _cached_backends(user_id)
+        try:
+            backends = decisions.router_backends_cached(user_id)
+        except decisions.FlagUnreadable:
+            logger.warning("tutor router: decision_router flag unreadable; turn not routed")
+            return None
         if backends is not None and backends[0] == decisions.OFF:
             return None  # known off without I/O: no state, no task, no thread hop
         state = build_state(message, history)
