@@ -188,9 +188,9 @@ def build_commit() -> str:
 # means the PostHog seam (services/posthog_client.py) is fully inert — no
 # client, no threads, no network. Whether a set token is actually USED is
 # decided there (`disabled_reason`), not here: it is also forced off under
-# pytest, APP_ENV=test, any non-"real" SAPLING_MODEL_MODE, and POSTHOG_DISABLED.
-# Read at call time, not import time (like `canopy_metrics_token`), so tests
-# and the kill switch need no reload.
+# pytest, APP_ENV=test and any non-"real" SAPLING_MODEL_MODE; the runtime
+# switch is the product_analytics feature flag. Read at call time, not import
+# time (like `canopy_metrics_token`), so tests need no reload.
 
 POSTHOG_DEFAULT_HOST = "https://us.i.posthog.com"  # US cloud ingestion
 

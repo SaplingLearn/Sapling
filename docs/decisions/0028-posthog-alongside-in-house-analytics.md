@@ -63,8 +63,12 @@ Anything that forwards spans or exception state is on the student-data path.
      **drop**. A caller that names someone is never re-attributed to whoever
      happens to be signed in. The request is seen through a narrow view held
      in a contextvar — the `scope["state"]` dict (shared by the handler,
-     threadpool `Depends` and BackgroundTasks) plus a lazy route-template
-     accessor — never the ASGI scope with its headers and cookies. Build the
+     threadpool `Depends` and BackgroundTasks) plus a route-template
+     accessor. While the request is in flight the accessor reads the route
+     off the scope (routing stamps it after the view is made); when the
+     request ends the middleware resolves the template once and drops the
+     scope, so a context copied into a task or thread never keeps the
+     scope — its headers and session cookie — alive afterwards. Build the
      properties (route template for `path`/`route`, no foreign user ids,
      `event_category`), then enqueue onto a bounded in-process queue
      (`POSTHOG_QUEUE_MAX`, default 10000; a bad or non-positive value falls
@@ -108,38 +112,45 @@ Anything that forwards spans or exception state is on the student-data path.
    Logfire.
 7. **Exceptions without state.** One capture site (the 500 handler), with the
    session user from `request.state`, through the same queue and consent
-   rule. The `$exception_list` (the SDK's own shape: type, module,
-   code-location frames) is built at ENQUEUE, with the message redacted and
-   no frame locals; the queue never holds the exception, its traceback or its
-   frames, which would keep every local (decrypted content) alive while the
-   item waits. `capture_exception_code_variables` and autocapture are off,
+   rule. The handler is async, so the request path does no file I/O: it
+   takes a plain frame SUMMARY (each chained exception's type and module, and
+   its frames' file/line/function/module, read off the traceback — no
+   linecache, no message, no locals), and the worker builds the SDK-shaped
+   `$exception_list` from it (source context via linecache) and scrubs it.
+   The queue never holds the exception, its traceback or its frames, which
+   would keep every local (decrypted content) alive while the item waits. `capture_exception_code_variables` and autocapture are off,
    and `before_send` scrubs again. The handler runs outside
    `RequestIDMiddleware`, so it reads DNT/GPC off the request headers.
 8. **Off in tests and E2E.** No client, no queue, no network when: the token is
-   unset, `POSTHOG_DISABLED` is truthy, under pytest, `APP_ENV=test`, or the
-   seam's mode (`agents._providers.model_mode()` — the one normalisation, not
-   a second parser) is anything but `real`. The gate is read at boot (no
-   client is built) AND on every submit and again on the worker (cheap env
-   reads), so `POSTHOG_DISABLED=1` stops capture — including items already
-   queued — without a restart. The local E2E and explore stacks
-   do not rely on that inference — `make e2e-up` does not force function mode
-   and runs `APP_ENV=local` against a `backend/.env` that may hold a real
-   token — so `scripts/e2e-up.sh` and `scripts/explore.sh` export
-   `POSTHOG_DISABLED=1` explicitly, and blank `POSTHOG_PERSONAL_API_KEY`
-   (erasure is not gated by the kill switch, §9). Local dev with a token
-   sends. Above all of this sits the `product_analytics` feature flag
-   (ADR 0029, `off` | `on`, seeded `on`): the worker resolves it per
-   student just before the consent read and sends nothing for a student it
-   is off for (an unreadable flag store reads as off). It is the admin's
-   switch, editable from /admin without a deploy; like the kill switch it
-   stops capture, never erasure.
+   unset, under pytest, `APP_ENV=test`, or the seam's mode
+   (`agents._providers.model_mode()` — the one normalisation, not a second
+   parser) is anything but `real`. The gate is decided ONCE, at boot: no
+   client is built, and with no client nothing is ever enqueued (the request
+   path does not re-run it per submit, nor the worker per delivery). The local
+   E2E and explore stacks do not rely on that inference — `make e2e-up` does
+   not force function mode and runs `APP_ENV=local` against a `backend/.env`
+   that may hold a real token — so `scripts/e2e-up.sh` and
+   `scripts/explore.sh` blank `POSTHOG_PROJECT_TOKEN` explicitly, and
+   `POSTHOG_PERSONAL_API_KEY` too (erasure is not gated by capture, §9).
+   Local dev with a token sends. **The runtime switch is the
+   `product_analytics` feature flag** (ADR 0029, `off` | `on`, seeded `on`):
+   the worker resolves it per student just before the consent read and sends
+   nothing — including items already queued — for a student it is off for.
+   The read is bounded (2 s) and an unreadable or slow flag store is cached
+   as off for 30 s, so an outage cannot stall the worker (or the flush before
+   an erasure) for 30 s per item. It is editable from /admin without a
+   deploy, and `SAPLING_FLAG_PRODUCT_ANALYTICS=off` is its env kill switch.
+   (An earlier draft also had a bespoke `POSTHOG_DISABLED` env gate re-read
+   on every submit; the flag plus "no token, no client" cover every case it
+   served, and the codebase rule is flags, not new env vars.) Like an unset
+   token, it stops capture, never erasure.
 9. **Account deletion deletes the PostHog person** (`bulk_delete` with
    `delete_events`) as a post-response BackgroundTask. Needs
    `POSTHOG_PERSONAL_API_KEY` (scope `person:write`) + `POSTHOG_PROJECT_ID`;
    failing → WARN, never a failed deletion. **Erasure is not capture:** the
    delete runs whenever the personal key, project id and API host are
-   configured — even with `POSTHOG_DISABLED` set or no project token, since
-   those stop sending, not deleting what was sent before. Only pytest,
+   configured — even with the flag off or no project token, since those stop
+   sending, not deleting what was sent before. Only pytest,
    `APP_ENV=test` and a non-real seam mode block it. Unconfigured: a WARN
    where PostHog was ever configured (a token or a personal key is set — a
    skipped delete there is a privacy to-do), silence where it never was.
@@ -178,15 +189,15 @@ Anything that forwards spans or exception state is on the student-data path.
     still racing → "no"). Our own `events` table is first-party observability
     and is unaffected by the opt-out or the headers.
 
-    **Deploy order.** The code can be live before migration
-    `20260927220057` runs (and #651 — staging migrations racing the deploy —
-    is still open, so this is a real window, not a theoretical one). Settings reads retry without `analytics_opt_out`
-    when PostgREST says that column does not exist (the #630 pattern: read
-    the response body), a PATCH of it answers 503 (nothing written), and the
-    consent check treats the missing column as "no" — so nobody is sent until
-    the column exists. The GET /settings ETag folds in a schema version and
-    whether the field came back, so a body cached before the deploy or the
-    migration can never 304 as current.
+    **Deploy order.** The column ships in its own migration
+    (`20261016064813_analytics_opt_out.sql`) and migrations apply before or
+    at merge — staging migrates on merge (#619), prod runs `db.migrate` in
+    `make promote` before merging — so the code assumes the column exists.
+    An earlier draft tolerated a missing column (retry-without-column reads,
+    a 503 PATCH, an ETag schema version); that machinery went once the
+    promotion order made the window not worth carrying code for. Should the
+    column ever be missing anyway, the consent lookup errors and fails
+    closed: nobody is sent.
 12. **No raw path, no second user, no `error.4xx`.** `error.4xx` (every
     expired-cookie 401, 404 probe and 422) stays in our table only. Every
     mirrored `path` / `route` payload key becomes the current request's

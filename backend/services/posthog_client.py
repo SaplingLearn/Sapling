@@ -9,19 +9,22 @@ through this module, and every send goes through ONE path:
     ──────────────────────               ───────────────────────────
     mirror_event / capture_ai_generation
     / capture_exception
-      → drop if PostHog is off NOW (the
-        gate is re-read: POSTHOG_DISABLED
-        works without a restart), DNT/GPC,
-        or error.4xx
+      → drop if there is no client (the
+        gate is decided ONCE, at boot),
+        DNT/GPC, or error.4xx
       → resolve the ACTOR: the item's own
         user id, or — only when it is None —
         the request's session user; no
         actor, or a malformed id → DROP
       → build properties (route template,
-        no foreign ids, event_category)
-      → enqueue ─────────────────────────→ gate re-read; consent_for(actor)
-        (bounded; drop-oldest)               (may block: it is this thread's
-                                             job) → capture, or drop
+        no foreign ids, event_category;
+        an exception as a plain frame
+        summary — no file I/O)
+      → enqueue ─────────────────────────→ product_analytics flag (bounded
+        (bounded; drop-oldest)               read, failures cached briefly);
+                                             consent_for(actor) (may block: it
+                                             is this thread's job); build the
+                                             $exception_list → capture, or drop
 
 The request path does no consent work and no I/O, so no event-loop thread
 ever waits on the database, and a cold consent cache DELAYS an event on the
@@ -51,12 +54,14 @@ anonymous event. Nothing is sent for a student who opted out
 (``user_settings.analytics_opt_out``), a soft-deleted account, an unknown id,
 an unreadable answer, or a request carrying ``Sec-GPC: 1`` / ``DNT: 1``.
 
-Gating (``disabled_reason``): unset token, ``POSTHOG_DISABLED``, pytest,
-``APP_ENV=test``, or any non-``real`` seam mode (the E2E and explore lanes)
-all mean NO client is constructed at boot, and — re-read on every submit and
-again on the worker — nothing is enqueued or sent while any holds, so
-``POSTHOG_DISABLED`` takes effect without a restart. Local dev with a token
-set does send.
+Gating (``disabled_reason``): unset token, pytest, ``APP_ENV=test``, or any
+non-``real`` seam mode (the E2E and explore lanes, which also blank the
+token) mean NO client is constructed at boot — decided once, in
+``initialize_posthog``; with no client nothing is ever enqueued. The runtime
+switch is the ``product_analytics`` feature flag (ADR 0029: per student,
+editable from /admin without a deploy; ``SAPLING_FLAG_PRODUCT_ANALYTICS=off``
+is its env kill switch), checked on the worker before every send. Local dev
+with a token set does send.
 """
 
 from __future__ import annotations
@@ -77,8 +82,6 @@ logger = logging.getLogger("sapling.posthog")
 _client: Any = None
 _client_lock = threading.Lock()
 
-_TRUTHY = {"1", "true", "yes", "on"}
-
 _NO_TOKEN = "POSTHOG_PROJECT_TOKEN is unset"
 
 
@@ -95,15 +98,13 @@ def _disabled_reason_for(
     (``agents._providers.model_mode()``) — never re-parsed here, so the
     PostHog gate and the LLM seam cannot disagree about which lane this is.
 
-    ``for_erasure``: the gate for an account-deletion ``bulk_delete``. The
-    kill switch and an unset token stop CAPTURE, not erasure — a person sent
-    before either was set still exists — so only the test/deterministic-lane
-    reasons apply.
+    ``for_erasure``: the gate for an account-deletion ``bulk_delete``. An
+    unset token (and the product_analytics flag) stop CAPTURE, not erasure —
+    a person sent before either changed still exists — so only the
+    test/deterministic-lane reasons apply.
 
     Order matters only for the log line; any one reason is sufficient.
     """
-    if not for_erasure and (env.get("POSTHOG_DISABLED") or "").strip().lower() in _TRUTHY:
-        return "POSTHOG_DISABLED is set"
     if under_pytest:
         return "running under pytest"
     if (env.get("APP_ENV") or "").strip().lower() == "test":
@@ -317,6 +318,55 @@ def _work() -> None:
 
 _SKIP = object()
 
+#: The worker's product_analytics read (a flag-store PostgREST call on a cache
+#: miss, with the connection's 30 s default timeout) is bounded by this...
+_FLAG_TIMEOUT_S = 2.0
+#: ...and an unreadable/slow store is remembered as "off" for this long, so an
+#: outage costs one bounded wait per window, not one 30 s read per queued item
+#: (and flush() before an account-deletion bulk_delete stays bounded).
+_FLAG_FAILURE_TTL_S = 30.0
+_flag_down_until = 0.0
+_flag_reader: threading.Thread | None = None
+
+
+def _product_analytics_on(actor: str) -> bool:
+    """The ``product_analytics`` flag for ``actor`` (#620/ADR 0029), from the
+    worker thread. Off when the store is unreadable or slower than
+    :data:`_FLAG_TIMEOUT_S`; either failure is cached for
+    :data:`_FLAG_FAILURE_TTL_S`. A read still hung from an earlier timeout
+    is not stacked on: until it ends, the answer is off. Never raises."""
+    global _flag_down_until, _flag_reader
+    if time.monotonic() < _flag_down_until:
+        return False
+    if _flag_reader is not None and _flag_reader.is_alive():
+        return False
+    from services.feature_flags import explain
+
+    box: dict = {}
+
+    def read() -> None:
+        try:
+            box["res"] = explain("product_analytics", actor)
+        except Exception as exc:  # explain fails closed itself; belt and braces
+            box["err"] = exc
+
+    reader = threading.Thread(target=read, name="posthog-flag-read", daemon=True)
+    _flag_reader = reader
+    reader.start()
+    reader.join(_FLAG_TIMEOUT_S)
+    res = box.get("res")
+    if reader.is_alive() or res is None or res.step == "fail_closed":
+        # Timed out, raised, or explain() could not read the store (its
+        # fail_closed answer is not cached there): off, and remembered.
+        _flag_down_until = time.monotonic() + _FLAG_FAILURE_TTL_S
+        logger.warning(
+            "PostHog: product_analytics flag unreadable (%s); not sending for %.0fs",
+            "timeout" if reader.is_alive() else (res.detail if res else "error"),
+            _FLAG_FAILURE_TTL_S,
+        )
+        return False
+    return res.variant == "on"
+
 
 def _distinct_id_for(actor: str) -> Any:
     """The distinct_id to send under, or ``_SKIP``. Runs on the worker; may
@@ -331,25 +381,26 @@ def _deliver(item: _Item) -> None:
     if client is None:
         return
     try:
-        if disabled_reason() is not None:  # switched off while it waited
-            return
-        from services.feature_flags import flag_on
-
-        # #620/ADR 0029: the admin switch, per student. Cached and fail-closed
-        # (an unreadable flag store sends nothing); on the worker, never the
-        # request path. Erasure (delete_person) is deliberately not gated.
-        if not flag_on("product_analytics", item.actor):
+        # #620/ADR 0029: the admin switch, per student — the runtime kill
+        # switch. Bounded and fail-closed; on the worker, never the request
+        # path. Erasure (delete_person) is deliberately not gated.
+        if not _product_analytics_on(item.actor):
             return
         distinct_id = _distinct_id_for(item.actor)
         if distinct_id is _SKIP:
             return
-        # One call for every kind: an exception arrives here as a ready,
-        # redacted `$exception_list` (built at enqueue), and the client's
-        # before_send (_scrub_event) still runs on it.
+        properties = item.properties
+        if _EXCEPTION_SUMMARY in properties:
+            # Built here, off the request path: the SDK shape with source
+            # context from linecache (file I/O), then scrubbed.
+            properties = dict(properties)
+            properties["$exception_list"] = _exception_list(properties.pop(_EXCEPTION_SUMMARY))
+        # One call for every kind; the client's before_send (_scrub_event)
+        # still runs on it.
         client.capture(
             item.name,
             distinct_id=distinct_id,
-            properties=item.properties,
+            properties=properties,
             timestamp=datetime.fromtimestamp(item.captured_at, tz=timezone.utc),
         )
     except Exception:
@@ -394,9 +445,10 @@ def _actor(user_id: str | None) -> str | None:
 
 
 def _accepting() -> bool:
-    """Cheap pre-check before any work: a client exists and the gate says on
-    RIGHT NOW (env reads; so the kill switch needs no restart)."""
-    return _client is not None and disabled_reason() is None
+    """Cheap pre-check before any work: a client exists. The gate was
+    decided once, when ``initialize_posthog`` built (or declined to build)
+    it; the per-student runtime switch is the worker's flag check."""
+    return _client is not None
 
 
 def _submit(
@@ -566,14 +618,17 @@ def capture_exception(
     DNT/GPC) is passed explicitly because the 500 handler runs outside
     RequestIDMiddleware, after the per-request contextvar has been reset.
 
-    The ``$exception_list`` is built HERE, as plain data: type, module and
-    code-location frames, the message already redacted, no frame locals. The
-    queue never holds the exception, its traceback or its frames — those keep
-    every local of every frame alive (decrypted notes, messages, documents)
-    for as long as the item waits.
+    Called from the async 500 handler, so the request path does no file I/O:
+    it takes a plain SUMMARY — each chained exception's type and module and
+    its frames' file/line/function/module, read straight off the traceback
+    (no linecache, no message, no locals). The worker builds the SDK-shaped
+    ``$exception_list`` from it (source context via linecache) and scrubs it.
+    The queue never holds the exception, its traceback or its frames — those
+    keep every local of every frame alive (decrypted notes, messages,
+    documents) for as long as the item waits.
     """
     def build() -> dict[str, Any]:
-        properties: dict[str, Any] = {"$exception_list": _exception_list(exc)}
+        properties: dict[str, Any] = {_EXCEPTION_SUMMARY: _exception_summary(exc)}
         if request_id:
             properties["request_id"] = request_id
         return properties
@@ -581,21 +636,92 @@ def capture_exception(
     _submit("$exception", build, user_id, privacy_signal=privacy_signal)
 
 
-def _exception_list(exc: BaseException) -> list[dict]:
-    """The SDK's own ``$exception_list`` shape (what issue grouping keys on),
-    built without locals and scrubbed with the same rules as before_send.
-    Frame source context comes from linecache (local files, cached)."""
-    from posthog.exception_utils import (
-        exc_info_from_error,
-        exceptions_from_error_tuple,
-        handle_in_app,
-    )
+#: Item property carrying an exception summary until the worker turns it into
+#: ``$exception_list``. Never sent.
+_EXCEPTION_SUMMARY = "_exception_summary"
+#: Bounds on the summary, so a pathological chain or recursion depth cannot
+#: make the request path (or the queue) do unbounded work.
+_MAX_CHAIN = 10
+_MAX_FRAMES = 200
+#: Lines of source context either side of a frame's line (the SDK's default).
+_CONTEXT_LINES = 5
 
-    values = exceptions_from_error_tuple(exc_info_from_error(exc))
+
+def _exception_summary(exc: BaseException) -> list[dict]:
+    """Plain, cheap data from a live exception: per exception in the chain
+    (outermost first, then its ``__cause__`` / ``__context__``), the type
+    name, its module, and every frame's file, line, function and module —
+    read from the frame objects themselves. No linecache, no message, no
+    locals: safe to call on the event loop and to queue."""
+    out: list[dict] = []
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(out) < _MAX_CHAIN:
+        seen.add(id(cur))
+        etype = type(cur)
+        frames = []
+        tb = cur.__traceback__
+        while tb is not None and len(frames) < _MAX_FRAMES:
+            code = tb.tb_frame.f_code
+            frames.append({
+                "filename": code.co_filename,
+                "lineno": tb.tb_lineno,
+                "function": code.co_name,
+                "module": tb.tb_frame.f_globals.get("__name__"),
+            })
+            tb = tb.tb_next
+        module = etype.__module__
+        out.append({
+            "type": etype.__name__,
+            "module": None if module == "builtins" else module,
+            "frames": frames,
+        })
+        if cur.__cause__ is not None:
+            cur = cur.__cause__
+        elif cur.__context__ is not None and not cur.__suppress_context__:
+            cur = cur.__context__
+        else:
+            cur = None
+    return out
+
+
+def _exception_list(summary: list[dict]) -> list[dict]:
+    """The SDK's ``$exception_list`` shape (what issue grouping keys on) from
+    a summary, on the worker: source context from linecache, in-app marking,
+    then the same scrub as before_send (message redacted, no locals)."""
+    import linecache
+
+    from posthog.exception_utils import handle_in_app
+
+    values: list[dict] = []
+    for exc in summary:
+        frames = []
+        for f in exc["frames"]:
+            filename, lineno = f["filename"], f["lineno"]
+            lines = linecache.getlines(filename)
+            idx = lineno - 1
+            frames.append({
+                "platform": "python",
+                "filename": filename,
+                "abs_path": os.path.abspath(filename),
+                "function": f["function"],
+                "module": f["module"],
+                "lineno": lineno,
+                "pre_context": [ln.rstrip("\n") for ln in lines[max(0, idx - _CONTEXT_LINES):idx]],
+                "context_line": lines[idx].rstrip("\n") if 0 <= idx < len(lines) else None,
+                "post_context": [ln.rstrip("\n") for ln in lines[idx + 1:idx + 1 + _CONTEXT_LINES]],
+            })
+        values.append({
+            "mechanism": {"type": "generic", "handled": True},
+            "module": exc["module"],
+            "type": exc["type"],
+            "value": _REDACTED,
+            "stacktrace": {"frames": frames, "type": "raw"},
+        })
     values = handle_in_app({"exception": {"values": values}})["exception"]["values"]
     scrubbed = _scrub_event({"properties": {"$exception_list": values}})
     if scrubbed is None:
-        raise ValueError("exception scrub failed")  # caller drops the item
+        raise ValueError("exception scrub failed")  # the worker drops the item
     return scrubbed["properties"]["$exception_list"]
 
 
@@ -653,8 +779,8 @@ def delete_person(user_id: str) -> None:
     tracked as a follow-up (ADR 0028).
 
     Runs whenever the personal key, project id and API host are configured —
-    even with ``POSTHOG_DISABLED`` or no project token, because those stop
-    capture, not erasure. Only pytest / ``APP_ENV=test`` / a non-real seam
+    even with no project token or the product_analytics flag off, because
+    those stop capture, not erasure. Only pytest / ``APP_ENV=test`` / a non-real seam
     mode block it (logged at WARNING). Unconfigured: WARN where PostHog was
     ever configured (it is a privacy to-do there), silent where it never was.
     """
@@ -706,9 +832,9 @@ def _delete_pass(user_id: str, *, label: str) -> bool:
     (False = skipped as unconfigured/gated, so no second pass is scheduled).
     Never raises."""
     try:
-        # Erasure is not capture: POSTHOG_DISABLED and an unset token stop
-        # sending, not deleting (a person sent before either was set still
-        # exists). Only the test / deterministic-lane reasons block it.
+        # Erasure is not capture: an unset token or an off flag stops sending,
+        # not deleting (a person sent before either changed still exists).
+        # Only the test / deterministic-lane reasons block it.
         reason = disabled_reason(for_erasure=True)
         if reason is not None:
             logger.warning("PostHog person delete skipped for %s: %s", user_id, reason)

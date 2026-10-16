@@ -101,7 +101,7 @@ def consent_db(monkeypatch):
         analytics_consent.clear_analytics_consent_cache()
 
 
-_REAL_FLAG_ON = feature_flags.flag_on
+_REAL_PA_ON = posthog_client._product_analytics_on
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +110,9 @@ def product_analytics_on(monkeypatch):
     resolves to its off default (#620); every other test in this module is
     about delivery once the admin switch is on, so default it to on here.
     ``TestProductAnalyticsFlag`` exercises the real gating."""
-    monkeypatch.setattr(feature_flags, "flag_on", lambda key, user_id: True)
+    monkeypatch.setattr(posthog_client, "_product_analytics_on", lambda actor: True)
+    monkeypatch.setattr(posthog_client, "_flag_down_until", 0.0)
+    monkeypatch.setattr(posthog_client, "_flag_reader", None)
 
 
 @pytest.fixture
@@ -165,8 +167,6 @@ class TestGate:
             ({"SAPLING_MODEL_MODE": "function"}, "SAPLING_MODEL_MODE"),
             ({"SAPLING_MODEL_MODE": " Function "}, "SAPLING_MODEL_MODE"),
             ({"APP_ENV": "test"}, "APP_ENV=test"),
-            ({"POSTHOG_DISABLED": "1"}, "POSTHOG_DISABLED"),
-            ({"POSTHOG_DISABLED": "true"}, "POSTHOG_DISABLED"),
         ],
     )
     def test_each_forced_off_rule(self, override, expect):
@@ -184,9 +184,10 @@ class TestGate:
         monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
         assert posthog_client.disabled_reason() is not None
 
-    def test_kill_switch_zero_is_not_truthy(self):
-        env = {**_ON_ENV, "POSTHOG_DISABLED": "0"}
-        assert _gate(env) is None
+    def test_there_is_no_posthog_disabled_env_gate(self):
+        """The runtime switch is the product_analytics flag (CLAUDE.md: never
+        gate with a new env var); a leftover POSTHOG_DISABLED does nothing."""
+        assert _gate({**_ON_ENV, "POSTHOG_DISABLED": "1"}) is None
 
 
 @pytest.mark.parametrize(
@@ -195,7 +196,6 @@ class TestGate:
         {"POSTHOG_PROJECT_TOKEN": ""},
         {"SAPLING_MODEL_MODE": "function"},
         {"APP_ENV": "test"},
-        {"POSTHOG_DISABLED": "1"},
     ],
 )
 def test_disabled_means_no_client_no_processor_no_network(override, monkeypatch, no_network):
@@ -371,9 +371,36 @@ class TestFlashcardEvents:
         assert len(rows) == 1
         assert rows[0]["user_id"] == USER_ID
         assert rows[0]["payload"] == {
-            "card_count": 1, "documents_used": 1, "weak_concepts_used": 2,
+            "card_count": 1, "documents_used": 1, "weak_concepts_used": 2, "via": "topic",
         }
         assert SECRET not in json.dumps(rows[0])
+
+    def test_import_generate_emits_flashcard_generated_once(self, sink):
+        """#677 review: AI generation through the import flow emitted nothing.
+        /import/generate is the generation; /import/commit only persists the
+        kept cards (from any import source), so it must not emit too."""
+        from main import app
+
+        cards = [{"front": SECRET, "back": "b"}, {"front": "q", "back": "a"}]
+        with patch("routes.flashcards.check_rate_limit", return_value=None), \
+             patch("routes.flashcards.gemini_generate_cards", return_value=cards):
+            r = TestClient(app).post("/api/flashcards/import/generate", json={
+                "user_id": USER_ID, "source": "paste", "text": "notes", "count": 2,
+            })
+        assert r.status_code == 200
+        with patch("routes.flashcards.table"), \
+             patch("routes.flashcards.check_achievements"), \
+             patch("routes.flashcards.resolve_offering", return_value=None):
+            r = TestClient(app).post("/api/flashcards/import/commit", json={
+                "user_id": USER_ID, "topic": "CS", "cards": cards, "dedup": False,
+            })
+        assert r.status_code == 200
+        events_service.flush_now()
+        rows = [x for x in sink if x["event_type"] == "flashcard.generated"]
+        assert [x["payload"] for x in rows] == [{
+            "card_count": 2, "documents_used": 0, "weak_concepts_used": 0, "via": "paste",
+        }]
+        assert SECRET not in json.dumps(rows)
 
     def test_rate_emits_flashcard_reviewed(self, sink):
         from main import app
@@ -847,10 +874,13 @@ class TestSettingsContract:
         from pathlib import Path
 
         migrations = Path(__file__).resolve().parents[1] / "db" / "migrations"
-        hits = [
-            p for p in migrations.glob("2*.sql")
-            if "analytics_opt_out" in p.read_text()
-        ]
+        def sql_only(path):  # comments may name the column (or an old file)
+            return "\n".join(
+                line for line in path.read_text().splitlines()
+                if not line.lstrip().startswith("--")
+            )
+
+        hits = [p for p in migrations.glob("2*.sql") if "analytics_opt_out" in sql_only(p)]
         assert len(hits) == 1
         sql = " ".join(
             line for line in hits[0].read_text().splitlines()
@@ -1250,14 +1280,16 @@ class TestNoRecreateAfterDelete:
 
 class TestLaneSilence:
     """R6: the local E2E / explore stacks turn PostHog off explicitly, not
-    only by inference from function mode."""
+    only by inference from function mode: they blank the project token, so
+    no client is ever built there."""
 
     @pytest.mark.parametrize("script", ["scripts/e2e-up.sh", "scripts/explore.sh"])
-    def test_scripts_export_posthog_disabled(self, script):
+    def test_scripts_blank_the_project_token(self, script):
         from pathlib import Path
 
         text = (Path(__file__).resolve().parents[2] / script).read_text()
-        assert re.search(r"^\s*export POSTHOG_DISABLED=1\s*$", text, re.M), script
+        assert re.search(r"^\s*export POSTHOG_PROJECT_TOKEN=(\s|$)", text, re.M), script
+        assert "POSTHOG_DISABLED" not in text
 
 
 class TestGateUsesTheSeam:
@@ -1541,22 +1573,6 @@ class TestBoundedQueue:
 # ── 9. Final hardening (PR #677) ────────────────────────────────────────────
 
 
-def _postgrest_error(body: str):
-    """What db/connection.py raises: httpx's HTTPStatusError, whose str() is
-    only the status line — the column is named in the RESPONSE BODY."""
-    import httpx
-
-    request = httpx.Request("GET", "http://supabase.test/rest/v1/user_settings")
-    response = httpx.Response(400, text=body, request=request)
-    return httpx.HTTPStatusError("Client error '400 Bad Request'", request=request, response=response)
-
-
-_MISSING_OPT_OUT_BODY = json.dumps({
-    "code": "42703",
-    "message": "column user_settings_1.analytics_opt_out does not exist",
-})
-
-
 class TestQueueMaxParsing:
     """POSTHOG_QUEUE_MAX never raises at import and never unbounds the queue."""
 
@@ -1589,101 +1605,6 @@ class TestQueueMaxParsing:
         )
         assert out.returncode == 0, out.stderr[-2000:]
         assert int(out.stdout.strip().splitlines()[-1]) == 10_000
-
-
-class TestDeployOrderRace:
-    """Code live before migration 20260927220057: settings keep working, the
-    PATCH says 503, and consent treats the missing column as "no"."""
-
-    def _tables(self, *, first_select_error=None, update_error=None):
-        calls: dict = {"selects": [], "updates": []}
-
-        def table_side_effect(name):
-            m = MagicMock()
-            if name == "user_settings":
-                def select(cols, filters=None):
-                    calls["selects"].append(cols)
-                    if first_select_error is not None and len(calls["selects"]) == 1:
-                        raise first_select_error
-                    return [{"user_id": USER_ID, "theme": "dark"}]
-
-                def update(data, filters=None):
-                    calls["updates"].append(data)
-                    if update_error is not None:
-                        raise update_error
-                    return [{}]
-
-                m.select.side_effect = select
-                m.update.side_effect = update
-            else:
-                m.select.return_value = []
-            return m
-
-        return table_side_effect, calls
-
-    def test_get_retries_without_the_missing_column(self):
-        from main import app
-
-        table_side_effect, calls = self._tables(
-            first_select_error=_postgrest_error(_MISSING_OPT_OUT_BODY),
-        )
-        with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
-            r = TestClient(app).get(f"/api/profile/{USER_ID}/settings")
-        assert r.status_code == 200
-        assert r.json()["theme"] == "dark" and "analytics_opt_out" not in r.json()
-        assert "analytics_opt_out" in calls["selects"][0]
-        assert "analytics_opt_out" not in calls["selects"][1]
-
-    def test_pgrst204_shape_is_recognised_too(self):
-        from services.analytics_consent import missing_opt_out_column
-
-        assert missing_opt_out_column(_postgrest_error(json.dumps({
-            "code": "PGRST204",
-            "message": "Could not find the 'analytics_opt_out' column of "
-                       "'user_settings' in the schema cache",
-        })))
-        # Another column missing is a real schema problem: not swallowed.
-        assert not missing_opt_out_column(_postgrest_error(json.dumps({
-            "code": "42703", "message": "column user_settings.theme does not exist",
-        })))
-
-    def test_an_unrelated_error_still_surfaces(self):
-        from main import app
-
-        table_side_effect, _ = self._tables(first_select_error=_postgrest_error(json.dumps({
-            "code": "42703", "message": "column user_settings.theme does not exist",
-        })))
-        with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
-            r = TestClient(app, raise_server_exceptions=False).get(
-                f"/api/profile/{USER_ID}/settings",
-            )
-        assert r.status_code == 500
-
-    def test_patch_of_the_missing_column_is_a_503(self):
-        from main import app
-
-        table_side_effect, calls = self._tables(
-            first_select_error=_postgrest_error(_MISSING_OPT_OUT_BODY),
-            update_error=_postgrest_error(_MISSING_OPT_OUT_BODY),
-        )
-        with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
-            r = TestClient(app, raise_server_exceptions=False).patch(
-                f"/api/profile/{USER_ID}/settings", json={"analytics_opt_out": True},
-            )
-        assert r.status_code == 503
-        assert "not available yet" in r.json()["detail"]
-
-    def test_consent_treats_the_missing_column_as_denied(self, monkeypatch, caplog):
-        monkeypatch.setattr(analytics_consent, "_lookup", _REAL_LOOKUP)
-        t = MagicMock()
-        t.return_value.select.side_effect = _postgrest_error(_MISSING_OPT_OUT_BODY)
-        monkeypatch.setattr("db.connection.table", t)
-        with caplog.at_level(logging.WARNING, "sapling.analytics_consent"):
-            assert analytics_consent.consent_for(USER_ID) is Consent.DENIED
-        assert "migration pending" in caplog.text
 
 
 class TestProviderPassthrough:
@@ -1770,7 +1691,7 @@ class TestErasureIsNotCapture:
         )
         for var in (
             "POSTHOG_PROJECT_TOKEN", "POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID",
-            "POSTHOG_API_HOST", "POSTHOG_DISABLED", "APP_ENV",
+            "POSTHOG_API_HOST", "APP_ENV",
         ):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("POSTHOG_HOST", "https://us.i.posthog.com")
@@ -1779,17 +1700,18 @@ class TestErasureIsNotCapture:
         monkeypatch.setenv("POSTHOG_PERSONAL_API_KEY", "phx_key")
         monkeypatch.setenv("POSTHOG_PROJECT_ID", "4242")
 
-    @pytest.mark.parametrize("extra", [
-        {"POSTHOG_DISABLED": "1"},                               # kill switch on
-        {},                                                      # no project token
-        {"POSTHOG_DISABLED": "1", "POSTHOG_PROJECT_TOKEN": "phc_x"},
+    @pytest.mark.parametrize("extra, flag_on", [
+        ({}, True),                                    # no project token
+        ({"POSTHOG_PROJECT_TOKEN": "phc_x"}, False),   # the flag's capture switch off
+        ({}, False),
     ])
     def test_configured_deletes_even_when_capture_is_off(
-        self, extra, outside_pytest, monkeypatch,
+        self, extra, flag_on, outside_pytest, monkeypatch,
     ):
         self._configure(monkeypatch)
         for k, v in extra.items():
             monkeypatch.setenv(k, v)
+        monkeypatch.setattr(posthog_client, "_product_analytics_on", lambda actor: flag_on)
         with patch("httpx.post", return_value=MagicMock(status_code=202)) as post:
             posthog_client.delete_person(USER_ID)
         post.assert_called_once()
@@ -1873,10 +1795,52 @@ class TestExceptionPayloadAtEnqueue:
 
         walk(tuple(item))
         assert SECRET not in json.dumps(item.properties, default=str)
-        exc_list = item.properties["$exception_list"]
-        assert exc_list[0]["type"] == "ValueError"
-        assert exc_list[0]["value"] == "[redacted]"
-        assert exc_list[0]["stacktrace"]["frames"]
+        summary = item.properties[posthog_client._EXCEPTION_SUMMARY]
+        assert summary[0]["type"] == "ValueError"
+        assert summary[0]["frames"][-1]["function"] == "handler_with_decrypted_locals"
+        assert "$exception_list" not in item.properties, "built on the worker"
+
+    def test_the_request_path_does_no_file_io(self, fake_client, monkeypatch):
+        """#677 review: capture_exception runs in the async 500 handler; the
+        SDK's exceptions_from_error_tuple reads source through linecache
+        there. The request path now takes a frame summary only; the worker
+        reads source and builds the list."""
+        import linecache
+        import threading
+
+        reads: list = []
+        real_getlines = linecache.getlines
+
+        def spy(filename, *a, **k):
+            reads.append(threading.current_thread().name)
+            return real_getlines(filename, *a, **k)
+
+        monkeypatch.setattr(linecache, "getlines", spy)
+        monkeypatch.setattr(linecache, "getline",
+                            lambda *a, **k: reads.append("getline") or "")
+
+        def outer():
+            try:
+                raise KeyError("inner")
+            except KeyError as e:
+                raise ValueError(f"bad input: {SECRET}") from e
+
+        try:
+            outer()
+        except ValueError as exc:
+            posthog_client.capture_exception(exc, user_id=USER_ID, request_id="r")
+            on_request_path = list(reads)
+        _drain()
+        assert on_request_path == []
+        assert reads and set(reads) == {"posthog-send"}
+        props = fake_client.capture.call_args.kwargs["properties"]
+        assert posthog_client._EXCEPTION_SUMMARY not in props
+        exc_list = props["$exception_list"]
+        assert [e["type"] for e in exc_list] == ["ValueError", "KeyError"]
+        assert all(e["value"] == "[redacted]" for e in exc_list)
+        frame = exc_list[0]["stacktrace"]["frames"][-1]
+        assert frame["function"] == "outer" and frame["context_line"]
+        assert SECRET not in json.dumps(props, default=str)
 
 
 class TestMigrationHeader:
@@ -1885,7 +1849,7 @@ class TestMigrationHeader:
 
         sql = (
             Path(__file__).resolve().parents[1]
-            / "db" / "migrations" / "20260927220057_llm_cost_precision_and_analytics_opt_out.sql"
+            / "db" / "migrations" / "20261016064813_analytics_opt_out.sql"
         ).read_text()
         assert "ai_observability" not in sql
         assert "posthog_client" in sql and "analytics_consent" in sql
@@ -1986,87 +1950,51 @@ class TestNoMisattribution:
 
 
 class TestRuntimeKillSwitch:
-    """POSTHOG_DISABLED takes effect without a restart — on submit AND for
-    items already queued."""
+    """The product_analytics flag is the runtime switch (no restart): flipping
+    it off stops new events AND items already queued, on the worker."""
 
-    @pytest.fixture
-    def real_gate(self, fake_client, monkeypatch):
-        from agents._providers import model_mode
-
-        monkeypatch.setattr(
-            posthog_client, "disabled_reason",
-            lambda *, for_erasure=False: posthog_client._disabled_reason_for(
-                os.environ, under_pytest=False, model_mode=model_mode(),
-                for_erasure=for_erasure,
-            ),
-        )
-        monkeypatch.setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
-        monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-        monkeypatch.delenv("APP_ENV", raising=False)
-        monkeypatch.delenv("POSTHOG_DISABLED", raising=False)
-        return fake_client
-
-    def test_flipping_the_switch_stops_new_events(self, real_gate, monkeypatch, sink):
+    def test_flipping_the_flag_stops_new_events(self, fake_client, monkeypatch, sink):
+        on = {"v": True}
+        monkeypatch.setattr(posthog_client, "_product_analytics_on", lambda actor: on["v"])
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
         _drain()
-        assert real_gate.capture.call_count == 1
-        monkeypatch.setenv("POSTHOG_DISABLED", "1")
+        assert fake_client.capture.call_count == 1
+        on["v"] = False
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
         _drain()
-        assert real_gate.capture.call_count == 1
+        assert fake_client.capture.call_count == 1
         assert posthog_client._queue.unfinished_tasks == 0
 
-    def test_items_queued_before_the_switch_are_dropped(
-        self, real_gate, monkeypatch, sink,
-    ):
+    def test_items_queued_before_the_flip_are_dropped(self, fake_client, monkeypatch, sink):
         import threading
 
         release = threading.Event()
+        on = {"v": True}
 
         def slow(uid):
             release.wait(2)
             return Consent.ALLOWED
 
         monkeypatch.setattr(analytics_consent, "_lookup", slow)
+        monkeypatch.setattr(posthog_client, "_product_analytics_on", lambda actor: on["v"])
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
         events_service.log_event("note.created", category="usage", user_id=USER_ID)
-        monkeypatch.setenv("POSTHOG_DISABLED", "1")
+        on["v"] = False
         release.set()
         _drain()
-        # At most the one item already past the gate check when it flipped.
-        assert real_gate.capture.call_count <= 1
+        # At most the one item already past the flag check when it flipped.
+        assert fake_client.capture.call_count <= 1
 
-
-class TestSettingsEtagShape:
-    """The GET /settings ETag changes with the body's shape, not only its
-    updated_at — a pre-migration / pre-deploy cached body must miss."""
-
-    def _etag(self, row):
-        from main import app
-
-        def table_side_effect(name):
-            m = MagicMock()
-            m.select.return_value = [row] if name == "user_settings" else []
-            return m
-
-        with patch("routes.profile.require_self"), \
-             patch("routes.profile.table", side_effect=table_side_effect):
-            r = TestClient(app).get(f"/api/profile/{USER_ID}/settings")
-        assert r.status_code == 200
-        return r.headers["etag"]
-
-    def test_with_and_without_the_column_differ(self):
-        stamp = "2026-09-27T00:00:00Z"
-        with_col = self._etag({"user_id": USER_ID, "updated_at": stamp, "analytics_opt_out": False})
-        without = self._etag({"user_id": USER_ID, "updated_at": stamp})
-        assert with_col != without
-
-    def test_differs_from_the_pre_change_formula(self):
-        from services.http_cache import make_etag
-
-        stamp = "2026-09-27T00:00:00Z"
-        old = make_etag("settings", USER_ID, stamp)
-        assert self._etag({"user_id": USER_ID, "updated_at": stamp, "analytics_opt_out": False}) != old
+    def test_the_gate_is_decided_once_at_boot(self, fake_client, monkeypatch, sink):
+        """Per-submit and per-delivery work never re-runs disabled_reason()."""
+        calls: list = []
+        monkeypatch.setattr(posthog_client, "disabled_reason",
+                            lambda **k: calls.append(k) or None)
+        events_service.log_event("note.created", category="usage", user_id=USER_ID)
+        posthog_client.capture_exception(ValueError("x"), user_id=USER_ID, request_id="r")
+        _drain()
+        assert calls == []
+        assert fake_client.capture.call_count == 2
 
 
 class TestRequestContextIsNarrow:
@@ -2093,10 +2021,37 @@ class TestRequestContextIsNarrow:
             "/api/work/42", headers={"Cookie": "sapling_session=SECRETCOOKIE"},
         )
         assert seen["type"] is RequestView
-        assert set(seen["slots"]) == {"state", "_route_of"}
+        assert set(seen["slots"]) == {"state", "_scope", "_template"}
         assert seen["user"] == USER_ID  # request.state is the same dict
         assert seen["route"] == "/api/work/{item_id}"
         assert seen["has_headers"] is False
+
+    def test_a_copied_context_drops_the_scope_when_the_request_ends(self, fake_client, sink):
+        """#677 review: a context copied into a task/thread during the request
+        kept the view — and through its closure the whole ASGI scope, with
+        the session cookie — alive for as long as that task lived."""
+        import contextvars
+        import gc
+
+        from services.request_context import _REQUEST_CTX
+
+        kept: dict = {}
+
+        def body(request):
+            kept["ctx"] = contextvars.copy_context()  # what a task/thread holds
+
+        TestClient(_signed_in_app(body)).post(
+            "/api/work/42", headers={"Cookie": "sapling_session=SECRETCOOKIE"},
+        )
+        view = kept["ctx"].run(_REQUEST_CTX.get)
+        assert view._scope is None
+        assert view.route_template() == "/api/work/{item_id}"  # resolved before letting go
+        assert view.state.get("user_id") == USER_ID
+        gc.collect()
+        assert not any(
+            isinstance(o, dict) and o.get("type") == "http" and "SECRETCOOKIE" in repr(o.get("headers"))
+            for o in gc.get_referrers(view.state)
+        ), "no live scope refers to the state dict through the view"
 
 
 class TestOneSubmitPath:
@@ -2125,10 +2080,14 @@ class TestNoRawClientApi:
 
 
 class TestProductAnalyticsFlag:
-    """#620/#677: `product_analytics` gates the worker's delivery, after the
-    disabled_reason() re-check and before the consent read."""
+    """#620/#677: `product_analytics` gates the worker's delivery, before the
+    consent read — through a bounded read whose failures are cached."""
 
-    def _deliver_with(self, monkeypatch, flag):
+    @pytest.fixture(autouse=True)
+    def real_flag(self, monkeypatch):
+        monkeypatch.setattr(posthog_client, "_product_analytics_on", _REAL_PA_ON)
+
+    def _deliver_with(self, monkeypatch, explain):
         sent = []
 
         class _C:
@@ -2136,9 +2095,8 @@ class TestProductAnalyticsFlag:
                 sent.append(a)
 
         monkeypatch.setattr(posthog_client, "_client", _C())
-        monkeypatch.setattr(posthog_client, "disabled_reason", lambda **k: None)
         monkeypatch.setattr(posthog_client, "_distinct_id_for", lambda actor: actor)
-        monkeypatch.setattr(feature_flags, "flag_on", flag)
+        monkeypatch.setattr(feature_flags, "explain", explain)
         item = posthog_client._Item(name="x", properties={}, actor="u1", captured_at=0.0)
         posthog_client._deliver(item)
         return sent
@@ -2148,13 +2106,14 @@ class TestProductAnalyticsFlag:
 
         def off(key, user_id):
             asked.append((key, user_id))
-            return False
+            return feature_flags.Resolution("off", "default", "stored default")
 
         assert self._deliver_with(monkeypatch, off) == []
         assert asked == [("product_analytics", "u1")]
 
     def test_worker_sends_when_flag_on(self, monkeypatch):
-        assert len(self._deliver_with(monkeypatch, lambda k, u: True)) == 1
+        on = lambda k, u: feature_flags.Resolution("on", "default", "stored default")  # noqa: E731
+        assert len(self._deliver_with(monkeypatch, on)) == 1
 
     def test_unreadable_flag_store_sends_nothing(self, monkeypatch):
         """No stored config (or an outage) resolves to the off default."""
@@ -2162,8 +2121,67 @@ class TestProductAnalyticsFlag:
             raise RuntimeError("db down")
 
         monkeypatch.setattr(feature_flags, "read_config", down)
-        # The real resolver, not this module's autouse stub.
-        assert _REAL_FLAG_ON("product_analytics", "u1") is False
+        assert posthog_client._product_analytics_on("u1") is False
+
+    def test_a_hung_flag_store_costs_one_bounded_wait_per_window(self, monkeypatch):
+        """#677 review: the worker's flag read could block 30 s (the
+        connection's default timeout) on every queued item during an outage."""
+        import threading
+
+        release = threading.Event()
+        calls: list = []
+
+        def hang(key, user_id):
+            calls.append(user_id)
+            release.wait(5)
+            return feature_flags.Resolution("on", "default", "")
+
+        monkeypatch.setattr(feature_flags, "explain", hang)
+        monkeypatch.setattr(posthog_client, "_FLAG_TIMEOUT_S", 0.05)
+        try:
+            started = time.monotonic()
+            for _ in range(20):
+                assert posthog_client._product_analytics_on("u1") is False
+            assert time.monotonic() - started < 1.0, "one bounded wait, then the cached failure"
+            assert calls == ["u1"], "the failure is cached: no read per item"
+        finally:
+            release.set()
+
+    def test_a_fail_closed_answer_is_cached_too(self, monkeypatch):
+        calls: list = []
+
+        def unreadable(key, user_id):
+            calls.append(user_id)
+            return feature_flags.Resolution("off", "fail_closed", "flag store unreadable")
+
+        monkeypatch.setattr(feature_flags, "explain", unreadable)
+        for _ in range(5):
+            assert posthog_client._product_analytics_on("u1") is False
+        assert calls == ["u1"]
+        monkeypatch.setattr(posthog_client, "_flag_down_until", 0.0)  # the window passes
+        monkeypatch.setattr(feature_flags, "explain",
+                            lambda k, u: feature_flags.Resolution("on", "default", ""))
+        assert posthog_client._product_analytics_on("u1") is True
+
+    def test_flush_before_erasure_stays_bounded_while_the_flag_store_hangs(
+        self, fake_client, monkeypatch, sink,
+    ):
+        import threading
+
+        release = threading.Event()
+        monkeypatch.setattr(feature_flags, "explain",
+                            lambda k, u: release.wait(5) and None)
+        monkeypatch.setattr(posthog_client, "_FLAG_TIMEOUT_S", 0.05)
+        try:
+            for _ in range(50):
+                events_service.log_event("note.created", category="usage", user_id=USER_ID)
+            started = time.monotonic()
+            posthog_client.flush(timeout_seconds=3)
+            assert time.monotonic() - started < 2.0
+            assert posthog_client._queue.unfinished_tasks == 0
+            fake_client.capture.assert_not_called()
+        finally:
+            release.set()
 
     def test_registered_off_first_and_client_visible(self):
         fd = feature_flags.REGISTRY["product_analytics"]

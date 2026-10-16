@@ -69,28 +69,38 @@ def request_has_privacy_signal() -> bool:
 
 class RequestView:
     """The two things the PostHog seam needs from the current request, and
-    nothing else — NOT the ASGI scope (headers, cookies, query string).
+    nothing else — NOT the ASGI scope (headers, cookies, query string) for
+    any longer than the request itself.
 
     * ``state`` — the request's ``scope["state"]`` dict. Starlette's
       ``request.state`` is a view over it, so ``auth_guard``'s
       ``request.state.user_id`` lands here, and the handler, a threadpool
       ``Depends`` and the request's BackgroundTasks all share it.
-    * ``route_template()`` — the matched route template, read LAZILY
-      (routing stamps ``scope["route"]`` after this view is made).
+    * ``route_template()`` — the matched route template. Routing stamps
+      ``scope["route"]`` after this view is made, so while the request is
+      in flight the view reads it from the scope; :meth:`detach` (called by
+      the middleware when the request ends) resolves the template once and
+      drops the scope. A context copied into a task or thread during the
+      request therefore never keeps the scope — its headers and session
+      cookie — alive after the response.
     """
 
-    __slots__ = ("state", "_route_of")
+    __slots__ = ("state", "_scope", "_template")
 
     def __init__(self, scope: dict) -> None:
         self.state: dict = scope.setdefault("state", {})
-
-        def _route_of() -> str | None:
-            return route_template_of(scope)
-
-        self._route_of = _route_of
+        self._scope: dict | None = scope
+        self._template: str | None = None
 
     def route_template(self) -> str | None:
-        return self._route_of()
+        scope = self._scope
+        return self._template if scope is None else route_template_of(scope)
+
+    def detach(self) -> None:
+        """Resolve the template one last time and let go of the scope."""
+        if self._scope is not None:
+            self._template = route_template_of(self._scope)
+            self._scope = None
 
 
 #: The current request's RequestView (ADR 0028). None outside a request.
@@ -204,10 +214,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # the handler emitted. The downstream task copies both at call_next,
         # so the handler, threadpool Depends and BackgroundTasks see them.
         privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
-        view_token = _REQUEST_CTX.set(RequestView(request.scope))
+        view = RequestView(request.scope)
+        view_token = _REQUEST_CTX.set(view)
         try:
             return await self._dispatch(request, call_next)
         finally:
+            # Copies of this context (tasks, threads, BackgroundTasks) keep
+            # the view: from here on it holds the template, not the scope.
+            view.detach()
             _REQUEST_CTX.reset(view_token)
             _PRIVACY_SIGNAL_CTX.reset(privacy_token)
 

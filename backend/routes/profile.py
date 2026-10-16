@@ -26,7 +26,7 @@ from models import (
     DeleteAccountBody,
 )
 from services.academics import school_peer_user_ids
-from services.analytics_consent import clear_analytics_consent_cache, missing_opt_out_column
+from services.analytics_consent import clear_analytics_consent_cache
 from services.auth_guard import require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
@@ -148,28 +148,6 @@ _SETTINGS_COLS = (
     "equipped_avatar_frame_id,equipped_banner_id,equipped_name_color_id,equipped_title_id,"
     "featured_role_id,featured_achievement_ids,updated_at"
 )
-
-
-#: Folded into the GET /settings ETag; bump when _SETTINGS_COLS changes.
-_SETTINGS_ETAG_VERSION = "2"
-
-#: The same list minus the ADR 0028 opt-out, for the deploy-order window in
-#: which this code is live but migration 20260927220057 has not run yet.
-_SETTINGS_COLS_WITHOUT_OPT_OUT = _SETTINGS_COLS.replace("analytics_opt_out,", "")
-
-
-def _select_settings(user_id: str) -> list:
-    """Read the settings row, tolerating a not-yet-migrated
-    ``analytics_opt_out`` (PostgREST 400 naming it): retry without the column,
-    so every settings/profile read keeps working and the field is simply
-    absent. The PostHog consent check treats that same state as "no"."""
-    filters = {"user_id": f"eq.{user_id}"}
-    try:
-        return table("user_settings").select(_SETTINGS_COLS, filters=filters)
-    except Exception as exc:
-        if not missing_opt_out_column(exc):
-            raise
-        return table("user_settings").select(_SETTINGS_COLS_WITHOUT_OPT_OUT, filters=filters)
 
 
 def _get_or_create_settings(user_id: str) -> dict:
@@ -489,14 +467,7 @@ def get_settings(user_id: str, request: Request):
     settings = _get_or_create_settings(user_id)
     # user_settings.updated_at is bumped on every patch → a clean single-source
     # ETag. A matching If-None-Match returns 304 without re-serializing.
-    # The body's SHAPE is part of the tag too: a schema version (bump it when
-    # the selected columns change) and whether analytics_opt_out came back —
-    # so a body cached before this deploy, or before its migration ran, can
-    # never be served as current once the field exists (same updated_at).
-    etag = make_etag(
-        "settings", _SETTINGS_ETAG_VERSION, user_id, settings.get("updated_at"),
-        "analytics_opt_out" in settings,
-    )
+    etag = make_etag("settings", user_id, settings.get("updated_at"))
     not_modified = conditional(request, etag)
     if not_modified is not None:
         return not_modified
@@ -543,20 +514,7 @@ def update_settings(
 
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        try:
-            table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
-        except Exception as exc:
-            # Deploy-order window (ADR 0028): the column is not migrated yet.
-            # A clear, retryable 503 — never a 500 — and nothing was written
-            # (the PATCH is one statement). Consent treats the missing column
-            # as "no" meanwhile, so the student is not tracked either way.
-            if "analytics_opt_out" in updates and missing_opt_out_column(exc):
-                raise HTTPException(
-                    status_code=503,
-                    detail="The analytics opt-out setting is not available yet. "
-                    "Please try again shortly.",
-                ) from exc
-            raise
+        table("user_settings").update(updates, filters={"user_id": f"eq.{user_id}"})
 
     # The consent cache's invalidation hook: an opt-out stops this process's
     # mirroring from the very next event (other processes: within the TTL).

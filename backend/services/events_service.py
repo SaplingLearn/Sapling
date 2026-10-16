@@ -59,7 +59,9 @@ quiz.answer_key_served        usage     quiz_id
 quiz.answer_key_flag_omitted  usage     quiz_id
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
-flashcard.generated           usage     card_count, documents_used, weak_concepts_used
+flashcard.generated           usage     card_count, documents_used, weak_concepts_used, via
+                                        (topic: /generate | paste | library_doc: /import/generate;
+                                        /import/commit persists, it does not emit)
 flashcard.reviewed            usage     card_id, rating (1 forgot | 2 hard | 3 easy)
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
