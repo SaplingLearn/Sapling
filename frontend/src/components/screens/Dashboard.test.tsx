@@ -164,3 +164,19 @@ describe("Dashboard course list by active semester", () => {
     expect(screen.getByText("Nothing enrolled this semester.")).toBeInTheDocument();
   });
 });
+
+describe("Dashboard upcoming assignments", () => {
+  it("drops a row with no due date instead of dating it 1970 and calling it overdue", async () => {
+    vi.mocked(getUpcomingAssignments).mockResolvedValue({
+      assignments: [
+        { id: "a-dated", user_id: "u1", title: "Problem Set 4", due_date: "2026-03-05" },
+        { id: "a-nodate", user_id: "u1", title: "Participation", due_date: null },
+      ],
+    });
+
+    render(<Dashboard />);
+
+    await waitFor(() => expect(screen.getAllByText("Problem Set 4").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Participation")).toBeNull();
+  });
+});
