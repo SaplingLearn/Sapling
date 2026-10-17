@@ -208,6 +208,14 @@ Setup verified from a fresh clone by: Jack He, 10/6/2026
 
 **Gradescope**
 
+The backend runs on Railway; the frontend uses the existing Cloudflare
+same-origin `/api` proxy. `backend/Dockerfile` installs Chromium and its Linux
+dependencies for BU SSO. The browser runs on the backend, never in the frontend
+worker. Saved credentials are verified when opening Gradescope setup; expired
+sessions prompt reconnection. Course linking, link listing, unlinking, and sync
+accept an optional `semester` term label so retakes import into the selected
+gradebook. Failed imports do not advance the last-successful-sync timestamp.
+
 - `POST` `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
 - `POST` `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
 - `DELETE` `/api/gradescope/credentials` — Remove stored credentials

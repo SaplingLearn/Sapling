@@ -13,7 +13,7 @@ import {
   type GradescopeCourse,
   type GradescopeSyncResult,
 } from "@/lib/api";
-import { humanizeError } from "@/lib/errorMessage";
+import { humanizeError, statusOf } from "@/lib/errorMessage";
 
 interface Props {
   open: boolean;
@@ -24,6 +24,8 @@ interface Props {
   /** Pretty label shown in the kicker. Defaults to "Gradescope" when no
    *  course is provided (settings mode). */
   saplingCourseLabel?: string;
+  semester?: string;
+  reconnect?: boolean;
   onClose: () => void;
   /** Fired after a successful sync. Not called in settings/connect-only mode. */
   onSynced?: () => void;
@@ -47,6 +49,8 @@ export function GradescopeSyncModal({
   userId,
   saplingCourseId,
   saplingCourseLabel,
+  semester,
+  reconnect = false,
   onClose,
   onSynced,
 }: Props) {
@@ -73,6 +77,8 @@ export function GradescopeSyncModal({
 
   // Sync result
   const [result, setResult] = React.useState<GradescopeSyncResult | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const submitting = React.useRef(false);
 
   React.useEffect(() => setMounted(true), []);
 
@@ -87,27 +93,30 @@ export function GradescopeSyncModal({
         setStage("choose-mode");
         return;
       }
+      // Saved credentials can expire. Verify them before showing a connected
+      // or ready state, and use this same response for the course picker.
+      const gs = await listGradescopeCourses(userId);
+      setCourses(gs.courses);
       // Settings-mode (no course): we're done at "connected" once creds
       // are saved — there's no course to link or sync from here.
       if (!saplingCourseId) {
         setStage("connected");
         return;
       }
-      const links = await listGradescopeLinks(userId);
+      const links = await listGradescopeLinks(userId, semester);
       const myLink = links.links.find((l) => l.sapling_course_id === saplingCourseId);
-      if (myLink) {
+      setLastSyncedAt(myLink?.last_synced_at ?? null);
+      if (myLink && gs.courses.some((course) => course.id === myLink.gradescope_course_id)) {
         setLinkedGsCourseId(myLink.gradescope_course_id);
         setStage("ready");
       } else {
-        const gs = await listGradescopeCourses(userId);
-        setCourses(gs.courses);
         setStage("link");
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Couldn't load Gradescope status");
+      setError(humanizeError(e, "Couldn't verify the Gradescope connection."));
       setStage("choose-mode");
     }
-  }, [userId, saplingCourseId]);
+  }, [userId, saplingCourseId, semester]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -119,13 +128,17 @@ export function GradescopeSyncModal({
     setSignedToken("");
     setBuUsername("");
     setBuPassword("");
-    refreshState();
-  }, [open, refreshState]);
+    if (reconnect) setStage("choose-mode");
+    else refreshState();
+  }, [open, reconnect, refreshState]);
 
   if (!mounted || !open) return null;
 
   async function onSubmitCredentials(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
+    setSaving(true);
     setError(null);
     try {
       await saveGradescopeCredentials(userId, {
@@ -136,8 +149,11 @@ export function GradescopeSyncModal({
       setPassword("");
       await refreshState();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "";
+      const msg = humanizeError(e, "Couldn't connect to Gradescope.");
       setError(msg.includes("Invalid") ? "Invalid Gradescope credentials." : msg);
+    } finally {
+      submitting.current = false;
+      setSaving(false);
     }
   }
 
@@ -160,7 +176,7 @@ export function GradescopeSyncModal({
       setBuUsername("");
       await refreshState();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "";
+      const msg = humanizeError(e, "BU sign-in failed.");
       setBuPassword(""); // never leave a wrong password sitting in state
       if (/408|duo.*timeout|wasn.?t approved/i.test(msg)) {
         setError(
@@ -189,6 +205,9 @@ export function GradescopeSyncModal({
       setError("Paste your _gradescope_session cookie value.");
       return;
     }
+    if (submitting.current) return;
+    submitting.current = true;
+    setSaving(true);
     try {
       await saveGradescopeCredentials(userId, {
         auth_mode: "cookies",
@@ -211,18 +230,27 @@ export function GradescopeSyncModal({
           "Those cookies didn't authenticate. Copy them again from a freshly signed-in tab.",
         ),
       );
+    } finally {
+      submitting.current = false;
+      setSaving(false);
     }
   }
 
   async function onPickCourse(gsCourseId: string) {
-    if (!saplingCourseId) return;
+    if (!saplingCourseId || submitting.current) return;
+    submitting.current = true;
+    setSaving(true);
     setError(null);
     try {
-      await linkGradescopeCourse(userId, saplingCourseId, gsCourseId);
+      await linkGradescopeCourse(userId, saplingCourseId, gsCourseId, semester);
       setLinkedGsCourseId(gsCourseId);
+      setLastSyncedAt(null);
       setStage("ready");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Couldn't link course");
+      setError(humanizeError(e, "Couldn't link course"));
+    } finally {
+      submitting.current = false;
+      setSaving(false);
     }
   }
 
@@ -231,13 +259,13 @@ export function GradescopeSyncModal({
     setError(null);
     setStage("syncing");
     try {
-      const res = await syncGradescopeCourse(userId, saplingCourseId);
+      const res = await syncGradescopeCourse(userId, saplingCourseId, semester);
       setResult(res);
       setStage("done");
       onSynced?.();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Sync failed");
-      setStage("ready");
+      setError(humanizeError(e, "Sync failed"));
+      setStage(statusOf(e) === 401 ? "choose-mode" : "ready");
     }
   }
 
@@ -267,7 +295,9 @@ export function GradescopeSyncModal({
         zIndex: 100,
         padding: 16,
       }}
-      onClick={onClose}
+      onClick={() => {
+        if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -321,7 +351,7 @@ export function GradescopeSyncModal({
                         : stage === "link"
                           ? "Pick the matching Gradescope course"
                           : stage === "done"
-                            ? "Sync complete"
+                            ? result?.failed ? "Sync needs attention" : "Sync complete"
                             : "Pull grades from Gradescope"}
           </h2>
         </header>
@@ -388,6 +418,7 @@ export function GradescopeSyncModal({
               signedToken={signedToken}
               setGradescopeSession={setGradescopeSession}
               setSignedToken={setSignedToken}
+              saving={saving}
               onSubmit={onSubmitCookies}
               onBack={() => {
                 setError(null);
@@ -482,6 +513,7 @@ export function GradescopeSyncModal({
                 <button
                   type="button"
                   className="btn btn--ghost"
+                  disabled={saving}
                   onClick={() => {
                     setError(null);
                     setStage("choose-mode");
@@ -491,11 +523,11 @@ export function GradescopeSyncModal({
                   ← Back
                 </button>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button type="button" className="btn" onClick={onClose}>
+                  <button type="button" className="btn" onClick={onClose} disabled={saving}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn--primary">
-                    Connect
+                  <button type="submit" className="btn btn--primary" disabled={saving}>
+                    {saving ? "Connecting…" : "Connect"}
                   </button>
                 </div>
               </div>
@@ -529,6 +561,7 @@ export function GradescopeSyncModal({
                     <li key={c.id} style={{ marginBottom: 6 }}>
                       <button
                         type="button"
+                        disabled={saving}
                         onClick={() => onPickCourse(c.id)}
                         style={{
                           width: "100%",
@@ -573,10 +606,10 @@ export function GradescopeSyncModal({
                 </ul>
               )}
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, gap: 10 }}>
-                <button type="button" className="btn" onClick={onClose}>
+                <button type="button" className="btn" onClick={onClose} disabled={saving}>
                   Cancel
                 </button>
-                <button type="button" className="btn btn--ghost" onClick={onResetCredentials}>
+                <button type="button" className="btn btn--ghost" onClick={onResetCredentials} disabled={saving}>
                   Use different account
                 </button>
               </div>
@@ -594,8 +627,9 @@ export function GradescopeSyncModal({
                   margin: "0 0 12px",
                 }}
               >
-                Your Gradescope account is connected. Go to any course in
-                the gradebook to link it and sync grades.
+                {courses.length > 0
+                  ? `Your Gradescope account is verified with ${courses.length} student course${courses.length === 1 ? "" : "s"}. Go to a course in the gradebook to link it and sync grades.`
+                  : "Sign-in was verified, but this account has no student courses. Check that you used the same Gradescope account you use for your classes."}
               </p>
               {lastSyncedAt && (
                 <p
@@ -648,7 +682,7 @@ export function GradescopeSyncModal({
                   {linkedGsCourseId}
                 </span>{" "}
                 and update grades in {saplingCourseLabel}. New assignments
-                land as Uncategorized. You can re-categorize them after.
+                are matched to categories by title where possible. You can re-categorize them after.
               </p>
               {lastSyncedAt && (
                 <p
@@ -664,6 +698,14 @@ export function GradescopeSyncModal({
                 </p>
               )}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  onClick={() => setStage("link")}
+                  disabled={stage === "syncing"}
+                >
+                  Change course
+                </button>
                 <button
                   type="button"
                   className="btn btn--ghost"
@@ -705,7 +747,9 @@ export function GradescopeSyncModal({
                   margin: "0 0 18px",
                 }}
               >
-                Pulled grades from Gradescope.
+                {result.failed > 0
+                  ? "Some assignments could not be saved. Retry the sync to import the remaining grades."
+                  : "Pulled grades from Gradescope."}
               </p>
               <div
                 style={{
@@ -725,6 +769,11 @@ export function GradescopeSyncModal({
                 />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                {result.failed > 0 && (
+                  <button type="button" className="btn btn--primary" onClick={onSyncNow}>
+                    Retry sync
+                  </button>
+                )}
                 <button type="button" className="btn btn--primary" onClick={onClose}>
                   Done
                 </button>
@@ -782,8 +831,7 @@ function SyncStat({
 // ───────────────────────────────────────────────────────────────────────────
 // Mode picker — first step when a user has no saved Gradescope creds.
 // Password mode covers accounts with a Gradescope-side password. Cookie
-// mode is the only way to connect for SSO-only accounts (BU, etc.) since
-// programmatic SSO with Duo 2FA isn't feasible.
+// mode also supports schools without an automated SSO flow.
 // ───────────────────────────────────────────────────────────────────────────
 function ChooseModeStep({
   onPickPassword,
@@ -825,7 +873,7 @@ function ChooseModeStep({
       <div style={{ height: 12 }} />
       <ModeCard
         title="Session cookies (manual)"
-        body="If you'd rather paste session cookies yourself. Works for any school. Cookies last about two weeks before you have to re-paste."
+        body="If you'd rather paste session cookies yourself. Works for any school. Reconnect when the session expires or you sign out of Gradescope."
         onClick={onPickCookies}
       />
 
@@ -1099,6 +1147,7 @@ function CookiePasteStep({
   signedToken,
   setGradescopeSession,
   setSignedToken,
+  saving,
   onSubmit,
   onBack,
 }: {
@@ -1106,6 +1155,7 @@ function CookiePasteStep({
   signedToken: string;
   setGradescopeSession: (v: string) => void;
   setSignedToken: (v: string) => void;
+  saving: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onBack: () => void;
 }) {
@@ -1232,12 +1282,13 @@ function CookiePasteStep({
           type="button"
           className="btn btn--ghost"
           onClick={onBack}
+          disabled={saving}
           style={{ padding: "6px 10px", fontSize: 12 }}
         >
           ← Back
         </button>
-        <button type="submit" className="btn btn--primary">
-          Verify &amp; connect
+        <button type="submit" className="btn btn--primary" disabled={saving}>
+          {saving ? "Connecting…" : "Verify & connect"}
         </button>
       </div>
     </form>
