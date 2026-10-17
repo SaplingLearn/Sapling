@@ -565,7 +565,10 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             continue
         a = rows[0]
 
-        if a.get("google_event_id"):
+        # Already exported, or no due date to put on a calendar (gradebook and
+        # Gradescope items may be undated; Google rejects a null all-day date
+        # and the export would fail partway). Same rule as sync_to_google.
+        if a.get("google_event_id") or not a.get("due_date"):
             skipped += 1
             continue
 
