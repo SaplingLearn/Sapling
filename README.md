@@ -473,4 +473,4 @@ For staging, after applying migrations you can lay down a self-contained fake de
 
 ## License
 
-Copyright (c) 2026 Andres Lopez, Jack He, Luke Cooper, and Jose Gael Cruz-Lopez
+Copyright (c) 2026 Sapling Labs Inc.
