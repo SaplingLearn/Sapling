@@ -41,6 +41,7 @@ export interface QuizActions {
   setConfig(config: SessionConfig): void;
   start(request: StartRequest, config?: SessionConfig): void;
   select(index: number): void;
+  write?(text: string): void;
   submitAnswer(): void;
   next(): void;
   finish(): void;
@@ -275,6 +276,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           conceptNodeId: from.conceptId,
           numQuestions: from.config.count,
           difficulty: from.config.difficulty,
+          questionFormat: from.config.questionFormat,
           // G5: set only by PRACTISE_MISSED, so an ordinary start sends
           // nothing and the route behaves exactly as it always has.
           sourceAttemptId: from.sourceAttemptId,
@@ -367,7 +369,8 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       const result = await withNetworkRetry(() =>
         answerQuestion(attemptId, {
           questionIndex: item.index,
-          selectedIndex: item.selectedIndex as number,
+          selectedIndex: item.selectedIndex,
+          ...(item.question.type && item.question.type !== "multiple_choice" ? { answerText: item.answerText ?? "" } : {}),
           questionId: item.question.id,
         }),
       );
@@ -407,7 +410,8 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       setConfig: next => {
         const applied = apply({ type: "SET_CONFIG", config: next });
         if (applied.config === next) {
-          savePrefs({ count: next.count, difficulty: next.difficulty, feedback: next.feedback });
+          savePrefs({ count: next.count, difficulty: next.difficulty, feedback: next.feedback,
+            ...(next.questionFormat ? { questionFormat: next.questionFormat } : {}) });
         }
       },
 
@@ -415,6 +419,9 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
 
       select: index => {
         apply({ type: "SELECT", index });
+      },
+      write: text => {
+        if (!answeringRef.current) apply({ type: "WRITE", text });
       },
 
       submitAnswer: () => {

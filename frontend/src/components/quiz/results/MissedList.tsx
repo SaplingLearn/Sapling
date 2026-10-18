@@ -56,14 +56,15 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
         item => String(item.question.id) === String(r.question_id),
       )?.question;
       const textFor = (label: string) =>
-        question?.options.find(o => o.label === label)?.text ?? "";
+        question?.type === "short_answer" || (question?.type === "numeric" || question?.type === "symbolic")
+          ? label : question?.options.find(o => o.label === label)?.text ?? "";
 
       return {
         questionId: String(r.question_id),
         stem: question?.question ?? "",
-        chosenLabel: r.selected,
+        chosenLabel: question?.type === "short_answer" || (question?.type === "numeric" || question?.type === "symbolic") ? "Your answer" : r.selected,
         chosenText: textFor(r.selected),
-        correctLabel: r.correct_answer,
+        correctLabel: question?.type === "short_answer" || (question?.type === "numeric" || question?.type === "symbolic") ? "Expected" : r.correct_answer,
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
       };

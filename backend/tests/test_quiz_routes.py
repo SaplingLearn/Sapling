@@ -768,18 +768,13 @@ class TestQuizAgentSuccess:
         assert len(correct) == 1
         assert correct[0]["text"] == "4"
 
-    def test_short_answer_type_is_rejected_at_schema_layer(self):
-        """short_answer was dropped from QuizQuestionType in refactor #2
-        because the frontend has no UI for free-text answers and
-        submit_quiz grades by option-label lookup. Constructing a
-        QuizQuestion with type='short_answer' must raise a Pydantic
-        validation error — not silently produce an ungradable item.
-        """
+    def test_short_answer_rejects_multiple_choice_options(self):
+        """Written questions have no answer choices; mixed shapes are invalid."""
         from pydantic import ValidationError
         try:
             QuizQuestion(
                 question="Define a closure.",
-                type="short_answer",  # type: ignore[arg-type]
+                type="short_answer",
                 difficulty="medium",
                 options=["a", "b", "c", "d"],
                 correct_answer="a",
@@ -790,9 +785,7 @@ class TestQuizAgentSuccess:
             pass
         else:
             raise AssertionError(
-                "Short-answer regression: QuizQuestion accepted "
-                "type='short_answer'. The Literal must stay MCQ-only "
-                "until real short-answer grading exists."
+                "A short-answer question must reject multiple-choice options."
             )
 
     def test_persists_to_quiz_attempts_table(self):

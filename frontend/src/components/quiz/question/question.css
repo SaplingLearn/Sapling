@@ -384,3 +384,27 @@
 .quiz-ask__input:focus {
   border-color: var(--border-strong);
 }
+
+.quiz-question__written {
+  display: grid;
+  gap: var(--pad-sm);
+}
+
+.quiz-question__written-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: var(--pad-md);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.6;
+}
+
+.quiz-question__written-input:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}

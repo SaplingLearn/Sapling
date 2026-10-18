@@ -259,6 +259,18 @@ def test_quiz_handler_wire_labels_match_the_browser_spec(monkeypatch):
     assert labels == list(E2E_QUIZ_CORRECT_LABELS)
 
 
+@pytest.mark.parametrize("format", ["short_answer", "numeric", "symbolic", "mixed"])
+def test_quiz_handler_supports_written_format_browser_journeys(monkeypatch, format):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    with quiz_agent.override(model=model_for("quiz")):
+        result = quiz_agent.run_sync(f"\nquestion_format: {format}.\n", deps=_deps())
+    types = [q.type for q in result.output.questions]
+    assert types == (["short_answer", "numeric", "symbolic"] if format == "mixed" else [format] * 3)
+    for i, question in enumerate(result.output.questions):
+        assert _agent_question_to_wire(question, i + 1) is not None
+
+
 def test_quiz_resolve_model_pref_returns_none_in_function_mode(monkeypatch):
     """The quiz half of the same bypass fixed in routes/learn.py: a fast/smart
     pref must not produce a live GoogleModel override in any non-real mode.
