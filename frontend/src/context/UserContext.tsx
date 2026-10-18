@@ -259,7 +259,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
   const setActiveUser = (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
-    profileGeneration.current += 1;
+    // A repeated confirmation of the same account must not cancel its
+    // profile load: userId would be unchanged, so the effect would not retry.
+    if (id !== userId) profileGeneration.current += 1;
     setUserId(id);
     setUserName(name);
     if (avatar) setAvatarUrl(avatar);

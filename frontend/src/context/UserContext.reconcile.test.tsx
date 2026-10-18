@@ -249,6 +249,7 @@ function SwitchingProbe() {
   const { userId, userName, isAuthenticated, isAdmin, setActiveUser, signOut } = useUser();
   return <>
     <button onClick={() => setActiveUser('new-user', 'New Name')}>Switch account</button>
+    <button onClick={() => setActiveUser(userId, userName)}>Confirm current account</button>
     <button onClick={() => void signOut()}>Sign out</button>
     <div data-testid="identity">{isAuthenticated ? `${userId}:${userName}:${isAdmin}` : 'out'}</div>
     <div data-testid="profile">{userName}:{String(isAdmin)}</div>
@@ -264,6 +265,21 @@ describe('profile responses cannot restore an older identity', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it('keeps an in-flight profile response when confirming the same account', async () => {
+    let finish!: (value: Partial<Response>) => void;
+    const response = new Promise<Partial<Response>>(resolve => { finish = resolve; });
+    const fetchMock = stubFetch(() => response);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    fireEvent.click(screen.getByText('Confirm current account'));
+    await act(async () => {
+      finish({ ok: true, status: 200, json: async () => ({ user_id: 'stale-1', name: 'Verified', is_admin: false }) });
+      await response;
+    });
+    expect(screen.getByTestId('identity').textContent).toBe('stale-1:Verified:false');
   });
 
   it.each([401, 200])('ignores an older %i response after switching accounts', async status => {
