@@ -405,7 +405,7 @@ class TestRequireSessionOwner:
             require_session_owner(SESSION, OWNER)
         call = tables.mocks["sessions"].select.call_args
         assert call.args[0] == "user_id"
-        assert call.kwargs["filters"] == {"id": f"eq.{SESSION}"}
+        assert call.kwargs["filters"] == {"id": f"eq.{SESSION}", "mode": "neq.review"}
 
 
 # ── Concurrent materialisation of one pending session ────────────────────────

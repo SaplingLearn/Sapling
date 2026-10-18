@@ -349,3 +349,13 @@ def test_mode_switch_refuses_a_review_session(legacy):
         rec,
         filtered=False,
     )
+
+
+def test_shared_tutor_ownership_never_accepts_a_review_row(monkeypatch):
+    from services import tutor_sessions
+
+    recorder = _Recorder()
+    monkeypatch.setattr(tutor_sessions, "table", recorder)
+    assert not tutor_sessions.session_owned_by("sess-review", USER)
+    assert recorder.filters == [{"id": "eq.sess-review", **NOT_REVIEW}]
+    assert recorder.writes == []

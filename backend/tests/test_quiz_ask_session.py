@@ -283,7 +283,8 @@ def test_the_materialised_quiz_ask_row_carries_its_teach_doc_so_chat_is_open():
         patch("routes.learn.events_service"),
     ):
         _consume_pending("s-q", "u1")
-    row = sessions.insert.call_args.args[0]
+    row = sessions.upsert.call_args.args[0]
+    assert sessions.upsert.call_args.kwargs == {"on_conflict": "id", "ignore_duplicates": True}
     assert row["loop_state"] == quiz_ask_state("node-1")
     _require_teaching(row["loop_state"])  # no 409
     with pytest.raises(HTTPException) as exc:

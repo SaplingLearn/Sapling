@@ -156,7 +156,7 @@ def legacy_client():
 
     def _table(name):
         m = MagicMock()
-        m.select.return_value = [{"offering_id": "off1"}] if name == "sessions" else []
+        m.select.return_value = [{"user_id": "user_andres", "offering_id": "off1", "mode": "socratic"}] if name == "sessions" else []
         m.update.return_value = []
         m.insert.return_value = []
         return m

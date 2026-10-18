@@ -493,3 +493,55 @@ test("a failed daily-review status read offers recovery without removing flashca
   await expect(page.getByTestId("review-status-retry")).toHaveCount(0);
   await context.close();
 });
+
+test("switching sessions cancels a pending tutor stream and retains the chosen session", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  await page.goto("/learn");
+  await walkProbeAndPlan(page, P);
+  const phase = page.getByTestId("loop-phase");
+  const original = await phase.getAttribute("data-session-id");
+  expect(original).toBeTruthy();
+  const [{ offering_id: offeringId }] = (await queryRaw("SELECT offering_id FROM sessions WHERE id = $1", [original])) as { offering_id: string }[];
+  // A second genuinely open loop session, as another tab could have started.
+  await queryRaw(
+    `INSERT INTO sessions (id, user_id, mode, topic, offering_id, started_at, loop_state)
+     VALUES ('e2e-loop-other-session', $1, 'socratic', 'Other session', $2, now() + interval '1 minute', '{"phase":"teach"}'::jsonb)`,
+    [USER_LOOP, offeringId],
+  );
+  await page.reload();
+  await expect(page.getByTestId("loop-session-e2e-loop-other-session")).toBeVisible();
+  await page.getByTestId(`loop-session-${original}`).click();
+  await expect(phase).toHaveAttribute("data-session-id", original!);
+  let release = () => {};
+  let entered = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const requested = new Promise<void>((resolve) => { entered = resolve; });
+  await page.route("**/api/learn/loop/chat/stream", async (route) => {
+    entered();
+    await held;
+    try {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: 'data: {"type":"token","data":{"delta":"STALE_SESSION_FEEDBACK"}}\n\ndata: {"type":"done","data":{"reply":"STALE_SESSION_FEEDBACK","phase":"feedback","graph_update":{},"mastery_changes":[]}}\n\n',
+      });
+    } catch {
+      // Chromium can discard the intercepted request after AbortController.
+    }
+  });
+  await page.getByTestId("tutor-input").fill("Explain this concept");
+  await page.getByTestId("tutor-send").click();
+  await requested;
+  const aborted = page.waitForEvent("requestfailed", (request) => request.url().includes("/api/learn/loop/chat/stream"));
+  await page.getByTestId("loop-session-e2e-loop-other-session").click();
+  expect((await aborted).failure()?.errorText).toContain("ERR_ABORTED");
+  await expect(phase).toHaveAttribute("data-session-id", "e2e-loop-other-session");
+  release();
+  await expect(phase).toHaveAttribute("data-phase", "teach");
+  await expect(page.getByText("STALE_SESSION_FEEDBACK", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+  await context.close();
+});

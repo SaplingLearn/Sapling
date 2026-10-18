@@ -1653,13 +1653,18 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
     # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
     # no-op 200 — nothing is deleted, and the answer never says whether the id
     # exists. A second delete (another tab, a double click) still succeeds.
+    # A known OWNED daily-review row is explicitly refused. Missing and
+    # foreign ids still share #709's idempotent success below. Never delete
+    # the daily queue through the tutor endpoint (that would reset its budget).
+    if session_id not in PENDING_SESSIONS:
+        owner_rows = table("sessions").select(
+            "user_id,mode",
+            filters={"id": f"eq.{session_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        )
+        if owner_rows and owner_rows[0].get("user_id") == user_id and owner_rows[0].get("mode") == REVIEW_MODE:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     if not session_owned_by(session_id, user_id):
-        return {"deleted": True}
-    # Daily review rows belong to the review queue, never tutor deletion.
-    owner_rows = table("sessions").select(
-        "mode", filters={"id": f"eq.{session_id}"}, limit=1
-    )
-    if owner_rows and owner_rows[0].get("mode") == REVIEW_MODE:
         return {"deleted": True}
     if session_id in PENDING_SESSIONS:
         with materialization_lock(session_id):
