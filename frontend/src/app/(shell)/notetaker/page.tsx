@@ -28,7 +28,7 @@ import type {
 import { now } from "@/lib/testMode";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
-import { buildQuizHref } from "@/lib/quiz/source";
+import { quizHrefForNote } from "@/lib/quiz/noteHref";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -1940,19 +1940,5 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
         </button>
       </div>
     </aside>
-  );
-}
-
-/**
- * The "Generate quiz" deep link (#537 §6): a concept deep link sourced from
- * this note, with a `returnTo` that reopens THIS note via the `?note=<id>`
- * support above. Exported as a pure helper — rather than extracting the
- * ~1900-line page's render tree — so the href-building logic is directly
- * unit-testable without mounting the whole component.
- */
-export function quizHrefForNote(noteId: string, conceptNodeId: string): string {
-  return buildQuizHref(
-    { concept: conceptNodeId },
-    { kind: "notes", returnTo: `/notetaker?note=${encodeURIComponent(noteId)}`, noteId },
   );
 }
