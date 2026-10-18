@@ -107,7 +107,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Calendar } from "./Calendar";
-import { getAllAssignments, updateAssignment } from "@/lib/api";
+import { exportToGoogleCalendar, getAllAssignments, getCalendarStatus, updateAssignment } from "@/lib/api";
 
 afterEach(() => {
   cleanup();
@@ -265,6 +265,19 @@ describe("Calendar — undated assignments", () => {
     await waitFor(() => expect(screen.getByText("Mon")).toBeInTheDocument());
   });
 
+  it("keeps undated items out of the week and day grids", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce(undated);
+    render(<Calendar />);
+    await waitFor(() => expect(screen.getByText("Mon")).toBeInTheDocument());
+
+    clickView("Week");
+    expect(await screen.findAllByText(EM_DASH)).toHaveLength(7);
+    expect(screen.queryByText("Participation")).toBeNull();
+    clickView("Day");
+    expect(screen.getByText("Nothing scheduled.")).toBeInTheDocument();
+    expect(screen.queryByText("Participation")).toBeNull();
+  });
+
   it("lists the undated item in the table with a 'No date' label", async () => {
     vi.mocked(getAllAssignments).mockResolvedValueOnce(undated);
     render(<Calendar />);
@@ -305,5 +318,75 @@ describe("Calendar — undated assignments", () => {
 
     await waitFor(() => expect(updateAssignment).toHaveBeenCalledTimes(1));
     expect(vi.mocked(updateAssignment).mock.calls[0][2]).toMatchObject({ due_date: null });
+  });
+
+  it("clears an existing due date and reloads the row as undated", async () => {
+    vi.mocked(getAllAssignments)
+      .mockResolvedValueOnce({ assignments: [{ id: "a-nodate", title: "Participation", due_date: "2026-03-20" }] } as never)
+      .mockResolvedValueOnce(undated);
+    vi.mocked(updateAssignment).mockResolvedValueOnce({ updated: true } as never);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Participation");
+
+    fireEvent.click(screen.getByTitle("Edit"));
+    fireEvent.change(screen.getByDisplayValue("2026-03-20"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateAssignment).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(updateAssignment).mock.calls[0][2]).toMatchObject({ due_date: null });
+    expect(await screen.findByText("No date")).toBeInTheDocument();
+  });
+
+  it("exports an undated CSV cell as empty while preserving quoted text", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({
+      assignments: [{ id: "a-nodate", title: 'Participation, "discussion"', course_code: "CS101", due_date: null, assignment_type: "other", notes: 'Bring "notes"' }],
+    } as never);
+    const createObjectURL = vi.fn<(blob: Blob) => string>(() => "blob:calendar-csv");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      render(<Calendar />);
+      clickView("Table");
+      await screen.findByText('Participation, "discussion"');
+      fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
+
+      const blob = createObjectURL.mock.calls[0][0] as Blob;
+      const csv = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(blob);
+      });
+      expect(csv).toBe('"Title","Course","Type","Due Date","Notes"\n"Participation, ""discussion""","CS101","other","","Bring ""notes"""');
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:calendar-csv");
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports skipped undated rows after exporting a mixed selection to Google", async () => {
+    const mixed = { assignments: [
+      { id: "a-nodate", title: "Participation", due_date: null },
+      { id: "a-dated", title: "Exam", due_date: "2026-03-20" },
+    ] } as never;
+    vi.mocked(getAllAssignments).mockResolvedValueOnce(mixed).mockResolvedValueOnce(mixed);
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true });
+    vi.mocked(exportToGoogleCalendar).mockResolvedValueOnce({ exported_count: 1, skipped_count: 1 });
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Participation");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all assignments" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export to Google" }));
+
+    await waitFor(() => expect(exportToGoogleCalendar).toHaveBeenCalledWith("u1", ["a-nodate", "a-dated"]));
+    expect(toastSpies.success).toHaveBeenCalledWith("Exported 1 (1 skipped).");
+    expect(await screen.findByText("No date")).toBeInTheDocument();
   });
 });

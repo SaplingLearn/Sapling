@@ -241,8 +241,9 @@ class TestUpdateAssignment:
         assert r.status_code == 200
         assert r.json() == {"updated": True}
 
-    def test_empty_due_date_clears_to_null(self):
-        """A cleared date input ("") must be written as NULL, not "" (invalid DATE)."""
+    @pytest.mark.parametrize("due_date", ["", None])
+    def test_empty_due_date_clears_to_null(self, due_date):
+        """Both date-clearing wire formats must persist SQL NULL."""
         with patch("routes.calendar.table") as t, \
              patch("routes.calendar.academics") as ac:
             ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
@@ -250,11 +251,24 @@ class TestUpdateAssignment:
             t.return_value.update.return_value = [{}]
             r = client.patch(
                 "/api/calendar/assignments/a1",
-                json={"user_id": "u1", "title": "Undated", "due_date": ""},
+                json={"user_id": "u1", "title": "Undated", "due_date": due_date},
             )
         assert r.status_code == 200
         written = t.return_value.update.call_args.args[0]
         assert written == {"title": "Undated", "due_date": None}
+
+    def test_omitted_due_date_does_not_clear_an_existing_date(self):
+        with patch("routes.calendar.table") as t, \
+             patch("routes.calendar.academics") as ac:
+            ac.user_enrollment_ids.return_value = [{"id": "e1", "offering_id": "o1"}]
+            t.return_value.select.return_value = [{"id": "a1"}]
+            t.return_value.update.return_value = [{}]
+            r = client.patch(
+                "/api/calendar/assignments/a1",
+                json={"user_id": "u1", "title": "Renamed"},
+            )
+        assert r.status_code == 200
+        assert t.return_value.update.call_args.args[0] == {"title": "Renamed"}
 
     def test_missing_user_id_returns_400(self):
         r = client.patch("/api/calendar/assignments/a1", json={"title": "No user"})
