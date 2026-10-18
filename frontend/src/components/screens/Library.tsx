@@ -17,7 +17,6 @@ const MarkdownChat = dynamic(
 );
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
-import { useIsMobile } from "@/lib/useIsMobile";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { useUser } from "@/context/UserContext";
 import {
@@ -45,7 +44,6 @@ type View = "grid" | "list";
 
 export function Library() {
   const toast = useToast();
-  const isMobile = useIsMobile();
   const { userId, userReady } = useUser();
   const [documents, setDocuments] = React.useState<Doc[]>([]);
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
@@ -89,7 +87,7 @@ export function Library() {
     }
   }, [userId, courseScanCourseId, courseScanLabel, toast]);
 
-  const cats: Cat[] = ["all", "lecture_notes", "syllabus", "reading", "slides", "study_guide", "assignment"];
+  const cats: Cat[] = ["all", "lecture_notes", "syllabus", "reading", "slides", "study_guide", "assignment", "other"];
 
   const load = React.useCallback(async () => {
     if (!userId) return;
@@ -154,16 +152,18 @@ export function Library() {
   }, [documents]);
 
   return (
-    <FullHeightScreen direction="row">
+    <FullHeightScreen direction="row" className="fa26-library">
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar
           title="Library"
           subtitle={`${documents.length} document${documents.length === 1 ? "" : "s"} · auto-extracted summaries and takeaways`}
           actions={
             <>
-              <div style={{ position: "relative" }}>
+              <div className="fa26-library-search-wrap" style={{ position: "relative" }}>
                 <input
                   data-testid="library-search"
+                  className="fa26-library-search"
+                  aria-label="Search documents"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search documents…"
@@ -199,11 +199,16 @@ export function Library() {
           }
         />
 
-        <div style={{
-          padding: "14px 32px", display: "flex", gap: 6, alignItems: "center",
-          borderBottom: "1px solid var(--border)", flexWrap: "wrap",
-        }}>
-          <FilterPills
+        <div className="fa26-library-filters">
+          <label htmlFor="library-course-select" className="label-micro">Course:</label>
+          <select id="library-course-select" className="fa26-course-select" value={courseFilter} onChange={event => setCourseFilter(event.target.value)}>
+            <option value="all">All ({groupedByCourse.all || 0})</option>
+            <option value="uncategorized">Uncategorized ({groupedByCourse.uncategorized || 0})</option>
+            {dedupedCourses.map(course => <option key={course.course_id} value={course.course_id}>{course.course_code || course.course_name} ({groupedByCourse[course.course_id] || 0})</option>)}
+          </select>
+          <span className="fa26-library-row-break" aria-hidden="true" />
+          <span className="label-micro">File Type:</span>
+          <FilterPills className="fa26-library-types"
             options={cats.map((c) => ({ value: c, label: c.replace("_", " ") }))}
             value={cat}
             onChange={setCat}
@@ -221,7 +226,7 @@ export function Library() {
         </div>
 
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+          <div className="fa26-library-content">
             {loading ? (
               view === "grid" ? <LibraryGridSkeleton /> : <LibraryListSkeleton />
             ) : (
@@ -236,11 +241,7 @@ export function Library() {
               </div>
             )}
             {view === "grid" ? (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                gap: 16,
-              }}>
+              <div className="fa26-library-grid">
                 {filtered.map(d => {
                   const isSelected = detail?.id === d.id;
                   const courseLabel = courseLookup[d.course_id ?? ""];
@@ -249,7 +250,7 @@ export function Library() {
                       key={d.id}
                       data-testid={`library-doc-${d.id}`}
                       onClick={() => setDetail(d)}
-                      className="card"
+                      className="card fa26-library-card"
                       style={{
                         padding: "var(--pad-lg)", display: "flex", flexDirection: "column",
                         gap: 10, textAlign: "left", cursor: "pointer",
@@ -259,7 +260,7 @@ export function Library() {
                       }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div style={{
+                        <div className="fa26-document-icon" style={{
                           width: 40, height: 48, borderRadius: "var(--r-sm)",
                           background: catColor[d.category], color: "#fff",
                           display: "flex", alignItems: "center", justifyContent: "center",
@@ -267,12 +268,12 @@ export function Library() {
                         }}>
                           <Icon name="doc" size={18} />
                         </div>
-                        <span className="chip" style={{ textTransform: "capitalize" }}>
+                        <span className="chip fa26-file-type" style={{ textTransform: "capitalize" }}>
                           {d.category.replace("_", " ")}
                         </span>
                       </div>
                       <div>
-                        <div className="h-serif" style={{
+                        <div className="h-serif fa26-file-name" style={{
                           fontSize: 16, lineHeight: 1.3, color: "var(--text)",
                           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
                         }}>
@@ -283,7 +284,7 @@ export function Library() {
                         </div>
                       </div>
                       {d.summary && (
-                        <div style={{
+                        <div className="fa26-file-summary" style={{
                           fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5,
                           display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden",
                         }}>
@@ -355,40 +356,6 @@ export function Library() {
         </div>
       </div>
 
-      {!isMobile && (
-        <aside style={{
-          width: 240, borderLeft: "1px solid var(--border)", flexShrink: 0,
-          background: "var(--bg-subtle)", padding: 16, overflowY: "auto",
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Courses</div>
-          <CourseRow
-            testid="library-course-filter-all"
-            label="All"
-            count={groupedByCourse.all || 0}
-            active={courseFilter === "all"}
-            onClick={() => setCourseFilter("all")}
-          />
-          <CourseRow
-            testid="library-course-filter-uncategorized"
-            label="Uncategorized"
-            count={groupedByCourse.uncategorized || 0}
-            active={courseFilter === "uncategorized"}
-            onClick={() => setCourseFilter("uncategorized")}
-          />
-          {dedupedCourses.map(c => (
-            <CourseRow
-              key={c.course_id}
-              testid={`library-course-filter-${c.course_id}`}
-              label={c.course_code || c.course_name}
-              subLabel={c.course_code ? c.course_name : undefined}
-              color={c.color || undefined}
-              count={groupedByCourse[c.course_id] || 0}
-              active={courseFilter === c.course_id}
-              onClick={() => setCourseFilter(c.course_id)}
-            />
-          ))}
-        </aside>
-      )}
 
       {detail && modalMounted && createPortal(
         <div
@@ -439,38 +406,6 @@ export function Library() {
         }}
       />
     </FullHeightScreen>
-  );
-}
-
-function CourseRow({
-  testid, label, subLabel, color, count, active, onClick,
-}: {
-  testid: string;
-  label: string; subLabel?: string; color?: string;
-  count: number; active: boolean; onClick: () => void;
-}) {
-  return (
-    <button
-      data-testid={testid}
-      onClick={onClick}
-      style={{
-        width: "100%", display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 10px", borderRadius: "var(--r-sm)", marginBottom: 4,
-        background: active ? "var(--bg-panel)" : "transparent",
-        border: active ? "1px solid var(--border)" : "1px solid transparent",
-        textAlign: "left",
-      }}
-    >
-      <span style={{
-        width: 8, height: 8, borderRadius: "50%",
-        background: color || "var(--text-muted)",
-      }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: active ? 600 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-        {subLabel && <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{subLabel}</div>}
-      </div>
-      <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>{count}</span>
-    </button>
   );
 }
 

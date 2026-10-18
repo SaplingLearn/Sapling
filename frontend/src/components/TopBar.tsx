@@ -16,7 +16,7 @@ export function TopBar({
 }) {
   const hasTitle = title !== undefined && title !== null && title !== "";
   return (
-    <header
+    <header className="top-bar"
       style={{
         display: "flex",
         alignItems: "flex-end",
@@ -32,11 +32,11 @@ export function TopBar({
       <div>
         {breadcrumb && <div className="label-micro" style={{ marginBottom: hasTitle ? 4 : 0 }}>{breadcrumb}</div>}
         {hasTitle && (
-          <h1 className="h-serif" style={{ margin: 0, fontSize: 30, fontWeight: 500 }}>{title}</h1>
+          <h1 className="h-serif top-bar__title" style={{ margin: 0, fontSize: 30, fontWeight: 500 }}>{title}</h1>
         )}
-        {subtitle && <div style={{ color: "var(--text-dim)", marginTop: 4, fontSize: 13 }}>{subtitle}</div>}
+        {subtitle && <div className="top-bar__subtitle" style={{ color: "var(--text-dim)", marginTop: 4, fontSize: 13 }}>{subtitle}</div>}
       </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div>
+      <div className="top-bar__actions" style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div>
     </header>
   );
 }

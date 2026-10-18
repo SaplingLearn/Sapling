@@ -11,7 +11,7 @@
  */
 
 import React from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnswerResult, GenerateResult, SubmitResult } from "@/lib/quiz/types";
 
@@ -310,5 +310,23 @@ describe("QuizScreen — Done drops the deep link (#537)", () => {
     expect(navigations).toEqual([{ via: "push", url: "/tree?node=c1" }]);
     // …and the History API is NOT used to fake a cross-route move.
     expect(location.pathname).toBe("/quiz");
+  });
+});
+
+describe("FA26 Study course filter", () => {
+  it("changes the course while preserving the return destination and clearing the concept", async () => {
+    quizApi.generateQuiz.mockClear();
+    searchParams = new URLSearchParams("concept=c1&from=dashboard&return=%2Fdashboard");
+    render(<ToastProvider><QuizScreen /></ToastProvider>);
+    await screen.findByRole("option", { name: "CS 330" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Quiz course" }), { target: { value: "course-a" } });
+    const navigation = navigations.at(-1)!;
+    const destination = new URL(navigation.url, "http://localhost");
+    expect(navigation.via).toBe("history.replaceState");
+    expect(navigation.state).toBeNull();
+    expect(destination.searchParams.get("course")).toBe("course-a");
+    expect(destination.searchParams.get("return")).toBe("/dashboard");
+    expect(destination.searchParams.has("concept")).toBe(false);
+    expect(quizApi.generateQuiz).not.toHaveBeenCalled();
   });
 });

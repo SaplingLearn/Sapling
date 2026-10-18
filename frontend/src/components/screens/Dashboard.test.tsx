@@ -26,7 +26,7 @@ const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams("layout=legacy"),
 }));
 
 vi.mock("@/context/UserContext", () => ({

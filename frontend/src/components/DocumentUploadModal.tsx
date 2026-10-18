@@ -4,7 +4,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "./Dialog";
 import { useToast } from "./ToastProvider";
 import {
   uploadDocumentStream,
@@ -68,7 +68,6 @@ const CATEGORY_OPTIONS = [
 
 export function DocumentUploadModal({ open, userId, courses, onClose, onComplete }: Props) {
   const toast = useToast();
-  const [mounted, setMounted] = React.useState(false);
   const [items, setItems] = React.useState<UploadItem[]>([]);
   const [dragging, setDragging] = React.useState(false);
   const [courseQuery, setCourseQuery] = React.useState("");
@@ -79,9 +78,6 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   // just-added course must be merged locally to be selectable right away.
   const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
 
-  React.useEffect(() => setMounted(true), []);
-
-  useScrollLock(open);
 
   React.useEffect(() => {
     if (!open) {
@@ -114,6 +110,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     }
     onClose();
   };
+
+  const courseSearchRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose: handleClose, initialFocusRef: courseSearchRef });
+  const titleId = React.useId();
 
   const addFiles = (fileList: File[]) => {
     const defaultCourseId = allCourses[0]?.course_id || "";
@@ -301,23 +302,30 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     >
       <div
         data-testid="upload-modal"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
         onClick={e => e.stopPropagation()}
-        className="card slide-up"
+        className="card slide-up fa26-upload"
         style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div className="fa26-upload__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
           <div>
             <div className="label-micro">Upload</div>
-            <div className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
+            <div id={titleId} className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
           </div>
           <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
-        <div style={{ padding: 20, overflowY: "auto" }}>
+        <div className="fa26-upload__body" style={{ padding: 20, overflowY: "auto" }}>
           <div
             data-testid="upload-modal-dropzone"
+            className="fa26-upload__dropzone"
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => {
@@ -338,10 +346,13 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
               PDF, DOCX, PPTX · max 100 MB each
             </div>
-            <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
+            <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm"
+              role="button" tabIndex={0} aria-label="Browse files"
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInputRef.current?.click(); } }}>
               <Icon name="up" size={12} /> Browse
               <input
                 data-testid="upload-modal-file-input"
+                ref={fileInputRef}
                 type="file"
                 multiple
                 accept=".pdf,.docx,.pptx"
@@ -359,6 +370,8 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
               <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
               <input
                 data-testid="upload-modal-course-search"
+                aria-label="Search for a course to add"
+                ref={courseSearchRef}
                 value={courseQuery}
                 onChange={e => setCourseQuery(e.target.value)}
                 placeholder="Search a course to add"

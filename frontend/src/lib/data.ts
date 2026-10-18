@@ -64,6 +64,7 @@ export type GraphEdge = {
   source: string;
   target: string;
   strength: number;
+  relationship_type?: string;
 };
 
 // Deep-link from a knowledge-graph node into the AI Tutor (`/learn`).

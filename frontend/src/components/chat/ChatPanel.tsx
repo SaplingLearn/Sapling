@@ -1,5 +1,6 @@
 "use client";
 
+import { DesignIcon } from "../fa26/DesignIcon";
 import React, { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Icon } from "../Icon";
@@ -75,7 +76,7 @@ export function ChatPanel({
   }, [messages, streamingText]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div className="fa26-chat-panel" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       {header && <div>{header}</div>}
       <div
         ref={scrollRef}
@@ -164,7 +165,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
   };
 
   return (
-    <div
+    <div className="fa26-chat-input"
       style={{
         padding: "12px 32px 20px",
         borderTop: "1px solid var(--border)",
@@ -175,7 +176,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
       }}
     >
       {onAction && (
-        <div style={{ display: "flex", gap: 6 }}>
+        <div className="fa26-chat-actions" style={{ display: "flex", gap: 6 }}>
           <button data-testid="tutor-action-hint" className="btn btn--sm" onClick={() => onAction("hint")} disabled={disabled} title="Ask for a small nudge">
             <Icon name="sparkle" size={12} /> Hint
           </button>
@@ -187,7 +188,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
           </button>
         </div>
       )}
-      <div
+      <div className="fa26-chat-composer"
         style={{
           display: "flex",
           gap: 10,
@@ -259,7 +260,7 @@ const Message = React.memo(function Message({
   const isUser = m.role === "user";
   return (
     <div
-      className="fade-in"
+      className={`fade-in fa26-message fa26-message--${isUser ? "user" : "assistant"}`}
       style={{
         display: "flex",
         gap: 12,
@@ -281,10 +282,10 @@ const Message = React.memo(function Message({
             flexShrink: 0,
           }}
         >
-          <Icon name="sparkle" size={14} />
+          <DesignIcon name="clov" />
         </div>
       )}
-      <div
+      <div className="fa26-message__bubble"
         style={{
           background: isUser ? "var(--accent)" : "var(--bg-panel)",
           color: isUser ? "var(--accent-fg)" : "var(--text)",
