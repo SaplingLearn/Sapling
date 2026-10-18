@@ -1,6 +1,7 @@
 """Adversarial pure diagnostic/planner contracts: no model, HTTP or database."""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import pytest
 
@@ -147,6 +148,72 @@ def test_adjacent_boundary_confirms_fresh_floor_examples_after_a_release_recheck
     assert report["skills"][0]["independent_correct"] == 3
     assert report["skills"][0]["independent_incorrect"] == 1
     assert probe_done(history)
+
+
+def test_released_interior_shape_does_not_trap_a_wide_bracket_in_rechecks(monkeypatch):
+    """Use the actual release/recheck policy, with only its journal read supplied.
+
+    Ability 1 gives an independent floor=1/ceiling=3. The first interior miss
+    is assisted by the prior release, so it cannot lower the ceiling. Avoiding
+    that now-released interior class leaves enough fresh floor confirmations
+    for four independent observations within the six-item cap.
+    """
+    from learning import misconceptions
+
+    journal = []
+    history = []
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(misconceptions, "recent_evidence", lambda *_args, **_kwargs: list(journal))
+
+    def grade(item, *, correct):
+        recheck = misconceptions.recheck_after_release("u1", "A", {}, now=now, item=item)
+        history.append(
+            observation(
+                difficulty=item.difficulty,
+                question_hash=item.question_hash,
+                correct=correct,
+                independent=not recheck,
+                same_session_recheck=recheck,
+                k=len(history),
+            )
+        )
+        journal.append(
+            {
+                "question_hash": item.question_hash,
+                "released": not correct,
+                "shape": (item.format, item.difficulty),
+            }
+        )
+        return recheck
+
+    assert grade(Item("floor", "A", 1, "initial-floor"), correct=True) is False
+    assert grade(Item("ceiling", "A", 3, "initial-ceiling"), correct=False) is False
+    sequence = []
+    while len(history) < P.PROBE_ITEMS_PER_SKILL_MAX and not probe_done(history):
+        item = choose(history)
+        assert item is not None
+        sequence.append(item.difficulty)
+        grade(item, correct=item.difficulty == 1)
+    assert sequence == [2, 1, 1, 1]
+    assert [h["independent"] for h in history] == [True, True, False, False, True, True]
+    report = summary(history)
+    row = report["skills"][0]
+    assert len(history) == P.PROBE_ITEMS_PER_SKILL_MAX
+    assert report["status"] == "bracketed" and probe_done(history)
+    assert (row["floor_difficulty"], row["ceiling_difficulty"]) == (1, 3)
+    assert (row["independent_correct"], row["independent_incorrect"]) == (3, 1)
+    # Confirmation does not erase either released class's copy-risk guard.
+    for difficulty in (2, 3):
+        assert (
+            misconceptions.recheck_after_release(
+                "u1",
+                "A",
+                {},
+                now=now,
+                item=Item("owed", "A", difficulty, f"new-owed-{difficulty}"),
+            )
+            is True
+        )
 
 
 def test_same_difficulty_slip_is_retested_and_not_confidently_bracketed():

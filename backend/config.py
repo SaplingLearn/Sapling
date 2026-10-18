@@ -1,5 +1,8 @@
+import logging
 import os
 from dotenv import load_dotenv
+
+from learning.params import PROBE_PLAN_READS_PER_MIN
 
 load_dotenv()
 
@@ -71,6 +74,30 @@ STUDENT_MONTHLY_BUDGET_USD = float(os.getenv("STUDENT_MONTHLY_BUDGET_USD", "2.00
 STUDENT_DAILY_TOKENS = int(os.getenv("STUDENT_DAILY_TOKENS", "400000"))
 STUDENT_DAILY_GRADES = int(os.getenv("STUDENT_DAILY_GRADES", "300"))
 LEARN_RATE_LIMIT_PER_MIN = int(os.getenv("LEARN_RATE_LIMIT_PER_MIN", "20"))
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Keep a request guard enabled if a deployment override is invalid."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        value = 0
+    if value <= 0:
+        logging.getLogger(__name__).warning(
+            "%s=%r is not a positive integer; using the policy default %d", name, raw, default
+        )
+        return default
+    return value
+
+
+# The no-model diagnostic/goal/plan guard keeps the policy's production default.
+# Only the scripted E2E launcher raises its process-wide burst allowance.
+LOOP_PROBE_PLAN_READS_PER_MIN = _positive_int_env(
+    "LOOP_PROBE_PLAN_READS_PER_MIN", PROBE_PLAN_READS_PER_MIN
+)
 # † Tutor calls per student per UTC day (owner decision A38, HANDOFF-06b): a COUNT cap that
 # holds when llm_usage cost reads wrong (#689) or EVENTS_LOGGING_ENABLED=false writes no rows.
 STUDENT_DAILY_TUTOR_CALLS = int(os.getenv("STUDENT_DAILY_TUTOR_CALLS", "200"))

@@ -220,6 +220,9 @@ if [ "$MODEL_MODE" = "function" ]; then
   # Give only this deterministic lane room for that burst. Real-model stacks
   # keep config.py's production default; an explicit caller cap (even 0) wins.
   export LEARN_RATE_LIMIT_PER_MIN="${LEARN_RATE_LIMIT_PER_MIN:-1000}"
+  # Probe/goal/plan reads use a separate process-local resource guard. DB resets
+  # do not clear that window either; fast adaptive journeys share one user.
+  export LOOP_PROBE_PLAN_READS_PER_MIN="${LOOP_PROBE_PLAN_READS_PER_MIN:-1000}"
 fi
 
 mkdir -p "$E2E_DIR"

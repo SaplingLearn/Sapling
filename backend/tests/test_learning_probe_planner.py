@@ -749,6 +749,7 @@ def test_probe_next_serves_mc_reason_options_without_the_key(probe):
     probe.full = [
         _ci("A-f", "A", "free", 2, "h-A-0"),  # A's post-test reserve (A23) — never served
         _ci("A-m", "A", "mc_reason", 2, "h-A-m", options=opts, correct_option="B"),
+        _ci("A-practice", "A", "free", 2, "h-A-z"),
     ]
     r = client.post(f"{LOOP}/probe/next", json=NEXT)
     assert r.status_code == 200, r.text
@@ -759,11 +760,14 @@ def test_probe_next_serves_mc_reason_options_without_the_key(probe):
 
 
 def test_probe_next_never_serves_the_posttest_reserve(probe):
-    """A23: each concept's post-test reserve is never probed; every other item stays reachable."""
+    """Diagnosis protects both delayed posttests and fresh teaching practice."""
     reserves = _reserves(probe.full)
     served = _served_until_done(probe, len(probe.full))
     assert served and not reserves & set(served)
-    assert len(served) == len(probe.full) - len(reserves)
+    practice = set(probe.store["doc"]["probe"]["practice_reserves"].values())
+    assert len(practice) == len(reserves)
+    assert not practice & (set(served) | reserves)
+    assert len(served) == len(probe.full) - len(reserves) - len(practice)
 
 
 def test_probe_next_never_serves_an_item_without_a_final_answer(probe):
@@ -772,6 +776,7 @@ def test_probe_next_never_serves_an_item_without_a_final_answer(probe):
         _ci("A-f", "A", "free", 2, "h-A-0"),  # A's post-test reserve (A23)
         _ci("A-x", "A", "free", 2, "h-A-x", final_answer=None),  # no final answer
         _ci("A-k", "A", "free", 2, "h-A-k"),
+        _ci("A-practice", "A", "free", 2, "h-A-z"),
     ]
     assert _served_until_done(probe, 3) == ["h-A-k"]
 
@@ -784,6 +789,7 @@ def test_probe_next_excludes_revealed_and_unavailable_items(probe):
         _ci("A-r", "A", "free", 2, "h-A-r"),
         _ci("A-u", "A", "free", 2, "h-A-u"),
         _ci("A-k", "A", "free", 2, "h-A-k"),
+        _ci("A-practice", "A", "free", 2, "h-A-z"),
     ]
     probe.revealed.return_value = {"h-A-r"}
     _probing(probe, unavailable=["h-A-u"])
@@ -1447,6 +1453,7 @@ def test_probe_next_excludes_items_already_answered_in_an_earlier_session(probe)
         _ci("A-f", "A", "free", 2, "h-A-0"),  # reserve
         _ci("A-s", "A", "free", 2, "h-A-a"),  # sorts first: served first unless excluded
         _ci("A-k", "A", "free", 2, "h-A-k"),
+        _ci("A-practice", "A", "free", 2, "h-A-z"),
     ]
     probe.seen.return_value = {"h-A-a"}
     # the unseen item first; the seen one only once nothing unseen is left
@@ -1517,7 +1524,7 @@ def test_probe_next_and_plan_get_are_rate_limited_per_user(probe, method, path):
             return client.post(f"{LOOP}{path}", json={**NEXT, "user_id": uid})
         return client.get(f"{LOOP}{path}", params={**PLAN_Q, "user_id": uid})
 
-    with patch("routes.learn_loop.PROBE_PLAN_READS_PER_MIN", 2):
+    with patch("routes.learn_loop.config.LOOP_PROBE_PLAN_READS_PER_MIN", 2):
         codes = [call(UID).status_code for _ in range(3)]
         other = call("u2")
     assert codes == [200, 200, 429]

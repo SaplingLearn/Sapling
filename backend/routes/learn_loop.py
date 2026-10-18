@@ -162,7 +162,6 @@ from learning.params import (
     POSTTEST_POSE_TTL_HOURS,
     PROBE_MAX_SKILLS,
     PROBE_SESSION_CAP,
-    PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_SECONDS_PER_CHECK,
     RUNG_ASSISTED_MIN,
@@ -4694,7 +4693,7 @@ def _probe_plan_read_limit(user_id: str) -> None:
     window, PROBE_PLAN_READS_PER_MIN a minute. Runs after the gate. No model
     runs behind these routes, so this is not the A20 rate limit (llm_usage)."""
     retry = check_rate_limit(
-        f"loop_probe_plan:{user_id}", limit=PROBE_PLAN_READS_PER_MIN, window_sec=60
+        f"loop_probe_plan:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=60
     )
     if retry is not None:
         raise HTTPException(
@@ -4784,11 +4783,6 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         for n in {it.node_id for it in items}
     } - {None}
     by_hash = {it.question_hash: it for it in items}
-    available = {
-        n: sorted({it.difficulty for it in items if it.node_id == n
-                   and it.question_hash not in reserves | revealed and is_servable(it)})
-        for n in (scope if scope is not None else skills)
-    }
     now = _now_s()
     out: dict = {}
 
@@ -4802,9 +4796,27 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         if pr.get("skills") is None:
             pr["skills"] = list(skills)
         pr["scope"] = sorted(scope) if scope is not None else list(skills)
-        pr["available_difficulties"] = available
         pr.setdefault("presented", [])
         cur = pr.get("current")
+        # Keep fresh teaching practice separately from the delayed posttest.
+        # The reserved question stays stable across answers and goal changes.
+        practice = pr.setdefault("practice_reserves", {})
+        asked = {h.get("question_hash") for h in pr["history"]}
+        current_hash = cur.get("question_hash") if isinstance(cur, dict) else None
+        for node in skills:
+            eligible = [it.question_hash for it in items if it.node_id == node
+                        and it.question_hash not in reserves | revealed | seen | asked | set(pr["unavailable"])
+                        and it.question_hash != current_hash and is_servable(it)]
+            if practice.get(node) not in eligible:
+                practice.pop(node, None)
+                if eligible:
+                    practice[node] = max(eligible)
+        practice_hashes = set(practice.values())
+        pr["available_difficulties"] = {
+            n: sorted({it.difficulty for it in items if it.node_id == n
+                       and it.question_hash not in reserves | revealed | practice_hashes and is_servable(it)})
+            for n in pr["scope"]
+        }
         if isinstance(cur, dict) and cur.get("question_hash"):
             qh = cur["question_hash"]
             if (not cur.get("grading_claim") or _claim_live(cur, now)) and qh in by_hash:
@@ -4823,7 +4835,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         skill_states = {n: states.get(n, BKT_L0) for n in pr["skills"]}
 
         def pick(extra_never: set[str]):
-            never = (reserves | revealed | set(pr["unavailable"]) | extra_never) - asked
+            never = (reserves | practice_hashes | revealed | set(pr["unavailable"]) | extra_never) - asked
             candidates = [
                 it
                 for it in items

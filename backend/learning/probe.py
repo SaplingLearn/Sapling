@@ -82,6 +82,7 @@ def _difficulty_key(
     available: set[int],
     correct: list[int],
     incorrect: list[int],
+    released: set[int],
 ) -> tuple[float, ...]:
     """Challenge the missing side, bisect a boundary, or retest a contradiction.
 
@@ -99,15 +100,23 @@ def _difficulty_key(
                 counts[difficulty],
                 min(abs(difficulty - d) for d in disputed),
             )
-        interior = {d for d in available if floor < d < ceiling}
+        # A released shape cannot supply fresh unaided evidence, even when the
+        # miss itself was assisted and therefore does not narrow the boundary.
+        interior = {d for d in available if floor < d < ceiling and d not in released}
         if interior:
             return (0 if difficulty in interior else 1, abs(difficulty - (floor + ceiling) / 2))
         # A wrong answer releases its reference and makes the next concept
         # check a recheck. Repeating the failed ceiling's shape can remain an
         # owed isomorph, adding no independent evidence. Once there is no
-        # interior level to bisect, confirm with novel floor-level examples
-        # until MIN is met; the observed ceiling is already established.
-        return (abs(difficulty - floor), counts[difficulty])
+        # fresh interior level to bisect, confirm with novel floor-level
+        # examples until MIN is met; the observed ceiling is established.
+        fresh_floors = {d for d in available if d <= floor and d not in released}
+        target = max(fresh_floors) if fresh_floors else floor
+        return (
+            0 if difficulty in fresh_floors else 1,
+            abs(difficulty - target),
+            counts[difficulty],
+        )
     if correct:
         harder = {d for d in available if d > max(correct)}
         target = max(harder) if harder else max(available)
@@ -170,13 +179,18 @@ def next_probe_item(
     # Choose the strand before comparing different kinds of adaptive keys.
     node_id = min(candidates, key=lambda n: (per_node[n], n))
     correct, incorrect = _evidence(by_node[node_id])
+    # Selection may avoid contaminated shapes using assisted misses too;
+    # _evidence above still excludes them from all diagnostic claims.
+    released = {
+        h["difficulty"] for h in by_node[node_id] if not h["correct"] or h.get("idk", False)
+    }
     available = {it.difficulty for it in candidates[node_id]}
     mid = (PROBE_TARGET_LO + PROBE_TARGET_HI) / 2
 
     def rank(it: ProbeItem) -> tuple:
         es = expected_success(states[node_id], it.difficulty, channel_for_format[it.format])
         return (
-            _difficulty_key(it.difficulty, available, correct, incorrect),
+            _difficulty_key(it.difficulty, available, correct, incorrect, released),
             0 if PROBE_TARGET_LO <= es <= PROBE_TARGET_HI else 1,
             abs(es - mid),
             it.difficulty,

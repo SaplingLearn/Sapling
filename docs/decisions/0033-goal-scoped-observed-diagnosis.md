@@ -20,6 +20,8 @@ question bank cannot establish an exact or universal frontier of understanding.
   bracketed result from partial, inconsistent, above/below available range and
   untested results. Show missing goal prerequisites, including beyond the three
   selected strands. Bank shortages and caps are limits, not proof of a boundary.
+  Keep one fresh practice question per assessed concept for teaching, separately
+  from its delayed posttest reserve; diagnosis must not exhaust that bank.
 - Help, prior item exposure, release rechecks and synthetic refusal-to-unknown
   fallback cannot certify an independent boundary. Capture the final help floor
   immediately before the existing evidence write. Legacy history has unknown
