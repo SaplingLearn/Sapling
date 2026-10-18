@@ -60,6 +60,10 @@ class LoopStateConflict(RuntimeError):
     """update_loop_state lost the compare-and-set on every attempt."""
 
 
+class LoopSessionClosed(RuntimeError):
+    """A conditional write cannot reopen an ended or durably closed session."""
+
+
 def load_loop_state(session_id: str) -> LoadedLoopState:
     rows = table("sessions").select(
         "loop_state,loop_state_rev", filters={"id": f"eq.{session_id}"}, limit=1
@@ -80,15 +84,29 @@ def load_loop_state(session_id: str) -> LoadedLoopState:
         return LoadedLoopState(LoopState.recover(doc), rev)
 
 
-def save_loop_state(session_id: str, state: LoopState, *, expected_rev: int) -> SaveOutcome:
+def save_loop_state(
+    session_id: str, state: LoopState, *, expected_rev: int, require_open: bool = False
+) -> SaveOutcome:
     doc = state.to_json()
+    filters = {"id": f"eq.{session_id}", "loop_state_rev": f"eq.{expected_rev}"}
+    if require_open:
+        filters.update({"ended_at": "is.null", "close_json": "is.null"})
     rows = table("sessions").update(
         {"loop_state": doc, "loop_state_rev": expected_rev + 1},
-        filters={"id": f"eq.{session_id}", "loop_state_rev": f"eq.{expected_rev}"},
+        filters=filters,
     )
     if rows:
         return SaveOutcome.SAVED
-    if table("sessions").select("id", filters={"id": f"eq.{session_id}"}, limit=1):
+    existing = table("sessions").select(
+        "id,ended_at,close_json" if require_open else "id",
+        filters={"id": f"eq.{session_id}"},
+        limit=1,
+    )
+    if existing:
+        if require_open and (
+            existing[0].get("ended_at") is not None or existing[0].get("close_json") is not None
+        ):
+            raise LoopSessionClosed(session_id)
         logger.info(
             "save_loop_state: sessions row %s moved past revision %s; not saved",
             session_id,
@@ -102,7 +120,7 @@ def save_loop_state(session_id: str, state: LoopState, *, expected_rev: int) -> 
 
 
 def update_loop_state(
-    session_id: str, mutate: Callable[[LoopState], LoopState | None]
+    session_id: str, mutate: Callable[[LoopState], LoopState | None], *, require_open: bool = False
 ) -> LoadedLoopState | None:
     """Load, apply `mutate` (in place, or return a replacement state), save
     with compare-and-set. On CONFLICT it re-loads and re-applies `mutate` to
@@ -114,7 +132,8 @@ def update_loop_state(
         replaced = mutate(state)
         if replaced is not None:
             state = replaced
-        outcome = save_loop_state(session_id, state, expected_rev=rev)
+        extra = {"require_open": True} if require_open else {}
+        outcome = save_loop_state(session_id, state, expected_rev=rev, **extra)
         if outcome is SaveOutcome.SAVED:
             return LoadedLoopState(state, rev + 1)
         if outcome is SaveOutcome.MISSING:

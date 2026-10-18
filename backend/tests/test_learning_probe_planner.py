@@ -29,7 +29,7 @@ def _items(node_id: str, n: int, *, difficulty: int = 2, fmt: str = "free") -> l
     ]
 
 
-def _obs(node_id, p_after, *, correct=True, idk=False, difficulty=2, k=0):
+def _obs(node_id, p_after, *, correct=True, idk=False, difficulty=2, k=0, independent=True):
     return {
         "node_id": node_id,
         "question_hash": f"h-{node_id}-{k}",
@@ -38,6 +38,7 @@ def _obs(node_id, p_after, *, correct=True, idk=False, difficulty=2, k=0):
         "correct": correct,
         "idk": idk,
         "p_after": p_after,
+        "independent": independent,
     }
 
 
@@ -192,16 +193,18 @@ def test_probe_done_empty_is_false():
     assert probe_done([]) is False
 
 
-def test_stop_rule_needs_min_items_and_stable_posterior():
+def test_stop_rule_needs_observed_boundaries_not_a_stable_posterior():
     from learning.probe import probe_done
 
     stable = [0.5, 0.55, 0.6, 0.6 + P.PROBE_STOP_DELTA / 2]
     hist = [_obs("A", p, k=i) for i, p in enumerate(stable)]
     assert len(hist) == P.PROBE_ITEMS_PER_SKILL_MIN
+    assert probe_done(hist) is False  # stable all-correct answers have no ceiling
+    hist[-1] = dict(hist[-1], difficulty=3, correct=False)
     assert probe_done(hist) is True
-    moving = stable[:-1] + [stable[-2] + 2 * P.PROBE_STOP_DELTA]
-    assert probe_done([_obs("A", p, k=i) for i, p in enumerate(moving)]) is False
-    assert probe_done(hist[:-1]) is False  # below MIN
+    hist[-1]["p_after"] += 2 * P.PROBE_STOP_DELTA
+    assert probe_done(hist) is True  # posterior movement does not erase evidence
+    assert probe_done(hist[:-1]) is False  # below MIN and missing a ceiling
 
 
 def test_probe_done_at_per_skill_max_even_if_moving():
@@ -406,6 +409,18 @@ ANSWER_KEYS = (
     "common_wrong_json",
     "wrong_key",
 )
+
+
+def _without_scope_metadata(body, *, diagnosis_status):
+    """Existing response contracts retain their fields plus explicit scope.
+
+    These legacy sessions have no confirmed goal. Check the added metadata,
+    then keep the exact assertions on the pre-existing response fields.
+    """
+    assert body["goal"] is None and body["goal_version"] == 0
+    assert set(body["diagnosis"]) == {"status", "stop_reason", "skills"}
+    assert body["diagnosis"]["status"] == diagnosis_status
+    return {k: v for k, v in body.items() if k not in {"goal", "goal_version", "diagnosis"}}
 
 
 def _ci(item_id, node, fmt, difficulty, qh, **over):
@@ -694,7 +709,7 @@ def test_probe_next_serves_an_item_without_the_key(probe):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["done"] is False
-    assert set(body) == {
+    assert set(_without_scope_metadata(body, diagnosis_status="not_assessed")) == {
         "done",
         "check_item_id",
         "question_hash",
@@ -827,7 +842,13 @@ def test_a_session_with_an_approved_plan_and_no_phase_is_not_probing(probe):
 def test_probe_next_with_no_candidates_finishes_probe(probe):
     probe.full = []
     r = client.post(f"{LOOP}/probe/next", json=NEXT)
-    assert r.status_code == 200 and r.json() == {"done": True, "phase": "plan"}
+    assert r.status_code == 200
+    assert _without_scope_metadata(r.json(), diagnosis_status="not_assessed") == {
+        "done": True,
+        "phase": "plan",
+    }
+    assert r.json()["diagnosis"]["stop_reason"] == "item_bank_exhausted"
+    assert all(s["status"] == "untested" for s in r.json()["diagnosis"]["skills"])
     assert probe.store["doc"]["phase"] == "plan"
     assert _learn_events(probe) == ["learn.probe_done"]
     kw = probe.events.call_args.kwargs
@@ -842,7 +863,8 @@ def test_probe_next_course_without_check_items(probe):
     probe.has_items.return_value = False
     probe.items.side_effect = AssertionError("no item read without check items")
     r = client.post(f"{LOOP}/probe/next", json=NEXT)
-    assert r.status_code == 200 and r.json() == {
+    assert r.status_code == 200
+    assert _without_scope_metadata(r.json(), diagnosis_status="not_assessed") == {
         "done": True,
         "phase": "plan",
         "no_check_items": True,
@@ -877,7 +899,7 @@ def test_probe_answer_persists_grade_answer_evidence_exactly_once(probe):
     assert ev["node_id"] == "A" and ev["channel"] == "free_response" and ev["correct"] is True
     assert ev["question_hash"] == "h-A-3" and ev["grader_backend"] == "gemini"
     body = r.json()
-    assert body == {
+    assert _without_scope_metadata(body, diagnosis_status="in_progress") == {
         "graded": True,
         "correct": True,
         "p_known": pytest.approx(0.61),
@@ -895,6 +917,10 @@ def test_probe_answer_persists_grade_answer_evidence_exactly_once(probe):
             "correct": True,
             "idk": False,
             "p_after": pytest.approx(0.61),
+            "independent": True,
+            "max_rung": 0,
+            "same_session_recheck": False,
+            "synthetic_idk": False,
         }
     ]
     assert probe.store["doc"]["current"] is None and probe.store["doc"]["steps"] == {}
@@ -1041,18 +1067,22 @@ def test_a_disowned_probe_answer_is_asked_again_and_never_becomes_idk(probe):
 
 
 def test_probe_answer_emits_probe_done_and_moves_to_plan(probe):
-    stable = [0.55, 0.58, 0.6]
-    history = [_obs("A", p, k=i) for i, p in enumerate(stable)]  # one short of MIN
+    history = [
+        _obs("A", 0.55, difficulty=1, k=0),
+        _obs("A", 0.58, difficulty=3, correct=False, k=1),
+        _obs("A", 0.6, difficulty=2, k=2),
+    ]  # one short of MIN; the next unaided success completes an ordered bracket
     _answer_doc(probe, history=history)
     r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="y"))
     assert r.status_code == 200 and r.json()["probe_done"] is True
+    assert r.json()["diagnosis"]["status"] == "bracketed"
     assert probe.store["doc"]["phase"] == "plan"
     assert probe.events.call_count == 1
     name, kw = probe.events.call_args.args[0], probe.events.call_args.kwargs
     assert name == "learn.probe_done" and kw["category"] == "usage" and kw["user_id"] == UID
     assert kw["payload"] == {
         "items": P.PROBE_ITEMS_PER_SKILL_MIN,
-        "misses": 0,
+        "misses": 1,
         "novice_floor": False,
         "skills": ["A"],
     }
@@ -1550,7 +1580,7 @@ def test_an_empty_proposal_opens_teaching(probe, states):
     probe.due.return_value = []
     r = client.get(f"{LOOP}/plan", params=PLAN_Q)
     assert r.status_code == 200, r.text
-    assert r.json() == {
+    assert _without_scope_metadata(r.json(), diagnosis_status="not_assessed") == {
         "concepts": [],
         "order": list(P.PLAN_ORDER),
         "empty": True,
@@ -1581,10 +1611,9 @@ def test_plan_approve_stores_the_learner_brief(probe):
     calls = []
     with patch(
         "routes.learn_loop.store_brief",
-        side_effect=lambda session_id, user_id, course_id, node_ids, **kw: calls.append(
-            (session_id, user_id, course_id, list(node_ids))
-        )
-        or "B",
+        side_effect=lambda session_id, user_id, course_id, node_ids, **kw: (
+            calls.append((session_id, user_id, course_id, list(node_ids))) or "B"
+        ),
     ):
         r = client.post(
             f"{LOOP}/plan/approve",

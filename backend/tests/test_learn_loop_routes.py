@@ -148,6 +148,7 @@ MODEL_ROUTES = [
 #: limit inline, after the gate (PKG-08 fix round; PKG-12's pattern), pinned in
 #: tests/test_learning_probe_planner.py.
 NO_MODEL_ROUTES = [
+    "/goal",
     "/status",
     "/hint",
     "/check/next",

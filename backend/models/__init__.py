@@ -7,6 +7,26 @@ from learning.params import GRADER_ANSWER_MAX_CHARS
 
 # ── Learn ─────────────────────────────────────────────────────────────────────
 
+class LoopGoal(BaseModel):
+    """The student confirms concept IDs; prose never silently selects a scope."""
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(default="", max_length=500)
+    target_node_ids: list[str] = Field(min_length=1, max_length=12)
+
+    @model_validator(mode="after")
+    def _distinct_targets(self) -> "LoopGoal":
+        if any(not n.strip() for n in self.target_node_ids) or len(set(self.target_node_ids)) != len(self.target_node_ids):
+            raise ValueError("target_node_ids must be non-empty and distinct")
+        self.text = self.text.strip()
+        return self
+
+
+class LoopGoalBody(BaseModel):
+    session_id: str
+    user_id: str = "user_andres"
+    goal: LoopGoal | None = None
+
+
 class StartSessionBody(BaseModel):
     user_id: str = "user_andres"
     topic: str = ""
@@ -14,6 +34,7 @@ class StartSessionBody(BaseModel):
     use_shared_context: bool = True
     course_id: Optional[str] = None  # Direct course_id lookup instead of resolving from topic
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    goal: LoopGoal | None = None
     # PKG-14 final fix round (spec §13 A99): the quiz "Ask about this" panel opens a
     # session ABOUT one quiz question. The client names the question by its attempt
     # and index; the server resolves the question's identity (`question_hash`) from
@@ -160,6 +181,7 @@ class ProbeAnswerBody(BaseModel):
 class PlanApproveBody(BaseModel):
     """PKG-08 /api/learn/loop/plan/approve — the student's subset of the proposed
     plan, in the order they want it (a reorder is theirs to make)."""
+    goal_version: int | None = Field(default=None, ge=0)
     session_id: str
     user_id: str
     concept_ids: List[str] = Field(..., min_length=1)

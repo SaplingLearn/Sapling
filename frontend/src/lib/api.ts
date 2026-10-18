@@ -998,6 +998,33 @@ export const getLoopStatus = async (userId: string): Promise<{ active: boolean }
 export type LoopPhase = 'probe' | 'plan' | 'teach' | 'check' | 'feedback' | 'close';
 export type LoopBand = 'novice' | 'develop' | 'profic';
 export type LoopFormat = 'free' | 'teachback' | 'mc_reason';
+/** Explicit learner-confirmed concepts; null means exploring the whole course. */
+export interface LoopGoal { text: string; target_node_ids: string[] }
+export interface LoopDiagnosisSkill {
+  node_id: string;
+  status: 'bracketed' | 'partial' | 'above_range' | 'below_range' | 'untested' | 'inconsistent';
+  floor_difficulty: number | null;
+  ceiling_difficulty: number | null;
+  independent_correct: number;
+  independent_incorrect: number;
+  independent_observations: number;
+  observations: number;
+  tested_difficulties: number[];
+  available_difficulties: number[];
+  contradictory_difficulties: number[];
+}
+export interface LoopDiagnosis {
+  status: 'bracketed' | 'limited' | 'in_progress' | 'not_assessed';
+  stop_reason: string | null;
+  skills: LoopDiagnosisSkill[];
+}
+export interface LoopLearningScope {
+  goal_version?: number;
+  goal?: LoopGoal | null;
+  diagnosis?: LoopDiagnosis | null;
+}
+export interface LoopGoalResult extends LoopLearningScope { phase: LoopPhase }
+
 /** A served option (A22): stored letter + text, never marked correct. */
 export interface LoopOption { letter: string; text: string }
 /** The check pose (`_pose_payload`). The `check` stream event carries only
@@ -1015,14 +1042,14 @@ export interface LoopProbeItem extends LoopCheckItem {
   node_id: string;
   prompt: string;
 }
-export type LoopProbeNext =
+export type LoopProbeNext = LoopLearningScope & (
   | ({ done: false } & LoopProbeItem)
-  | { done: true; phase: LoopPhase; no_check_items?: boolean };
-export type LoopProbeAnswerResult =
+  | { done: true; phase: LoopPhase; no_check_items?: boolean });
+export type LoopProbeAnswerResult = LoopLearningScope & (
   | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
   // unavailable → counted as not asked; refused (A33) → the item stays posed;
   // recorded: false → graded but lost to a stale claim (the probe moved on)
-  | { graded: false; unavailable?: boolean; refused?: boolean; recorded?: boolean };
+  | { graded: false; unavailable?: boolean; refused?: boolean; recorded?: boolean });
 export interface LoopLearnerState { node_id: string; p_known: number; band: LoopBand }
 export interface LoopPlanConcept {
   node_id: string;
@@ -1030,8 +1057,10 @@ export interface LoopPlanConcept {
   kind: 'review' | 'new' | 'sibling' | string;
   p_known: number;
   band?: LoopBand;
+  reason?: 'goal' | 'prerequisite' | 'review' | 'related';
+  target_node_ids?: string[];
 }
-export interface LoopPlan {
+export interface LoopPlan extends LoopLearningScope {
   concepts: LoopPlanConcept[];
   order: string[];
   /** Nothing to plan: the server moved the session straight to `teach`. */
@@ -1046,7 +1075,7 @@ export interface LoopBudgetNotice {
   scope: string | null;
   session_capped: boolean;
 }
-export interface LoopStartResult {
+export interface LoopStartResult extends LoopLearningScope {
   session_id: string;
   initial_message: string;
   graph_state?: unknown;
@@ -1156,7 +1185,7 @@ export const listLoopSessionsFor = async (
 
 /** GET /status for one session (read-only): where it stands and, while an item
  *  takes answers, its pose. The resume restore and the post-submission reconcile. */
-export interface LoopSessionStatus {
+export interface LoopSessionStatus extends LoopLearningScope {
   active: boolean;
   session_id: string;
   /** PKG-08's phase: probe | plan | teach | close. */
@@ -1174,13 +1203,17 @@ export const getLoopSessionStatus = (sessionId: string, userId: string) =>
 /** The teaching modes StartSessionBody.mode knows (the legacy deep links' ?mode=). */
 export const LOOP_DEEP_LINK_MODES = ['socratic', 'expository', 'teachback'] as const;
 
-export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null) =>
+export const startLoopSession = (userId: string, courseId: string, topic: string, mode?: string | null, goal?: LoopGoal | null) =>
   loopPost<LoopStartResult>('/start-session', {
     user_id: userId,
     topic,
     course_id: courseId,
     ...(mode && (LOOP_DEEP_LINK_MODES as readonly string[]).includes(mode) ? { mode } : {}),
+    ...(goal !== undefined ? { goal } : {}),
   });
+
+export const setLoopGoal = (sessionId: string, userId: string, goal: LoopGoal | null) =>
+  loopPost<LoopGoalResult>('/goal', { session_id: sessionId, user_id: userId, goal });
 
 export const nextLoopProbe = (sessionId: string, userId: string) =>
   loopPost<LoopProbeNext>('/probe/next', { session_id: sessionId, user_id: userId });
@@ -1193,9 +1226,10 @@ export const answerLoopProbe = (sessionId: string, userId: string, questionHash:
 export const getLoopPlan = (sessionId: string, userId: string) =>
   fetchJSON<LoopPlan>(`/api/learn/loop/plan?${new URLSearchParams({ session_id: sessionId, user_id: userId })}`);
 
-export const approveLoopPlan = (sessionId: string, userId: string, conceptIds: string[]) =>
+export const approveLoopPlan = (sessionId: string, userId: string, conceptIds: string[], goalVersion?: number) =>
   loopPost<{ phase: LoopPhase; concept_ids: string[] }>('/plan/approve', {
     session_id: sessionId, user_id: userId, concept_ids: conceptIds,
+    ...(goalVersion !== undefined ? { goal_version: goalVersion } : {}),
   });
 
 export const streamLoopChat = (sessionId: string, userId: string, message: string, handlers: StreamChatHandlers = {}) =>

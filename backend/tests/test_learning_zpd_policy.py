@@ -3041,7 +3041,9 @@ def test_save_loop_state_never_inserts_or_upserts_sessions(monkeypatch):
     from learning.policy import LoopState
 
     sig = inspect.signature(loop_state_store.save_loop_state)
-    assert list(sig.parameters) == ["session_id", "state", "expected_rev"]
+    assert list(sig.parameters) == ["session_id", "state", "expected_rev", "require_open"]
+    assert sig.parameters["require_open"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["require_open"].default is False
     assert sig.parameters["expected_rev"].kind is inspect.Parameter.KEYWORD_ONLY
     assert sig.parameters["expected_rev"].default is inspect.Parameter.empty
     t = _sessions_table(update_rows=[])

@@ -37,3 +37,94 @@
     padding: 10px 16px !important;
   }
 }
+
+.scopeEditor {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 32px 32px;
+}
+
+.scopeCard {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--pad-xl);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scopeFieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.scopeFieldset legend {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.scopeOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  padding: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.scopeOption input {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.scopeOptions {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.scopeText {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font: inherit;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.scopeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scopeSummary {
+  padding: 8px 32px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.diagnosis {
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border-radius: var(--r-md);
+  overflow-wrap: anywhere;
+}
+
+.diagnosisList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 767px) {
+  .scopeEditor { padding: 16px; }
+  .scopeCard { padding: 16px; }
+  .scopeSummary { padding: 8px 16px; }
+}

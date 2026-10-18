@@ -40,6 +40,33 @@ class Plan:
     order: tuple[str, ...] = tuple(PLAN_ORDER)
 
 
+def goal_scope(
+    target_node_ids: Iterable[str],
+    prereq_edges: Iterable[tuple[str, str]],
+    *,
+    nodes: Iterable[str],
+) -> frozenset[str]:
+    """Valid targets plus all their transitive valid prerequisites.
+
+    Edges point prerequisite -> dependent, as for outer_fringe. Invalid graph
+    endpoints cannot bridge into unrelated content. A visited set handles cycles;
+    descendants and disconnected strands stay outside the selected goal.
+    """
+    valid = set(nodes)
+    prerequisites: dict[str, set[str]] = defaultdict(set)
+    for prerequisite, dependent in prereq_edges:
+        if prerequisite in valid and dependent in valid:
+            prerequisites[dependent].add(prerequisite)
+    scope = set(target_node_ids) & valid
+    pending = list(scope)
+    while pending:
+        for prerequisite in prerequisites[pending.pop()]:
+            if prerequisite not in scope:
+                scope.add(prerequisite)
+                pending.append(prerequisite)
+    return frozenset(scope)
+
+
 def _components(nodes: Sequence[str], prereqs: dict[str, set[str]]) -> dict[str, int]:
     """node -> strongly-connected-component id over the prerequisite graph
     (iterative Tarjan; deterministic over the sorted node list)."""
@@ -147,7 +174,7 @@ def plan(
     siblings: list[str] = []
     for n in new:
         for s in siblings_fn(n):
-            if s in proficient and s not in taken:
+            if s in proficient and s not in taken and keep(s):
                 siblings.append(s)
                 taken.add(s)
                 break

@@ -1,19 +1,16 @@
-"""Probe phase (spec §3.3 probe band, §3.4 limits). Pure: no agents/db imports.
+"""Adaptive, unaided floor/ceiling diagnosis. Pure: no agents/db imports.
 
-Picks the next check item whose expected success under the current belief
-sits in the probe band, stops when belief stabilises, and detects the
-novice floor. Items arrive through a Protocol so this module never depends
-on the check-item module; the format -> channel map arrives as an argument
-(PKG-05 owns CHANNEL_FOR_FORMAT in agents/tools/check.py, which this module
-may not import — invariant 2 — and no second map is defined here);
-observations are JSON dicts because they live in sessions.loop_state.
+Beliefs choose an initial challenge, but never establish a diagnostic boundary.
+Only explicitly independent observations can do that. Assisted and legacy
+observations still consume the finite fatigue budget. Items arrive through a
+Protocol and their format/channel map is supplied by the caller.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Protocol, TypedDict
+from typing import NotRequired, Protocol, TypedDict
 
 from learning.params import (
     CHANNELS,
@@ -24,15 +21,13 @@ from learning.params import (
     PROBE_ITEMS_PER_SKILL_MAX,
     PROBE_ITEMS_PER_SKILL_MIN,
     PROBE_SESSION_CAP,
-    PROBE_STOP_DELTA,
     PROBE_TARGET_HI,
     PROBE_TARGET_LO,
 )
 
 
 class ProbeItem(Protocol):
-    """What the probe needs of a check item. The route binds each item to the
-    student's node_id (A2: stored items key on concept_key, not node_id)."""
+    """The caller binds a stored check item to the student's node_id."""
 
     id: str
     node_id: str
@@ -45,20 +40,83 @@ class ProbeObservation(TypedDict):
     node_id: str
     question_hash: str
     difficulty: int
-    channel: str  # always the item's channel (A1: no "idk" channel)
+    channel: str
     correct: bool
-    idk: bool  # explicit "I don't know" (A1)
+    idk: bool
     p_after: float
+    # Missing in old saved sessions: unknown help provenance is not unaided.
+    independent: NotRequired[bool]
 
 
 def expected_success(p_known: float, item_difficulty: int, channel: str) -> float:
-    """P(correct) for one item: difficulty-shifted belief through the channel's
-    BKT observation likelihood p·(1 − S) + (1 − p)·G (spec §3.1) — the same
-    formula chance-corrects mc. An unknown channel raises KeyError."""
+    """Difficulty-shifted BKT likelihood; only a starting-item heuristic."""
     row = CHANNELS[channel]
     g, s = float(row["G"]), float(row["S"])
     p = max(0.0, min(1.0, p_known + PROBE_DIFFICULTY_SHIFT[item_difficulty]))
     return p * (1.0 - s) + (1.0 - p) * g
+
+
+def _evidence(history: Sequence[ProbeObservation]) -> tuple[list[int], list[int]]:
+    correct, incorrect = [], []
+    for h in history:
+        if h.get("independent") is not True or h["difficulty"] not in PROBE_DIFFICULTY_SHIFT:
+            continue
+        # An explicit unknown is not independent success, even if a malformed
+        # old record also has correct=True.
+        (correct if h["correct"] and not h.get("idk", False) else incorrect).append(h["difficulty"])
+    return correct, incorrect
+
+
+def _bracketed(history: Sequence[ProbeObservation]) -> bool:
+    correct, incorrect = _evidence(history)
+    return bool(
+        len(correct) + len(incorrect) >= PROBE_ITEMS_PER_SKILL_MIN
+        and correct
+        and incorrect
+        and max(correct) < min(incorrect)
+    )
+
+
+def _difficulty_key(
+    difficulty: int,
+    available: set[int],
+    correct: list[int],
+    incorrect: list[int],
+) -> tuple[float, ...]:
+    """Challenge the missing side, bisect a boundary, or retest a contradiction.
+
+    Conflicting observations are not averaged away as a supposed slip. Further
+    items expose uncertainty, but cannot make conflicting evidence a confident
+    boundary.
+    """
+    counts = Counter(correct + incorrect)
+    if correct and incorrect:
+        floor, ceiling = max(correct), min(incorrect)
+        if floor >= ceiling:
+            disputed = {d for d in correct + incorrect if ceiling <= d <= floor}
+            return (
+                0 if difficulty in disputed else 1,
+                counts[difficulty],
+                min(abs(difficulty - d) for d in disputed),
+            )
+        interior = {d for d in available if floor < d < ceiling}
+        if interior:
+            return (0 if difficulty in interior else 1, abs(difficulty - (floor + ceiling) / 2))
+        # A wrong answer releases its reference and makes the next concept
+        # check a recheck. Repeating the failed ceiling's shape can remain an
+        # owed isomorph, adding no independent evidence. Once there is no
+        # interior level to bisect, confirm with novel floor-level examples
+        # until MIN is met; the observed ceiling is already established.
+        return (abs(difficulty - floor), counts[difficulty])
+    if correct:
+        harder = {d for d in available if d > max(correct)}
+        target = max(harder) if harder else max(available)
+        return (abs(difficulty - target), counts[difficulty])
+    if incorrect:
+        easier = {d for d in available if d < min(incorrect)}
+        target = min(easier) if easier else min(available)
+        return (abs(difficulty - target), counts[difficulty])
+    return ()
 
 
 def next_probe_item(
@@ -68,47 +126,71 @@ def next_probe_item(
     *,
     channel_for_format: Mapping[str, str],
     asked_per_node: Mapping[str, int] | None = None,
+    history: Sequence[ProbeObservation] | None = None,
 ) -> ProbeItem | None:
-    """The unasked item closest to the probe-band midpoint, in-band preferred;
-    ties break on (difficulty, question_hash). Respects PROBE_ITEMS_PER_SKILL_MAX
-    per node and PROBE_SESSION_CAP. Pass the full candidate list (asked items
-    included) so per-node counts are right; the caller has already removed items
-    that must never be served (post-test reserve, unavailable, unservable).
-    channel_for_format is PKG-05's CHANNEL_FOR_FORMAT. `asked_per_node` is the
-    caller's own count of asked items per node (its recorded observations); when
-    given it replaces the count over `items`, so an asked item that has since
-    left the list (withdrawn) still counts toward the per-skill cap."""
-    asked = set(asked_hashes)
-    if len(asked) >= PROBE_SESSION_CAP:
+    """Pick a novel item fairly across eligible, unfinished skill strands.
+
+    Least-observed strands go first so one attractive band cannot exhaust the
+    session before another skill is tested. Unaided evidence then drives harder,
+    easier or bisecting challenges. The belief band is an initial heuristic.
+
+    Pass all eligible items, including asked ones. Explicit observation counts
+    include withdrawn items; history/counts can only increase fatigue counts.
+    Old callers without history retain the starting-item heuristic and caps.
+    """
+    history = history or []
+    asked = set(asked_hashes) | {h["question_hash"] for h in history}
+    by_node: dict[str, list[ProbeObservation]] = defaultdict(list)
+    for h in history:
+        by_node[h["node_id"]].append(h)
+    per_node = Counter(it.node_id for it in items if it.question_hash in asked)
+    for node_id, count in (asked_per_node or {}).items():
+        per_node[node_id] = max(per_node[node_id], count)
+    for node_id, observations in by_node.items():
+        per_node[node_id] = max(per_node[node_id], len(observations))
+    if max(len(asked), len(history), sum(per_node.values())) >= PROBE_SESSION_CAP or novice_floor(
+        history
+    ):
         return None
-    per_node: Counter[str] = (
-        Counter(dict(asked_per_node))
-        if asked_per_node is not None
-        else Counter(it.node_id for it in items if it.question_hash in asked)
-    )
-    mid = (PROBE_TARGET_LO + PROBE_TARGET_HI) / 2.0
-    in_band: list[tuple[tuple[float, int, str], ProbeItem]] = []
-    near: list[tuple[tuple[float, int, str], ProbeItem]] = []
+
+    candidates: dict[str, list[ProbeItem]] = defaultdict(list)
     for it in items:
-        if it.question_hash in asked or it.node_id not in states:
-            continue
-        if per_node[it.node_id] >= PROBE_ITEMS_PER_SKILL_MAX:
-            continue
-        channel = channel_for_format.get(it.format)
-        if channel is None or it.difficulty not in PROBE_DIFFICULTY_SHIFT:
-            continue
-        es = expected_success(states[it.node_id], it.difficulty, channel)
-        key = (abs(es - mid), it.difficulty, it.question_hash)
-        (in_band if PROBE_TARGET_LO <= es <= PROBE_TARGET_HI else near).append((key, it))
-    pool = in_band or near
-    if not pool:
+        if (
+            it.question_hash not in asked
+            and it.node_id in states
+            and per_node[it.node_id] < PROBE_ITEMS_PER_SKILL_MAX
+            and not _bracketed(by_node[it.node_id])
+            and channel_for_format.get(it.format) in CHANNELS
+            and it.difficulty in PROBE_DIFFICULTY_SHIFT
+        ):
+            candidates[it.node_id].append(it)
+    if not candidates:
         return None
-    return min(pool, key=lambda pair: pair[0])[1]
+
+    # Choose the strand before comparing different kinds of adaptive keys.
+    node_id = min(candidates, key=lambda n: (per_node[n], n))
+    correct, incorrect = _evidence(by_node[node_id])
+    available = {it.difficulty for it in candidates[node_id]}
+    mid = (PROBE_TARGET_LO + PROBE_TARGET_HI) / 2
+
+    def rank(it: ProbeItem) -> tuple:
+        es = expected_success(states[node_id], it.difficulty, channel_for_format[it.format])
+        return (
+            _difficulty_key(it.difficulty, available, correct, incorrect),
+            0 if PROBE_TARGET_LO <= es <= PROBE_TARGET_HI else 1,
+            abs(es - mid),
+            it.difficulty,
+            it.question_hash,
+        )
+
+    return min(candidates[node_id], key=rank)
 
 
 def novice_floor(history: Sequence[ProbeObservation]) -> bool:
-    """Spec §3.3 last bullet, session-wide: NOVICE_FLOOR_MISSES not-correct
-    answers (an idk counts) at the easiest difficulty, or NOVICE_FLOOR_IDK idks."""
+    """A session-wide fatigue stop, not proof of a skill's diagnostic floor.
+
+    Legacy/assisted answers count toward exhaustion but never toward a boundary.
+    """
     misses_easiest = sum(
         1 for h in history if h["difficulty"] == PROBE_EASIEST_DIFFICULTY and not h["correct"]
     )
@@ -116,27 +198,117 @@ def novice_floor(history: Sequence[ProbeObservation]) -> bool:
     return misses_easiest >= NOVICE_FLOOR_MISSES or idks >= NOVICE_FLOOR_IDK
 
 
+def diagnostic_summary(
+    history: Sequence[ProbeObservation],
+    *,
+    skills: Iterable[str],
+    stop_reason: str | None = None,
+    available_difficulties: Mapping[str, Iterable[int]] | None = None,
+) -> dict:
+    """Describe evidence separately from a finite reason to stop.
+
+    `skills` selects the current goal's strands; old goal observations still
+    consume global fatigue but do not leak into this summary. Range labels need
+    explicit item-bank coverage and MIN unaided observations. Without coverage,
+    a missing side remains partial rather than an invented bound.
+    """
+    by_node: dict[str, list[ProbeObservation]] = defaultdict(list)
+    for h in history:
+        by_node[h["node_id"]].append(h)
+    rows = []
+    for node_id in sorted(set(skills)):
+        observations = by_node[node_id]
+        correct, incorrect = _evidence(observations)
+        floor = max(correct) if correct else None
+        ceiling = min(incorrect) if incorrect else None
+        coverage = sorted(
+            d
+            for d in set((available_difficulties or {}).get(node_id, []))
+            if d in PROBE_DIFFICULTY_SHIFT
+        )
+        independent = len(correct) + len(incorrect)
+        contradictory = sorted(
+            {d for d in correct + incorrect if ceiling <= d <= floor}
+            if floor is not None and ceiling is not None and floor >= ceiling
+            else set()
+        )
+        if not independent:
+            status = "untested"
+        elif contradictory:
+            status = "inconsistent"
+        elif _bracketed(observations):
+            status = "bracketed"
+        elif (
+            independent >= PROBE_ITEMS_PER_SKILL_MIN
+            and coverage
+            and not incorrect
+            and floor >= max(coverage)
+        ):
+            status = "above_range"
+        elif (
+            independent >= PROBE_ITEMS_PER_SKILL_MIN
+            and coverage
+            and not correct
+            and ceiling <= min(coverage)
+        ):
+            status = "below_range"
+        else:
+            status = "partial"
+        rows.append(
+            {
+                "node_id": node_id,
+                "status": status,
+                "floor_difficulty": floor,
+                "ceiling_difficulty": ceiling,
+                "independent_correct": len(correct),
+                "independent_incorrect": len(incorrect),
+                "independent_observations": independent,
+                "observations": len(observations),
+                "tested_difficulties": sorted(set(correct + incorrect)),
+                "available_difficulties": coverage,
+                "contradictory_difficulties": contradictory,
+            }
+        )
+
+    all_bracketed = bool(rows) and all(r["status"] == "bracketed" for r in rows)
+    if stop_reason is None:
+        if len(history) >= PROBE_SESSION_CAP:
+            stop_reason = "session_cap"
+        elif novice_floor(history):
+            stop_reason = "novice_floor"
+        elif all_bracketed:
+            stop_reason = "observed_boundaries"
+        elif rows and all(
+            r["status"] == "bracketed" or r["observations"] >= PROBE_ITEMS_PER_SKILL_MAX
+            for r in rows
+        ):
+            stop_reason = "per_skill_cap"
+    if all_bracketed:
+        status = "bracketed"
+    elif not any(r["independent_observations"] for r in rows):
+        status = "not_assessed"
+    elif stop_reason is not None:
+        status = "limited"
+    else:
+        status = "in_progress"
+    return {"status": status, "stop_reason": stop_reason, "skills": rows}
+
+
 def probe_done(
     history: Sequence[ProbeObservation],
     *,
     skills: Iterable[str] | None = None,
+    available_difficulties: Mapping[str, Iterable[int]] | None = None,
 ) -> bool:
-    """Session cap, novice floor, or every skill (history's nodes plus `skills`)
-    capped (≥ MAX items) or stabilised (≥ MIN items and the last two posteriors
-    within PROBE_STOP_DELTA). Empty history → False."""
+    """Stop for observed boundaries after MIN evidence, or finite fatigue caps.
+
+    Posterior stability and all-correct runs never prove a ceiling. Old sessions
+    remain bounded even though they cannot establish unaided evidence.
+    """
     if not history:
         return False
-    if len(history) >= PROBE_SESSION_CAP or novice_floor(history):
-        return True
-    by_node: dict[str, list[float]] = defaultdict(list)
-    for h in history:
-        by_node[h["node_id"]].append(float(h["p_after"]))
-    required = set(by_node) | (set(skills) if skills is not None else set())
-    for node_id in required:
-        ps = by_node.get(node_id, [])
-        if len(ps) >= PROBE_ITEMS_PER_SKILL_MAX:
-            continue
-        if len(ps) >= PROBE_ITEMS_PER_SKILL_MIN and abs(ps[-1] - ps[-2]) < PROBE_STOP_DELTA:
-            continue
-        return False
-    return True
+    required = set(skills) if skills is not None else {h["node_id"] for h in history}
+    summary = diagnostic_summary(
+        history, skills=required, available_difficulties=available_difficulties
+    )
+    return summary["stop_reason"] is not None

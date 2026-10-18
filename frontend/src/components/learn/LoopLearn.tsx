@@ -44,6 +44,7 @@ import {
   requestLoopHint,
   requestLoopHintTurn,
   resumeSession,
+  setLoopGoal,
   startLoopSession,
   streamLoopChat,
   streamLoopCheckAnswer,
@@ -52,6 +53,9 @@ import {
   type LoopCheckAnswer,
   type LoopCheckItem,
   type LoopCloseResponse,
+  type LoopGoal,
+  type LoopDiagnosis,
+  type LoopLearningScope,
   type LoopOpenSession,
   type LoopPhase,
   type LoopPlanConcept,
@@ -65,6 +69,7 @@ import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
 import styles from "./LoopLearn.module.css";
+import { DiagnosisSummary, GoalEditor } from "./LearningScope";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -179,6 +184,17 @@ export function LoopLearn() {
   // panel offers a retry instead of sitting empty.
   const [loadError, setLoadError] = useState<"start" | "probe" | "plan" | null>(null);
 
+  // Goals are session-owned. New sessions start whole-course; typed topic text
+  // never silently selects targets, and nothing is inherited across courses.
+  const [goal, setGoal] = useState<LoopGoal | null>(null);
+  const [diagnosis, setDiagnosis] = useState<LoopDiagnosis | null>(null);
+  const [scopeReady, setScopeReady] = useState(false);
+  const [scopeError, setScopeError] = useState(false);
+  const [goalEditor, setGoalEditor] = useState(false);
+  const [goalBusy, setGoalBusy] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
+  const goalButton = useRef<HTMLButtonElement>(null);
+
   // Probe
   const [probeItem, setProbeItem] = useState<LoopProbeItem | null>(null);
   const [probeDraft, setProbeDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -192,6 +208,7 @@ export function LoopLearn() {
   // Plan
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
+  const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
 
   // Teach / check / feedback
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -211,6 +228,8 @@ export function LoopLearn() {
   const [closeNote, setCloseNote] = useState<string | null>(null);
 
   // Knowledge map
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState(false);
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
 
   // A session "generation": bumped whenever the screen switches session, so a
@@ -244,6 +263,11 @@ export function LoopLearn() {
   }, [deepLink, router, pathname]);
 
   const course = useMemo(() => courses?.find((c) => c.course_id === courseId) ?? null, [courses, courseId]);
+  const applyLearningScope = useCallback((payload: LoopLearningScope | null | undefined) => {
+    if (!payload) return;
+    if (payload.goal !== undefined) setGoal(payload.goal);
+    if (payload.diagnosis !== undefined) setDiagnosis(payload.diagnosis);
+  }, []);
   const paused = state.budgetPause;
   const item = state.item;
 
@@ -262,6 +286,8 @@ export function LoopLearn() {
   const refreshGraph = useCallback(async () => {
     if (!userId) return;
     const request = ++graphRequest.current;
+    setGraphLoading(true);
+    setGraphError(false);
     try {
       const g = await getGraph(userId);
       if (!mounted.current || request !== graphRequest.current) return;
@@ -271,7 +297,9 @@ export function LoopLearn() {
       }));
       setGraph({ nodes, edges });
     } catch {
-      // the map is a convenience; the /tree link stays
+      if (mounted.current && request === graphRequest.current) setGraphError(true);
+    } finally {
+      if (mounted.current && request === graphRequest.current) setGraphLoading(false);
     }
   }, [userId, courses]);
 
@@ -317,13 +345,14 @@ export function LoopLearn() {
 
   /** Apply GET /status: the phase, and the open item's pose or none. */
   const applyStatus = useCallback((sid: string, st: LoopSessionStatus) => {
+    applyLearningScope(st);
     if (st.loop_phase === "close") {
       void enterClosed(sid);
       return;
     }
     dispatch({ type: "check", item: st.check ?? null });
     dispatch({ type: "phase", phase: statusPhase(st) });
-  }, [enterClosed]);
+  }, [enterClosed, applyLearningScope]);
 
   /** After a submission that did not settle (a 409, a stream error, Stop): the
    *  server may already have graded it, so re-read where the session stands.
@@ -344,6 +373,13 @@ export function LoopLearn() {
     streamAbort.current = null;
     dispatch({ type: "reset" });
     setReadOnly(null);
+    setGoal(null);
+    setDiagnosis(null);
+    setScopeReady(false);
+    setScopeError(false);
+    setGoalEditor(false);
+    setGoalBusy(false);
+    setGoalError(null);
     setStarting(false);
     setLoadError(null);
     setProbeItem(null);
@@ -355,6 +391,7 @@ export function LoopLearn() {
     setProbeFinished(false);
     setNoCheckItems(false);
     setPlan(null);
+    setPlanGoalVersion(undefined);
     setPlanBusy(false);
     setMessages([]);
     setStreamingText(null);
@@ -376,6 +413,10 @@ export function LoopLearn() {
     try {
       const r = await getLoopPlan(sid, userId);
       if (g !== gen.current) return;
+      applyLearningScope(r);
+      setScopeReady(true);
+      setScopeError(false);
+      setPlanGoalVersion(r.goal_version);
       setPlan(r.concepts ?? []);
       if (r.phase) dispatch({ type: "phase", phase: r.phase }); // an empty plan teaches at once
     } catch (err) {
@@ -383,7 +424,7 @@ export function LoopLearn() {
       setLoadError("plan");
       reportError(err, "Couldn't load today's plan.");
     }
-  }, [userId, reportError]);
+  }, [userId, reportError, applyLearningScope]);
 
   const nextProbe = useCallback(async (sid: string, g: number) => {
     setProbeBusy(true);
@@ -391,6 +432,7 @@ export function LoopLearn() {
     try {
       const r = await nextLoopProbe(sid, userId);
       if (g !== gen.current) return;
+      applyLearningScope(r);
       setProbeReference(null);
       if (r.done) {
         setProbeItem(null);
@@ -408,18 +450,21 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setProbeBusy(false);
     }
-  }, [userId, loadPlan, reportError]);
+  }, [userId, loadPlan, reportError, applyLearningScope]);
 
-  /** A resumed check phase restores the open item's pose READ-ONLY (GET
-   *  /status) — POST /check/next may activate another item (a write). */
-  const restoreCheck = useCallback(async (sid: string, g: number) => {
+  const loadLearningScope = useCallback(async (sid: string, g: number) => {
     try {
-      const st = await getLoopSessionStatus(sid, userId);
-      if (g === gen.current) applyStatus(sid, st);
-    } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't restore the current question.");
+      const response = await getLoopSessionStatus(sid, userId);
+      if (g !== gen.current) return null;
+      applyStatus(sid, response);
+      setScopeReady(true);
+      setScopeError(false);
+      return response;
+    } catch {
+      if (g === gen.current) setScopeError(true);
+      return null;
     }
-  }, [userId, applyStatus, reportError]);
+  }, [userId, applyStatus]);
 
   const resume = useCallback(async (s: LoopOpenSession) => {
     const g = ++gen.current;
@@ -435,11 +480,14 @@ export function LoopLearn() {
       if (g === gen.current) toast.error(humanizeError(err, "Couldn't load this session's messages."));
     }
     if (g !== gen.current) return;
-    // Continue the phase — never a new session, and no turn is sent (§11.3).
-    if (s.phase === "probe") await nextProbe(s.session_id, g);
-    else if (s.phase === "plan") await loadPlan(s.session_id, g);
-    else if (s.phase === "check") await restoreCheck(s.session_id, g);
-  }, [clearSessionView, nextProbe, loadPlan, restoreCheck, toast]);
+    const latest = await loadLearningScope(s.session_id, g);
+    if (g !== gen.current) return;
+    // Another tab may have edited the goal since /sessions was read. Continue
+    // from authoritative status, never a stale list's phase or an extra pose write.
+    const phase = latest ? statusPhase(latest) : s.phase;
+    if (phase === "probe") await nextProbe(s.session_id, g);
+    else if (phase === "plan") await loadPlan(s.session_id, g);
+  }, [clearSessionView, nextProbe, loadPlan, loadLearningScope, toast]);
 
   const openReadOnly = useCallback(async (id: string) => {
     const g = ++gen.current;
@@ -498,6 +546,8 @@ export function LoopLearn() {
       if (g !== gen.current) return;
       setSessionId(r.session_id);
       sessionRef.current = r.session_id;
+      applyLearningScope(r);
+      setScopeReady(true);
       if (r.initial_message) setMessages([asMsg("assistant", r.initial_message)]);
       if (r.budget?.level === "hard") {
         // A27: a capped student still gets the template opener and the probe
@@ -525,7 +575,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, state.phase, clearSessionView, nextProbe, reportError, dropFromPicker]);
+  }, [courseId, userId, course, state.phase, clearSessionView, nextProbe, reportError, dropFromPicker, applyLearningScope]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
@@ -603,6 +653,16 @@ export function LoopLearn() {
     if (courses) void refreshGraph();
   }, [courses, refreshGraph]);
 
+  const retryLearningScope = async () => {
+    if (!sessionId) return;
+    const g = gen.current;
+    const latest = await loadLearningScope(sessionId, g);
+    if (!latest || g !== gen.current) return;
+    const phase = statusPhase(latest);
+    if (phase === "probe") await nextProbe(sessionId, g);
+    else if (phase === "plan") await loadPlan(sessionId, g);
+  };
+
   const retrySessions = () => {
     setSessionsError(false);
     setOpenSessions(null);
@@ -638,6 +698,7 @@ export function LoopLearn() {
     try {
       const r = await answerLoopProbe(sessionId, userId, probeItem.question_hash, a);
       if (g !== gen.current) return;
+      applyLearningScope(r);
       if (r.graded) {
         void refreshGraph();
         setProbeCount((n) => n + 1);
@@ -662,16 +723,77 @@ export function LoopLearn() {
     }
   };
 
+  const saveGoal = async (requested: LoopGoal | null) => {
+    if (!sessionId || !courseId || goalBusy || !scopeReady) return;
+    if (state.phase !== "probe" && state.phase !== "plan") return;
+    const ownIds = new Set(graph.nodes.filter((n) => n.course_id === courseId && !n.is_subject_root).map((n) => n.id));
+    if (requested && (requested.text.length > 500 || requested.target_node_ids.length < 1 || requested.target_node_ids.length > 12 ||
+      requested.target_node_ids.some((id) => !ownIds.has(id)))) {
+      setGoalError("Confirm 1–12 concepts from this course.");
+      return;
+    }
+    const sid = sessionId;
+    const g = ++gen.current;
+    setGoalBusy(true);
+    setGoalError(null);
+    try {
+      const response = await setLoopGoal(sid, userId, requested);
+      if (g !== gen.current) return;
+      applyLearningScope(response);
+      setScopeReady(true);
+      setGoalEditor(false);
+      setProbeItem(null);
+      setProbeDraft(EMPTY_DRAFT);
+      setProbeReference(null);
+      setProbeCount(0);
+      setProbeFinished(false);
+      setNoCheckItems(false);
+      setPlan(null);
+      setPlanGoalVersion(undefined);
+      setLoadError(null);
+      dispatch({ type: "phase", phase: response.phase });
+      if (response.phase === "probe") await nextProbe(sid, g);
+      else if (response.phase === "plan") await loadPlan(sid, g);
+      requestAnimationFrame(() => { if (g === gen.current) goalButton.current?.focus(); });
+    } catch (error) {
+      if (g !== gen.current) return;
+      setGoalError(humanizeError(error, "Couldn't update your learning scope. Try again."));
+      if (extractErrorDetail(error).status === 409) {
+        try {
+          const latest = await getLoopSessionStatus(sid, userId);
+          if (g !== gen.current) return;
+          applyStatus(sid, latest);
+          if (!["probe", "plan"].includes(statusPhase(latest))) {
+            setGoalEditor(false);
+            toast.info(humanizeError(error, "The session has started teaching. Start a new session to change its goal."));
+          }
+        } catch { /* keep the draft and error available for retry */ }
+      }
+    } finally {
+      if (g === gen.current) setGoalBusy(false);
+    }
+  };
+
   // ── Plan ───────────────────────────────────────────────────────────────
   const approvePlan = async () => {
     if (!sessionId || !plan || plan.length === 0 || planBusy) return;
     const g = gen.current;
     setPlanBusy(true);
     try {
-      const r = await approveLoopPlan(sessionId, userId, plan.map((c) => c.node_id));
+      const ids = plan.map((concept) => concept.node_id);
+      const r = planGoalVersion === undefined
+        ? await approveLoopPlan(sessionId, userId, ids)
+        : await approveLoopPlan(sessionId, userId, ids, planGoalVersion);
       if (g === gen.current) dispatch({ type: "phase", phase: r.phase });
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't save the plan.");
+      if (g !== gen.current) return;
+      reportError(err, "Couldn't save the plan.");
+      if (g !== gen.current) return;
+      if (extractErrorDetail(err).status === 409) {
+        setPlan(null);
+        setLoadError("plan");
+        await retryLearningScope();
+      }
     } finally {
       if (g === gen.current) setPlanBusy(false);
     }
@@ -913,10 +1035,10 @@ export function LoopLearn() {
   // ── Derived view data ──────────────────────────────────────────────────
   const conceptNames = useMemo(() => {
     const names = new Map<string, string>();
-    for (const n of graph.nodes) names.set(n.id, n.name);
+    for (const n of graph.nodes) if (n.course_id === courseId) names.set(n.id, n.name);
     for (const c of plan ?? []) if (c.concept_name) names.set(c.node_id, c.concept_name);
     return names;
-  }, [graph.nodes, plan]);
+  }, [graph.nodes, plan, courseId]);
   const railGraph = useMemo(() => {
     const nodes = graph.nodes.filter((n) => n.course_id === courseId);
     const ids = new Set(nodes.map((n) => n.id));
@@ -980,10 +1102,24 @@ export function LoopLearn() {
               testId="loop-course-select"
               value={courseId ?? ""}
               options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
-              onChange={(v) => setCourseId(v)}
+              onChange={(v) => {
+                ++gen.current;
+                clearSessionView();
+                setSessionId(null);
+                sessionRef.current = null;
+                setOpenSessions(null);
+                setCourseId(v);
+              }}
               ariaLabel="Course"
               size="sm"
             />
+          )}
+          {sessionId && !readOnly && (state.phase === "probe" || state.phase === "plan") && (
+            <button ref={goalButton} type="button" className="btn btn--sm" data-testid="loop-set-goal"
+              disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady}
+              onClick={() => { setGoalEditor(true); setGoalError(null); }}>
+              {goal ? "Edit goal" : "Set goal"}
+            </button>
           )}
           <Link data-testid="loop-tree-link" href={treeHref} className="btn btn--sm btn--ghost">
             Knowledge map
@@ -1207,9 +1343,16 @@ export function LoopLearn() {
     );
   } else if (loadingSessions) {
     body = <div style={{ padding: 40, color: "var(--text-dim)" }}>{starting ? "Starting your session…" : "Loading…"}</div>;
+  } else if (goalEditor) {
+    body = <GoalEditor key={`${sessionId}:${courseId}`} goal={goal}
+      nodes={railGraph.nodes.filter((node) => !node.is_subject_root)} busy={goalBusy} error={goalError}
+      loadingNodes={graphLoading} nodesError={graphError} onRetryNodes={() => void refreshGraph()}
+      onSave={(next) => void saveGoal(next)} onCancel={() => { setGoalEditor(false); goalButton.current?.focus(); }} />;
   } else if (state.phase === "probe") {
     body = (
       <ProbePanel
+        diagnosis={diagnosis}
+        names={conceptNames}
         item={probeItem}
         count={probeCount}
         draft={probeDraft}
@@ -1228,6 +1371,8 @@ export function LoopLearn() {
   } else if (state.phase === "plan") {
     body = (
       <PlanPanel
+        diagnosis={diagnosis}
+        names={conceptNames}
         plan={plan}
         busy={planBusy}
         loadFailed={loadError === "plan"}
@@ -1319,6 +1464,15 @@ export function LoopLearn() {
       >
         {header}
         {sessionStrip}
+        {sessionId && !readOnly && (
+          <div className={styles.scopeSummary} data-testid="loop-goal-summary">
+            {scopeError ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
+              <button type="button" data-testid="loop-goal-retry" className="btn btn--sm" onClick={() => void retryLearningScope()}>Retry learning scope</button></>
+              : !scopeReady ? "Loading learning scope…"
+                : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => conceptNames.get(id) ?? "Selected concept").join(", ")}</span></>
+                  : "Scope: Explore the whole course"}
+          </div>
+        )}
         {notices}
         <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
           <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -1446,8 +1600,10 @@ function OptionList({
 }
 
 function ProbePanel({
-  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry,
+  item, count, draft, setDraft, reference, note, busy, loadFailed, greeting, onSubmit, onIdk, onNext, onRetry, diagnosis, names,
 }: {
+  diagnosis: LoopDiagnosis | null;
+  names: Map<string, string>;
   item: LoopProbeItem | null;
   count: number;
   draft: Draft;
@@ -1476,6 +1632,7 @@ function ProbePanel({
             fine answer.
           </p>
         </div>
+        <DiagnosisSummary diagnosis={diagnosis} names={names} />
         {greeting && (
           <div
             style={{
@@ -1504,6 +1661,7 @@ function ProbePanel({
           <div
             data-testid="loop-probe-item"
             data-question-hash={item.question_hash}
+            data-difficulty={item.difficulty}
             className="card"
             style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}
           >
@@ -1589,8 +1747,10 @@ function ProbePanel({
 }
 
 function PlanPanel({
-  plan, busy, loadFailed, onApprove, onRetry,
+  plan, busy, loadFailed, onApprove, onRetry, diagnosis, names,
 }: {
+  diagnosis: LoopDiagnosis | null;
+  names: Map<string, string>;
   plan: LoopPlanConcept[] | null;
   busy: boolean;
   loadFailed: boolean;
@@ -1609,6 +1769,7 @@ function PlanPanel({
             Built from your check-in: anything due for review first, then what&apos;s next to learn.
           </p>
         </div>
+        <DiagnosisSummary diagnosis={diagnosis} names={names} />
         {plan === null && !loadFailed && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Building your plan…</div>}
         {plan === null && loadFailed && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
@@ -1640,7 +1801,11 @@ function PlanPanel({
                   }}
                 >
                   <span style={{ width: 22, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
-                  <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}</span>
+                  <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
+                    {c.reason && <span data-testid={`loop-plan-reason-${c.node_id}`} style={{ display: "block", marginTop: 4, fontWeight: 400, fontSize: 12, color: "var(--text-dim)" }}>
+                      {c.reason === "prerequisite" ? "Prerequisite for your goal" : c.reason === "goal" ? "Your selected goal" : c.reason === "review" ? "Due for review" : "Related practice"}
+                    </span>}
+                  </span>
                   {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
                   {kind && <span className={kind.chip}>{kind.label}</span>}
                 </li>

@@ -29,6 +29,10 @@ _COUNTERS = ("n_strong_unassisted", "streak_unassisted", "max_streak_unassisted"
 _OPTIONAL_FLOATS = ("fsrs_d", "fsrs_s", "htc_k", "unassisted_next", "assist_gap")
 _TIMESTAMPS = ("fsrs_last_review_at", "fsrs_due_at", "last_evidence_at")
 _ONE_DAY = timedelta(days=1)
+# A selected goal can span more than PostgREST's 1000-row response limit. A
+# bounded IN list also keeps UUID-heavy GET URLs below common proxy limits.
+# (user_id, node_id) is unique, so each request can return at most 100 rows.
+_READ_BATCH_SIZE = 100
 
 
 @dataclass
@@ -92,20 +96,27 @@ def _from_row(row: dict, now: datetime) -> LearnerState:
 
 
 def read_states(user_id: str, node_ids, now: datetime | None = None) -> dict[str, LearnerState]:
-    """One batched read; each returned state is decayed to `now`. Nodes with
-    no row are absent from the result (read_state supplies the prior)."""
+    """Bounded batched reads, decayed to one `now`, without silent truncation.
+
+    Each batch is below the PostgREST row/URL limits. Nodes with no row are
+    absent from the result (read_state supplies the prior).
+    """
     ids = sorted({n for n in node_ids if n})
     if not ids:
         return {}
     now = _aware(now) if now else datetime.now(timezone.utc)
-    rows = (
-        table("learner_state").select(
-            LEARNER_STATE_COLUMNS,
-            filters={"user_id": f"eq.{user_id}", "node_id": f"in.({','.join(ids)})"},
+    states = {}
+    for start in range(0, len(ids), _READ_BATCH_SIZE):
+        batch = ids[start : start + _READ_BATCH_SIZE]
+        rows = (
+            table("learner_state").select(
+                LEARNER_STATE_COLUMNS,
+                filters={"user_id": f"eq.{user_id}", "node_id": f"in.({','.join(batch)})"},
+            )
+            or []
         )
-        or []
-    )
-    return {r["node_id"]: _from_row(r, now) for r in rows if r.get("node_id") in ids}
+        states.update({r["node_id"]: _from_row(r, now) for r in rows if r.get("node_id") in batch})
+    return states
 
 
 def read_state(user_id: str, node_id: str, now: datetime | None = None) -> LearnerState:

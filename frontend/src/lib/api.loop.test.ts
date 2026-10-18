@@ -284,3 +284,30 @@ describe('budgetPauseOf (spec §3.5 / A20 429 body, A39 session_capped)', () => 
     expect(budgetPauseOf(null)).toBeNull();
   });
 });
+
+describe('explicit learning goals and versioned planning', () => {
+  it('sends confirmed targets and objective without inferring scope from text', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ session_id: 's9', initial_message: '', goal: { text: 'Prepare for the exam', target_node_ids: ['n2'] }, goal_version: 1 }));
+    const result = await startLoopSession('u', 'c1', 'Course', undefined, { text: 'Prepare for the exam', target_node_ids: ['n2'] });
+    expect(bodyOf()).toEqual({ user_id: 'u', course_id: 'c1', topic: 'Course', goal: { text: 'Prepare for the exam', target_node_ids: ['n2'] } });
+    expect(result.goal?.target_node_ids).toEqual(['n2']);
+  });
+
+  it('updates scope through the goal endpoint and can explicitly clear it', async () => {
+    const { setLoopGoal } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => json({ phase: 'probe', goal: null, goal_version: 2, diagnosis: { status: 'not_assessed', stop_reason: null, skills: [] } }));
+    await setLoopGoal('s1', 'u', { text: '', target_node_ids: ['n2'] });
+    expect(urlOf()).toContain('/api/learn/loop/goal');
+    expect(bodyOf()).toEqual({ session_id: 's1', user_id: 'u', goal: { text: '', target_node_ids: ['n2'] } });
+    await setLoopGoal('s1', 'u', null);
+    expect(bodyOf(1)).toEqual({ session_id: 's1', user_id: 'u', goal: null });
+  });
+
+  it('approves the exact returned goal version and propagates stale-plan rejection', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json({ phase: 'teach', concept_ids: ['n1'] }))
+      .mockResolvedValueOnce(json({ detail: 'goal changed; reload the plan' }, 409));
+    await approveLoopPlan('s1', 'u', ['n1'], 3);
+    expect(bodyOf()).toEqual({ session_id: 's1', user_id: 'u', concept_ids: ['n1'], goal_version: 3 });
+    await expect(approveLoopPlan('s1', 'u', ['n1'], 2)).rejects.toMatchObject({ status: 409 });
+  });
+});

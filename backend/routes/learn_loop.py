@@ -96,6 +96,7 @@ from learning.checks import CheckItem, is_servable, posttest_reserve_hash, selec
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE, flush_pending
 from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active, learning_loop_for_request
+from learning.goals import encode_goal, public_goal, goal_version
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.served_scan import ScanSet
@@ -115,6 +116,7 @@ from learning.misconceptions import (
 )
 from learning.loop_state_store import (
     LoopStateConflict,
+    LoopSessionClosed,
     load_loop_state,
     recent_evidence,
     revealed_hashes,
@@ -159,6 +161,7 @@ from learning.params import (
     POSTTEST_MIN_AGE_DAYS,
     POSTTEST_POSE_TTL_HOURS,
     PROBE_MAX_SKILLS,
+    PROBE_SESSION_CAP,
     PROBE_PLAN_READS_PER_MIN,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_SECONDS_PER_CHECK,
@@ -191,6 +194,7 @@ from models import (
     LoopCheckNextBody,
     LoopHintBody,
     LoopRatingBody,
+    LoopGoalBody,
     PlanApproveBody,
     PosttestAnswerBody,
     PosttestStartBody,
@@ -434,7 +438,7 @@ def _load_loop_state(session_id: str) -> dict:
     return load_loop_state(session_id).state.to_json()
 
 
-def _update_loop_state(session_id: str, mutate: Callable[[dict], None]) -> dict:
+def _update_loop_state(session_id: str, mutate: Callable[[dict], None], *, require_open: bool = False) -> dict:
     """The ONE loop-state write (A38 06(q)): `update_loop_state` with `mutate`
     applied to the FRESH document (on a conflict it runs again on the newer
     one), re-validated by PKG-06's typed parser — a malformed PKG-06 field
@@ -450,7 +454,10 @@ def _update_loop_state(session_id: str, mutate: Callable[[dict], None]) -> dict:
         return LoopState.from_json(doc)
 
     try:
-        saved = update_loop_state(session_id, apply)
+        extra = {"require_open": True} if require_open else {}
+        saved = update_loop_state(session_id, apply, **extra)
+    except LoopSessionClosed as exc:
+        raise HTTPException(status_code=409, detail=_SESSION_CLOSED) from exc
     except LoopStateConflict as exc:
         logger.warning("loop state for %s: compare-and-set exhausted", session_id)
         raise _StateConflict() from exc
@@ -1595,12 +1602,13 @@ class _LoopTurn:
         }
 
     def history(self) -> list:
-        return _load_loop_history(
+        history = _load_loop_history(
             self.session_id,
             user_id=self.user_id,
             course_id=self.course_id,
             loop_state=self.state,
         )
+        return _with_goal_context(history, self.state, self.user_id)
 
     def plan(self, decision) -> None:
         """Tier + run assembly for `decision`, the ai_budget verdict the calling
@@ -2308,6 +2316,8 @@ class _LoopOpener(_LoopTurn):
         self.arm = _arm_for(body.user_id, request)  # PKG-14 (A20), as _LoopTurn
         # A99: a quiz-ask session names its quiz question; the help row is written
         # here, before any tutor text exists (a failed write is a 503)
+        if body.goal is not None and body.origin == "quiz_ask":
+            raise HTTPException(status_code=422, detail="Choose a goal in a course learning session")
         self.quiz_ask = open_quiz_ask(body, session_id=self.session_id)
         # A106 (review m2): a quiz-ask session runs on the quiz node's course only
         # (resolve_quiz_ask 422s when it has none) — never the client's course_id
@@ -2316,6 +2326,8 @@ class _LoopOpener(_LoopTurn):
             if self.quiz_ask is not None
             else body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
         )
+        if body.goal is not None:
+            _validate_goal(body.goal, _plan_states(self.user_id, self.course_id or ""))
         self.offering_id = resolve_offering(self.course_id, create=True) if self.course_id else ""
         # routes/learn.py::_start_session_agent (:540–543)'s cue, as server text;
         # the topic is the student's and rides the envelope (review round 3, C1(a))
@@ -2328,10 +2340,13 @@ class _LoopOpener(_LoopTurn):
         # A99: a quiz-ask session skips the probe and the plan — it teaches the
         # quiz's concept from the first turn (the materialised row keeps this doc)
         self.state = quiz_ask_state(self.quiz_ask.node_id) if self.quiz_ask is not None else {}
+        if body.goal is not None:
+            self.state["goal"] = encode_goal(body.goal)
+            self.state["goal_version"] = 1
         self._derive(None)
 
     def history(self) -> list:
-        return []
+        return _with_goal_context([], self.state, self.user_id)
 
     def _deterministic_text(self, *, hard: bool) -> str | None:
         # the opener is never paused: at the hard level it is the template (A27)
@@ -2357,7 +2372,7 @@ class _LoopOpener(_LoopTurn):
             "graph_update": merged or {},
             "loop": True,
         }
-        if self.quiz_ask is not None:  # A99: the row materialises in `teach`
+        if self.state:  # Preserve a private goal while the session is still lazy.
             PENDING_SESSIONS[self.session_id]["loop_state"] = dict(self.state)
         return {
             "reply": reply,
@@ -2782,7 +2797,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
     if pending is not None:
         if pending.get("user_id") != user_id:
             raise HTTPException(status_code=404, detail="Session not found")
-        state: dict = {}
+        state: dict = copy.deepcopy(pending.get("loop_state") or {})
     else:
         try:
             _session_scope(session_id, user_id)
@@ -2814,6 +2829,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
+        **_learning_scope_payload(state),
         "phase": phase,
         # PKG-13 reopen: the open item's pose, so a resuming client restores the
         # check READ-ONLY (POST /check/next may activate — write — another item).
@@ -4436,6 +4452,93 @@ def _require_phase(doc: dict, phase: str) -> None:
         raise HTTPException(status_code=409, detail=f"phase is {current}")
 
 
+def _validate_goal(goal, states: dict[str, float]) -> None:
+    if goal is not None and not set(goal.target_node_ids) <= set(states):
+        raise HTTPException(status_code=422, detail="Choose target concepts from this course")
+
+
+def _goal_scope_for(state: dict, states: dict[str, float], edges) -> frozenset[str] | None:
+    goal = state.get("goal")
+    if not isinstance(goal, dict) or not goal.get("target_node_ids"):
+        return None
+    targets = goal["target_node_ids"]
+    if not set(targets) <= set(states):
+        raise HTTPException(status_code=422, detail="A goal concept is no longer available; edit the goal")
+    return planner.goal_scope(targets, edges, nodes=states)
+
+
+def _check_goal_version(doc: dict, expected: int) -> None:
+    if goal_version(doc) != expected:
+        raise HTTPException(status_code=409, detail="Goal changed; refresh the learning session")
+
+
+def _learning_scope_payload(state: dict) -> dict:
+    pr = state.get("probe") or {}
+    skills = pr.get("scope", pr.get("skills", []))
+    return {
+        "goal": public_goal(state),
+        "goal_version": goal_version(state),
+        "diagnosis": probe_policy.diagnostic_summary(
+            pr.get("history") or [], skills=skills,
+            stop_reason=pr.get("stop_reason"),
+            available_difficulties=pr.get("available_difficulties"),
+        ),
+    }
+
+
+def _with_goal_context(history: list, state: dict, user_id: str) -> list:
+    goal = public_goal(state)
+    if goal is None:
+        return history
+    names = _plan_node_names(user_id, goal["target_node_ids"])
+    text = "Student-confirmed learning goal: " + goal["text"]
+    text += "\nTarget concepts: " + ", ".join(names.get(n, n) for n in goal["target_node_ids"])
+    text += "\nConnect the approved prerequisites and practice to this objective."
+    context = wrap_untrusted(neutralise_control_tags(text), source="student_goal")
+    return [_brief_message(context), *history]
+
+
+@router.post("/goal")
+def set_goal(body: LoopGoalBody, request: Request) -> dict:
+    """Change confirmed scope before teaching, preserving evidence and fatigue caps."""
+    _gate(body.user_id, request)
+    _probe_plan_read_limit(body.user_id)
+    pending = PENDING_SESSIONS.get(body.session_id)
+    if pending is not None:
+        if pending.get("user_id") != body.user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if _loop_phase(pending.get("loop_state") or {}) not in ("probe", "plan"):
+            raise HTTPException(status_code=409, detail="Start a new session to change a teaching goal")
+        course_id = pending.get("course_id") or ""
+    else:
+        _, course_id = _session_scope(body.session_id, body.user_id)
+    states = _plan_states(body.user_id, course_id)
+    _validate_goal(body.goal, states)
+    _consume_pending(body.session_id, body.user_id)
+    encoded = encode_goal(body.goal)
+    now = _now_s()
+
+    def change(doc: dict) -> None:
+        _refuse_while_closing(doc, now)
+        if _loop_phase(doc) not in ("probe", "plan"):
+            raise HTTPException(status_code=409, detail="Start a new session to change a teaching goal")
+        pr = _probe_doc(doc)
+        current = pr.get("current") or {}
+        if current.get("grading_claim"):
+            raise HTTPException(status_code=409, detail="Wait for the current answer to finish grading")
+        if current.get("question_hash") and current["question_hash"] not in pr["unavailable"]:
+            pr["unavailable"].append(current["question_hash"])
+        for key in ("skills", "scope", "available_difficulties", "stop_reason", "novice_floor"):
+            pr.pop(key, None)
+        pr["current"] = None
+        doc["goal"], doc["goal_version"] = encoded, goal_version(doc) + 1
+        doc.pop("plan", None)
+        doc["phase"] = "probe"
+
+    saved = _update_loop_state(body.session_id, change, require_open=True)
+    return {"phase": "probe", **_learning_scope_payload(saved)}
+
+
 def _probe_doc(doc: dict) -> dict:
     """The document's `probe` object with every list/map present (in place)."""
     pr = doc.get("probe")
@@ -4448,16 +4551,26 @@ def _probe_doc(doc: dict) -> dict:
     return pr
 
 
+class _PlanNodesRead:
+    """Read-only paging adapter; all graph writes still use graph_service."""
+    def select_with_count(self, *args, **kwargs):
+        return table("graph_nodes").select_with_count(*args, **kwargs)
+
+
+class _PlanEdgesRead:
+    def select_with_count(self, *args, **kwargs):
+        return table("graph_edges").select_with_count(*args, **kwargs)
+
+
 def _plan_states(user_id: str, course_id: str) -> dict[str, float]:
     """Decayed p_known for every graph node of (user, course) — one
     `graph_nodes` read, one `learner_state` read (PKG-03); BKT_L0 for a node
     with no learner_state row."""
-    rows = (
-        table("graph_nodes").select(
-            "id", filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"}
-        )
-        or []
-    )
+    rows = list(page_all(
+        _PlanNodesRead(), "id",
+        filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
+        order="id.asc",
+    ))
     ids = [r["id"] for r in rows if r.get("id")]
     states = read_states(user_id, ids)
     return {n: (states[n].p_known if n in states else BKT_L0) for n in ids}
@@ -4467,16 +4580,12 @@ def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str
     """The user's prerequisite edges among `node_ids`, oriented (prerequisite,
     dependent) by EDGE_PREREQ_SOURCE_IS_PREREQ — the direction PKG-03's
     propagation and PKG-07's `_prereq_proficient` read. One `graph_edges` read."""
-    rows = (
-        table("graph_edges").select(
-            "source_node_id,target_node_id",
-            filters={
-                "user_id": f"eq.{user_id}",
-                "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}",
-            },
-        )
-        or []
-    )
+    rows = list(page_all(
+        _PlanEdgesRead(), "id,source_node_id,target_node_id",
+        filters={"user_id": f"eq.{user_id}",
+                 "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}"},
+        order="id.asc",
+    ))
     keep = set(node_ids)
     out = []
     for e in rows:
@@ -4632,28 +4741,41 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     state = _load_loop_state(body.session_id)
     _require_phase(state, "probe")
     request_id = _request_id(request)
+    version = goal_version(state)
     fixed = (
         (state.get("probe") or {}).get("skills") if isinstance(state.get("probe"), dict) else None
     )
     if fixed is None and not _probe_course_has_items(course_id):
+        empty_scope = []
+        if state.get("goal"):
+            goal_states = _plan_states(body.user_id, course_id)
+            goal_edges = _plan_prereq_edges(body.user_id, list(goal_states))
+            empty_scope = sorted(_goal_scope_for(state, goal_states, goal_edges) or [])
 
         def finish_empty(doc: dict) -> None:
             _require_phase(doc, "probe")
+            _check_goal_version(doc, version)
             pr = _probe_doc(doc)
+            pr["scope"] = empty_scope
+            pr["stop_reason"] = "item_bank_exhausted"
             pr["skills"] = []
             pr["current"] = None
             doc["phase"] = "plan"
 
         saved = _update_loop_state(body.session_id, finish_empty)
         _emit_probe_done(saved, body.user_id, request_id)
-        return {"done": True, "phase": "plan", "no_check_items": True}
+        return {"done": True, "phase": "plan", "no_check_items": True, **_learning_scope_payload(saved)}
 
     states = _plan_states(body.user_id, course_id)
+    edges = _plan_prereq_edges(body.user_id, list(states))
+    scope = _goal_scope_for(state, states, edges)
     if fixed is None:
-        edges = _plan_prereq_edges(body.user_id, list(states))
-        skills = planner.outer_fringe(states, edges)[:PROBE_MAX_SKILLS]
+        fringe = planner.outer_fringe(states, edges)
+        targets = list((state.get("goal") or {}).get("target_node_ids") or [])
+        candidates = targets + fringe + (sorted(scope) if scope is not None else [])
+        skills = list(dict.fromkeys(n for n in candidates if scope is None or n in scope))[:PROBE_MAX_SKILLS]
     else:
-        skills = [s for s in fixed if isinstance(s, str)]
+        skills = [s for s in fixed if isinstance(s, str) and s in states and (scope is None or s in scope)]
     items = _probe_items(body.user_id, course_id, skills)
     revealed = revealed_hashes(body.user_id) if items else set()
     seen = seen_hashes(body.user_id) if items else set()
@@ -4662,16 +4784,26 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         for n in {it.node_id for it in items}
     } - {None}
     by_hash = {it.question_hash: it for it in items}
+    available = {
+        n: sorted({it.difficulty for it in items if it.node_id == n
+                   and it.question_hash not in reserves | revealed and is_servable(it)})
+        for n in (scope if scope is not None else skills)
+    }
     now = _now_s()
     out: dict = {}
 
     def select(doc: dict) -> None:
         out.clear()
         _require_phase(doc, "probe")
+        _check_goal_version(doc, version)
+        _refuse_while_closing(doc, now)
         doc["phase"] = "probe"  # explicit from the first item on
         pr = _probe_doc(doc)
         if pr.get("skills") is None:
             pr["skills"] = list(skills)
+        pr["scope"] = sorted(scope) if scope is not None else list(skills)
+        pr["available_difficulties"] = available
+        pr.setdefault("presented", [])
         cur = pr.get("current")
         if isinstance(cur, dict) and cur.get("question_hash"):
             qh = cur["question_hash"]
@@ -4683,6 +4815,10 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
                 pr["unavailable"].append(qh)
             pr["current"] = None
         asked = {h.get("question_hash") for h in pr["history"]}
+        if len(set(pr["presented"]) | asked | set(pr["unavailable"])) >= PROBE_SESSION_CAP:
+            pr["stop_reason"] = "session_limit"
+            doc["phase"], out["done"] = "plan", True
+            return
         per_node = Counter(h.get("node_id") for h in pr["history"])
         skill_states = {n: states.get(n, BKT_L0) for n in pr["skills"]}
 
@@ -4699,19 +4835,27 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
                 asked,
                 channel_for_format=CHANNEL_FOR_FORMAT,
                 asked_per_node=per_node,
+                history=pr["history"],
             )
 
         item = pick(seen) or pick(set())  # seen items only when nothing unseen is left
         if item is None:
+            reason = probe_policy.diagnostic_summary(pr["history"], skills=pr["skills"])["stop_reason"]
+            if reason == "observed_boundaries" and set(pr["scope"]) - set(pr["skills"]):
+                reason = "coverage_limit"
+            pr["stop_reason"] = reason or "item_bank_exhausted"
             doc["phase"] = "plan"
             out["done"] = True
             return
+        if item.question_hash not in pr["presented"]:
+            pr["presented"].append(item.question_hash)
         pr["current"] = {
             "check_item_id": item.id,
             "question_hash": item.question_hash,
             "node_id": item.node_id,
             "difficulty": item.difficulty,
             "channel": CHANNEL_FOR_FORMAT[item.format],
+            "previously_seen": item.question_hash in seen,
         }
         out["item"] = item
         out["new"] = True
@@ -4719,7 +4863,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     saved = _update_if_changed(body.session_id, state, select)
     if out.get("done"):
         _emit_probe_done(saved, body.user_id, request_id)
-        return {"done": True, "phase": "plan"}
+        return {"done": True, "phase": "plan", **_learning_scope_payload(saved)}
     item = out["item"]
     if out.get("new"):  # A93: posed — in the scan set until graded
         _ledger(record_posed, body.user_id, item.question_hash, source="probe", session_id=body.session_id)
@@ -4733,6 +4877,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         "difficulty": pose["difficulty"],
         "prompt": pose["prompt"],
         "options": pose["options"],
+        **_learning_scope_payload(saved),
     }
 
 
@@ -4850,6 +4995,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         item=item.item,
     )
     written = False
+    synthetic_idk = False
     # A93: a probe item graded with help anywhere (another session's hints, a
     # reveal) carries no unassisted credit — the same help floor as every grade
     floor = _reveal_floor(body.user_id, item.item, None)
@@ -4883,6 +5029,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
             )
             if (_probe_doc(state).get("current") or {}).get("grading_claim") != claim:
                 return {"graded": False, "refused": True}
+            synthetic_idk = True
             idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
             outcome = await grade_answer(
                 item.item,
@@ -4928,6 +5075,10 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         "correct": correct,
         "idk": bool(evidence.get("idk", idk)),
         "p_after": p_after,
+        "independent": floor == 0 and not recheck and not synthetic_idk and not posed.get("previously_seen", False),
+        "max_rung": int(floor),
+        "same_session_recheck": bool(recheck),
+        "synthetic_idk": synthetic_idk,
     }
     out: dict = {}
 
@@ -4936,6 +5087,13 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         pr["current"] = None
         out["done"] = probe_policy.probe_done(pr["history"], skills=pr.get("skills") or [])
         out["novice_floor"] = probe_policy.novice_floor(pr["history"])
+        if out["done"]:
+            reason = probe_policy.diagnostic_summary(
+                pr["history"], skills=pr.get("skills") or []
+            )["stop_reason"]
+            if reason == "observed_boundaries" and set(pr.get("scope", [])) - set(pr.get("skills", [])):
+                reason = "coverage_limit"
+            pr["stop_reason"] = reason
 
     def record_posed(doc: dict) -> None:
         out.clear()
@@ -4952,6 +5110,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         "p_known": p_after,
         "probe_done": bool(out.get("done")),
         "novice_floor": bool(out.get("novice_floor")),
+        **_learning_scope_payload(saved),
     }
     if not correct:  # spec §3.3: a wrong answer or an idk gets the answer at once
         response["reference_answer"] = item.reference_answer
@@ -4977,15 +5136,25 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
     """Behaviour 13: the proposed plan — due reviews, then the outer fringe's new
     material (coupled cap), then interleaved proficient siblings, in PLAN_ORDER.
     The proposal is stored so /plan/approve can check the student's choice
-    against it. No goal filter yet (Non-goals: nothing maps a syllabus week to
-    concepts)."""
+    against it. Confirmed goal concepts and their prerequisite closure constrain
+    every candidate, including reviews and interleaved siblings."""
     _gate(user_id, request)
     _probe_plan_read_limit(user_id)
     _, course_id = _session_scope(session_id, user_id)
     state = _load_loop_state(session_id)
     _require_phase(state, "plan")
+    version = goal_version(state)
     states = _plan_states(user_id, course_id)
     edges = _plan_prereq_edges(user_id, list(states))
+    scope = _goal_scope_for(state, states, edges)
+    targets = set((state.get("goal") or {}).get("target_node_ids") or [])
+    # Diagnostic failures are planning needs even when an old posterior is high.
+    # This is local prioritization, never a synthetic mastery/evidence write.
+    planning_states = dict(states)
+    for h in (state.get("probe") or {}).get("history", []):
+        n = h.get("node_id")
+        if n in planning_states and h.get("independent") is True and not h.get("correct"):
+            planning_states[n] = min(planning_states[n], BKT_PROFICIENT - 0.01)
     parents: dict[str, set[str]] = {}
     for prereq, dependent in edges:
         if prereq != dependent:
@@ -4996,19 +5165,24 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
         return sorted(m for m, ps in parents.items() if m != node_id and ps & mine)
 
     proposal = planner.plan(
-        planner.outer_fringe(states, edges),
-        _plan_due_reviews(user_id, list(states)),
+        planner.outer_fringe(planning_states, edges),
+        list(dict.fromkeys(_plan_due_reviews(user_id, list(states)) + [
+            n for n in sorted(targets) if planning_states[n] >= BKT_PROFICIENT
+        ])),
         siblings,
-        None,
-        proficient=frozenset(n for n, p in states.items() if p >= BKT_PROFICIENT),
+        scope.__contains__ if scope is not None else None,
+        proficient=frozenset(n for n, p in planning_states.items() if p >= BKT_PROFICIENT),
     )
     ids = [c.node_id for c in proposal.concepts]
     kinds = {c.node_id: c.kind for c in proposal.concepts}
 
     def store(doc: dict) -> None:
         _require_phase(doc, "plan")
+        _check_goal_version(doc, version)
+        _refuse_while_closing(doc, _now_s())
         plan_doc = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
         plan_doc["proposed"], plan_doc["proposed_kinds"] = list(ids), dict(kinds)
+        plan_doc["goal_version"] = version
         doc["plan"] = plan_doc
         if not ids:
             # Nothing to plan (no fringe, no due review: a new student, all
@@ -5017,9 +5191,9 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
             plan_doc["approved"], plan_doc["cursor"] = [], 0
             doc["phase"] = "teach"
 
-    _update_if_changed(session_id, state, store)
+    saved = _update_if_changed(session_id, state, store)
     if not ids:
-        return {"concepts": [], "order": list(PLAN_ORDER), "empty": True, "phase": "teach"}
+        return {"concepts": [], "order": list(PLAN_ORDER), "empty": True, "phase": "teach", **_learning_scope_payload(saved)}
     names = _plan_node_names(user_id, ids)
     return {
         "concepts": [
@@ -5028,10 +5202,13 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
                 "concept_name": names.get(n, ""),
                 "kind": kinds[n],
                 "p_known": states.get(n, BKT_L0),
+                "reason": "goal" if n in targets else "prerequisite" if scope is not None and n in scope else "review" if kinds[n] == "review" else "related",
+                "target_node_ids": sorted(targets),
             }
             for n in ids
         ],
         "order": list(PLAN_ORDER),
+        **_learning_scope_payload(saved),
     }
 
 
@@ -5050,7 +5227,11 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
 
     def approve(doc: dict) -> None:
         _require_phase(doc, "plan")
+        _refuse_while_closing(doc, _now_s())
         plan_doc = doc.get("plan") if isinstance(doc.get("plan"), dict) else {}
+        version = goal_version(doc)
+        if version and (body.goal_version != version or plan_doc.get("goal_version") != version):
+            raise HTTPException(status_code=409, detail="Goal changed; review the current plan")
         proposed = plan_doc.get("proposed") or []
         if len(set(chosen)) != len(chosen) or not set(chosen) <= set(proposed):
             raise HTTPException(

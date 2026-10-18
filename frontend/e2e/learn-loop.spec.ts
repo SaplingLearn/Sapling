@@ -96,7 +96,10 @@ async function expectTurn(page: Page, text: string) {
   for (const paragraph of text.split("\n\n")) await expect(log).toContainText(paragraph);
 }
 
-/** Probe → plan → approve (shared by the journeys). Returns how many probe items were answered. */
+/** Probe → plan → approve. The fixture succeeds independently at level1 and
+ * misses harder items, so the diagnostic observes a real boundary/limit and
+ * still has meaningful frontier work to plan. All-correct can validly skip an
+ * empty coursewide plan once every concept is proficient. */
 async function walkProbeAndPlan(page: Page, P: Params): Promise<number> {
   const phase = page.getByTestId("loop-phase");
   await expect(phase).toHaveAttribute("data-phase", "probe");
@@ -106,20 +109,30 @@ async function walkProbeAndPlan(page: Page, P: Params): Promise<number> {
   let answered = 0;
   while ((await phase.getAttribute("data-phase")) === "probe" && answered < Number(P.PROBE_SESSION_CAP)) {
     const qh = await probeItem.getAttribute("data-question-hash");
-    await page.getByTestId("loop-probe-input").fill(GRADER_CORRECT_TOKEN);
+    const difficulty = Number(await probeItem.getAttribute("data-difficulty"));
+    expect([1, 2, 3]).toContain(difficulty);
+    await page.getByTestId("loop-probe-input").fill(difficulty === 1 ? GRADER_CORRECT_TOKEN : WORKING_ATTEMPT);
     await page.getByTestId("loop-probe-submit").click();
     answered += 1;
-    // A correct answer shows no reference card: the server serves a different item
-    // or moves the session to the plan. Wait for either.
+    // A correct answer advances; a miss shows corrective feedback until Next.
+    // Neither case bypasses the diagnostic or assumes a posterior means mastery.
     await expect
       .poll(async () => {
         if ((await phase.getAttribute("data-phase")) !== "probe") return true;
         if (!(await probeItem.isVisible())) return false;
         const now = await probeItem.getAttribute("data-question-hash");
-        return now !== null && now !== qh;
+        return (await page.getByTestId("loop-probe-reference").isVisible()) || (now !== null && now !== qh);
       })
       .toBe(true);
-    await expect(page.getByTestId("loop-probe-reference")).toHaveCount(0);
+    if (await page.getByTestId("loop-probe-reference").isVisible()) {
+      expect(difficulty).toBeGreaterThan(1);
+      await page.getByTestId("loop-probe-next").click();
+      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
+        (await probeItem.getAttribute("data-question-hash")) !== qh).toBe(true);
+    } else {
+      expect(difficulty).toBe(1);
+      await expect(page.getByTestId("loop-probe-reference")).toHaveCount(0);
+    }
   }
 
   await expect(phase).toHaveAttribute("data-phase", "plan");
@@ -543,5 +556,64 @@ test("switching sessions cancels a pending tutor stream and retains the chosen s
   await expect(phase).toHaveAttribute("data-phase", "teach");
   await expect(page.getByText("STALE_SESSION_FEEDBACK", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+  await context.close();
+});
+
+test("a phone learner confirms a goal, sees prerequisite planning and retains it after reload", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto("/learn");
+  const phase = page.getByTestId("loop-phase");
+  await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
+  await page.getByTestId("loop-set-goal").click();
+  const editor = page.getByRole("form", { name: "Learning goal" });
+  const objective = "Understand how bitwise operators use binary numbers";
+  await editor.getByRole("textbox", { name: /Your objective/ }).fill(objective);
+  await expect(editor.getByTestId("loop-goal-save")).toBeDisabled(); // prose does not infer targets
+  await editor.getByRole("checkbox", { name: "Bitwise Operators", exact: true }).check();
+  const goalResponse = page.waitForResponse((response) => response.url().includes("/api/learn/loop/goal") && response.request().method() === "POST");
+  await editor.getByTestId("loop-goal-save").click();
+  const scoped = await (await goalResponse).json();
+  expect(scoped.goal.text).toBe(objective);
+  expect(scoped.goal.target_node_ids).toHaveLength(1);
+  expect(scoped.goal_version).toBeGreaterThan(0);
+  await expect(page.getByTestId("loop-goal-summary")).toContainText(objective);
+  expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+  // Honest unknown answers produce foundational work; they do not pretend the
+  // learner mastered the target just to make a goal-specific plan appear.
+  let answered = 0;
+  while ((await phase.getAttribute("data-phase")) === "probe" && answered < Number(P.PROBE_SESSION_CAP)) {
+    await expect(page.getByTestId("loop-probe-idk")).toBeVisible();
+    await page.getByTestId("loop-probe-idk").click();
+    answered += 1;
+    await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" || await page.getByTestId("loop-probe-reference").isVisible()).toBe(true);
+    if (await page.getByTestId("loop-probe-next").isVisible()) await page.getByTestId("loop-probe-next").click();
+    await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" || await page.getByTestId("loop-probe-idk").isVisible()).toBe(true);
+  }
+  await expect(phase).toHaveAttribute("data-phase", "plan");
+  await expect(page.getByTestId("loop-diagnosis")).toBeVisible();
+  await expect(page.getByTestId("loop-diagnosis")).toContainText(/could not bound|not been independently assessed/);
+  const prerequisite = page.locator('[data-testid^="loop-plan-concept-"]').filter({ hasText: "Binary Numbers" });
+  await expect(prerequisite).toContainText("Prerequisite for your goal");
+  await expect(page.locator('[data-testid^="loop-plan-concept-"]').filter({ hasText: "Two's Complement" })).toHaveCount(0);
+  expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+  const sessionId = await phase.getAttribute("data-session-id");
+  const [stored] = await queryRaw("SELECT loop_state FROM sessions WHERE id = $1", [sessionId]);
+  expect(JSON.stringify(stored.loop_state)).not.toContain(objective); // goal prose is encrypted, IDs remain usable
+  await page.reload();
+  await expect(phase).toHaveAttribute("data-session-id", sessionId!);
+  await expect(phase).toHaveAttribute("data-phase", "plan");
+  await expect(page.getByTestId("loop-goal-summary")).toContainText(objective);
+  await expect(prerequisite).toContainText("Prerequisite for your goal");
+  const approval = page.waitForRequest((request) => request.url().includes("/api/learn/loop/plan/approve"));
+  await page.getByTestId("loop-plan-approve").click();
+  expect((await approval).postDataJSON().goal_version).toBe(scoped.goal_version);
+  await expect(phase).toHaveAttribute("data-phase", "teach");
+  await expect(page.getByTestId("loop-set-goal")).toHaveCount(0); // locked once teaching begins
   await context.close();
 });

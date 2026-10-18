@@ -36,7 +36,7 @@ vi.mock("next/link", () => ({
 
 const api = vi.hoisted(() => ({
   getCourses: vi.fn(), listLoopSessionsFor: vi.fn(), resumeSession: vi.fn(), getLoopSessionStatus: vi.fn(),
-  startLoopSession: vi.fn(), nextLoopProbe: vi.fn(), answerLoopProbe: vi.fn(),
+  startLoopSession: vi.fn(), setLoopGoal: vi.fn(), nextLoopProbe: vi.fn(), answerLoopProbe: vi.fn(),
   getLoopPlan: vi.fn(), approveLoopPlan: vi.fn(), streamLoopChat: vi.fn(), streamLoopCheckAnswer: vi.fn(),
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
   getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(),
@@ -65,6 +65,12 @@ beforeEach(() => {
   router.replace.mockReset();
   Object.values(toast).forEach((f) => f.mockReset());
   api.getCourses.mockResolvedValue({ courses: [course] });
+  api.getLoopSessionStatus.mockImplementation(async (id: string) => {
+    const listing = await api.listLoopSessionsFor.mock.results.at(-1)?.value;
+    const current = listing?.sessions?.find((session: { session_id: string }) => session.session_id === id);
+    const phase = current?.phase ?? "teach";
+    return status({ session_id: id, loop_phase: ["check", "feedback"].includes(phase) ? "teach" : phase, phase, goal: null, diagnosis: null });
+  });
   api.getGraph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
   api.resumeSession.mockResolvedValue({ session: { id: "s2" }, messages: [{ id: "m1", role: "assistant", content: "welcome back", created_at: "" }] });
 });
@@ -79,6 +85,7 @@ async function resumedTeach() {
 
 /** A teach session whose "Check me" posed `pose`. */
 async function withCheckItem(item: object = pose) {
+  api.getLoopSessionStatus.mockResolvedValueOnce(status()); // initial resume, before later reconciliation
   api.nextLoopCheck.mockResolvedValue({ phase: "check", check: item });
   await resumedTeach();
   fireEvent.click(await screen.findByTestId("loop-check-me"));
@@ -890,6 +897,7 @@ it("a closed-session 409 on a submission shows the stored close once (one /close
   api.streamLoopCheckAnswer.mockRejectedValue(Object.assign(new Error(JSON.stringify({ detail: "this session is closed" })), { status: 409 }));
   api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
   await withCheckItem();
+  api.getLoopSessionStatus.mockClear();
   fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
   fireEvent.click(screen.getByTestId("loop-attempt-submit"));
   expect(await screen.findByTestId("loop-close-summary")).toBeTruthy();
@@ -1088,4 +1096,176 @@ it("a status snapshot requested before wrap-up cannot reopen the closed session"
   await act(async () => { finishStatus(status({ phase: "feedback", check: null })); });
   expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close");
   expect(screen.getByTestId("loop-close-summary").textContent).toContain("Wrapped up.");
+});
+
+describe("explicit goals and honest diagnostic coverage", () => {
+  const node = (id: string, name: string, courseId = "c1") => ({ id, concept_name: name, course_id: courseId, subject: "Intro CS", mastery_score: 0.3, mastery_tier: "learning" });
+  const graph = { nodes: [node("n1", "Binary Numbers"), node("n2", "Bitwise Operators"), node("n3", "Unrelated Topic"), node("foreign", "Private other-course topic", "c2")], edges: [] };
+  const objective = { text: "Understand bitwise operations", target_node_ids: ["n2"] };
+  const diagnosis = {
+    status: "limited", stop_reason: "item_bank_exhausted", skills: [{ node_id: "n2", status: "partial", floor_difficulty: 1, ceiling_difficulty: null,
+      independent_correct: 1, independent_incorrect: 0, independent_observations: 1, observations: 2, tested_difficulties: [1], available_difficulties: [1], contradictory_difficulties: [] }],
+  };
+
+  async function openGoalEditor() {
+    const button = await screen.findByTestId("loop-set-goal");
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(button);
+    await screen.findByRole("form", { name: "Learning goal" });
+  }
+
+  async function probeSession() {
+    api.getGraph.mockResolvedValue(graph);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+  }
+
+  it("requires explicit own-course targets, then shows the scoped prerequisite plan and its version", async () => {
+    api.setLoopGoal.mockResolvedValue({ phase: "probe", goal: objective, diagnosis, goal_version: 1 });
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: true, p_known: 0.5, probe_done: true, diagnosis });
+    api.getLoopPlan.mockResolvedValue({ phase: "plan", goal: objective, diagnosis, goal_version: 1, concepts: [
+      { node_id: "n1", concept_name: "Binary Numbers", kind: "new", p_known: 0.3, reason: "prerequisite", target_node_ids: ["n2"] },
+      { node_id: "n2", concept_name: "Bitwise Operators", kind: "new", p_known: 0.5, reason: "goal" },
+    ], order: ["n1", "n2"] });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["n1", "n2"] });
+    await probeSession();
+    await openGoalEditor();
+    fireEvent.change(screen.getByRole("textbox", { name: /Your objective/ }), { target: { value: objective.text } });
+    expect((screen.getByTestId("loop-goal-save") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("Private other-course topic")).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bitwise Operators" }));
+    fireEvent.click(screen.getByTestId("loop-goal-save"));
+    await waitFor(() => expect(api.setLoopGoal).toHaveBeenCalledWith("s2", "u1", objective));
+    expect((await screen.findByTestId("loop-goal-summary")).textContent).toContain(objective.text);
+    await screen.findByTestId("loop-probe-item");
+    fireEvent.change(screen.getByRole("textbox", { name: "Check-in answer" }), { target: { value: "independent reasoning" } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    expect((await screen.findByTestId("loop-plan-reason-n1")).textContent).toContain("Prerequisite for your goal");
+    expect(screen.getByTestId("loop-plan-reason-n2").textContent).toContain("Your selected goal");
+    expect(screen.queryByTestId("loop-plan-concept-n3")).toBeNull();
+    expect(screen.getByTestId("loop-diagnosis").textContent).toContain("could not bound every concept");
+    fireEvent.click(screen.getByText("Evidence by concept (1)"));
+    expect(screen.getByTestId("loop-diagnosis-n2").textContent).toContain("1 independent answer out of 2 observations");
+    fireEvent.click(screen.getByTestId("loop-plan-approve"));
+    await waitFor(() => expect(api.approveLoopPlan).toHaveBeenCalledWith("s2", "u1", ["n1", "n2"], 1));
+  });
+
+  it("restores a persisted goal and follows status when a stale list still says plan", async () => {
+    api.getGraph.mockResolvedValue(graph);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "probe", phase: "probe", goal: objective, diagnosis }));
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, diagnosis });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain(objective.text);
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    await openGoalEditor();
+    expect((screen.getByRole("checkbox", { name: "Bitwise Operators" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("can explicitly explore the whole course without retaining the old objective", async () => {
+    api.setLoopGoal.mockResolvedValue({ phase: "probe", goal: null, diagnosis: null, goal_version: 2 });
+    await probeSession();
+    await openGoalEditor();
+    fireEvent.change(screen.getByRole("textbox", { name: /Your objective/ }), { target: { value: "Unconfirmed text" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Explore the whole course" }));
+    fireEvent.click(screen.getByTestId("loop-goal-save"));
+    await waitFor(() => expect(api.setLoopGoal).toHaveBeenCalledWith("s2", "u1", null));
+    await screen.findByTestId("loop-probe-item");
+    expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
+  });
+
+  it("ignores a saved goal response after the learner switches sessions", async () => {
+    let finish: (value: object) => void = () => {};
+    api.setLoopGoal.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    api.getGraph.mockResolvedValue(graph);
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z"), open("s1", "probe", "2026-09-20T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    await openGoalEditor();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bitwise Operators" }));
+    fireEvent.click(screen.getByTestId("loop-goal-save"));
+    await waitFor(() => expect(api.setLoopGoal).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
+    await screen.findByTestId("loop-probe-item");
+    const count = api.nextLoopProbe.mock.calls.length;
+    await act(async () => { finish({ phase: "probe", goal: objective, diagnosis, goal_version: 1 }); });
+    expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(count);
+  });
+
+  it("clears the editor and targets synchronously on a course switch", async () => {
+    api.getCourses.mockResolvedValue({ courses: [course, { course_id: "c2", course_name: "Other course", course_code: "CS 201" }] });
+    api.getGraph.mockResolvedValue(graph);
+    api.listLoopSessionsFor.mockImplementation((_u: string, c: string) => Promise.resolve(listed([open(c === "c1" ? "s2" : "other", "probe", "2026-09-21T10:00:00Z")])));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    await openGoalEditor();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Bitwise Operators" }));
+    fireEvent.click(screen.getByTestId("loop-course-select"));
+    fireEvent.click(screen.getByTestId("loop-course-select-option-c2"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("other"));
+    await screen.findByTestId("loop-probe-item");
+    expect(screen.queryByRole("form", { name: "Learning goal" })).toBeNull();
+    await openGoalEditor();
+    expect(screen.queryByRole("checkbox", { name: "Bitwise Operators" })).toBeNull();
+    expect((screen.getByRole("checkbox", { name: "Private other-course topic" }) as HTMLInputElement).checked).toBe(false);
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+  });
+
+  it("lets a failed check-status load recover metadata and the posed question", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "check", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockRejectedValueOnce(new ApiError("unavailable", 503)).mockResolvedValueOnce(status({ phase: "check", check: pose, goal: objective, diagnosis }));
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry learning scope" }));
+    expect(await screen.findByTestId("loop-check-prompt")).toBeTruthy();
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain(objective.text);
+    expect(api.nextLoopCheck).not.toHaveBeenCalled();
+  });
+});
+
+it("reloads the actual goal and plan after a stale-version approval is rejected", async () => {
+  const firstGoal = { text: "Work on recursion", target_node_ids: ["n1"] };
+  const secondGoal = { text: "Work on pointers", target_node_ids: ["n2"] };
+  api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+  api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "plan", phase: "plan", goal: firstGoal, goal_version: 1 }))
+    .mockResolvedValueOnce(status({ loop_phase: "plan", phase: "plan", goal: secondGoal, goal_version: 2 }));
+  api.getLoopPlan.mockResolvedValueOnce({ goal: firstGoal, goal_version: 1, concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.3, reason: "goal" }] })
+    .mockResolvedValueOnce({ goal: secondGoal, goal_version: 2, concepts: [{ node_id: "n2", concept_name: "Pointers", kind: "new", p_known: 0.3, reason: "goal" }] });
+  api.approveLoopPlan.mockRejectedValueOnce(new ApiError("stale goal", 409, { body: { detail: "Goal changed; refresh the learning session" } }))
+    .mockResolvedValueOnce({ phase: "teach", concept_ids: ["n2"] });
+  render(<LoopLearn />);
+  fireEvent.click(await screen.findByTestId("loop-plan-approve"));
+  expect(await screen.findByTestId("loop-plan-concept-n2")).toBeTruthy();
+  expect(screen.queryByTestId("loop-plan-concept-n1")).toBeNull();
+  expect(screen.getByTestId("loop-goal-summary").textContent).toContain(secondGoal.text);
+  expect(api.approveLoopPlan).toHaveBeenCalledTimes(1); // fresh plan needs explicit learner approval
+  await waitFor(() => expect((screen.getByTestId("loop-plan-approve") as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByTestId("loop-plan-approve"));
+  await waitFor(() => expect(api.approveLoopPlan).toHaveBeenLastCalledWith("s2", "u1", ["n2"], 2));
+});
+
+it("a rejected goal change restores teaching instead of pretending to restart the check-in", async () => {
+  api.getGraph.mockResolvedValue({ nodes: [{ id: "n1", concept_name: "Recursion", course_id: "c1", subject: "Intro CS", mastery_score: 0.3, mastery_tier: "learning" }], edges: [] });
+  api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+  api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "probe", phase: "probe", goal: null }))
+    .mockResolvedValueOnce(status({ loop_phase: "teach", phase: "teach", goal: null }));
+  api.nextLoopProbe.mockResolvedValue(probeItem);
+  api.setLoopGoal.mockRejectedValue(new ApiError("locked", 409, { body: { detail: "Start a new session to change a teaching goal" } }));
+  render(<LoopLearn />);
+  await screen.findByTestId("loop-probe-item");
+  fireEvent.click(screen.getByTestId("loop-set-goal"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Recursion" }));
+  fireEvent.click(screen.getByTestId("loop-goal-save"));
+  await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"));
+  expect(screen.queryByRole("form", { name: "Learning goal" })).toBeNull();
+  expect(screen.queryByTestId("loop-set-goal")).toBeNull();
+  expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+  expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
 });

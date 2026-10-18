@@ -31,8 +31,8 @@ node through motivation, establishment, connection and a check.
 
 | Capability | Source mechanism | What it does not establish |
 | --- | --- | --- |
-| Diagnose prior knowledge | `learning/probe.py`, loop probe routes | A guaranteed two-sided knowledge frontier |
-| Choose the next concepts | `learning/planner.py`: prerequisite outer fringe, due reviews, sibling interleaving; loop plan routes | A plan filtered to the student's concrete goal |
+| Diagnose prior knowledge | Adaptive independent floor/ceiling observations with explicit uncertainty and coverage limits | An exact frontier beyond the available validated questions |
+| Choose the next concepts | Student-confirmed goal targets, complete prerequisite closure, filtered reviews/siblings and observed failures | Perfect goal-to-curriculum mapping or calibrated readiness |
 | Use the graph as part of teaching | Learner states and prerequisite edges drive selection; graded evidence flows through `graph_service.apply_graph_update` | That extracted prerequisites or numerical mastery estimates are calibrated |
 | Require learner effort | Explicit submissions, reasoned checks and independent-attempt gates | That time spent or any submitted text demonstrates understanding |
 | Adapt help | State-dependent H0–H6 scaffolding, worked examples and misconception handling | Reliable fading or appropriate help for every learner |
@@ -42,20 +42,19 @@ node through motivation, establishment, connection and a check.
 
 ## Material gaps
 
-1. **The diagnostic does not guarantee the creator's knowledge boundary.**
-   `probe_done` can stop when the posterior stabilizes, at a per-skill cap, at
-   the session cap or at the novice floor. Running the existing BKT and probe
-   functions with four correct observations at difficulty 2 and the explicit
-   `free_response` evidence channel yields approximately
-   `0.8796 → 0.9898 → 0.999 → 0.999`, and
-   `probe_done=True`, without any failed/unknown ceiling. Bounded diagnostics are
-   reasonable; the limitation is treating an unbracketed result as a located edge.
-   The next improvement should report tested/untested prerequisites and uncertainty
-   when caps or item shortages prevent a boundary estimate.
-2. **Goal selection is incomplete.** `plan_get` explicitly passes
-   `goal_filter=None`. Goals can appear in learner context without constraining
-   the concepts selected by the planner. Goal-to-concept mapping should include
-   required prerequisite closure and student confirmation.
+1. **The diagnostic is bounded by its evidence.** The follow-up implementation
+   removes posterior stabilization as a stopping criterion. Independent success
+   drives harder items, failure drives easier items, and an ordered floor/ceiling
+   requires minimum independent observations. Contradictions remain visible.
+   Assisted, repeated, legacy or synthetic-refusal observations cannot certify
+   boundaries. Caps, unavailable items, untested prerequisites and out-of-range
+   performance are reported honestly; no finite sample guarantees an exact edge.
+2. **Goals now constrain planning, with student confirmation.** Optional private
+   goal prose is encrypted; confirmed owned course concept IDs and their complete
+   prerequisite closure constrain every candidate, including due reviews and
+   siblings. Independent diagnostic failures remain planning needs even against
+   an older high posterior. The app does not guess concept scope from free text.
+   Goal changes retain prior evidence/fatigue and invalidate stale plan approvals.
 3. **Challenge and mastery numbers are heuristics.** `learning/params.py` labels
    many cut-points as engineering choices. BKT probabilities, success bands and
    graph badges require calibration against observed unassisted performance.
@@ -99,5 +98,7 @@ Frontend fixes prevent stale streaming callbacks or graph reads from replacing a
 newer session's state, refresh the graph after graded probes, provide daily-review
 status recovery and keep controls usable at narrow mobile widths.
 
-These changes address integration correctness. The PR remains a draft: production
+The follow-up diagnosis and goal work is specified in ADR 0033 and covered by
+policy, route, database and desktop/mobile journey regressions. These changes
+address implementation correctness. The PR remains a draft: production
 release gates and empirical learner-outcome validation are separate work.
