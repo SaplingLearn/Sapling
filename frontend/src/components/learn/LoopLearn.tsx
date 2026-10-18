@@ -1624,6 +1624,7 @@ function PlanPanel({
                 <li
                   key={c.node_id}
                   data-testid={`loop-plan-concept-${c.node_id}`}
+                  className={styles.planItem}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1634,7 +1635,7 @@ function PlanPanel({
                   }}
                 >
                   <span style={{ width: 22, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
-                  <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}</span>
+                  <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}</span>
                   {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
                   {kind && <span className={kind.chip}>{kind.label}</span>}
                 </li>

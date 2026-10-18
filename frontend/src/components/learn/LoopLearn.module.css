@@ -2,12 +2,16 @@
   min-width: 0;
 }
 
+.screen textarea {
+  min-width: 0;
+}
+
 @media (max-width: 767px) {
   /* Keep course selection, map and End session reachable on narrow screens. */
   .screen > div > header {
     flex-wrap: wrap;
     gap: 12px;
-    padding: 16px;
+    padding: 16px !important;
     flex-shrink: 0;
   }
 
@@ -22,6 +26,10 @@
 
   .screen > div > header h1 {
     overflow-wrap: anywhere;
+  }
+
+  .planItem {
+    flex-wrap: wrap;
   }
 
   .sessionStrip {
