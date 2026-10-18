@@ -868,7 +868,7 @@ function GradescopeSyncDialog({
                   warn={result.failed > 0}
                 />
               </div>
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 {result.failed > 0 && (
                   <button type="button" className="btn btn--primary" onClick={onSyncNow}>
                     Retry sync
