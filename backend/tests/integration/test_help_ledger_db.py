@@ -8,6 +8,7 @@ helpers; reads back over psycopg (#397). Run inside the B6 cycle."""
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -38,11 +39,19 @@ def test_help_rows_round_trip_into_the_max_help_floor(db_conn):
     help_ledger.record_help(USER, qh, 6, source="loop", session_id="s-b")
     assert help_ledger.max_help(USER, qh) == 6
     rows = db_conn.execute(
-        "SELECT kind, rung, source FROM learning_reveals WHERE user_id = %s AND question_hash = %s "
-        "ORDER BY at",
+        "SELECT kind, rung, source FROM learning_reveals WHERE user_id = %s AND question_hash = %s",
         (USER, qh),
     ).fetchall()
-    assert [(r["kind"], r["rung"]) for r in rows] == [("help", 2), ("help", 3), ("reveal", None), ("help", 6)]
+    # Help timestamps come from the app; reveals use the database clock. Those
+    # clocks can differ (e.g. Docker on macOS), so cross-clock ordering is not
+    # the ledger contract. Verify every exact row, including duplicates/source,
+    # while the assertions above verify the floor after each sequential write.
+    assert Counter((r["kind"], r["rung"], r["source"]) for r in rows) == Counter([
+        ("help", 2, "loop"),
+        ("help", 3, "review"),
+        ("reveal", None, "teach"),
+        ("help", 6, "loop"),
+    ])
 
 
 @pytest.mark.parametrize(
