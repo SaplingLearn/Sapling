@@ -87,7 +87,7 @@ test("cookie-only session hydrates the dashboard via the /api/auth/me fallback",
  * callback puts in the redirect, so this is that request with a different
  * source of token. A regression makes the POST 404 again.
  */
-test("the session BFF mints a cookie through the frontend origin", async ({
+test("the session BFF mints and clears a cookie through the frontend origin", async ({
   request,
 }) => {
   const login = await request.post(`${FRONTEND_URL}/api/auth/test-login`, {
@@ -104,9 +104,36 @@ test("the session BFF mints a cookie through the frontend origin", async ({
 
   // 404 here means the /api proxy is shadowing the app's own route again.
   expect(res.status()).toBe(200);
+  expect(await res.json()).toEqual({ ok: true });
   const setCookies = res
     .headersArray()
     .filter(h => h.name.toLowerCase() === "set-cookie")
     .map(h => h.value);
-  expect(setCookies.some(c => c.startsWith("sapling_session="))).toBe(true);
+  const sessionCookie = setCookies.find(c => c.startsWith("sapling_session="));
+  expect(sessionCookie).toBeDefined();
+  expect(sessionCookie).toMatch(/;\s*HttpOnly(?:;|$)/i);
+  expect(sessionCookie).toMatch(/;\s*SameSite=Lax(?:;|$)/i);
+
+  // These responses must also come from the local BFF, rather than falling
+  // through to a backend 404. Routing locally must retain its auth/CSRF checks.
+  const invalidToken = await request.post(`${FRONTEND_URL}/api/auth/session`, {
+    headers: { Origin: FRONTEND_URL },
+    data: { authToken: "invalid" },
+  });
+  expect(invalidToken.status()).toBe(401);
+  expect(invalidToken.headers()["set-cookie"]).toBeUndefined();
+
+  const crossOrigin = await request.delete(`${FRONTEND_URL}/api/auth/session`, {
+    headers: { Origin: "https://untrusted.example" },
+  });
+  expect(crossOrigin.status()).toBe(403);
+  expect(crossOrigin.headers()["set-cookie"]).toBeUndefined();
+
+  const logout = await request.delete(`${FRONTEND_URL}/api/auth/session`, {
+    headers: { Origin: FRONTEND_URL },
+  });
+  expect(logout.status()).toBe(200);
+  expect(await logout.json()).toEqual({ ok: true });
+  expect(logout.headers()["set-cookie"]).toMatch(/sapling_session=;/);
+  expect(logout.headers()["set-cookie"]).toMatch(/;\s*Max-Age=0(?:;|$)/i);
 });
