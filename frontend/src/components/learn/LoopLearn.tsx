@@ -282,8 +282,11 @@ export function LoopLearn() {
   /** The session is closed (a 409 from any teaching route, or /status): show its
    *  stored close — POST /close is idempotent (A60) — and drop it from the picker. */
   const enterClosed = useCallback(async (sid: string) => {
-    const g = gen.current;
+    // A terminal close invalidates pre-close status/plan/hint requests too,
+    // not only the active stream. Their snapshots must never reopen it.
+    const g = ++gen.current;
     streamAbort.current?.abort();
+    setCloseBusy(false);
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "close" });
     dropFromPicker(sid);
@@ -887,7 +890,9 @@ export function LoopLearn() {
       // closed whatever the screen shows now: never leave it in the picker
       dropFromPicker(sid);
       if (g !== gen.current) return;
+      ++gen.current; // invalidate status snapshots requested before this close
       streamAbort.current?.abort();
+      setCloseBusy(false);
       setClose(r);
       dispatch({ type: "check", item: null });
       dispatch({ type: "phase", phase: "close" });

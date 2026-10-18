@@ -806,3 +806,12 @@ def test_observe_only_router_decisions_do_not_consume_learning_grade_allowance()
     assert usage.day_grades == 1
     assert float(usage.day_usd) == pytest.approx(0.003)
     assert usage.day_tokens == 40
+
+
+def test_accelerated_function_burst_allowance_preserves_the_monetary_cap(usage, monkeypatch):
+    monkeypatch.setattr(config, "LEARN_RATE_LIMIT_PER_MIN", 1000)
+    usage([_row(cost=_develop_cap())])
+    assert ai_budget.rate_limited(UID) is False
+    decision = ai_budget.check(UID, "tutor", "develop")
+    assert (decision.level, decision.scope, decision.pause_novice) == ("hard", "daily_usd", True)
+    assert ai_budget.check(UID, "grader").level == "normal"

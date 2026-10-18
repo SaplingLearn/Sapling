@@ -215,6 +215,11 @@ fi
 MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
 if [ "$MODEL_MODE" = "function" ]; then
   export SAPLING_FLAG_DECISION_ROUTER="${SAPLING_FLAG_DECISION_ROUTER:-jev}"
+  # Scripted models and 0.01x hint gates compress a full diagnostic/teaching
+  # session (including grading subcalls and observer decisions) into seconds.
+  # Give only this deterministic lane room for that burst. Real-model stacks
+  # keep config.py's production default; an explicit caller cap (even 0) wins.
+  export LEARN_RATE_LIMIT_PER_MIN="${LEARN_RATE_LIMIT_PER_MIN:-1000}"
 fi
 
 mkdir -p "$E2E_DIR"

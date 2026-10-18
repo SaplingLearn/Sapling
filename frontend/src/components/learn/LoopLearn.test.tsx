@@ -1052,3 +1052,40 @@ describe("LoopLearn — graph request ordering", () => {
     expect(screen.queryByText("Concepts appear here as you learn.")).toBeNull();
   });
 });
+
+it("keeps graded feedback open when wrap-up is rate limited, with no false success", async () => {
+  const resetAt = new Date(Date.now() + 60_000).toISOString();
+  api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "feedback", "2026-09-21T10:00:00Z")]));
+  api.closeLoopSession.mockRejectedValue(new ApiError("rate limited", 429, {
+    body: { detail: "ai budget reached", scope: "rate_limit", reset_at: resetAt, session_capped: false },
+  }));
+  render(<LoopLearn />);
+  await screen.findByText("welcome back");
+  fireEvent.click(screen.getByTestId("loop-close-button"));
+  expect(await screen.findByTestId("loop-budget-paused")).toBeTruthy();
+  expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("feedback");
+  expect(screen.getByText("welcome back")).toBeTruthy();
+  expect(screen.queryByTestId("loop-close-done")).toBeNull();
+  expect(screen.queryByTestId("loop-close-summary")).toBeNull();
+  await waitFor(() => expect((screen.getByTestId("loop-close-button") as HTMLButtonElement).disabled).toBe(false));
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it("a status snapshot requested before wrap-up cannot reopen the closed session", async () => {
+  let finishStatus: (value: ReturnType<typeof status>) => void = () => {};
+  api.getLoopSessionStatus.mockImplementation(() => new Promise((resolve) => { finishStatus = resolve; }));
+  // The grade can persist before its feedback transport fails; reconciliation
+  // then reads a feedback snapshot while the learner closes the session.
+  api.streamLoopCheckAnswer.mockRejectedValue(new Error("feedback stream interrupted"));
+  api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "feedback" });
+  await withCheckItem();
+  fireEvent.change(screen.getByRole("textbox", { name: "Your answer" }), { target: { value: "the base case" } });
+  fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+  await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalled());
+  fireEvent.click(screen.getByTestId("loop-close-button"));
+  await screen.findByTestId("loop-close-summary");
+  expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close");
+  await act(async () => { finishStatus(status({ phase: "feedback", check: null })); });
+  expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close");
+  expect(screen.getByTestId("loop-close-summary").textContent).toContain("Wrapped up.");
+});
