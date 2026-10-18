@@ -73,6 +73,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [equippedCosmetics, setEquippedCosmetics] = useState<EquippedCosmetics>({});
   const [featuredRole, setFeaturedRole] = useState<Role | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  // Account changes and newer profile loads invalidate older responses,
+  // including a 401 or a body that finishes after sign-out.
+  const profileGeneration = React.useRef(0);
 
   useEffect(() => {
     const saved = localStorage.getItem('sapling_user');
@@ -115,10 +118,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false;
+    const generation = profileGeneration.current;
     (async () => {
       try {
         const me = await getMe();
-        if (cancelled) return;
+        if (cancelled || generation !== profileGeneration.current) return;
         // Write-through setActiveUser: hydrates state AND persists
         // localStorage, so the next bootstrap takes the fast synchronous
         // path above instead of hitting the network again.
@@ -152,6 +156,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   // state plus the persisted localStorage copy. Used by signOut and by the
   // #191 stale-identity reconciliation in fetchProfileData.
   const clearStaleClientAuth = useCallback(() => {
+    profileGeneration.current += 1;
     setUserId('');
     setUserName('');
     setAvatarUrl('');
@@ -167,8 +172,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;
+    const generation = ++profileGeneration.current;
     try {
       const res = await fetch(`${API_URL}/api/auth/me?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
+      if (generation !== profileGeneration.current) return;
       if (!res.ok) {
         // #191: a definitive 401 (no live session) or 404 (user row gone —
         // the stale-session family) means the identity this client holds is
@@ -190,6 +197,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const data = await res.json();
+      if (generation !== profileGeneration.current) return;
       // /me answers for whoever owns the session cookie and ignores
       // ?user_id=. A different user_id means this client's identity (e.g. a
       // localStorage copy from another account on a shared browser) is not
@@ -251,6 +259,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
   const setActiveUser = (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
+    profileGeneration.current += 1;
     setUserId(id);
     setUserName(name);
     if (avatar) setAvatarUrl(avatar);
