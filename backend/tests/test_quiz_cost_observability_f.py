@@ -132,6 +132,87 @@ class TestGenerateRateLimit:
         assert other.status_code == 200
 
 
+class TestGenerateRateLimitIsEnvOverridable:
+    """#537: the two guard constants read the environment; defaults intact.
+
+    `request_limits._rate_state` is module-level, so a whole Playwright run
+    shares ONE window that only a backend restart clears — and the redesigned
+    quiz lane needs more generations than any human would. The E2E stacks
+    raise the limit through the environment; production sets nothing and must
+    keep the shipped defaults.
+    """
+
+    @staticmethod
+    def _reloaded():
+        """Re-import services.quiz_config against the current environment.
+
+        `importlib.reload` mutates the module in place, so every caller must
+        restore it (see `_restore`) or later tests inherit the override.
+        """
+        import importlib
+
+        from services import quiz_config
+
+        return importlib.reload(quiz_config)
+
+    @classmethod
+    def _restore(cls):
+        cls._reloaded()
+
+    def test_defaults_hold_when_unset(self, monkeypatch):
+        monkeypatch.delenv("QUIZ_GENERATE_RATE_LIMIT", raising=False)
+        monkeypatch.delenv("QUIZ_GENERATE_RATE_WINDOW_SEC", raising=False)
+        try:
+            cfg = self._reloaded()
+            assert cfg.QUIZ_GENERATE_RATE_LIMIT == 8
+            assert cfg.QUIZ_GENERATE_RATE_WINDOW_SEC == 300
+        finally:
+            monkeypatch.undo()
+            self._restore()
+
+    def test_an_override_is_honoured(self, monkeypatch):
+        monkeypatch.setenv("QUIZ_GENERATE_RATE_LIMIT", "1000")
+        monkeypatch.setenv("QUIZ_GENERATE_RATE_WINDOW_SEC", "60")
+        try:
+            cfg = self._reloaded()
+            assert cfg.QUIZ_GENERATE_RATE_LIMIT == 1000
+            assert cfg.QUIZ_GENERATE_RATE_WINDOW_SEC == 60
+        finally:
+            monkeypatch.undo()
+            self._restore()
+
+    def test_a_junk_override_falls_back_to_the_default(self, monkeypatch):
+        """Fail-safe, not fail-fast: a stray value must neither disable the
+        guard (limit=0 would 429 everyone, a negative window never expires)
+        nor stop the app from booting."""
+        for bad in ("", "   ", "eight", "0", "-5", "3.5"):
+            monkeypatch.setenv("QUIZ_GENERATE_RATE_LIMIT", bad)
+            monkeypatch.setenv("QUIZ_GENERATE_RATE_WINDOW_SEC", bad)
+            try:
+                cfg = self._reloaded()
+                assert cfg.QUIZ_GENERATE_RATE_LIMIT == 8, bad
+                assert cfg.QUIZ_GENERATE_RATE_WINDOW_SEC == 300, bad
+            finally:
+                monkeypatch.undo()
+                self._restore()
+
+    def test_the_route_still_enforces_whatever_was_resolved(self):
+        """The env seam moves the NUMBER, never the behaviour: the route binds
+        the value at its own import and still 429s one call past it."""
+        from routes import quiz as quiz_route
+        from services.quiz_config import QUIZ_GENERATE_RATE_LIMIT
+
+        assert quiz_route.QUIZ_GENERATE_RATE_LIMIT == QUIZ_GENERATE_RATE_LIMIT
+        run = AsyncMock(return_value=SimpleNamespace(output=_quiz()))
+        with (
+            patch("routes.quiz.table", side_effect=_factory()),
+            patch("routes.quiz.quiz_agent.run", new=run),
+        ):
+            for _ in range(quiz_route.QUIZ_GENERATE_RATE_LIMIT):
+                assert _generate().status_code == 200
+            assert _generate().status_code == 429
+
+
 class TestDailySpendGuard:
     def test_over_budget_user_is_refused_before_the_model_runs(self):
         from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD

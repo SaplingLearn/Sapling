@@ -453,6 +453,29 @@ class TestUploadDocumentOrchestrator:
     and _grading_categories_from in routes/documents.py.
     """
 
+    def test_sync_upload_is_indexed(self):
+        """#482: /upload/sync never indexed at all. Gradebook syllabus uploads go
+        through it, so none of them ever reached RAG. It now enqueues the SAME
+        entry point the streaming route uses, keyed on the persisted row."""
+        result = _make_orchestrator_result(category="syllabus", is_syllabus=True)
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.save_assignments_to_db"),
+            patch("routes.documents.apply_graph_update"),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.index_document") as idx,
+        ):
+            t.return_value.select.return_value = []
+            t.return_value.insert.return_value = [
+                {"id": "doc-sync-1", "file_name": "syllabus.pdf", "category": "syllabus"}
+            ]
+            r = _make_upload(filename="syllabus.pdf")
+
+        assert r.status_code == 200
+        idx.assert_called_once_with("doc-sync-1")
+
     def test_returns_persisted_row_for_lecture_notes(self):
         result = _make_orchestrator_result(
             category="lecture_notes",
@@ -808,6 +831,32 @@ class TestUploadDocumentStreaming:
         # Final 'done' carries the persisted document_id.
         done = json.loads(events[-1]["data"])
         assert done["data"]["document_id"] == "stream-1"
+
+    def test_streaming_upload_indexes_through_the_shared_entry_point(self):
+        """The post-roll hands index_document the persisted id and nothing else:
+        everything the indexer needs is read back off the row, which is what
+        lets the sweeper re-drive the identical work later (#482)."""
+        from routes import documents
+
+        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll") as spawn,
+        ):
+            t.return_value.insert.return_value = [{"id": "stream-1"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                r.read()
+
+        tasks = {task[0]: task[1:] for task in spawn.call_args.args}
+        assert tasks["index_document"] == (documents.index_document, "stream-1")
+        assert "index_document_chunks" not in tasks
 
     def test_includes_syllabus_event_when_is_syllabus(self):
         """progress:extract message mentions syllabus when classifier flags it."""

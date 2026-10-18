@@ -452,6 +452,34 @@ class TestDailyTotalsPaging:
         assert first_call.kwargs["offset"] == 0
         assert second_call.kwargs["offset"] == _XP_EVENTS_PAGE
 
+    def test_daily_totals_keeps_paging_when_the_total_reads_zero(self):
+        """PR #589 review E2, in the third copy of the same loop.
+
+        `_paged` above always states a truthful total, so it only proved the
+        loop CAN take a second lap. `select_with_count` reports `total = 0`
+        for a missing or unparseable Content-Range, and `seen >= count` then
+        holds on lap one holding a completely full page — golden-hour becomes
+        unearnable and perfect-week resets, silently, on a 2xx.
+        """
+        from services.achievement_service import _XP_EVENTS_PAGE, _daily_totals
+
+        day = "2026-07-30"
+        first = [
+            {"amount": 1, "created_at": f"{day}T09:00:00+00:00"}
+            for _ in range(_XP_EVENTS_PAGE)
+        ]
+        second = [{"amount": 1, "created_at": f"{day}T10:00:00+00:00"} for _ in range(5)]
+        handle = MagicMock()
+        handle.select_with_count.side_effect = [(first, 0), (second, 0)]
+
+        with patch("services.achievement_service.table", return_value=handle):
+            totals = _daily_totals("u1")
+
+        assert totals == {day: _XP_EVENTS_PAGE + 5}, (
+            "an unparseable total truncated the ledger scan to page one"
+        )
+        assert handle.select_with_count.call_count == 2
+
     def test_paging_is_deterministically_ordered(self):
         """Without a stable sort, offset paging can skip or duplicate rows
         across the page boundary — same reasoning as xp_service._ledger_total."""

@@ -2,5 +2,6 @@
   "category": "reading",
   "confidence": 0.9,
   "is_syllabus": false,
-  "rationale": "The document discusses a specific topic (Recurrence Relations) and provides a definition and example, which is characteristic of a reading material."
+  "rationale": "The document defines a recurrence relation and provides an example, which is characteristic of reading material or a textbook chapter.",
+  "shareability": "course_material"
 }

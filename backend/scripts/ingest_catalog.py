@@ -28,6 +28,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.connection import table  # noqa: E402
+from services.encryption import encrypt_if_present  # noqa: E402
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -165,6 +166,17 @@ def main() -> None:
     # Attach embeddings to records
     for rec, vec in zip(records, embeddings):
         rec["embedding"] = vec
+
+    # ADR 0025 / #484: encrypt AFTER embedding (the embed pass above reads
+    # `r["chunk_text"]`) and after the ids were computed on the plaintext.
+    # Catalog rows are public BU course text with nothing to protect; they are
+    # encrypted anyway so the invariant is "chunk_text is ALWAYS ciphertext",
+    # which the `ciphertext` e2e oracle can assert. A per-category rule cannot
+    # be asserted, and `decrypt_if_present` returns the raw value on failure —
+    # in a mixed table that makes a genuine decrypt failure indistinguishable
+    # from a legitimately-plaintext row.
+    for rec in records:
+        rec["chunk_text"] = encrypt_if_present(rec["chunk_text"])
 
     # Upsert to Supabase in batches of BATCH_SIZE
     print("\nUpserting to course_chunks...")

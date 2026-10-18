@@ -32,6 +32,31 @@ Identity is likewise split: `users` is slimmed to account state, with a 1:1 `use
 
 Almost everything currently runs inline on the request path. The one true background task is in `backend/routes/quiz.py:483`, where FastAPI `background_tasks.add_task(_update_context, ...)` defers the post-quiz context regeneration. `backend/services/course_context_service.py:109` `update_course_context` is called inline from `apply_graph_update` and from course add/delete, but its expensive Gemini summary is hash-gated — it only re-runs `_generate_summary_with_gemini` when the stats hash changes. It resolves the touched course to an `offering_id` and upserts into `offering_concept_stats` / `offering_summary`. Achievement checks (`check_achievements`) are also inline and wrapped in best-effort `try/except`.
 
+## Feature flags
+
+Flags are declared in code and configured in the DB (#620, ADR 0029):
+`backend/services/feature_flags.py::REGISTRY` is the only place a flag's key,
+variants and client-visibility are defined; its *configuration* — default
+variant, percentage rollout, per-user/role rules — lives in
+`feature_flags`/`feature_flag_targets` and is edited from `/admin`
+(`routes/admin_flags.py`). Resolution is first-match-wins: a
+`SAPLING_FLAG_<KEY>` env override, then fail-closed (unregistered flag,
+invalid value, or an unreadable store), then a per-user rule, a per-role
+rule, a stable percentage rollout, and finally the stored default —
+anything that goes wrong resolves to `variants[0]` ("off"), never an
+exception the caller has to handle. Backend code reads flags through
+`flag_variant`/`flag_on`/`require_flag`; the frontend calls `useFlag(key)`
+against the client-visible subset served at `GET /api/flags`. Reads are
+served from a 30 s per-process snapshot cache that every admin write clears
+on its own process (other replicas catch up within the TTL;
+`FEATURE_FLAGS_SNAPSHOT_TTL_S` / `FEATURE_FLAGS_ROLES_TTL_S` tune it, and the
+E2E stack sets both to 0). The flags today are one `hide_<feature>` per
+main-nav destination (all but Dashboard): `on` drops it from both nav skins
+(`frontend/src/lib/navFeatures.ts`) and `NavFeatureGate` redirects its routes
+to `/dashboard`; `off`, the fail-closed answer, leaves it visible. The admin API itself is the one place that does NOT fail closed on a
+DB error — it raises, so a broken flag store shows up as an error rather
+than a deceptively healthy "off".
+
 ## Known sharp edges
 
 - `upload_document`'s worker agents run in parallel, but text extraction still runs before the stream opens by default (`OCR_ASYNC_ENABLED` moves it onto a thread inside the SSE context — ADR 0010's lightweight variant), so wall-clock ≈ extraction time + classifier + max(worker) time on the request path.
@@ -41,4 +66,4 @@ Almost everything currently runs inline on the request path. The one true backgr
 - `course_context_service.update_course_context` resolves the course to an offering and writes to `offering_concept_stats` and `offering_summary` synchronously inside the request — a chat turn that touches several courses incurs that aggregation cost serially before returning.
 - Document-upload concept population only runs for `category in ("syllabus", "assignment")`; lecture notes, slides, readings, and study guides do NOT auto-populate the graph from upload — that path is the separate `/scan-concepts` endpoints (`backend/routes/documents.py:1106`, `:1149`).
 - Sessions are lazy: `start_session` does not persist anything; the row is materialized inside `_consume_pending` on the first `/chat` call, so a session that's started and abandoned leaves no DB trace.
-- **RAG indexing has the durability inversion backwards** (#482). DBOS wraps `/upload/sync` (`routes/documents.py`), which never indexes chunks; the route that *does* index is the streaming `/upload`, which is deliberately non-durable (ADR 0011). So a crash between `_persist_document` and the post-roll `_index_document_chunks` task leaves a healthy-looking `documents` row whose content is absent from retrieval — permanently, because nothing re-indexes on its own. A partial embedding failure has the same shape: those chunks are dropped rather than persisted with a NULL embedding (which retrieval could never return anyway), and the drop now emits a `rag.chunks_dropped` event so the rate is at least visible. The recovery path is `scripts/backfill_document_chunks.py`, which is manual and invoked by nothing — worth wiring to a retry trigger before this matters in production.
+- **RAG indexing is recoverable, but not by DBOS** (#482). `documents.index_status` (`pending` / `indexing` / `indexed` / `partial` / `failed` / `skipped`) is the indexing work queue. Both upload routes persist `extracted_text` at insert and hand the new id to `services/document_indexing.py::index_document`, which reads everything else off the stored row and owns every status transition; `services/index_sweeper.py` re-drives what did not finish, claiming batches through the `claim_documents_for_indexing` SQL function (`SKIP LOCKED`, attempts spent at claim time, bounded at 3). DBOS is deliberately not the mechanism: ADR 0011 keeps it off in every deployed environment, and the streaming route stays non-durable by design. Sharp edges that remain: the sweeper is off outside real model mode (so E2E never exercises a re-drive), a document from before #482 has no stored confidence and so re-indexes PRIVATE — including every row the derivation backfill marks `pending` — and an `indexed` document is never re-driven on its own. Re-sharing one is `scripts/backfill_document_chunks.py --doc <id>` or `POST /api/admin/documents/{id}/reindex`, which works only where a confidence was stored; a NULL-confidence row needs a fresh classification. A re-drive that cannot embed (function mode) leaves the row exactly as it found it; only a never-attempted upload records `skipped`. The sweeper claims one document per turn, so no lease runs down while a document waits, and a failed or partial document waits `lease_seconds` after its last attempt began before it is retried — on a finished row `index_leased_at` is that time, not a live lease. Stuck documents are listed at `GET /api/admin/documents/unindexed`.

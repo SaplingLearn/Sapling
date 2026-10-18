@@ -1,6 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.9,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document lists project deliverables, a due date, and grading criteria, which are characteristic of an assignment."
+  "rationale": "The document describes a programming project for a course, including its requirements, deliverables, grading policy, and due date.",
+  "shareability": "course_material"
 }

@@ -4,7 +4,7 @@ Called synchronously after events to grant achievements when thresholds are met.
 """
 
 from datetime import datetime, timedelta, timezone
-from db.connection import table
+from db.connection import MAX_ROWS, page_all, table
 from services import gradebook_service
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
@@ -207,13 +207,10 @@ def _session_stat(user_id: str, trigger_type: str) -> int:
     return best
 
 
-# supabase/config.toml sets PostgREST's `max_rows = 1000`. A response past that
-# cap doesn't error — PostgREST returns 206 Partial Content, which is a 2xx, so
-# db/connection.py's raise_for_status() never fires and the truncation is silent
-# by construction. Same constant and same reasoning as
-# routes/gamification.py::_XP_EVENTS_PAGE and xp_service.py::_XP_EVENTS_PAGE;
-# keep it at or below max_rows and page to completion.
-_XP_EVENTS_PAGE = 1000
+# The paging loop and the reason for it now live in db/connection.py::page_all
+# (PostgREST truncates past max_rows with a 206 — a 2xx, so nothing raises).
+# This alias only names the page size for the tests that assert on it.
+_XP_EVENTS_PAGE = MAX_ROWS
 
 
 def _daily_totals(user_id: str) -> dict:
@@ -250,27 +247,17 @@ def _daily_totals(user_id: str) -> dict:
     pages, skipping or double-counting across the page boundary.
     """
     totals: dict = {}
-    seen = 0
-    offset = 0
-    while True:
-        rows, count = table("xp_events").select_with_count(
-            "amount,created_at",
-            filters={"user_id": f"eq.{user_id}"},
-            order="created_at.asc,id.asc",
-            limit=_XP_EVENTS_PAGE,
-            offset=offset,
-        )
-        rows = rows or []
-        for r in rows:
-            ts = _parse_ts(r.get("created_at"))
-            if not ts:
-                continue
-            day = ts.date().isoformat()
-            totals[day] = totals.get(day, 0) + int(r.get("amount") or 0)
-        seen += len(rows)
-        if not rows or seen >= count:
-            break
-        offset += _XP_EVENTS_PAGE
+    for r in page_all(
+        table("xp_events"), "amount,created_at",
+        filters={"user_id": f"eq.{user_id}"},
+        order="created_at.asc,id.asc",
+        page=_XP_EVENTS_PAGE,
+    ):
+        ts = _parse_ts(r.get("created_at"))
+        if not ts:
+            continue
+        day = ts.date().isoformat()
+        totals[day] = totals.get(day, 0) + int(r.get("amount") or 0)
     return totals
 
 

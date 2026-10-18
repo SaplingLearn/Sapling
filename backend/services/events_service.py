@@ -22,7 +22,7 @@ Design guarantees:
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
 
-Event taxonomy (issue #117) — the twelve event types the app emits, pinned in
+Event taxonomy (issue #117) — the event types the app emits, pinned in
 ``EVENT_TAXONOMY`` below. Payloads carry ids/counts/enums only: never raw
 text, titles, summaries, full URLs, or timestamps (``created_at`` is a DB
 default). Free-text that must be correlatable (chat messages, session topics)
@@ -46,15 +46,43 @@ quiz.started                  usage     quiz_id, concept_node_id, num_questions,
 quiz.completed                usage     quiz_id, concept_node_id, score, total, mastery_delta
 quiz.tool_empty               usage     tool, feature, expect, concept_node_id
 quiz.rag_uncovered            usage     concept_node_id, reason, course_chunks, k_chunks
+quiz.answer_key_served        usage     quiz_id
+quiz.answer_key_flag_omitted  usage     quiz_id
 chat.message_sent             usage     mode, session_id (+ content=message -> fingerprint)
 note.created                  usage     note_id, course_id, offering_id, has_body
 session.started               usage     session_id, mode, offering_id (+ content=topic -> fingerprint)
 session.ended                 usage     session_id, time_spent_minutes, concepts_covered
 rag.retrieval_failed          error     course_id, error_type
 rag.chunks_dropped            error     doc_id, dropped, total
+rag.index_failed              error     doc_id, status (failed | partial), error_type
+                                        (an error CLASS or code, never a message),
+                                        attempts (#482)
+rag.index_recovered           usage     doc_id, attempts, chunk_count — a document that
+                                        failed or was stranded, later indexed (#482)
+rag.visibility_resync_failed  error     error_type (the Class Intel toggle moved but
+                                        course_chunks.visibility was not updated, #629)
+rag.relevance_scored          usage     doc_id, course_id (BU code), category, sample
+                                        (summary | first_chunk — what was scored), score (cosine
+                                        of the upload vs the course's catalog embedding —
+                                        observe-only, #628: the data a threshold gets picked from)
+flag.changed                  audit     key, field, before, after
+decision.made                 system    feature, backend (who answered: jev | flash_lite |
+                                        function | none), requested, fallback_reason (an
+                                        enum-like reason, never a message), model, latency_ms,
+                                        floor, answers {key: value, raw ("<invalid>" for
+                                        an off-list answer), confidence, defaulted?},
+                                        optional shadow {backend, answers, agree {key:
+                                        bool|null} | null (null = shadow_same_as_served),
+                                        ...}, + caller extras. The tutor router adds
+                                        session_id, mode, history_messages, and the model
+                                        the turn ACTUALLY ran on: model_tier (fast | smart
+                                        | default — default whenever the pref was not
+                                        honoured), tutor_model (resolved model name) and
+                                        model_pref_requested (the raw request field).
+                                        ADR 0027 / #640 / #642.
 ============================  ========  =====================================================
 
-Note on the two ``rag.*`` rows (#482): they are ``category="error"``, but
+Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
 ``/api/admin/analytics/errors`` filters on ``event_type like error.*`` and
 projects an HTTP shape (path / method / status_code / duration_ms), so these
 surface through ``/usage/summary``'s ``by_event_type`` breakdown instead of
@@ -98,6 +126,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # dropped). Same reasoning: a 502 the student sees should be a 502 an
     # admin can count.
     "quiz.generation_failed",
+    # #537/G8: the hero-card snapshot submit now returns inline failed to
+    # read, and was swallowed so the submit could still succeed.
+    # category="error" for the same reason quiz.context_write_failed is: a
+    # swallowed failure with only a log line behind it is how #529 stayed
+    # invisible for 51 days in this same handler. Fires at most once per
+    # submit, so the /errors feed can carry it without drowning. See the emit
+    # site, routes/quiz.py::_gamification_block.
+    "quiz.gamification_snapshot_failed",
     # F5: a personalization input returned zero rows for a student who
     # plausibly should have data. Three inputs were silently empty for
     # months (#529's 42P10, the misconceptions offering-id filter, the
@@ -114,13 +150,52 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # it used to be indistinguishable from a retrieval that quietly failed.
     # category="usage" for that reason — see the emit site in routes/quiz.py.
     "quiz.rag_uncovered",
+    # #546: the deprecated `include_answer_key` flag, made countable. Its
+    # deletion is gated on "nobody still asks for the client-side answer
+    # key", and only a rollup can answer that — a log line can't. Two types,
+    # not one with a payload flag, because by_event_type doesn't break
+    # payloads out and the two populations mean opposite things: _served is
+    # the caller that BLOCKS deletion (it got the key), _flag_omitted is the
+    # flag-unaware caller for whom deletion is a no-op. See the emit site,
+    # routes/quiz.py::_record_answer_key_flag.
+    "quiz.answer_key_served",
+    "quiz.answer_key_flag_omitted",
     "chat.message_sent",
     "note.created",
     "session.started",
     "session.ended",
     "rag.retrieval_failed",
     "rag.chunks_dropped",
+    "rag.relevance_scored",
+    # #482: a document that did not finish indexing, and one that later did.
+    # Before these, a failed index was a WARNING in a background thread and a
+    # healthy-looking documents row; the pair makes the failure rate and the
+    # sweeper's recovery rate both countable.
+    "rag.index_failed",
+    "rag.index_recovered",
+    # #629: the Class Intel toggle moved but the resync that applies it to
+    # course_chunks.visibility failed. It runs as a post-response
+    # BackgroundTask, so without this the student sees the opt-out succeed
+    # while their uploads stay in classmates' retrieval, with nothing saying
+    # so. Rare and per-user, so category="error" is affordable on the feed.
+    "rag.visibility_resync_failed",
+    # #620: admin feature-flag change (audit).
+    "flag.changed",
+    # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
+    # backend that actually served them, and (in shadow mode) the second
+    # backend's answers plus per-key agreement. category="system": the server
+    # emits it about a chat turn (the turn itself is chat.message_sent), so it
+    # must not count as the student's activity in the usage rollups. It is
+    # the dataset the routing-accuracy and Jev-agreement reviews are run over.
+    "decision.made",
 })
+
+#: Category for rows the SERVER emits about a request (e.g. decision.made, one
+#: per routed chat turn) rather than something the user did. Attributed to the
+#: user (user_id) so it joins to their turn, but routes/admin_analytics.py's
+#: usage rollups exclude it — it is not activity. The other categories are
+#: usage | audit | error (0035; the column has no CHECK constraint).
+SYSTEM_CATEGORY = "system"
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
 # the queue via reset_for_tests(maxsize=...).

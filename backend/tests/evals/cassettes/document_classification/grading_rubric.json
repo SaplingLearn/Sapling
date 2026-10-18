@@ -1,6 +1,7 @@
 {
-  "category": "assignment",
-  "confidence": 0.9,
-  "is_syllabus": false,
-  "rationale": "The document includes point distributions for different aspects of an essay, indicating it is likely part of an assignment or grading criteria for one."
+  "category": "other",
+  "confidence": 0.8,
+  "is_syllabus": true,
+  "rationale": "The document outlines grading criteria and point allocation for an essay, which functions as a course requirement and implies a course structure.",
+  "shareability": "course_material"
 }

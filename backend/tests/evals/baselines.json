@@ -16,8 +16,9 @@
     "OrderedByImportanceEvaluator": 1.0
   },
   "document_classification": {
-    "CategoryEvaluator": 0.8,
-    "SyllabusFlagEvaluator": 0.88
+    "CategoryEvaluator": 0.862069,
+    "ShareabilityEvaluator": 1.0,
+    "SyllabusFlagEvaluator": 0.896552
   },
   "document_summary": {
     "AbstractLengthEvaluator": 0.933333,

@@ -272,12 +272,26 @@ def update_course_context(offering_id: str) -> None:
             out.extend(rows or [])
         return out
 
-    def _parse_quiz_context_to_arrays(ctx_rows: list) -> tuple[list, list, list]:
+    def _parse_quiz_context_to_arrays(ctx_rows: list) -> tuple[list, list]:
+        # #572 (canonical telling — other mentions of this drop point back
+        # here): `quiz_context.context_json` never carries an
+        # `effective_explanations` key — `agents/quiz_context.py::QuizContext`
+        # writes exactly `weak_areas`/`common_mistakes`/`questions_seen_summary`/
+        # `recommended_difficulty`/`notes` (every stored row also carries a
+        # server-stamped `schema_version`, added by
+        # `services/quiz_context_service.py::save_quiz_context`, not by the
+        # model). A prior version of this function read `effective_explanations`
+        # here too, which meant `offering_concept_stats.effective_explanations`
+        # always persisted an empty array — indistinguishable from "this class
+        # produced no effective explanations". Only the dead read is gone; the
+        # column itself stays. Its DB default (`'{}'`) covers a fresh INSERT,
+        # but the upsert below runs `on_conflict="offering_id,concept_name"` —
+        # a merge-duplicates UPDATE on an existing row — and never mentions
+        # this column in its payload, so an existing row's value (including
+        # anything written out-of-band) is left untouched, not reset.
         common_misconceptions: list = []
-        effective_explanations: list = []
         prerequisite_gaps: list = []
         seen_misconceptions: set = set()
-        seen_explanations: set = set()
         seen_prereqs: set = set()
 
         for ctx in ctx_rows:
@@ -299,19 +313,13 @@ def update_course_context(offering_id: str) -> None:
                     seen_prereqs.add(w.lower())
                     prerequisite_gaps.append(w)
 
-            for exp in cj.get("effective_explanations", []):
-                exp = (exp or "").strip()
-                if exp and exp.lower() not in seen_explanations:
-                    seen_explanations.add(exp.lower())
-                    effective_explanations.append(exp)
-
-        return common_misconceptions[:20], effective_explanations[:20], prerequisite_gaps[:20]
+        return common_misconceptions[:20], prerequisite_gaps[:20]
 
     # ── 7. Upsert into course_concept_stats (quiz arrays per concept) ─────────
     for name, metrics in concept_metrics.items():
         node_ids_for_concept = concept_data.get(name, {}).get("node_ids", [])
         ctx_rows = _fetch_quiz_context_rows(node_ids_for_concept)
-        cm, ee, pg = _parse_quiz_context_to_arrays(ctx_rows)
+        cm, pg = _parse_quiz_context_to_arrays(ctx_rows)
 
         table("offering_concept_stats").upsert(
             {
@@ -323,7 +331,6 @@ def update_course_context(offering_id: str) -> None:
                 "pct_struggling": metrics["pct_struggling"],
                 "pct_unexplored": metrics["pct_unexplored"],
                 "common_misconceptions": cm,
-                "effective_explanations": ee,
                 "prerequisite_gaps": pg,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },

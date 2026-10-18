@@ -130,6 +130,37 @@ def test_generate_writes_a_real_attempt_row_with_ciphertext_questions(
     assert "recursion" not in row["questions_json"].lower()
 
 
+def test_generate_default_response_never_reveals_the_correct_option(
+    authed_client, db_conn, assert_keyless_projection
+):
+    """With `include_answer_key` omitted entirely — the shape every real
+    caller now gets (see GenerateQuizBody.include_answer_key, #546) —
+    nothing anywhere in the response may let a client determine which
+    option is correct, and what IS served must be the faithful keyless
+    projection of what was stored.
+
+    Grounded against the attempt's REAL stored answer key, decrypted
+    straight from Postgres via the same helper the other tests in this file
+    use: not a hand-built fixture, and not merely "the field named
+    `correct` is absent" (a renamed or restructured leak would slip past a
+    check that narrow).
+
+    The assertions themselves live in the `assert_keyless_projection`
+    fixture (tests/conftest.py), shared with the hermetic twin in
+    tests/test_quiz_answers_c.py so the two lanes cannot drift; its
+    docstring carries the non-circularity argument for the hard-coded
+    allowlists it uses."""
+    from services.encryption import decrypt_json_column
+
+    r = _generate(authed_client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    row = _attempt_row(db_conn, body["quiz_id"], "questions_json")
+    assert row is not None, "generate returned 200 but wrote no attempt row"
+    assert_keyless_projection(body, decrypt_json_column(row["questions_json"]))
+
+
 @pytest.mark.parametrize("difficulty", _advertised_difficulties())
 def test_generate_accepts_every_difficulty_the_config_advertises(
     authed_client, db_conn, difficulty
@@ -292,6 +323,110 @@ def test_a_replayed_submit_is_a_409_and_re_applies_no_mastery(
     )
 
 
+# ── G8: the XP line, inline ─────────────────────────────────────────────────
+
+
+def test_submit_returns_the_xp_it_paid_and_the_card_the_endpoint_would_serve(
+    authed_client, db_conn
+):
+    """G8 (#537): the results screen used to read `/api/gamification/me` twice
+    around the submit and subtract. Submit now carries the numbers itself.
+
+    Both halves are checked against something that is not the response:
+    `xp_awarded` against the `xp_events` row Postgres actually stored for this
+    attempt, and the snapshot against a live `GET /api/gamification/me`. The
+    hermetic lane can only prove the two callers share a function; only here
+    can it prove they agree on real rows — which is the whole claim G8 makes.
+    """
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    authed_client.post(f"/api/quiz/attempts/{quiz_id}/answer",
+                       json={"question_index": 0, "selected_index": 1})
+
+    s = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
+    assert s.status_code == 200, s.text
+
+    block = s.json()["gamification"]
+    assert block is not None, "the submit response carried no gamification block"
+
+    paid = db_conn.execute(
+        "SELECT amount FROM xp_events WHERE source_id = %s AND rule_key = %s",
+        (quiz_id, "quiz_completed"),
+    ).fetchall()
+    assert len(paid) == 1, f"expected exactly one quiz_completed award, got {paid!r}"
+    assert block["xp_awarded"] == paid[0]["amount"]
+
+    stored_total = db_conn.execute(
+        "SELECT total_xp FROM users WHERE id = %s", (USER_ACTIVE,)
+    ).fetchone()["total_xp"]
+    assert block["total_xp"] == stored_total
+
+    me = authed_client.get(f"/api/gamification/me?user_id={USER_ACTIVE}")
+    assert me.status_code == 200, me.text
+    award_only = {"xp_awarded", "leveled_up", "duplicate"}
+    assert {k: v for k, v in block.items() if k not in award_only} == me.json(), (
+        "the inline snapshot and /api/gamification/me disagree — the point of "
+        "both going through services/gamification_service.py"
+    )
+
+    # "N of M" — the one pair whose two sides could be filtered differently
+    # (review E1), and only a real Postgres can prove the `achievements!inner`
+    # embed actually drops an earned row whose badge is a DRAFT. The seeded
+    # catalog carries the ten that 20260731194102 demoted.
+    live_total = db_conn.execute(
+        "SELECT count(*) AS n FROM achievements WHERE status = 'live'"
+    ).fetchone()["n"]
+    assert block["total_count"] == live_total
+    assert block["earned_count"] <= block["total_count"], (
+        "'N of M' exceeded M — an earned draft badge is in the numerator"
+    )
+
+
+# ── abandon ─────────────────────────────────────────────────────────────────
+
+
+def test_abandon_stamps_the_real_row_and_the_listing_agrees(authed_client, db_conn):
+    """#537 G4. The point of the endpoint is that the DATABASE, not one
+    browser's localStorage, is what stops offering the attempt — so the stamp
+    is read back through psycopg rather than through the PostgREST layer that
+    wrote it, and the derived status is read back off the listing."""
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+
+    first = authed_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "abandoned"
+
+    row = _attempt_row(db_conn, quiz_id, "completed_at, abandoned_at")
+    assert row["abandoned_at"] is not None, "the discard never reached the row"
+    assert row["completed_at"] is None, (
+        "a discard must not complete the attempt — no score, no mastery, no XP"
+    )
+
+    # Idempotent: the client fires this and forgets it, so a retry after a
+    # dropped response answers with the stamp already stored.
+    again = authed_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert again.status_code == 200, again.text
+    assert again.json() == first.json()
+
+    listing = authed_client.get(f"/api/quiz/attempts?user_id={USER_ACTIVE}")
+    mine = next(a for a in listing.json()["attempts"] if a["quiz_id"] == quiz_id)
+    assert mine["status"] == "abandoned", (
+        "the history listing still calls it in_progress, so the resume strip "
+        "would offer it again on the next device"
+    )
+
+
+def test_abandoning_a_submitted_attempt_is_a_409(authed_client, db_conn):
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    assert authed_client.post(
+        "/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []}
+    ).status_code == 200
+
+    r = authed_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "QUIZ_ATTEMPT_ALREADY_COMPLETED"
+    assert _attempt_row(db_conn, quiz_id, "abandoned_at")["abandoned_at"] is None
+
+
 # ── resume + history ────────────────────────────────────────────────────────
 
 
@@ -330,7 +465,7 @@ def test_history_lists_the_students_own_completed_attempts(authed_client):
     assert "questions" not in mine and "questions_json" not in mine
 
 
-def test_another_student_can_neither_answer_nor_submit_this_attempt(
+def test_another_student_can_neither_answer_submit_nor_abandon_this_attempt(
     authed_client, other_user_client, db_conn
 ):
     """The hermetic lane stubs `require_self` to a no-op, so it structurally
@@ -346,7 +481,14 @@ def test_another_student_can_neither_answer_nor_submit_this_attempt(
     s = other_user_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
     assert s.status_code in (403, 404), s.text
 
-    assert _attempt_row(db_conn, quiz_id, "completed_at")["completed_at"] is None
+    # #537 G4: a discard closes someone's quiz, so it is a write like the other
+    # two and needs the same owner check.
+    d = other_user_client.post(f"/api/quiz/attempts/{quiz_id}/abandon")
+    assert d.status_code in (403, 404), d.text
+
+    row = _attempt_row(db_conn, quiz_id, "completed_at, abandoned_at")
+    assert row["completed_at"] is None
+    assert row["abandoned_at"] is None
     assert db_conn.execute(
         "SELECT count(*) AS n FROM quiz_responses WHERE attempt_id = %s", (quiz_id,)
     ).fetchone()["n"] == 0
@@ -400,3 +542,81 @@ def test_a_past_exam_leaves_the_column_null(authed_client, db_conn):
     """
     quiz_id = _generate(authed_client).json()["quiz_id"]
     assert _attempt_row(db_conn, quiz_id, "exam_days_away")["exam_days_away"] is None
+
+
+# ── G5: practise the ones you missed ────────────────────────────────────────
+
+
+def _sat_and_missed(authed_client):
+    """Generate, answer every question B, submit. Returns the attempt id.
+
+    The seam's key is B, C, A — so B throughout gets Q1 right and misses Q2
+    and Q3, which is the state "practise the ones you missed" starts from.
+    """
+    quiz_id = _generate(authed_client).json()["quiz_id"]
+    for index in range(3):
+        a = authed_client.post(
+            f"/api/quiz/attempts/{quiz_id}/answer",
+            json={"question_index": index, "selected_index": 1},
+        )
+        assert a.status_code == 200, a.text
+    s = authed_client.post("/api/quiz/submit", json={"quiz_id": quiz_id, "answers": []})
+    assert s.status_code == 200, s.text
+    assert s.json()["score"] == 1, "the seam's answer key moved; this setup assumes B, C, A"
+    return quiz_id
+
+
+def _stored_questions(db_conn, quiz_id):
+    from services.encryption import decrypt_json_column
+
+    row = _attempt_row(db_conn, quiz_id, "questions_json")
+    return decrypt_json_column(row["questions_json"])
+
+
+def test_practising_the_missed_questions_re_serves_them_verbatim(
+    authed_client, db_conn
+):
+    """G5 over HTTP with real rows.
+
+    The mocked lane cannot prove the derivation — it hands the route exactly
+    the response rows it wants to see. Here `is_correct` was written into
+    Postgres by the /answer route and read back by the query under test, so
+    "which ones did they miss" is answered by the system, not by a fixture.
+    """
+    source_id = _sat_and_missed(authed_client)
+    source = _stored_questions(db_conn, source_id)
+    missed = source[1:]
+
+    r = _generate(authed_client, num_questions=2, source_attempt_id=source_id)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == {
+        "attempt_id": source_id,
+        "reserved_count": 2,
+        "regenerated_count": 0,
+    }
+    assert [q["question"] for q in body["questions"]] == [q["question"] for q in missed]
+
+    stored = _stored_questions(db_conn, body["quiz_id"])
+    # E5 identity survives the copy — the same items, asked again — while the
+    # ids are renumbered, because an id is a position inside one attempt.
+    assert [q["question_hash"] for q in stored] == [q["question_hash"] for q in missed]
+    assert [q["id"] for q in stored] == [1, 2]
+    assert all(q["provenance"]["reserved_from"] == source_id for q in stored)
+
+
+def test_a_longer_practice_quiz_tops_up_with_generated_questions(
+    authed_client, db_conn
+):
+    """Two recoverable misses, three asked for: the remainder comes from the
+    ordinary generation path, and the response says how the quiz was split."""
+    source_id = _sat_and_missed(authed_client)
+
+    r = _generate(authed_client, num_questions=3, source_attempt_id=source_id)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"]["reserved_count"] == 2
+    assert body["source"]["regenerated_count"] >= 1
+    assert body["delivered_count"] == len(body["questions"])
+    stems = [q["question"] for q in body["questions"]]
+    assert len(set(stems)) == len(stems), "a re-served item was also regenerated"

@@ -13,7 +13,13 @@ strings the route and agent assemble:
     copy (the approach `bench_quiz_question_cap.py` takes, because it needs
     schema VARIANTS) would measure the wrong string the first time anyone
     edits the prompt, which is exactly the drift this is meant to catch.
-  * the routing message, in both concrete and adaptive forms;
+  * the routing message, in both concrete and adaptive forms — plus the two
+    conditional lines that ride on top of it, each measured on its own so it
+    can be priced on its own: H3's exam-proximity sentence and H4's
+    student-signal block. Both are IMPORTED from the modules that render
+    them, for the reason `_SYSTEM_PROMPT` is: a hand-copy here was already
+    two features stale, so this benchmark was publishing token counts for a
+    prompt that no longer existed.
   * the tool returns, serialized at their real caps;
   * the COURSE MATERIAL block, measured per chunk across a realistic size
     range, so `k` can be priced rather than guessed;
@@ -55,8 +61,11 @@ from google.genai import types as genai_types  # noqa: E402
 from agents._providers import model_mode, model_name_for  # noqa: E402
 from agents.quiz import _SYSTEM_PROMPT  # noqa: E402
 from config import GEMINI_API_KEY  # noqa: E402
+from services.exam_proximity import exam_prompt_line  # noqa: E402
 from services.quiz_config import QUIZ_MAX_QUESTIONS  # noqa: E402
 from services.quiz_repetition import RECENT_QUESTION_LIMIT  # noqa: E402
+from services.quiz_signals import QuizSignals  # noqa: E402
+from services.quiz_signals import prompt_block as signal_prompt_block  # noqa: E402
 
 # Resolved through the provider config, not hard-coded: the whole point of
 # measuring "the quiz's prompt" is that it is measured on the model the quiz
@@ -196,6 +205,15 @@ def recently_asked_block(n: int = RECENT_QUESTION_LIMIT) -> str:
 
 
 def routing_msg(adaptive: bool) -> str:
+    """The BASE routing message: what a student with no upcoming exam and no
+    signals gets. The two conditional lines that ride on top of it are
+    measured separately, by `exam_line` and `signals_line`, so each can be
+    priced on its own instead of disappearing into one average.
+
+    This one IS a structural copy — it is assembled inline in
+    `_quiz_via_agent`, not by an importable builder — which is exactly why the
+    two below are not.
+    """
     n = QUIZ_MAX_QUESTIONS
     if adaptive:
         clause = (
@@ -213,6 +231,37 @@ def routing_msg(adaptive: bool) -> str:
         f"concept_node_id='00000000-0000-0000-0000-000000000000' to "
         f"read_recent_quiz_attempts."
     )
+
+
+def exam_line(days_away: int = 3) -> str:
+    """H3/#555's proximity sentence — from the module that renders it.
+
+    Imported rather than copied, for the same reason `_SYSTEM_PROMPT` is: the
+    hand-written routing message here was already two features stale, so the
+    budget doc it feeds was publishing numbers for a prompt that no longer
+    existed. Deriving is the only version of this that stays true.
+    """
+    return exam_prompt_line(days_away)
+
+
+def signals_line() -> str:
+    """H4/#556's student-signal sentence, at its fullest — every signal known.
+
+    The ceiling, deliberately: this is the most the block can cost, and the
+    point of measuring it is to decide whether that ceiling is worth paying.
+    The per-signal F6 dimensions on `quiz.started` price the real
+    distribution; see docs/quiz-prompt-budget.md.
+    """
+    return signal_prompt_block(QuizSignals(
+        times_studied=6,
+        velocity_per_day=0.041,
+        in_flight_attempts=2,
+        flashcards_course_cards=42,
+        flashcards_course_reviewed=17,
+        flashcards_course_last_review_days=3,
+        tutor_course_sessions_14d=4,
+        tutor_concept_days_since=2,
+    ))
 
 
 def main() -> int:
@@ -244,6 +293,10 @@ def main() -> int:
     variable = [
         (f"recently asked ({RECENT_QUESTION_LIMIT} stems, E6)",
          count(recently_asked_block())),
+        ("exam proximity line (H3, when inside the horizon)",
+         count(exam_line())),
+        ("student signals (H4, every signal known — the ceiling)",
+         count(signals_line())),
         ("catalog chunk (typical)", count(chunk_text(180))),
     ]
 

@@ -92,7 +92,7 @@
   },
   "src/components/screens/Dashboard.tsx": {
     "no-restricted-syntax": {
-      "count": 20
+      "count": 19
     },
     "react/no-unescaped-entities": {
       "count": 2
@@ -101,11 +101,6 @@
   "src/components/screens/Gradebook/Course.tsx": {
     "no-restricted-syntax": {
       "count": 9
-    }
-  },
-  "src/components/screens/Gradebook/Landing.tsx": {
-    "no-restricted-syntax": {
-      "count": 1
     }
   },
   "src/components/screens/Learn.tsx": {
@@ -141,7 +136,7 @@
   },
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 26
+      "count": 23
     }
   },
   "src/lib/useActiveSemester.ts": {

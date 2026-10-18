@@ -48,6 +48,9 @@ playwright>=1.45,<2
 # Testing
 pytest==9.1.1
 pytest-anyio==0.0.0
+# Coverage for the Canopy dashboard's canopy/coverage commit status (ci.yml's
+# canopy-metrics job, push to main only). Never part of the gating pytest run.
+pytest-cov==7.1.0
 
 # Linting (#193): `ruff check` is gated in CI against the baseline in ruff.toml.
 ruff==0.15.18
@@ -59,7 +62,12 @@ ruff==0.15.18
 # e2e CI lane went red on every push to main after #349 while the lock-pinned
 # lanes stayed green. Bump this ceiling only together with a chat_stream.py
 # migration and a fresh requirements.lock.
-pydantic-ai-slim[google]>=0.0.20,<2
+# >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
+# the #646 continuation appends run-level `run(instructions=...)` (added in
+# 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
+# requirements.lock pins 1.107.0, which is what CI installs; a local venv may
+# be older (the #707 work was run locally on 1.89.1). Both are above the floor.
+pydantic-ai-slim[google]>=1.11.1,<2
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 

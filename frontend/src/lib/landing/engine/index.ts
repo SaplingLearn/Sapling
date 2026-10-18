@@ -17,12 +17,13 @@ import { put } from './dom';
 import { createFlipState, type FlipState } from './flip';
 import { buildGraph, type BuiltGraph } from './graph';
 import {
-  createGraphViewState, drawExplore, drawScroll,
+  EXPLORE_CAM_MS, createGraphViewState, drawExplore, drawScroll,
   type GraphViewState,
 } from './graphView';
 import { createMarquee, type MarqueeController } from './marquee';
 import { fitIngest, measure, type Measured, type ViewportCache } from './measure';
 import { createPlantField, type PlantField } from './plant';
+import { createScrollGovernor, type ScrollGovernor } from './scrollGovernor';
 import { createSim, type SimController } from './sim';
 
 /** How often the layout measure pass may run, in ms. */
@@ -69,6 +70,14 @@ export class LandingEngine {
   readonly flip: FlipState = createFlipState();
   readonly marquee: MarqueeController;
   readonly sim: SimController = createSim();
+  /**
+   * Meters the wheel so a flick cannot cross an act between two frames.
+   *
+   * The acts are scroll-scrubbed and `actPeak` latches whatever progress a
+   * frame reports, so an unmetered momentum gesture doesn't play an act
+   * quickly — it steps over it. See `scrollGovernor.ts`.
+   */
+  private readonly governor: ScrollGovernor = createScrollGovernor();
 
   mouse: Mouse = { x: 0, y: 0 };
   parallaxY = 0;
@@ -91,6 +100,8 @@ export class LandingEngine {
 
   // scroll smoothing
   private sySmooth: number | undefined;
+  /** Time-eased opacity for the ambient field — see ambient.ts. */
+  private ambientFade = 0;
   private syMedia = 0;
   private jumpUntil = 0;
   private lastJumpSy = 0;
@@ -99,13 +110,141 @@ export class LandingEngine {
   // nav / jump pill
   private jumpLastY = 0;
   private jumpSeen = 0;
-  private jumpOnDark: boolean | undefined;
   private activeNav = -1;
 
   // act state
   private rotCur = 0;
   private tutorFacing = -1;
   private tileCounts = [0, 0, 0, 0];
+
+  /**
+   * High-water mark of each act's scroll progress, indexed act1/act2/act3.
+   *
+   * The acts are scrubbed: their progress is recomputed from scroll position
+   * every frame, so scrolling back up used to run them in reverse — the graph
+   * un-assembled, chips flew back into the document, the carousel spun
+   * backwards. These latch the furthest point each act reached, so scrolling
+   * up holds the played state and only the page moves.
+   *
+   * Deliberately never reset. Re-entering an act from above shows its end
+   * state rather than replaying it, which is the same rule seen from the
+   * other side: once played, it stays played.
+   */
+  private actPeak = [0, 0, 0];
+
+  /** Which acts have had their spent scrub runway folded away. */
+  private actFolded = [false, false, false];
+
+  /** Previous frame's raw scroll position, for direction. -1 until first tick. */
+  private lastRawSy = -1;
+
+  /** True while this frame's scroll moved down the page. See `peak`. */
+  private advancing = false;
+
+  // eased scroll correction on the way into explore mode
+  private gliding = false;
+  private glideFrom = 0;
+  private glideTo = 0;
+  private glideT0 = 0;
+
+  /**
+   * Latch raw scrubbed progress to its high-water mark.
+   *
+   * Only a downward frame may advance it, and that is the whole point. Raw
+   * progress is `(scrollY - top) / runway` clamped to 0..1, so a reader
+   * approaching an act *from below* — coming back up out of the gallery,
+   * say — reports progress already past the end on the first frame the act
+   * is visible. Latching that handed them the finale they never scrolled
+   * through, lit all four stage ticks, and folded the act away for good, so
+   * the stages could never play. Requiring a downward frame costs normal
+   * scrubbing nothing (raw only rises going down, and the high-water mark
+   * holds it going up) and leaves an act approached from below unplayed,
+   * ready to run properly the next time it is scrolled through.
+   *
+   * @param i   Act index, 0..2.
+   * @param raw Progress straight off the scroll position, already clamped.
+   */
+  private peak(i: number, raw: number): number {
+    if (this.advancing && raw > this.actPeak[i]) this.actPeak[i] = raw;
+    return this.actPeak[i];
+  }
+
+  /**
+   * Fold a finished act down to a single viewport.
+   *
+   * Each act is a tall section whose extra height is nothing but scrub runway
+   * for its animation: 360vh on act 1, 220vh on act 2, 240vh on act 3. Once
+   * `actPeak` has latched an act at 1 that runway drives nothing, so scrolling
+   * back up meant grinding through ~8 screens of dead space to get out.
+   *
+   * It is seamless from any scroll position because of how sticky behaves.
+   * While the act is pinned its child sits at the viewport top for every
+   * `scrollY` in `[top, top + h - vh]`, so cutting the section to one
+   * viewport and pulling `scrollY` back to `top` leaves that child exactly
+   * where it was. Past the act, the same distance comes off instead, which
+   * cancels the upward shift of everything below. Above it, nothing on screen
+   * moves and the shrink is zero. `min(scrollY - top, h - vh)` covers all
+   * three, and clamping at zero is what makes the third case a no-op.
+   *
+   * The smoothed scroll passes track absolute `scrollY`, so they shift too —
+   * otherwise the next frame reads a 360vh delta and either lerps through it
+   * or trips the `jumping` bypass.
+   *
+   * One trigger, and only one: the act finished. Its runway is spent and
+   * drives nothing, so cutting it costs the reader nothing they have not
+   * already seen.
+   *
+   * An unfinished act is deliberately *not* folded, not even when the reader
+   * is scrolling back up out of it. Folding there cuts exactly the runway
+   * that would have finished the act, stranding it mid-scene forever —
+   * `actPeak` never resets, so coming back down shows the frozen state rather
+   * than replaying. That turned one upward nudge at stage 1 into a permanent
+   * skip of the other three. The cost of holding the pin is that leaving an
+   * act early means scrolling back up through the runway you came down; the
+   * scroll governor keeps that distance honest by making the trip down cost
+   * the same.
+   *
+   * Scrolling up into an act from *below* needs no special case. Raw progress
+   * there is already past 1, so `actPeak` latches on the first frame and the
+   * act folds — the reader gets the finished scene, then keeps going.
+   *
+   * @returns true if a fold happened, in which case the caller must abandon
+   *          the frame: every cached offset below that act is now stale.
+   */
+  private foldActs(M: Measured, vh: number, rawSy: number): boolean {
+    const acts = [M.act1, M.act2, M.act3];
+    for (let i = 0; i < 3; i++) {
+      const a = acts[i];
+      if (!a || this.actFolded[i]) continue;
+      // 0.999, not 1: scrolling out the bottom drives raw progress past 1 and
+      // clamp01 pins it, but reversing exactly on the boundary can leave a
+      // float a hair short, and the last 0.1% of any act is invisible anyway
+      if (this.actPeak[i] < 0.999) continue;
+      this.actFolded[i] = true;
+      const runway = a.o.h - vh;
+      if (runway <= 1) continue;
+      const shrink = Math.max(0, Math.min(rawSy - a.o.top, runway));
+      // vh units, not px, so the section still tracks a window resize
+      a.el.style.height = '100vh';
+      if (shrink > 0) {
+        const to = Math.max(0, rawSy - shrink);
+        window.scrollTo(0, to);
+        if (this.sySmooth !== undefined) this.sySmooth -= shrink;
+        this.syMedia -= shrink;
+        // An in-flight wheel gesture is metered against absolute positions,
+        // so rebase it by the same amount. Releasing instead would drop the
+        // rest of the gesture: the fold is invisible, so the visitor would
+        // see their flick simply stop producing movement.
+        this.governor.shift(-shrink);
+        // direction is diffed against this; leaving the pre-fold value here
+        // would read as one enormous upward scroll on the next frame
+        this.lastRawSy = to;
+      }
+      this.M = null;
+      return true;
+    }
+    return false;
+  }
 
   constructor(refs: EngineRefs, hooks: EngineHooks) {
     this.refs = refs;
@@ -116,14 +255,88 @@ export class LandingEngine {
     });
   }
 
+  /**
+   * The scroll position where act 1's stage is pinned *and* the page agrees
+   * with what the canvas is drawing.
+   *
+   * Explore mode freezes the page, so it can only be entered from a position
+   * where the sticky stage is flush with the viewport — otherwise the whole
+   * HUD locks against a half-scrolled stage. Every point in the sticky range
+   * satisfies that, but only this one also matches the act's latched
+   * progress: land anywhere else and the next downward frame advances
+   * `actPeak` to wherever the page happens to sit, jumping the scene past
+   * stages the reader never saw.
+   *
+   * Null until the act has been measured.
+   */
+  act1PinnedScroll(): number | null {
+    const a = this.M?.act1;
+    if (!a) return null;
+    // live rect rather than the cached offset: `measure` runs at most ~1.6x
+    // per second, and this is read on a click
+    const top = a.el.getBoundingClientRect().top + window.scrollY;
+    const runway = Math.max(0, a.el.offsetHeight - window.innerHeight);
+    return top + this.actPeak[0] * runway;
+  }
+
+  /**
+   * Ease the page to act 1's pinned position on the way into explore mode.
+   *
+   * Setting the position outright would be a jump cut. The stage can sit the
+   * better part of a viewport off when the click lands, and every piece of
+   * explore mode hangs off that stage, so the whole scene would leap at the
+   * exact moment the camera starts moving — a correction the reader reads as
+   * a glitch rather than as the transition doing its job.
+   *
+   * So ride the camera's own curve: `drawExplore` eases with `smooth()` over
+   * `EXPLORE_CAM_MS` from the same instant, so the stage slides into place
+   * across the same window the graph is already travelling in, and the two
+   * land together.
+   */
+  glideToPinnedAct1(): void {
+    const to = this.act1PinnedScroll();
+    if (to === null) return;
+    this.glideScrollTo(to);
+  }
+
+  /**
+   * Ease the page to an arbitrary scroll position over the same window and
+   * curve as `glideToPinnedAct1`. Used on the way out of explore mode to
+   * hand the reader back to wherever they were before the click, rather
+   * than leaving them parked at the act's pinned stage.
+   */
+  glideScrollTo(to: number): void {
+    const from = window.scrollY;
+    if (Math.abs(to - from) <= 1) return;
+    // The governor meters wheel travel against absolute positions. Let it go
+    // now rather than have it fight the glide for the frame it takes to
+    // notice the page moved without its say-so.
+    this.governor.release();
+    this.glideFrom = from;
+    this.glideTo = to;
+    this.glideT0 = performance.now();
+    this.gliding = true;
+  }
+
+  /**
+   * Whether act 1's four-stage slideshow has been scrolled all the way
+   * through. `actPeak` latches progress, so this stays true once reached.
+   */
+  act1Finished(): boolean {
+    return this.actPeak[0] >= 0.999;
+  }
+
   /** Programmatic scrolls call this so smoothing doesn't fight them. */
   markJump(): void {
     this.jumpUntil = Date.now() + JUMP_MS;
+    // A nav jump is meant to land 1:1; metering would fight it the whole way.
+    this.governor.release();
   }
 
   start(): void {
     if (!this.raf) this.raf = requestAnimationFrame(this.tick);
     if (!this.simRaf) this.simRaf = requestAnimationFrame(this.simTick);
+    this.governor.attach();
   }
 
   stop(): void {
@@ -131,6 +344,7 @@ export class LandingEngine {
     if (this.simRaf) cancelAnimationFrame(this.simRaf);
     this.raf = 0;
     this.simRaf = 0;
+    this.governor.detach();
     this.marquee.destroy();
     this.sim.destroy();
   }
@@ -152,10 +366,22 @@ export class LandingEngine {
     this.raf = requestAnimationFrame(this.tick);
     const root = this.refs.root;
     if (!root) return;
+    // Advance the metered scroll first: everything below reads `scrollY`.
+    this.governor.step();
+    if (this.gliding) {
+      const k = clamp01((performance.now() - this.glideT0) / EXPLORE_CAM_MS);
+      window.scrollTo(0, this.glideFrom + (this.glideTo - this.glideFrom) * smooth(k));
+      if (k >= 1) this.gliding = false;
+    }
     const now = Date.now();
 
     if (!this.M || now - this.measuredAt > MEASURE_MS) {
       this.measuredAt = now;
+      // Refit before measuring: the fit is what the chip flight is measured
+      // against, and it drifts when a webfont lands after mount or when the
+      // fit's own width compensation changes how the tiles wrap. A resize is
+      // no longer the only thing that can move it.
+      fitIngest(this.refs.ingestStage);
       const r = measure(
         {
           root,
@@ -174,6 +400,19 @@ export class LandingEngine {
     const vh = window.innerHeight;
     const rawSy = window.scrollY;
     const inten = Number(this.hooks.getParallax() ?? 1);
+
+    // 0.5px deadband so sub-pixel jitter never reads as a direction change.
+    this.advancing = this.lastRawSy >= 0 && rawSy > this.lastRawSy + 0.5;
+    this.lastRawSy = rawSy;
+
+    // Reclaim the runway of any act that has played all the way through.
+    // Ahead of the smoothing block, which this shifts in step with the
+    // scroll position.
+    // Explore mode holds the reader inside act 1 on purpose; resizing the
+    // section under them there would move the page out from under the graph.
+    if (!this.hooks.getExploring() && !this.hooks.getExpOut()) {
+      if (this.foldActs(M, vh, rawSy)) return;
+    }
 
     // ── double-lerp scroll smoothing: raw → scroll pass (0.05) → media pass (0.08)
     if (this.sySmooth === undefined) {
@@ -199,11 +438,13 @@ export class LandingEngine {
     const syM = this.syMedia;
 
     if (rawSy < vh * 1.4) {
-      this.heroShiftPx = syM * -0.3;
+      // deliberately unsmoothed: on a fast scroll back to the top the lagged
+      // value made the whole hero layer settle into place a beat late
+      this.heroShiftPx = rawSy * -0.3;
       if (this.refs.heroContent) {
         put(this.refs.heroContent, 'transform', 'translateY(' + this.heroShiftPx.toFixed(1) + 'px)');
       }
-      this.parallaxY = syM * 0.1;
+      this.parallaxY = rawSy * 0.1;
     }
 
     if (rawSy < vh * 1.6) {
@@ -256,9 +497,16 @@ export class LandingEngine {
     this.tickAct1(M, vh, rawSy, sy);
     this.tickAct2(M, vh, rawSy, sy);
     this.tickAct3(M, vh, rawSy, sy);
-    this.tickNav(M, vh, rawSy, sy);
+    this.tickNav(M, vh, rawSy);
 
-    if (this.refs.ambientCanvas) this.ambient.draw(this.refs.ambientCanvas, syM, vh, this.mouse);
+    // rawSy, not the lerp: the dot field kept drifting and dissolving for a
+    // beat after a fast return to the top. Opacity still eases in time —
+    // dots dissolve in place rather than popping — but position tracks 1:1.
+    if (this.refs.ambientCanvas) {
+      const fadeTarget = clamp01((rawSy - vh * 0.5) / (vh * 0.5));
+      this.ambientFade += (fadeTarget - this.ambientFade) * 0.1;
+      this.ambient.draw(this.refs.ambientCanvas, rawSy, vh, this.mouse, this.ambientFade);
+    }
 
     if (M.gal) {
       const gt = M.gal.top - rawSy;
@@ -282,7 +530,7 @@ export class LandingEngine {
     const top = M.act1.o.top - rawSy;
     if (top + M.act1.o.h <= -100 || top >= vh + 100) return;
 
-    const p = clamp01(-(M.act1.o.top - sy) / Math.max(1, M.act1.o.h - vh));
+    const p = this.peak(0, clamp01(-(M.act1.o.top - sy) / Math.max(1, M.act1.o.h - vh)));
     drawScroll(canvas, this.graph, this.view, p);
 
     M.caps.forEach((c) => {
@@ -300,7 +548,7 @@ export class LandingEngine {
     M.ticks.forEach((t) => {
       const wn = ACT1_WINDOWS[t.i];
       const active = p >= wn[0] && p < (wn[1] === 1.01 ? 2 : wn[1] + 0.02);
-      put(t.el, 'background', active ? '#8FD9A8' : 'rgba(230,242,232,0.2)');
+      put(t.el, 'background', active ? '#0E9E5A' : 'rgba(18,32,26,0.14)');
       put(t.el, 'height', active ? '38px' : '26px');
     });
   }
@@ -310,7 +558,7 @@ export class LandingEngine {
     const top = M.act2.o.top - rawSy;
     if (top + M.act2.o.h <= -100 || top >= vh + 100) return;
 
-    const p = clamp01(-(M.act2.o.top - sy) / Math.max(1, M.act2.o.h - vh));
+    const p = this.peak(1, clamp01(-(M.act2.o.top - sy) / Math.max(1, M.act2.o.h - vh)));
     const sc = M.scene;
     if (!sc.doc || sc.tiles.length !== 4 || !sc.docL || !sc.tileL) return;
 
@@ -374,7 +622,7 @@ export class LandingEngine {
     const top = M.act3.o.top - rawSy;
     if (top + M.act3.o.h <= -100 || top >= vh + 100) return;
 
-    const p = clamp01(-(M.act3.o.top - sy) / Math.max(1, M.act3.o.h - vh));
+    const p = this.peak(2, clamp01(-(M.act3.o.top - sy) / Math.max(1, M.act3.o.h - vh)));
     const docked = p > 0.86;
     let target: number;
     let ease = 0.09;
@@ -413,10 +661,13 @@ export class LandingEngine {
     }
   }
 
-  private tickNav(M: Measured, vh: number, rawSy: number, sy: number): void {
-    if (M.stem) put(M.stem, 'width', (clamp01(sy / this.docH) * 100).toFixed(2) + '%');
+  // Deliberately unsmoothed: the hairline, the past-hero flag and the active
+  // section must land the instant the scroll does, or they visibly trail a
+  // fast return to the top.
+  private tickNav(M: Measured, vh: number, rawSy: number): void {
+    if (M.stem) put(M.stem, 'width', (clamp01(rawSy / this.docH) * 100).toFixed(2) + '%');
 
-    const past = sy > vh * 0.7;
+    const past = rawSy > vh * 0.7;
     const dy = rawSy - this.jumpLastY;
     if (Math.abs(dy) > 1.5) {
       this.jumpLastY = rawSy;
@@ -434,28 +685,11 @@ export class LandingEngine {
       this.hooks.setJumpDown(false);
     }
 
-    // recolour the jump pill when it sits over the dark act
-    if (M.dark && M.jumpPill) {
-      const mid = rawSy + vh * 0.9;
-      const onDark = mid > M.dark.top && mid < M.dark.top + M.dark.h;
-      if (onDark !== this.jumpOnDark) {
-        this.jumpOnDark = onDark;
-        if (M.jumpLabel) {
-          put(M.jumpLabel, 'color', onDark ? '#B9D9C4' : '#61726A');
-          put(
-            M.jumpLabel, 'text-shadow',
-            onDark ? '0 1px 10px rgba(4,18,12,0.85)' : '0 0 8px rgba(246,248,244,0.9)',
-          );
-        }
-        M.jumpTicks.forEach((t) => put(t, 'opacity', onDark ? '0.9' : '1'));
-      }
-    }
-
     if (past !== this.hooks.getPastHero()) this.hooks.setPastHero(past);
 
     let activeIdx = 0;
     M.nav.forEach((n, i) => {
-      if (i > 0 && n.top - sy < vh * 0.5) activeIdx = i;
+      if (i > 0 && n.top - rawSy < vh * 0.5) activeIdx = i;
     });
     if (activeIdx !== this.activeNav) {
       this.activeNav = activeIdx;
@@ -477,9 +711,7 @@ export class LandingEngine {
             ? '#0E9E5A'
             : i < activeIdx
               ? 'rgba(79,165,116,0.6)'
-              : this.jumpOnDark
-                ? 'rgba(230,242,232,0.28)'
-                : 'rgba(18,32,26,0.18)',
+              : 'rgba(18,32,26,0.18)',
         );
         put(t, 'transform', i === activeIdx ? 'scale(1.5)' : 'scale(1)');
       });

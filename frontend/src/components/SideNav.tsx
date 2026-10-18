@@ -6,47 +6,87 @@ import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { useUser } from "@/context/UserContext";
+import type { NavItem } from "@/lib/navFeatures";
+import { useVisibleNavSections } from "@/lib/useNavSections";
 
-type Entry = { href: string; label: string; icon: string };
-
-const SECTIONS: { label: string; items: Entry[] }[] = [
-  {
-    label: "Learn",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: "home" },
-      { href: "/learn",     label: "Tutor",     icon: "brain" },
-      { href: "/quiz",      label: "Quiz",      icon: "flask" },
-      { href: "/tree",      label: "Tree",      icon: "tree" },
-      { href: "/study",     label: "Study",     icon: "bolt" },
-    ],
-  },
-  {
-    label: "Organize",
-    items: [
-      { href: "/library",  label: "Library",  icon: "book" },
-      { href: "/calendar", label: "Calendar", icon: "cal" },
-    ],
-  },
-  {
-    label: "Community",
-    items: [
-      { href: "/social",       label: "Social",       icon: "users" },
-      { href: "/achievements", label: "Achievements", icon: "trophy" },
-    ],
-  },
-  {
-    label: "Tools",
-    items: [
-      { href: "/gradebook",      label: "Grades",         icon: "star" },
-      { href: "/notetaker",      label: "Notetaker",      icon: "pencil" },
-      { href: "/course-planner", label: "Course Planner", icon: "planner" },
-    ],
-  },
-];
+type Entry = NavItem;
 
 export const SIDE_NAV_EXPANDED = 232;
 export const SIDE_NAV_COLLAPSED = 64;
 const COLLAPSE_KEY = "sapling_sidenav_collapsed";
+
+/* Row rhythm. 44px is the WCAG comfort target and this rail used to sit there,
+   but a desktop-only sidebar carrying 12 destinations reads as a wall at that
+   pitch. 38px is the dense-desktop value: still above the 36px floor we hold
+   ourselves to on a pointer-first surface, and ~15% tighter per row once the
+   1px gap is counted. Never take NAV_ITEM_MIN_HEIGHT below 36. */
+const NAV_ITEM_MIN_HEIGHT = 38;
+const NAV_GAP = 1;
+
+/* Horizontal inset shared by every horizontal rule in the rail — the collapsed
+   group separators and the Settings/Admin rule — so they read as one line
+   family instead of three different indents. */
+const RULE_INSET = 8;
+
+/* Collapse/expand geometry.
+ *
+ * Each width keeps its own layout — wide rows run the full width of the rail
+ * with the icon 12px inside the pill (so icons line up with the avatar);
+ * narrow rows full-width with the icon centred — and the
+ * rail animates BETWEEN them rather than snapping. The trick is that nothing
+ * uses `justify-content: center` any more (it cannot be interpolated):
+ * centring in the narrow rail is expressed as a computed left padding, so
+ * margin and padding tween on the same curve and duration as the rail's
+ * width and every icon glides from its wide position to the centre. */
+const RAIL_PAD_X = { wide: 10, narrow: 6 };
+const RAIL_INNER_NARROW = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X.narrow;
+const ICON_SIZE = 15;
+const ROW = {
+  wide: { inset: 0, padX: 12 },
+  narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
+};
+/* Wide-rail group header slot: space above the label, the label's line, and
+   space below it before the first row. Kept tight so the groups read as one
+   list with light dividers, not as separate blocks. */
+const HEADER = { above: 12, line: 14, below: 6 };
+
+const GEOMETRY_TRANSITION =
+  "margin var(--dur) var(--ease), padding var(--dur) var(--ease), height var(--dur) var(--ease)";
+
+function rowGeometry(collapsed: boolean): React.CSSProperties {
+  const r = collapsed ? ROW.narrow : ROW.wide;
+  return {
+    marginLeft: r.inset,
+    marginRight: r.inset,
+    padding: `6px ${r.padX}px`,
+    overflow: "hidden",
+  };
+}
+
+/* Text fades rather than mounting/unmounting. Out: immediately and quickly,
+   so nothing is visibly squeezed as the rail narrows. In: a beat late, so the
+   label arrives once there is room for it. */
+function fade(collapsed: boolean): React.CSSProperties {
+  return {
+    opacity: collapsed ? 0 : 1,
+    whiteSpace: "nowrap",
+    transition: `opacity var(--dur-fast) var(--ease) ${collapsed ? "0ms" : "90ms"}`,
+  };
+}
+
+/* Active/hover surfaces.
+ *
+ * A plain neutral highlight. The selected row is a flat `--bg-soft`
+ * (`--ink-100`) fill — one step off the rail's warm `--bg-subtle` ground —
+ * with the label in bold ink. The earlier `--sap-100` green read as a
+ * washed-out tint against the cream rail, and `--ink-200` read as too heavy;
+ * one step of the shell's own warm grey is enough once the label goes bold.
+ * No rail, no hue on the label: the fill IS the treatment.
+ *
+ * Hover is the same colour at half strength, so it is unmistakably the
+ * weaker, transient state and never reads as a second selection. */
+const NAV_ACTIVE_BG = "var(--bg-soft)";
+const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -69,6 +109,7 @@ export function SideNav() {
   const pathname = usePathname() || "/";
   const { userName, avatarUrl, isAdmin, isAuthenticated } = useUser();
   const [collapsed, setCollapsed] = useCollapsed();
+  const sections = useVisibleNavSections();
 
   const width = collapsed ? SIDE_NAV_COLLAPSED : SIDE_NAV_EXPANDED;
 
@@ -84,12 +125,13 @@ export function SideNav() {
         height: "100vh",
         borderRight: "1px solid var(--border)",
         background: "var(--bg-subtle)",
-        padding: collapsed ? "16px 6px" : "16px 10px",
+        padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
-        gap: 2,
-        overflowY: "auto",
-        overflowX: "hidden",
+        gap: NAV_GAP,
+        // The rail itself never scrolls: only the destinations region below
+        // does, so the account footer stays pinned at the bottom.
+        overflow: "hidden",
         transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
@@ -100,9 +142,11 @@ export function SideNav() {
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: collapsed ? "center" : "flex-start",
           gap: 2,
-          padding: collapsed ? "2px 0 14px" : "2px 8px 14px",
+          // Wide: the mark sits 6px in. Narrow: centred (computed, so it tweens).
+          padding: `2px 0 14px ${collapsed ? (RAIL_INNER_NARROW - 32) / 2 : 6}px`,
+          overflow: "hidden",
+          transition: GEOMETRY_TRANSITION,
           borderBottom: "1px solid var(--border)",
           marginBottom: 8,
           textDecoration: "none",
@@ -118,17 +162,18 @@ export function SideNav() {
             width: 32,
             height: 32,
             marginTop: -4,
-            marginLeft: collapsed ? 0 : -2,
-            marginRight: collapsed ? 0 : -4,
+            marginRight: -4,
             alignSelf: "center",
             flexShrink: 0,
           }}
         />
-        {!collapsed && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start" }}>
+        <div
+            aria-hidden={collapsed || undefined}
+            style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start", ...fade(collapsed) }}
+          >
             <span
               style={{
-                fontFamily: "'Spectral', Georgia, serif",
+                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
                 fontWeight: 700,
                 fontSize: 20,
                 color: "var(--brand-forest)",
@@ -140,22 +185,67 @@ export function SideNav() {
               Sapling
             </span>
           </div>
-        )}
       </Link>
 
-      {SECTIONS.map((section, i) => (
+      {/* The destinations scroll on their own when the viewport is too short
+          for them, with the scrollbar hidden (`scrollbarWidth` here, the
+          WebKit pseudo-element in globals.css) — a 10px gutter in a 232px
+          rail read as clutter, and wheel/trackpad/keyboard scrolling all
+          still work. `minHeight: 0` is what lets a flex child shrink below
+          its content and scroll at all. */}
+      <div
+        data-sidenav-scroll=""
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          scrollbarWidth: "none",
+          display: "flex",
+          flexDirection: "column",
+          gap: NAV_GAP,
+        }}
+      >
+      {sections.map((section, i) => (
         <React.Fragment key={section.label}>
-          {!collapsed && (
+          {/* Header slot. Wide: the group label. Narrow: a hairline (none
+              above the first group — the logo rule already does that job).
+              The slot's height tweens between the two so the rows below
+              slide rather than jump, and label/hairline cross-fade.
+              Spacing lives in HEADER. */}
+          <div
+            aria-hidden={collapsed || undefined}
+            style={{
+              position: "relative",
+              flexShrink: 0,
+              overflow: "hidden",
+              height: collapsed ? (i === 0 ? 0 : 29) : HEADER.above + HEADER.line + HEADER.below,
+              transition: GEOMETRY_TRANSITION,
+            }}
+          >
             <div
               className="label-micro"
-              style={{ padding: i === 0 ? "4px 10px 4px" : "14px 10px 4px" }}
+              style={{ position: "absolute", left: 10, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
             >
               {section.label}
             </div>
-          )}
-          {collapsed && i > 0 && (
-            <div style={{ height: 1, background: "var(--border)", margin: "8px 8px" }} aria-hidden />
-          )}
+            {i > 0 && (
+              <div
+                data-sidenav-group-rule=""
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  left: RULE_INSET,
+                  right: RULE_INSET,
+                  top: 18,
+                  height: 1,
+                  background: "var(--border)",
+                  opacity: collapsed ? 1 : 0,
+                  transition: "opacity var(--dur-fast) var(--ease)",
+                }}
+              />
+            )}
+          </div>
           {section.items.map(item => (
             <NavLink
               key={item.href}
@@ -167,8 +257,61 @@ export function SideNav() {
         </React.Fragment>
       ))}
 
-      <div style={{ flex: 1 }} />
+      </div>
 
+      {/* Collapse/expand sits just above the footer rule, pinned with it, and
+          is built like a nav row: panel icon + "Collapse" in the wide rail, the
+          bare icon in the narrow one — the usual sidebar toggle.
+          Same insets, padding and row height as NavLink so it lines up with
+          the destinations above it. */}
+      <button
+        type="button"
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : undefined}
+        onClick={() => setCollapsed(!collapsed)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexShrink: 0,
+          minHeight: NAV_ITEM_MIN_HEIGHT,
+          marginTop: 6,
+          ...rowGeometry(collapsed),
+          borderRadius: "var(--r-xs)",
+          color: "var(--text-dim)",
+          fontSize: 13,
+          textAlign: "left",
+          transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = NAV_HOVER_BG;
+          e.currentTarget.style.color = "var(--text)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "var(--text-dim)";
+        }}
+      >
+        <PanelToggleIcon collapsed={collapsed} />
+        <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
+      </button>
+
+      {/* The account footer — Settings, Admin and the profile block — sits
+          under one full-width rule, the same line as the logo's, so the pair
+          frames the rail top and bottom and the account cluster reads as split
+          off from the main nav. Pinned: it never scrolls with the list above. */}
+      <div
+        data-sidenav-footer=""
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: NAV_GAP,
+          flexShrink: 0,
+          marginTop: 4,
+          paddingTop: 10,
+          borderTop: "1px solid var(--border)",
+        }}
+      >
       <NavLink
         entry={{ href: "/settings", label: "Settings", icon: "cog" }}
         active={isActive(pathname, "/settings")}
@@ -182,19 +325,15 @@ export function SideNav() {
         />
       )}
 
+      {/* The profile block carries no rule of its own — the footer's rule
+          already opened this cluster, and a second hairline here would box the
+          avatar in. */}
       {isAuthenticated && (
-        <div
-          style={{
-            padding: collapsed ? "10px 0 4px" : "10px 6px 4px",
-            borderTop: "1px solid var(--border)",
-            marginTop: 8,
-          }}
-        >
+        <div style={{ padding: "10px 0 4px" }}>
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: collapsed ? 0 : 4,
               width: "100%",
             }}
           >
@@ -206,15 +345,16 @@ export function SideNav() {
                 gap: 10,
                 flex: 1,
                 minWidth: 0,
-                padding: "6px 6px",
+                // Wide: 12px in. Narrow: centred (computed, so it tweens).
+                padding: `6px ${collapsed ? (RAIL_INNER_NARROW - 30) / 2 : 12}px`,
                 borderRadius: "var(--r-sm)",
                 textAlign: "left",
-                justifyContent: collapsed ? "center" : "flex-start",
+                overflow: "hidden",
+                transition: GEOMETRY_TRANSITION,
               }}
             >
               <Avatar name={userName || "?"} size={30} img={avatarUrl || undefined} />
-              {!collapsed && (
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div aria-hidden={collapsed || undefined} style={{ minWidth: 0, flex: 1, ...fade(collapsed) }}>
                   <div
                     style={{
                       fontSize: 13,
@@ -229,71 +369,11 @@ export function SideNav() {
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Account</div>
                 </div>
-              )}
             </div>
-            {!collapsed && (
-              <button
-                type="button"
-                aria-label="Collapse sidebar"
-                title="Collapse sidebar"
-                onClick={() => setCollapsed(true)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  flexShrink: 0,
-                  borderRadius: "var(--r-sm)",
-                  color: "var(--text-muted)",
-                  transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-soft)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                <Icon name="chev" size={12} />
-              </button>
-            )}
           </div>
-          {collapsed && (
-            <button
-              type="button"
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
-              onClick={() => setCollapsed(false)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "100%",
-                height: 44,
-                marginTop: 6,
-                borderRadius: "var(--r-sm)",
-                color: "var(--text-muted)",
-                transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-soft)";
-                e.currentTarget.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--text-muted)";
-              }}
-            >
-              <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
-                <Icon name="chev" size={12} />
-              </span>
-            </button>
-          )}
         </div>
       )}
+      </div>
     </aside>
   );
 }
@@ -302,34 +382,80 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
   return (
     <Link
       href={entry.href}
+      data-testid={`nav-link-${entry.href.slice(1)}`}
       title={collapsed ? entry.label : undefined}
       aria-label={collapsed ? entry.label : undefined}
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: collapsed ? "center" : "flex-start",
         gap: 10,
-        width: "100%",
-        minHeight: 44,
-        padding: collapsed ? "8px 0" : "8px 12px",
-        borderRadius: "var(--r-sm)",
-        background: active ? "var(--bg-soft)" : "transparent",
+        // No explicit width: the rail is a flex column, so a row stretches to
+        // the content box on its own and the margins below actually inset it.
+        // `width: 100%` would have added to them and overflowed instead.
+        minHeight: NAV_ITEM_MIN_HEIGHT,
+        // Wide: the pill runs the rail's full width and the icon sits 12px
+        // inside it, on the same line as the avatar below. Narrow: the icon
+        // is centred. See ROW.
+        ...rowGeometry(collapsed),
+        borderRadius: "var(--r-xs)",
+        background: active ? NAV_ACTIVE_BG : "transparent",
         color: active ? "var(--text)" : "var(--text-dim)",
         fontWeight: active ? 600 : 400,
         fontSize: 13,
-        transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+        transition: `background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), ${GEOMETRY_TRANSITION}`,
         textDecoration: "none",
       }}
       onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.color = "var(--text)";
+        if (active) return;
+        e.currentTarget.style.background = NAV_HOVER_BG;
+        e.currentTarget.style.color = "var(--text)";
       }}
       onMouseLeave={(e) => {
-        if (!active) e.currentTarget.style.color = "var(--text-dim)";
+        if (active) return;
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--text-dim)";
       }}
     >
-      <Icon name={entry.icon} size={15} />
-      {!collapsed && <span style={{ flex: 1 }}>{entry.label}</span>}
+      <span style={{ display: "inline-flex", flexShrink: 0 }}>
+        <Icon name={entry.icon} size={ICON_SIZE} />
+      </span>
+      <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
+        {entry.label}
+      </span>
     </Link>
   );
 }
 
+/* The sidebar-toggle glyph: a panel with its left column ruled off and a
+   chevron in the open area. Only the chevron moves — it points in (close)
+   when the rail is wide and flips to point out (open) when narrow, turning
+   about its own centre on the rail's duration so it animates with the
+   collapse. Stroke weight and caps match `Icon`. */
+function PanelToggleIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      width={ICON_SIZE}
+      height={ICON_SIZE}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      style={{ flexShrink: 0 }}
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <path d="M9 3v18" />
+      <path
+        d="M16 9l-3 3 3 3"
+        style={{
+          transformBox: "fill-box",
+          transformOrigin: "center",
+          transform: collapsed ? "rotate(180deg)" : "none",
+          transition: "transform var(--dur) var(--ease)",
+        }}
+      />
+    </svg>
+  );
+}

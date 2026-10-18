@@ -22,6 +22,7 @@ import { clamp01, lerpColor, smooth } from '../color';
 import { XTIER_LABEL } from '../course';
 import { cv } from './dom';
 import type { BuiltGraph, GraphNode } from './graph';
+import { canvasFont } from '../fonts';
 
 /** Focal length for the perspective divide. */
 const FL = 1050;
@@ -78,6 +79,25 @@ export function createGraphViewState(): GraphViewState {
     expProj: null, expHover: null,
   };
 }
+
+/**
+ * How long the camera takes to settle into the explore framing, in ms.
+ *
+ * Exported because the page scroll rides the same curve: entering explore
+ * from a stage that is not flush with the viewport has to correct the scroll
+ * position, and doing that on a different clock reads as a jump cut against
+ * the camera move. See `LandingEngine.glideToPinnedAct1`.
+ */
+export const EXPLORE_CAM_MS = 850;
+
+/**
+ * How long the staggered node reveal takes to fill, in ms. The longest clock
+ * inside `drawExplore`, so it is what the exit has to wait for: hand back to
+ * the scroll renderer before this elapses and every node still part-way
+ * through its reveal pops to its scroll-view state. Exported so the exit
+ * cannot be timed independently and drift.
+ */
+export const EXPLORE_FILL_MS = 1250;
 
 /**
  * Snapshot the camera and each node's reveal progress so explore mode can
@@ -177,7 +197,7 @@ export function drawScroll(
     const ex = a.x + (b.x - a.x) * ep;
     const ey = a.y + (b.y - a.y) * ep;
     const alpha = 0.16 * Math.min(1, a.sc) * (1 + 0.4 * smooth((p - 0.82) / 0.14));
-    ctx.strokeStyle = 'rgba(143,217,168,' + alpha.toFixed(3) + ')';
+    ctx.strokeStyle = 'rgba(12,86,56,' + alpha.toFixed(3) + ')';
     ctx.lineWidth = 0.7;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -227,11 +247,11 @@ export function drawScroll(
 
   if (p > 0.76) {
     const la = smooth((p - 0.76) / 0.1);
-    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.font = '11px ' + canvasFont('mono');
     proj.forEach((pr) => {
       if (!pr.n.hub) return;
       ctx.globalAlpha = la * 0.85;
-      ctx.fillStyle = '#B9D9C4';
+      ctx.fillStyle = '#33443B';
       ctx.fillText(pr.n.label.toUpperCase(), pr.x + 14, pr.y + 4);
     });
     ctx.globalAlpha = 1;
@@ -246,9 +266,9 @@ export function drawScroll(
     const cp = smooth((p - hv.n.colorAt) / 0.09);
     const status = cp < 0.05 ? 'UNEXPLORED' : XTIER_LABEL[hv.n.tier].toUpperCase();
     const label = hv.n.label;
-    ctx.font = '600 12px "DM Sans", sans-serif';
+    ctx.font = '600 12px ' + canvasFont('sans');
     const tw = ctx.measureText(label).width;
-    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.font = '9px ' + canvasFont('mono');
     const sw = ctx.measureText(status).width;
     const bw = Math.max(tw, sw) + 24;
     const bh = 40;
@@ -257,17 +277,17 @@ export function drawScroll(
     // flip the chip when it would run off the right/top edge
     if (bx + bw > w - 12) bx = hv.x - bw - 16;
     if (by < 12) by = hv.y + 16;
-    ctx.fillStyle = 'rgba(6,23,16,0.92)';
-    ctx.strokeStyle = 'rgba(143,217,168,0.4)';
+    ctx.fillStyle = 'rgba(253,252,249,0.96)';
+    ctx.strokeStyle = 'rgba(12,86,56,0.35)';
     ctx.beginPath();
     ctx.roundRect(bx, by, bw, bh, 9);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#F6F8F4';
-    ctx.font = '600 12px "DM Sans", sans-serif';
+    ctx.fillStyle = '#12201A';
+    ctx.font = '600 12px ' + canvasFont('sans');
     ctx.fillText(label, bx + 12, by + 17);
     ctx.fillStyle = cp < 0.05 ? '#9a9a9a' : hv.n.final;
-    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.font = '9px ' + canvasFont('mono');
     ctx.fillText(status, bx + 12, by + 31);
   }
 }
@@ -285,7 +305,7 @@ export function drawExplore(
 
   const { nodes, edges, adj } = graph;
   const t = Date.now() * 0.001;
-  let k = clamp01((performance.now() - (st.expT0 || 0)) / 850);
+  let k = clamp01((performance.now() - (st.expT0 || 0)) / EXPLORE_CAM_MS);
   if (st.expOut) k = 1 - k;
   const e = smooth(k);
 
@@ -313,7 +333,7 @@ export function drawExplore(
     return { x: x * sc + cx, y: y * sc + cy, z, sc, n, i };
   });
 
-  let ck = clamp01((performance.now() - (st.expT0 || 0)) / 1250);
+  let ck = clamp01((performance.now() - (st.expT0 || 0)) / EXPLORE_FILL_MS);
   if (st.expOut) ck = 1 - ck;
 
   const sel = selected;
@@ -340,8 +360,8 @@ export function drawExplore(
     if (eReveal <= 0.01) return;
     ctx.globalAlpha = dim * eReveal;
     ctx.strokeStyle = hot
-      ? 'rgba(143,217,168,0.55)'
-      : 'rgba(143,217,168,' + (ed.cross ? 0.1 : 0.16) + ')';
+      ? 'rgba(12,86,56,0.55)'
+      : 'rgba(12,86,56,' + (ed.cross ? 0.1 : 0.16) + ')';
     ctx.lineWidth = hot ? 1.6 : 0.7;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -390,7 +410,7 @@ export function drawExplore(
       ctx.globalAlpha = dim * fog * la;
       ctx.beginPath();
       ctx.arc(pr.x, pr.y, ar, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(230,242,232,0.13)';
+      ctx.strokeStyle = 'rgba(18,32,26,0.10)';
       ctx.lineWidth = 2.2 * pr.sc;
       ctx.stroke();
       ctx.beginPath();
@@ -403,7 +423,7 @@ export function drawExplore(
         ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(pr.x, pr.y, ar + 8 * pr.sc, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(230,242,232,0.5)';
+        ctx.strokeStyle = 'rgba(18,32,26,0.45)';
         ctx.lineWidth = 1.4;
         ctx.stroke();
       }
@@ -413,11 +433,11 @@ export function drawExplore(
       if (show) {
         ctx.globalAlpha = dim * la * (n.hub ? 0.95 : 0.72);
         ctx.font = n.root
-          ? '600 14px "JetBrains Mono", monospace'
+          ? '600 14px ' + canvasFont('mono')
           : n.hub
-            ? '11px "JetBrains Mono", monospace'
-            : '11px "DM Sans", sans-serif';
-        ctx.fillStyle = n.root ? '#F6F8F4' : n.hub ? '#B9D9C4' : '#8FA89A';
+            ? '11px ' + canvasFont('mono')
+            : '11px ' + canvasFont('sans');
+        ctx.fillStyle = n.root ? '#12201A' : n.hub ? '#33443B' : '#61726A';
         ctx.textAlign = 'center';
         ctx.fillText(n.hub ? n.label.toUpperCase() : n.label, pr.x, pr.y + ar + 15 * pr.sc + 4);
         ctx.textAlign = 'left';

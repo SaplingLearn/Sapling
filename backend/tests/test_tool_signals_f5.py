@@ -190,6 +190,7 @@ def test_unknown_expectation_degrades_to_silence(sink):
         (Expect.ENROLLED, "enrollments"),
         (Expect.HAS_ATTEMPTS, "quiz_attempts"),
         (Expect.HAS_GRAPH, "graph_nodes"),
+        (Expect.HAS_DOCUMENTS, "documents"),
     ],
 )
 def test_each_expectation_probes_its_own_table(sink, expect, table_name):
@@ -318,3 +319,119 @@ def test_probe_is_owner_scoped_and_bounded(sink):
     # Completed attempts only: an in-flight row is not evidence the student
     # has history worth digesting.
     assert captured["filters"]["completed_at"] == "not.is.null"
+
+
+def test_a_caller_that_already_knows_skips_the_probe(sink):
+    """#556 review: some callers hold the answer before they get here. The
+    quiz route reads a `graph_nodes` row for this user and course on its way
+    in, so a HAS_GRAPH probe scoped to that course could only return what it
+    just saw — a guaranteed-True round trip on the request path, once per
+    generation, forever. The expectation still ships in the event: it names
+    WHY the caller expected data, which is what a rollup reads."""
+    with patch("services.tool_signals.table") as t:
+        reported = report_empty_result(
+            "quiz_signals.offerings_for_course",
+            user_id="u1", count=0, expect=Expect.HAS_GRAPH,
+            feature="quiz", plausible=True,
+        )
+
+    assert reported is True
+    t.assert_not_called()
+    events_service.flush_now()
+    assert len(sink) == 1
+    assert sink[0]["event_type"] == "quiz.tool_empty"
+    assert sink[0]["payload"]["expect"] == "has_graph"
+
+
+def test_a_caller_that_knows_there_is_nothing_reports_nothing(sink):
+    """The flip side, and the reason this is a fact and not a flag: passing
+    False must stay silent rather than fall back to probing."""
+    with patch("services.tool_signals.table") as t:
+        reported = report_empty_result(
+            "t", user_id="u1", count=0, expect=Expect.HAS_GRAPH, plausible=False,
+        )
+
+    assert reported is False
+    t.assert_not_called()
+    events_service.flush_now()
+    assert sink == []
+
+
+def test_no_assertion_from_the_caller_still_probes(sink):
+    """#592 review C4: `plausible` is an override for a caller that HOLDS the
+    fact, never a way to turn the probe off. A caller that passes nothing —
+    `scripts/benchmark_quiz.py`, whose fixture user has no graph_nodes — must
+    still be checked, or the seam manufactures discrepancies for it."""
+    with patch("services.tool_signals.table") as t:
+        t.return_value.select.return_value = []   # this user has no graph
+        reported = report_empty_result(
+            "quiz_signals.offerings_for_course",
+            user_id="quizfix-user-0001", count=0, expect=Expect.HAS_GRAPH,
+            feature="quiz", plausible=None,
+        )
+
+    assert reported is False
+    t.assert_called_once_with("graph_nodes")
+    events_service.flush_now()
+    assert sink == []
+
+
+def test_the_probe_is_narrowed_to_the_scope_the_caller_supplied(sink):
+    """A student with a graph in some OTHER course does not answer "should
+    this course have had data?" — the mismatch would fire the alarm on the
+    routine case of starting work in a second course."""
+    captured = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def select(columns="*", filters=None, **kw):
+            captured.update(filters or {})
+            return [{"id": "n1"}]
+
+        m.select.side_effect = select
+        return m
+
+    with patch("services.tool_signals.table", side_effect=factory):
+        report_empty_result(
+            "quiz_signals.offerings_for_course",
+            user_id="u1", count=0, expect=Expect.HAS_GRAPH, feature="quiz",
+            scope={"course_id": "eq.c1"},
+        )
+
+    assert captured["course_id"] == "eq.c1"
+    assert captured["user_id"] == "eq.u1"
+
+
+def test_the_documents_probe_is_course_scoped_through_the_fk_not_offering_ids(sink):
+    """`documents` keys on offering_id, and the tool that reads it resolves
+    course → offerings in app code. A probe scoped by those same ids shares the
+    read's keyspace and can only ever agree with it — the #553 blind spot. So
+    this probe joins `course_offerings` inside PostgREST and filters on the
+    abstract course: an independent route to "does this student have a live
+    document in this course". The embed must be `!inner` and must be in the
+    select, or PostgREST ignores the embedded filter."""
+    captured = {}
+
+    def factory(name):
+        m = MagicMock()
+
+        def _select(cols, **kw):
+            captured.update(kw)
+            captured["cols"] = cols
+            return []
+
+        m.select.side_effect = _select
+        return m
+
+    with patch("services.tool_signals.table", side_effect=factory):
+        report_empty_result(
+            "search_course_materials", user_id="u1", count=0,
+            expect=Expect.HAS_DOCUMENTS,
+            scope={"course_offerings.course_id": "eq.c1"},
+        )
+    assert "course_offerings!inner(course_id)" in captured["cols"]
+    assert captured["filters"]["course_offerings.course_id"] == "eq.c1"
+    assert captured["filters"]["user_id"] == "eq.u1"
+    assert captured["filters"]["deleted_at"] == "is.null"
+    assert captured["limit"] == 1

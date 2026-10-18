@@ -1,6 +1,7 @@
 {
   "category": "study_guide",
-  "confidence": 0.9,
-  "is_syllabus": true,
-  "rationale": "The document is explicitly labeled as a \"STUDY GUIDE\" and covers specific topics with practice questions and an answer key, indicating preparation for an exam. It also references the \"syllabus\" and covers material from specific \"weeks\", thus it is also a syllabus."
+  "confidence": 1.0,
+  "is_syllabus": false,
+  "rationale": "The document is explicitly labeled as a study guide and covers topics from chapters 1-5, aligning with course material. It includes practice questions and an answer key, typical features of a study guide.",
+  "shareability": "course_material"
 }

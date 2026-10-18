@@ -141,6 +141,24 @@ def is_weak(score: float) -> bool:
     return score < MASTERY_LEARNING_MIN
 
 
+def canopy_metrics_token() -> str:
+    """Shared secret for `GET /api/internal/metrics`, or "" when the feature is off.
+
+    Canopy (the team dashboard) polls that route hourly with
+    `Authorization: Bearer <this value>`; the same value is Canopy's
+    `SAPLING_METRICS_TOKEN` Worker secret. Optional and deliberately absent from
+    `validate_config`: unset, empty or whitespace-only means the route answers a
+    plain 404, as if it did not exist. Generate with `openssl rand -hex 32`.
+
+    Stripped, because a value pasted into a host's dashboard with a trailing
+    newline would otherwise never match anything and fail as a silent 401.
+
+    Read at call time, not import time (like `build_commit` below), so a
+    rotation needs no code change and a test can set the env var.
+    """
+    return (os.getenv("CANOPY_METRICS_TOKEN") or "").strip()
+
+
 def build_commit() -> str:
     """Short git SHA of the running build, or "unknown".
 

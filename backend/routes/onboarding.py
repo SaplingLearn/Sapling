@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from db.connection import table
+from db.connection import like_literal, pg_quote_value, table
 from models import OnboardingBody
 from services.academics import resolve_offering
 from services.auth_guard import require_self
@@ -25,7 +25,15 @@ def search_courses(request: Request, q: str = Query("", min_length=0)):
     """
     filters = {}
     if q.strip():
-        filters["or"] = f"(course_name.ilike.%{q}%,course_code.ilike.%{q}%)"
+        # The query is user input going into a PostgREST logic tree, so it
+        # gets the grammar's own escaping (db/connection.py). Unescaped, a
+        # comma or a paren in the box splits or closes the `or=(…)` tree —
+        # "Ethics, Law" searched for two broken operands — and a `%` or `_`
+        # became a live LIKE wildcard that matched most of the catalog.
+        needle = pg_quote_value(f"%{like_literal(q.strip())}%")
+        filters["or"] = (
+            f"(course_name.ilike.{needle},course_code.ilike.{needle})"
+        )
 
     rows = table("courses").select(
         "id,course_code,course_name",

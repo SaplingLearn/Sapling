@@ -226,6 +226,15 @@ def seed_users() -> None:
         )
 
 
+def seed_feature_flags() -> None:
+    """#620: the migration seeds product_analytics=on; the per-test TRUNCATE
+    wipes it, so restore the prod-like baseline. No other flag rows: every
+    other flag is off (its variants[0]) until a journey configures it."""
+    table("feature_flags").upsert(
+        {"key": "product_analytics", "default_variant": "on"}, on_conflict="key",
+    )
+
+
 # (id, user_id, offering_id, color, nickname, curve_mode, curve_avg_target, curve_sd_delta)
 _ENROLLMENTS = [
     (ENR_ACTIVE_CS_F25, USER_ACTIVE, OFF_CS_F25, "#4f86f7", "Intro CS", "raw", None, None),
@@ -716,7 +725,8 @@ def seed_offering_concept_stats() -> None:
                 "pct_struggling": 0.5,
                 "pct_unexplored": 0.25,
                 "common_misconceptions": misconceptions,
-                "effective_explanations": [],
+                # No `effective_explanations` key — #572, see
+                # services/course_context_service.py::_parse_quiz_context_to_arrays.
                 "prerequisite_gaps": [],
             },
         )
@@ -856,6 +866,7 @@ def main() -> None:
     seed_courses()
     seed_offerings()
     seed_users()
+    seed_feature_flags()
     seed_enrollments()
     seed_graph()
     seed_gradebook()

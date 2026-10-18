@@ -42,9 +42,9 @@ from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from services.durable import workflow_id
+from services.document_indexing import index_document
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
-from agents._providers import model_mode
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
 from agents.concept_extraction import concept_extraction_agent
@@ -386,6 +386,68 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     return row
 
 
+#: PostgREST's code for "column not found in the schema cache", plus the
+#: Postgres wording it wraps. Either shape means a column is genuinely absent
+#: rather than the row being bad.
+_MISSING_COLUMN_MARKERS = ("PGRST204", "does not exist", "Could not find the")
+
+#: The only columns `_persist_document` is willing to ship ahead of. Anything
+#: else reported absent is a real schema problem and must surface. The last
+#: three are #482's; `extracted_text` is deliberately NOT here — it predates
+#: this hatch (0030), and dropping it would silently cost the recovery text.
+_DROPPABLE_COLUMNS = (
+    "request_id", "shareability",
+    "index_status", "index_attempts", "shareability_confidence",
+)
+
+
+def _missing_column(exc: Exception) -> str | None:
+    """Which droppable column a PostgREST error says is absent, or None.
+
+    Reads the RESPONSE BODY, not `str(exc)`. `db/connection.py` raises through
+    httpx's `raise_for_status()`, whose message is only `Client error '400 Bad
+    Request' for url …` plus a link to MDN — the PGRST204 payload naming the
+    column never appears in it. A guard written against the exception string
+    therefore never fires, which is exactly how the first version of this
+    escape hatch shipped as dead code and left every upload failing in the one
+    window it existed to cover.
+
+    Returns the column NAME rather than a bool so the retry drops only that
+    one. Dropping both would lose `request_id` whenever `shareability` is the
+    absent one — and a client retrying with the same X-Request-ID would then no
+    longer be recognised as a replay, re-running the whole orchestrator and
+    persisting a duplicate document.
+    """
+    body = ""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            body = response.text or ""
+        except Exception:
+            body = ""
+    if not body:
+        body = str(exc)
+    if not any(m in body for m in _MISSING_COLUMN_MARKERS):
+        return None
+    for col in _DROPPABLE_COLUMNS:
+        if f"'{col}'" in body or f'"{col}"' in body:
+            return col
+    return None
+
+
+def _stored_confidence(classification) -> float | None:
+    """The classifier's confidence as the row can hold it, or None.
+
+    Only a real number in [0, 1] is stored — anything else would be rejected by
+    `documents_shareability_confidence_check` and fail the whole insert. None
+    reads as private at index time (#630), the safe direction.
+    """
+    value = getattr(classification, "confidence", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 0.0 <= value <= 1.0 else None
+
+
 def _persist_document(
     *,
     user_id: str,
@@ -395,6 +457,7 @@ def _persist_document(
     request_id: str | None = None,
     course_id: str | None = None,
     char_count: int | None = None,
+    extracted_text: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -406,7 +469,14 @@ def _persist_document(
     ``request_id`` (when provided) is stored verbatim for idempotent
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
-    on the row. Returns (document_id, full_row).
+    on the row.
+
+    ``extracted_text`` IS persisted, encrypted, and the row is enqueued for
+    indexing (#482). The indexer used to write the text, which made the
+    recovery path depend on the thing that failed: a document whose indexer
+    never ran had nothing for a re-drive to work from. It is stripped from the
+    returned row — `/upload/sync` hands that row to the client verbatim.
+    Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
     concept_notes = [
@@ -420,6 +490,19 @@ def _persist_document(
         "offering_id": offering_id,
         "file_name": filename,
         "category": result.classification.category,
+        # #630: stored, not just acted on. Without a stored value, a re-index or
+        # a backfill has nothing to reproduce the sharing decision from, and
+        # `decide_visibility(None)` privatises everything — which is the same
+        # shape of silent corpus loss as #628.
+        "shareability": getattr(result.classification, "shareability", None),
+        # #482: the confidence the sharing decision was made at. A re-drive
+        # reads it back, because decide_visibility treats a missing confidence
+        # as private — without it, recovering a correctly shared document
+        # would silently privatise it.
+        "shareability_confidence": _stored_confidence(result.classification),
+        "extracted_text": encrypt_if_present(extracted_text),
+        "index_status": "pending",
+        "index_attempts": 0,
         "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
@@ -427,17 +510,40 @@ def _persist_document(
     }
     if request_id:
         row["request_id"] = request_id
-    try:
-        inserted = table("documents").insert(row)
-    except Exception:
-        # Schema may not yet have the request_id column; retry without it
-        # so deployments can ship the code before the migration runs.
-        if "request_id" in row:
-            row.pop("request_id", None)
+    # The schema may not yet have some of these columns; retry without each one
+    # PostgREST names, so a deployment can ship the code before its migration
+    # runs. Losing `shareability` is safe in the direction that matters: an
+    # absent stored value reads as private at index time (#630), never as
+    # shareable.
+    #
+    # Gated on the error BODY and narrowed to the column it names — not on
+    # which keys happen to be in the row, and not on `str(exc)`. Keyed on
+    # presence this was a universal retry that stripped `request_id` from
+    # every failure; read off the exception string it never fired at all.
+    #
+    # A LOOP, not one retry (#482): a single migration can add several columns
+    # to this insert, and a hatch that drops one and gives up fails every
+    # upload in exactly the window it exists for. Bounded by the droppable
+    # set, and a column named again after it was dropped is raised — the drop
+    # is then not what is failing.
+    for _ in range(len(_DROPPABLE_COLUMNS) + 1):
+        try:
             inserted = table("documents").insert(row)
-        else:
-            raise
-    full_row = inserted[0] if inserted else row
+            break
+        except Exception as exc:
+            column = _missing_column(exc)
+            if column is None or column not in row:
+                raise
+            logger.warning(
+                "documents insert rejected %r as absent — retrying without it. "
+                "The migration that adds it has not run in this environment.",
+                column,
+            )
+            row.pop(column)
+    else:  # pragma: no cover — unreachable: each pass removes a column or raises
+        raise RuntimeError("documents insert kept naming absent columns")
+    full_row = dict(inserted[0] if inserted else row)
+    full_row.pop("extracted_text", None)
     full_row["summary"] = summary
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
@@ -647,15 +753,19 @@ async def upload_document_sync(
         _graph_backstop, user_id=user_id, course_id=course_id,
         filename=filename, result=result,
     )
-    _, full_row = await asyncio.to_thread(
+    doc_id, full_row = await asyncio.to_thread(
         _persist_document, user_id=user_id, offering_id=offering_id,
         filename=filename, result=result, request_id=request_id,
         course_id=course_id, char_count=len(extracted_text),
+        extracted_text=extracted_text,
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     background_tasks.add_task(update_course_context, course_id)
     background_tasks.add_task(_check_upload_achievements, user_id)
+    # #482: this route never indexed. Gradebook syllabus uploads come through
+    # it, so none of them reached RAG. Same entry point as the streaming route.
+    background_tasks.add_task(index_document, doc_id)
 
     response = dict(full_row)
     response["categories"] = _grading_categories_from(result)
@@ -975,6 +1085,7 @@ async def upload_document(
                 request_id=request_id,
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
+                extracted_text=extracted_text,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since
@@ -985,7 +1096,10 @@ async def upload_document(
                 ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                 ("update_course_context", update_course_context, course_id),
                 ("check_upload_achievements", _check_upload_achievements, user_id),
-                ("index_document_chunks", _index_document_chunks, doc_id, course_id, user_id, extracted_text, classification.category, getattr(summary, "abstract", "")),
+                # #482: the id only. The indexer reads everything else off the
+                # stored row, which is what lets the sweeper re-drive this same
+                # work if the attempt below dies with the process.
+                ("index_document", index_document, doc_id),
             )
         except Exception:
             logger.exception(
@@ -1039,101 +1153,6 @@ def _check_upload_achievements(user_id: str) -> None:
         check_achievements(user_id, "documents_uploaded", {})
     except Exception:
         pass
-
-
-def _index_document_chunks(
-    doc_id: str,
-    course_id: str,      # Sapling UUID — resolved to BU code internally
-    user_id: str,
-    extracted_text: str,
-    category: str,
-    doc_summary: str = "",
-) -> None:
-    """Chunk, embed, and upsert a document into course_chunks.
-
-    Runs in a background thread via _spawn_post_roll after the document
-    is persisted, so it never blocks the SSE stream.
-    """
-    import time
-    from services.chunker import chunk_for_category
-    from services.rag_service import embed_document_text, index_document_chunks
-    from services.encryption import encrypt_if_present
-
-    MIN_COURSE_RELEVANCE = 0.35
-
-    try:
-        # Resolve BU course code from Sapling UUID
-        rows = table("courses").select(
-            "course_code", filters={"id": f"eq.{course_id}"}, limit=1
-        )
-        bu_course_id = (rows[0].get("course_code") or course_id) if rows else course_id
-
-        chunks = chunk_for_category(extracted_text, category)
-        if not chunks:
-            return
-
-        # Store raw extracted text on the document row (best-effort)
-        try:
-            table("documents").update(
-                {"extracted_text": encrypt_if_present(extracted_text)},
-                filters={"id": f"eq.{doc_id}"},
-            )
-        except Exception:
-            logger.warning("[RAG] could not store extracted_text for doc %s", doc_id)
-
-        # Relevance gate: skip docs that are off-topic for the course. The
-        # embedding-based check below routes through services.rag_service
-        # (#413) — the shared lazy client behind the #439 model_mode() gate —
-        # catalog_rows itself is a plain Supabase read (not gated) so the gate
-        # is only ever skipped when there's actually a catalog embedding to
-        # compare against.
-        catalog_rows = table("course_chunks").select(
-            "embedding",
-            filters={"course_id": f"eq.{bu_course_id}", "category": "eq.catalog"},
-            limit=1,
-        )
-        if catalog_rows and catalog_rows[0].get("embedding"):
-            if model_mode() != "real":
-                # #439: no google.genai.Client in non-real mode. Raising here
-                # (instead of silently skipping the gate) reproduces the exact
-                # behavior a real embed-call failure already produced: the
-                # outer `except` below aborts indexing and logs
-                # "_index_document_chunks failed for doc %s" — the line
-                # e2e_oracles/logscan.py's ALLOWLIST already expects. Function
-                # mode is now that same no-op, by design, not by accident of a
-                # swallowed exception.
-                raise RuntimeError(
-                    "RAG relevance-gate embedding skipped: "
-                    "SAPLING_MODEL_MODE != 'real' (#439)"
-                )
-
-            # #413: no raw genai.Client here — a keyless run used to construct
-            # Client(api_key="") whose ValueError the outer `except` swallowed
-            # into a silent no-index degrade. rag_service's shared lazy client
-            # (dummy-key fallback + timeout) fails at call time with a clear
-            # API error instead, on the same degrade path.
-            catalog_vec = catalog_rows[0]["embedding"]
-            sample_text = doc_summary or chunks[0]
-            doc_sample_vec = embed_document_text(sample_text)
-            time.sleep(1.5)
-            dot = sum(a * b for a, b in zip(doc_sample_vec, catalog_vec))
-            if dot < MIN_COURSE_RELEVANCE:
-                logger.warning(
-                    "[RAG] doc %s skipped — relevance to %s is %.3f (< %.2f)",
-                    doc_id, bu_course_id, dot, MIN_COURSE_RELEVANCE,
-                )
-                return
-
-        count = index_document_chunks(
-            course_code=bu_course_id,
-            doc_id=doc_id,
-            uploader_id=user_id,
-            chunks=chunks,
-        )
-        logger.info("[RAG] indexed %d chunks for doc %s", count, doc_id)
-
-    except Exception:
-        logger.exception("[RAG] _index_document_chunks failed for doc %s", doc_id)
 
 
 def _spawn_post_roll(*tasks: tuple) -> None:

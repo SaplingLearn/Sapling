@@ -65,6 +65,11 @@ function tierFor(score: number): Tier {
  * the mastery class on the `graph-node-circle` mark. Kept in lockstep with
  * frontend/src/components/graph/KnowledgeGraph2D.tsx (a redesign that retunes
  * these constants updates this table in the same PR).
+ *
+ * Since #537 the graph's copy of both this table and `tierFor` above lives in
+ * `frontend/src/lib/graph/nodeStyle.ts` (`TIER_OPACITY` / `tierFor`), which
+ * KnowledgeGraph2D and the quiz screens both import — that is the file to diff
+ * against when either constant moves.
  */
 const TIER_OPACITY: Record<Tier, number> = {
   mastered: 1,

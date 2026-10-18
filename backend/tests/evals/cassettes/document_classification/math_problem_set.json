@@ -2,5 +2,6 @@
   "category": "assignment",
   "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document lists specific problems to solve, refers to a due date, and mentions a late policy, which are all hallmarks of an assignment."
+  "rationale": "The document contains numbered problems and refers to a due date and late policy, indicating it is an assignment.",
+  "shareability": "course_material"
 }

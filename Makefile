@@ -12,13 +12,17 @@
 # merge main->production, wait for the deploy, smoke. One prompt, at the merge.
 # See backend/promotion/README.md.
 
-.PHONY: e2e-up e2e-down explore explore-down promote
+.PHONY: e2e-up e2e-down explore explore-down gallery-shots promote
 
 e2e-up:
 	scripts/e2e-up.sh
 
 e2e-down:
 	scripts/e2e-down.sh
+
+# Capture the /gallery product screenshots (local only; takes the stack lock).
+gallery-shots:
+	scripts/gallery-shots.sh
 
 explore:
 	scripts/explore.sh

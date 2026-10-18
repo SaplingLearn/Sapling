@@ -197,6 +197,18 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
 if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
   echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
 fi
+# The deterministic lane exercises the typed decision seam (#640, ADR 0027).
+# The tutor router runs whatever the `decision_router` feature flag says
+# (ADR 0029) and the flag is off by default — no stored config on this stack —
+# so switch it on through its generic env override, respecting a value the
+# caller exported (`off` skips the seam). Under function mode an on variant
+# runs the scripted `function` backend; Gemini/Jev are never dialled. Function
+# mode is detected the same way as the check above: the shell first, then
+# backend/.env.
+MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
+if [ "$MODEL_MODE" = "function" ]; then
+  export SAPLING_FLAG_DECISION_ROUTER="${SAPLING_FLAG_DECISION_ROUTER:-jev}"
+fi
 
 mkdir -p "$E2E_DIR"
 
@@ -234,6 +246,29 @@ migrate_reload_seed
 # Same app entry as `python main.py` but without --reload: a file-watcher
 # restarting mid-test would make E2E runs nondeterministic.
 echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…"
+# #537: raise the quiz-generation rate limit for the lane. The guard
+# (services/quiz_config.py::QUIZ_GENERATE_RATE_LIMIT, 8 per 300s) keeps its
+# sliding window in a module-level dict, so it is neither per-test nor
+# per-spec: ONE Playwright run shares a single window across every worker,
+# and the per-test TRUNCATE + re-seed does not reset it — only a backend
+# restart does. The redesigned quiz lane makes ~20 real generations, so the
+# production number 429s the specs that happen to run last (alphabetically:
+# quiz.spec.ts after quiz-errors/quiz-integration). Under function mode a
+# generation is a scripted constant that costs nothing, which is the only
+# thing the limit exists to bound. Exported, so it beats backend/.env
+# (python-dotenv never overrides existing env); overridable for anyone who
+# wants to exercise the real guard.
+export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
+echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
+# roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
+# directly, which clears neither — one journey's rules would leak into the
+# next, and a retried feature-flags.spec.ts would fail its baseline. TTL 0 =
+# every resolution reads the DB. Unconditional: a local lane has no load for
+# the cache to save.
+export FEATURE_FLAGS_SNAPSHOT_TTL_S=0
+export FEATURE_FLAGS_ROLES_TTL_S=0
+echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this stack (ADR 0029)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

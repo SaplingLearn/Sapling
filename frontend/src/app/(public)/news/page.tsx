@@ -17,20 +17,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { CompanionShell } from '@/components/companion/CompanionShell';
+import { ArticleArt } from '@/components/journal/ArticleArt';
 import { NEWS_FILTERS, NEWS_POSTS } from '@/lib/landing/companionContent';
-
-const MONO = "'JetBrains Mono',monospace";
-const SERIF = "'Spectral',Georgia,serif";
-const DISPLAY = "'Playfair Display',Georgia,serif";
-
-/** The two posts the import ships artwork for. */
-const ART: Record<string, string> = {
-  'assets/journal-founding.png': '/journal-founding.png',
-  'assets/journal-ai-homework.png': '/journal-ai-homework.png',
-};
+import { DISPLAY, MONO, SERIF } from '@/lib/landing/companionType';
 
 export default function NewsPage() {
   const [query, setQuery] = useState('');
@@ -51,14 +42,15 @@ export default function NewsPage() {
   const posts = NEWS_POSTS.filter((p) => {
     if (filter !== 'all' && p.cat !== filter) return false;
     if (!q) return true;
-    return `${p.title} ${p.excerpt} ${p.tag}`.toLowerCase().includes(q);
+    // the article body too, not just the card copy (#601)
+    return `${p.title} ${p.excerpt} ${p.tag} ${p.text}`.toLowerCase().includes(q);
   });
 
   const activeLabel = NEWS_FILTERS.find((f) => f.key === filter)?.label ?? 'All articles';
 
   return (
     <CompanionShell current="/news">
-      <div style={{ flex: 1, minWidth: 0, width: '100%', maxWidth: 1240, margin: '0 auto', padding: '64px 32px', boxSizing: 'border-box' }}>
+      <div>
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div>
             <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#6f6857', animation: 'fadeUp 600ms ease both' }}>
@@ -92,7 +84,7 @@ export default function NewsPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search posts"
             aria-label="Search posts"
-            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: '#1a1814' }}
+            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, color: '#1a1814' }}
           />
           {query && (
             <button
@@ -114,7 +106,7 @@ export default function NewsPage() {
               type="button"
               aria-haspopup="listbox"
               aria-expanded={menuOpen}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5, fontWeight: 500, color: '#1a1814', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, fontWeight: 500, color: '#1a1814', cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               {activeLabel}
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6f6857" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transition: 'transform 220ms', transform: menuOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -139,7 +131,7 @@ export default function NewsPage() {
                   role="option"
                   aria-selected={f.key === filter}
                   className="cp-menuitem"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5, color: f.key === filter ? '#1a1814' : '#6f6857', fontWeight: f.key === filter ? 600 : 500, cursor: 'pointer' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, color: f.key === filter ? '#1a1814' : '#6f6857', fontWeight: f.key === filter ? 600 : 500, cursor: 'pointer' }}
                 >
                   {f.label}
                   {f.key === filter && (
@@ -164,7 +156,7 @@ export default function NewsPage() {
             <button
               onClick={() => { setQuery(''); setFilter('all'); }}
               type="button"
-              style={{ marginTop: 10, padding: '11px 20px', borderRadius: 8, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5, color: '#1a1814', cursor: 'pointer' }}
+              style={{ marginTop: 10, padding: '11px 20px', borderRadius: 8, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, color: '#1a1814', cursor: 'pointer' }}
             >
               Clear filters
             </button>
@@ -172,33 +164,30 @@ export default function NewsPage() {
         )}
 
         <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px,1fr))', gap: 26 }}>
-          {posts.map((p) => {
-            const art = ART[p.src];
-            return (
-              <Link
-                key={p.title}
-                href="/#newsletter"
-                className="cp-newscard"
-                style={{ display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', color: 'inherit', transition: 'border-color 220ms, transform 220ms' }}
-              >
-                <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', background: '#ebe6dc', borderBottom: '1px solid rgba(42,39,31,0.08)' }}>
-                  {art && <Image src={art} alt="" fill sizes="(max-width: 900px) 100vw, 33vw" style={{ objectFit: 'cover' }} />}
-                </div>
-                <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 11 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 12, lineHeight: 1 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.06em', color: '#6f6857' }}>{p.date}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>{p.tag}</span>
-                  </span>
-                  <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 21, lineHeight: 1.24, letterSpacing: '-0.015em', color: '#1a1814' }}>{p.title}</h2>
-                  <p style={{ margin: 0, fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.62, color: '#3f3b31' }}>{p.excerpt}</p>
-                  <span style={{ marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, lineHeight: 1 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: '#1B6C42' }}>Read article →</span>
-                    <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', color: '#6f6857' }}>{p.time}</span>
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
+          {posts.map((p) => (
+            <Link
+              key={p.title}
+              href={`/news/${p.slug}`}
+              className="cp-newscard"
+              style={{ display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden', background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', color: 'inherit', transition: 'border-color 220ms, transform 220ms' }}
+            >
+              <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 10', background: '#ebe6dc', borderBottom: '1px solid rgba(42,39,31,0.08)' }}>
+                <ArticleArt art={p.art} sizes="(max-width: 900px) 100vw, 33vw" />
+              </div>
+              <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 11 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 12, lineHeight: 1 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.06em', color: '#6f6857' }}>{p.date}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>{p.tag}</span>
+                </span>
+                <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 21, lineHeight: 1.24, letterSpacing: '-0.015em', color: '#1a1814' }}>{p.title}</h2>
+                <p style={{ margin: 0, fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.62, color: '#3f3b31' }}>{p.excerpt}</p>
+                <span style={{ marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, lineHeight: 1 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: '#1B6C42' }}>Read article →</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', color: '#6f6857' }}>{p.time}</span>
+                </span>
+              </div>
+            </Link>
+          ))}
         </div>
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>

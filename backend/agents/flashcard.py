@@ -46,7 +46,9 @@ _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 # migration doesn't silently flip cost/latency/determinism: temperature 0.7,
 # an 8192-token output cap, and thinking disabled (budget 0). GoogleModel's
 # defaults would otherwise enable dynamic thinking and provider-default
-# temperature. Flash accepts thinking_budget=0 (unlike Pro).
+# temperature. 2.5 Flash and 3.1 Flash-Lite accept thinking_budget=0; Pro and
+# 3.5 Flash-Lite reject it with a 400 (checked live 2026-09-26) — re-check
+# before moving the `flashcard` slot to another model.
 _FLASHCARD_SETTINGS = GoogleModelSettings(
     temperature=0.7,
     max_tokens=8192,

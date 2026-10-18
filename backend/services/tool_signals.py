@@ -82,6 +82,15 @@ class Expect(str, Enum):
     #: exactly how #553 (course id passed where offering id was expected)
     #: presents.
     COURSE_HAS_AGGREGATES = "course_has_aggregates"
+    #: Has at least one live (not soft-deleted) document — so a course-materials
+    #: read could return rows. The caller scopes it to a course with
+    #: ``{"course_offerings.course_id": "eq.<course>"}``, which PostgREST
+    #: resolves through the documents→course_offerings FK (see
+    #: ``_PROBE_SELECT``). Deliberately NOT scoped by offering ids: the tool
+    #: that reads documents resolves course → offerings in app code, so a probe
+    #: keyed on those same ids shares the read's keyspace and can only ever
+    #: agree with it — the #553 blind spot, rebuilt.
+    HAS_DOCUMENTS = "has_documents"
 
 
 # (table, extra filters, owner_scoped). Each probe is a single indexed read
@@ -104,6 +113,14 @@ _PROBES: dict[Expect, tuple[str, dict, bool]] = {
     Expect.COURSE_HAS_AGGREGATES: (
         "offering_concept_stats", {"common_misconceptions": "neq.{}"}, False,
     ),
+    Expect.HAS_DOCUMENTS: ("documents", {"deleted_at": "is.null"}, True),
+}
+
+# Probes that need more than `id` selected. PostgREST only honours a filter on
+# an embedded resource when that resource is in the select, and only drops the
+# parent row on a non-match when the embed is `!inner`.
+_PROBE_SELECT: dict[Expect, str] = {
+    Expect.HAS_DOCUMENTS: "id,course_offerings!inner(course_id)",
 }
 
 
@@ -137,7 +154,9 @@ def _user_plausibly_has_data(
     if owner_scoped:
         filters["user_id"] = f"eq.{user_id}"
     try:
-        rows = table(table_name).select("id", filters=filters, limit=1)
+        rows = table(table_name).select(
+            _PROBE_SELECT.get(expect, "id"), filters=filters, limit=1,
+        )
     except Exception:
         # WARNING, not debug: a probe that can never answer makes this whole
         # seam silently inert — the exact failure mode F5 exists to end, one
@@ -165,6 +184,7 @@ def report_empty_result(
     feature: str = "unknown",
     scope: dict | None = None,
     payload: dict | None = None,
+    plausible: bool | None = None,
 ) -> bool:
     """Flag a tool result that is empty when it probably shouldn't be.
 
@@ -185,8 +205,18 @@ def report_empty_result(
     both the quiz and the tutor) would otherwise attribute every caller's
     empties to whichever feature the default happened to name.
 
-    NOTE: this is SYNCHRONOUS and does a Supabase read. Async callers must
-    use `report_empty_result_async`, or they block the event loop.
+    `plausible` lets a caller that ALREADY KNOWS the answer skip the probe
+    read. Some callers do: the quiz route reads a `graph_nodes` row before it
+    reaches this seam, so probing `HAS_GRAPH` for that same user and course
+    can only return what the caller just saw — a guaranteed-True round trip
+    on the request path, once per generation. `expect` is still required, and
+    still ships in the event: it names WHY the caller expected data, which is
+    the part a rollup reads. Pass this only for a fact you hold; a guess here
+    manufactures discrepancies with no probe left to catch it.
+
+    NOTE: this is SYNCHRONOUS and does a Supabase read (unless `plausible` is
+    supplied). Async callers must use `report_empty_result_async`, or they
+    block the event loop.
     """
     try:
         if count or not user_id:
@@ -198,7 +228,8 @@ def report_empty_result(
                 logger.debug("tool_signals: unknown expectation %r", expect)
                 return False
 
-        plausible = _user_plausibly_has_data(user_id, expect, scope)
+        if plausible is None:
+            plausible = _user_plausibly_has_data(user_id, expect, scope)
         if plausible is not True:
             return False
 

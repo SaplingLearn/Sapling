@@ -303,7 +303,8 @@ class TestUpdateProfile:
         # A user with no user_profiles row yet should get one created before the
         # update lands (ensure-row semantics).
         user_row = {"id": USER_ID, "email": None, "streak_count": 0, "created_at": "2025-01-01"}
-        profile_selects = []
+        profile_row: list = []  # the user_profiles table: empty until the upsert
+        events = []
         insert_calls = []
 
         def table_side_effect(name):
@@ -311,14 +312,20 @@ class TestUpdateProfile:
             if name == "users":
                 m.select.return_value = [user_row]
             elif name == "user_profiles":
-                # First select(s) return empty (no row) → insert; then return a row.
                 def _select(*args, **kwargs):
-                    profile_selects.append(True)
-                    # After an insert has happened, the row exists.
-                    return [{"user_id": USER_ID, "name": None}] if insert_calls else []
+                    events.append("select")
+                    return list(profile_row)
+
+                def _upsert(payload, **kw):
+                    events.append("upsert")
+                    insert_calls.append((payload, kw))
+                    profile_row.append({"user_id": USER_ID, "name": None})
+                    return list(profile_row)
 
                 m.select.side_effect = _select
-                m.insert.side_effect = lambda payload: insert_calls.append(payload) or [{}]
+                # Race-safe create (#674): ON CONFLICT DO NOTHING, never a blind INSERT.
+                m.insert.side_effect = AssertionError("blind INSERT races (#674)")
+                m.upsert.side_effect = _upsert
                 m.update.return_value = [{}]
             elif name == "user_settings":
                 m.select.return_value = [{"user_id": USER_ID}]
@@ -329,10 +336,19 @@ class TestUpdateProfile:
         with _mock_self(), patch("routes.profile.table", side_effect=table_side_effect):
             r = client.patch(f"/api/profile/{USER_ID}", json={"website": "https://x.io"})
 
+        from routes.profile import _PROFILE_COLS
+
         assert r.status_code == 200
-        # A user_profiles row was inserted because none existed.
-        assert insert_calls, "expected a user_profiles row to be created when missing"
-        assert insert_calls[0] == {"user_id": USER_ID}
+        # update_profile ensures the row twice (via _get_user_or_404, then
+        # before the update). The first ensure finds nothing and creates it,
+        # using the upsert's returned row with no re-select; the second finds
+        # the row, so exactly one create and one select per ensure.
+        assert events == ["select", "upsert", "select"]
+        assert len(insert_calls) == 1
+        assert insert_calls[0] == (
+            {"user_id": USER_ID},
+            {"on_conflict": "user_id", "ignore_duplicates": True, "columns": _PROFILE_COLS},
+        )
 
 
 # ── GET /api/profile/{user_id}/settings ────────────────────────────────────
@@ -983,6 +999,34 @@ class TestShareClassContextToggleRefresh:
         # distinct offering.
         assert sorted(c.args[0] for c in refresh.call_args_list) == ["off-1", "off-2"]
 
+    def test_toggling_share_class_context_resyncs_chunk_visibility(self):
+        """#629: the toggle also has to reach rows already in `course_chunks`.
+        Without this, opting out stopped FUTURE uploads from being shared and
+        left every earlier one in the class pool — the opt-out would read as
+        applied while the data it was meant to withdraw stayed published."""
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context"),
+            patch("routes.profile.resync_user_chunk_visibility") as resync,
+        ):
+            r = client.patch(
+                f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
+            )
+        assert r.status_code == 200
+        resync.assert_called_once_with(USER_ID)
+
+    def test_other_settings_do_not_resync_chunk_visibility(self):
+        with (
+            _mock_self(),
+            patch("routes.profile.table", side_effect=self._tables()),
+            patch("routes.profile.update_course_context"),
+            patch("routes.profile.resync_user_chunk_visibility") as resync,
+        ):
+            r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
+        assert r.status_code == 200
+        resync.assert_not_called()
+
     def test_other_settings_do_not_trigger_refresh(self):
         with (
             _mock_self(),
@@ -1167,3 +1211,253 @@ class TestFeaturedAchievementsStatusFilter:
 
         assert r.status_code == 200
         assert "achievements.status" not in (captured["filters"] or {})
+
+
+# ── #674: first-load settings create must be race-safe ─────────────────────
+#
+# These barrier tests are the deterministic regression guard for #674. The
+# Playwright journey frontend/e2e/settings-first-load.spec.ts is a smoke
+# check only: whether its two parallel requests actually interleave is up to
+# timing, so it can pass against the pre-fix code.
+
+
+def _pg_error(status: int, body: dict | None = None):
+    import httpx
+
+    req = httpx.Request("POST", "http://pg/rest/v1/user_settings")
+    resp = httpx.Response(status, request=req, json=body) if body is not None else httpx.Response(
+        status, request=req, text="not json"
+    )
+    return httpx.HTTPStatusError(f"{status}", request=req, response=resp)
+
+
+class _SettingsTable:
+    """A `user_settings`/`user_profiles` table keyed on `user_id`.
+
+    The upsert behaves like PostgREST's ON CONFLICT DO NOTHING with
+    return=representation: the inserted row comes back, a skipped conflict
+    returns `[]`. A plain INSERT of an existing PK raises the 409 PostgREST
+    returns.
+
+    With `racing=True`, two concurrent first loads are forced to interleave:
+    each of the first two SELECTs snapshots the pre-write state, then waits at
+    a barrier until both have read, so both go on to create the row.
+    """
+
+    def __init__(self, *, racing: bool = False):
+        import threading
+
+        self.rows: dict[str, dict] = {}
+        self.lock = threading.Lock()
+        self.first_reads = threading.Barrier(2, timeout=5) if racing else None
+        self.selects = 0
+        self.upsert_columns: list = []
+
+    def select(self, cols, filters=None):
+        uid = filters["user_id"].removeprefix("eq.")
+        with self.lock:
+            self.selects += 1
+            hold = self.first_reads is not None and self.selects <= 2
+            # Snapshot BEFORE the barrier: both first reads must observe the
+            # pre-write state, or the slower thread can see the winner's row
+            # and the race never happens.
+            snapshot = [dict(self.rows[uid])] if uid in self.rows else []
+        if hold:
+            self.first_reads.wait()
+        return snapshot
+
+    def insert(self, data):
+        with self.lock:
+            if data["user_id"] in self.rows:
+                raise _pg_error(409, {"code": "23505"})
+            self.rows[data["user_id"]] = dict(data)
+        return [data]
+
+    def upsert(self, data, on_conflict="id", *, ignore_duplicates=False, columns=None):
+        assert on_conflict == "user_id", "keyed on user_id"
+        # A merge would DO UPDATE the winner's row (firing its updated_at
+        # trigger); the create must be DO NOTHING.
+        assert ignore_duplicates, "get-or-create must not merge into an existing row"
+        with self.lock:
+            self.upsert_columns.append(columns)
+            if data["user_id"] in self.rows:
+                return []
+            self.rows[data["user_id"]] = dict(data)
+            return [dict(data)]
+
+
+def test_concurrent_first_loads_both_get_settings_674():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from routes import profile
+
+    fake = _SettingsTable(racing=True)
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: profile._get_or_create_settings(USER_ID), range(2)))
+
+    assert results == [{"user_id": USER_ID}, {"user_id": USER_ID}]
+    assert list(fake.rows) == [USER_ID]
+    # Winner: its upsert's representation is the row, no re-read. Loser: DO
+    # NOTHING returned [], so it re-reads the winner's row. 2 + 1 SELECTs.
+    assert fake.selects == 3
+
+
+def test_concurrent_first_profile_loads_both_succeed_674():
+    """Same race on the sibling user_profiles create (reached from the public
+    profile GET, export, and both profile PATCH paths)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from routes import profile
+
+    fake = _SettingsTable(racing=True)
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: profile._get_or_create_profile(USER_ID), range(2)))
+
+    assert [r["user_id"] for r in results] == [USER_ID, USER_ID]
+    assert list(fake.rows) == [USER_ID]
+
+
+def test_existing_settings_row_is_not_rewritten_674():
+    from routes import profile
+
+    fake = _SettingsTable()
+    fake.rows[USER_ID] = {"user_id": USER_ID, "profile_visibility": "private"}
+    fake.upsert = MagicMock(side_effect=AssertionError("must not write when the row exists"))
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        assert profile._get_or_create_settings(USER_ID)["profile_visibility"] == "private"
+
+
+def test_uncontended_create_uses_the_upsert_row_without_a_second_select_674():
+    from routes import profile
+
+    fake = _SettingsTable()
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        assert profile._get_or_create_settings(USER_ID) == {"user_id": USER_ID}
+
+    assert fake.selects == 1
+    # The representation is projected to the same columns the SELECT reads.
+    assert fake.upsert_columns == [profile._SETTINGS_COLS]
+
+
+@pytest.mark.parametrize("helper", ["_get_or_create_settings", "_get_or_create_profile"])
+def test_missing_users_row_fk_violation_is_404_not_500(helper):
+    """A session whose `users` row is missing (hard-deleted; #285 class): the
+    create hits the FK to users. PostgREST returns that as a 409 too, which DO
+    NOTHING does not absorb; it must be a 404, like _get_user_or_404. (The
+    app's own account deletion is a soft delete that keeps the row.)"""
+    from routes import profile
+
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(side_effect=_pg_error(409, {"code": "23503", "message": "fk"}))
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with pytest.raises(HTTPException) as exc:
+            getattr(profile, helper)(USER_ID)
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize("helper", ["_get_or_create_settings", "_get_or_create_profile"])
+def test_lost_race_with_an_empty_reread_is_404_not_a_made_up_row(helper):
+    """DO NOTHING returned [] (the row existed), yet the re-read finds nothing:
+    the row vanished, e.g. cascaded away by a hard-deleted `users` row. That
+    is a 404, never a synthesized {"user_id": ...} served as a 200."""
+    from routes import profile
+
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(return_value=[])
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with pytest.raises(HTTPException) as exc:
+            getattr(profile, helper)(USER_ID)
+
+    assert exc.value.status_code == 404
+    assert fake.selects == 2
+
+
+def test_settings_get_for_a_lost_race_with_vanished_row_answers_404():
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(return_value=[])
+    with _mock_self(), patch("routes.profile.table", side_effect=lambda name: fake):
+        r = client.get(f"/api/profile/{USER_ID}/settings")
+
+    assert r.status_code == 404
+    assert "etag" not in {k.lower() for k in r.headers}
+
+
+def test_settings_get_for_a_hard_deleted_users_row_answers_404():
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(side_effect=_pg_error(409, {"code": "23503"}))
+    with _mock_self(), patch("routes.profile.table", side_effect=lambda name: fake):
+        r = client.get(f"/api/profile/{USER_ID}/settings")
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "User not found"
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        pytest.param(lambda: _pg_error(409, {"code": "23505"}), id="other-409-sqlstate"),
+        pytest.param(lambda: _pg_error(409), id="409-non-json-body"),
+        pytest.param(lambda: _pg_error(500, {"code": "23503"}), id="fk-code-but-not-409"),
+    ],
+)
+def test_other_create_errors_still_propagate(err):
+    """Only the FK-violation 409 is a missing user; anything else stays loud."""
+    import httpx
+
+    from routes import profile
+
+    fake = _SettingsTable()
+    fake.upsert = MagicMock(side_effect=err())
+    with patch("routes.profile.table", side_effect=lambda name: fake):
+        with pytest.raises(httpx.HTTPStatusError):
+            profile._get_or_create_settings(USER_ID)
+
+
+@pytest.mark.parametrize(
+    ("helper", "table_name", "cols"),
+    [
+        ("_get_or_create_settings", "user_settings", "_SETTINGS_COLS"),
+        ("_get_or_create_profile", "user_profiles", "_PROFILE_COLS"),
+    ],
+)
+def test_get_or_create_sends_do_nothing_on_the_wire(helper, table_name, cols):
+    """End to end through the real db.connection (only its httpx client is
+    faked): the create the profile helpers issue must reach PostgREST as an
+    ON CONFLICT (user_id) DO NOTHING (`Prefer: resolution=ignore-duplicates`),
+    projected to the columns the SELECT reads. The fakes above only see the
+    kwargs; this pins what actually goes out."""
+    import db.connection as dbconn
+    from routes import profile
+
+    def _resp(payload):
+        r = MagicMock()
+        r.json.return_value = payload
+        r.raise_for_status.return_value = None
+        return r
+
+    with patch.object(dbconn, "_client") as http:
+        http.get.return_value = _resp([])  # no row yet
+        http.post.return_value = _resp([{"user_id": USER_ID}])
+        getattr(profile, helper)(USER_ID)
+
+    assert http.post.call_count == 1
+    call = http.post.call_args
+    assert call.args[0].endswith(f"/{table_name}")
+    prefer = call.kwargs["headers"]["Prefer"]
+    assert "resolution=ignore-duplicates" in prefer, prefer
+    assert "resolution=merge-duplicates" not in prefer, prefer
+    assert call.kwargs["params"] == {"on_conflict": "user_id", "select": getattr(profile, cols)}
+    assert call.kwargs["json"] == {"user_id": USER_ID}
+
+
+def test_upsert_without_columns_sends_no_projection():
+    """Other upsert callers (no `columns=`) keep PostgREST's full
+    representation: no `select=` is added."""
+    import db.connection as dbconn
+
+    with patch.object(dbconn, "_client") as client_mock:
+        dbconn.table("user_settings").upsert({"user_id": USER_ID}, on_conflict="user_id")
+        assert client_mock.post.call_args.kwargs["params"] == {"on_conflict": "user_id"}

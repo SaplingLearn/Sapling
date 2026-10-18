@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from services import events_service
+from tests.agent_run_fakes import run_result
 
 client = TestClient(app)
 
@@ -94,14 +95,37 @@ def test_event_taxonomy_is_pinned():
         "quiz.completed",
         "quiz.context_write_failed",  # #529/B3
         "quiz.generation_failed",     # #544/F3
+        # #537/G8: the hero-card snapshot submit returns inline failed to read
+        # and was swallowed. Emit coverage lives in
+        # test_quiz_gamification_g8.py::TestNeitherFailureInventsANumber.
+        "quiz.gamification_snapshot_failed",
         "quiz.tool_empty",            # F5: a personalization input came back empty
         "quiz.rag_uncovered",         # E8: generation ran without course grounding
+        # #546: the deprecated include_answer_key flag's two straggler
+        # populations, made countable. Emit coverage lives in
+        # test_quiz_answers_c.py::TestAnswerKeyFlagTelemetry (the C3 file).
+        "quiz.answer_key_served",
+        "quiz.answer_key_flag_omitted",
         "chat.message_sent",
         "note.created",
         "session.started",
         "session.ended",
         "rag.retrieval_failed",
         "rag.chunks_dropped",
+        # #482: a document that did not finish indexing, and one the sweeper
+        # later recovered. Emit coverage lives in test_document_indexing.py.
+        "rag.index_failed",
+        "rag.index_recovered",
+        "rag.relevance_scored",
+        # #629: the Class Intel toggle moved but course_chunks.visibility did
+        # not follow. A privacy control that fails silently is not one.
+        "rag.visibility_resync_failed",
+        # #620: admin feature-flag change (audit). Emit coverage lives in
+        # test_admin_flags_routes.py.
+        "flag.changed",
+        # #640/#642 (ADR 0027): one row per typed-decision call. Emit
+        # coverage lives in test_decisions.py / test_tutor_router.py.
+        "decision.made",
     })
 
 
@@ -518,11 +542,18 @@ def test_quiz_generate_emits_quiz_started(sink):
             mock.select.return_value = [_quiz_node_row()]
         else:
             mock.select.return_value = []
+        mock.select_with_count.return_value = ([], 0)
         mock.insert.return_value = []
         return mock
 
     with (
         patch("routes.quiz.table", side_effect=factory),
+        # Patched through the signals module too, so the offering resolution
+        # answers from the fixture rather than from whatever a real
+        # (unreachable) Supabase does — this test asserts on the SCOPE the
+        # signals ran with, and letting a live connection error supply it
+        # makes the assertion depend on the machine.
+        patch("services.quiz_signals.table", side_effect=factory),
         patch(
             "routes.quiz.quiz_agent.run",
             new=AsyncMock(return_value=SimpleNamespace(output=fake_quiz)),
@@ -567,6 +598,17 @@ def test_quiz_generate_emits_quiz_started(sink):
         "signal_times_studied": 2,
         "signal_velocity": 0.0,
         "signal_in_flight": 0,
+        # The two course-keyed signals report UNKNOWN here rather than zero,
+        # and that distinction is the assertion: this fixture's course has no
+        # offering row and no name, so neither key that reaches a flashcard
+        # exists and there is no way to tell this course's tutor sessions from
+        # any other's. Zeros would claim the student HAS none, which is a
+        # different — and unverified — statement.
+        "signal_flashcards_course_cards": None,
+        "signal_flashcards_course_reviewed": None,
+        "signal_flashcards_course_last_review_days": None,
+        "signal_tutor_course_sessions_14d": None,
+        "signal_tutor_concept_days_since": None,
     }
     # Ids/counts/enums only, per the #117 payload rule — no prompt text.
     assert isinstance(ev["payload"]["routing_chars"], int)
@@ -927,7 +969,7 @@ def _learn_table_factory(offering_id="off1"):
     def factory(name):
         mock = MagicMock()
         if name == "sessions":
-            mock.select.return_value = [{"offering_id": offering_id}]
+            mock.select.return_value = [{"offering_id": offering_id, "user_id": "user_andres"}]
         else:
             mock.select.return_value = []
         mock.update.return_value = []
@@ -942,7 +984,7 @@ SECRET_MESSAGE = "my very private question about recursion and my grades"
 
 def test_chat_json_emits_message_sent_with_fingerprint(sink):
     agent = MagicMock()
-    agent.run = AsyncMock(return_value=SimpleNamespace(output="A reply."))
+    agent.run = AsyncMock(return_value=run_result("A reply."))
     with (
         patch("routes.learn.table", side_effect=_learn_table_factory()),
         patch("routes.learn.agent_for_mode", return_value=agent),
@@ -987,6 +1029,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
         patch("routes.learn._consume_pending"),
+        patch("routes.learn.require_session_owner"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),
         patch("routes.learn.offering_course_id", return_value="c1"),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -1220,13 +1263,12 @@ def test_nonstream_fallback_turn_emits_chat_message_sent_exactly_once(sink):
                            data=fallback_result)
 
     fallback_agent = MagicMock()
-    fallback_agent.run = AsyncMock(
-        return_value=SimpleNamespace(output="a fallback reply")
-    )
+    fallback_agent.run = AsyncMock(return_value=run_result("a fallback reply"))
 
     with (
         patch.object(learn_routes, "stream_agent_turn", fake_stream),
         patch.object(learn_routes, "_consume_pending"),
+        patch.object(learn_routes, "require_session_owner"),
         patch.object(learn_routes, "table", side_effect=_learn_table_factory()),
         patch.object(learn_routes, "agent_for_mode", return_value=fallback_agent),
         patch.object(learn_routes, "save_message"),

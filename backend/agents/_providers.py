@@ -10,6 +10,7 @@ via env vars without touching code:
     SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
     SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
     SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
+    SAPLING_MODEL_DECISION=gemini-2.5-flash-lite
 
 Defaults are tuned per task: cheaper models for simpler classifications,
 flagship Flash for tasks where output quality drives downstream UX, and
@@ -44,6 +45,7 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    "decision",
 ]
 
 
@@ -92,6 +94,11 @@ _DEFAULTS: dict[AgentTask, str] = {
     # vision-capable model, and transcription accuracy on handwritten
     # mathematics is exactly where the lite tier degrades → full Flash.
     "ocr_vision": "gemini-2.5-flash",
+    # The typed decision seam's LLM backend (services/decisions.py, ADR 0027):
+    # a handful of yes/no / choice / ordered-scale judgments per call, short
+    # structured output, latency-sensitive → the cheap lite tier. This is the
+    # `flash_lite` decision backend and the fallback when Jev is unavailable.
+    "decision": "gemini-2.5-flash-lite",
 }
 
 
@@ -331,10 +338,11 @@ def model_mode() -> str:
 
     `_model_mode` stays private to this module for `model_for`'s internal
     dispatch. This is the one sanctioned way a non-agent module reaches the
-    seam: `services/rag_service.py` and `routes/documents.py`'s RAG indexing
-    build raw `google.genai.Client`s directly (predating #391), so they gate
-    on `model_mode() == "real"` rather than importing the private name across
-    a package boundary (#439).
+    seam: `services/rag_service.py` builds a raw `google.genai.Client` for
+    embeddings (predating #391), so it gates on `model_mode() == "real"`
+    rather than importing the private name across a package boundary (#439).
+    Callers of rag_service — `routes/documents.py`'s indexing among them —
+    inherit that gate rather than repeating it (#628).
     """
     return _model_mode()
 

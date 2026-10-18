@@ -240,10 +240,11 @@ def test_chat_route_saves_raw_body_message():
     saved: list[tuple] = []
 
     async def fake_chat_via_agent(**kwargs):
-        return {"reply": "ok!", "graph_update": {}, "mastery_changes": []}
+        return {"reply": "ok!", "graph_update": {}, "mastery_changes": []}, ("default", None)
 
     with (
         patch("routes.learn._chat_via_agent", side_effect=fake_chat_via_agent),
+        patch("routes.learn.require_session_owner"),
         patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
         patch("routes.learn._get_session_offering_id", return_value=""),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -285,6 +286,7 @@ def test_stream_route_saves_raw_body_message():
         patch("routes.learn.stream_agent_turn", fake_stream),
         patch("routes.learn.save_message", side_effect=lambda *a, **k: saved.append(a)),
         patch("routes.learn._consume_pending"),
+        patch("routes.learn.require_session_owner"),
         patch("routes.learn._get_session_offering_id", return_value=""),
         patch("routes.learn._load_message_history", return_value=[]),
         patch("routes.learn.events_service"),
@@ -304,3 +306,21 @@ def test_stream_route_saves_raw_body_message():
         "the persisted user row must be the raw body.message — "
         "never the assembled catalog/RAG/graph prefix"
     )
+
+
+# ── #629: the tutor's retrieval names its reader ────────────────────────────
+
+
+def test_prepare_chat_run_passes_the_student_as_the_retrieval_reader():
+    """`retrieve_chunks` without a `user_id` asks for shared rows only, so an
+    opted-out student would stop seeing their OWN uploads in their own tutor."""
+    with (
+        patch("routes.learn._get_course_info", return_value={"course_code": "CS101"}),
+        patch("routes.learn._get_catalog_chunk", return_value=""),
+        patch("services.rag_service.retrieve_chunks", return_value=[]) as mock_retrieve,
+        patch("services.graph_context.build_graph_context_block", return_value=""),
+        patch("routes.learn._resolve_model_pref", return_value=None),
+    ):
+        _prepare()
+
+    assert mock_retrieve.call_args.kwargs["user_id"] == "u1"

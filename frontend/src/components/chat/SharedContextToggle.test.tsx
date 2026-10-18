@@ -10,12 +10,21 @@
  *   3. A failed PATCH is swallowed (console.warn) — the toggle still flips
  *   4. Mount hydrates from the server value when one is present
  *
+ * Plus tooltip placement (#581): the panel is 240px wide against a ~130px
+ * button, so whichever edge it is NOT anchored to overhangs. The anchor has
+ * to follow the toggle's position in its container, on both open paths
+ * (hover and keyboard focus):
+ *   5. Default/`align="right"` anchors right — the active-session TopBar
+ *   6. `align="left"` anchors left — the start-session card's left-flush row
+ *   7. Focus opens the tooltip with the same anchoring as hover
+ *
  * Module mocks: @/lib/api (fetchSettings/updateSettings) and useUser.
  */
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const { mockFetchSettings, mockUpdateSettings } = vi.hoisted(() => ({
   mockFetchSettings: vi.fn(),
@@ -91,5 +100,58 @@ describe("SharedContextToggle", () => {
       expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false"),
     );
     expect(localStorage.getItem("sapling_shared_ctx")).toBe("false");
+  });
+});
+
+describe("SharedContextToggle tooltip placement (#581)", () => {
+  // The tooltip is `position: absolute` inside an `inline-block` wrapper, so
+  // only one horizontal offset may be set — setting both would stretch the
+  // panel across the wrapper instead of anchoring it to one edge.
+  function anchorOf(tip: HTMLElement) {
+    return { left: tip.style.left, right: tip.style.right };
+  }
+
+  it("anchors to the right edge by default — the TopBar mount must not regress", () => {
+    render(<SharedContextToggle enabled onChange={() => {}} />);
+    fireEvent.mouseOver(screen.getByRole("switch"));
+    expect(anchorOf(screen.getByRole("tooltip"))).toEqual({ left: "", right: "0px" });
+  });
+
+  it('anchors to the left edge with align="left" — the start-session card mount', () => {
+    render(<SharedContextToggle enabled onChange={() => {}} align="left" />);
+    fireEvent.mouseOver(screen.getByRole("switch"));
+    // Anchored left, the 240px panel opens INTO the card rather than
+    // overhanging its left edge under the opaque sidebar.
+    expect(anchorOf(screen.getByRole("tooltip"))).toEqual({ left: "0px", right: "" });
+  });
+
+  it('is explicit that align="right" and the default are the same placement', () => {
+    render(<SharedContextToggle enabled onChange={() => {}} align="right" />);
+    fireEvent.mouseOver(screen.getByRole("switch"));
+    expect(anchorOf(screen.getByRole("tooltip"))).toEqual({ left: "", right: "0px" });
+  });
+
+  it("opens on keyboard focus with the same anchoring as hover", async () => {
+    // Keyboard users reach the tooltip through onFocus, never onMouseEnter —
+    // the clipped-text bug hit that path identically. Tab to the switch the
+    // way a keyboard user does rather than firing a synthetic hover.
+    render(<SharedContextToggle enabled onChange={() => {}} align="left" />);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    await userEvent.tab();
+    expect(screen.getByRole("switch")).toHaveFocus();
+    expect(anchorOf(screen.getByRole("tooltip"))).toEqual({ left: "0px", right: "" });
+
+    await userEvent.tab();
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("hides the tooltip again on mouse-out", () => {
+    render(<SharedContextToggle enabled onChange={() => {}} />);
+    const toggle = screen.getByRole("switch");
+    fireEvent.mouseOver(toggle);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Shared course context");
+    fireEvent.mouseOut(toggle);
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });

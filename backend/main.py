@@ -6,6 +6,7 @@ from pathlib import Path
 import logfire
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -23,9 +24,13 @@ logging.basicConfig(
 
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
+from routes.admin_flags import router as admin_flags_router
+from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
+from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
+from routes.internal_metrics import router as internal_metrics_router
 from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
@@ -36,6 +41,8 @@ from services.storage_service import (
     ensure_bucket_exists,
 )
 from services.durable import init_dbos, shutdown_dbos
+from services.index_sweeper import start_sweeper, stop_sweeper
+from services import typesafe_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -108,7 +115,23 @@ async def _lifespan(_app: FastAPI):
     # passthrough otherwise. Fails loudly (raises) if the operator opted in
     # and launch fails — see services/durable.py::init_dbos.
     init_dbos()
+    # #482: drain the document indexing queue. Without this, a document whose
+    # upload-time index attempt failed — or died with the process — would stay
+    # out of retrieval for good. No-op outside real model mode.
+    start_sweeper()
+    # #672: the decision seam's backends moved from env vars to the
+    # decision_router flag; say so if a deployment still sets the old ones.
+    from services import decisions
+    decisions.warn_removed_env()
     yield
+    await stop_sweeper()
+    # Let in-flight tutor-router decisions finish first: each one emits a
+    # decision.made row through the Jev client and the events worker closed
+    # below (bounded by the router's own backstop).
+    from services import tutor_router
+    await tutor_router.drain_inflight()
+    # The decision seam's pooled Jev client (#642) for this loop.
+    await typesafe_client.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
@@ -223,15 +246,24 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     rid = getattr(request.state, "request_id", None) or current_request_id()
-    code, message = quiz_errors.validation_error_code(exc.errors())
+    # `jsonable_encoder`, exactly as FastAPI's own default handler does it, and
+    # for a reason that is invisible until it isn't: a Pydantic field or model
+    # validator raising ValueError puts the EXCEPTION OBJECT into the error's
+    # `ctx`, which `json.dumps` cannot serialize. Handing the raw list to
+    # JSONResponse turns any such 422 into a 500 — the enveloped 4xx contract
+    # (#540 A3) failing precisely when a route adds the kind of cross-field
+    # rule the envelope exists to report. Encoded ONCE and reused, so the
+    # payload and the machine detail can never disagree.
+    errors = jsonable_encoder(exc.errors())
+    code, message = quiz_errors.validation_error_code(errors)
     if code is quiz_errors.QuizErrorCode.QUIZ_COUNT_OUT_OF_RANGE:
         message = (
             f"Quizzes can have between {quiz_config.QUIZ_MIN_QUESTIONS} "
             f"and {quiz_config.QUIZ_MAX_QUESTIONS} questions."
         )
     content = quiz_errors.error_content(
-        request.url.path, 422, exc.errors(), rid,
-        code=code, message=message, machine_detail=exc.errors(),
+        request.url.path, 422, errors, rid,
+        code=code, message=message, machine_detail=errors,
     )
     return JSONResponse(
         status_code=422,
@@ -267,14 +299,22 @@ app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
+# Mounted BEFORE admin_router so its specific /flags paths win over any
+# generic admin_router route that could otherwise shadow them.
+app.include_router(admin_flags_router, prefix="/api/admin/flags")
+app.include_router(flags_router,       prefix="/api/flags")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
+app.include_router(admin_documents_router, prefix="/api/admin/documents")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
 app.include_router(gamification.router, prefix="/api/gamification")
+# Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
+# session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
+app.include_router(internal_metrics_router, prefix="/api/internal")
 
 
 @app.get("/api/health")

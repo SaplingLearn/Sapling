@@ -1,6 +1,7 @@
 {
   "category": "reading",
-  "confidence": 0.8,
+  "confidence": 0.9,
   "is_syllabus": false,
-  "rationale": "The document lists suggested and optional readings for a course, typical of a reading list which falls under the \"reading\" category."
+  "rationale": "The document lists suggested and required readings for a course, with specific chapters and page numbers indicated.",
+  "shareability": "course_material"
 }

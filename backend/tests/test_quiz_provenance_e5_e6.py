@@ -134,7 +134,7 @@ def _coverage(rows, total):
         return m
 
     with patch("routes.quiz.table", side_effect=factory):
-        return _course_chunk_coverage("CAS CS 330")
+        return _course_chunk_coverage("CAS CS 330", "user-1")
 
 
 def test_trustworthy_zero_count_is_reported():
@@ -163,7 +163,7 @@ def test_count_read_failure_is_unknown():
         return m
 
     with patch("routes.quiz.table", side_effect=factory):
-        assert _course_chunk_coverage("CAS CS 330") is None
+        assert _course_chunk_coverage("CAS CS 330", "user-1") is None
 
 
 # ── E5: identity + provenance are written ───────────────────────────────────
@@ -232,9 +232,11 @@ def test_provenance_records_the_model_that_actually_served():
 
 @pytest.mark.parametrize("include_answer_key", [True, False])
 def test_provenance_never_reaches_the_client(include_answer_key):
-    """Both response shapes. The keyed branch is still the default until
-    #546 flips it, so an allowlist that only guards the keyless path would
-    ship chunk ids to every browser today."""
+    """Both response shapes. #546 made keyless the default, but the keyed
+    branch is still reachable for as long as the flag is accepted — and it
+    is a separate projection (`_INTERNAL_QUESTION_KEYS`, not
+    `_strip_answer_key`), so an allowlist that only guarded the keyless path
+    would ship chunk ids to whichever caller still opts in."""
     r, row, _ = _generate(
         [_question()],
         material=CourseMaterial(chunk_ids=("chunk-a",), bu_code="X"),
