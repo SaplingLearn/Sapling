@@ -259,17 +259,21 @@ class TestRateLimiting:
         assert statuses[10] == 429
 
     def test_bu_sso_limited_after_3(self):
-        # Strictest cap (3/10min). Playwright isn't installed in the test env,
-        # so calls 1-3 fail in the flow — but the 4th must be rejected by the
-        # limiter before reaching it.
+        # Strictest cap (3/10min). Keep this hermetic even when Chromium is
+        # installed: the first three calls reach the mocked flow, and the
+        # fourth must be rejected before launching a browser or sending Duo.
         body = {"user_id": "u1", "bu_username": "x", "bu_password": "y"}
-        with patch("routes.gradescope.table", side_effect=_table_factory({})):
+        with (
+            patch("routes.gradescope.table", side_effect=_table_factory({})),
+            patch.object(gs, "login_via_bu_sso", side_effect=gs.GradescopeAuthError("Unavailable")) as login,
+        ):
             statuses = [
                 client.post("/api/gradescope/credentials/bu-sso", json=body).status_code
                 for _ in range(4)
             ]
         assert all(s != 429 for s in statuses[:3]), "first 3 calls must not be rate-limited"
         assert statuses[3] == 429
+        assert login.call_count == 3
 
     def test_limit_is_per_user(self):
         # u1 exhausts its window; u2 is unaffected.
