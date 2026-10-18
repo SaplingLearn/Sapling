@@ -85,6 +85,13 @@ class TestListStudentCourses:
 # ── list_assignments ─────────────────────────────────────────────────────────
 
 class TestListAssignments:
+    @pytest.mark.parametrize("payload", [None, {}, "login page"])
+    def test_unexpected_scraper_result_is_reported_as_fetch_failure(self, payload):
+        conn = MagicMock()
+        conn.account.get_assignments.return_value = payload
+        with pytest.raises(gs.GradescopeFetchError, match="unexpected assignment list"):
+            gs.list_assignments(conn, "course")
+
     def test_missing_id_is_not_the_literal_none(self):
         conn = MagicMock()
         conn.account.get_assignments.return_value = [SimpleNamespace(assignment_id=None)]
@@ -400,6 +407,44 @@ class TestCookieLoginTriesBothEncodings:
 
 
 class TestAuthenticationValidation:
+    @pytest.mark.parametrize("status", [429, 500, 503])
+    def test_cookie_outage_is_retryable_not_an_expired_session(self, status):
+        session = MagicMock()
+        session.get.return_value = SimpleNamespace(
+            status_code=status, url="https://www.gradescope.com/account", text="unavailable",
+        )
+        with patch.object(gs, "_new_session", return_value=session):
+            with pytest.raises(gs.GradescopeFetchError, match="temporarily unavailable"):
+                gs.login_with_cookies(None, "encoded%3D")
+        session.get.assert_called_once()
+        session.close.assert_called_once()
+
+    @pytest.mark.parametrize("step", ["login", "account"])
+    def test_password_outage_is_retryable_and_closes_the_session(self, step):
+        session = MagicMock()
+        session.get.side_effect = [
+            SimpleNamespace(text='<form action="/login"><input name="authenticity_token" value="csrf"></form>', raise_for_status=lambda: None),
+            SimpleNamespace(status_code=503, url="https://www.gradescope.com/account"),
+        ]
+        session.post.return_value = SimpleNamespace(
+            status_code=503 if step == "login" else 200,
+            history=[SimpleNamespace(status_code=302)],
+            url="https://www.gradescope.com/account", text="",
+        )
+        with patch.object(gs, "_new_session", return_value=session):
+            with pytest.raises(gs.GradescopeFetchError, match="temporarily unavailable"):
+                gs.login("student@example.edu", "test-password")
+        session.close.assert_called_once()
+
+    def test_missing_login_form_is_a_scraper_failure_and_closes_session(self):
+        session = MagicMock()
+        session.get.return_value = SimpleNamespace(text="<html>Changed page</html>", raise_for_status=lambda: None)
+        with patch.object(gs, "_new_session", return_value=session):
+            with pytest.raises(gs.GradescopeFetchError, match="markup may have changed"):
+                gs.login("student@example.edu", "test-password")
+        session.close.assert_called_once()
+        session.post.assert_not_called()
+
     def test_cookie_network_failure_is_not_reported_as_invalid_credentials(self):
         session = MagicMock()
         session.get.side_effect = gs.requests.ConnectionError("connection refused")
@@ -461,6 +506,7 @@ class TestAuthenticationValidation:
                 gs.login("student@example.edu", "test-password")
         assert session.post.call_args.kwargs["data"]["session[password]"] == "test-password"
         assert "params" not in session.post.call_args.kwargs
+        session.close.assert_called_once()
 
     def test_upstream_requests_have_a_default_timeout(self):
         session = gs._new_session()
@@ -645,7 +691,7 @@ def test_bu_browser_flow_harvests_only_gradescope_cookies_and_closes_browser():
     browser = MagicMock()
     context = browser.new_context.return_value
     page = context.new_page.return_value
-    page.url = "https://www.gradescope.com/account"
+    page.url = "https://shib.bu.edu/idp/profile/SAML2/Redirect/SSO"
     context.cookies.return_value = [
         {"name": "_gradescope_session", "value": "session", "domain": ".gradescope.com"},
         {"name": "signed_token", "value": "token", "domain": "www.gradescope.com"},
@@ -654,11 +700,40 @@ def test_bu_browser_flow_harvests_only_gradescope_cookies_and_closes_browser():
     ]
     playwright = MagicMock()
     playwright.return_value.__enter__.return_value.chromium.launch.return_value = browser
+
+    def first_visible(_page, selectors, _timeout):
+        field = MagicMock()
+        if selectors is gs._SHIB_SUBMIT_SELECTORS:
+            field.click.side_effect = lambda: setattr(page, "url", "https://www.gradescope.com/account")
+        return field
+
     with (
         patch.object(gs, "PLAYWRIGHT_AVAILABLE", True),
         patch.object(gs, "sync_playwright", playwright),
-        patch.object(gs, "_first_visible", return_value=MagicMock()),
+        patch.object(gs, "_first_visible", side_effect=first_visible),
     ):
         result = gs.login_via_bu_sso("student", "private-password")
     assert result == {"_gradescope_session": "session", "signed_token": "token"}
+    browser.close.assert_called_once()
+
+
+@pytest.mark.parametrize("url", [
+    "https://shib.bu.edu.evil.example/login",
+    "https://evil.example/shib.bu.edu/login",
+    "http://shib.bu.edu/login",
+])
+def test_bu_browser_never_fills_credentials_on_an_untrusted_redirect(url):
+    browser = MagicMock()
+    page = browser.new_context.return_value.new_page.return_value
+    page.url = url
+    playwright = MagicMock()
+    playwright.return_value.__enter__.return_value.chromium.launch.return_value = browser
+    with (
+        patch.object(gs, "PLAYWRIGHT_AVAILABLE", True),
+        patch.object(gs, "sync_playwright", playwright),
+        patch.object(gs, "_first_visible", return_value=MagicMock()) as find,
+    ):
+        with pytest.raises(gs.GradescopeAuthError, match="secure WebLogin"):
+            gs.login_via_bu_sso("student", "private-password")
+    assert find.call_count == 2  # school button and picker only, never credential fields
     browser.close.assert_called_once()

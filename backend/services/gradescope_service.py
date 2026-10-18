@@ -114,12 +114,24 @@ def _is_gradescope_url(url: str, *, account: bool = False) -> bool:
     return valid and parsed.path.rstrip("/") not in {"", "/login"}
 
 
+def _is_bu_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == "shib.bu.edu"
+
+
 def _new_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(_BROWSER_HEADERS)
     # The upstream scraper omits timeouts on course/assignment requests.
     session.request = partial(session.request, timeout=20)
     return session
+
+
+def _check_availability(response: requests.Response, session: requests.Session) -> None:
+    """An outage or upstream throttle does not invalidate saved credentials."""
+    if response.status_code == 429 or response.status_code >= 500:
+        session.close()
+        raise GradescopeFetchError("Gradescope is temporarily unavailable. Please retry shortly.")
 
 
 def _clean_pasted_cookie(value: str | None) -> str | None:
@@ -204,6 +216,7 @@ def login_with_cookies(
             session.close()
             raise GradescopeFetchError("Couldn't reach Gradescope. Please retry shortly.") from e
 
+        _check_availability(r, session)
         if r.status_code == 200 and _is_gradescope_url(r.url or "", account=True):
             break
 
@@ -271,7 +284,8 @@ def login(email: str, password: str) -> GSConnection:
         'form[action="/login"] input[name="authenticity_token"]'
     )
     if not token_input or not token_input.get("value"):
-        raise GradescopeAuthError(
+        session.close()
+        raise GradescopeFetchError(
             "Couldn't find the Gradescope login form — site markup may have changed."
         )
     auth_token = token_input["value"]
@@ -298,6 +312,7 @@ def login(email: str, password: str) -> GSConnection:
         session.close()
         raise GradescopeFetchError("Couldn't reach Gradescope. Please retry shortly.") from e
 
+    _check_availability(resp, session)
     # Success looks like: at least one 302 in the redirect chain AND the
     # final URL isn't /login (which is where Gradescope bounces failed
     # attempts back to with a flash error).
@@ -310,6 +325,7 @@ def login(email: str, password: str) -> GSConnection:
         err_soup = BeautifulSoup(resp.text, "html.parser")
         flash = err_soup.select_one(".alert, .flash, .error")
         detail = flash.get_text(strip=True) if flash else None
+        session.close()
         raise GradescopeAuthError(
             detail or "Invalid Gradescope credentials"
         )
@@ -321,7 +337,9 @@ def login(email: str, password: str) -> GSConnection:
     except requests.RequestException as e:
         session.close()
         raise GradescopeFetchError("Couldn't verify the Gradescope login. Please retry.") from e
+    _check_availability(account_page, session)
     if account_page.status_code != 200 or not _is_gradescope_url(account_page.url or "", account=True):
+        session.close()
         raise GradescopeAuthError("Gradescope login did not create an authenticated session.")
 
     # Pick up X-CSRF-Token from the landed page so subsequent POSTs work.
@@ -393,6 +411,9 @@ def list_assignments(conn: GSConnection, course_id: str) -> list[dict[str, Any]]
         raise GradescopeFetchError(
             f"Failed to list assignments for course {course_id}: {e}"
         ) from e
+
+    if not isinstance(assignments, list):
+        raise GradescopeFetchError("Gradescope returned an unexpected assignment list. Please retry.")
 
     out: list[dict[str, Any]] = []
     for a in assignments:
@@ -625,6 +646,10 @@ def login_via_bu_sso(
                 raise GradescopeAuthError(
                     f"Didn't land on BU's WebLogin (currently at {page.url}): {e}"
                 ) from e
+            # The glob above is a navigation wait, not a hostname check. Never
+            # fill institutional credentials into a substring/lookalike URL.
+            if not _is_bu_login_url(page.url or ""):
+                raise GradescopeAuthError("Didn't reach BU's secure WebLogin. Use session cookies or retry.")
 
             # Step 5: Fill BU username + password, click Continue. Trimmed
             # per-selector timeouts — these elements appear within the

@@ -14,6 +14,7 @@ import {
   type GradescopeSyncResult,
 } from "@/lib/api";
 import { humanizeError, statusOf } from "@/lib/errorMessage";
+import { useScrollLock } from "@/lib/useScrollLock";
 
 interface Props {
   open: boolean;
@@ -33,6 +34,7 @@ interface Props {
 
 type Stage =
   | "loading"
+  | "verification-error"
   | "choose-mode"
   | "credentials"
   | "cookies"
@@ -44,7 +46,17 @@ type Stage =
   | "syncing"
   | "done";
 
-export function GradescopeSyncModal({
+export function GradescopeSyncModal(props: Props) {
+  if (!props.open) return null;
+  // Keep requests and credential drafts scoped to one account/course/term
+  // and one opening. An older request may finish after navigation or close,
+  // but it must never populate the next dialog with that previous context.
+  return <GradescopeSyncDialog key={JSON.stringify([
+    props.userId, props.saplingCourseId, props.semester, props.reconnect,
+  ])} {...props} />;
+}
+
+function GradescopeSyncDialog({
   open,
   userId,
   saplingCourseId,
@@ -79,14 +91,37 @@ export function GradescopeSyncModal({
   const [result, setResult] = React.useState<GradescopeSyncResult | null>(null);
   const [saving, setSaving] = React.useState(false);
   const submitting = React.useRef(false);
+  const active = React.useRef(true);
+  const dialogRef = React.useRef<HTMLDivElement>(null);
+  const fieldId = React.useId();
+  useScrollLock(open);
+
+  React.useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
 
   React.useEffect(() => setMounted(true), []);
+
+  React.useEffect(() => {
+    if (!mounted) return;
+    const previousFocus = document.activeElement;
+    dialogRef.current?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [mounted]);
+
+  React.useEffect(() => {
+    if (mounted && !dialogRef.current?.contains(document.activeElement)) dialogRef.current?.focus();
+  }, [mounted, stage]);
 
   const refreshState = React.useCallback(async () => {
     setError(null);
     setStage("loading");
     try {
       const status = await getGradescopeStatus(userId);
+      if (!active.current) return;
       setLastSyncedAt(status.last_synced_at);
       if (!status.has_credentials) {
         // No saved creds — let the user pick how they want to connect.
@@ -96,6 +131,7 @@ export function GradescopeSyncModal({
       // Saved credentials can expire. Verify them before showing a connected
       // or ready state, and use this same response for the course picker.
       const gs = await listGradescopeCourses(userId);
+      if (!active.current) return;
       setCourses(gs.courses);
       // Settings-mode (no course): we're done at "connected" once creds
       // are saved — there's no course to link or sync from here.
@@ -104,6 +140,7 @@ export function GradescopeSyncModal({
         return;
       }
       const links = await listGradescopeLinks(userId, semester);
+      if (!active.current) return;
       const myLink = links.links.find((l) => l.sapling_course_id === saplingCourseId);
       setLastSyncedAt(myLink?.last_synced_at ?? null);
       if (myLink && gs.courses.some((course) => course.id === myLink.gradescope_course_id)) {
@@ -113,8 +150,9 @@ export function GradescopeSyncModal({
         setStage("link");
       }
     } catch (e: unknown) {
+      if (!active.current) return;
       setError(humanizeError(e, "Couldn't verify the Gradescope connection."));
-      setStage("choose-mode");
+      setStage(statusOf(e) === 401 ? "choose-mode" : "verification-error");
     }
   }, [userId, saplingCourseId, semester]);
 
@@ -146,6 +184,7 @@ export function GradescopeSyncModal({
         email: email.trim(),
         password,
       });
+      if (!active.current) return;
       setPassword("");
       await refreshState();
     } catch (e: unknown) {
@@ -165,17 +204,21 @@ export function GradescopeSyncModal({
       setError("Enter your BU username and password.");
       return;
     }
+    if (submitting.current) return;
+    submitting.current = true;
     // Move to "waiting for Duo" stage immediately so the user knows
     // their phone is about to buzz. The fetch promise stays open for up
     // to ~125s while Playwright drives the SSO + Duo flow on the server.
     setStage("bu-sso-waiting");
     try {
       await connectGradescopeViaBuSso(userId, username, buPassword, 120);
+      if (!active.current) return;
       // Clear the password from memory as soon as we don't need it.
       setBuPassword("");
       setBuUsername("");
       await refreshState();
     } catch (e: unknown) {
+      if (!active.current) return;
       const msg = humanizeError(e, "BU sign-in failed.");
       setBuPassword(""); // never leave a wrong password sitting in state
       if (/408|duo.*timeout|wasn.?t approved/i.test(msg)) {
@@ -194,6 +237,8 @@ export function GradescopeSyncModal({
         setError(msg || "SSO failed unexpectedly.");
       }
       setStage("bu-sso-form");
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -214,6 +259,7 @@ export function GradescopeSyncModal({
         gradescope_session: session,
         signed_token: signedToken.trim() || undefined,
       });
+      if (!active.current) return;
       setGradescopeSession("");
       setSignedToken("");
       await refreshState();
@@ -243,6 +289,7 @@ export function GradescopeSyncModal({
     setError(null);
     try {
       await linkGradescopeCourse(userId, saplingCourseId, gsCourseId, semester);
+      if (!active.current) return;
       setLinkedGsCourseId(gsCourseId);
       setLastSyncedAt(null);
       setStage("ready");
@@ -255,17 +302,22 @@ export function GradescopeSyncModal({
   }
 
   async function onSyncNow() {
-    if (!saplingCourseId) return; // settings-only mode has no course to sync
+    if (!saplingCourseId || submitting.current) return;
+    submitting.current = true;
     setError(null);
     setStage("syncing");
     try {
       const res = await syncGradescopeCourse(userId, saplingCourseId, semester);
+      if (!active.current) return;
       setResult(res);
       setStage("done");
       onSynced?.();
     } catch (e: unknown) {
+      if (!active.current) return;
       setError(humanizeError(e, "Sync failed"));
       setStage(statusOf(e) === 401 ? "choose-mode" : "ready");
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -282,6 +334,8 @@ export function GradescopeSyncModal({
 
   return createPortal(
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-labelledby="gs-modal-title"
@@ -297,6 +351,28 @@ export function GradescopeSyncModal({
       }}
       onClick={() => {
         if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          if (!saving && stage !== "syncing" && stage !== "bu-sso-waiting") onClose();
+        }
+        if (event.key !== "Tab") return;
+        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]',
+        ));
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (!first) {
+          event.preventDefault();
+          event.currentTarget.focus();
+        } else if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }}
     >
       <div
@@ -338,6 +414,8 @@ export function GradescopeSyncModal({
           >
             {stage === "choose-mode"
               ? "Connect Gradescope"
+              : stage === "verification-error"
+                ? "Couldn't verify Gradescope"
               : stage === "credentials"
                 ? "Sign in with Gradescope password"
                 : stage === "cookies"
@@ -376,6 +454,24 @@ export function GradescopeSyncModal({
         <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
           {stage === "loading" && (
             <p style={{ color: "var(--text-dim)", fontSize: 14 }}>Loading…</p>
+          )}
+
+          {stage === "verification-error" && (
+            <div>
+              <p style={{ color: "var(--text-dim)" }}>
+                Your saved credentials have not been changed. Retry the connection check,
+                or reconnect if you want to use a different Gradescope session.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                <button type="button" className="btn btn--primary" onClick={() => void refreshState()}>
+                  Retry connection
+                </button>
+                <button type="button" className="btn" onClick={() => { setError(null); setStage("choose-mode"); }}>
+                  Reconnect
+                </button>
+                <button type="button" className="btn" onClick={onClose}>Cancel</button>
+              </div>
+            </div>
           )}
 
           {stage === "choose-mode" && (
@@ -443,6 +539,7 @@ export function GradescopeSyncModal({
                 never shown again after this form.
               </p>
               <label
+                htmlFor={`${fieldId}-email`}
                 className="mono"
                 style={{
                   display: "block",
@@ -456,6 +553,7 @@ export function GradescopeSyncModal({
                 Email
               </label>
               <input
+                id={`${fieldId}-email`}
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -473,6 +571,7 @@ export function GradescopeSyncModal({
                 }}
               />
               <label
+                htmlFor={`${fieldId}-password`}
                 className="mono"
                 style={{
                   display: "block",
@@ -486,6 +585,7 @@ export function GradescopeSyncModal({
                 Password
               </label>
               <input
+                id={`${fieldId}-password`}
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -905,6 +1005,7 @@ function BuSsoFormStep({
   onSubmit: (e: React.FormEvent) => void;
   onBack: () => void;
 }) {
+  const fieldId = React.useId();
   return (
     <form onSubmit={onSubmit}>
       <p
@@ -925,6 +1026,7 @@ function BuSsoFormStep({
       </p>
 
       <label
+        htmlFor={`${fieldId}-username`}
         className="mono"
         style={{
           display: "block",
@@ -938,6 +1040,7 @@ function BuSsoFormStep({
         BU username
       </label>
       <input
+        id={`${fieldId}-username`}
         type="text"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
@@ -956,6 +1059,7 @@ function BuSsoFormStep({
         }}
       />
       <label
+        htmlFor={`${fieldId}-password`}
         className="mono"
         style={{
           display: "block",
@@ -969,6 +1073,7 @@ function BuSsoFormStep({
         BU password
       </label>
       <input
+        id={`${fieldId}-password`}
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
@@ -1159,6 +1264,7 @@ function CookiePasteStep({
   onSubmit: (e: React.FormEvent) => void;
   onBack: () => void;
 }) {
+  const fieldId = React.useId();
   return (
     <form onSubmit={onSubmit}>
       <p
@@ -1204,6 +1310,7 @@ function CookiePasteStep({
       </ol>
 
       <label
+        htmlFor={`${fieldId}-session`}
         className="mono"
         style={{
           display: "block",
@@ -1217,6 +1324,7 @@ function CookiePasteStep({
         _gradescope_session <span style={{ color: "var(--err)" }}>*</span>
       </label>
       <textarea
+        id={`${fieldId}-session`}
         value={gradescopeSession}
         onChange={(e) => setGradescopeSession(e.target.value)}
         required
@@ -1238,6 +1346,7 @@ function CookiePasteStep({
       />
 
       <label
+        htmlFor={`${fieldId}-token`}
         className="mono"
         style={{
           display: "block",
@@ -1251,6 +1360,7 @@ function CookiePasteStep({
         signed_token <span style={{ color: "var(--text-muted)" }}>(optional)</span>
       </label>
       <textarea
+        id={`${fieldId}-token`}
         value={signedToken}
         onChange={(e) => setSignedToken(e.target.value)}
         rows={2}
