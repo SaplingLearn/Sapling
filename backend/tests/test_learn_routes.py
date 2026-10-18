@@ -219,7 +219,7 @@ class TestModeSwitch:
         def factory(name):
             mock = MagicMock()
             if name == "sessions":
-                mock.select.return_value = [{"topic": topic}]
+                mock.select.return_value = [{"topic": topic, "user_id": "u1"}]
             else:
                 mock.select.return_value = []
             return mock
@@ -370,7 +370,9 @@ class TestRenameSession:
         )
         assert r.status_code == 400
 
-    def test_wrong_user_returns_403(self):
+    def test_wrong_user_returns_404(self):
+        """Foreign sessions answer the same 404 as missing ones, so session
+        ids can't be probed (see test_learn_session_ownership.py)."""
         sessions_mock = MagicMock()
         sessions_mock.select.return_value = [{"user_id": "other_user"}]
 
@@ -386,7 +388,7 @@ class TestRenameSession:
                 "/api/learn/sessions/s1",
                 json={"user_id": "u1", "topic": "Renamed"},
             )
-        assert r.status_code == 403
+        assert r.status_code == 404
 
     def test_missing_session_returns_404(self):
         with patch("routes.learn.table") as t:
@@ -441,7 +443,7 @@ class TestChatViaAgent:
             if name == "messages":
                 mock.select.return_value = rows
             elif name == "sessions":
-                mock.select.return_value = [{"offering_id": offering_id}]
+                mock.select.return_value = [{"offering_id": offering_id, "user_id": "user_andres"}]
             elif name == "users":
                 mock.select.return_value = [{"name": "Andres"}]
             elif name == "graph_nodes":
@@ -645,7 +647,7 @@ class TestChatViaAgent:
 
                 mock.insert.side_effect = _capture
             elif name == "sessions":
-                mock.select.return_value = [{"offering_id": "off1"}]
+                mock.select.return_value = [{"offering_id": "off1", "user_id": "user_andres"}]
             elif name == "users":
                 mock.select.return_value = [{"name": "Andres"}]
             else:
@@ -942,7 +944,7 @@ class TestActionAgent:
         def factory(name):
             mock = MagicMock()
             if name == "sessions":
-                mock.select.return_value = [{"offering_id": "off1"}]
+                mock.select.return_value = [{"offering_id": "off1", "user_id": "user_andres"}]
             else:
                 mock.select.return_value = []
             mock.insert.return_value = []

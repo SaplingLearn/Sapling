@@ -377,35 +377,16 @@ export function Hero({
 
       {/* Hero Content */}
       <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
-        {/* Legibility veil. The point cloud runs straight through the copy and
-            was breaking the letterforms, so the copy sits on a slight blur of
-            whatever is behind it plus a wash of the page colour. Both are
-            feathered by a radial mask so there is no edge — the dots just go
-            soft and pale as they pass under the text. Sits below the text in
-            this block's own stacking context (the block is z-20), above the
-            canvas and cards. */}
-        <div
-          aria-hidden
-          className="absolute -z-10 pointer-events-none"
-          style={{
-            inset: '-10% -16%',
-            backdropFilter: 'blur(4px)',
-            WebkitBackdropFilter: 'blur(4px)',
-            background:
-              'radial-gradient(ellipse at center, rgba(240,244,242,0.6) 0%, rgba(240,244,242,0.45) 55%, rgba(240,244,242,0.2) 100%)',
-            // Two linear fades intersected, not one radial: a radial mask
-            // thinned out over the S and the g, so the ends of the wordmark
-            // sat in sharp dots while the middle sat in soft ones. This holds
-            // full strength across the whole block and feathers only at the
-            // outer margin the negative inset adds.
-            maskImage:
-              'linear-gradient(90deg, transparent 0%, #000 14%, #000 86%, transparent 100%), linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%)',
-            WebkitMaskImage:
-              'linear-gradient(90deg, transparent 0%, #000 14%, #000 86%, transparent 100%), linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%)',
-            maskComposite: 'intersect',
-            WebkitMaskComposite: 'source-in',
-          }}
-        />
+        {/* There is deliberately no legibility veil behind the copy.
+            A blurred, washed plate used to sit here — `backdrop-filter:
+            blur(4px)` plus a radial wash of the page colour — because the
+            point cloud runs straight through the wordmark and was breaking
+            the letterforms. It was inset -10%/-16%, wider than the text it
+            was protecting, so it also caught the two floating cards either
+            side and left them permanently hazy: a fix for the copy that cost
+            the panels their focus. Removed by request. If the dots ever need
+            taming again, do it to the dots — thin the field behind the copy
+            in the canvas — not with a plate over everything behind them. */}
         {/* The wordmark scrambles in client-side, so the accessible name is
             the only server-rendered trace of it — public-seo.spec pins that. */}
         <h1 aria-label="Sapling" style={{

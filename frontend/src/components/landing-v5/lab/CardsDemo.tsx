@@ -76,7 +76,7 @@ export function CardsDemo() {
 
       {done ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, animation: 'labIn 320ms ease both' }}>
-          <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 30, fontWeight: 600 }}>Deck complete</span>
+          <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 30, fontWeight: 600 }}>Deck complete</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 'min(340px,100%)' }}>
             {log.map((l, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 13px', borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
@@ -90,7 +90,7 @@ export function CardsDemo() {
           <button
             onClick={() => { setIdx(0); setFlipped(false); setLog([]); }}
             type="button"
-            style={{ marginTop: 4, padding: '10px 22px', borderRadius: 10, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            style={{ marginTop: 4, padding: '10px 22px', borderRadius: 10, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
           >
             Study again
           </button>
@@ -102,12 +102,12 @@ export function CardsDemo() {
               <div style={{ position: 'relative', width: '100%', maxWidth: 600, aspectRatio: '16 / 9', maxHeight: '100%', transformStyle: 'preserve-3d', transition: 'transform 560ms cubic-bezier(0.4,0,0.2,1)', transform: `rotateY(${flipped ? 180 : 0}deg)` }}>
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(18,32,26,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
                   <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#9AA5A0' }}>FRONT</span>
-                  <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#12201A' }}>{card.q}</span>
+                  <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#12201A' }}>{card.q}</span>
                   <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#B4BEB8' }}>click to reveal</span>
                 </div>
                 <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', borderRadius: 18, background: '#0C5638', border: '1px solid #0C5638', boxShadow: '0 18px 40px -18px rgba(12,86,56,0.5)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
                   <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#8FD9A8' }}>BACK</span>
-                  <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 'clamp(18px,2.1vw,24px)', fontWeight: 500, lineHeight: 1.4, color: '#F6F8F4' }}>{card.a}</span>
+                  <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(18px,2.1vw,24px)', fontWeight: 500, lineHeight: 1.4, color: '#F6F8F4' }}>{card.a}</span>
                   <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: 'rgba(230,242,232,0.5)' }}>HOW DID THAT GO?</span>
                 </div>
               </div>
@@ -122,7 +122,7 @@ export function CardsDemo() {
                   onClick={() => rate(k)}
                   type="button"
                   className="ld-labrate"
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '11px 0', borderRadius: 11, fontFamily: "'DM Sans',sans-serif", cursor: 'pointer', transition: 'all 180ms', border: `1px solid ${RATE_TONE[k]}66`, background: `${RATE_TONE[k]}12` }}
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '11px 0', borderRadius: 11, fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", cursor: 'pointer', transition: 'all 180ms', border: `1px solid ${RATE_TONE[k]}66`, background: `${RATE_TONE[k]}12` }}
                 >
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: RATE_TONE[k] }}>
                     {RATE_LABEL[k]} <b style={{ ...MONO, fontSize: 10, color: '#9AA5A0', fontWeight: 400 }}>{k}</b>

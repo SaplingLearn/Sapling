@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { WIKI_TOC } from '@/lib/landing/companionContent';
 import { DISPLAY, INK } from '@/lib/landing/companionType';
+import { useWikiSearch } from './WikiSearch';
 
 /**
  * The wiki's contents rail, with a scrollspy.
@@ -45,15 +46,37 @@ const SPY_LINE = 100;
  * beside it: display face for a heading, quieter face for its contents. Size
  * and colour both run the same direction, so the tier is legible at a glance
  * without a rule or an indent to prop it up.
+ *
+ * Both tiers are sized in `vh` between a floor and the size they had, so
+ * eighteen links and five group labels fit the viewport instead of scrolling
+ * inside the rail. The rail was a flat 781px, which fits a 900px-tall window
+ * and nothing shorter — it scrolled on 1366x768 and 1280x720, two of the
+ * commonest laptop screens there are, and the scroll was inside a sticky box
+ * most people never think to scroll. The heading voice above survives the
+ * shrink: the label stays Playfair in ink, it just stops being 18px on a
+ * screen that cannot afford 18px.
+ *
+ * `lineHeight` is pinned rather than left at `normal`: the leading is most of
+ * a row's height at these sizes, and an unpinned one varies by font and
+ * platform, so the fit would have been measured on one machine and wrong on
+ * the next.
  */
 const GROUP: React.CSSProperties = {
-  fontFamily: DISPLAY, fontWeight: 500, fontSize: 18, lineHeight: 1.25,
-  letterSpacing: '-0.01em', color: INK, marginBottom: 8,
+  fontFamily: DISPLAY, fontWeight: 500,
+  fontSize: 'clamp(14px, 2vh, 18px)', lineHeight: 1.25,
+  letterSpacing: '-0.01em', color: INK,
+  marginBottom: 'clamp(2px, 0.85vh, 8px)',
 };
-const LINK: React.CSSProperties = { fontSize: 14, lineHeight: 1.4, padding: '4px 0', transition: 'color 120ms ease' };
+const LINK: React.CSSProperties = {
+  fontSize: 'clamp(10.5px, 1.5vh, 13.5px)',
+  padding: 'clamp(1px, 0.4vh, 4px) 0',
+  lineHeight: 1.25,
+  transition: 'color 120ms ease',
+};
 
 export function WikiRail() {
   const [active, setActive] = React.useState('');
+  const { query, q, prose } = useWikiSearch();
 
   React.useEffect(() => {
     // TOC order is DOM order, which is what lets the loop below stop early.
@@ -95,15 +118,32 @@ export function WikiRail() {
     };
   }, []);
 
+  /* A group survives only if something in it matched, so the rail collapses
+     to the answer instead of leaving empty headings behind. Matching the
+     group name too means "capture" finds the whole Capture set, which is how
+     people search a contents list. */
+  const groups = WIKI_TOC.map((section) => ({
+    group: section.group,
+    items: section.items.filter((t) =>
+      !q
+      || t.title.toLowerCase().includes(q)
+      || section.group.toLowerCase().includes(q)
+      || (prose[t.href.slice(1)] ?? '').includes(q)),
+  })).filter((section) => section.items.length > 0);
+
   return (
-    /* Eighteen entries plus their group labels outgrow a short viewport, and
-       a sticky element taller than the screen puts its last items out of
-       reach. Bounded and scrollable so every section stays clickable. */
+    /* Sized to fit rather than bounded and scrolled. `overflowY: auto`
+       survives only as a last resort for a window too short for even the
+       clamp floors (under ~460px tall); at every ordinary size the content
+       is smaller than the box and the scrollbar never appears.
+       `.wiki-rail` carries the narrow-width collapse — see globals.css. */
     <nav
       aria-label="Contents"
+      className="wiki-rail"
       style={{
-        position: 'sticky', top: 84, maxHeight: 'calc(100vh - 104px)', overflowY: 'auto',
-        display: 'flex', flexDirection: 'column', gap: 26,
+        position: 'sticky', top: 84, maxHeight: 'calc(100vh - 100px)',
+        overflowY: 'auto', display: 'flex', flexDirection: 'column',
+        gap: 'clamp(5px, 1.9vh, 18px)',
         /* Both columns start at the same grid row top, but they set Playfair
            at different sizes, so their first lines sit at different baselines
            — the rail's label floated 14px above the section heading beside
@@ -112,7 +152,13 @@ export function WikiRail() {
         paddingTop: 14,
       }}
     >
-      {WIKI_TOC.map((section) => (
+      {groups.length === 0 && (
+        <span style={{ fontSize: 13, color: '#8d866f', lineHeight: 1.5 }}>
+          Nothing matches “{query.trim()}”.
+        </span>
+      )}
+
+      {groups.map((section) => (
         /* `aria-labelledby` rather than a real <h2>: the groups are headings
            of the rail, but the article column already owns h2 for its
            eighteen sections, and five more would double every entry in the

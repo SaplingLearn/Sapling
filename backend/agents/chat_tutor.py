@@ -8,7 +8,8 @@ read_session_history_tool, read_user_progress_tool,
 apply_graph_update_tool, update_mastery_tool.
 
 Modes (Socratic, Expository, TeachBack) are gated by selecting different
-system prompts at construction time. The route picks the right agent
+prompts at construction time (passed as `instructions=`, so they are sent
+on every turn — see `_build_agent`). The route picks the right agent
 instance per request based on body.mode.
 
 Per-call thinking budget: the Pro thinking cap is applied at the route
@@ -45,7 +46,10 @@ from agents.tools.graph_read import (
 TutorMode = Literal["socratic", "expository", "teachback"]
 
 
-# ── System prompts (one per mode) ──────────────────────────────────────────
+# ── Instructions (one per mode) ────────────────────────────────────────────
+#
+# Passed to the agent as `instructions=`, never `system_prompt=` — see
+# `_build_agent` for why that kwarg must not be "tidied" back.
 
 # #150: academic-integrity parity with the legacy prompt
 # (prompts/preamble.txt) — held out of #149 for this issue. Compact form
@@ -144,8 +148,8 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All seven tools are registered on every mode. The system prompt steers
-# WHEN to call them; the surface stays uniform so a Pro-tier model can
+# All seven tools are registered on every mode. The mode's instructions
+# steer WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
 
 
@@ -172,7 +176,15 @@ def _build_agent(mode: TutorMode) -> Agent[SaplingDeps, str]:
         model=model_for("chat_tutor"),
         deps_type=SaplingDeps,
         output_type=str,
-        system_prompt=_PROMPTS[mode],
+        # `instructions=`, NOT `system_prompt=`: pydantic-ai sends a
+        # system_prompt only when message_history is empty, and every tutor
+        # turn after the opener runs with history rebuilt from `messages`
+        # rows (routes.learn._load_message_history), which carries no
+        # SystemPromptPart. With system_prompt those turns ran without the
+        # mode rules, academic integrity, the injection guard and the tool
+        # guidance. Instructions are re-sent on every model request.
+        # Pinned by tests/test_chat_tutor_prompt_every_turn.py.
+        instructions=_PROMPTS[mode],
         metadata={
             "prompt_version": _PROMPT_HASHES[mode],
             "agent": "chat_tutor",

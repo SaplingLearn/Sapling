@@ -13,10 +13,15 @@
  * so the hierarchy is doing the work, not decoration.
  */
 :root {
-  --font-display: 'Playfair Display', 'Spectral', georgia, serif;
-  --font-serif: 'Spectral', 'Playfair Display', georgia, serif;
-  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  /* Each role leads with the loader's variable, not the human family name.
+     `next/font/local` registers every face under a generated name, so a bare
+     'Playfair Display' matches nothing and silently renders Times — see
+     lib/landing/fonts.ts. The human names stay behind the variable as a
+     courtesy to anyone who has the font installed. */
+  --font-display: var(--font-playfair), 'Playfair Display', var(--font-spectral), 'Spectral', georgia, serif;
+  --font-serif: var(--font-spectral), 'Spectral', var(--font-playfair), 'Playfair Display', georgia, serif;
+  --font-sans: var(--font-dm-sans), 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
   --brand-forest: #1B6C42;
@@ -929,6 +934,165 @@ body { font-size: 14px; line-height: 1.5; }
   overflow-y: auto;
   padding: var(--pad-lg);
 }
+
+/* ── Tooltip / InfoTip / Switch ──────────────────────────────────────
+   Tooltip portals to <body> and is positioned `fixed` from its trigger
+   (ui/Tooltip.tsx), so it never clips inside a Sheet or scroll box. */
+.tt-anchor { display: inline-flex; }
+.tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 280px;
+  padding: 8px 11px;
+  border-radius: var(--r-sm);
+  background: var(--ink-900, #1d2a1b);
+  color: #fff;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  animation: fade-in var(--dur-fast) var(--ease);
+}
+.tooltip[data-side="bottom"] { transform: translate(-50%, 0); }
+.info-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+}
+.info-tip:hover, .info-tip:focus-visible { color: var(--text); border-color: var(--text-muted); }
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+  transition: background var(--dur-fast) var(--ease);
+  cursor: pointer;
+}
+.switch[aria-checked="true"] { background: var(--brand-forest); }
+.switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.switch[aria-checked="true"] .switch__knob { transform: translateX(16px); }
+.field {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input, var(--bg-panel));
+  font-size: var(--fs-md);
+  font-family: inherit;
+}
+.field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ── Admin: feature flags (#620) ─────────────────────────────────────── */
+.flags { display: flex; flex-direction: column; gap: 28px; }
+.flags__intro { display: flex; align-items: center; gap: 10px; color: var(--text-dim); font-size: var(--fs-md); }
+.flags__intro p { margin: 0; }
+.flags__empty { padding: 32px; text-align: center; color: var(--text-muted); }
+.flags__group { display: flex; flex-direction: column; gap: 10px; }
+.flags__group-title { margin: 0; padding-left: 2px; }
+.flags__list { overflow: hidden; }
+.flag-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 112px auto auto;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 16px 16px 20px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.flag-row + .flag-row { border-top: 1px solid var(--border); }
+.flag-row:hover { background: var(--bg-subtle); }
+.flag-row__main { min-width: 0; }
+.flag-row__title { font-weight: 600; font-size: var(--fs-base); color: var(--text); }
+.flag-row__desc { margin-top: 3px; font-size: var(--fs-sm); color: var(--text-muted); }
+.flag-row__chips { display: flex; gap: 6px; justify-content: flex-end; }
+.flag-row__changed { font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; }
+.flag-row__state { display: flex; align-items: center; gap: 10px; cursor: default; }
+.flag-row__state-label { min-width: 52px; text-align: right; font-size: var(--fs-sm); color: var(--text-dim); }
+.flag-row__open { color: var(--text-muted); }
+@media (max-width: 760px) {
+  .flag-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; }
+  .flag-row__chips, .flag-row__changed { grid-column: 1; justify-content: flex-start; }
+  .flag-row__open { display: none; }
+}
+.flags__confirm-text { margin: 0 0 24px; color: var(--text-dim); font-size: var(--fs-base); line-height: 1.55; }
+.flags__confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.flag-panel { display: flex; flex-direction: column; gap: 28px; min-height: 100%; }
+.flag-panel__desc { margin: 0; color: var(--text-dim); font-size: var(--fs-md); line-height: 1.5; }
+.flag-panel__section { display: flex; flex-direction: column; gap: 12px; }
+.flag-panel__section + .flag-panel__section { padding-top: 24px; border-top: 1px solid var(--border); }
+.flag-panel__section-head { display: flex; align-items: center; gap: 8px; }
+.flag-panel__section-title { margin: 0; font-size: var(--fs-base); font-weight: 600; color: var(--text); }
+.flag-panel__fit { align-self: flex-start; flex-shrink: 0; }
+.flag-panel__muted { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
+.flag-panel__rollout-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-md); color: var(--text-dim); }
+.flag-panel__pct { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); }
+.flag-panel__presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.flag-panel__preset {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  background: var(--bg-panel);
+  transition: all var(--dur-fast) var(--ease);
+}
+.flag-panel__preset:hover { border-color: var(--border-strong); color: var(--text); }
+.flag-panel__preset[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-border); color: var(--sap-600); font-weight: 600; }
+.flag-panel__range { width: 100%; accent-color: var(--brand-forest); }
+.flag-panel__overrides { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); }
+.flag-panel__overrides li { display: flex; align-items: center; gap: 10px; padding: 9px 8px 9px 12px; }
+.flag-panel__overrides li + li { border-top: 1px solid var(--border); }
+.flag-panel__override-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); }
+.flag-panel__remove { color: var(--text-muted); }
+.flag-panel__add { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--r-md); background: var(--bg-subtle); }
+.flag-panel__add-row { display: flex; align-items: center; gap: 10px; }
+.flag-panel__add-btn { margin-left: auto; }
+.flag-panel__add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.flag-panel__results { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--bg-panel); }
+.flag-panel__results button { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 7px 10px; border-radius: var(--r-xs); text-align: left; font-size: var(--fs-md); }
+.flag-panel__results button:hover, .flag-panel__results button:focus-visible { background: var(--bg-soft); }
+.flag-panel__result-sub { font-size: var(--fs-xs); color: var(--text-muted); }
+.flag-panel__explain { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--accent-soft); font-size: var(--fs-md); }
+.flag-panel__footer {
+  position: sticky;
+  bottom: calc(-1 * var(--pad-lg));
+  margin: auto calc(-1 * var(--pad-lg)) calc(-1 * var(--pad-lg));
+  padding: 14px var(--pad-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  box-shadow: 0 -8px 16px -12px rgba(0, 0, 0, 0.2);
+}
+.flag-panel__summary { margin: 0; font-size: var(--fs-md); color: var(--text); line-height: 1.5; }
+.flag-panel__footer-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ── EmptyState ──────────────────────────────────────────────────────
    `hero` is Gradebook's display-scale blank-semester screen, promoted here
@@ -2352,6 +2516,56 @@ input[type="reset"]:disabled {
      the viewport corner — when a window is narrowed after the page loaded. */
   .landing-dc .drag-shell    { display: none !important; }
 }
+
+/* The gallery's handwritten "click to demo the features!" note.
+   Its whole meaning is positional — an arrow sweeping down-left onto the
+   first rail of cards. Once the header row wraps, the note is no longer
+   beside the rails and the arrow points at the body copy instead, so it
+   comes off rather than lying about where to click. */
+@media (max-width: 899px) {
+  /* `!important` for the same reason the two rules above carry it: the note
+     sets `display: flex` inline, and an inline declaration outranks any
+     stylesheet rule without it. */
+  .landing-dc .ld-handnote { display: none !important; }
+}
+
+/* ── Wiki contents rail ────────────────────────────────────────────
+   The rail is a fixed 190px column beside the article. That holds until the
+   window is narrow enough for 190px to be most of it: at 390px wide the
+   rail took 190 and left the reference itself 112px, so the page whose job
+   is showing you exact definitions had them wrapping two words to a line.
+
+   Under 900px the grid collapses to one column and the rail stops being a
+   sidebar: static rather than sticky, unbounded rather than capped, and its
+   five groups flow as a wrapping row above the article. Nothing scrolls
+   inside it at any width — on a short window the page scrolls, which is what
+   a reader expects; a scrollbar inside a sticky box is one most people never
+   find. `!important` throughout because every one of these properties is set
+   inline on the element (see WikiRail.tsx).
+
+   The `max-height` half of the query matters as much as the width half. The
+   rail's height is set by its eighteen entries, not by the window's width,
+   so a wide-but-short window — 960x560, a half-height window on a laptop —
+   keeps the sidebar and cannot fit it however far the clamps in WikiRail.tsx
+   squeeze. Below 580px tall the same collapse applies at any width: measured,
+   600px tall is the shortest window the column still fits. */
+@media (max-width: 899px), (max-height: 580px) {
+  .wiki-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .wiki-rail {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 18px 28px !important;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(42, 39, 31, 0.12);
+  }
+  /* Each group keeps its own label-over-links stack; the groups are what
+     wrap, so the contents still read as five named sets rather than one
+     undifferentiated run of eighteen links. */
+  .wiki-rail > div { min-width: 132px; }
+}
 /* The grove's cards keep one size at every viewport height.
    Two `max-height` rules used to tighten them in steps — the demo pane to
    124px under 1020px of viewport, 110px under 880px — so the header and both
@@ -2474,12 +2688,31 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   .landing-v5 .hero-info p  { font-size:12.5px !important; }
 }
 
+/* Gallery card responsive scale (#624). `--gal-scale` drives a uniform
+   `transform: scale()` on `.ld-galcard` (see Gallery.tsx's `CARD`/`SLOT`) so
+   the illustration, type, and every keyframe animation shrink together —
+   not the width-only resize that left the v4 grove cards squashed (see the
+   note above `.landing-dc .gal-rail`). One card fully visible plus a peek
+   of the next is what both breakpoints are tuned for. */
+.landing-v5 #gallery { --gal-scale: 1; }
+@media (max-width: 899px) {
+  .landing-v5 #gallery { --gal-scale: 0.84; }
+}
+@media (max-width: 599px) {
+  .landing-v5 #gallery { --gal-scale: 0.68; }
+}
+
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). */
 .landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
 
-/* Gallery + feature lab hover states. */
-.landing-v5 .ld-galcard:hover  { transform: translateY(-5px); }
+/* Gallery + feature lab hover states.
+   `.ld-galcard` carries a base `transform: scale(var(--gal-scale))` for the
+   responsive shrink (#624), so the hover rule has to restate that scale
+   alongside the lift — replacing it outright would snap the card back to
+   full size the instant a cursor lands on it. */
+.landing-v5 .ld-galcard        { transform: scale(var(--gal-scale, 1)); }
+.landing-v5 .ld-galcard:hover  { transform: scale(var(--gal-scale, 1)) translateY(-5px); }
 .landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
 .landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
 .landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
@@ -2701,7 +2934,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes labSpin { to { transform:rotate(360deg); } }
 @keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
 
-.landing-v5 .ld-labprimary:hover { background: #0C5638; }
+/* The rest state is now #0C5638, so hover lifts to the bright green the
+   room's Send button already uses rather than repeating the base colour. */
+.landing-v5 .ld-labprimary:hover { background: #0E9E5A; }
 .landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
 .landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
 .landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
