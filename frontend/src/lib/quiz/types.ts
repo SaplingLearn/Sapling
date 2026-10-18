@@ -25,6 +25,7 @@ export type FeedbackMode = "as-you-go" | "at-end";
 /** Persisted under `sapling_quiz_prefs`. `null` means "no stored preference —
  *  fall back to the config-derived default". */
 export interface QuizPrefs {
+  questionFormat?: string;
   count: number | null;
   difficulty: string | null;
   feedback: FeedbackMode;
@@ -38,6 +39,8 @@ export interface WireOption {
 }
 
 export interface WireQuestion {
+  material_context?: "course_material" | "catalog" | "general";
+  type?: "multiple_choice" | "short_answer" | "numeric" | "symbolic";
   id: number;
   question: string;
   options: WireOption[];
@@ -72,6 +75,8 @@ export interface GenerateResult {
 }
 
 export interface AnswerResult {
+  answer_text?: string;
+  correct_answer?: string | null;
   question_index: number;
   question_id: number;
   is_correct: boolean;
@@ -189,7 +194,8 @@ export interface AttemptDetail {
   questions: WireQuestion[];
   responses: {
     question_index: number;
-    selected_index: number;
+    selected_index: number | null;
+    answer_text?: string | null;
     is_correct: boolean;
     answered_at: string;
   }[];
@@ -235,10 +241,11 @@ export type QuizScope =
   | { kind: "missed"; conceptId: string; missedCount: number };
 
 export interface QuizItem {
+  answerText?: string;
   index: number;
   question: WireQuestion;
   selectedIndex: number | null;
-  verdict: { isCorrect: boolean; correctIndex: number; explanation: string } | null;
+  verdict: { isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
   flagged: boolean;
 }
 
@@ -258,7 +265,7 @@ export interface QuizSession {
   intent: QuizIntent;
   scope: QuizScope;
   source: QuizSource;
-  config: { count: number; difficulty: string; feedback: FeedbackMode };
+  config: { count: number; difficulty: string; feedback: FeedbackMode; questionFormat?: string };
   conceptId: string;
   courseId: string | null;
   attemptId: string | null;

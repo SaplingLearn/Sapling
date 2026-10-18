@@ -235,6 +235,9 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
+| `quiz-written-answer` | labeled written-answer textarea for short answers, numeric answers, and algebra |
+| `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
+| `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
 | `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
 | `quiz-next` | the same footer button once the verdict is showing — "Next question" / "See results" |

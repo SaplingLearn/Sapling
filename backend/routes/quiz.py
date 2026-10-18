@@ -40,6 +40,8 @@ from services.request_limits import check_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
+from services.quiz_grading import WRITTEN_TYPES, grade_written, numeric_value
+from services.quiz_algebra import equivalent_algebra
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.academics import course_offering_ids
@@ -389,13 +391,22 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
 # stored row from an older shape can hold the answer under any key at all
 # (the rich seed has {"q":..., "a":...}). Anything not listed here never
 # reaches a client that hasn't answered yet.
-_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty")
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context")
 _KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _written_response_text(row: dict) -> str:
+    if not row.get("answer_text"):
+        return ""
+    value = decrypt_json_column(row["answer_text"])
+    return value.get("text", "") if isinstance(value, dict) else ""
 
 
 def _is_wire_question(q) -> bool:
     """True if this stored question is in the current wire shape, so
     _strip_answer_key can be trusted to remove everything sensitive."""
+    if isinstance(q, dict) and q.get("type") in WRITTEN_TYPES:
+        return _validate_wire_question(q)
     return (
         isinstance(q, dict)
         and isinstance(q.get("options"), list)
@@ -458,6 +469,14 @@ def _validate_wire_question(wire: dict) -> bool:
     exactly one correct option (zero = ungradable free point per #129,
     two = the grader's first-match wins silently).
     """
+    if wire.get("type") in WRITTEN_TYPES:
+        answer = wire.get("correct_answer")
+        return (
+            isinstance(answer, str) and bool(answer.strip())
+            and len(answer) <= 2000 and not wire.get("options")
+            and (wire["type"] != "numeric" or numeric_value(answer) is not None)
+            and (wire["type"] != "symbolic" or equivalent_algebra(answer, answer))
+        )
     options = wire.get("options") or []
     qid = wire.get("id")
     if len(options) < _MIN_OPTIONS:
@@ -496,6 +515,15 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 
     Returning None lets the caller filter questions out cleanly.
     """
+    if q.type in WRITTEN_TYPES:
+        wire = {
+            "id": qid, "type": q.type, "question": q.question, "options": [],
+            "correct_answer": q.correct_answer, "accepted_answers": q.accepted_answers,
+            "explanation": q.explanation, "concept_tested": q.concept,
+            "difficulty": q.difficulty,
+            "question_hash": question_hash(q.question, [q.type]),
+        }
+        return wire if _validate_wire_question(wire) else None
     options: list[dict] = []
     matched = False
     canonical = q.correct_answer.strip()
@@ -1028,6 +1056,7 @@ async def _quiz_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    question_format: str = "multiple_choice",
     times_studied: int | None = None,
     has_graph: bool | None = None,
 ) -> GeneratedQuiz:
@@ -1255,6 +1284,7 @@ async def _quiz_via_agent(
         request_id=request_id,
     )
     routing_msg += _do_not_repeat_block(recent)
+    routing_msg += f"\nquestion_format: {question_format}. Only generate the requested format; mixed uses a useful variety.\n"
 
     if material.block:
         user_message = (
@@ -1347,6 +1377,9 @@ async def _quiz_via_agent(
     def _absorb(quiz: Quiz, model: str) -> None:
         nonlocal dropped
         for q in quiz.questions:
+            if question_format != "mixed" and q.type != question_format:
+                dropped += 1
+                continue
             # E5: identity is the dedupe key now. The stem check is kept
             # alongside it and is the COARSER of the two — a hash covers the
             # stem AND the options, so a model re-emitting one stem with
@@ -1354,7 +1387,7 @@ async def _quiz_via_agent(
             # Dropping it would have narrowed #543's duplicate-question
             # guard, which is not a trade E5 needs to make.
             stem = normalize_text(q.question)
-            qhash = question_hash(q.question, q.options)
+            qhash = question_hash(q.question, [q.type] if q.type in WRITTEN_TYPES else q.options)
             if qhash in seen_hashes or stem in seen_stems:
                 logger.warning(
                     "quiz: dropping duplicate question (hash=%s, stem_len=%d)",
@@ -1367,6 +1400,9 @@ async def _quiz_via_agent(
                 dropped += 1
                 continue
             mapped["provenance"] = {**provenance_base, "model": model}
+            mapped["material_context"] = (
+                "course_material" if material.rag_grounded else "catalog" if material.has_catalog else "general"
+            )
             seen_stems.add(stem)
             seen_hashes.add(qhash)
             wire_questions.append(mapped)
@@ -1694,6 +1730,7 @@ async def _generate_or_502(
             use_shared_context=body.use_shared_context,
             request_id=request_id,
             model_pref=body.model_pref,
+            question_format=body.question_format,
             times_studied=times_studied,
             # A fact, not a guess (#592): `generate_quiz` reached here only
             # after an owner-scoped `graph_nodes` read, and `course_id` came
@@ -2060,10 +2097,14 @@ def get_attempt(attempt_id: str, request: Request):
     attempt = _load_owned_attempt(attempt_id, request)
 
     responses = table("quiz_responses").select(
-        "question_index,selected_index,is_correct,time_ms,confidence,answered_at",
+        "question_index,selected_index,answer_text,is_correct,time_ms,confidence,answered_at",
         filters={"attempt_id": f"eq.{attempt_id}"},
         order="question_index.asc",
     ) or []
+    responses = [
+        {**r, "answer_text": _written_response_text(r) if r.get("answer_text") else None}
+        for r in responses
+    ]
     last_activity = max(
         (r.get("answered_at") for r in responses if r.get("answered_at")),
         default=None,
@@ -2131,7 +2172,11 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         )
     question = questions[body.question_index]
     options = question.get("options", [])
-    if body.selected_index >= len(options):
+    written = question.get("type") in WRITTEN_TYPES
+    if (written and body.answer_text is None) or (not written and body.selected_index is None):
+        raise QuizAPIError(status_code=400, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+                           message="Use the answer format shown for this question.")
+    if not written and body.selected_index >= len(options):
         raise QuizAPIError(
             status_code=400,
             code=QuizErrorCode.QUIZ_QUESTION_INVALID,
@@ -2154,7 +2199,9 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         (i for i, o in enumerate(options) if o.get("correct")), -1
     )
 
-    def _is_correct(selected_index: int) -> bool:
+    def _is_correct(selected_index: int | None, answer_text: str | None = None) -> bool:
+        if written:
+            return grade_written(question, answer_text or "")
         return correct_index >= 0 and correct_index == selected_index
 
     recorded = True
@@ -2174,10 +2221,12 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             "attempt_id": attempt_id,
             "question_index": body.question_index,
             "selected_index": body.selected_index,
-            "is_correct": _is_correct(body.selected_index),
+            "is_correct": _is_correct(body.selected_index, body.answer_text),
             "time_ms": body.time_ms,
             "confidence": body.confidence,
         }
+        if written:
+            row["answer_text"] = encrypt_json({"text": body.answer_text})
         # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
         # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
         # conditional claim on `quiz_attempts`; an INSERT into `quiz_responses`
@@ -2220,7 +2269,10 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         # it immediately rather than discovering it at submit time.
         "question_index": body.question_index,
         "question_id": question.get("id"),
-        "is_correct": _is_correct(response_row["selected_index"]),
+        "is_correct": _is_correct(response_row["selected_index"],
+                                  _written_response_text(response_row)),
+        "correct_answer": question.get("correct_answer") if written else None,
+        **({"answer_text": _written_response_text(response_row)} if written else {}),
         "correct_index": correct_index,
         "explanation": question.get("explanation", ""),
         "next_question": next_question,
@@ -2462,7 +2514,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index",
+        "question_index,selected_index,answer_text",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -2479,6 +2531,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     for q_index, q in enumerate(questions):
         qid = str(q["id"])
         recorded = recorded_by_index.get(q_index)
+        if q.get("type") in WRITTEN_TYPES:
+            # Written responses must have been accepted through /answer. Never
+            # let a submission payload override the first recorded response.
+            selected_text = _written_response_text(recorded) if recorded else ""
+            is_correct = grade_written(q, selected_text)
+            if selected_text:
+                graded_answers.append({"question_id": q["id"], "answer_text": selected_text})
+            score += int(is_correct)
+            results.append({"question_id": qid, "selected": selected_text,
+                            "correct": is_correct, "correct_answer": q.get("correct_answer", ""),
+                            "explanation": q.get("explanation", "")})
+            continue
         if recorded is not None:
             sel_idx = recorded.get("selected_index")
             options = q.get("options", [])

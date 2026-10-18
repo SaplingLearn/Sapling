@@ -30,6 +30,7 @@ handlers here rather than growing parallel modules.
 from __future__ import annotations
 
 import json
+import re
 
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
@@ -147,11 +148,27 @@ _E2E_QUIZ_QUESTIONS = [
 
 
 def _quiz_handler(messages, info) -> ModelResponse:
+    prompt = "\n".join(
+        part.content for message in messages for part in message.parts
+        if getattr(part, "part_kind", None) == "user-prompt" and isinstance(part.content, str)
+    )
+    requested = re.search(r"question_format: (short_answer|numeric|symbolic|mixed)\.", prompt)
+    questions = _E2E_QUIZ_QUESTIONS
+    if requested:
+        formats = ["short_answer", "numeric", "symbolic"] if requested[1] == "mixed" else [requested[1]] * 3
+        answers = {"short_answer": "base case", "numeric": "0.5", "symbolic": "2x+2"}
+        questions = [{
+            "question": f"E2E written question {n}: enter the {kind} fixture answer.",
+            "type": kind, "difficulty": "medium", "options": [],
+            "correct_answer": answers[kind],
+            "accepted_answers": ["termination condition"] if kind == "short_answer" else [],
+            "explanation": "Scripted written-answer fixture.", "concept": "Recursion",
+        } for n, kind in enumerate(formats, 1)]
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name=info.output_tools[0].name,
-                args={"questions": _E2E_QUIZ_QUESTIONS},
+                args={"questions": questions},
             )
         ]
     )

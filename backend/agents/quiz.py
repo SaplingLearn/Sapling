@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
 
 from agents._providers import model_for
@@ -30,19 +30,14 @@ from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 # Difficulty + question type are Literals so Gemini's enum constraint
 # applies and downstream UI can branch on stable strings.
-#
-# `QuizQuestionType` is intentionally MCQ-only today. The frontend
-# `submitQuiz` flow grades by `q["options"][i].correct` lookup — there's
-# no UI for free-text answers, no fuzzy-match grading, no LLM-judged
-# scoring. Generating short-answer questions through this path would
-# emit unrenderable, ungradable items. Keep the type narrow until real
-# short-answer support exists; revisit when that lands.
+# Written formats use deterministic server grading; mixed is a request mode,
+# not a question type. Every emitted item has one concrete answer format.
 QuizDifficulty = Literal["easy", "medium", "hard"]
-QuizQuestionType = Literal["multiple_choice"]
+QuizQuestionType = Literal["multiple_choice", "short_answer", "numeric", "symbolic"]
 
 
 class QuizQuestion(BaseModel):
-    """A single multiple-choice quiz question. Kept small so the parent
+    """A single quiz question. Kept small so the parent
     Quiz schema doesn't trip Gemini's structured-output complexity limit."""
 
     # NOTE: no `max_length` on the string fields below. Gemini's
@@ -56,10 +51,10 @@ class QuizQuestion(BaseModel):
     question: str
     type: QuizQuestionType
     difficulty: QuizDifficulty
-    # Exactly 4 options (matches the system prompt's "4 options, exactly
-    # one correct"). Also narrows the schema vs. the prior 3-6 range,
-    # which was part of the "too many states" issue above.
-    options: list[str] = Field(min_length=4, max_length=4)
+    # MCQ has four choices; written formats have none. Conditional validation
+    # stays out of the JSON schema to keep provider schema complexity bounded.
+    options: list[str] = Field(default_factory=list, max_length=4)
+    accepted_answers: list[str] = Field(default_factory=list, max_length=8)
     # The option text the agent considers correct. Must appear verbatim
     # in `options`; the route validates this and drops questions that
     # violate the contract rather than silently mis-marking them.
@@ -69,6 +64,18 @@ class QuizQuestion(BaseModel):
     # concept_names per the prompt. Used by the route to award mastery
     # on a correct answer.
     concept: str
+
+    @model_validator(mode="after")
+    def validate_format(self):
+        if self.type == "multiple_choice" and len(self.options) != 4:
+            raise ValueError("Multiple-choice questions need four options.")
+        if self.type != "multiple_choice" and self.options:
+            raise ValueError("Written questions must not contain answer choices.")
+        if not self.correct_answer.strip() or len(self.correct_answer) > 2000:
+            raise ValueError("A bounded canonical answer is required.")
+        if any(not answer.strip() or len(answer) > 2000 for answer in self.accepted_answers):
+            raise ValueError("Accepted answers must be non-empty and bounded.")
+        return self
 
 
 class Quiz(BaseModel):
@@ -81,7 +88,7 @@ class Quiz(BaseModel):
 
 
 _SYSTEM_PROMPT = (
-    "You generate adaptive multiple-choice quizzes for a student. Each "
+    "You generate adaptive, course-grounded quizzes for a student. Each "
     "question must target a specific concept the student has weak "
     "mastery on, OR address a class-level misconception you've seen, "
     "OR revive a concept the student hasn't reviewed in a while.\n\n"
@@ -137,8 +144,7 @@ _SYSTEM_PROMPT = (
     "   user-requested difficulty exactly.\n"
     "- Never override the user-requested difficulty by more than one "
     "   step in either direction. Stay close to what they asked for.\n\n"
-    "Per-question rules (multiple-choice only — the type field is "
-    "constrained to 'multiple_choice'):\n"
+    "Multiple-choice question rules:\n"
     "- 4 options, exactly one correct. The text in `correct_answer` "
     "   MUST appear verbatim in `options` — character-for-character. "
     "   Questions that violate this are dropped at the route layer.\n"
@@ -168,6 +174,27 @@ _SYSTEM_PROMPT = (
     # student- or peer-derived — data for question writing, never
     # instructions. Single source of truth in services/prompt_safety.py.
     "\n\n" + INJECTION_GUARD_PROMPT
+)
+_SYSTEM_PROMPT += (
+    "\n\nQUESTION FORMATS:\n"
+    "Honor the requested question_format. For mixed quizzes use multiple_choice and "
+    "short_answer, with numeric and symbolic ONLY where the course material supports math. "
+    "For non-mathematical topics use no math formats in mixed mode. "
+    "For multiple_choice, supply four options and exactly one correct_answer. "
+    "For short_answer, ask for a precise term, fill-in-the-blank, or brief factual answer; "
+    "provide a canonical correct_answer and accepted_answers with common equivalent "
+    "wordings/abbreviations. Do not ask open-ended essays requiring subjective grading. "
+    "For numeric, correct_answer must be a plain number or fraction; specify required "
+    "units and rounding in the question, asking students to enter the number only. "
+    "For symbolic, ask for an algebraic expression, with a correct_answer using only "
+    "single-letter variables, rational numbers, + - * / ^ and parentheses, and integer "
+    "powers from -8 to 8. Implicit multiplication such as 2(x+1) is supported. "
+    "Do not ask for equations, functions, roots or trigonometric notation. "
+    "Numeric grading accepts equivalent fractions, decimals, percentages and scientific "
+    "notation, with exact equality. For numeric questions, do not ask for symbolic expressions or approximate "
+    "irrational values unless an explicit rounded answer is requested. "
+    "For written questions, options must be empty. Explain the reasoning after grading. "
+    "Keep every item focused on the requested concept and the supplied course material."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 

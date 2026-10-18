@@ -426,6 +426,7 @@
 
 .quiz-home-settings__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--quiz-home-setting-gap);
   padding: var(--quiz-home-setting-pad);
