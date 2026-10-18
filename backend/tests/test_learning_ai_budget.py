@@ -403,7 +403,7 @@ def test_arm_sessions_are_not_downgraded_but_pause_at_hard(usage, events):
 
 def test_grader_cap_counts_grader_second_opinion_and_decision_rows(usage, events):
     per_task = config.STUDENT_DAILY_GRADES // 3
-    rows = [_row(task=t) for t in ("grader", "grader_second", "decision") for _ in range(per_task)]
+    rows = [_row(task=t) for t in ("grader", "grader_second", "learning_decision") for _ in range(per_task)]
     rows += [_row(task="grader") for _ in range(config.STUDENT_DAILY_GRADES - len(rows))]
     rows += [_row(task="loop_tutor") for _ in range(5)]  # tutor rows never count as grades
     usage(rows)
@@ -763,12 +763,12 @@ def test_grade_is_unavailable_at_the_grader_cap_without_a_model_call(usage, monk
 
 def test_decision_run_is_skipped_at_the_grader_cap(usage):
     from pydantic_ai.models.function import FunctionModel
-    from agents.decision import decision_agent
-    from services import decisions
+    from agents.learning_decision import learning_decision_agent
+    from services import learning_decisions as decisions
 
-    usage([_row(task="decision") for _ in range(config.STUDENT_DAILY_GRADES)])
+    usage([_row(task="learning_decision") for _ in range(config.STUDENT_DAILY_GRADES)])
     runs: list = []
-    with decision_agent.override(model=FunctionModel(_must_not_run(runs))):
+    with learning_decision_agent.override(model=FunctionModel(_must_not_run(runs))):
         assert asyncio.run(decisions._run_decision("judge_leak", None, _deps())) is (
             decisions.BUDGET_CAPPED
         )
@@ -795,3 +795,14 @@ def test_a_reused_request_id_serves_a_summary_at_most_ttl_stale(usage, monkeypat
         assert fake.reads == 2
     finally:
         request_context._REQUEST_KEY_CTX.reset(token)
+
+
+def test_observe_only_router_decisions_do_not_consume_learning_grade_allowance():
+    rows = [
+        {"task": "decision", "created_at": NOW.isoformat(), "cost_usd": "0.001", "total_tokens": 17},
+        {"task": "learning_decision", "created_at": NOW.isoformat(), "cost_usd": "0.002", "total_tokens": 23},
+    ]
+    usage = ai_budget._summarise(rows, NOW)
+    assert usage.day_grades == 1
+    assert float(usage.day_usd) == pytest.approx(0.003)
+    assert usage.day_tokens == 40

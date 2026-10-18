@@ -53,7 +53,7 @@ AgentTask = Literal[
     # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
     "grader", "grader_second",
     # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
-    "decision",
+    "decision", "learning_decision",
     # The loop tutor's three tier slots — ONE agent, slot chosen per run (PKG-07; spec §3.5, A15).
     "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
     # The end-of-session close: summary, self-evaluation, if-then plan (PKG-09; spec §13 A12).
@@ -123,6 +123,7 @@ _DEFAULTS: dict[AgentTask, str] = {
     "grader_second": "gemini-2.5-flash",
     # Decision seam (PKG-05b, spec §3.5/§3.6): one short closed judgment per run → lite tier, thinking off.
     "decision": "gemini-2.5-flash-lite",
+    "learning_decision": "gemini-2.5-flash-lite",
     # Session close (PKG-09): single-shot, tool-less, structured; Lite is enough.
     "session_close": "gemini-2.5-flash-lite",
 }

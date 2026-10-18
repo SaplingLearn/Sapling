@@ -66,7 +66,6 @@ import {
   rateFlashcard,
   deleteFlashcard,
   getDocuments,
-  getLoopStatus,
   type EnrolledCourse,
   type StudyGuideContent,
   type StudyGuideExam,
@@ -74,6 +73,7 @@ import {
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 import { DueQueue } from "../learn/DueQueue";
+import { useLoopStatus } from "../learn/useLoopStatus";
 
 type Mode = "guide" | "cards";
 
@@ -608,7 +608,7 @@ function FlashcardsMode({
   semesterReady: boolean;
 }) {
   const toast = useToast();
-  const { userId } = useUser();
+  const { userId, userReady } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const [courseId, setCourseId] = React.useState<string>("all");
   const [topicFilter, setTopicFilter] = React.useState<string>("all");
@@ -619,16 +619,9 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
-  // Learning loop (PKG-12): the "Due today" queue renders only when the loop is on
-  // for this student; a 404 (loop off) or any error keeps the legacy UI unchanged.
-  const [loopActive, setLoopActive] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!userId) return;
-    getLoopStatus(userId)
-      .then(r => setLoopActive(!!r.active))
-      .catch(() => setLoopActive(false));
-  }, [userId]);
+  // A failed status read is not an inactive learning loop: retain the legacy
+  // flashcards and offer a retry so the student can still reach due reviews.
+  const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
 
   React.useEffect(() => {
     if (!userId) return;
@@ -745,7 +738,15 @@ function FlashcardsMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {loopActive && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
+        {loopActive === true && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
+        {loopActive === "error" && (
+          <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
+            <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>
+            <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
+              Retry due reviews
+            </button>
+          </div>
+        )}
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <FilterPills
             options={[

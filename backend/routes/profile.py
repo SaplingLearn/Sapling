@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
 
 from services.chunk_visibility import resync_user_chunk_visibility
@@ -46,15 +47,76 @@ _PROFILE_COLS = (
 _PROFILE_ENCRYPTED = ("name", "first_name", "last_name", "bio", "location")
 
 
+# Postgres foreign_key_violation. PostgREST answers it with a 409, the same
+# status as the unique/PK conflict ON CONFLICT DO NOTHING absorbs, so only
+# the body's SQLSTATE tells the two apart.
+_FK_VIOLATION = "23503"
+
+
+def _is_fk_violation(exc: httpx.HTTPStatusError) -> bool:
+    if exc.response.status_code != 409:
+        return False
+    try:
+        body = exc.response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("code") == _FK_VIOLATION
+
+
+def _missing_users_row() -> HTTPException:
+    return HTTPException(status_code=404, detail="User not found")
+
+
+def _get_or_create_row(name: str, columns: str, user_id: str) -> dict:
+    """Read the 1:1 `user_id`-keyed row of `name`, creating it if missing.
+
+    Race-safe (#674): Settings.tsx loads /settings and the public profile in
+    parallel, both land here for a first-time user, and a blind INSERT from
+    the loser 409s into a 500. ON CONFLICT DO NOTHING, not a merge, whose
+    DO UPDATE would fire the updated_at trigger and move the winner's ETag.
+
+    The upsert's own representation is the row when this call inserted it;
+    only a lost race (DO NOTHING returns `[]`) needs a second read.
+
+    Both tables FK to `users` with ON DELETE CASCADE. A session whose `users`
+    row is missing (hard-deleted, e.g. a cookie that outlived a manually
+    removed row, the #285 class) violates that FK, which DO NOTHING does not
+    absorb. That is a 404 like every other missing-user path here
+    (`_get_user_or_404`, `/api/auth/me`), not a 500. The same holds when the
+    re-read after a lost race finds nothing: the row existed a moment ago, so
+    it vanished, which a cascade from a hard-deleted `users` row explains.
+    Serving a made-up `{"user_id": ...}` there would be a 200 with a fixed
+    ETag for a row that does not exist.
+
+    The app's own account deletion is a SOFT delete (`users.deleted_at`); a
+    soft-deleted user still has the row, so none of this fires for them.
+    """
+    filters = {"user_id": f"eq.{user_id}"}
+    rows = table(name).select(columns, filters=filters)
+    if rows:
+        return rows[0]
+    try:
+        rows = table(name).upsert(
+            {"user_id": user_id},
+            on_conflict="user_id",
+            ignore_duplicates=True,
+            columns=columns,
+        )
+    except httpx.HTTPStatusError as exc:
+        if _is_fk_violation(exc):
+            raise _missing_users_row() from exc
+        raise
+    if rows:
+        return rows[0]
+    rows = table(name).select(columns, filters=filters)
+    if not rows:
+        raise _missing_users_row()
+    return rows[0]
+
+
 def _get_or_create_profile(user_id: str) -> dict:
     """Return the decrypted user_profiles row, creating it if missing."""
-    rows = table("user_profiles").select(_PROFILE_COLS, filters={"user_id": f"eq.{user_id}"})
-    if not rows:
-        table("user_profiles").insert({"user_id": user_id})
-        rows = table("user_profiles").select(_PROFILE_COLS, filters={"user_id": f"eq.{user_id}"})
-    if not rows:
-        return {"user_id": user_id}
-    row = rows[0]
+    row = _get_or_create_row("user_profiles", _PROFILE_COLS, user_id)
     for col in _PROFILE_ENCRYPTED:
         row[col] = decrypt_if_present(row.get(col))
     return row
@@ -89,13 +151,7 @@ _SETTINGS_COLS = (
 
 
 def _get_or_create_settings(user_id: str) -> dict:
-    rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
-    if not rows:
-        table("user_settings").insert({"user_id": user_id})
-        rows = table("user_settings").select(_SETTINGS_COLS, filters={"user_id": f"eq.{user_id}"})
-    if not rows:
-        return {"user_id": user_id}
-    return rows[0]
+    return _get_or_create_row("user_settings", _SETTINGS_COLS, user_id)
 
 
 def _get_user_roles(user_id: str) -> list:

@@ -62,7 +62,12 @@ ruff==0.15.18
 # e2e CI lane went red on every push to main after #349 while the lock-pinned
 # lanes stayed green. Bump this ceiling only together with a chat_stream.py
 # migration and a fresh requirements.lock.
-pydantic-ai-slim[google]>=0.0.20,<2
+# >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
+# the #646 continuation appends run-level `run(instructions=...)` (added in
+# 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
+# requirements.lock pins 1.107.0, which is what CI installs; a local venv may
+# be older (the #707 work was run locally on 1.89.1). Both are above the floor.
+pydantic-ai-slim[google]>=1.11.1,<2
 
 # Jev decision backend (learning loop PKG-15; spec §3.6, §13 A24, ADR 0027).
 # EXACT pin (invariant 24): Jev's confidence thresholds are tuned against one SDK

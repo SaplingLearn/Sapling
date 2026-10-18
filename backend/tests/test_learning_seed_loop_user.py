@@ -203,7 +203,7 @@ def test_capped_user_spend_is_past_the_novice_allowance(recorder):
     allowance = config.STUDENT_DAILY_BUDGET_USD * config.BUDGET_NOVICE_MULTIPLIER
     assert sum(float(r["cost_usd"]) for r in rows) > allowance  # hard level in every band
     assert len(rows) < config.LEARN_RATE_LIMIT_PER_MIN  # the $ cap, not the rate limit
-    assert all(r["task"] not in ("grader", "grader_second", "decision") for r in rows)
+    assert all(r["task"] not in ("grader", "grader_second", "learning_decision") for r in rows)
     # stamped NOW on every run (an upsert): a stack seeded once stays capped past
     # UTC midnight only through a re-seed, never on a stale timestamp
     for r in rows:

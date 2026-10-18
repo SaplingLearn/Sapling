@@ -22,7 +22,7 @@ Design guarantees:
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
 
-Event taxonomy (issue #117) — the twelve event types the app emits, pinned in
+Event taxonomy (issue #117) — the event types the app emits, pinned in
 ``EVENT_TAXONOMY`` below. Payloads carry ids/counts/enums only: never raw
 text, titles, summaries, full URLs, or timestamps (``created_at`` is a DB
 default). Free-text that must be correlatable (chat messages, session topics)
@@ -114,6 +114,21 @@ review.session_started        usage     session_id, offering_id (a daily review 
                                         session.started — it is not a tutor session)
 review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
 review.graded                 usage     kind, correct, rating
+flag.changed                  audit     key, field, before, after
+decision.made                 system    feature, backend (who answered: jev | flash_lite |
+                                        function | none), requested, fallback_reason (an
+                                        enum-like reason, never a message), model, latency_ms,
+                                        floor, answers {key: value, raw ("<invalid>" for
+                                        an off-list answer), confidence, defaulted?},
+                                        optional shadow {backend, answers, agree {key:
+                                        bool|null} | null (null = shadow_same_as_served),
+                                        ...}, + caller extras. The tutor router adds
+                                        session_id, mode, history_messages, and the model
+                                        the turn ACTUALLY ran on: model_tier (fast | smart
+                                        | default — default whenever the pref was not
+                                        honoured), tutor_model (resolved model name) and
+                                        model_pref_requested (the raw request field).
+                                        ADR 0027 / #640 / #642.
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -276,7 +291,22 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "review.session_started",
     "review.served",
     "review.graded",
+    # #620: admin feature-flag change (audit).
+    "flag.changed",
+    # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
+    # backend that actually served them, and (in shadow mode) the second
+    # backend's answers plus per-key agreement. category="system": the server
+    # emits it about a chat turn (the turn itself is chat.message_sent), so it
+    # must not count as the student's activity in the usage rollups. It is
+    # the dataset the routing-accuracy and Jev-agreement reviews are run over.
 })
+
+#: Category for rows the SERVER emits about a request (e.g. decision.made, one
+#: per routed chat turn) rather than something the user did. Attributed to the
+#: user (user_id) so it joins to their turn, but routes/admin_analytics.py's
+#: usage rollups exclude it — it is not activity. The other categories are
+#: usage | audit | error (0035; the column has no CHECK constraint).
+SYSTEM_CATEGORY = "system"
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
 # the queue via reset_for_tests(maxsize=...).

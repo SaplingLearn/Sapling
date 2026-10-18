@@ -42,6 +42,15 @@ from tests.agent_run_fakes import FakeRunResult
 
 client = TestClient(app)
 
+
+@pytest.fixture(autouse=True)
+def legacy_owner_guard_for_delegation_fixtures(monkeypatch):
+    # These legacy-route probes isolate delegation/phase behavior. Their fake
+    # loop state has no legacy sessions row; #709 ownership remains exercised
+    # without this mock by the dedicated session-ownership suite.
+    monkeypatch.setattr("routes.learn.require_session_owner", lambda *args, **kwargs: None)
+
+
 T0 = 1_790_000_000.0  # when the active item was first shown (float seconds, PKG-06's store)
 NOW = T0 + 600.0  # the route clock in these tests: ten minutes of independent work
 
@@ -326,6 +335,8 @@ def seams():
         ns.save_msg = p("save_message")
         ns.events = p("events_service")
         ns.consume = p("_consume_pending")
+        from routes.learn import _consume_pending_off_loop
+        ns.consume_async = p("_consume_pending_off_loop", wraps=_consume_pending_off_loop)
         p("_load_message_history", return_value=[])
         ns.blocks = p("_context_blocks", return_value=["CTX"])
         ns.by_id = p("chunks_for_ids", return_value=[])
@@ -487,7 +498,7 @@ def test_session_scope_reads_the_owner_and_the_course():
         assert _session_scope("s1", "u1") == ("off-1", "c1")
         with pytest.raises(HTTPException) as other:
             _session_scope("s1", "u2")
-    assert other.value.status_code == 403
+    assert other.value.status_code == 404
     tbl.assert_called_with("sessions")
     handle.select.return_value = []
     with (
@@ -2334,7 +2345,7 @@ def test_action_in_check_phase_is_a_hint_turn_with_no_evidence(gate_on, seams):
     seams.events.log_event.assert_not_called()
     seams.grade.assert_not_awaited()  # an [ACTION: …] turn is never graded (invariant 26)
     seams.flush.assert_not_called()
-    seams.consume.assert_called_once_with("s1", "u1")
+    seams.consume_async.assert_awaited_once_with("s1", "u1")
 
 
 def test_action_outside_the_check_phase_is_a_teach_turn(gate_on, seams):
@@ -2922,7 +2933,7 @@ def test_legacy_chat_call_sequence_unchanged_when_gate_false():
     with (
         patch("routes.learn.learning_loop_for_request", return_value=False) as gate,
         patch("routes.learn.table", side_effect=factory),
-        patch("routes.learn._chat_via_agent", return_value=turn),
+        patch("routes.learn._chat_via_agent", return_value=(turn, ("default", None))),
         patch("routes.learn_loop.chat") as loop_chat,
     ):
         r = client.post(
@@ -2958,7 +2969,7 @@ def test_the_real_gate_reads_nothing_on_the_legacy_path_with_the_flag_unset(monk
         patch(
             "routes.learn.table", side_effect=lambda n: MagicMock(select=MagicMock(return_value=[]))
         ),
-        patch("routes.learn._chat_via_agent", return_value=turn),
+        patch("routes.learn._chat_via_agent", return_value=(turn, ("default", None))),
     ):
         r = client.post(
             "/api/learn/chat", json={"session_id": "s1", "user_id": "u1", "message": "hi"}
@@ -3796,3 +3807,54 @@ def test_a_released_items_twin_is_a_recheck_whatever_came_between(gate_on, seams
     with agent_p, usage_p:
         client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0 returns 1"))
     assert seams.grade.call_args.kwargs["same_session_recheck"] is recheck
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("router_fails", [False, True])
+def test_active_loop_chat_observes_only_after_persistence_and_router_cannot_fail_it(
+    gate_on, seams, streaming, router_fails
+):
+    order = []
+    seams.save_msg.side_effect = lambda session_id, role, *args: order.append(role)
+    observed = []
+
+    def observe(**kwargs):
+        order.append("observe")
+        observed.append(kwargs)
+        if router_fails:
+            raise RuntimeError("observer unavailable")
+
+    body = {"session_id": "s1", "user_id": "u1", "message": "Explain recursion"}
+    with patch("routes.learn.observe_tutor_turn", side_effect=observe):
+        if streaming:
+            with patch("routes.learn_loop.stream_structured_turn", _fake_stream()):
+                response = client.post("/api/learn/loop/chat/stream", json=body)
+            assert _sse_events(response.text)[-1]["type"] == "done"
+        else:
+            response = client.post("/api/learn/loop/chat", json=body)
+            assert response.json()["reply"] == ITEM.prompt
+    assert response.status_code == 200
+    assert order == ["user", "assistant", "observe"]
+    assert len(observed) == 1
+    assert observed[0]["session_id"] == "s1"
+    assert observed[0]["message"] == "Explain recursion"
+    assert observed[0]["model_tier"] == "none"
+    assert observed[0]["tutor_model"] is None
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream", "/check/answer", "/check/answer/stream", "/action", "/probe/answer"])
+def test_active_loop_foreign_pending_session_is_404_without_materialization(gate_on, seams, path):
+    from routes.learn import PENDING_SESSIONS
+
+    body = {"session_id": "foreign-pending", "user_id": "u1", "message": "hi",
+            "question_hash": "qh-1", "answer": "n == 0", "action_type": "hint"}
+    PENDING_SESSIONS["foreign-pending"] = {"user_id": "someone-else"}
+    try:
+        response = client.post("/api/learn/loop" + path, json=body)
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Session not found"
+        assert PENDING_SESSIONS["foreign-pending"] == {"user_id": "someone-else"}
+        seams.save_msg.assert_not_called()
+        seams.grade.assert_not_called()
+    finally:
+        PENDING_SESSIONS.pop("foreign-pending", None)

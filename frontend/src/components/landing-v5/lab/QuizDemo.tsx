@@ -54,7 +54,7 @@ export function QuizDemo() {
     return (
       <div style={{ padding: '22px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, animation: 'labIn 320ms ease both' }}>
-          <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 54, fontWeight: 600, lineHeight: 1 }}>
+          <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 54, fontWeight: 600, lineHeight: 1 }}>
             {correctCount} / {QUESTIONS.length}
           </span>
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.2em', color: '#8B9891' }}>
@@ -67,10 +67,10 @@ export function QuizDemo() {
             </span>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-            <button onClick={retake} type="button" style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: '#33443B', cursor: 'pointer' }}>
+            <button onClick={retake} type="button" style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13, color: '#33443B', cursor: 'pointer' }}>
               Retake
             </button>
-            <button onClick={retake} type="button" style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <button onClick={retake} type="button" style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
               Learn weak areas
             </button>
           </div>
@@ -100,7 +100,7 @@ export function QuizDemo() {
       </div>
 
       <div>
-        <p style={{ margin: 0, fontFamily: "'Playfair Display',serif", fontSize: 20, lineHeight: 1.4, color: '#12201A' }}>{q.text}</p>
+        <p style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 20, lineHeight: 1.4, color: '#12201A' }}>{q.text}</p>
         <div role="radiogroup" style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {q.options.map((o) => {
             const isPicked = o.label === picked;
@@ -114,7 +114,7 @@ export function QuizDemo() {
                 key={o.label}
                 type="button"
                 onClick={() => { if (!reviewing) setPicked(o.label); }}
-                style={{ textAlign: 'left', display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', borderRadius: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 14, transition: 'all 180ms', border: `1px solid ${bd}`, background: bg, color: fg, cursor: reviewing ? 'default' : 'pointer' }}
+                style={{ textAlign: 'left', display: 'flex', gap: 10, alignItems: 'flex-start', padding: '12px 14px', borderRadius: 10, fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, transition: 'all 180ms', border: `1px solid ${bd}`, background: bg, color: fg, cursor: reviewing ? 'default' : 'pointer' }}
               >
                 <span style={{ ...MONO, fontSize: 12, color: isPicked || (reviewing && correct) ? '#0E9E5A' : '#9AA5A0' }}>{o.label}.</span>
                 <span>{o.text}</span>

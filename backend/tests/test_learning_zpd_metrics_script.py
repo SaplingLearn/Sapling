@@ -399,7 +399,7 @@ def test_series_slots_are_invariant_6():
         "check_items",
         "grader",
         "grader_second",
-        "decision",
+        "learning_decision",
         "loop_tutor",
         "loop_tutor_lite",
         "loop_tutor_deep",

@@ -9,7 +9,7 @@
  * "TRY IT · THIS ONE ACTUALLY WORKS" line is promising.
  */
 
-export const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono',monospace" };
+export const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
 
 /** Lab-local tier swatches; see labData.ts for why they differ from the graph's. */
 export const LAB_TIER = {
@@ -18,7 +18,7 @@ export const LAB_TIER = {
 
 export function LabShell({ route, children }: { route: string; children: React.ReactNode }) {
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', fontFamily: "'DM Sans',sans-serif", color: '#12201A', background: '#FDFCF9', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", color: '#12201A', background: '#FDFCF9', display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: '0 0 auto', height: 38, borderBottom: '1px solid #ECE9DE', background: '#F6F8F4', display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px' }}>
         <span style={{ display: 'flex', gap: 5 }}>
           {[0, 1, 2].map((i) => (
@@ -35,16 +35,25 @@ export function LabShell({ route, children }: { route: string; children: React.R
   );
 }
 
-/** Shared button styles the demos reuse. */
+/**
+ * Shared button styles the demos reuse.
+ *
+ * The primary sits on the brand green at rest. It used to be near-black ink
+ * (#12201A) and turn green only on hover, which is the reverse of every other
+ * primary in the lab — the flashcard "Flip", the quiz's own "Retake", the room
+ * "Send" are all #0C5638 from the start. Assessment's "Submit answer" is the
+ * one button that runs through this shared style, so it was the one reading as
+ * a different, darker control than the ones beside it.
+ */
 export const PRIMARY_BTN: React.CSSProperties = {
-  padding: '11px 24px', borderRadius: 10, border: 'none', background: '#12201A',
-  color: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 13.5,
+  padding: '11px 24px', borderRadius: 10, border: 'none', background: '#0C5638',
+  color: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5,
   fontWeight: 600, cursor: 'pointer', transition: 'background 200ms',
 };
 
 export const GHOST_BTN: React.CSSProperties = {
   padding: '10px 20px', borderRadius: 10, border: '1px solid #DCE7DE',
-  background: '#FDFCF9', fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+  background: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13,
   color: '#33443B', cursor: 'pointer',
 };
 

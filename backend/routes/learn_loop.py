@@ -87,7 +87,7 @@ from agents.loop_tutor import (
     tier_run_kwargs,
 )
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
-from agents.usage import UnfinishedRun, record_agent_usage
+from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
 from learning import probe as probe_policy
@@ -205,10 +205,12 @@ from routes.learn import (  # legacy helpers, reused verbatim — never copied
     _CONTINUATION_RUN_KEYS,
     _agent_turn_or_http_error,
     _consume_pending,
+    _consume_pending_off_loop,
     _get_catalog_chunk,
     _get_course_id_for_topic,
     _get_course_info,
     _load_message_history,
+    _observe_persisted_turn,
     save_message,
 )
 from services import ai_budget, events_service
@@ -370,7 +372,7 @@ def _session_scope(session_id: str, user_id: str) -> tuple[str, str]:
     if not rows:
         raise HTTPException(status_code=404, detail="Session not found")
     if rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        raise HTTPException(status_code=404, detail="Session not found")
     offering_id = rows[0].get("offering_id") or ""
     return offering_id, (offering_course_id(offering_id) if offering_id else "")
 
@@ -1496,6 +1498,9 @@ class _LoopTurn:
         refused: bool = False,
     ):
         self.user_id, self.session_id = body.user_id, body.session_id
+        self.observer_body = body
+        self.observer_history: list = []
+        self.served_model: str | None = None
         self.mode = body.mode
         self.message, self.kind, self.persist_user_row = message, kind, persist_user_row
         # an [ACTION: ...] turn's message is server text; every other is the student's
@@ -1680,6 +1685,7 @@ class _LoopTurn:
             context = context._replace(rag_k=0, source_chunks=0, tool_choice="none")
         nonce = new_nonce()
         history = self.history()
+        self.observer_history = history
         self.prefix = phase_prefix(
             phase=self.phase,
             band=self.band,
@@ -1820,6 +1826,7 @@ class _LoopTurn:
         # PKG-10 (fix round F4): the model requests this turn cost (a run, its
         # output/leak retries, a continuation) — a confronting turn counts them all
         self.run_requests += _requests_of(run_result)
+        self.served_model = served_model_name(run_result, self.slot)
         record_agent_usage(
             run_result,
             feature="loop_tutor",
@@ -2004,6 +2011,15 @@ class _LoopTurn:
                 request_id=self.request_id,
                 payload={"mode": self.mode, "session_id": self.session_id},
                 content=self.message,
+            )
+        if self.kind == "chat" and self.persist_user_row:
+            # Observe only after both message rows persist. The shared helper
+            # catches scheduling failures; no router answer controls teaching.
+            _observe_persisted_turn(
+                self.observer_body,
+                history=self.observer_history,
+                ran_on=(self.tier, self.served_model),
+                request_id=self.request_id,
             )
         offer_rung = out.get("offer_rung")
         return {
@@ -2765,7 +2781,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
     pending = PENDING_SESSIONS.get(session_id)
     if pending is not None:
         if pending.get("user_id") != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
+            raise HTTPException(status_code=404, detail="Session not found")
         state: dict = {}
     else:
         try:
@@ -2918,7 +2934,7 @@ def list_open_sessions(
 @router.post("/chat", dependencies=_RATE_LIMITED)
 async def chat(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return await _json_turn(
         lambda: _LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on),
@@ -2929,7 +2945,7 @@ async def chat(body: ChatBody, request: Request):
 @router.post("/chat/stream", dependencies=_RATE_LIMITED)
 async def chat_stream(body: ChatBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
 
@@ -3288,7 +3304,7 @@ def _submission_turn(
 @router.post("/check/answer", dependencies=_RATE_LIMITED)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
@@ -3300,7 +3316,7 @@ async def check_answer(body: LoopCheckAnswerBody, request: Request):
 @router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
     )
@@ -3901,7 +3917,7 @@ async def action(body: ActionBody, request: Request):
     rung, otherwise the current phase. Assistant-only persistence; never graded
     (invariant 26)."""
     loop_on = _gate(body.user_id, request)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     message = f"[ACTION: {_ACTION_PROMPTS.get(body.action_type, '')}]"
     chat_body = ChatBody(
@@ -4248,7 +4264,7 @@ async def close_session(
     claim = ""
     if pending is not None:
         if pending.get("user_id") != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
+            raise HTTPException(status_code=404, detail="Session not found")
         PENDING_SESSIONS.pop(session_id, None)
         phase = "close"
         record = fallback_close(build_close([], [], [], {}))
@@ -4267,7 +4283,7 @@ async def close_session(
         if not rows:
             raise HTTPException(status_code=404, detail="Session not found")
         if rows[0].get("user_id") != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
+            raise HTTPException(status_code=404, detail="Session not found")
         if rows[0].get("close_json") is not None:
             return _stored_close(rows[0])
         had_state = bool(rows[0].get("loop_state"))
@@ -4950,7 +4966,7 @@ async def probe_answer(body: ProbeAnswerBody, request: Request) -> dict:
     404, never a 429."""
     loop_on = _gate(body.user_id, request)
     ai_budget.enforce_rate_limit_for(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _probe_submission(body, request, loop_on=loop_on), what="probe grader"
     )

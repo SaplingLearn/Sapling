@@ -198,7 +198,7 @@ def test_an_unrelated_insert_error_keeps_the_column(monkeypatch):
 #: the non-tutor features (documents, notes, quiz, study guide, …).
 SESSION_SITES = {
     ("agents/grader.py", "_run_once"): {"deps.session_id"},
-    ("services/decisions.py", "_run_decision"): {"deps.session_id"},
+    ("services/learning_decisions.py", "_run_decision"): {"deps.session_id"},
     ("routes/learn_loop.py", "record_usage"): {"self.session_id"},
     ("routes/learn_loop.py", "_loop_continuation_text"): {"turn.session_id"},
     ("routes/learn.py", "_continuation_text"): {

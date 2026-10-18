@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 /**
  * Study → Flashcards with the learning loop (PKG-12): the "Due today" panel renders
- * only when getLoopStatus says the loop is on; a 404 (inactive) or any error keeps the
- * legacy flashcards UI exactly as it was.
+ * only when getLoopStatus says the loop is on; a definitive inactive result keeps
+ * legacy flashcards alone, while an outage offers retry without hiding flashcards.
  */
 
 import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams("mode=cards"),
@@ -80,10 +80,14 @@ describe("Study flashcards — Due today behind the loop", () => {
     expect(screen.queryByTestId("review-due-panel")).toBeNull();
   });
 
-  it("treats a failed probe as inactive", async () => {
-    mockedStatus.mockRejectedValue(new Error("network"));
+  it("offers retry after a failed status read while retaining flashcards", async () => {
+    mockedStatus.mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce({ active: true });
     renderStudy();
     await screen.findByText("No cards here yet");
     expect(screen.queryByTestId("review-due-panel")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Retry due reviews" }));
+    expect(await screen.findByTestId("review-due-panel")).toBeTruthy();
+    await waitFor(() => expect(mockedStatus).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("No cards here yet")).toBeTruthy();
   });
 });

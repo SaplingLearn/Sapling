@@ -44,7 +44,7 @@ export function GradesDemo() {
     <div style={{ padding: '20px 26px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <span style={{ fontFamily: "'Playfair Display',serif", fontSize: 46, fontWeight: 600, lineHeight: 1, transition: 'color 300ms' }}>
+          <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 46, fontWeight: 600, lineHeight: 1, transition: 'color 300ms' }}>
             {grade.toFixed(1)}
           </span>
           <span style={{ padding: '5px 12px', borderRadius: 8, background: '#E6F2E8', border: '1px solid #0E9E5A', ...MONO, fontSize: 13, letterSpacing: '0.1em', color: '#0C5638' }}>

@@ -64,6 +64,7 @@ import {
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
+import styles from "./LoopLearn.module.css";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -221,6 +222,7 @@ export function LoopLearn() {
   const streamAbort = useRef<AbortController | null>(null);
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
   const mounted = useRef(true);
+  const graphRequest = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -259,9 +261,10 @@ export function LoopLearn() {
   // ── Knowledge map ──────────────────────────────────────────────────────
   const refreshGraph = useCallback(async () => {
     if (!userId) return;
+    const request = ++graphRequest.current;
     try {
       const g = await getGraph(userId);
-      if (!mounted.current) return;
+      if (!mounted.current || request !== graphRequest.current) return;
       const nodes = ((g.nodes ?? []) as ApiNode[]).map((n) => apiToGraphNode(n, courses ?? []));
       const edges = ((g.edges ?? []) as ApiEdge[]).map((e) => ({
         source: e.source as string, target: e.target as string, strength: e.strength,
@@ -338,6 +341,7 @@ export function LoopLearn() {
     streamAbort.current = null;
     dispatch({ type: "reset" });
     setReadOnly(null);
+    setStarting(false);
     setLoadError(null);
     setProbeItem(null);
     setProbeDraft(EMPTY_DRAFT);
@@ -427,6 +431,7 @@ export function LoopLearn() {
     } catch (err) {
       if (g === gen.current) toast.error(humanizeError(err, "Couldn't load this session's messages."));
     }
+    if (g !== gen.current) return;
     // Continue the phase — never a new session, and no turn is sent (§11.3).
     if (s.phase === "probe") await nextProbe(s.session_id, g);
     else if (s.phase === "plan") await loadPlan(s.session_id, g);
@@ -478,6 +483,7 @@ export function LoopLearn() {
         }
       }
       dropFromPicker(leaving);
+      if (g0 !== gen.current) return;
     }
     const g = ++gen.current;
     clearSessionView();
@@ -630,6 +636,7 @@ export function LoopLearn() {
       const r = await answerLoopProbe(sessionId, userId, probeItem.question_hash, a);
       if (g !== gen.current) return;
       if (r.graded) {
+        void refreshGraph();
         setProbeCount((n) => n + 1);
         if (r.probe_done) setProbeFinished(true);
         if (r.reference_answer) {
@@ -693,29 +700,40 @@ export function LoopLearn() {
     const sid = sessionRef.current;
     let streamed = "";
     let hardSeen = false;
+    // Abort is cooperative: a queued event may arrive after Stop or a session
+    // switch. Only the currently owned, live stream may change the learner UI.
+    const ownsTurn = () => mounted.current && g === gen.current && streamAbort.current === controller;
+    const acceptsEvents = () => ownsTurn() && !controller.signal.aborted;
     setStreamingText("");
     const handlers: StreamChatHandlers = {
       signal: controller.signal,
       onToken: (d) => {
+        if (!acceptsEvents()) return;
         streamed += d;
         setStreamingText(streamed);
       },
       // A46: discard every token streamed so far; the current text follows
       onRetract: () => {
+        if (!acceptsEvents()) return;
         streamed = "";
         setStreamingText("");
       },
-      onPhase: (p) => dispatch({ type: "phase", phase: p }),
-      onCheck: (c) => dispatch({ type: "check", item: c }),
-      onLearnerState: (s) => dispatch({ type: "learner_state", state: s }),
+      onPhase: (p) => { if (acceptsEvents()) dispatch({ type: "phase", phase: p }); },
+      onCheck: (c) => { if (acceptsEvents()) dispatch({ type: "check", item: c }); },
+      onLearnerState: (s) => { if (acceptsEvents()) dispatch({ type: "learner_state", state: s }); },
       onBudget: (b) => {
+        if (!acceptsEvents()) return;
         if (b.level === "hard") hardSeen = true;
         dispatch({ type: "budget", level: b.level, resetAt: b.reset_at, sessionCapped: b.session_capped });
       },
     };
     try {
       const res = await run(handlers);
-      if (g !== gen.current || streamAbort.current !== controller) return null;
+      if (!ownsTurn()) return null;
+      if (controller.signal.aborted) {
+        if (submission && sid) void reconcile(sid, g);
+        return null;
+      }
       // done.reply is always the final, leak-stripped text (A46) — never the tokens
       const text = res.reply ?? streamed;
       if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
@@ -728,6 +746,9 @@ export function LoopLearn() {
       }
       if (submission && res.ask_rating && sid) setAskRating(sid);
       if (res.phase) dispatch({ type: "phase", phase: res.phase });
+      for (const learnerState of res.learner_state ?? []) {
+        dispatch({ type: "learner_state", state: learnerState });
+      }
       applyActivated(res.check);
       if (res.budget?.level === "hard") {
         dispatch({ type: "budget", level: "hard", resetAt: res.budget.reset_at, sessionCapped: res.budget.session_capped });
@@ -736,7 +757,7 @@ export function LoopLearn() {
       }
       return res;
     } catch (err) {
-      if (g !== gen.current) return null;
+      if (!ownsTurn()) return null;
       if (streamed) setMessages((prev) => [...prev, { ...asMsg("assistant", streamed), interrupted: true }]);
       // The grade lands BEFORE the feedback stream starts: a submission that did
       // not settle (409 already graded, a mid-stream error, Stop) re-reads the
@@ -811,6 +832,7 @@ export function LoopLearn() {
         : attempt.answer).trim();
       if (draft && countedAttempt.current !== `${qh}:${draft}`) {
         const recorded = await postLoopAttempt(sessionId, userId, qh, draft);
+        if (g !== gen.current) return;
         if (recorded.counted) countedAttempt.current = `${qh}:${draft}`;
       }
       const r = await requestLoopHint(sessionId, userId, qh);
@@ -892,15 +914,14 @@ export function LoopLearn() {
   }, [graph.nodes, plan]);
   const railGraph = useMemo(() => {
     const nodes = graph.nodes.filter((n) => n.course_id === courseId);
-    if (nodes.length === 0) return graph;
     const ids = new Set(nodes.map((n) => n.id));
     return { nodes, edges: graph.edges.filter((e) => ids.has(e.source as string) && ids.has(e.target as string)) };
   }, [graph, courseId]);
   // The deep link's ?suggest= / ?topic= concept, until a turn names one (legacy parity).
   const linkedNodeId = useMemo(() => {
     const want = (deepLink.suggest || deepLink.topic).toLowerCase();
-    return want ? graph.nodes.find((n) => n.name.toLowerCase() === want)?.id ?? null : null;
-  }, [graph.nodes, deepLink]);
+    return want ? railGraph.nodes.find((n) => n.name.toLowerCase() === want)?.id ?? null : null;
+  }, [railGraph.nodes, deepLink]);
   const focusNodeId = state.focusNodeId ?? linkedNodeId;
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
   const treeHref = focusNodeId ? `/tree?node=${encodeURIComponent(focusNodeId)}` : "/tree";
@@ -981,6 +1002,7 @@ export function LoopLearn() {
 
   const sessionStrip = (
     <div
+      className={styles.sessionStrip}
       style={{
         display: "flex",
         alignItems: "center",
@@ -1282,7 +1304,7 @@ export function LoopLearn() {
   const showRail = !isMobile && !sessionsError && !noCourses;
 
   return (
-    <FullHeightScreen>
+    <FullHeightScreen className={styles.screen}>
       <DisclaimerModal />
       <div
         data-testid="loop-phase"
@@ -1495,6 +1517,7 @@ function ProbePanel({
                     />
                     <input
                       data-testid="loop-probe-reason"
+                      aria-label="Check-in reasoning"
                       style={FIELD_STYLE}
                       placeholder="In one sentence: why?"
                       value={draft.reason}
@@ -1505,6 +1528,7 @@ function ProbePanel({
                 ) : (
                   <textarea
                     data-testid="loop-probe-input"
+                    aria-label="Check-in answer"
                     style={FIELD_STYLE}
                     rows={3}
                     placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
@@ -1516,7 +1540,7 @@ function ProbePanel({
                     }}
                   />
                 )}
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
                     {busy ? "Checking…" : "Submit"}
                   </button>
@@ -1674,6 +1698,7 @@ function CheckCard({
           />
           <input
             data-testid="loop-attempt-reason"
+            aria-label="Your reasoning"
             style={FIELD_STYLE}
             placeholder="In one sentence: why?"
             value={draft.reason}
@@ -1684,6 +1709,7 @@ function CheckCard({
       ) : (
         <textarea
           data-testid="loop-attempt-input"
+          aria-label="Your answer"
           style={FIELD_STYLE}
           rows={2}
           placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer — this is what gets checked"}

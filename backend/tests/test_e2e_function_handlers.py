@@ -693,24 +693,24 @@ def test_env_module_registers_decision_handler_on_dispatch(monkeypatch):
     else "no" / "none" — at the fixed E2E_DECISION_CONFIDENCE."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
-    from agents.decision import DecisionPickOutput, build_decision_message, decision_agent
+    from agents.learning_decision import DecisionPickOutput, build_decision_message, learning_decision_agent
     from agents.function_handlers_e2e import E2E_DECISION_CONFIDENCE, E2E_DECISION_YES_TOKEN
 
     opts = [("w_loop", "loop"), ("w_speed", "speed")]
     hit = build_decision_message(f"Q {E2E_DECISION_YES_TOKEN}", [("S", "x")], opts)
     miss = build_decision_message("Q", [("S", "x")], opts)
-    with decision_agent.override(model=model_for("decision")):
+    with learning_decision_agent.override(model=model_for("learning_decision")):
         picks = [
-            decision_agent.run_sync(m, deps=_deps(), output_type=DecisionPickOutput).output
+            learning_decision_agent.run_sync(m, deps=_deps(), output_type=DecisionPickOutput).output
             for m in (hit, miss)
         ]
-        yes, no = (decision_agent.run_sync(m, deps=_deps()).output for m in (hit, miss))
+        yes, no = (learning_decision_agent.run_sync(m, deps=_deps()).output for m in (hit, miss))
     assert [p.choice for p in picks] == ["w_loop", "none"]
     assert (yes.answer, no.answer) == ("yes", "no")
     assert yes.confidence == picks[1].confidence == E2E_DECISION_CONFIDENCE
     # Request-path from PKG-10 on (match_wrong_reason without a prior grade);
     # until then services/decisions.py is its only runner, and no route calls it.
-    assert "decision" in providers._FUNCTION_HANDLERS
+    assert "learning_decision" in providers._FUNCTION_HANDLERS
 
 
 @pytest.mark.parametrize("slot", ["loop_tutor_lite", "loop_tutor", "loop_tutor_deep"])
@@ -798,7 +798,7 @@ def test_e2e_grader_wrong_reason_token_matches_the_first_listed_key(monkeypatch)
     from agents.tools.check import CheckAnswer, grade_answer
     from learning.misconceptions import confront_of
     from learning.policy import LoopState
-    from services import decisions
+    from services import learning_decisions as decisions
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
@@ -1120,3 +1120,87 @@ def test_support_lane_parse_is_the_spec_7_post_launch_parse():
     assert '(process.env.LEARNING_LOOP_ENABLED ?? "").trim().toLowerCase()' in src
     fixtures = (pathlib.Path(__file__).resolve().parents[2] / "frontend/e2e/support/fixtures.ts").read_text()
     assert 'export { killSwitchLane } from "./lane";' in fixtures
+
+# ── Typed decision seam / tutor router (#640, ADR 0027) ───────────────────
+#
+# Function mode turns the decision seam on automatically, and the tutor router
+# calls it on every chat turn — so the E2E module registers a `decision`
+# handler. Its answers must (a) validate against the real DecisionOutput
+# schema, (b) cover every router key, and (c) sit above the default floor so
+# the lane exercises the applied-answer path, not the defaults path.
+
+
+def _run_router_decision():
+    import asyncio
+
+    from agents.decision import decision_agent
+    from services import decisions, tutor_router
+
+    with decision_agent.override(model=model_for("decision")):
+        return asyncio.run(decisions.decide(
+            tutor_router.build_state("What is recursion?", []),
+            tutor_router.QUESTIONS, feature=tutor_router.FEATURE,
+            # What the router runs in function mode with the flag on.
+            backend=decisions.JEV,
+        ))
+
+
+def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+    result = _run_router_decision()
+
+    from agents.function_handlers_e2e import E2E_DECISION_ANSWERS
+    from services import tutor_router
+
+    assert result.backend == "function"
+    assert {a["key"] for a in E2E_DECISION_ANSWERS} == {q.key for q in tutor_router.QUESTIONS}
+    assert not any(a.defaulted for a in result.answers.values()), result.answers
+    assert result.value("complexity") == "medium"
+    assert result.value("needs_retrieval") is True
+
+
+def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):
+    """The gallery lane runs function mode too, so its handlers module needs
+    the same registration (the #484 lesson: a second handlers module is the
+    one that gets missed)."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_showcase")
+    sys.modules.pop("agents.function_handlers_showcase", None)
+    try:
+        result = _run_router_decision()
+        showcase = sys.modules["agents.function_handlers_showcase"]
+    finally:
+        sys.modules.pop("agents.function_handlers_showcase", None)
+
+    assert result.backend == "function"
+    assert not any(a.defaulted for a in result.answers.values()), result.answers
+    # ONE list shared through the side-effect-free fixtures module, not a
+    # hand-copied literal that can drift from the E2E module's.
+    import inspect
+
+    from agents._decision_fixtures import DECISION_ANSWERS
+
+    assert "DECISION_ANSWERS" in inspect.getsource(showcase)
+    assert "needs_retrieval" not in inspect.getsource(showcase)
+    assert result.value("complexity") == next(
+        a["value"] for a in DECISION_ANSWERS if a["key"] == "complexity")
+
+
+def test_e2e_decision_answers_are_the_shared_fixture():
+    import ast
+    from pathlib import Path
+
+    from agents._decision_fixtures import DECISION_ANSWERS
+
+    src = Path(__file__).resolve().parents[1] / "agents" / "function_handlers_e2e.py"
+    tree = ast.parse(src.read_text())
+    (assign,) = [n for n in tree.body if isinstance(n, ast.Assign)
+                 and any(getattr(t, "id", None) == "E2E_DECISION_ANSWERS" for t in n.targets)]
+    assert isinstance(assign.value, ast.Name) and assign.value.id == "DECISION_ANSWERS", (
+        "E2E_DECISION_ANSWERS must alias the shared fixture, not copy it")
+    assert {a["key"] for a in DECISION_ANSWERS} == {
+        "needs_retrieval", "needs_rewrite", "complexity",
+        "is_graded_work_request", "injection_attempt",
+    }

@@ -1,4 +1,4 @@
-"""PKG-15: the `jev` and `shadow_jev` backends of services/decisions.py (spec §3.6, §6,
+"""PKG-15: the `jev` and `shadow_jev` backends of services/learning_decisions.py (spec §3.6, §6,
 §13 A24, A98). Hermetic: Jev is either a scripted `_jev.ask` or an httpx2.MockTransport;
 the decision agent runs on FunctionModel; the grader is stubbed; events and llm_usage
 rows are captured by patching events_service."""
@@ -56,7 +56,7 @@ def usage(monkeypatch):
 
 @pytest.fixture
 def seam(monkeypatch, events, usage):
-    from services import decisions
+    from services import learning_decisions as decisions
 
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     for name in decisions.DECISION_NAMES:
@@ -68,7 +68,7 @@ def seam(monkeypatch, events, usage):
 
 def _gemini(answer="no", confidence=0.8, *, choice=None):
     """The decision agent on FunctionModel (yes/no or pick); counts its runs."""
-    from agents.decision import decision_agent
+    from agents.learning_decision import learning_decision_agent
 
     runs = []
 
@@ -77,7 +77,7 @@ def _gemini(answer="no", confidence=0.8, *, choice=None):
         args = {"choice": choice, "confidence": confidence} if choice else {"answer": answer, "confidence": confidence}
         return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)])
 
-    return decision_agent.override(model=FunctionModel(handler)), runs
+    return learning_decision_agent.override(model=FunctionModel(handler)), runs
 
 
 def _scripted_jev(monkeypatch, seam, *outcomes):
@@ -117,7 +117,7 @@ def _run(coro_fn):
 
     async def main():
         out = await coro_fn()
-        from services import decisions
+        from services import learning_decisions as decisions
 
         await decisions.drain_shadows()
         return out
@@ -141,7 +141,7 @@ def test_jev_serves_a_yes_no_decision_and_records_typesafe_usage(seam, monkeypat
     assert (made["backend"], made["decision"]) == ("jev", "judge_leak")
     assert _payloads(events, "decision.fallback") == []
     [row] = usage
-    assert (row["provider"], row["task"], row["model"]) == ("typesafe", "decision", "jev-1.13.0")
+    assert (row["provider"], row["task"], row["model"]) == ("typesafe", "learning_decision", "jev-1.13.0")
     assert row["usage"] == {"input_tokens": 210, "output_tokens": 3}
     assert (row["user_id"], row["request_id"], row["session_id"]) == ("user-zz9", "req-zz9", "sess-zz9")
     payload, questions = calls[0]
@@ -522,7 +522,7 @@ def test_shadow_stats_compute_every_live_gate(ev):
     rows += [_shadow_row(2000, code="oversize", ms=0), _shadow_row(2001, code="circuit_open", ms=0)]
     rows.append({"event_type": "decision.made", "payload": {"decision": "judge_leak"}})  # ignored
     usage = [
-        {"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.00004}
+        {"request_id": f"rq{i}", "task": "learning_decision", "provider": "gemini", "cost_usd": 0.00004}
         for i in range(1000)
     ] + [{"request_id": "rq1", "task": "decision_shadow", "provider": "typesafe", "cost_usd": 1.0}]
     [(name, s)] = ev.shadow_stats(rows, usage_rows=usage).items()
@@ -608,7 +608,7 @@ def test_uncounted_jev_rows_never_rate_limit_or_spend_the_token_cap(task):
 def test_counted_rows_still_count():
     from services import ai_budget
 
-    now, rows = _now_rows("decision", 3)
+    now, rows = _now_rows("learning_decision", 3)
     u = ai_budget._summarise(rows, now)
     assert (u.minute_rows, u.day_tokens, u.day_grades) == (3, 1500, 3)
 
@@ -627,7 +627,7 @@ def test_a_billed_jev_fallback_counts_one_grade_not_two(seam, monkeypatch, usage
         v = _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
     assert (v.backend, v.fallback) == ("gemini", True)
     tasks = [r["task"] for r in usage if r.get("provider") == "typesafe"] + [r["task"] for r in gemini_rows]
-    assert tasks == ["decision_jev_extra", "decision"]
+    assert tasks == ["decision_jev_extra", "learning_decision"]
     assert sum(t in ai_budget.GRADE_TASKS for t in tasks) == 1
 
 
@@ -650,7 +650,7 @@ def test_a_served_jev_decision_without_a_prior_is_one_grade(seam, monkeypatch, u
     monkeypatch.setenv("DECISION_BACKEND_JUDGE_LEAK", "jev")
     _scripted_jev(monkeypatch, seam, {"q": ("no", 0.9, {})})
     _run(lambda: seam.judge_leak(_leak(seam), deps=_deps()))
-    assert [r["task"] for r in usage if r.get("provider") == "typesafe"] == ["decision"]
+    assert [r["task"] for r in usage if r.get("provider") == "typesafe"] == ["learning_decision"]
 
 
 # ── review fix round: no shadow event is dropped for a non-enum key ──────────
@@ -742,7 +742,7 @@ def test_the_lifespan_drains_shadows_and_closes_jev_before_the_event_flush():
 
 def test_aclose_clients_closes_this_loops_client(monkeypatch):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    from services import decisions
+    from services import learning_decisions as decisions
 
     monkeypatch.setattr(decisions, "JEV_ENABLED", True)
     monkeypatch.setenv(_jev.API_KEY_ENV, "ts-test-key")
@@ -786,8 +786,8 @@ def test_co_shadowed_decisions_never_inflate_each_others_gemini_cost(ev):
     row is whose, so such requests are left out of both averages."""
     rows = [_shadow_row(i, decision="judge_leak") for i in range(4)]
     rows += [_shadow_row(i, decision="item_answerable") for i in range(2)]  # rq0, rq1 shared
-    usage = [{"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.0001} for i in range(4)]
-    usage += [{"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.0001} for i in range(2)]
+    usage = [{"request_id": f"rq{i}", "task": "learning_decision", "provider": "gemini", "cost_usd": 0.0001} for i in range(4)]
+    usage += [{"request_id": f"rq{i}", "task": "learning_decision", "provider": "gemini", "cost_usd": 0.0001} for i in range(2)]
     stats = ev.shadow_stats(rows, usage_rows=usage)
     assert stats["judge_leak"].gemini_cost_per_decision_usd == pytest.approx(0.0001)  # rq2, rq3 only
     assert stats["judge_leak"].gemini_cost_conclusive is True
@@ -807,7 +807,7 @@ def test_with_zero_calls_the_cost_gate_never_passes_vacuously(ev):
     """Every row a no-call code: no Jev cost was measured, so cost_not_worse must fail
     (or be inconclusive) — never 0 <= the Gemini cost."""
     rows = [_shadow_row(i, code="circuit_open", ms=0, day=i % 8) for i in range(20)]
-    usage = [{"request_id": f"rq{i}", "task": "decision", "provider": "gemini", "cost_usd": 0.001} for i in range(20)]
+    usage = [{"request_id": f"rq{i}", "task": "learning_decision", "provider": "gemini", "cost_usd": 0.001} for i in range(20)]
     [s] = ev.shadow_stats(rows, usage_rows=usage).values()
     assert s.cost_per_decision_usd == float("inf")
     assert ev.live_gates(s)["cost_not_worse"] in (False, None)

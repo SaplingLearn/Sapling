@@ -14,7 +14,7 @@ import httpx2
 import pytest
 
 from agents import _jev
-from services import decisions
+from services import learning_decisions as decisions
 
 _BACKEND = __import__("pathlib").Path(__file__).resolve().parents[1]
 
@@ -483,7 +483,7 @@ def test_importing_jev_does_not_import_the_sdk():
     import sys
 
     code = (
-        "import sys; import agents._jev, services.decisions; "
+        "import sys; import agents._jev, services.learning_decisions; "
         "print('typesafe_sdk' in sys.modules)"
     )
     out = subprocess.run(

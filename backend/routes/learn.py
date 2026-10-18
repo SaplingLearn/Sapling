@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from sse_starlette.sse import EventSourceResponse
 
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
@@ -14,7 +15,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from agents import CONTINUATION_LIMITS, TUTOR_LIMITS
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
-from agents.usage import record_agent_usage
+from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
 from learning.gate import learning_loop_for_request
@@ -30,15 +31,23 @@ from services.quiz_ask import open_quiz_ask
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
+from services.tutor_sessions import (
+    PENDING_SESSIONS,
+    SESSION_NOT_FOUND as _SESSION_NOT_FOUND,
+    materialization_lock,
+    require_session_owner,
+    session_owned_by,
+)
+from services.tutor_router import observe_tutor_turn
 from services.xp_service import award_xp_safe
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Lazy sessions: start-session does not write to DB until the user sends their first chat message.
-# Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
-PENDING_SESSIONS: dict[str, dict] = {}
+# Lazy sessions: start-session does not write to DB until the user sends their
+# first chat message. PENDING_SESSIONS (session_id -> pending payload) lives in
+# services/tutor_sessions.py so other routes can share the ownership rule.
 
 MODE_DISPLAY_NAMES = {
     "socratic": "Socratic (question-based)",
@@ -134,6 +143,62 @@ def _resolve_model_pref(model_pref: str | None):
     return google_model(name)
 
 
+def _ran_on(result, agent, run_kwargs: dict, model_pref: str | None) -> tuple[str, str | None]:
+    """(model_tier, tutor_model) for the run that ACTUALLY served a turn.
+
+    The tier is what `_prepare_chat_run` resolved: `fast`/`smart` when it put
+    a model override into `run_kwargs` for that pref, else `default` (no pref,
+    an unknown one, or a mode where the pref is not honoured, #391). The name
+    is the model the run result reports (`served_model_name`, the same
+    answer the llm_usage row records), falling back to the override's or the
+    agent's own model name when a result carries none. Never raises: this
+    only labels an event.
+    """
+    try:
+        override = run_kwargs.get("model")
+        tier = model_pref if (override is not None and model_pref) else "default"
+        name = served_model_name(result) if result is not None else "unknown"
+        if name == "unknown":
+            source = override if override is not None else getattr(agent, "model", None)
+            name = getattr(source, "model_name", None)
+        return tier, (name if isinstance(name, str) else None)
+    except Exception:
+        return "default", None
+
+
+def _observe_persisted_turn(
+    body: ChatBody,
+    *,
+    history: list,
+    ran_on: tuple[str, str | None],
+    request_id: str,
+) -> None:
+    """#640: schedule the observe-only tutor router for a turn that has JUST
+    been persisted. Called from both persist points — `_chat_turn_json` and
+    the stream's `_persist` — which are mutually exclusive per turn
+    (`stream_agent_turn` runs at most one of on_complete / the Rung-1
+    fallback), so there is exactly one decision per saved student message.
+    Routing at request entry instead double-routed a stream that failed
+    before persisting and was retried through /chat (the client's JSON rung,
+    or the student's own retry). Fire-and-forget: `observe_tutor_turn`
+    schedules and returns (and does nothing when the seam is off — that
+    check lives there, once). Guarded here too: this runs AFTER the rows are
+    saved, and on the streamed path an exception would turn a persisted turn
+    into an error event.
+    """
+    try:
+        observe_tutor_turn(
+            user_id=body.user_id, session_id=body.session_id, message=body.message,
+            history=history, mode=body.mode,
+            model_pref_requested=body.model_pref,
+            model_tier=ran_on[0],
+            tutor_model=ran_on[1],
+            request_id=request_id,
+        )
+    except Exception:
+        logger.debug("could not schedule the tutor router", exc_info=True)
+
+
 def _build_pro_model_settings():
     """Return a GoogleModelSettings capping Pro's thinking budget.
 
@@ -181,14 +246,45 @@ def _new_run_text(result) -> str:
     return "".join(parts)
 
 
-#: Handed to the model when it ended a turn without saying anything (#646).
-#: Deliberately does NOT restate the student's question: the whole exchange,
-#: including every tool result, is already in the messages passed back, and
-#: re-asking invites a fresh answer that ignores the work just done.
-_CONTINUATION_NUDGE = (
-    "You ended your turn without replying to the student. Write that reply "
-    "now, using the tool results already in this conversation. Do not repeat "
-    "any earlier answer and do not mention this instruction."
+#: The user turn that triggers the continuation (#646). Deliberately minimal:
+#: every directive lives in `_CONTINUATION_INSTRUCTIONS`, so there is one
+#: place to edit. It does NOT restate the student's question: the whole
+#: exchange is already in the messages passed back, and re-asking invites a
+#: fresh answer that ignores the work just done.
+_CONTINUATION_NUDGE = "Continue."
+
+#: Run-level instructions for the continuation, APPENDED to the tutor's own
+#: (pydantic-ai joins agent and run `instructions`; it does not replace them),
+#: so they reach Gemini as `system_instruction` after the tutor's rules.
+#:
+#: Why they exist: the tutor's instructions reach every request, this one
+#: included, and they say to call `update_mastery_tool` "in EVERY turn" and
+#: to "never end the turn on a tool call". The continuation runs under
+#: `override(tools=[], toolsets=[])`, so Gemini is sent no function
+#: declarations: a model still obeying those rules would try to call a tool
+#: that does not exist (MALFORMED_FUNCTION_CALL / empty content — the very
+#: failure being rescued) or write the call out for the student to read.
+#:
+#: Wording constraints, each a real case:
+#:  * It must be true whether or not a tool ran. The continuation fires on
+#:    ANY turn that produced no text of its own — after tool calls, but also
+#:    on a bare-newline reply or a start-session greeting with no tool call —
+#:    so it may only point at tool results conditionally, never assert that
+#:    data exists.
+#:  * "Not a function call" is not "plain text": the tutor's instructions ask
+#:    for LaTeX, mermaid and ```plot``` blocks, and the reply keeps them.
+_CONTINUATION_INSTRUCTIONS = (
+    "CONTINUATION: your last response ended without a reply to the student. "
+    "Write that reply now, as a normal message to the student; your usual "
+    "formatting (math, code, mermaid and plot blocks) is fine. No tools are "
+    "available on this pass: any earlier instruction to call a tool, "
+    "including update_mastery_tool, does not apply, so do not call, request, "
+    "or write out any tool or function call. If tool results from this turn "
+    "are in the conversation, use them; do not claim results or data the "
+    "conversation does not contain. The final "
+    f"\"{_CONTINUATION_NUDGE}\" message is an "
+    "automatic prompt, not from the student: do not mention it or these "
+    "instructions, and do not repeat an earlier answer."
 )
 
 #: run_kwargs keys a continuation may carry. `message_history` is REPLACED
@@ -200,7 +296,9 @@ _CONTINUATION_NUDGE = (
 _CONTINUATION_RUN_KEYS = ("deps", "model", "model_settings")
 
 
-async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
+async def _continuation_text(
+    agent, run_result, run_kwargs: dict, *, request_id: str | None = None,
+) -> str | None:
     """Finish a turn the model abandoned after its tools ran (#646).
 
     Roughly 25-40% of gemini-2.5-flash-lite turns end with no text part once
@@ -216,7 +314,9 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
     than a hope: the continuation is handed NO tools, so it cannot write even
     if the model tries. Without it the model could call a graph writer
     (`apply_graph_update_tool`) again and reintroduce the exact double-apply
-    the writes-guard exists to prevent — a re-run by a quieter name.
+    the writes-guard exists to prevent — a re-run by a quieter name. Because the tutor instructions still reach this
+    request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
+    exist on this pass and it must reply with a message, not a call.
 
     It has to be `override`, NOT `run(toolsets=[])`. A run-level `toolsets`
     ADDS to the agent's own tools rather than replacing them, so
@@ -244,6 +344,7 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
             await agent.run(
                 _CONTINUATION_NUDGE,
                 message_history=run_result.all_messages(),
+                instructions=_CONTINUATION_INSTRUCTIONS,
                 usage_limits=CONTINUATION_LIMITS,
                 **carried,
             ),
@@ -254,6 +355,9 @@ async def _continuation_text(agent, run_result, run_kwargs: dict) -> str | None:
                 getattr(carried.get("deps"), "session_id", None),
                 getattr(carried.get("deps"), "user_id", None),
             ),
+            # Explicit: on the streamed path this runs inside the SSE
+            # generator, after the request contextvar is gone.
+            request_id=request_id,
         )
     return _new_run_text(result).strip() or None
 
@@ -411,6 +515,12 @@ def _load_message_history(session_id: str) -> list:
 
     Empty/decrypt-failed content is skipped so we don't feed empty
     parts to the LLM.
+
+    The history carries NO system/instructions text. The tutor's rules
+    reach the model only because the chat tutor agents declare them as
+    `instructions=` (re-sent on every request); a `system_prompt=` would
+    be skipped whenever this history is non-empty, i.e. on every turn after
+    the opener. Pinned by tests/test_chat_tutor_prompt_every_turn.py.
     """
     rows = table("messages").select(
         "role,content",
@@ -429,8 +539,7 @@ def _load_message_history(session_id: str) -> list:
         elif raw_role in ("assistant", "model"):
             history.append(ModelResponse(parts=[TextPart(content=str(content))]))
         # else: drop (legacy 'system' rows have no equivalent in
-        # Pydantic AI's role taxonomy and the system prompt is supplied
-        # by the agent itself).
+        # Pydantic AI's role taxonomy).
     return history
 
 
@@ -467,46 +576,112 @@ def _elapsed_minutes(started_at_iso: str) -> int:
 
 
 def _consume_pending(session_id: str, user_id: str) -> None:
-    """If session was started lazily, persist session row + first assistant message before user/chat."""
+    """If session was started lazily, persist session row + first assistant message before user/chat.
+
+    Callers run require_session_owner first; the user check here is a
+    second line of defence and runs before anything is written, so a
+    mismatched caller can never destroy or claim the owner's pending session.
+
+    Concurrency (CodeRabbit on #709): sync routes such as /mode-switch run in
+    FastAPI's threadpool, so two of the owner's requests can arrive while the
+    session is still pending. Materialisation is serialised per session id by
+    ``materialization_lock``; the pending entry is removed only AFTER the
+    session row and the initial assistant message are written. So:
+
+    - a request that finds no pending entry can rely on the row existing
+      (the lock-free fast path below — no lock for a ready session);
+    - a request that loses the race waits on the lock, then finds the entry
+      gone and returns, and only then writes its own messages (no FK
+      failure on ``messages.session_id``);
+    - ownership checks keep seeing the pending entry throughout, so a
+      concurrent request is never 404'd in a gap between "no longer
+      pending" and "row inserted";
+    - if materialisation fails, the entry stays pending (never wrongly
+      ready) and the lock is released for the next request to retry.
+
+    The row write is an upsert that ignores a duplicate id, so a retry is
+    safe even when an earlier attempt committed the row but its response was
+    lost (timeout, dropped connection). Two markers on the pending payload:
+
+    - ``_row_may_exist`` is set BEFORE the first write attempt. From then on
+      end-session / rename / delete must treat the session as possibly
+      having a ``sessions`` row and act on the DB too, not just on memory.
+    - ``_row_written`` is set once a write has returned. It guards the
+      ``session.started`` event against double-logging when a later step
+      (the greeting write) fails and the request is retried.
+
+    Sync code: the async routes call it through ``_consume_pending_off_loop``
+    so the lock wait and the network writes never block the event loop.
+    """
     if session_id not in PENDING_SESSIONS:
         return
-    pending = PENDING_SESSIONS.pop(session_id)
-    if pending["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
-    
-    # Sessions key on the offering (0025). The pending payload carries the
-    # offering id (resolved at start-session) alongside the abstract course id.
-    session_data = {
-        "id": session_id,
-        "user_id": user_id,
-        "mode": pending["mode"],
-        "topic": pending["topic"],
-    }
-    if pending.get("offering_id"):
-        session_data["offering_id"] = pending["offering_id"]
-    if pending.get("loop_state"):
-        # PKG-14 (spec §13 A99): a quiz-ask loop session materialises in `teach`
-        session_data["loop_state"] = pending["loop_state"]
+    with materialization_lock(session_id):
+        pending = PENDING_SESSIONS.get(session_id)
+        if pending is None:
+            return  # another request materialised (or discarded) it while we waited
+        if pending["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
-    table("sessions").insert(session_data)
-    # #117: session.started once the lazy session row actually materializes.
-    # The topic is free text -> content= (fingerprint only), never payload.
-    events_service.log_event(
-        "session.started",
-        category="usage",
-        user_id=user_id,
-        payload={
-            "session_id": session_id,
-            "mode": pending["mode"],
-            "offering_id": pending.get("offering_id"),
-        },
-        content=pending["topic"],
-    )
-    save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        if not pending.get("_row_written"):
+            # Sessions key on the offering (0025). The pending payload carries
+            # the offering id (resolved at start-session) alongside the
+            # abstract course id.
+            session_data = {
+                "id": session_id,
+                "user_id": user_id,
+                "mode": pending["mode"],
+                "topic": pending["topic"],
+            }
+            if pending.get("offering_id"):
+                session_data["offering_id"] = pending["offering_id"]
+            if pending.get("loop_state"):
+                # Quiz-ask loop sessions materialize in teach phase.
+                session_data["loop_state"] = pending["loop_state"]
+
+            pending["_row_may_exist"] = True
+            table("sessions").upsert(session_data, on_conflict="id", ignore_duplicates=True)
+            pending["_row_written"] = True
+            # #117: session.started once the lazy session row actually
+            # materializes. The topic is free text -> content= (fingerprint
+            # only), never payload.
+            events_service.log_event(
+                "session.started",
+                category="usage",
+                user_id=user_id,
+                payload={
+                    "session_id": session_id,
+                    "mode": pending["mode"],
+                    "offering_id": pending.get("offering_id"),
+                },
+                content=pending["topic"],
+            )
+        save_message(session_id, "assistant", pending["assistant_reply"], pending["graph_update"])
+        PENDING_SESSIONS.pop(session_id, None)
+
+
+async def _consume_pending_off_loop(session_id: str, user_id: str) -> None:
+    """`_consume_pending` for the async routes (/chat, /chat/stream, /action).
+
+    The slow path takes a blocking threading lock (possibly held by a
+    threadpool request mid-insert) and makes sync network writes, so it runs
+    in the threadpool; doing it inline would freeze every request on this
+    worker's event loop for as long as the insert takes. A session that is
+    not pending takes the inline fast path and never leaves the loop.
+    """
+    if session_id not in PENDING_SESSIONS:
+        return
+    await run_in_threadpool(_consume_pending, session_id, user_id)
+
+
+def _session_row_may_exist(pending: dict | None) -> bool:
+    """True when the session has (or may have) a ``sessions`` row: it is not
+    pending at all, or materialisation already attempted the row write."""
+    return pending is None or bool(pending.get("_row_may_exist"))
 
 
 def _ensure_session_ready(session_id: str, user_id: str) -> None:
-    """For action/mode-switch: materialize lazy session if still pending."""
+    """For /mode-switch (a sync route, already in the threadpool): materialize
+    the lazy session if still pending."""
     _consume_pending(session_id, user_id)
 
 
@@ -553,6 +728,7 @@ async def _start_session_agent(
     session_id: str | None = None,
     *,
     model_pref: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """Core start-session pipeline on chat_tutor_agent: _prepare_chat_run
     (empty history) -> agent.run -> record_agent_usage -> stash
@@ -586,7 +762,10 @@ async def _start_session_agent(
     if session_id is None:
         session_id = str(uuid.uuid4())
 
-    request_id = current_request_id() or str(uuid.uuid4())
+    # `request_id`: the streaming route's Rung-1 fallback passes the turn's
+    # own (this then runs inside the SSE generator, where the request
+    # contextvar is gone and a fresh uuid would orphan the usage rows).
+    request_id = request_id or current_request_id() or str(uuid.uuid4())
 
     # Use abstract course_id from body, or resolve it from the topic. The graph
     # + shared context key on this abstract id; the session row keys on the
@@ -616,6 +795,7 @@ async def _start_session_agent(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
             session_id=session_id,
+            request_id=request_id,
         )
         # str — chat_tutor agents return plain Markdown. Safe to read
         # `.output` directly here (no `_new_run_text` narrowing): this call
@@ -634,7 +814,7 @@ async def _start_session_agent(
             # opener's tool results are in its messages just like a chat
             # turn's.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs)
+                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
             except Exception:
                 logger.warning(
                     "Continuation after a textless session greeting failed",
@@ -814,10 +994,12 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
-) -> dict:
+) -> tuple[dict, tuple[str, str | None]]:
     """Run chat_tutor_agent and return the wire response shape.
 
-    Returns ``{"reply": str, "graph_update": dict, "mastery_changes": list}``.
+    Returns ``({"reply": str, "graph_update": dict, "mastery_changes": list},
+    (model_tier, tutor_model))`` — the wire dict, and what the run actually
+    ran on (see `_ran_on`), kept out of the dict so it can never leak.
     Graph changes are persisted in-band during the agent run by
     `apply_graph_update_tool` (registered on chat_tutor); the tool also
     accumulates its payload on `deps` so the route can echo `graph_update`
@@ -849,6 +1031,7 @@ async def _chat_via_agent(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
             session_id=_usage_session_id(session_id, deps.user_id),
+            request_id=request_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
         # puts `message_history` into `run_kwargs`, so a textless model
@@ -875,7 +1058,7 @@ async def _chat_via_agent(
             # have already run. Fire regardless of whether writes landed:
             # nothing else will re-run, so there is no better answer waiting.
             try:
-                rescued = await _continuation_text(agent, result, run_kwargs)
+                rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
             except Exception:
                 # Second model call; a failure here must degrade to the
                 # pre-#646 behaviour, never surface as its own error.
@@ -910,16 +1093,22 @@ async def _chat_via_agent(
     # end_session can derive concepts_covered correctly.
     merged_graph_update = merge_graph_updates(deps.graph_updates)
 
-    return {
+    response = {
         "reply": reply,
         "graph_update": merged_graph_update,
         # Always empty since PKG-14b (update_mastery_tool is gone, spec §11.6).
         "mastery_changes": deps.mastery_changes,
     }
+    # Out of band, never in the wire dict: what this run actually ran on, for
+    # the #640 router's event.
+    return response, _ran_on(result, agent, run_kwargs, model_pref)
 
 
 async def _chat_turn_json(
-    body: ChatBody, request: Request, *, model_pref: str | None = None
+    body: ChatBody,
+    request: Request,
+    *,
+    model_pref: str | None = None,
 ) -> dict:
     """One full non-streaming chat turn: agent run, persistence, and the
     #117 `chat.message_sent` emission — the SINGLE emission site for
@@ -935,6 +1124,9 @@ async def _chat_turn_json(
     Persist ordering preserved: prior turns load BEFORE the new user row is
     written; the user row and assistant row are written only after the agent
     run succeeds, so a failed turn persists nothing.
+
+    This is also one of the two points the observe-only tutor router (#640)
+    is scheduled from — see `_observe_persisted_turn`.
     """
     # Unify with the middleware-stamped request ID so agent traces and
     # any downstream error payloads share the same correlation key.
@@ -953,7 +1145,7 @@ async def _chat_turn_json(
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
 
-    response = await _chat_via_agent(
+    response, ran_on = await _chat_via_agent(
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -982,6 +1174,9 @@ async def _chat_turn_json(
         payload={"mode": body.mode, "session_id": body.session_id},
         content=body.message,
     )
+    _observe_persisted_turn(
+        body, history=message_history, ran_on=ran_on, request_id=request_id,
+    )
 
     return response
 
@@ -989,6 +1184,7 @@ async def _chat_turn_json(
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
+    require_session_owner(body.session_id, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
     ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
@@ -997,7 +1193,7 @@ async def chat(body: ChatBody, request: Request):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("chat")(body, request)
     _kill_switch_budget(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
     )
@@ -1014,6 +1210,7 @@ async def chat_stream(body: ChatBody, request: Request):
     (ADR 0011); retries are client-driven and idempotent via X-Request-ID.
     """
     require_self(body.user_id, request)
+    require_session_owner(body.session_id, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
     ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
@@ -1022,7 +1219,7 @@ async def chat_stream(body: ChatBody, request: Request):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("chat_stream")(body, request)
     _kill_switch_budget(body.user_id)
-    _consume_pending(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
 
     request_id = (
         getattr(request.state, "request_id", None)
@@ -1053,6 +1250,10 @@ async def chat_stream(body: ChatBody, request: Request):
     # SAPLING_MODEL_MODE=function — forcing a GoogleModel here would bypass
     # the e2e seam and re-create the cross-loop client problem #453 solved.
 
+    #: What the streamed run actually ran on — set by `_usage` (on_usage runs
+    #: before on_complete), read by `_persist` for the #640 router's event.
+    ran: dict = {}
+
     def _persist(reply: str, graph_update: dict, mastery_changes: list) -> dict:
         # Mirrors chat()'s ordering: user row, then assistant row. Runs only
         # after the agent run completes, so a disconnect mid-generation
@@ -1071,6 +1272,13 @@ async def chat_stream(body: ChatBody, request: Request):
             payload={"mode": body.mode, "session_id": body.session_id},
             content=body.message,
         )
+        # #640: the streamed twin of `_chat_turn_json`'s router call, labelled
+        # with the run `_usage` saw (on_usage runs before on_complete).
+        _observe_persisted_turn(
+            body, history=message_history,
+            ran_on=ran.get("on") or _ran_on(None, agent, run_kwargs, body.model_pref),
+            request_id=request_id,
+        )
         return {}
 
     async def _fallback() -> dict:
@@ -1085,10 +1293,15 @@ async def chat_stream(body: ChatBody, request: Request):
     def _usage(run_result) -> None:
         # #118: streaming turns report usage via the final AgentRunResultEvent,
         # surfaced by stream_agent_turn's on_usage hook after the run completes.
+        # request_id is explicit: this runs inside the SSE generator, after
+        # RequestIDMiddleware has reset the contextvar, so the implicit lookup
+        # would orphan the row from its turn (and from the turn's decision.made).
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
             session_id=_usage_session_id(body.session_id, body.user_id),
+            request_id=request_id,
         )
+        ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
 
     async def event_stream():
         async for ev in stream_agent_turn(
@@ -1100,7 +1313,7 @@ async def chat_stream(body: ChatBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1204,14 +1417,17 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # on_complete/nonstream_fallback executes per turn — see
         # stream_agent_turn's docstring). model_pref="fast" (D2): the
         # second chance runs on the fast tier.
-        return await _start_session_agent(body, session_id, model_pref="fast")
+        return await _start_session_agent(body, session_id, model_pref="fast",
+                                          request_id=request_id)
 
     def _usage(run_result) -> None:
         # #118: same hook as /chat/stream — the opener runs the same
-        # chat_tutor agent, so it rolls up under the same feature/task.
+        # chat_tutor agent, so it rolls up under the same feature/task. Explicit
+        # request_id, as in /chat/stream: the contextvar is gone by now.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
             session_id=session_id,
+            request_id=request_id,
         )
 
     async def event_stream():
@@ -1224,7 +1440,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
             nonstream_fallback=_fallback,
             on_usage=_usage,
             request_id=request_id,
-            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs),
+            continuation=lambda rr: _continuation_text(agent, rr, run_kwargs, request_id=request_id),
         ):
             yield sapling_event_to_sse(ev)
 
@@ -1240,6 +1456,7 @@ def end_session(body: EndSessionBody, request: Request):
         require_self(body.user_id, request)
     else:
         body.user_id = get_session_user_id(request)
+    require_session_owner(body.session_id, body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
     # kill-switch path (spec §11.6). No model runs here, so no budget check.
     if learning_loop_for_request(body.user_id):
@@ -1247,16 +1464,21 @@ def end_session(body: EndSessionBody, request: Request):
         loop = _loop_delegate("end_session")(body, request)
         if loop is not None:
             return loop
+    empty = {
+        "concepts_covered": [],
+        "time_spent_minutes": 0,
+    }
+    # Discard under the materialisation lock so a concurrent first turn can't
+    # insert the row after we drop the entry. A pending session whose row was
+    # never attempted has nothing in the DB to end. One whose materialisation
+    # attempted the row (and then failed, say on the greeting) may have a
+    # row, so it is ended in the DB too, as is one that materialised while
+    # we waited.
+    popped = None
     if body.session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[body.session_id]
-        if body.user_id and pending["user_id"] != body.user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        PENDING_SESSIONS.pop(body.session_id, None)
-        # PKG-14b (spec §11.2): the three always-empty lists are gone.
-        empty = {
-            "concepts_covered": [],
-            "time_spent_minutes": 0,
-        }
+        with materialization_lock(body.session_id):
+            popped = PENDING_SESSIONS.pop(body.session_id, None)
+    if popped is not None and not _session_row_may_exist(popped):
         return {"summary": empty}
 
     session_rows = table("sessions").select(
@@ -1265,7 +1487,9 @@ def end_session(body: EndSessionBody, request: Request):
         filters={"id": f"eq.{body.session_id}", **NOT_REVIEW},
     )
     if not session_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
+        if popped is not None:
+            return {"summary": empty}  # the attempted row write never landed
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     session = session_rows[0]
 
     table("sessions").update(
@@ -1400,20 +1624,18 @@ def rename_session(session_id: str, body: RenameSessionBody, request: Request):
     if not topic or len(topic) > 120:
         raise HTTPException(status_code=400, detail="Topic must be 1-120 characters")
 
+    require_session_owner(session_id, body.user_id)
     if session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[session_id]
-        if pending["user_id"] != body.user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        pending["topic"] = topic
-        return {"updated": True, "session": {"id": session_id, "topic": topic}}
-
-    owner_rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
-    )
-    if not owner_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if owner_rows[0].get("user_id") != body.user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        with materialization_lock(session_id):
+            pending = PENDING_SESSIONS.get(session_id)
+            if pending is not None:
+                # Rename the copy a later materialisation will write...
+                pending["topic"] = topic
+                if not _session_row_may_exist(pending):
+                    return {"updated": True, "session": {"id": session_id, "topic": topic}}
+                # ...and, since an earlier attempt may already have written
+                # the row (the retry's upsert won't overwrite it), the row too.
+        # Otherwise it materialised while we waited: rename the real row.
 
     table("sessions").update(
         {"topic": topic},
@@ -1428,21 +1650,24 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
         require_self(user_id, request)
     else:
         user_id = get_session_user_id(request)
-    if session_id in PENDING_SESSIONS:
-        pending = PENDING_SESSIONS[session_id]
-        if pending["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
-        PENDING_SESSIONS.pop(session_id, None)
+    # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
+    # no-op 200 — nothing is deleted, and the answer never says whether the id
+    # exists. A second delete (another tab, a double click) still succeeds.
+    if not session_owned_by(session_id, user_id):
         return {"deleted": True}
-    # Verify the session belongs to the authenticated user before deleting. A daily
-    # review session is never deleted here: that would wipe today's review state (A73).
+    # Daily review rows belong to the review queue, never tutor deletion.
     owner_rows = table("sessions").select(
-        "user_id,mode", filters={"id": f"eq.{session_id}"}, limit=1
+        "mode", filters={"id": f"eq.{session_id}"}, limit=1
     )
     if owner_rows and owner_rows[0].get("mode") == REVIEW_MODE:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if owner_rows and owner_rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        return {"deleted": True}
+    if session_id in PENDING_SESSIONS:
+        with materialization_lock(session_id):
+            popped = PENDING_SESSIONS.pop(session_id, None)
+        if popped is not None and not _session_row_may_exist(popped):
+            return {"deleted": True}
+        # A row may exist (an attempted materialisation, or one that finished
+        # while we waited): delete it too. Both deletes are no-ops if not.
     table("messages").delete({"session_id": f"eq.{session_id}"})
     table("sessions").delete({"id": f"eq.{session_id}"})
     return {"deleted": True}
@@ -1451,10 +1676,12 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
 @router.get("/sessions/{session_id}/resume")
 def resume_session(session_id: str, request: Request):
     user_id = get_session_user_id(request)
-    if session_id in PENDING_SESSIONS:
-        p = PENDING_SESSIONS[session_id]
-        if p["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Session user mismatch")
+    require_session_owner(session_id, user_id)
+    # .get(), not `in` + [...]: a concurrent first turn or delete can drop the
+    # entry in between. Gone means it materialised (or was discarded): read
+    # the DB below.
+    p = PENDING_SESSIONS.get(session_id)
+    if p is not None:
         now = datetime.now(timezone.utc).isoformat()
         return {
             "session": {
@@ -1481,9 +1708,7 @@ def resume_session(session_id: str, request: Request):
         filters={"id": f"eq.{session_id}", **NOT_REVIEW},  # a review session is never resumed
     )
     if not session_rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session_rows[0].get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Session user mismatch")
+        raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
 
     # Expose the abstract course id (derived from the offering) for the
     # frontend, alongside the stored offering id.
@@ -1548,6 +1773,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
         session_id=_usage_session_id(body.session_id, body.user_id),
+        request_id=request_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's
@@ -1561,7 +1787,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
         # (#646) — an action turn has no fallback rung at all, so the
         # alternative is failing work the tools already did.
         try:
-            rescued = await _continuation_text(agent, result, run_kwargs)
+            rescued = await _continuation_text(agent, result, run_kwargs, request_id=request_id)
         except Exception:
             logger.warning(
                 "Continuation after a textless action turn failed", exc_info=True
@@ -1585,6 +1811,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 @router.post("/action")
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
+    require_session_owner(body.session_id, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
     ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
@@ -1593,7 +1820,7 @@ async def action(body: ActionBody, request: Request):
         request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
         return await _loop_delegate("action")(body, request)
     _kill_switch_budget(body.user_id)
-    _ensure_session_ready(body.session_id, body.user_id)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
     )
@@ -1602,6 +1829,7 @@ async def action(body: ActionBody, request: Request):
 @router.post("/mode-switch")
 def mode_switch(body: ModeSwitchBody, request: Request):
     require_self(body.user_id, request)
+    require_session_owner(body.session_id, body.user_id)
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(

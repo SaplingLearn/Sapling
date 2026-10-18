@@ -444,3 +444,52 @@ test("kill switch restores the legacy Learn screen", async ({ page }) => {
   )) as { n: number }[];
   expect(errors[0].n).toBe(0);
 });
+
+// UI regression coverage; the deterministic function model supplies all lesson
+// and grading text. This exercises navigation/forms at a real phone width,
+// rather than inferring mobile usability from the component's desktop tests.
+test("phone learner can check in, answer a check and reach wrap-up without horizontal overflow", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto("/learn");
+  const phase = page.getByTestId("loop-phase");
+  await expect(page.getByRole("textbox", { name: "Check-in answer" })).toBeVisible();
+  await expect(page.getByTestId("loop-tree-link")).toBeVisible();
+  await expect(page.getByTestId("loop-rail")).toHaveCount(0);
+  expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await walkProbeAndPlan(page, P);
+  await firstTeachTurn(page);
+  await page.getByTestId("loop-check-me").click();
+  await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+  await page.getByRole("textbox", { name: "Your answer", exact: true }).fill(`working: ${GRADER_CORRECT_TOKEN}`);
+  await page.getByTestId("loop-attempt-submit").click();
+  await expect(phase).toHaveAttribute("data-phase", "feedback");
+  await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
+  expect(await phase.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.getByTestId("loop-close-button").click();
+  await expect(page.getByTestId("loop-close-done")).toBeVisible();
+  await expect(page.getByTestId("loop-close-study-link")).toHaveAttribute("href", "/study?mode=cards");
+  await context.close();
+});
+
+test("a failed daily-review status read offers recovery without removing flashcards", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  const { context, page } = await signIn(browser, USER_CAPPED, "Casey Cap");
+  let first = true;
+  await page.route("**/api/learn/loop/review/active?*", async (route) => {
+    if (first) {
+      first = false;
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "temporarily unavailable" }) });
+    } else await route.continue();
+  });
+  await page.goto("/study?mode=cards");
+  await expect(page.getByTestId("review-status-retry")).toBeVisible();
+  await expect(page.getByText(CAPPED_CARD_FRONT, { exact: true })).toBeVisible();
+  await page.getByTestId("review-status-retry").click();
+  await expect(page.getByTestId("review-due-panel")).toBeVisible();
+  await expect(page.getByTestId("review-status-retry")).toHaveCount(0);
+  await context.close();
+});

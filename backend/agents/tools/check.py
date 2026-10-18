@@ -7,7 +7,7 @@ the post-test (PKG-14) call it. It NEVER persists: the calling route runs
 learning.evidence.flush_pending once (spec §5, §8.1; inv_14). No Supabase
 import here by design.
 
-PKG-05b: it grades through the typed decision seam (services/decisions.py,
+PKG-05b: it grades through the typed decision seam (services/learning_decisions.py,
 spec §13 A24): the rubric grade via `grade_rubric_items`, the mc_reason reason
 check via `reason_is_correct` — each one agents.grader.grade() call with the
 same format and answer as before, so grader prompts and llm_usage rows are
@@ -51,8 +51,8 @@ from learning.misconceptions import (
     slip_or_misconception,
 )
 from learning.params import LADDER_MAX_RUNG, NUMERIC_GATE_EDGE_SLACK, RUNG_NO_CREDIT_MIN
-from services import decisions  # a module import: tests patch its functions
-from services.decisions import GradeState, ReasonState
+from services import learning_decisions as decisions  # a module import: tests patch its functions
+from services.learning_decisions import GradeState, ReasonState
 
 if TYPE_CHECKING:
     from learning.checks import CheckItem

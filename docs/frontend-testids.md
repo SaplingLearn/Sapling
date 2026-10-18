@@ -87,6 +87,7 @@ renders the element.
 | Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) |
 | Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
@@ -298,6 +299,8 @@ never collide in the DOM.
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
 | `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
+| `nav-link-<route>` | a SideNav destination row (`SideNav.tsx` `NavLink`), `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`); a feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0 |
+| `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
 
 ### `social`
 
@@ -398,6 +401,44 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-cost-group-feature` / `-user` / `-model` | the LLM-cost group-by toggle (drives the `group_by` query) |
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
+
+### `admin-tab-*` / `flag`
+
+Added with the #620 feature-flags admin UI (ADR 0029). `admin-tab-{tab}` is
+on every button in `Admin.tsx`'s tab bar (one per `Tab` value — `users`,
+`allowlist`, `roles`, `flags`, `achievements`, `cosmetics`, `analytics`,
+`audit`, `feedback`); Task 8's E2E journey opens the flags tab via
+`admin-tab-flags`. The tab's own content is `admin/FeatureFlags.tsx` (the
+list) and `admin/FlagPanel.tsx` (the right-hand panel), both new files with no
+baselined backlog — every button/input in them is tagged.
+
+| testid | element |
+| --- | --- |
+| `admin-tab-{tab}` | one tab-bar button per `Tab` value (`Admin.tsx`) |
+| `flag-row-{key}` | a flag's list row (grouped by nav section); click opens its right-hand panel |
+| `flag-state-{key}` | the row's current everyone-default in words (`Visible`/`Hidden` for a `hide_*` flag) |
+| `flag-toggle-{key}` | the row's `role="switch"` (`ui/Switch.tsx`); checked = Visible for a hide flag. Opens the confirm dialog, never saves directly |
+| `flag-open-{key}` | the row's chevron button that opens the panel (the keyboard path to it) |
+| `flag-save-scope-{key}` | the plain-language scope of a pending default/rollout change (design spec §7) — in the row switch's confirm dialog, or in the panel's sticky footer while edits are staged |
+| `flag-confirm-{key}` / `flag-cancel-{key}` | the row switch's confirm dialog buttons; confirm calls `adminUpdateFlag` |
+| `flag-panel-{key}` | the panel itself (`admin/FlagPanel.tsx`, a `ui/Sheet`); `flag-panel-{key}-close` is its close button |
+| `flag-default-{key}` | the panel's everyone-default `Toggle`; each option is `flag-default-{key}-{variant}` (`-off`/`-on`) |
+| `flag-rollout-{key}` | the rollout-percent `<input type="range">` |
+| `flag-rollout-preset-{key}-{n}` | a rollout preset chip (`0`/`10`/`25`/`50`/`100`) |
+| `flag-rollout-value-{key}` | the staged rollout percentage readout |
+| `flag-rollout-variant-{key}` | the rollout-variant `Toggle`, shown only for a flag with more than two variants (otherwise the rollout serves the other variant) |
+| `flag-save-{key}` / `flag-discard-{key}` | the panel footer's Save (calls `adminUpdateFlag`) and Discard; the footer only exists while edits are staged |
+| `flag-target-row-{key}-{type}-{id}` | one override row, suffixed with the rule's `target_type` (`user`/`role`) and `target_id` |
+| `flag-target-remove-{key}-{type}-{id}` | that row's remove button (`adminDeleteFlagTarget`) |
+| `flag-target-type-{key}` | the new-override Role/Student `Toggle` (options `-role`/`-user`) |
+| `flag-target-role-{key}` | the role picker `<select>`, shown for a Role override |
+| `flag-target-user-search-{key}` | the student search `<input>`, shown for a Student override (debounced `adminFetchUsers`) |
+| `flag-target-user-result-{key}-{userId}` | one student search result |
+| `flag-target-variant-{key}` | the new-override variant `Toggle` |
+| `flag-target-add-{key}` | "Add override" (`adminUpsertFlagTarget`) |
+| `flag-explain-input-{key}` | "Check a student" input — name/email search, or a raw user id + Enter (`adminExplainFlag`) |
+| `flag-explain-user-{key}-{userId}` | one student search result there; clicking it runs the check |
+| `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override` |
 
 ### `profile`
 

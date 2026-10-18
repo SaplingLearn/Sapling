@@ -13,7 +13,7 @@ other provenance, and any gold file over DECISION_EVAL_MAX_CASES cases (a per-fi
 cap; PKG-05b recorded 8 cases in all under its session budget, HANDOFF-05b). Measures
 the Gemini baseline through the production prompts — the grading decisions
 through agents/grader.py's message builder on the State-rebuilt item, the rest
-through services/decisions.py's `decision_request` — and `promotion_checks()`
+through services/learning_decisions.py's `decision_request` — and `promotion_checks()`
 computes every §3.6 gate for a candidate backend.
 Never hand-edit a case; add one on a miss.
 
@@ -81,7 +81,7 @@ from _replay import (  # noqa: E402  (sibling, sys.path-injected)
     run_with_cassette,
     save_cassette,
 )
-from agents.decision import DecisionPickOutput, decision_agent  # noqa: E402
+from agents.learning_decision import DecisionPickOutput, learning_decision_agent  # noqa: E402
 from agents.grader import (  # noqa: E402
     GraderOutput,
     build_grader_message,
@@ -91,7 +91,7 @@ from agents.grader import (  # noqa: E402
 )
 from learning import bkt  # noqa: E402
 from learning.params import BKT_L0  # noqa: E402
-from services import decisions as seam  # noqa: E402
+from services import learning_decisions as seam  # noqa: E402
 
 DATASET, FIXTURES = "decisions", Path(__file__).parent / "fixtures" / "decisions"
 ALLOWED_PROVENANCE = ("synthetic", "consented_deidentified")
@@ -174,7 +174,7 @@ async def _decision_cassette(case_name: str, message: str, output_type: type[Bas
         return output_type.model_validate(body)
     for attempt in range(_RECORD_RETRIES + 1):
         try:
-            result = await decision_agent.run(message, deps=make_deps(), output_type=output_type)
+            result = await learning_decision_agent.run(message, deps=make_deps(), output_type=output_type)
             break
         except Exception as exc:  # noqa: BLE001 - re-raised unless transient
             if not _is_transient(exc) or attempt == _RECORD_RETRIES:
@@ -460,7 +460,7 @@ GEMINI_TASKS = {
     "grade_rubric_items": frozenset({"grader", "grader_second"}),
     "reason_is_correct": frozenset({"grader", "grader_second"}),
 }
-_DECISION_TASKS = frozenset({"decision"})
+_DECISION_TASKS = frozenset({"learning_decision"})
 _DAY_S = 86_400
 
 

@@ -223,7 +223,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               <div style={{ fontSize: 15, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
               {item.format === "mc_reason" ? (
                 <>
-                  <div role="radiogroup" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div role="radiogroup" aria-label="Review answer options" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {(item.options ?? []).map((o) => (
                       <label key={o.letter} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
                         <input
@@ -241,6 +241,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                   </div>
                   <textarea
                     data-testid="review-reason-input"
+                    aria-label="Review reasoning"
                     placeholder="In one sentence: why?"
                     value={reason}
                     disabled={answered}
@@ -251,6 +252,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
               ) : (
                 <textarea
                   data-testid="review-answer-input"
+                  aria-label="Review answer"
                   placeholder="Your answer"
                   value={answer}
                   disabled={answered}

@@ -683,7 +683,7 @@ def test_probe_routes_reject_foreign_session(probe, method, path, body):
             if method == "post"
             else client.get(f"{LOOP}{path}")
         )
-    assert r.status_code == 403, r.text
+    assert r.status_code == 404, r.text
     assert not load.called and not probe.save.called
     probe.grade.assert_not_awaited()
     probe.agu.assert_not_called()

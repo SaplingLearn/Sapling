@@ -92,7 +92,7 @@ SERIES_SLOTS = (  # spec §8 invariant 6
     "check_items",
     "grader",
     "grader_second",
-    "decision",
+    "learning_decision",
     "loop_tutor",
     "loop_tutor_lite",
     "loop_tutor_deep",

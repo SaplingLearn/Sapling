@@ -37,7 +37,7 @@ SERIES_AGENT_TASKS = (
     "check_items",
     "grader",
     "grader_second",
-    "decision",
+    "learning_decision",
     "loop_tutor",
     "loop_tutor_lite",
     "loop_tutor_deep",
@@ -50,7 +50,7 @@ SERIES_AGENT_MODULES = (
     # agent and prompt stack on the check_items model slot
     "check_items_topup.py",
     "grader.py",
-    "decision.py",
+    "learning_decision.py",
     "loop_tutor.py",
     "session_close.py",
 )
@@ -823,7 +823,7 @@ def test_inv_28_symmetric_missingness(monkeypatch):
         reason_checks.append(student_answer)
         return GradeResult(unavailable=True)
 
-    # PKG-05b: grade_answer grades through services/decisions.py, which resolves
+    # PKG-05b: grade_answer grades through services/learning_decisions.py, which resolves
     # agents.grader.grade at call time, so the stub sits there; the items carry
     # the question/reference/rubric/wrong fields the seam's grading State reads.
     monkeypatch.setattr(agents.grader, "grade", _unavailable)
@@ -1155,7 +1155,7 @@ def test_inv_24_typesafe_only_in_jev():
             assert re.fullmatch(r"typesafe-sdk==\d+\.\d+\.\d+", spec), f"not an exact pin: {line}"
             pins.append(spec)
     if jev.exists():  # PKG-15: no longer vacuous
-        from services import decisions
+        from services import learning_decisions as decisions
 
         assert pins == [decisions.JEV_SDK_VERSION], pins
         lock = (BACKEND / "requirements.lock").read_text()
@@ -1233,7 +1233,7 @@ def test_inv_24_behaviour_no_client_without_the_guard(monkeypatch):
     import asyncio
 
     from agents import _jev
-    from services import decisions
+    from services import learning_decisions as decisions
 
     built = []
     monkeypatch.setattr(_jev, "_client_class_override", lambda **kw: built.append(kw))
@@ -1254,7 +1254,7 @@ def test_inv_25_decision_states_carry_no_identifiers():
     """Decision states are text only (A24 privacy gate: data minimisation in code)."""
     from pydantic import BaseModel
 
-    from services import decisions
+    from services import learning_decisions as decisions
 
     states = {
         n: o
@@ -1354,7 +1354,7 @@ def test_inv_30_answers_addressed_to_the_grader_are_never_graded(monkeypatch):
 
 
 # ── invariant 23 (PKG-06b; spec §8.23, §13 A20) ──────────────────────────────
-BUDGETED_AGENT_MODULES = ("grader", "decision", "loop_tutor", "session_close")
+BUDGETED_AGENT_MODULES = ("grader", "learning_decision", "loop_tutor", "session_close")
 # Every pydantic-ai Agent method that runs (or serves) the model; the self-test pins it against the
 # installed pydantic-ai. services/chat_stream.py streams through run_stream_events.
 AGENT_RUN_METHODS = frozenset(
@@ -1526,7 +1526,7 @@ def test_inv_23_ai_budget_checked_before_every_run():
 
     names = _budgeted_agent_names()
     assert names, (
-        "no module-level Agent( in agents/grader.py or agents/decision.py: the scan would be vacuous"
+        "no module-level Agent( in agents/grader.py or agents/learning_decision.py: the scan would be vacuous"
     )
     found, bad = 0, []
     for path in _backend_sources():
@@ -1821,7 +1821,7 @@ def test_inv_19_review_grades_through_grader_only():
     assert "agents.grader" not in text, (
         "review.py bypasses grade_answer and reaches the grader agent"
     )
-    assert "services.decisions" not in text, (
+    assert "services.learning_decisions" not in text, (
         "review.py bypasses grade_answer and reaches the decision seam"
     )
     assert not re.search(

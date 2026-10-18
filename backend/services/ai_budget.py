@@ -47,7 +47,8 @@ EventLevel = Literal["soft", "hard", "grader_cap"]
 
 BUDGET_CAPPED_EVENT = "ai.budget_capped"  # spec §6
 BUDGET_REACHED_DETAIL = "ai budget reached"  # spec §3.5 / A20 429 body
-GRADE_TASKS = frozenset({"grader", "grader_second", "decision"})  # spec §3.5 STUDENT_DAILY_GRADES
+GRADE_TASKS = frozenset({"grader", "grader_second", "learning_decision"})  # spec §3.5 STUDENT_DAILY_GRADES
+# The generic observe-only router task "decision" records spend but is not a graded answer.
 # PKG-15 (spec §13 A98 (i), review M2): Jev rows that do not stand in for a Gemini run — a
 # shadow, a billed served-Jev attempt that fell back, a served Jev run where the grader's
 # prior would have answered for free — count in $ ONLY: never toward the per-minute rate

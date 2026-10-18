@@ -7,7 +7,7 @@ This is the ONLY module that imports it (invariant 24).
 
 What this module owns, and nothing else:
 - the build guard: a client exists only when `model_mode() == "real"` AND
-  `services.decisions.JEV_ENABLED` (`enabled()`; checked by `_client`, the only
+  `services.learning_decisions.JEV_ENABLED` (`enabled()`; checked by `_client`, the only
   constructor site). `SAPLING_MODEL_MODE=function` never reaches Jev, and
   `JEV_ENABLED=false` (the default) never builds a client.
 - the pin: model `JEV_MODEL` ("jev-1.13.0", never an alias), a per-attempt
@@ -27,7 +27,7 @@ What this module owns, and nothing else:
   left unanswered, is `bad_answer` (a failure, never a default).
 
 What it does not own: fallbacks, events and llm_usage rows are
-services/decisions.py's (it has the deps). A failure is one `JevUnavailable`
+services/learning_decisions.py's (it has the deps). A failure is one `JevUnavailable`
 whose `code` is an event enum (`jev_absent`, `oversize`, `circuit_open`,
 `timeout`, `transport`, `http_<status>`, `bad_answer`), never a message: the
 SDK's own errors can quote the response body, which can echo the state.
@@ -113,8 +113,8 @@ def privacy_gate_open() -> bool:
 
 
 def _settings():
-    """services.decisions owns the §3.6 settings; read at call time (tests patch them)."""
-    from services import decisions
+    """services.learning_decisions owns the §3.6 settings; read at call time (tests patch them)."""
+    from services import learning_decisions as decisions
 
     return decisions
 

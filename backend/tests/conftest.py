@@ -79,14 +79,33 @@ def _clear_rate_limit_state():
 def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
-    from services import academics, course_context_service, growth
+    from services import academics, course_context_service, feature_flags, growth
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
+    feature_flags.clear_feature_flags_cache()
+    feature_flags.clear_user_roles_cache()
     yield
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
+    feature_flags.clear_feature_flags_cache()
+    feature_flags.clear_user_roles_cache()
+
+
+@pytest.fixture(autouse=True)
+def _tutor_session_reads_follow_learn_table(monkeypatch):
+    """The tutor-session ownership read moved from routes/learn.py to
+    services/tutor_sessions.py so flashcards/feedback could share it. Dozens
+    of learn tests drive the whole route through ONE `patch("routes.learn.
+    table", side_effect=factory)`; this keeps the ownership read on that same
+    factory by resolving `routes.learn.table` at call time. A test of a
+    non-learn route that needs a different answer patches
+    `services.tutor_sessions.table` itself, which overrides this."""
+    import routes.learn as learn_routes
+    from services import tutor_sessions
+
+    monkeypatch.setattr(tutor_sessions, "table", lambda name: learn_routes.table(name))
 
 
 @pytest.fixture(autouse=True)

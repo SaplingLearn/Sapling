@@ -204,6 +204,18 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
 if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
   echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
 fi
+# The deterministic lane exercises the typed decision seam (#640, ADR 0027).
+# The tutor router runs whatever the `decision_router` feature flag says
+# (ADR 0029) and the flag is off by default — no stored config on this stack —
+# so switch it on through its generic env override, respecting a value the
+# caller exported (`off` skips the seam). Under function mode an on variant
+# runs the scripted `function` backend; Gemini/Jev are never dialled. Function
+# mode is detected the same way as the check above: the shell first, then
+# backend/.env.
+MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
+if [ "$MODEL_MODE" = "function" ]; then
+  export SAPLING_FLAG_DECISION_ROUTER="${SAPLING_FLAG_DECISION_ROUTER:-jev}"
+fi
 
 mkdir -p "$E2E_DIR"
 
@@ -273,6 +285,16 @@ fi
 # (config.LEARNING_GATE_TIME_SCALE defaults to 1.0); only the loop reads it.
 export LEARNING_GATE_TIME_SCALE="${LEARNING_GATE_TIME_SCALE:-0.01}"
 echo "  ℹ LEARNING_GATE_TIME_SCALE=$LEARNING_GATE_TIME_SCALE for this stack (spec §13 A5; production is 1.0)"
+
+# ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
+# roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
+# directly, which clears neither — one journey's rules would leak into the
+# next, and a retried feature-flags.spec.ts would fail its baseline. TTL 0 =
+# every resolution reads the DB. Unconditional: a local lane has no load for
+# the cache to save.
+export FEATURE_FLAGS_SNAPSHOT_TTL_S=0
+export FEATURE_FLAGS_ROLES_TTL_S=0
+echo "  ℹ FEATURE_FLAGS_SNAPSHOT_TTL_S=0, FEATURE_FLAGS_ROLES_TTL_S=0 for this stack (ADR 0029)"
 # `setsid <simple command> &` is load-bearing: bash fork+execs the simple
 # command directly, so $! is setsid's PID, which becomes the new session's
 # process-group leader — the PID e2e-down.sh kills as a group. (Backgrounding a

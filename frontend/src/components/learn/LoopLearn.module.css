@@ -1,0 +1,31 @@
+.screen {
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  /* Keep course selection, map and End session reachable on narrow screens. */
+  .screen > div > header {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 16px;
+    flex-shrink: 0;
+  }
+
+  .screen > div > header > div {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .screen > div > header > div:last-child {
+    flex-wrap: wrap;
+  }
+
+  .screen > div > header h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .sessionStrip {
+    flex-shrink: 0;
+    padding: 10px 16px !important;
+  }
+}

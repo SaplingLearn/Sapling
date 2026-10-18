@@ -6,8 +6,8 @@ Invocation (from `backend/`):
         [--base-url URL] [--log PATH]
 
 Check names: `graph`, `counts`, `ciphertext`, `logscan`, `orphans`, `ragstore`,
-`learn_loop` (PKG-13: the learning loop's write invariants, table-wide) — default
-is all of them. `--check` may repeat to select a subset.
+`flags`, `learn_loop` (learning-loop write invariants, table-wide). The default
+is all checks; `--check` may repeat to select a subset.
 
 Exit codes: 0 clean / 1 findings / 2 infra error — ANY `Finding(oracle=
 "oracle-error", ...)` FORCES exit 2, even if every other check came back
@@ -47,6 +47,7 @@ CHECKS: dict[str, Callable[[argparse.Namespace], tuple[list[Finding], int]]] = {
     "orphans": lambda args: gather.run_orphans(args),
     "ragstore": lambda args: gather.run_ragstore(args),
     "learn_loop": lambda args: gather.run_learn_loop(args),
+    "flags": lambda args: gather.run_flags(args),
 }
 
 

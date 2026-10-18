@@ -943,7 +943,7 @@ def test_grade_answer_takes_the_key_from_the_seam_with_the_graders_result(graded
     grader's own GradeResult as `prior` (no model call)."""
     from agents.tools import check as check_mod
     from agents.tools.check import CheckAnswer, grade_answer
-    from services import decisions
+    from services import learning_decisions as decisions
 
     graded["set"](
         item_results={"r1": False, "r2": False}, all_yes=False, matched_wrong_key="w_loop"

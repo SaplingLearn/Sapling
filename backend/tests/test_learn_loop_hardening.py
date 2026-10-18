@@ -752,6 +752,7 @@ def test_a_delegated_legacy_request_is_rate_limited(handler, path, body):
     decision = MagicMock(reset_at=None, scope="rate_limit", session_capped=False)
     with (
         patch("routes.learn.learning_loop_for_request", return_value=True),
+        patch("routes.learn.require_session_owner"),  # ownership has its own suite
         patch(
             "services.ai_budget.enforce_rate_limit_for", side_effect=AIBudgetExceeded(decision)
         ) as rl,

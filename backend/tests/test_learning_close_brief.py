@@ -1575,7 +1575,7 @@ def test_close_route_materialises_pending_session(monkeypatch):
     assert not [c for c in tables.calls if c[1] in ("messages", "node_mastery_events")]
 
 
-def test_close_route_pending_session_of_another_student_is_403(monkeypatch):
+def test_close_route_pending_session_of_another_student_is_404(monkeypatch):
     import routes.learn as learn
 
     _wire_close(monkeypatch, session=False)
@@ -1586,13 +1586,13 @@ def test_close_route_pending_session_of_another_student_is_403(monkeypatch):
     }
     try:
         r = client.post("/api/learn/loop/close", json={"session_id": "s-other", "user_id": UID})
-        assert r.status_code == 403
+        assert r.status_code == 404
         assert "s-other" in learn.PENDING_SESSIONS
     finally:
         learn.PENDING_SESSIONS.pop("s-other", None)
 
 
-def test_close_route_unknown_session_404_and_foreign_session_403(monkeypatch):
+def test_close_route_unknown_and_foreign_session_are_both_404(monkeypatch):
     import routes.learn_loop as loop
 
     _wire_close(monkeypatch, session=False)
@@ -1602,7 +1602,7 @@ def test_close_route_unknown_session_404_and_foreign_session_403(monkeypatch):
     tables.rows["sessions"][0]["user_id"] = "someone_else"
     monkeypatch.setattr(loop, "run_session_close", _fake_run(AssertionError()))
     r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
-    assert r.status_code == 403
+    assert r.status_code == 404
 
 
 # ── brief + block-trimmed history (spec §13 A19) ─────────────────────────────
@@ -1840,7 +1840,7 @@ def test_end_session_flag_off_is_byte_identical(monkeypatch):
     assert {"concepts_covered", "time_spent_minutes"} <= set(r.json()["summary"])
     assert called == []
     selects = [c.args[0] for c in tables["sessions"].select.call_args_list]
-    assert selects == ["user_id,started_at"]  # no loop_state read
+    assert selects == ["user_id", "user_id,started_at"]  # ownership first; no loop_state read
     updates = [c.args[0] for c in tables["sessions"].update.call_args_list]
     assert {"summary_json": "LEGACY"} in updates
     assert not any("close_json" in u for u in updates)

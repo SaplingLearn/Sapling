@@ -11,7 +11,7 @@ import pytest
 
 
 def _reason_item(**over):
-    from services import decisions
+    from services import learning_decisions as decisions
 
     state = decisions.ReasonState(
         question="Why does f recurse forever?",
@@ -58,7 +58,7 @@ def test_the_grader_hint_check_is_strict(hint, leaks):
 
 def test_the_grader_hint_check_reads_numeric_paraphrases():
     from agents import grader
-    from services import decisions
+    from services import learning_decisions as decisions
 
     state = decisions.GradeState(
         question="What is 3 + 4?",

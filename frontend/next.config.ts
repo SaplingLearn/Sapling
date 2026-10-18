@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 // The dev-mode OpenNext hook lets `next dev` continue to work locally
-// against Cloudflare bindings (R2/KV/env vars). Safe no-op in prod builds.
+// against Cloudflare bindings (R2/KV/env vars). See the guarded call at the
+// foot of this file for why it is not simply invoked.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
 
@@ -125,6 +126,34 @@ const nextConfig: NextConfig = {
   },
 };
 
-initOpenNextCloudflareForDev();
+/*
+ * Dev only — and the guard is load-bearing, not tidiness.
+ *
+ * This runs on every load of this config, `next build` included, and it boots
+ * a Miniflare/workerd runtime to expose Cloudflare bindings. When that runtime
+ * cannot start, the failure is an unhandled rejection that takes the build
+ * down with it:
+ *
+ *   *** std::terminate() called with no exception
+ *   MiniflareCoreError [ERR_RUNTIME_FAILURE]: The Workers runtime failed to start
+ *
+ * which is what `npm run build` does on at least one Windows machine here —
+ * and with it `build:test`, and so the whole local E2E lane. Isolated, it is
+ * not this project's config: `getPlatformProxy` against a minimal wrangler
+ * file with no `main`, no assets and no secrets fails identically, so workerd
+ * simply cannot start there. (`workerd --version` still answers, because that
+ * never boots the runtime.)
+ *
+ * The hook is documented as being for the dev server, nothing in `src/` calls
+ * `getCloudflareContext`, and `wrangler.toml` declares no bindings, so a
+ * production build has nothing to gain from it. Deployed builds get their
+ * bindings from the worker entrypoint, not from this.
+ *
+ * Note the comment this replaced claimed it was a "safe no-op in prod builds".
+ * It was not; it was an unguarded call that happened not to have crashed yet.
+ */
+if (process.env.NODE_ENV === "development") {
+  initOpenNextCloudflareForDev();
+}
 
 export default nextConfig;

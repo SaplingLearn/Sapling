@@ -1870,7 +1870,7 @@ SUPPORT_BOT_REASON = (
 
 def test_the_seam_hands_grade_the_option_texts():
     from agents.tools.check import _maps
-    from services.decisions import GradeState, ReasonState, grader_item_from
+    from services.learning_decisions import GradeState, ReasonState, grader_item_from
 
     item = _item(**SUPPORT_BOT)
     state = ReasonState(
@@ -1900,7 +1900,7 @@ def test_an_honest_reason_paraphrasing_its_own_option_is_graded(grader, events):
 
 
 def test_the_seam_returns_a_deterministic_refusal_not_a_verdict(grader, events):
-    from services import decisions
+    from services import learning_decisions as decisions
 
     g, calls = grader
     state = decisions.GradeState(
@@ -1923,7 +1923,7 @@ def test_the_seam_returns_a_deterministic_refusal_not_a_verdict(grader, events):
 
 
 def test_the_seam_refuses_an_injected_reason_too(grader, events):
-    from services import decisions
+    from services import learning_decisions as decisions
 
     g, calls = grader
     state = decisions.ReasonState(
@@ -1941,7 +1941,7 @@ def test_the_seam_refuses_an_injected_reason_too(grader, events):
 
 def test_a_refused_prior_matches_no_wrong_reason():
     from agents.grader import GradeResult
-    from services import decisions
+    from services import learning_decisions as decisions
 
     state = decisions.WrongReasonState(question="q", answer="a", wrong={"w": "x"})
     prior = GradeResult(unavailable=True, refused="grader_directive")
@@ -3962,7 +3962,7 @@ EVALS = Path(__file__).resolve().parent / "evals"
 def _recorded_decision_injections() -> list[str]:
     """The two answers CodeRabbit found credited, as the grader sees them: the
     injection rows of the decisions gold, rendered the way the seam renders them."""
-    from services.decisions import mc_reason_answer
+    from services.learning_decisions import mc_reason_answer
 
     out = []
     for stem in ("grade_rubric_items", "reason_is_correct"):
@@ -4140,7 +4140,7 @@ def test_the_grader_eval_carries_the_live_mc_reason_miss(grader_eval):
     Live grade() credited it in 16 of 19 calls before the grader's contradiction
     report existed. A grading-accuracy case (gold all no, gated by StrictOnWrong),
     not an injection; its recording is graded, never refused, and never credited."""
-    from services.decisions import mc_reason_answer
+    from services.learning_decisions import mc_reason_answer
 
     ev = grader_eval
     [case] = [c for c in ev.CASES if c.name == "derivative_mc_reason_rejects_the_key"]
