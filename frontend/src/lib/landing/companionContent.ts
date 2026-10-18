@@ -184,7 +184,7 @@ export const WIKI_TOC = [
 export const WIKI_GRAPH_TERMS = [
   { term:'Node', def:'One concept in one course, carrying a mastery score from 0.00 to 1.00. Every concept you touch anywhere in Sapling resolves to a node.' },
   { term:'Course root', def:'The labelled hub at the centre of a course’s cluster. Every concept in the course wires back to it.' },
-  { term:'Edge', def:'A link between two concepts, drawn at a thickness that follows its strength. Stored with a type — prerequisite, builds on, part of, or related — though the tree draws all four the same way today.' },
+  { term:'Edge', def:'A link between two concepts, drawn at a thickness that follows its strength. Stored with a type (prerequisite, builds on, part of, or related), though the tree draws all four the same way today.' },
   { term:'Dedup', def:'“Linear Regression”, “linear regression” and a double-spaced copy all resolve to one node, so re-running an extract never splits a concept in two.' },
   { term:'Scope', def:'Your graph is yours, and it keys to the course rather than the section. Retake a course and your mastery carries over instead of resetting.' },
 ] as const;
@@ -207,7 +207,7 @@ export const WIKI_MASTERY_FORMULA = 'after = clamp(before + correct × 0.03 − 
 export const WIKI_MASTERY_MOVES = [
   { source:'Quiz answer', value:'+0.03 / −0.02', note:'Per question, right or wrong. Mastery is earned faster than it is lost, so a rough quiz dents progress without erasing it.' },
   { source:'Tutor turn', value:'−0.10 … +0.30', note:'The tutor proposes a change per concept and the range is enforced, so no conversation can hand you a mastered node.' },
-  { source:'New concept', value:'0.00', note:'Whatever planted it — a document, a note, a tutor session — a concept arrives unexplored. Extracting seeds your tree, it does not grade it.' },
+  { source:'New concept', value:'0.00', note:'Whatever planted it (a document, a note, a tutor session), a concept arrives unexplored. Extracting seeds your tree, it does not grade it.' },
   { source:'Flashcard rating', value:'no change', note:'Rating a card records the rating. It does not write to the concept the card tests.' },
   { source:'Assignment score', value:'no change', note:'Your gradebook tracks the grade on your transcript. It runs alongside your graph rather than into it.' },
 ] as const;
@@ -241,7 +241,7 @@ export const WIKI_UPLOAD_SPECS = [
   { label:'File types', value:'PDF · DOCX · PPTX', note:'Anything else is refused at upload. Photos and images are not accepted here.' },
   { label:'Size limit', value:'100 MB', note:'Per file. A larger one is rejected before any processing starts.' },
   { label:'Text extraction', value:'Docling, then Tesseract', note:'A layout-aware pass first, falling back to plain OCR. A clean digital PDF reads better than a scan, and a scan better than handwriting.' },
-  { label:'Retries', value:'Processed once', note:'An upload that gets retried — a flaky connection, a second tap — is recognised as the same request and not run through the pipeline again.' },
+  { label:'Retries', value:'Processed once', note:'An upload that gets retried after a flaky connection or a second tap is recognised as the same request and not run through the pipeline again.' },
 ] as const;
 
 /** The five progress events the upload actually streams over SSE
@@ -249,7 +249,7 @@ export const WIKI_UPLOAD_SPECS = [
  *  and a flashcard fan-out that no upload has ever performed. */
 export const WIKI_PIPELINE = [
   { num:'01', title:'Extract text', body:'The file is read page by page, with OCR where the page is an image rather than text.' },
-  { num:'02', title:'Classify', body:'Sapling works out what it is holding — a syllabus, a lecture deck, a reading — and writes a short summary.' },
+  { num:'02', title:'Classify', body:'Sapling works out what it is holding, whether a syllabus, a lecture deck, or a reading, and writes a short summary.' },
   { num:'03', title:'Extract concepts', body:'Every concept named in the material is pulled out, along with the notes backing it.' },
   { num:'04', title:'Update graph', body:'Those concepts are merged onto your tree as new unexplored nodes, deduplicated against what is already there.' },
   { num:'05', title:'Finalise', body:'The document lands in your library with its summary and concept list attached. A syllabus also goes on to produce assignments and dates.' },
@@ -258,7 +258,7 @@ export const WIKI_PIPELINE = [
 export const WIKI_NOTE_SPECS = [
   { label:'Autosave', value:'800 ms', note:'Typing settles, then the note saves. Switching notes or closing the tab flushes it immediately.' },
   { label:'Summarise', value:'2 – 4 sentences', note:'Faithful to what you wrote, including the questions you left yourself. A near-empty note is told it is near-empty rather than embellished.' },
-  { label:'Extract concepts', value:'up to 15', note:'Title-Case ideas only — not assignment titles or page numbers. Each is merged onto your graph and linked back to the note.' },
+  { label:'Extract concepts', value:'up to 15', note:'Title-Case ideas only, not assignment titles or page numbers. Each is merged onto your graph and linked back to the note.' },
   { label:'Generate quiz', value:'weakest linked concept', note:'Picks the lowest-mastery concept linked to the note. Needs at least one link before it will run.' },
 ] as const;
 
@@ -273,12 +273,12 @@ export const WIKI_FLASHCARD_RATINGS = [
 
 export const WIKI_FLASHCARD_NOTES = [
   'A rating is recorded against the card: your latest rating, the time, and one more on its review count.',
-  'There is no review schedule yet. A card you forgot does not come back sooner than one you found easy — you choose what to study.',
+  'There is no review schedule yet. A card you forgot does not come back sooner than one you found easy; you choose what to study.',
   'Generating a deck reads the concepts you are weakest on. Studying one does not write back to them.',
 ] as const;
 
 export const WIKI_GUIDE_SPECS = [
-  { label:'Built from', value:'Your document library', note:'The summaries and concept notes from what you uploaded for that course. Not from your graph — a guide does not yet lean harder on your weak concepts.' },
+  { label:'Built from', value:'Your document library', note:'The summaries and concept notes from what you uploaded for that course. Not from your graph: a guide does not yet lean harder on your weak concepts.' },
   { label:'Scope', value:'Per course, per exam', note:'Saved once generated, so coming back to it is instant.' },
   { label:'Regenerate', value:'On demand', note:'Rebuilds from scratch, which is what you want after adding material.' },
 ] as const;
@@ -286,7 +286,7 @@ export const WIKI_GUIDE_SPECS = [
 export const WIKI_CALENDAR_SPECS = [
   { label:'From a syllabus', value:'Assignments, dates, weights', note:'You review what was found before it saves. Due dates come through only where the syllabus states them plainly.' },
   { label:'Re-upload', value:'Deduplicated', note:'An updated syllabus will not double your assignment list.' },
-  { label:'Grading categories', value:'Into your gradebook', note:'The weight buckets a syllabus names — Exams 40%, Homework 20% — seed the categories your grade is computed from.' },
+  { label:'Grading categories', value:'Into your gradebook', note:'The weight buckets a syllabus names, such as Exams 40% and Homework 20%, seed the categories your grade is computed from.' },
   { label:'Google Calendar', value:'Import, sync, export', note:'Optional, and disconnectable. Sapling can also suggest study blocks around what is due.' },
 ] as const;
 
@@ -309,7 +309,7 @@ export const WIKI_GRADE_NOTES = [
 export const WIKI_ROOM_SPECS = [
   { label:'Joining', value:'Invite or public', note:'Join a room you were pointed at, or browse the public ones.' },
   { label:'Messages', value:'Reply, edit, delete, react', note:'Yours to edit or delete. The room also keeps an activity feed of what has been happening.' },
-  { label:'Overview', value:'Shared concepts only', note:'What the room sees of you is your mastery on concepts you have in common — never your notes, documents, or grades.' },
+  { label:'Overview', value:'Shared concepts only', note:'What the room sees of you is your mastery on concepts you have in common, never your notes, documents, or grades.' },
   { label:'Matching', value:'In-room or school-wide', note:'Suggests partners by where their graph is strong and yours is not.' },
 ] as const;
 
@@ -320,13 +320,13 @@ export const WIKI_CLASS_TERMS = [
 ] as const;
 
 export const WIKI_ONBOARDING_SPECS = [
-  { label:'Sign-in', value:'Google, domain-gated', note:'Gated to a school email domain — bu.edu by default.' },
+  { label:'Sign-in', value:'Google, domain-gated', note:'Gated to a school email domain, bu.edu by default.' },
   { label:'Asked once', value:'Year, majors, learning style', note:'Learning style is stored, but it does not shape the tutor much yet.' },
   { label:'Courses', value:'From the catalog', note:'Searched by name or code, then enrolled into the current term.' },
 ] as const;
 
 export const WIKI_ACHIEVEMENT_TERMS = [
-  { term:'Trigger', def:'Each achievement watches one real number — quizzes completed, cards reviewed, concepts mastered, login streak, rooms joined. Nothing is awarded for time logged.' },
+  { term:'Trigger', def:'Each achievement watches one real number: quizzes completed, cards reviewed, concepts mastered, login streak, rooms joined. Nothing is awarded for time logged.' },
   { term:'Cosmetics', def:'Four equippable slots: avatar frame, banner, name colour, and title. You unlock them through achievements or through a role you hold.' },
   { term:'Featured', def:'You choose which achievements and which role show on your public profile.' },
 ] as const;
@@ -335,14 +335,14 @@ export const WIKI_ACHIEVEMENT_TERMS = [
  *  that privacy claims name what is true today rather than implying
  *  blanket encryption. */
 export const WIKI_DATA_FACTS = [
-  { fact:'Sensitive columns are encrypted at rest with AES-256-GCM — a fresh random nonce for every value, and a tag that makes tampering detectable.',
+  { fact:'Sensitive columns are encrypted at rest with AES-256-GCM, with a fresh random nonce for every value and a tag that makes tampering detectable.',
     detail:'Encrypted: your name and bio, your email, tutor and study-room messages, note titles and bodies, document summaries and extracted text, assignment points and notes, quiz questions and answers, flashcard fronts and backs.' },
   { fact:'Some things are deliberately not encrypted, and you should know which.',
-    detail:'Concept names and mastery scores, note tags, your username and cosmetics, and generated study-guide text are stored in plain form. Access to them is scoped to you rather than hidden by encryption — so keep anything sensitive out of a tag.' },
+    detail:'Concept names and mastery scores, note tags, your username and cosmetics, and generated study-guide text are stored in plain form. Access to them is scoped to you rather than hidden by encryption, so keep anything sensitive out of a tag.' },
   { fact:'Your material builds your graph and your study tools. It is never sold, and never used to train outside models.',
     detail:'Text is decrypted server-side, in flight, only to build the prompt for a study action you asked for.' },
   { fact:'Deleting a document removes it from your library, but the concepts it planted stay on your tree.',
-    detail:'That is on purpose — they are yours now, and you may have studied them since. Remove one from the tree itself, where a node can be deleted directly.' },
+    detail:'That is on purpose: they are yours now, and you may have studied them since. Remove one from the tree itself, where a node can be deleted directly.' },
   { fact:'You can export everything Sapling holds on you, or delete your account outright.',
     detail:'Both live in your profile settings.' },
 ] as const;

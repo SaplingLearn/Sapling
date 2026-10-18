@@ -3,22 +3,19 @@
  * sitemap, manifest, and the careers-slug hard 404.
  *
  * These import the App Router special files directly and assert on their
- * exported values — no rendering. layout.tsx pulls next/font/google, which
+ * exported values — no rendering. layout.tsx pulls next/font/local, which
  * has no runtime outside the Next build, so it is mocked to inert variables.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-vi.mock('next/font/google', () => {
-  const font = () => ({ variable: '', className: '' });
-  return {
-    Spectral: font,
-    DM_Sans: font,
-    Playfair_Display: font,
-    JetBrains_Mono: font,
-  };
-});
+// `next/font/local` is a default export taking one options object, where
+// `next/font/google` was a named export per family. The fonts moved local so
+// a build with no network reach still typesets correctly — see layout.tsx.
+vi.mock('next/font/local', () => ({
+  default: () => ({ variable: '', className: '' }),
+}));
 
 // notFound() throws in real Next; mirror that so the slug page's control flow
 // is observable.

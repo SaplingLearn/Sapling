@@ -9,6 +9,7 @@ from models import SubmitFeedbackBody, SubmitIssueReportBody
 from services.auth_guard import get_session_user_id
 from services.encryption import encrypt_if_present
 from services.request_limits import read_within_limit
+from services.tutor_sessions import session_owned_by
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,22 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
     # convention (services/academics.py, graph_service.py) and hand-build it
     # rather than relying on the DB default. user_id/session_id now carry real
     # FKs (users / sessions), which the session / request body satisfy.
+    # Link the row to a tutor session only if that session is the caller's.
+    # An unowned (or missing, or still-pending — no row yet for the FK) id is
+    # dropped rather than failing the feedback, and so is the link when the
+    # ownership lookup itself fails: the feedback is what matters.
+    session_id = body.session_id
+    if session_id:
+        try:
+            owned = session_owned_by(session_id, user_id, allow_pending=False)
+        except Exception:
+            logger.warning(
+                "Feedback session-ownership lookup failed; dropping the session link",
+                exc_info=True,
+            )
+            owned = False
+        if not owned:
+            session_id = None
     table("feedback").insert({
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -40,7 +57,7 @@ def submit_feedback(body: SubmitFeedbackBody, request: Request):
         "rating": body.rating,
         "selected_options": body.selected_options,
         "comment": encrypt_if_present(body.comment),
-        "session_id": body.session_id,
+        "session_id": session_id,
         "topic": encrypt_if_present(body.topic),
     })
     return {"ok": True}

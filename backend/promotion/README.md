@@ -22,12 +22,16 @@ that shipped #515.
 - If production carries a hotfix/revert that was never back-merged to `main`,
   preflight **blocks** (`production-diverged`): back-merge production into
   main first, or the merge would fail only after migrations had applied.
-  Neither of these two guards has an override flag.
+  Neither of these two guards has an override flag. Production-only commits
+  that change no content do NOT block (#666): step 6's merge commit exists
+  only on `production`, but its tree is the `main` commit it merged, so the
+  next run needs no zero-file back-merge. The test is exact: `production`'s
+  tree must equal the tree of its (single) merge base with `main`.
 
 ## What it does
 
 1. **Preflight** (read-only): local `db/migrations/` matches `origin/main`,
-   production is an ancestor of main, target-identity, ledger exists, no
+   production carries no content main lacks, target-identity, ledger exists, no
    orphans, staging-ran-it-first, no destructive DDL, something to promote.
 2. **Snapshot** production.
 3. **Migrate** production (`db.migrate`) — this is the irreversible step.

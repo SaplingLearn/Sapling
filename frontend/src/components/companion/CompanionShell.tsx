@@ -20,7 +20,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { PAGE_MAX, PAGE_PAD } from '@/lib/landing/companionType';
 
-const SANS = "'DM Sans',system-ui,sans-serif";
+const SANS = "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
 
 /**
  * Page order as it appears in the footer. No Home entry: the wordmark in the
@@ -99,7 +99,7 @@ export function CompanionShell({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, position: 'relative', pointerEvents: 'auto' }}>
           <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: '0 0 auto' }}>
             <Image src="/sapling-icon.svg" alt="" width={26} height={26} style={{ flexShrink: 0, position: 'relative', top: -2 }} />
-            <span style={{ fontFamily: "'Spectral',Georgia,serif", fontWeight: 700, fontSize: 20, color: '#1B6C42', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 20, color: '#1B6C42', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
               Sapling
             </span>
           </Link>
