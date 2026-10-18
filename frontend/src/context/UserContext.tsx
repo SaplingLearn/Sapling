@@ -76,12 +76,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   // Account changes and newer profile loads invalidate older responses,
   // including a 401 or a body that finishes after sign-out.
   const profileGeneration = React.useRef(0);
+  const activeIdentity = React.useRef('');
 
   useEffect(() => {
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
       try {
         const { id, name, avatar } = JSON.parse(saved);
+        activeIdentity.current = id;
         setUserId(id);
         setUserName(name);
         if (avatar) setAvatarUrl(avatar);
@@ -157,6 +159,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   // #191 stale-identity reconciliation in fetchProfileData.
   const clearStaleClientAuth = useCallback(() => {
     profileGeneration.current += 1;
+    activeIdentity.current = '';
     setUserId('');
     setUserName('');
     setAvatarUrl('');
@@ -261,7 +264,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const setActiveUser = (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
     // A repeated confirmation of the same account must not cancel its
     // profile load: userId would be unchanged, so the effect would not retry.
-    if (id !== userId) profileGeneration.current += 1;
+    if (id !== activeIdentity.current) profileGeneration.current += 1;
+    activeIdentity.current = id;
     setUserId(id);
     setUserName(name);
     if (avatar) setAvatarUrl(avatar);
