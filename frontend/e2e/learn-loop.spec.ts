@@ -152,7 +152,6 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   test.skip(killSwitchLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
   const P = await learningParams([
-    "BKT_L0",
     "PROBE_ITEMS_PER_SKILL_MIN",
     "PROBE_SESSION_CAP",
     "GATE_INDEPENDENT_MIN_S_NOVICE",
@@ -232,14 +231,38 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // Correct attempt → the explicit-submission route (spec §13 A16), never a chat turn.
   const submitted = page.waitForRequest((r) => r.url().includes("/api/learn/loop/check/answer/stream"));
   await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
+  // The learner chip appears only after grading. Read this active session's
+  // concept directly, after the earned hint and immediately before submission.
+  const checkedSessionId = await phase.getAttribute("data-session-id");
+  expect(checkedSessionId).toBeTruthy();
+  const beforeCheck = (await queryRaw(
+    `SELECT l.node_id, l.p_known
+       FROM sessions s JOIN learner_state l
+         ON l.user_id = s.user_id AND l.node_id = s.loop_state->>'concept'
+      WHERE s.id = $1 AND s.user_id = $2`,
+    [checkedSessionId, USER_LOOP],
+  )) as { node_id: string; p_known: number }[];
+  expect(beforeCheck).toHaveLength(1);
+  const checkedNodeId = beforeCheck[0].node_id;
+  const beforeCheckKnown = Number(beforeCheck[0].p_known);
+  expect(checkedNodeId).toBeTruthy();
+  expect(Number.isFinite(beforeCheckKnown)).toBe(true);
+  expect(beforeCheckKnown).toBeGreaterThan(0);
+  expect(beforeCheckKnown).toBeLessThan(1);
   await page.getByTestId("loop-attempt-submit").click();
   const body = JSON.parse((await submitted).postData() ?? "{}");
   expect(body).toMatchObject({ question_hash: checkHash, idk: false, answer: `working: ${GRADER_CORRECT_TOKEN}` });
   await expect(phase).toHaveAttribute("data-phase", "feedback");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_QUESTION);
+  // The diagnostic deliberately includes independent misses, so the initial
+  // prior is no longer this check's baseline. Even assisted correct evidence
+  // must improve the checked concept from its actual pre-submission belief.
   const learner = page.getByTestId("loop-learner-state");
-  await expect.poll(async () => Number(await learner.getAttribute("data-p-known"))).toBeGreaterThan(Number(P.BKT_L0));
+  await expect(learner).toBeVisible();
+  await expect(learner).toHaveAttribute("data-node-id", checkedNodeId);
+  await expect.poll(async () => Number(await learner.getAttribute("data-p-known"))).toBeGreaterThan(beforeCheckKnown);
+  const afterCheckKnown = Number(await learner.getAttribute("data-p-known"));
 
   // A15/A16/A26: no loop request carried a model preference, and the answer never went
   // through the chat route.
@@ -262,7 +285,12 @@ test("loop user completes probe → plan → check (explicit submission) with a 
     USER_LOOP,
   ])) as { node_id: string; p_known: number }[];
   expect(states.length).toBeGreaterThan(0);
-  expect(Math.max(...states.map((s) => Number(s.p_known)))).toBeGreaterThan(Number(P.BKT_L0));
+  const checkedState = states.find((s) => s.node_id === checkedNodeId);
+  expect(checkedState, "the explicitly checked concept is persisted").toBeDefined();
+  expect(Number(checkedState!.p_known)).toBeGreaterThan(beforeCheckKnown);
+  // The DB stores the posterior; UI reads intentionally apply elapsed-time
+  // decay. Allow that tiny read-time difference while checking the same node.
+  expect(Number(checkedState!.p_known)).toBeCloseTo(afterCheckKnown, 5);
 
   // The explicit submission was graded (A16): an evidence row carries the check's hash,
   // and every graded probe answer wrote one too.

@@ -31,6 +31,8 @@ question bank cannot establish an exact or universal frontier of understanding.
   candidates, reviews and siblings to those targets' complete prerequisite
   closure. An independently failed concept remains a planning need despite an
   older high posterior. This local priority does not fabricate mastery evidence.
+  Goal-scoped reviews and siblings also wait for proficient external ancestor
+  components; a high target score cannot bypass a weak earlier prerequisite.
 - Encrypt objective text within `sessions.loop_state.goal.text_encrypted`;
   expose it only after session ownership checks and wrap it as untrusted tutor
   context. IDs and diagnosis metadata contain no learner prose. Do not log goals.

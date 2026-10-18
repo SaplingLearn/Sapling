@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from learning import params as P
-from learning.planner import goal_scope, plan
+from learning.planner import goal_scope, outer_fringe, plan, prerequisite_ready
 from learning.probe import diagnostic_summary, next_probe_item, probe_done
 
 
@@ -389,3 +389,59 @@ def test_goal_filter_applies_to_interleaved_siblings_as_well_as_reviews_and_new_
         ("goal", "new"),
         ("foundation", "sibling"),
     ]
+
+
+def test_proficient_goal_review_waits_for_its_missing_prerequisite():
+    states = {"foundation": 0.2, "target": 0.99, "unrelated": 0.99}
+    edges = [("foundation", "target")]
+    scope = goal_scope(["target"], edges, nodes=states)
+    ready = prerequisite_ready(states, edges)
+    assert ready == frozenset({"foundation", "unrelated"})
+    # Explicit-goal routes filter due/advanced reviews before reviews-first plan.
+    reviews = [n for n in ["target", "unrelated"] if n in ready]
+    proposal = plan(outer_fringe(states, edges), reviews, lambda _: [], scope.__contains__)
+    assert [(c.node_id, c.kind) for c in proposal.concepts] == [("foundation", "new")]
+    states["foundation"] = P.BKT_PROFICIENT
+    assert "target" in prerequisite_ready(states, edges)
+    proposal = plan([], ["target"], lambda _: [], scope.__contains__)
+    assert [(c.node_id, c.kind) for c in proposal.concepts] == [("target", "review")]
+
+
+def test_readiness_is_cycle_safe_and_ignores_foreign_or_self_endpoints():
+    states = {"P": 0.2, "A": 0.3, "B": 0.99, "isolated": 0.4}
+    edges = [("P", "A"), ("A", "B"), ("B", "A"), ("ghost", "isolated"), ("P", "P")]
+    assert prerequisite_ready(states, iter(edges)) == frozenset({"P", "isolated"})
+    assert outer_fringe(states, iter(edges)) == ["isolated", "P"]
+    states["P"] = P.BKT_PROFICIENT
+    assert prerequisite_ready(states, iter(edges)) == frozenset(states)
+    assert outer_fringe(states, iter(edges)) == ["isolated", "A"]
+
+
+def test_transitive_goal_readiness_defers_high_posterior_intermediates_and_target():
+    states = {"foundation": 0.2, "bridge": 0.99, "target": 0.99, "unrelated": 0.3}
+    edges = [("foundation", "bridge"), ("bridge", "target")]
+    # Preserve existing direct readiness for course-wide planning.
+    assert prerequisite_ready(states, edges) == frozenset({"foundation", "target", "unrelated"})
+    ready = prerequisite_ready(states, iter(edges), transitive=True)
+    assert ready == frozenset({"foundation", "unrelated"})
+    scope = goal_scope(["target"], edges, nodes=states)
+    allowed = scope & ready
+    proposal = plan(
+        outer_fringe(states, edges),
+        ["bridge", "target"],
+        lambda _: ["target"],
+        allowed.__contains__,
+        proficient=frozenset({"bridge", "target"}),
+    )
+    assert [(c.node_id, c.kind) for c in proposal.concepts] == [("foundation", "new")]
+    states["foundation"] = P.BKT_PROFICIENT
+    assert prerequisite_ready(states, edges, transitive=True) == frozenset(states)
+
+
+def test_transitive_readiness_ignores_own_cycle_but_blocks_external_descendants():
+    states = {"A": 0.2, "B": 0.99, "target": 0.99, "unrelated": 0.4}
+    edges = [("A", "B"), ("B", "A"), ("B", "target"), ("ghost", "A"), ("A", "A")]
+    assert prerequisite_ready(states, edges, transitive=True) == frozenset({"A", "B", "unrelated"})
+    states["outside"] = 0.3
+    edges.append(("outside", "A"))
+    assert prerequisite_ready(states, edges, transitive=True) == frozenset({"outside", "unrelated"})

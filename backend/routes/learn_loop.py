@@ -5176,13 +5176,14 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
         mine = parents.get(node_id, set())
         return sorted(m for m, ps in parents.items() if m != node_id and ps & mine)
 
+    ready = planner.prerequisite_ready(planning_states, edges, transitive=True) if scope is not None else None
     proposal = planner.plan(
         planner.outer_fringe(planning_states, edges),
         list(dict.fromkeys(_plan_due_reviews(user_id, list(states)) + [
             n for n in sorted(targets) if planning_states[n] >= BKT_PROFICIENT
         ])),
         siblings,
-        scope.__contains__ if scope is not None else None,
+        (lambda n: n in scope and n in ready) if scope is not None else None,
         proficient=frozenset(n for n, p in planning_states.items() if p >= BKT_PROFICIENT),
     )
     ids = [c.node_id for c in proposal.concepts]

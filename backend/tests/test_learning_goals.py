@@ -304,3 +304,18 @@ def test_rejected_lazy_goal_does_not_materialize_session(probe, invalid):
         assert result.status_code == (422 if invalid == "foreign_target" else 409)
         assert rl.PENDING_SESSIONS["s1"] == pending
     probe.consume.assert_not_called()
+
+
+def test_goal_review_waits_for_weak_ancestor_even_if_target_and_parent_look_known(probe):
+    probe.states.return_value = {"A": 0.2, "B": 0.99, "T": 0.99}
+    probe.edges.return_value = [("A", "B"), ("B", "T")]
+    probe.due.return_value = ["B", "T"]
+    assert set_goal(("T",)).status_code == 200
+    probe.store["doc"]["phase"] = "plan"
+    response = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
+    assert [c["node_id"] for c in response["concepts"]] == ["A"]
+    assert response["concepts"][0]["reason"] == "prerequisite"
+    # Once that prerequisite is independently ready, relevant reviews return.
+    probe.states.return_value["A"] = 0.99
+    response = client.get(f"{LOOP}/plan", params=PLAN_Q).json()
+    assert {c["node_id"] for c in response["concepts"]} == {"B", "T"}

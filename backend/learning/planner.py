@@ -114,12 +114,24 @@ def _components(nodes: Sequence[str], prereqs: dict[str, set[str]]) -> dict[str,
     return comp
 
 
-def outer_fringe(states: dict[str, float], prereq_edges: Iterable[tuple[str, str]]) -> list[str]:
-    """Every node below BKT_PROFICIENT whose prerequisites are all proficient (no
-    prerequisites qualifies), by p descending then node_id. A prerequisite CYCLE
-    is one unit (its strongly connected component): a member is ready when every
-    prerequisite OUTSIDE its component is proficient, so a cycle never hides its
-    nodes. Edges with an endpoint outside `states`, and self-loops, are dropped."""
+def prerequisite_ready(
+    states: dict[str, float],
+    prereq_edges: Iterable[tuple[str, str]],
+    *,
+    transitive: bool = False,
+) -> frozenset[str]:
+    """Nodes whose external-SCC direct prerequisites are all proficient.
+
+    Readiness applies even to an already-proficient node: an advanced goal
+    review must not bypass a missing prerequisite merely because its own old
+    posterior is high. Cycles are one component, blocked only by prerequisites
+    outside that component. Foreign endpoints and self-loops are ignored.
+
+    Explicit goals can set transitive=True: every weak ancestor component
+    blocks its descendants, even if an intermediate node's old posterior is
+    high. A component's own weak members do not block that component itself.
+    The default keeps course-wide direct-readiness behavior unchanged.
+    """
     prereqs: dict[str, set[str]] = defaultdict(set)
     for prereq, dependent in prereq_edges:
         if prereq == dependent or prereq not in states or dependent not in states:
@@ -130,11 +142,33 @@ def outer_fringe(states: dict[str, float], prereq_edges: Iterable[tuple[str, str
     for n, c in comp.items():
         members[c].append(n)
 
+    if transitive:
+        dependents: dict[int, set[int]] = defaultdict(set)
+        for dependent, prerequisites in prereqs.items():
+            for prerequisite in prerequisites:
+                if comp[prerequisite] != comp[dependent]:
+                    dependents[comp[prerequisite]].add(comp[dependent])
+        weak = {comp[n] for n, p in states.items() if p < BKT_PROFICIENT}
+        pending = [child for parent in weak for child in dependents[parent]]
+        blocked: set[int] = set()
+        while pending:
+            component = pending.pop()
+            if component not in blocked:
+                blocked.add(component)
+                pending.extend(dependents[component])
+        return frozenset(n for n in states if comp[n] not in blocked)
+
     def ready(n: str) -> bool:
         outside = {q for m in members[comp[n]] for q in prereqs[m] if comp[q] != comp[n]}
         return all(states[q] >= BKT_PROFICIENT for q in outside)
 
-    fringe = [n for n, p in states.items() if p < BKT_PROFICIENT and ready(n)]
+    return frozenset(n for n in states if ready(n))
+
+
+def outer_fringe(states: dict[str, float], prereq_edges: Iterable[tuple[str, str]]) -> list[str]:
+    """Ready nodes below proficiency, by p descending then node_id."""
+    ready = prerequisite_ready(states, prereq_edges)
+    fringe = [n for n, p in states.items() if p < BKT_PROFICIENT and n in ready]
     return sorted(fringe, key=lambda n: (-states[n], n))
 
 
