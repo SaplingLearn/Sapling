@@ -243,8 +243,8 @@ for (const kind of ["check", "probe"] as const) {
           // pose (or plan) before reading the resulting session continuation.
           await expect.poll(async () => {
             const phase = await page.getByTestId("loop-phase").getAttribute("data-phase");
-            const submit = page.getByTestId("loop-probe-submit");
-            return phase === "plan" || (await submit.isVisible() && await submit.isEnabled());
+            const unknown = page.getByTestId("loop-probe-idk");
+            return phase === "plan" || (await unknown.isVisible() && await unknown.isEnabled());
           }).toBe(true);
         }
         await expectNoOverflow(page);
