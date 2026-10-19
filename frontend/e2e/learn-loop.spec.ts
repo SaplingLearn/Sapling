@@ -30,7 +30,7 @@
  * steps its session graded, and no assistant message may state the seeded final
  * answer (E2E_LOOP_FINAL_ANSWER) before a release.
  */
-import type { Browser, Page } from "@playwright/test";
+import type { Browser, Page, Response } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { queryRaw, seedGoalContinuationItems } from "./support/db";
@@ -920,18 +920,42 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
     for (const rung of [1, 2]) {
       await page.getByTestId("loop-attempt-input").fill(`${WORKING_ATTEMPT}; revision ${rung}`);
       const button = page.getByTestId("loop-hint-button");
-      await expect.poll(async () => {
-        await expect(button).toBeEnabled();
-        const response = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/hint");
-        await button.click();
-        const gate = await response;
-        expect(gate.status()).toBe(200);
-        const result = await gate.json();
-        await expect(button).toBeEnabled();
-        return result.rung ?? 0;
-      }, { timeout: Number(P.GATE_INDEPENDENT_MIN_S_NOVICE) * 1000 + GATE_POLL_MARGIN_MS,
-        intervals: [100, 500, 1_000] }).toBe(rung);
-      await expect(page.getByTestId("loop-hint-reply")).toContainText(LOOP_HINT_BODY);
+      const hintActions: Response[] = [];
+      const captureHintAction = (response: Response) => {
+        if (new URL(response.url()).pathname !== "/api/learn/loop/action" || response.request().method() !== "POST") return;
+        const body = response.request().postDataJSON();
+        if (body.session_id === firstSession && body.user_id === USER_LOOP && body.action_type === "hint") hintActions.push(response);
+      };
+      page.on("response", captureHintAction);
+      try {
+        let granted: number | undefined;
+        await expect.poll(async () => {
+          if (granted !== undefined) return granted; // never grant another rung while checking this one
+          await expect(button).toBeEnabled();
+          const response = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/hint");
+          await button.click();
+          const gate = await response;
+          expect(gate.status()).toBe(200);
+          expect(gate.request().postDataJSON()).toMatchObject({ session_id: firstSession, user_id: USER_LOOP, question_hash: hash });
+          const result = await gate.json();
+          if (typeof result.rung === "number") granted = result.rung;
+          await expect(button).toBeEnabled();
+          return granted ?? 0;
+        }, { timeout: Number(P.GATE_INDEPENDENT_MIN_S_NOVICE) * 1000 + GATE_POLL_MARGIN_MS,
+          intervals: [100, 500, 1_000] }).toBe(rung);
+        await expect.poll(() => hintActions.length).toBe(1);
+        expect(hintActions[0].status()).toBe(200);
+        const served = await hintActions[0].json();
+        expect(served).toMatchObject({ phase: "hint", learner_state: expect.arrayContaining([expect.objectContaining({ node_id: binary })]) });
+        expect(typeof served.reply).toBe("string");
+        expect(served.reply.trim().length).toBeGreaterThan(0);
+        await expect(check).toHaveAttribute("data-question-hash", hash!);
+        // H1 may use the asset's deterministic source anchor and H2 its hint
+        // question. Assert the actual served response, not a generic model body.
+        await expect(page.getByTestId("loop-hint-reply")).toHaveText(served.reply);
+      } finally {
+        page.off("response", captureHintAction);
+      }
     }
     const submitted = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/answer/stream");
     await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
