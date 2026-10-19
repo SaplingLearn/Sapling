@@ -1,9 +1,10 @@
 """learner_state table access (spec §4 PKG-03, §5, §13 A3).
 
 read_* return p_known DECAYED toward BKT_L0 along the concept's FSRS
-stability (spec §3.1, "Decay at read"). write_state is called ONLY from
-services.graph_service.apply_graph_update — spec §8 invariant 1,
-tests/test_learning_loop_invariants.py::test_inv_01_single_graph_writer.
+stability (spec §3.1, "Decay at read"). Evidence row projections use state_row;
+the single graph writer commits them through the atomic transaction RPC.
+The compatibility write_state helper has no production callers; invariant 1
+forbids adding one as an unconditional-write fallback.
 write_metrics (PKG-14, spec §13 A79) is the one non-evidence write: an UPDATE of
 the four derived columns only, called ONLY by scripts/derive_zpd_metrics.py
 (inv_01 pins its callers, inv_20 the script).
@@ -54,6 +55,8 @@ class LearnerState:
     in_zone: bool | None = None
     last_evidence_at: datetime | None = None
     exists: bool = False
+    # Populated by the transactional snapshot, not inferred from updated_at.
+    evidence_version: int = 0
 
 
 def _aware(ts: datetime) -> datetime:
@@ -78,6 +81,10 @@ def _from_row(row: dict, now: datetime) -> LearnerState:
         raise ValueError(f"learner_state row node={row.get('node_id')} has no p_known")
     p_stored = float(stored)
     st = LearnerState(user_id=row["user_id"], node_id=row["node_id"], p_known=p_stored, exists=True)
+    version = row.get("evidence_version", 0)
+    if type(version) is not int or version < 0:
+        raise ValueError("Invalid learner-state evidence version")
+    st.evidence_version = version
     for col in _COUNTERS:
         setattr(st, col, int(row.get(col) or 0))
     for col in _OPTIONAL_FLOATS:
@@ -126,29 +133,34 @@ def read_state(user_id: str, node_id: str, now: datetime | None = None) -> Learn
     )
 
 
-def write_state(state: LearnerState, now: datetime | None = None) -> None:
-    """Upsert the BKT/FSRS columns. ONLY caller: graph_service.apply_graph_update.
+def state_row(state: LearnerState, now: datetime) -> dict:
+    """The canonical evidence columns, shared by legacy and atomic writers.
 
-    The derived columns (htc_k, unassisted_next, assist_gap, in_zone) are
-    deliberately absent: PostgREST merge-duplicates would null them.
+    Derived metrics and database-owned versions are deliberately absent.
+    Transaction CAS protects their version; the upsert preserves their values.
     """
+    return {
+        "user_id": state.user_id,
+        "node_id": state.node_id,
+        "p_known": state.p_known,
+        "n_strong_unassisted": state.n_strong_unassisted,
+        "streak_unassisted": state.streak_unassisted,
+        "max_streak_unassisted": state.max_streak_unassisted,
+        "opps": state.opps,
+        "fsrs_d": state.fsrs_d,
+        "fsrs_s": state.fsrs_s,
+        "fsrs_last_review_at": _iso(state.fsrs_last_review_at),
+        "fsrs_due_at": _iso(state.fsrs_due_at),
+        "last_evidence_at": _iso(state.last_evidence_at),
+        "updated_at": _iso(now),
+    }
+
+
+def write_state(state: LearnerState, now: datetime | None = None) -> None:
+    """Compatibility helper; production evidence must use the atomic RPC."""
     now = _aware(now) if now else datetime.now(timezone.utc)
     table("learner_state").upsert(
-        {
-            "user_id": state.user_id,
-            "node_id": state.node_id,
-            "p_known": state.p_known,
-            "n_strong_unassisted": state.n_strong_unassisted,
-            "streak_unassisted": state.streak_unassisted,
-            "max_streak_unassisted": state.max_streak_unassisted,
-            "opps": state.opps,
-            "fsrs_d": state.fsrs_d,
-            "fsrs_s": state.fsrs_s,
-            "fsrs_last_review_at": _iso(state.fsrs_last_review_at),
-            "fsrs_due_at": _iso(state.fsrs_due_at),
-            "last_evidence_at": _iso(state.last_evidence_at),
-            "updated_at": _iso(now),
-        },
+        state_row(state, now),
         on_conflict="user_id,node_id",
     )
 

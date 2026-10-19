@@ -58,9 +58,11 @@ import {
   type LoopDiagnosis,
   type LoopLearningScope,
   type LoopOpenSession,
+  type LoopPendingGrade,
   type LoopPhase,
   type LoopPlanConcept,
   type LoopProbeItem,
+  type LoopProbeAnswerResult,
   type LoopRating,
   type LoopSessionStatus,
   type LoopTurnResult,
@@ -77,10 +79,13 @@ const NO_CHECK_ITEMS_COPY =
   "No check items for this course yet. You can still learn with the tutor; nothing is graded until the course has items.";
 const PLAN_DONE_COPY = "That's every concept in today's plan — close the session when you're ready.";
 const NO_ITEM_COPY = "No check is ready for this concept yet — keep going with the tutor.";
+const NO_FRESH_PRACTICE_COPY = "Fresh practice questions are unavailable for these concepts in this session. You can review source material with the tutor; source review does not assess or complete your goal. Starting another session will not replenish these questions.";
 const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
 const CONTINUE_MESSAGE = "Let's continue.";
+const FEEDBACK_PENDING_DETAIL = "feedback pending; retry feedback before another check";
+const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before another check.";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -189,8 +194,10 @@ export function LoopLearn() {
   // never silently selects targets, and nothing is inherited across courses.
   const [goal, setGoal] = useState<LoopGoal | null>(null);
   const [goalProgress, setGoalProgress] = useState<LoopGoalProgress | null>(null);
+  const [practiceUnavailable, setPracticeUnavailable] = useState<string[]>([]);
   const [diagnosis, setDiagnosis] = useState<LoopDiagnosis | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
+  const [scopeLoading, setScopeLoading] = useState(false);
   const [scopeError, setScopeError] = useState(false);
   const [goalEditor, setGoalEditor] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
@@ -210,6 +217,7 @@ export function LoopLearn() {
   // Plan
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
   const [planJustApproved, setPlanJustApproved] = useState(false);
 
@@ -223,6 +231,8 @@ export function LoopLearn() {
   const [hintRetry, setHintRetry] = useState(false);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const [checkBusy, setCheckBusy] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const [pendingGrade, setPendingGrade] = useState<LoopPendingGrade | null>(null);
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
 
@@ -236,6 +246,11 @@ export function LoopLearn() {
   const [graphError, setGraphError] = useState(false);
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
 
+  // A visible session id is not readiness: resume still reads its scope and
+  // may pose a probe or materialise its plan. Let those operations settle before
+  // wrapping up that session, rather than racing them against /close.
+  const sessionTransitionBusy = starting || scopeLoading || probeBusy || planLoading || planBusy || goalBusy || closeBusy || !!pendingGrade;
+
   // A session "generation": bumped whenever the screen switches session, so a
   // response for the previous one is dropped instead of landing on the new one.
   const gen = useRef(0);
@@ -243,6 +258,7 @@ export function LoopLearn() {
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
+  const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
   const hintEpoch = useRef(0);
   const earnedHint = useRef<{ sessionId: string; questionHash: string; rung: number } | null>(null);
@@ -280,9 +296,12 @@ export function LoopLearn() {
     if (payload.goal !== undefined) setGoal(payload.goal);
     if (payload.diagnosis !== undefined) setDiagnosis(payload.diagnosis);
     if (payload.goal_progress !== undefined) setGoalProgress(payload.goal_progress);
+    if (payload.goal === null) setPracticeUnavailable([]);
+    else if (payload.practice_unavailable_node_ids !== undefined) setPracticeUnavailable(payload.practice_unavailable_node_ids);
   }, []);
   const paused = state.budgetPause;
   const item = state.item;
+  const exhaustedPracticeAttempt = practiceUnavailable.some((id) => goalProgress?.attempted_node_ids.includes(id));
 
   // A daily (or per-minute) pause lifts at its reset time — never earlier, and
   // a session cap never (a new session starts fresh, A39). Owner question in
@@ -328,7 +347,15 @@ export function LoopLearn() {
     const g = ++gen.current;
     invalidateHint();
     streamAbort.current?.abort();
+    setStarting(false);
+    setScopeLoading(false);
+    setProbeBusy(false);
+    setPlanLoading(false);
+    setPlanBusy(false);
+    setGoalBusy(false);
     setCloseBusy(false);
+    setFeedbackPending(false);
+    setPendingGrade(null);
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "close" });
     dropFromPicker(sid);
@@ -361,29 +388,33 @@ export function LoopLearn() {
   const applyStatus = useCallback((sid: string, st: LoopSessionStatus) => {
     invalidateHint();
     applyLearningScope(st);
+    setPendingGrade(st.pending_grade ?? null);
     if (st.loop_phase === "close") {
       void enterClosed(sid);
       return;
     }
     dispatch({ type: "check", item: st.check ?? null });
     dispatch({ type: "phase", phase: statusPhase(st) });
+    setFeedbackPending(statusPhase(st) === "feedback");
   }, [enterClosed, applyLearningScope, invalidateHint]);
 
   /** After a submission that did not settle (a 409, a stream error, Stop): the
    *  server may already have graded it, so re-read where the session stands.
    *  Read-only. If even that fails, the item is cleared (fail closed): "Check
    *  me" re-poses it while it is still open (/check/next is idempotent then). */
-  const reconcile = useCallback(async (sid: string, g: number) => {
+  const reconcile = useCallback(async (sid: string, g: number, epoch = turnEpoch.current) => {
+    const current = () => g === gen.current && epoch === turnEpoch.current && sid === sessionRef.current;
     try {
       const st = await getLoopSessionStatus(sid, userId);
-      if (g === gen.current) applyStatus(sid, st);
+      if (current()) applyStatus(sid, st);
     } catch {
-      if (g === gen.current) dispatch({ type: "check", item: null });
+      if (current()) dispatch({ type: "check", item: null });
     }
   }, [userId, applyStatus]);
 
   // ── Session lifecycle ──────────────────────────────────────────────────
   const clearSessionView = useCallback(() => {
+    ++turnEpoch.current;
     invalidateHint();
     streamAbort.current?.abort();
     streamAbort.current = null;
@@ -391,8 +422,10 @@ export function LoopLearn() {
     setReadOnly(null);
     setGoal(null);
     setGoalProgress(null);
+    setPracticeUnavailable([]);
     setDiagnosis(null);
     setScopeReady(false);
+    setScopeLoading(false);
     setScopeError(false);
     setGoalEditor(false);
     setGoalBusy(false);
@@ -411,6 +444,7 @@ export function LoopLearn() {
     setPlanJustApproved(false);
     setPlanGoalVersion(undefined);
     setPlanBusy(false);
+    setPlanLoading(false);
     setMessages([]);
     setStreamingText(null);
     setAttempt(EMPTY_DRAFT);
@@ -419,6 +453,8 @@ export function LoopLearn() {
     setHintBusy(false);
     setCheckNote(null);
     setCheckBusy(false);
+    setFeedbackPending(false);
+    setPendingGrade(null);
     setAskRating(null);
     setClose(null);
     setCloseBusy(false);
@@ -427,7 +463,11 @@ export function LoopLearn() {
   }, [invalidateHint]);
 
   const loadPlan = useCallback(async (sid: string, g: number) => {
+    if (g !== gen.current) return;
+    setPlanLoading(true);
     setLoadError(null);
+    setPlan(null);
+    setPlanGoalVersion(undefined);
     try {
       const r = await getLoopPlan(sid, userId);
       if (g !== gen.current) return;
@@ -441,10 +481,13 @@ export function LoopLearn() {
       if (g !== gen.current) return;
       setLoadError("plan");
       reportError(err, "Couldn't load today's plan.");
+    } finally {
+      if (g === gen.current) setPlanLoading(false);
     }
   }, [userId, reportError, applyLearningScope]);
 
   const nextProbe = useCallback(async (sid: string, g: number) => {
+    if (g !== gen.current) return;
     setProbeBusy(true);
     setLoadError(null);
     try {
@@ -453,11 +496,16 @@ export function LoopLearn() {
       applyLearningScope(r);
       setProbeReference(null);
       if (r.done) {
+        setPendingGrade(null);
         setProbeItem(null);
         if (r.no_check_items) setNoCheckItems(true);
         dispatch({ type: "phase", phase: r.phase });
         if (r.phase === "plan") await loadPlan(sid, g);
+      } else if ("pending_grade" in r) {
+        setPendingGrade(r.pending_grade);
+        setProbeItem(null);
       } else {
+        setPendingGrade(null);
         setProbeItem(r);
         setProbeDraft(EMPTY_DRAFT);
       }
@@ -471,6 +519,8 @@ export function LoopLearn() {
   }, [userId, loadPlan, reportError, applyLearningScope]);
 
   const loadLearningScope = useCallback(async (sid: string, g: number) => {
+    if (g !== gen.current) return null;
+    setScopeLoading(true);
     try {
       const response = await getLoopSessionStatus(sid, userId);
       if (g !== gen.current) return null;
@@ -481,30 +531,39 @@ export function LoopLearn() {
     } catch {
       if (g === gen.current) setScopeError(true);
       return null;
+    } finally {
+      if (g === gen.current) setScopeLoading(false);
     }
   }, [userId, applyStatus]);
 
   const resume = useCallback(async (s: LoopOpenSession) => {
     const g = ++gen.current;
     clearSessionView();
+    setStarting(true);
     setSessionId(s.session_id);
     sessionRef.current = s.session_id;
     dispatch({ type: "phase", phase: s.phase });
+    setFeedbackPending(s.phase === "feedback");
     try {
-      const r = await resumeSession(s.session_id);
+      try {
+        const r = await resumeSession(s.session_id);
+        if (g !== gen.current) return;
+        setMessages(toChat(r.messages));
+      } catch (err) {
+        if (g === gen.current) toast.error(humanizeError(err, "Couldn't load this session's messages."));
+      }
       if (g !== gen.current) return;
-      setMessages(toChat(r.messages));
-    } catch (err) {
-      if (g === gen.current) toast.error(humanizeError(err, "Couldn't load this session's messages."));
+      const latest = await loadLearningScope(s.session_id, g);
+      if (g !== gen.current) return;
+      // Another tab may have edited the goal since /sessions was read. Continue
+      // from authoritative status, never a stale list's phase or an extra pose write.
+      const phase = latest ? statusPhase(latest) : s.phase;
+      if (latest?.pending_grade) return; // Recover the saved result, not a new pose.
+      if (phase === "probe") await nextProbe(s.session_id, g);
+      else if (phase === "plan") await loadPlan(s.session_id, g);
+    } finally {
+      if (g === gen.current) setStarting(false);
     }
-    if (g !== gen.current) return;
-    const latest = await loadLearningScope(s.session_id, g);
-    if (g !== gen.current) return;
-    // Another tab may have edited the goal since /sessions was read. Continue
-    // from authoritative status, never a stale list's phase or an extra pose write.
-    const phase = latest ? statusPhase(latest) : s.phase;
-    if (phase === "probe") await nextProbe(s.session_id, g);
-    else if (phase === "plan") await loadPlan(s.session_id, g);
   }, [clearSessionView, nextProbe, loadPlan, loadLearningScope, toast]);
 
   const openReadOnly = useCallback(async (id: string) => {
@@ -528,7 +587,7 @@ export function LoopLearn() {
   const newSession = useCallback(async (
     { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
   ) => {
-    if (!courseId || !userId) return;
+    if (!courseId || !userId || sessionTransitionBusy) return;
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const leaving = sessionRef.current;
@@ -571,7 +630,6 @@ export function LoopLearn() {
         // A27: a capped student still gets the template opener and the probe
         dispatch({ type: "budget", level: "hard", resetAt: r.budget.reset_at, sessionCapped: r.budget.session_capped });
       }
-      setStarting(false);
       await nextProbe(r.session_id, g);
       if (g !== gen.current) return;
       // the first /probe/next materialised the session row: list it
@@ -593,7 +651,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, state.phase, clearSessionView, nextProbe, reportError, dropFromPicker, applyLearningScope]);
+  }, [courseId, userId, course, state.phase, sessionTransitionBusy, clearSessionView, nextProbe, reportError, dropFromPicker, applyLearningScope]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
@@ -703,8 +761,31 @@ export function LoopLearn() {
     }
   };
 
+  const applyProbeAnswer = async (r: LoopProbeAnswerResult, g: number) => {
+    applyLearningScope(r);
+    if (r.graded) {
+      setPendingGrade(null);
+      void refreshGraph();
+      setProbeCount((n) => n + 1);
+      if (r.probe_done) setProbeFinished(true);
+      if (r.reference_answer) {
+        setProbeReference(r.reference_answer);
+        return;
+      }
+      await advanceProbe(r.probe_done, g);
+      return;
+    }
+    if (r.refused) {
+      setProbeNote(PROBE_REFUSED_COPY);
+      return;
+    }
+    setProbeNote(PROBE_UNAVAILABLE_COPY);
+    if (sessionId) await nextProbe(sessionId, g);
+  };
+
   const submitProbe = async (idk: boolean) => {
-    if (!sessionId || !probeItem || probeBusy) return;
+    if (!sessionId || !probeItem || probeBusy || pendingGrade) return;
+    ++turnEpoch.current;
     const g = gen.current;
     const a: LoopCheckAnswer = idk
       ? { idk: true }
@@ -716,33 +797,19 @@ export function LoopLearn() {
     try {
       const r = await answerLoopProbe(sessionId, userId, probeItem.question_hash, a);
       if (g !== gen.current) return;
-      applyLearningScope(r);
-      if (r.graded) {
-        void refreshGraph();
-        setProbeCount((n) => n + 1);
-        if (r.probe_done) setProbeFinished(true);
-        if (r.reference_answer) {
-          setProbeReference(r.reference_answer); // shown until "Next" (spec §3.3 corrective feedback)
-          return;
-        }
-        await advanceProbe(r.probe_done, g);
-        return;
-      }
-      if (r.refused) {
-        setProbeNote(PROBE_REFUSED_COPY); // the item stays posed (A33)
-        return;
-      }
-      setProbeNote(PROBE_UNAVAILABLE_COPY); // counted as not asked; another item follows
-      await nextProbe(sessionId, g);
+      await applyProbeAnswer(r, g);
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't send that answer.");
+      if (g === gen.current) {
+        reportError(err, "Couldn't send that answer.");
+        void reconcile(sessionId, g);
+      }
     } finally {
       if (g === gen.current) setProbeBusy(false);
     }
   };
 
   const saveGoal = async (requested: LoopGoal | null) => {
-    if (!sessionId || !courseId || goalBusy || !scopeReady) return;
+    if (!sessionId || !courseId || goalBusy || !scopeReady || pendingGrade) return;
     if (state.phase !== "probe" && state.phase !== "plan") return;
     const ownIds = new Set(graph.nodes.filter((n) => n.course_id === courseId && !n.is_subject_root).map((n) => n.id));
     if (requested && (requested.text.length > 500 || requested.target_node_ids.length < 1 || requested.target_node_ids.length > 12 ||
@@ -850,6 +917,9 @@ export function LoopLearn() {
     streamAbort.current = controller;
     const g = gen.current;
     const sid = sessionRef.current;
+    const epoch = ++turnEpoch.current;
+    const recoveringFeedback = feedbackPending;
+    let feedbackStarted = false;
     let streamed = "";
     let hardSeen = false;
     // Abort is cooperative: a queued event may arrive after Stop or a session
@@ -870,7 +940,18 @@ export function LoopLearn() {
         streamed = "";
         setStreamingText("");
       },
-      onPhase: (p) => { if (acceptsEvents()) dispatch({ type: "phase", phase: p }); },
+      onPhase: (p) => {
+        if (!acceptsEvents()) return;
+        dispatch({ type: "phase", phase: p });
+        setFeedbackPending(p === "feedback");
+        if (p === "feedback") {
+          setPendingGrade(null);
+          feedbackStarted = true; // the server committed the grade before this stream
+          dispatch({ type: "check", item: null });
+          setAttempt(EMPTY_DRAFT);
+          setHint(null);
+        }
+      },
       onCheck: (c) => { if (acceptsEvents()) dispatch({ type: "check", item: c }); },
       onLearnerState: (s) => { if (acceptsEvents()) dispatch({ type: "learner_state", state: s }); },
       onBudget: (b) => {
@@ -883,13 +964,14 @@ export function LoopLearn() {
       const res = await run(handlers);
       if (!ownsTurn()) return null;
       if (controller.signal.aborted) {
-        if (submission && sid) void reconcile(sid, g);
+        if ((submission || feedbackStarted || recoveringFeedback) && sid) void reconcile(sid, g, epoch);
         return null;
       }
       // done.reply is always the final, leak-stripped text (A46) — never the tokens
       const text = res.reply ?? streamed;
       if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
       if (submission && res.graded) {
+        setPendingGrade(null);
         // graded — correct, not yet, idk, or a refusal the server graded as idk:
         // the item takes no more answers
         dispatch({ type: "check", item: null });
@@ -898,6 +980,8 @@ export function LoopLearn() {
       }
       if (submission && res.ask_rating && sid) setAskRating(sid);
       if (res.phase) dispatch({ type: "phase", phase: res.phase });
+      setFeedbackPending(false); // only a successful done means feedback was served
+      setCheckNote(null);
       for (const learnerState of res.learner_state ?? []) {
         dispatch({ type: "learner_state", state: learnerState });
       }
@@ -916,7 +1000,7 @@ export function LoopLearn() {
       // session so the answer box never sticks on a graded item.
       const { status, detail } = extractErrorDetail(err);
       const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
-      if (submission && sid && !closed) void reconcile(sid, g);
+      if ((submission || feedbackStarted || recoveringFeedback) && sid && !closed) void reconcile(sid, g, epoch);
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
       if (hardSeen) return null;
@@ -929,10 +1013,10 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [applyActivated, reportError, reconcile, invalidateHint]);
+  }, [applyActivated, reportError, reconcile, invalidateHint, feedbackPending]);
 
   const send = (text: string) => {
-    if (!sessionId || paused) return;
+    if (!sessionId || paused || starting || scopeLoading || pendingGrade) return;
     setPlanJustApproved(false);
     setMessages((prev) => [...prev, asMsg("user", text)]);
     void runTurn((h) => streamLoopChat(sessionId, userId, text, h));
@@ -949,7 +1033,7 @@ export function LoopLearn() {
   };
 
   const submitAttempt = async (idk: boolean) => {
-    if (!sessionId || !item || attemptBusy) return;
+    if (!sessionId || !item || attemptBusy || pendingGrade) return;
     const g = gen.current;
     const a: LoopCheckAnswer = idk
       ? { idk: true }
@@ -969,6 +1053,38 @@ export function LoopLearn() {
     );
     if (g === gen.current) setAttemptBusy(false);
     if (res?.graded) void refreshGraph();
+  };
+
+  const recoverGrade = async () => {
+    if (!sessionId || !pendingGrade || starting || scopeLoading || probeBusy || attemptBusy || streamingText !== null) return;
+    const sid = sessionId;
+    const saved = pendingGrade;
+    const g = gen.current;
+    if (saved.kind === "check") {
+      setAttemptBusy(true);
+      const result = await runTurn(
+        (handlers) => streamLoopCheckAnswer(sid, userId, saved.question_hash, { idk: false }, handlers),
+        { submission: true },
+      );
+      if (g !== gen.current) return;
+      setAttemptBusy(false);
+      if (result?.graded) void refreshGraph();
+      return;
+    }
+    ++turnEpoch.current;
+    setProbeBusy(true);
+    setProbeNote(null);
+    try {
+      const result = await answerLoopProbe(sid, userId, saved.question_hash, { idk: false });
+      if (g !== gen.current) return;
+      await applyProbeAnswer(result, g);
+    } catch (error) {
+      if (g !== gen.current) return;
+      reportError(error, "Couldn't finish checking the saved answer. Try again.");
+      void reconcile(sid, g);
+    } finally {
+      if (g === gen.current) setProbeBusy(false);
+    }
   };
 
   const askHint = async () => {
@@ -1025,14 +1141,21 @@ export function LoopLearn() {
   };
 
   const checkMe = async () => {
-    if (!sessionId || checkBusy) return;
+    if (!sessionId || checkBusy || feedbackPending || starting || scopeLoading || pendingGrade) return;
     const g = gen.current;
+    const epoch = ++turnEpoch.current;
     setCheckBusy(true);
     setCheckNote(null);
     try {
       const r = await nextLoopCheck(sessionId, userId);
-      if (g !== gen.current) return;
+      if (g !== gen.current || epoch !== turnEpoch.current) return;
       applyLearningScope(r);
+      if (r.pending_grade) {
+        setPendingGrade(r.pending_grade);
+        dispatch({ type: "check", item: null });
+        dispatch({ type: "phase", phase: r.phase });
+        return;
+      }
       if (r.check && r.goal_progress === undefined) setGoalProgress(null);
       setPlanJustApproved(false);
       if (r.phase === "plan") {
@@ -1048,16 +1171,25 @@ export function LoopLearn() {
       }
       dispatch({ type: "phase", phase: r.phase });
       if (r.check) applyActivated(r.check);
-      else setCheckNote(r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
+      else setCheckNote(r.practice_unavailable_node_ids?.length ? null : r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't get a check question.");
+      if (g !== gen.current || epoch !== turnEpoch.current) return;
+      const { status, detail } = extractErrorDetail(err);
+      if (status === 409 && detail === FEEDBACK_PENDING_DETAIL) {
+        dispatch({ type: "check", item: null });
+        dispatch({ type: "phase", phase: "feedback" });
+        setFeedbackPending(true);
+        setCheckNote(FEEDBACK_PENDING_COPY);
+        return;
+      }
+      reportError(err, "Couldn't get a check question.");
     } finally {
       if (g === gen.current) setCheckBusy(false);
     }
   };
 
   const doClose = async () => {
-    if (!sessionId || closeBusy) return;
+    if (!sessionId || closeBusy || pendingGrade) return;
     const g = gen.current;
     const sid = sessionId;
     setCloseBusy(true);
@@ -1071,6 +1203,7 @@ export function LoopLearn() {
       streamAbort.current?.abort();
       setCloseBusy(false);
       setClose(r);
+      setFeedbackPending(false);
       dispatch({ type: "check", item: null });
       dispatch({ type: "phase", phase: "close" });
       void refreshGraph();
@@ -1171,7 +1304,7 @@ export function LoopLearn() {
           )}
           {sessionId && !readOnly && (state.phase === "probe" || state.phase === "plan") && (
             <button ref={goalButton} type="button" className="btn btn--sm" data-testid="loop-set-goal"
-              disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady}
+              disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady || !!pendingGrade}
               onClick={() => { setGoalEditor(true); setGoalError(null); }}>
               {goal ? "Edit goal" : "Set goal"}
             </button>
@@ -1184,7 +1317,7 @@ export function LoopLearn() {
               data-testid="loop-close-button"
               className="btn btn--sm"
               onClick={() => void doClose()}
-              disabled={closeBusy}
+              disabled={closeBusy || !!pendingGrade}
               title="Wrap up this session"
             >
               {closeBusy ? "Closing…" : "End session"}
@@ -1237,7 +1370,7 @@ export function LoopLearn() {
         className="btn btn--sm"
         style={{ flexShrink: 0 }}
         onClick={() => void newSession({ closeCurrent: true })}
-        disabled={!courseId || starting}
+        disabled={!courseId || sessionTransitionBusy}
         title="Wrap up this session and start a new one"
       >
         + New session
@@ -1245,7 +1378,7 @@ export function LoopLearn() {
     </div>
   );
 
-  const notices = (paused || noCheckItems || topicOffer) && (
+  const notices = (paused || noCheckItems || topicOffer || practiceUnavailable.length > 0) && (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
       {paused && (
         <BudgetPausedBanner
@@ -1273,6 +1406,26 @@ export function LoopLearn() {
           {NO_CHECK_ITEMS_COPY}
         </div>
       )}
+      {practiceUnavailable.length > 0 && (
+        <div data-testid="loop-practice-unavailable" role="status"
+          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 14, lineHeight: 1.5 }}>
+          <p style={{ margin: "0 0 6px" }}>{NO_FRESH_PRACTICE_COPY}</p>
+          <p style={{ margin: "0 0 8px", overflowWrap: "anywhere" }}>Practice unavailable: {practiceUnavailable.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</p>
+          {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practise them.</p>}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <Link data-testid="loop-practice-sources" href="/library" className="btn btn--sm btn--ghost" style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}>Review source material</Link>
+            {!exhaustedPracticeAttempt && (state.phase === "plan" || (teaching && !item && !feedbackPending)) && (
+              <button data-testid="loop-practice-refresh" type="button" className="btn btn--sm"
+                style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal" }} disabled={sessionTransitionBusy || streaming || checkBusy}
+                onClick={() => {
+                  if (!sessionId) return;
+                  if (state.phase === "plan") void loadPlan(sessionId, gen.current);
+                  else void checkMe();
+                }}>Check for fresh practice</button>
+            )}
+          </div>
+        </div>
+      )}
       {topicOffer && (
         // ?topic= while a session is open: resume won (a reload never starts a
         // probe, §11.3); the link's concept is one click away, never automatic.
@@ -1285,7 +1438,7 @@ export function LoopLearn() {
           <button
             data-testid="loop-topic-start"
             className="btn btn--sm"
-            disabled={starting}
+            disabled={sessionTransitionBusy}
             onClick={() => void newSession({ closeCurrent: true, topic: topicOffer, mode: deepLink.mode })}
           >
             Start a session on {topicOffer}
@@ -1346,6 +1499,7 @@ export function LoopLearn() {
             <button
               data-testid="loop-readonly-new-session"
               className="btn btn--primary btn--sm"
+              disabled={sessionTransitionBusy}
               onClick={() => void newSession()}
             >
               Start a new session
@@ -1398,6 +1552,21 @@ export function LoopLearn() {
     );
   } else if (loadingSessions) {
     body = <div style={{ padding: 40, color: "var(--text-dim)" }}>{starting ? "Starting your session…" : "Loading…"}</div>;
+  } else if (pendingGrade) {
+    const busy = probeBusy || attemptBusy || streaming || starting || scopeLoading;
+    body = (
+      <CenteredCard testId="loop-pending-grade">
+        <h2 className="h-serif" style={{ margin: "0 0 8px", fontSize: 22 }}>Finish checking saved answer</h2>
+        <p role="status" style={{ fontSize: 14, lineHeight: 1.5, color: "var(--text-dim)", margin: "0 0 16px" }}>
+          Your answer was saved before checking finished. Continue with that saved result; you don&apos;t need to answer again.
+        </p>
+        <button type="button" data-testid="loop-recover-grade" className="btn btn--primary"
+          style={{ minHeight: 44, maxWidth: "100%", whiteSpace: "normal" }}
+          disabled={busy} aria-busy={busy} onClick={() => void recoverGrade()}>
+          {busy ? "Finishing check…" : "Finish checking saved answer"}
+        </button>
+      </CenteredCard>
+    );
   } else if (goalEditor) {
     body = <GoalEditor key={`${sessionId}:${courseId}`} goal={goal}
       nodes={railGraph.nodes.filter((node) => !node.is_subject_root)} busy={goalBusy} error={goalError}
@@ -1462,20 +1631,21 @@ export function LoopLearn() {
                 data-testid="loop-continue"
                 className="btn btn--sm btn--primary"
                 onClick={() => send(CONTINUE_MESSAGE)}
-                disabled={!!paused || streaming}
+                disabled={!!paused || streaming || starting || scopeLoading}
               >
-                Continue
+                {feedbackPending ? "Retry feedback" : "Continue"}
               </button>
             )}
             <button
               data-testid="loop-check-me"
               className="btn btn--sm"
               onClick={() => void checkMe()}
-              disabled={checkBusy || streaming}
-              title="Get a question on this concept"
+              disabled={checkBusy || streaming || feedbackPending || starting || scopeLoading}
+              title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
             >
               Check me
             </button>
+            {feedbackPending && !streaming && !checkNote && <span role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{FEEDBACK_PENDING_COPY}</span>}
             {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
               <button
                 data-testid="loop-teach-start"
@@ -1500,7 +1670,7 @@ export function LoopLearn() {
           header={chatHeader}
           streamingText={streamingText}
           onStop={stop}
-          disabled={!!paused}
+          disabled={!!paused || starting || scopeLoading}
           placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
         />
       </div>
@@ -1533,7 +1703,7 @@ export function LoopLearn() {
           {goalProgress.status === "continue_available"
             ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
             : goalProgress.status === "needs_more_practice"
-              ? "Your goal still needs prerequisite practice. No fresh next step is available in this session; review your material or start another session."
+              ? "Your goal still needs prerequisite practice. Review source material; more practice is needed before the goal can continue."
               : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
           {goalProgress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {goalProgress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
           {goalProgress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {goalProgress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
@@ -1714,6 +1884,17 @@ function ProbePanel({
           </div>
         )}
         {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
+        {!item && reference !== null && (
+          <div className="card" style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div data-testid="loop-probe-reference" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontSize: 14 }}>
+              <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
+              {reference}
+            </div>
+            <button data-testid="loop-probe-next" className="btn btn--primary" disabled={busy} onClick={onNext}>
+              Next
+            </button>
+          </div>
+        )}
         {!item && !busy && loadFailed && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
             <span>The next question didn&apos;t load.</span>

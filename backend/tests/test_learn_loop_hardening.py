@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -529,22 +530,47 @@ def test_a_grader_failure_releases_the_claim(gate_on, seams):
     assert first.status_code == 502 and second.json()["verdict"] == "correct"
 
 
-def test_a_post_flush_conflict_never_allows_a_second_flush(gate_on, seams):
-    """The flush happened, then the record's compare-and-set is exhausted: the
-    claim persists, so the retry is refused instead of flushing again."""
+def test_a_post_flush_conflict_replays_one_committed_operation_without_regrading(gate_on, seams):
+    """An exhausted final CAS retains the checkpoint; replay commits no new evidence."""
+    from learning import grade_checkpoint
     from learning.params import LOOP_STATE_CAS_RETRIES
 
-    def flush(*a, **k):
-        seams.store["conflicts"] = 1 + LOOP_STATE_CAS_RETRIES
+    committed = {}
+
+    def flush(deps, _course):
+        batch = deepcopy(deps.pending_evidence)
+        operation = batch[0]["operation_id"]
+        if operation not in committed:
+            committed[operation] = batch
+            seams.store["conflicts"] = 1 + LOOP_STATE_CAS_RETRIES
+        else:
+            assert batch == committed[operation], "Replay must retain the exact frozen evidence"
+        deps.pending_evidence.clear()
         return [{"node_id": "node-1"}]
 
     seams.flush.side_effect = flush
-    r = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
-    assert r.status_code == 409
-    again = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
-    assert again.status_code == 409 and again.json()["detail"] == ALREADY
-    seams.flush.assert_called_once()
-    assert seams.store["doc"]["steps"]["qh-1"].get("grading_claim")
+    first = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
+    assert first.status_code == 409
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    operation = entry["grading_claim"]
+    assert grade_checkpoint.KEY in entry and "graded_at" not in entry
+    assert list(committed) == [operation]
+    assert len(seams.receipts) == 1
+
+    p1, p2 = _feedback_agent_patches()
+    with p1, p2:
+        again = client.post("/api/learn/loop/check/answer", json=_answer(answer="Changed retry must not replace the saved answer"))
+    assert again.status_code == 200 and again.json()["verdict"] == "correct"
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["graded"] == 1 and entry["graded_operation_id"] == operation
+    assert "grading_claim" not in entry and grade_checkpoint.KEY not in entry
+    assert seams.store["doc"]["checks_since_rating"] == 1
+    assert list(committed) == list(seams.receipts) == [operation]
+    assert seams.flush.call_count == 2  # two transport attempts, one acknowledged operation
+    seams.grade.assert_awaited_once()
+    duplicate = client.post("/api/learn/loop/check/answer", json=_answer(answer="n == 0"))
+    assert duplicate.status_code == 409 and duplicate.json()["detail"] == ALREADY
+    assert seams.flush.call_count == 2 and len(committed) == 1
 
 
 def test_check_next_moves_past_a_stale_claim_and_never_regrades_it(gate_on, seams):

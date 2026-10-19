@@ -281,7 +281,7 @@ def seams():
         doc = LoopState.from_json(json.loads(json.dumps(store["doc"])))
         return LoadedLoopState(doc, store["rev"])
 
-    def _save(session_id, state, *, expected_rev):
+    def _save(session_id, state, *, expected_rev, require_open=False):
         if store["conflicts"]:
             store["conflicts"] -= 1
             if store["racer"] is not None:
@@ -349,7 +349,26 @@ def seams():
             },
         )
         p("_now_s", return_value=NOW)
-        ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
+        ns.grade = AsyncMock(return_value=CORRECT)
+
+        async def grade_with_evidence(item, answer, **kw):
+            outcome = await ns.grade(item, answer, **kw)
+            if not outcome.unavailable and not outcome.refused and not kw["deps"].pending_evidence:
+                from learning.evidence import Evidence
+                ev = Evidence(
+                    **{**(outcome.evidence or {}), "node_id": kw["node_id"],
+                       "correct": bool(outcome.correct), "idk": answer.idk,
+                       "session_id": kw["deps"].session_id, "check_item_id": item.id,
+                       "question_hash": item.question_hash, "max_rung": kw["max_rung"],
+                       "same_session_recheck": kw["same_session_recheck"],
+                       "grader_backend": outcome.grader_backend, "confidence": outcome.confidence},
+                )
+                row = ev.model_dump(mode="json")
+                kw["deps"].pending_evidence.append(row)
+                outcome = SimpleNamespace(**{**vars(outcome), "evidence": row})
+            return outcome
+
+        p("grade_answer", new=grade_with_evidence)
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
         # PKG-14 (spec §13 A88): the open posed items a served turn is scanned
@@ -366,6 +385,21 @@ def seams():
         ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
         ns.concept_key = p("_concept_key_for_node", return_value="recursion")
         ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
+        ns.receipts = {}
+
+        def committed_receipt(user_id, operation):
+            if operation not in ns.receipts:
+                from learning import grade_checkpoint
+                from learning.evidence import Evidence, planning_observation
+                entry = store["doc"]["steps"]["qh-1"]
+                saved = grade_checkpoint.open_checkpoint(entry[grade_checkpoint.KEY], kind="check",
+                    operation_id=operation, user_id=user_id, session_id="s1", course_id="c1", question_hash="qh-1")
+                ns.receipts[operation] = {"operation_id": operation, "user_id": user_id, "course_id": "c1",
+                    "posteriors": dict(p_known),
+                    "observations": [planning_observation(Evidence.model_validate(ev)) for ev in saved.evidence]}
+            return ns.receipts[operation]
+
+        ns.receipt = p("read_evidence_receipt", side_effect=committed_receipt)
         ns.ai_budget.check.return_value = NORMAL
         yield ns
 
@@ -667,7 +701,7 @@ def test_an_exhausted_conflict_ends_a_stream_in_a_terminal_error(gate_on, seams)
         "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
     )
     evs = _sse_events(r.text)
-    assert [e["type"] for e in evs] == ["phase", "check", "error"]
+    assert [e["type"] for e in evs] == ["error"]  # activity admission failed before serving
     seams.save_msg.assert_not_called()
 
 
@@ -942,7 +976,7 @@ def test_check_phase_chat_serves_the_pose_without_a_model(gate_on, seams):
     )
 
 
-def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
+def test_hard_budget_pauses_a_teach_stream_and_persists_only_activity(gate_on, seams):
     seams.store["doc"] = {"phase": "teach"}
     seams.ai_budget.check.return_value = HARD
     never = MagicMock(side_effect=AssertionError("no model at the hard level"))
@@ -955,7 +989,9 @@ def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
     assert [e["type"] for e in evs] == ["phase", "budget"]
     assert evs[1]["data"] == HARD_BUDGET
     seams.save_msg.assert_not_called()
-    seams.save.assert_not_called()
+    assert set(seams.store["doc"]) == {"v", "steps", "current", "checks_since_rating", "phase", "turn_activity"}
+    assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    seams.flush.assert_not_called()
 
 
 def test_hard_budget_json_chat_is_429_with_reset_at(gate_on, seams):
@@ -966,7 +1002,9 @@ def test_hard_budget_json_chat_is_429_with_reset_at(gate_on, seams):
     )
     assert r.status_code == 429  # AIBudgetExceeded → PKG-06b's registered handler
     assert r.json()["detail"] == "ai budget reached" and r.json()["reset_at"] == RESET_ISO
-    seams.save.assert_not_called()
+    assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    seams.flush.assert_not_called()
+    seams.save_msg.assert_not_called()
 
 
 def test_novice_check_pose_pauses_at_the_hard_level(gate_on, seams):
@@ -1134,7 +1172,7 @@ def test_a_policy_tier_whose_slot_failed_its_evals_routes_to_a_routable_one(gate
 def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on, seams):
     """ADR 0024 honest degrade on the loop's own SSE path: a failure while the
     turn is planned (a context read) ends the stream with ONE terminal
-    `error` event — never a broken stream — and persists nothing."""
+    `error` event — never a broken stream — and persists only timing metadata."""
     seams.store["doc"] = {"phase": "teach"}
     seams.blocks.side_effect = RuntimeError("rag read failed")
     never = MagicMock(side_effect=AssertionError("no model run after a failed plan"))
@@ -1147,13 +1185,23 @@ def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on,
     assert [e["type"] for e in evs] == ["error"]
     assert evs[0]["data"]["retryable"] is True and evs[0]["data"]["request_id"]
     seams.save_msg.assert_not_called()
-    seams.save.assert_not_called()
+    assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    seams.flush.assert_not_called()
 
 
 def test_a_deterministic_stream_whose_persistence_fails_ends_in_a_terminal_error(gate_on, seams):
     """Behaviour 19: a failed persistence inside complete is a terminal error —
     on the deterministic path too, where there is no stream_agent_turn guard."""
-    seams.save.side_effect = RuntimeError("sessions update failed")
+    original_save = seams.save.side_effect
+    writes = []
+
+    def fail_after_admission(*args, **kwargs):
+        writes.append(1)
+        if len(writes) > 1:
+            raise RuntimeError("sessions update failed")
+        return original_save(*args, **kwargs)
+
+    seams.save.side_effect = fail_after_admission
     r = client.post(
         "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
     )
@@ -1412,6 +1460,8 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
         session_id="s1",  # PKG-14b (A92): the continuation's usage row names its session
         band="develop",
         slot="loop_tutor",
+        tier="standard",
+        run_requests=0,
         agent=agent,
         assembled="PREFIX\n\nhi",
         render=render_turn,  # the turn's served render (fix round 2: the H2 hint question)
@@ -1422,7 +1472,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
             "message_history": ["H"],
             "usage_limits": LOOP_LIMITS,
         },
-        budget_counters=lambda: {
+        budget_counters=lambda **kwargs: {
             "session_tutor_requests": 0,
             "session_deep_requests": 0,
             "arm_session": False,
@@ -2450,7 +2500,8 @@ def test_hard_level_leaking_payload_is_served_only_as_h6(gate_on, seams, h6_ok, 
         )
         assert r.json()["budget"]["level"] == "hard"
     else:
-        seams.save.assert_not_called()
+        assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+        assert seams.store["doc"]["steps"]["qh-1"]["rung"] == 2
 
 
 def _opener_patches():
@@ -3141,6 +3192,8 @@ def _misconception_diagnosis() -> dict:
         "difficulty": 2,
         "idk": False,
         "isomorph_of": "qh-0",
+        "released": True,
+        "after_release": False,
     }
     return {
         "attempt": attempt,
@@ -3313,11 +3366,11 @@ def test_a_conflicting_grade_save_re_applies_the_attempt_to_the_fresh_state(gate
 
     real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
 
-    def arm_then_update(session_id, mutate):
+    def arm_then_update(session_id, mutate, **kwargs):
         if armed["on"]:
             seams.store["conflicts"], seams.store["racer"] = 1, racer
             armed["on"] = False
-        return real_update(session_id, mutate)
+        return real_update(session_id, mutate, **kwargs)
 
     def grade(*a, **kw):
         armed["on"] = True  # the next write (the grade's record) loses one race
@@ -3685,8 +3738,8 @@ def test_the_misconception_row_is_written_only_after_the_claims_save(gate_on, se
     seams.grade.return_value = _wrong_with(_misconception_diagnosis())
     real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
 
-    def spy_update(session_id, mutate):
-        out = real_update(session_id, mutate)
+    def spy_update(session_id, mutate, **kwargs):
+        out = real_update(session_id, mutate, **kwargs)
         order.append("save")
         return out
 
@@ -3698,9 +3751,9 @@ def test_the_misconception_row_is_written_only_after_the_claims_save(gate_on, se
         patch("routes.learn_loop.record", side_effect=lambda *a: order.append("record") or {}),
     ):
         client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
-    # the claim's save, then the grade's save that releases it — only then the row
+    # Claim, encrypted checkpoint, open-session guard and final save precede the rollup.
     assert order.count("record") == 1
-    assert order[: order.index("record")].count("save") == 2
+    assert order[: order.index("record")].count("save") == 4
 
 
 def test_a_lost_claim_writes_no_misconception_row(gate_on, seams):
@@ -3712,11 +3765,11 @@ def test_a_lost_claim_writes_no_misconception_row(gate_on, seams):
     armed = {"on": False}
     real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
 
-    def update(session_id, mutate):
+    def update(session_id, mutate, **kwargs):
         if armed["on"]:
             seams.store["conflicts"], seams.store["racer"] = 1, steal
             armed["on"] = False
-        return real_update(session_id, mutate)
+        return real_update(session_id, mutate, **kwargs)
 
     def grade(*a, **kw):
         armed["on"] = True

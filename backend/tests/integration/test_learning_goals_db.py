@@ -58,6 +58,32 @@ def _session(*, owner=USER_ACTIVE, state=None):
     return session_id
 
 
+def _practice_bank(name, *, course=COURSE_CS):
+    """Two authored synthetic capacity-only assets, never graded in this suite.
+
+    Canonical encryption/hash conventions exercise the real item reader. One
+    item is the protected posttest and the other the probe's practice reserve,
+    leaving no diagnostic item, while allowing an actual practice proposal.
+    """
+    from db.connection import table
+    from learning.checks import question_hash
+    from services.check_item_service import concept_key
+    from services.encryption import encrypt_if_present, encrypt_json
+
+    for variant in range(2):
+        prompt = f"Synthetic integration capacity asset {variant} for {name}."
+        table("check_items").insert({
+            "id": str(uuid.uuid4()), "course_id": course, "concept_key": concept_key(name),
+            "format": "free", "difficulty": 2, "prompt": encrypt_if_present(prompt),
+            "question_hash": question_hash(prompt),
+            "reference_answer": encrypt_if_present("Synthetic capacity fixture, not a real assessment."),
+            "final_answer": encrypt_if_present("fixture response"),
+            "rubric_json": encrypt_json([{"id": "r1", "text": "Synthetic criterion"},
+                                        {"id": "r2", "text": "Synthetic explanation"}]),
+            "common_wrong_json": encrypt_json([{"key": "fixture", "text": "Synthetic mismatch"}]),
+        })
+
+
 def _body(session_id, *, user=USER_ACTIVE):
     return {"session_id": session_id, "user_id": user}
 
@@ -150,9 +176,13 @@ def test_goal_course_ownership_and_prerequisite_closure_use_real_graph(authed_cl
     assert diagnosis["status"] == "not_assessed"
     plan = authed_client.get(f"{LOOP}/plan", params=_body(session_id))
     assert plan.status_code == 200, plan.text
-    assert [c["node_id"] for c in plan.json()["concepts"]] == [root]
-    assert plan.json()["concepts"][0]["reason"] == "prerequisite"
-    assert plan.json()["concepts"][0]["target_node_ids"] == [target]
+    # An owned prerequisite with no bank is still required, but cannot be
+    # presented as an actionable assessment plan. Source review remains open.
+    assert plan.json()["concepts"] == [] and plan.json()["phase"] == "teach"
+    assert plan.json()["practice_unavailable_node_ids"] == [root]
+    assert set(plan.json()["goal_progress"]["unresolved_prerequisite_ids"]) == {root, middle}
+    assert plan.json()["goal_progress"]["remaining_target_node_ids"] == [target]
+    assert plan.json()["goal_progress"]["attempted_node_ids"] == []
     raw = _raw(db_conn, session_id)["loop_state"]
     assert set(raw["probe"]["scope"]) == {root, middle, target}
     assert set(raw["probe"]["scope"]).isdisjoint({unrelated, foreign, wrong_course})
@@ -181,6 +211,7 @@ def test_foreign_authenticated_user_cannot_read_or_mutate_goal(
 
 def test_goal_edit_preserves_fatigue_and_invalidates_old_plan_approval(authed_client, db_conn):
     target = _node("Goal edit application")
+    _practice_bank("Goal edit application")
     history = [
         {
             "node_id": "old-strand",

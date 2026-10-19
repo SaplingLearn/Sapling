@@ -1115,6 +1115,8 @@ async def collect_structured(
     *,
     nonstream_fallback=None,
     on_usage=None,
+    on_incomplete_usage=None,
+    run_kwargs=None,
     transform=None,
     transform_final=None,
 ):
@@ -1122,11 +1124,12 @@ async def collect_structured(
     async for ev in stream_structured_turn(
         agent=agent,
         user_message="hi",
-        run_kwargs={"deps": deps, "model": model},
+        run_kwargs={"deps": deps, "model": model, **(run_kwargs or {})},
         deps=deps,
         on_complete=on_complete,
         nonstream_fallback=nonstream_fallback,
         on_usage=on_usage,
+        on_incomplete_usage=on_incomplete_usage,
         request_id="r1",
         transform=transform,
         transform_final=transform_final,
