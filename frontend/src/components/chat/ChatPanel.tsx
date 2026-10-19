@@ -117,20 +117,25 @@ export function ChatPanel({
   }, []);
 
   const last = messages[messages.length - 1];
+  const firstId = messages[0]?.id ?? null;
+  const firstSeen = useRef<string | null>(null);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    // The student's own new turn always brings the conversation to the end.
+    // The student's own new turn always brings the conversation to the end,
+    // and so does a different conversation (another session's transcript).
     const ownTurn = last?.role === "user" && last.id !== lastSeen.current;
+    const newConversation = firstId !== firstSeen.current;
     lastSeen.current = last?.id ?? null;
-    if (following.current || ownTurn) {
+    firstSeen.current = firstId;
+    if (following.current || ownTurn || newConversation) {
       el.scrollTop = el.scrollHeight;
       following.current = true;
     } else {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- a layout read decides it
       setBehind(true);
     }
-  }, [messages, streamingText, last]);
+  }, [messages, streamingText, last, firstId]);
 
   return (
     <div className={`fa26-chat-panel ${styles.panel}`}>

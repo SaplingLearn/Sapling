@@ -193,6 +193,21 @@ describe("ChatPanel reading position", () => {
   });
 });
 
+describe("ChatPanel reading position across conversations", () => {
+  it("a different conversation starts at its end, with no stale Jump to latest", () => {
+    const first: ChatMsg[] = [{ id: "a1", role: "assistant", content: "one" }];
+    const { rerender } = render(<ChatPanel messages={first} onSend={noop} />);
+    const log = screen.getByTestId("tutor-messages");
+    Object.defineProperty(log, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(log, "clientHeight", { configurable: true, get: () => 300 });
+    log.scrollTop = 100;
+    fireEvent.scroll(log);
+    rerender(<ChatPanel messages={[{ id: "b1", role: "assistant", content: "another session" }]} onSend={noop} />);
+    expect(log.scrollTop).toBe(1000);
+    expect(screen.queryByTestId("tutor-jump-latest")).toBeNull();
+  });
+});
+
 describe("ChatPanel Retry gating", () => {
   it("renders Retry disabled while the caller says a retry would conflict", () => {
     const onRetry = vi.fn();
