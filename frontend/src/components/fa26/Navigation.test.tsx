@@ -64,4 +64,14 @@ describe("FA26 navigation", () => {
     expect(screen.queryByTestId("nav-link-library")).toBeNull();
     expect(screen.queryByTestId("nav-link-learn")).toBeNull();
   });
+
+  it("draws Library, Calendar and Clov with the approved botanical exports", () => {
+    render(<Navigation />);
+    const iconIn = (name: string) => screen.getByRole("link", { name }).querySelector(".sapling-icon");
+    expect(iconIn("Library")).toHaveAttribute("data-icon", "library");
+    expect(iconIn("Calendar")).toHaveAttribute("data-icon", "calendar");
+    expect(iconIn("Clov")).toHaveAttribute("data-icon", "clov");
+    expect(iconIn("Dashboard")).toHaveAttribute("data-icon", "today");
+    expect(iconIn("Library")).toHaveAttribute("aria-hidden", "true");
+  });
 });

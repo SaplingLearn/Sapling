@@ -1,7 +1,24 @@
 import React from "react";
+import { BotanicalIcon, type BotanicalIconName } from "../sapling/BotanicalIcon";
+
+/**
+ * FA26 glyphs that now have an approved, authored Pen export (redesign
+ * handoff assets/asset-manifest.json). #727 drew these as temporary stand-ins
+ * for the then-unavailable originals; the originals win. Names without an
+ * approved equivalent (tree, study, notes and the utility marks) keep their
+ * FA26 artwork: the handoff says not to invent a third icon family.
+ */
+const APPROVED: Partial<Record<string, BotanicalIconName>> = {
+  home: "today",
+  library: "library",
+  calendar: "calendar",
+  clov: "clov",
+};
 
 /** Compact botanical marks used by the FA26 navigation. */
 export function DesignIcon({ name, size = 22 }: { name: string; size?: number }) {
+  const approved = APPROVED[name];
+  if (approved) return <BotanicalIcon name={approved} size={size} />;
   const artwork: Record<string, React.ReactNode> = {
     home: <path d="M2 11 12 2l10 9h-4v10h-5v-6h-3v6H6V11Z" />,
     library: <><rect x="2" y="2" width="8" height="8" rx="2" /><path d="M13 10C12 4 17 1 23 2c0 6-4 9-10 8M10 13c1 6-4 10-9 9 0-6 4-10 9-9" /><rect x="13" y="13" width="8" height="8" rx="2" /></>,
