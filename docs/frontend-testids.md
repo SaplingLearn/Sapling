@@ -75,6 +75,7 @@ renders the element.
 | --- | --- | --- |
 | Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
+| Local sample-data hold screen | `setup` | `frontend/src/app/setting-up/page.tsx` (where a new account waits after signing in to a LOCAL backend while the sample dataset is copied onto it, #715) |
 | Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
@@ -148,6 +149,14 @@ route:
 | `onboarding-course-search` | course search field |
 | `onboarding-course-result-${course.id}` | one course search result |
 | `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
+
+### `setup`
+
+| testid | element |
+| --- | --- |
+| `setup-gate` | local sample-data hold screen root (`/setting-up`) |
+| `setup-error` | why the seed failed (failed state only) |
+| `setup-continue` | "Continue anyway" link to `/onboarding` (failed state only) |
 
 ### `upload-modal`
 

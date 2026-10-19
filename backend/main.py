@@ -44,6 +44,10 @@ from services.storage_service import (
 from services.durable import init_dbos, shutdown_dbos
 from services.check_item_service import shutdown_draft_pool
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.local_seed_watcher import (
+    start_watcher as start_local_seed_watcher,
+    stop_watcher as stop_local_seed_watcher,
+)
 from services import typesafe_client
 
 try:
@@ -121,6 +125,9 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    # #715: on a developer's LOCAL stack only, copy the rich sample dataset
+    # onto each Google account that signs in. Not started anywhere else.
+    start_local_seed_watcher()
     # #672: the decision seam's backends moved from env vars to the
     # decision_router flag; say so if a deployment still sets the old ones.
     from services import decisions
@@ -131,6 +138,7 @@ async def _lifespan(_app: FastAPI):
     # First (A38 fix round, m8): before the event drain stops, so no drafting
     # starts after it, and before any other step whose failure could skip it.
     shutdown_draft_pool()
+    await stop_local_seed_watcher()
     await stop_sweeper()
     # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded) so
     # their decision.shadow + llm_usage rows reach the event drain below, then close the
