@@ -961,6 +961,134 @@ test("phone retention entry creates no pose until requested and respects real de
   await context.close();
 });
 
+test("phone explicit goal warns before teaching when only protected practice remains and offers source review", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  // Synthetic asset-only starting state, installed BEFORE browser activity.
+  // Retain the actual protected post-test items; do not reset exposure, seed
+  // mastery or fabricate an attempt to make an exhausted goal look complete.
+  await seedGoalContinuationItems("unavailable");
+  const binary = "rich-node-loop-binary";
+  const bitwise = "rich-node-loop-bitwise";
+  const reserves = await queryRaw(
+    "SELECT id, format, difficulty FROM check_items WHERE course_id = 'rich-course-cs101' AND concept_key IN ('binary numbers', 'bitwise operators') ORDER BY id",
+  );
+  expect(reserves).toEqual([
+    { id: "rich-check-binary-free-d2", format: "free", difficulty: 2 },
+    { id: "rich-check-bitwise-free-d2", format: "free", difficulty: 2 },
+  ]);
+  // A clearly synthetic, unopened probe container avoids the normal session
+  // opener model (covered by the full journeys) and its queued usage write.
+  // Install it AFTER the pristine asset guard, before any browser activity.
+  // Every goal, probe, plan and refresh below still uses the actual routes;
+  // no grades, observations, priors, exposures or completed goals are seeded.
+  const sessionId = "e2e-practice-preflight";
+  await queryRaw(
+    `INSERT INTO sessions (id, user_id, mode, topic, offering_id, started_at, loop_state)
+     VALUES ($1, $2, 'socratic', 'Synthetic unopened practice preflight fixture', 'rich-off-cs101-s26', now(), $3::jsonb)`,
+    [sessionId, USER_LOOP, JSON.stringify({ phase: "probe" })],
+  );
+  const counts = async () => (await queryRaw(
+    `SELECT
+       (SELECT count(*)::int FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
+         WHERE g.user_id = $1 AND e.event_type = 'evidence') AS evidence,
+       (SELECT count(*)::int FROM llm_usage WHERE user_id = $1) AS model_runs`,
+    [USER_LOOP],
+  ))[0];
+  const before = await counts();
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  const modelPosts: string[] = [];
+  let approvals = 0;
+  let checks = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    const path = new URL(request.url()).pathname;
+    if (!path.startsWith("/api/learn/")) return;
+    if (path.includes("/chat") || path.includes("/answer") || path.endsWith("/action") ||
+        path.endsWith("/hint") || path.endsWith("/close") || path.endsWith("/start-session") ||
+        path.endsWith("/start-session/stream")) modelPosts.push(path);
+    if (path === "/api/learn/loop/plan/approve") approvals += 1;
+    if (path === "/api/learn/loop/check/next") checks += 1;
+  });
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/learn?course=rich-course-cs101&resume=${sessionId}`);
+    await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
+    const phase = page.getByTestId("loop-phase");
+    await expect(phase).toHaveAttribute("data-session-id", sessionId);
+    await page.getByTestId("loop-set-goal").click();
+    const editor = page.getByRole("form", { name: "Learning goal" });
+    const objective = "Understand bitwise operations after binary foundations";
+    await editor.getByTestId("loop-goal-text").fill(objective);
+    await editor.getByRole("checkbox", { name: "Bitwise Operators", exact: true }).check();
+    const emptyPlan = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === "/api/learn/loop/plan" && response.request().method() === "GET" &&
+        url.searchParams.get("session_id") === sessionId;
+    });
+    await editor.getByTestId("loop-goal-save").click();
+    const response = await emptyPlan;
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({
+      empty: true, phase: "teach", concepts: [], practice_unavailable_node_ids: [binary],
+      goal_progress: { status: "needs_more_practice", unresolved_prerequisite_ids: [binary],
+        remaining_target_node_ids: [bitwise], attempted_node_ids: [] },
+    });
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+    await expect(page.getByTestId("loop-goal-summary")).toContainText(objective);
+    const warning = page.getByTestId("loop-practice-unavailable");
+    await expect(warning).toBeVisible();
+    for (const text of ["Fresh practice questions are unavailable", "Binary Numbers",
+      "source review does not assess or complete your goal", "Starting another session will not replenish"]) {
+      await expect(warning).toContainText(text);
+    }
+    const progress = page.getByTestId("loop-goal-progress");
+    await expect(progress).toContainText("Your goal still needs prerequisite practice");
+    await expect(progress).toContainText("Prerequisites needing practice: Binary Numbers");
+    await expect(progress).toContainText("Goal concepts remaining: Bitwise Operators");
+    await expect(page.getByTestId("loop-plan-approve")).toHaveCount(0);
+    await expect(page.getByTestId("loop-teach-start")).toHaveCount(0);
+    await expect(page.getByTestId("loop-check-prompt")).toHaveCount(0);
+    expect(approvals).toBe(0);
+    expect(checks).toBe(0); // availability was disclosed before a check request
+    expect(modelPosts).toEqual([]);
+
+    // Only the learner's explicit refresh asks again. No new assets exist, so
+    // the real route remains honestly blocked, without auto-approval or credit.
+    const refreshResponse = page.waitForResponse((result) => new URL(result.url()).pathname === "/api/learn/loop/check/next");
+    await page.getByTestId("loop-practice-refresh").click();
+    const refreshed = await refreshResponse;
+    expect(refreshed.status()).toBe(200);
+    expect(await refreshed.json()).toMatchObject({ phase: "teach", check: null,
+      practice_unavailable_node_ids: [binary], goal_progress: { status: "needs_more_practice", attempted_node_ids: [] } });
+    await expect(page.getByTestId("loop-practice-refresh")).toBeEnabled();
+    await expect(warning).toBeVisible();
+    const [{ loop_state: state }] = await queryRaw("SELECT loop_state FROM sessions WHERE id = $1 AND user_id = $2", [sessionId, USER_LOOP]) as {
+      loop_state: { goal: { target_node_ids: string[] }; plan: { approved: string[]; attempted?: string[]; checked_nodes?: string[] };
+        steps?: Record<string, unknown>; current?: string; concept?: string; probe?: { history?: unknown[] } };
+    }[];
+    expect(state.goal.target_node_ids).toEqual([bitwise]);
+    expect(state.plan.approved).toEqual([]);
+    expect(state.plan.attempted ?? []).toEqual([]);
+    expect(state.plan.checked_nodes ?? []).toEqual([]);
+    expect(state.steps ?? {}).toEqual({});
+    expect(state.probe?.history ?? []).toEqual([]);
+    expect(state.current).toBeFalsy();
+    expect(state.concept).toBeFalsy();
+    const geometry = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth }));
+    expect(geometry.viewport).toBe(390);
+    expect(geometry.content).toBeLessThanOrEqual(geometry.viewport);
+
+    await expect(page.getByTestId("loop-practice-sources")).toHaveAttribute("href", "/library");
+    await page.getByTestId("loop-practice-sources").click();
+    await expect(page).toHaveURL(/\/library$/);
+    await expect(page.getByTestId("library-doc-rich-doc-loop-cs-notes")).toContainText("binary-and-bits-notes.pdf");
+    expect(checks).toBe(1);
+    expect(approvals).toBe(0);
+    expect(modelPosts).toEqual([]);
+    expect(await counts()).toEqual(before);
+  } finally { await context.close(); }
+});
+
 test("independent prerequisite recovery unlocks a fresh goal plan requiring approval in the same session", async ({ browser }) => {
   test.skip(killSwitchLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
