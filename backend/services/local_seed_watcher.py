@@ -3,25 +3,31 @@
 On a developer's own stack, a fresh Google sign-in lands on an empty account.
 `python -m db.seed_local_rich --owner-user-id` fills it, but only if someone
 remembers to run it between signing in and looking around. This loop runs that
-same seed (`seed_local_rich.seed_owner`) for them: every few seconds it lists
-the real Google accounts — `users.id` is `user_<google id>`; fixture accounts
-are rich-*/seed-*/it-* and are never touched — and seeds each one that does
-not have the sample data yet, one at a time, in a worker thread.
+same seed (`seed_local_rich.seed_owner`) for them, one account at a time in a
+worker thread, for every account that is:
+
+- a real Google sign-in: `users.id` is `user_<google id>` (fixture accounts are
+  rich-*/seed-*/it-* and are never touched) and `google_id` is set (an
+  ensure_user_exists stub is not a sign-in yet);
+- live: `deleted_at` is null;
+- not yet onboarded: `onboarding_completed` is false.
+
+The seed completes onboarding as its LAST write, so that one column is the
+whole "already seeded" story: a finished seed is never redone (a sample course
+the developer dropped stays dropped across restarts), an account whose seed
+stopped midway is still a candidate and is finished on a later pass (the seed
+is idempotent), and an account that was already onboarded — a developer's own
+account with their own data — is left alone; the CLI is its way in.
 
 LOCAL ONLY. It starts only when `seed_helpers.is_local_backend()` holds (APP_ENV
 local|test AND a loopback SUPABASE_URL) — the exact check the seed CLI's guard
 uses — so staging and production never run it, and GET /api/auth/local-seed
 404s there.
 
-"Already seeded" is read off the data, not a new column: the owner seed's copy
-of one sample enrollment (`owner_seed_marker_id`, deterministic) exists AND
-`users.onboarding_completed` is true. The enrollment is written early and
-onboarding is completed last, so an account whose seed stopped midway reads as
-unseeded and is finished on a later pass. In-process, an account seeded by this
-process is remembered by (id, created_at): the marker can be absent for good
-(a pre-existing enrollment in the sample offering keeps its own id), and that
-must cost one idempotent re-run per restart, never one every pass — while an
-account deleted and re-created under the same Google id is a new account.
+The loop idles on a slow poll (LOCAL_SEED_WATCH_INTERVAL_SECONDS, default
+30s): sign-in is picked up at once regardless, because every `pending` answer
+from the status route — the post-sign-in routing asks, then the hold screen
+polls every 2s — `nudge()`s the sleeping loop awake.
 
 A failing account is recorded (the status route reports it) and retried on an
 exponential backoff; it never stops the others or the loop.
@@ -31,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import threading
 import time
@@ -41,7 +48,30 @@ from db.seed_helpers import is_local_backend
 
 logger = logging.getLogger(__name__)
 
-WATCH_INTERVAL_SECONDS = float(os.getenv("LOCAL_SEED_WATCH_INTERVAL_SECONDS", "2"))
+DEFAULT_WATCH_INTERVAL_SECONDS = 30.0
+
+
+def _interval_from_env() -> float:
+    """LOCAL_SEED_WATCH_INTERVAL_SECONDS, or the default (with a warning) when it
+    is not a positive finite number. Never raises: main.py imports this module
+    in every environment, so a typo must not stop a backend from booting."""
+    raw = (os.getenv("LOCAL_SEED_WATCH_INTERVAL_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_WATCH_INTERVAL_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "[local-seed] ignoring LOCAL_SEED_WATCH_INTERVAL_SECONDS=%r (not a positive "
+            "number of seconds); using %ss", raw, DEFAULT_WATCH_INTERVAL_SECONDS,
+        )
+        return DEFAULT_WATCH_INTERVAL_SECONDS
+    return value
+
+
+WATCH_INTERVAL_SECONDS = _interval_from_env()
 #: First retry delay after a failed seed; doubles per failure up to the cap.
 BACKOFF_BASE_SECONDS = 10.0
 BACKOFF_MAX_SECONDS = 300.0
@@ -63,7 +93,6 @@ _wake: asyncio.Event | None = None
 _scan_lock = threading.Lock()
 #: Guards the state below, which the status route reads from another thread.
 _state_lock = threading.Lock()
-_seeded: dict[str, str | None] = {}      # user id -> created_at it was seeded at
 _seeding: str | None = None
 _failures: dict[str, _Failure] = {}
 
@@ -72,7 +101,6 @@ def _reset() -> None:
     """Forget all in-process state (tests; equivalent to a restart)."""
     global _seeding
     with _state_lock:
-        _seeded.clear()
         _failures.clear()
         _seeding = None
 
@@ -86,28 +114,15 @@ def is_oauth_account(user_id: object) -> bool:
     return isinstance(user_id, str) and user_id.startswith(OAUTH_ID_PREFIX)
 
 
-def _seeded_in_db(users: list[dict]) -> set[str]:
-    """Which of these accounts already hold a completed owner seed."""
-    from db.seed_local_rich import owner_seed_marker_id
-
-    markers = {
-        owner_seed_marker_id(u["id"]): u["id"] for u in users if u.get("onboarding_completed")
-    }
-    if not markers:
-        return set()
-    rows = table("enrollments").select("id", filters={"id": f"in.({','.join(markers)})"}) or []
-    return {markers[row["id"]] for row in rows if row.get("id") in markers}
-
-
-def _remember_seeded(users: list[dict]) -> None:
-    with _state_lock:
-        for user in users:
-            _seeded[user["id"]] = user.get("created_at")
-            _failures.pop(user["id"], None)
-
-
-def _known_seeded(user: dict) -> bool:
-    return user["id"] in _seeded and _seeded[user["id"]] == user.get("created_at")
+#: The candidate rule, as PostgREST filters (see the module docstring). The
+#: `like` is only a pre-filter — `_` is a LIKE wildcard — so is_oauth_account
+#: re-checks the prefix in Python.
+_CANDIDATE_FILTERS = {
+    "id": f"like.{OAUTH_ID_PREFIX}*",
+    "google_id": "not.is.null",
+    "deleted_at": "is.null",
+    "onboarding_completed": "eq.false",
+}
 
 
 def _seed_one(owner: dict, now: float) -> bool:
@@ -137,7 +152,8 @@ def _seed_one(owner: dict, now: float) -> bool:
     finally:
         with _state_lock:
             _seeding = None
-    _remember_seeded([owner])
+    with _state_lock:
+        _failures.pop(user_id, None)
     logger.info("[local-seed] seeded sample data onto %s (%d rows created)", user_id, created)
     return True
 
@@ -157,8 +173,7 @@ def scan_once(now: float | None = None) -> int:
         now = time.monotonic() if now is None else now
         try:
             users = table("users").select(
-                "id,onboarding_completed,created_at",
-                filters={"id": f"like.{OAUTH_ID_PREFIX}*"},
+                "id,onboarding_completed", filters=_CANDIDATE_FILTERS,
             ) or []
         except Exception:
             logger.warning("[local-seed] could not list local accounts", exc_info=True)
@@ -167,43 +182,35 @@ def scan_once(now: float | None = None) -> int:
             due = [
                 u for u in users
                 if is_oauth_account(u.get("id"))
-                and not _known_seeded(u)
                 and (u["id"] not in _failures or _failures[u["id"]].retry_at <= now)
             ]
-            # A failed account is re-seeded outright: its marker may predate the failure.
-            fresh = [u for u in due if u["id"] not in _failures]
-        if not due:
-            return 0
-        try:
-            done = _seeded_in_db(fresh)
-        except Exception:
-            logger.warning("[local-seed] could not check which accounts are seeded", exc_info=True)
-            return 0
-        _remember_seeded([u for u in fresh if u["id"] in done])
-        return sum(_seed_one(u, now) for u in due if u["id"] not in done)
+        return sum(_seed_one(u, now) for u in due)
     finally:
         _scan_lock.release()
 
 
-def status_for(user_id: str) -> dict:
-    """{"state": pending|seeding|ready|failed, "error"?} for one account."""
+def status_for(user_id: str) -> dict | None:
+    """{"state": pending|seeding|ready|failed, "error"?} for one account, or
+    None when it is not a live Google account (missing, an ensure_user_exists
+    stub, soft-deleted): nothing the watcher would ever seed, so nothing to
+    wait for. `ready` is simply "onboarded" — by the seed, or by hand — and it
+    outranks a recorded failure, which "Continue anyway" can leave behind.
+    """
     with _state_lock:
         if _seeding == user_id:
             return {"state": "seeding"}
-        failure = _failures.get(user_id)
-        if failure is not None:
-            return {"state": "failed", "error": failure.error}
     rows = table("users").select(
-        "id,onboarding_completed,created_at", filters={"id": f"eq.{user_id}"}, limit=1,
+        "id,google_id,deleted_at,onboarding_completed",
+        filters={"id": f"eq.{user_id}"}, limit=1,
     ) or []
-    if not rows:
-        return {"state": "pending"}
-    with _state_lock:
-        if _known_seeded(rows[0]):
-            return {"state": "ready"}
-    if _seeded_in_db(rows):
-        _remember_seeded(rows)
+    if not rows or rows[0].get("google_id") is None or rows[0].get("deleted_at") is not None:
+        return None
+    if rows[0].get("onboarding_completed"):
         return {"state": "ready"}
+    with _state_lock:
+        failure = _failures.get(user_id)
+    if failure is not None:
+        return {"state": "failed", "error": failure.error}
     return {"state": "pending"}
 
 

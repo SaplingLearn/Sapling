@@ -897,17 +897,6 @@ def _seed_owner_chunks(writer) -> None:
         })
 
 
-def owner_seed_marker_id(owner_id: str) -> str:
-    """The id the owner seed gives its copy of the sample CS enrollment.
-
-    Deterministic (OwnerSeedWriter's uuid5 scheme), so "has this account been
-    seeded?" needs no new column: the local-seed watcher looks for this row.
-    """
-    from db.seed_local_owner import OwnerSeedWriter
-
-    return OwnerSeedWriter(owner_id)._id("enrollments", ENR_ACTIVE_CS_F25)
-
-
 def seed_owner(owner: dict, *, report: bool = True) -> int:
     """Copy the rich dataset onto an existing account; returns rows created.
 

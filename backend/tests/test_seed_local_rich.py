@@ -306,10 +306,18 @@ def test_seed_owner_refuses_outside_local_without_exiting(local_database, monkey
     assert local_database.writes == []
 
 
-def test_owner_seed_marker_is_the_owners_copy_of_the_sample_enrollment(local_database):
-    marker = rich.owner_seed_marker_id("user-personal")
-    assert marker.startswith("rich-owner-")
-    assert marker != rich.owner_seed_marker_id("user-other")
-    assert not any(row["id"] == marker for row in local_database.rows["enrollments"])
+def test_owner_seed_skips_the_sample_feedback_and_issue_reports(local_database):
+    """Those rows exist for the ciphertext oracle's baseline, not as account
+    content: on a developer's account they would read as real submissions."""
     _seed_personal()
-    assert any(row["id"] == marker for row in local_database.rows["enrollments"])
+    assert local_database.rows["feedback"] == []
+    assert local_database.rows["issue_reports"] == []
+
+
+def test_owner_seed_existence_probes_select_only_key_columns(local_database):
+    """A probe must not drag back ciphertext or 768-float embeddings."""
+    _seed_personal()
+    probes = [(name, columns) for name, columns in local_database.selects if columns == "*"]
+    assert probes == []
+    chunk_probes = {columns for name, columns in local_database.selects if name == "course_chunks"}
+    assert chunk_probes == {"id"}

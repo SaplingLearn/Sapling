@@ -753,8 +753,9 @@ async def local_seed_status(request: Request):
 
     404 — the frontend's cue to keep its normal routing — whenever the watcher
     would not run (any non-local backend, gated per REQUEST on the same
-    predicate as the seed CLI's guard, checked before the session) and for a
-    non-Google fixture account, which the watcher never seeds. A `pending`
+    predicate as the seed CLI's guard, checked before the session) and for any
+    account the watcher never seeds: a non-Google fixture account, a missing
+    or soft-deleted one, an ensure_user_exists stub (no google_id). A `pending`
     answer wakes the watcher so a fresh sign-in waits one seed, not a poll.
     """
     from services import local_seed_watcher
@@ -765,6 +766,8 @@ async def local_seed_status(request: Request):
     if not local_seed_watcher.is_oauth_account(user_id):
         raise HTTPException(status_code=404, detail="Not Found")
     status = await asyncio.to_thread(local_seed_watcher.status_for, user_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Not Found")
     if status["state"] == "pending":
         local_seed_watcher.nudge()
     return status

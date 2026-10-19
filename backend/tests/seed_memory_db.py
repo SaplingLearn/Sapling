@@ -4,7 +4,14 @@ from copy import deepcopy
 
 
 def _matches(stored, expr: str) -> bool:
-    """The PostgREST operators the seed code uses: eq., in.(a,b), like.prefix*."""
+    """The PostgREST operators the seed code uses: eq., in.(a,b), like.prefix*,
+    is.null and not.is.null. Booleans compare as PostgREST spells them."""
+    if expr == "is.null":
+        return stored is None
+    if expr == "not.is.null":
+        return stored is not None
+    if isinstance(stored, bool) and expr.startswith("eq."):
+        return expr.removeprefix("eq.").lower() == str(stored).lower()
     if expr.startswith("in.(") and expr.endswith(")"):
         return str(stored) in expr[4:-1].split(",")
     if expr.startswith("like."):
@@ -24,12 +31,17 @@ class MemoryDatabase:
     def __init__(self):
         self.rows = defaultdict(list)
         self.writes = []
+        self.selects = []  # (table, columns) per select, to pin what reads fetch
 
     def table(self, name):
         db = self
 
         class Handle:
             def select(self, columns="*", filters=None, limit=None, offset=None, order=None):
+                db.selects.append((name, columns))
+                return self._read(filters, limit, offset, order)
+
+            def _read(self, filters=None, limit=None, offset=None, order=None):
                 rows = [row for row in db.rows[name] if all(
                     _matches(row.get(key), value) for key, value in (filters or {}).items()
                 )]
@@ -41,7 +53,7 @@ class MemoryDatabase:
                 return deepcopy(rows)
 
             def select_with_count(self, columns="*", filters=None, limit=None, offset=None, order=None):
-                count = len(self.select(columns, filters=filters))
+                count = len(self._read(filters))
                 return self.select(columns, filters=filters, limit=limit, offset=offset, order=order), count
 
             def insert(self, row):
@@ -52,16 +64,16 @@ class MemoryDatabase:
                 return [deepcopy(row)]
 
             def update(self, row, filters):
-                matching = self.select(filters=filters)
+                matching = self._read(filters)
                 for saved in db.rows[name]:
                     if saved in matching:
                         saved.update(deepcopy(row))
                 db.writes.append((name, "update"))
-                return self.select(filters=filters)
+                return self._read(filters)
 
             def upsert(self, row, on_conflict):
                 filters = {key: f"eq.{row[key]}" for key in on_conflict.split(",")}
-                if self.select(filters=filters):
+                if self._read(filters):
                     return self.update(row, filters)
                 return self.insert(row)
 

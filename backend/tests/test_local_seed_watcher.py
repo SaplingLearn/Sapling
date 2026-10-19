@@ -22,6 +22,12 @@ GOOGLE = "user_1001"
 GOOGLE_2 = "user_1002"
 
 
+def _account(user_id, **fields):
+    """A users row as Google sign-in leaves it: google id set, not deleted, not onboarded."""
+    return {"id": user_id, "google_id": user_id.removeprefix("user_"),
+            "deleted_at": None, "onboarding_completed": False, **fields}
+
+
 @pytest.fixture(autouse=True)
 def _fresh_watcher_state():
     watcher._reset()
@@ -42,14 +48,14 @@ def db(local_env, monkeypatch):
         monkeypatch.setattr(module, "table", database.table)
     database.rows["roles"] = [{"id": "11111111-2222-4333-8444-555555555555", "slug": "admin"}]
     database.rows["users"] = [
-        {"id": GOOGLE, "email": encrypt("me@bu.edu"), "onboarding_completed": False,
-         "is_approved": True, "created_at": "2026-10-18T00:00:00+00:00"},
-        # Fixture accounts: the rich seed's, the staging seed's, the integration lane's.
-        {"id": "rich-user-new", "onboarding_completed": False, "created_at": "2026-10-18T00:00:00+00:00"},
-        {"id": "seed-user-1", "onboarding_completed": False, "created_at": "2026-10-18T00:00:00+00:00"},
-        {"id": "it-user-71476fdfa7d5", "onboarding_completed": False, "created_at": "2026-10-18T00:00:00+00:00"},
+        _account(GOOGLE, email=encrypt("me@bu.edu"), is_approved=True),
+        # Fixture accounts: the rich seed's, the staging seed's, the integration
+        # lane's. Given google ids here so the id prefix alone must keep them out.
+        _account("rich-user-new", google_id="g-rich"),
+        _account("seed-user-1", google_id="g-seed"),
+        _account("it-user-71476fdfa7d5", google_id="g-it"),
         # SQL LIKE's `_` matches any character; the prefix check must not.
-        {"id": "users-lookalike", "onboarding_completed": False, "created_at": "2026-10-18T00:00:00+00:00"},
+        _account("users-lookalike", google_id="g-lookalike"),
     ]
     database.rows["user_profiles"] = [{"user_id": GOOGLE, "name": encrypt("Real Me")}]
     return database
@@ -63,6 +69,8 @@ def seeds(monkeypatch):
     def fake_seed_owner(owner, *, report=True):
         assert report is False, "the watcher logs; it never prints the CLI summary"
         seen.append(owner["id"])
+        # The real seed's last write, and what makes an account no longer a candidate.
+        rich.table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
         return 1
 
     monkeypatch.setattr(rich, "seed_owner", fake_seed_owner)
@@ -129,16 +137,41 @@ def test_an_already_seeded_account_is_left_alone_after_a_restart(db, monkeypatch
     assert watcher.status_for(GOOGLE) == {"state": "ready"}
 
 
-def test_an_account_onboarded_by_hand_still_gets_the_sample_data(db, seeds):
-    """Existing unseeded accounts are seeded the first time the watcher sees them."""
+def test_an_onboarded_account_is_left_alone(db, seeds):
+    """An existing dev account with its own data: the CLI is its way in, not the watcher."""
     db.rows["users"][0]["onboarding_completed"] = True
-    assert watcher.scan_once() == 1
-    assert seeds == [GOOGLE]
+    assert watcher.scan_once() == 0
+    assert seeds == []
+
+
+def test_a_stub_account_without_a_google_id_is_left_alone(db, seeds):
+    """auth_guard's ensure_user_exists stub is not a real sign-in yet."""
+    db.rows["users"][0]["google_id"] = None
+    assert watcher.scan_once() == 0
+    assert seeds == []
+
+
+def test_a_soft_deleted_account_is_left_alone(db, seeds):
+    db.rows["users"][0]["deleted_at"] = "2026-10-18T01:00:00+00:00"
+    assert watcher.scan_once() == 0
+    assert seeds == []
+
+
+def test_a_completed_seed_is_never_redone_so_an_unenrollment_sticks(db):
+    """The seed completes onboarding last; from then on the account is the
+    developer's. A sample course they dropped stays dropped across restarts."""
+    watcher.scan_once()
+    dropped = _enrolled(db, GOOGLE)[0]["id"]
+    db.rows["enrollments"] = [row for row in db.rows["enrollments"] if row["id"] != dropped]
+    watcher._reset()
+    assert watcher.scan_once() == 0
+    assert dropped not in {row["id"] for row in db.rows["enrollments"]}
+    assert len(_enrolled(db, GOOGLE)) == 4
 
 
 def test_a_seed_interrupted_before_onboarding_completed_is_finished(db, monkeypatch):
-    """The marker enrollment is written early; only onboarding_completed, set
-    after the whole seed succeeded, makes the account count as seeded."""
+    """onboarding_completed is the seed's last write, so an account whose seed
+    stopped midway is still a candidate and is finished on a later pass."""
     original = owner_seed.OwnerSeedWriter.insert_if_absent
     state = {"failed": False}
 
@@ -159,31 +192,29 @@ def test_a_seed_interrupted_before_onboarding_completed_is_finished(db, monkeypa
 
 
 def test_an_account_deleted_and_recreated_is_seeded_again(db, seeds):
-    """users.id is user_<google id>, so re-signing in after deleting the account
-    reuses the id; created_at is what tells the two accounts apart."""
+    """users.id is user_<google id>, so signing in again after deleting the
+    account reuses the id; the new row starts un-onboarded, so it is seeded."""
     watcher.scan_once()
-    db.rows["users"][0]["created_at"] = "2026-10-19T00:00:00+00:00"
+    db.rows["users"][0] = _account(GOOGLE)
     assert watcher.scan_once() == 1
     assert seeds == [GOOGLE, GOOGLE]
 
 
-def test_a_seeded_account_is_not_reseeded_within_a_process(db, seeds):
-    """Even when the marker never appears (a pre-existing enrollment in the
-    sample offering keeps its own id), one process seeds an account once."""
+def test_a_seeded_account_is_not_reseeded(db, seeds):
     assert watcher.scan_once() == 1
     assert watcher.scan_once() == 0
     assert seeds == [GOOGLE]
 
 
 def test_one_failing_account_does_not_stop_the_others(db, monkeypatch):
-    db.rows["users"].append({"id": GOOGLE_2, "onboarding_completed": False,
-                             "created_at": "2026-10-18T00:00:00+00:00"})
+    db.rows["users"].append(_account(GOOGLE_2))
     seen = []
 
     def half_broken(owner, *, report=True):
         seen.append(owner["id"])
         if owner["id"] == GOOGLE:
             raise RuntimeError("boom")
+        rich.table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
         return 1
 
     monkeypatch.setattr(rich, "seed_owner", half_broken)
@@ -324,6 +355,59 @@ def test_a_nudge_wakes_the_loop_before_the_interval(local_env, monkeypatch):
     assert calls == [1]
 
 
+def test_the_idle_poll_is_slow_because_sign_in_nudges():
+    assert watcher.WATCH_INTERVAL_SECONDS == 30.0
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, 30.0), ("", 30.0), ("5", 5.0), ("0.5", 0.5),
+    ("abc", 30.0), ("0", 30.0), ("-3", 30.0), ("nan", 30.0), ("inf", 30.0),
+])
+def test_the_interval_env_var_is_parsed_safely(monkeypatch, caplog, raw, expected):
+    if raw is None:
+        monkeypatch.delenv("LOCAL_SEED_WATCH_INTERVAL_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("LOCAL_SEED_WATCH_INTERVAL_SECONDS", raw)
+    with caplog.at_level("WARNING", logger=watcher.__name__):
+        assert watcher._interval_from_env() == expected
+    bad = raw not in (None, "", "5", "0.5")
+    assert any("LOCAL_SEED_WATCH_INTERVAL_SECONDS" in r.getMessage() for r in caplog.records) is bad
+
+
+def test_a_bad_interval_never_breaks_the_import(monkeypatch):
+    """The module is imported by main.py in EVERY environment."""
+    import importlib
+
+    monkeypatch.setenv("LOCAL_SEED_WATCH_INTERVAL_SECONDS", "two seconds")
+    try:
+        importlib.reload(watcher)
+        assert watcher.WATCH_INTERVAL_SECONDS == watcher.DEFAULT_WATCH_INTERVAL_SECONDS
+    finally:
+        monkeypatch.delenv("LOCAL_SEED_WATCH_INTERVAL_SECONDS")
+        importlib.reload(watcher)
+
+
+def test_a_pending_status_answer_wakes_the_idle_watcher_at_once(db, monkeypatch):
+    """End to end through the app: the watcher sleeps the full idle interval,
+    and the hold screen's status poll is what makes a sign-in instant."""
+    import threading
+
+    scanned = threading.Event()
+    monkeypatch.setattr(watcher, "scan_once", lambda: scanned.set() or 0)
+    with (
+        patch("main.start_sweeper"),
+        patch("main.stop_sweeper", new=AsyncMock()),
+        patch("main.ensure_bucket_exists", new=AsyncMock()),
+    ):
+        from main import app
+
+        with TestClient(app) as live:
+            assert watcher.WATCH_INTERVAL_SECONDS >= 30
+            assert not scanned.wait(0.2), "the watcher sleeps first; nothing should scan yet"
+            assert _status(live).json() == {"state": "pending"}
+            assert scanned.wait(5), "a pending answer must wake the sleeping watcher"
+
+
 def test_the_loop_survives_a_scan_that_raises(local_env, monkeypatch):
     calls = []
 
@@ -392,6 +476,35 @@ def test_status_is_404_outside_local(client, db, monkeypatch, env, url):
 def test_status_is_404_for_a_fixture_account(client, db):
     """Not the watcher's to seed: the frontend keeps today's onboarding route."""
     assert _status(client, "rich-user-new").status_code == 404
+
+
+@pytest.mark.parametrize("change", [
+    {"google_id": None},                           # an ensure_user_exists stub
+    {"deleted_at": "2026-10-18T01:00:00+00:00"},   # a soft-deleted account
+])
+def test_status_is_404_for_an_account_the_watcher_would_never_seed(client, db, change):
+    db.rows["users"][0].update(change)
+    assert _status(client).status_code == 404
+
+
+def test_status_is_404_for_a_missing_account(client, db):
+    db.rows["users"] = db.rows["users"][1:]
+    assert _status(client).status_code == 404
+
+
+def test_status_ready_for_an_onboarded_account(client, db):
+    """An account onboarded by hand (or seeded earlier) has nothing to wait for."""
+    db.rows["users"][0]["onboarding_completed"] = True
+    assert _status(client).json() == {"state": "ready"}
+
+
+def test_status_ready_once_a_failed_account_is_onboarded_anyway(client, db, monkeypatch):
+    """'Continue anyway' then finishing onboarding by hand ends the wait too."""
+    monkeypatch.setattr(rich, "seed_owner", lambda owner, **kw: (_ for _ in ()).throw(RuntimeError("x")))
+    watcher.scan_once()
+    assert _status(client).json()["state"] == "failed"
+    db.rows["users"][0]["onboarding_completed"] = True
+    assert _status(client).json() == {"state": "ready"}
 
 
 def test_status_pending_nudges_the_watcher(client, db, monkeypatch):

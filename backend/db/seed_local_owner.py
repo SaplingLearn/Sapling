@@ -12,6 +12,11 @@ from services.profiles import get_display_name
 _ACTIVE = "rich-user-active"
 _PEER = "rich-user-second"
 _SHARED = {"schools", "courses", "course_offerings", "offering_concept_stats"}
+#: Never copied onto an owner. user_roles: a sample dataset must never grant
+#: the developer admin rights. feedback/issue_reports: the rich seed keeps them
+#: as ciphertext-oracle baseline rows; on a real account they would read as
+#: submissions the developer never made.
+_SKIPPED = {"user_roles", "feedback", "issue_reports"}
 
 
 def resolve_owner(*, email: str | None = None, user_id: str | None = None) -> dict:
@@ -75,8 +80,8 @@ class OwnerSeedWriter:
         return value if table_name == "room_messages" else f"rich-owner-{value}"
 
     def _write(self, table_name: str, source: dict, keys: str) -> None:
-        if table_name == "user_roles":
-            return  # A sample dataset must never grant the developer admin rights.
+        if table_name in _SKIPPED:
+            return
         if table_name == "users" and source["id"] != _PEER:
             return
         if table_name == "user_profiles" and source["user_id"] != _PEER:
@@ -96,8 +101,12 @@ class OwnerSeedWriter:
         if table_name == "rooms":
             row["invite_code"] = f"OWNER-{self.invite_prefix}-{source['invite_code']}"
 
-        filters = {key: f"eq.{row[key]}" for key in keys.split(",")}
-        existing = table(table_name).select("*", filters=filters, limit=1)
+        key_columns = keys.split(",")
+        filters = {key: f"eq.{row[key]}" for key in key_columns}
+        # Key columns (+ the id, to remap children onto an existing row) only:
+        # select("*") would drag back ciphertext and 768-float embeddings.
+        columns = ",".join(dict.fromkeys(key_columns + (["id"] if source_id else [])))
+        existing = table(table_name).select(columns, filters=filters, limit=1)
         if existing:
             if source_id:
                 self.ids[source_id] = existing[0]["id"]
