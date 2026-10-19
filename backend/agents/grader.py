@@ -845,48 +845,63 @@ def _invalid_verdict_fields(
     """Invalid labelled verdicts or support quotes.
 
     Each requested criterion needs exactly one yes/no, and each yes needs one
-    labelled quote. Missing, duplicated, invented or unreadable entries are
-    model failures, not evidence that a student failed a criterion. The
+    nonempty labelled quote. Only after all verdicts validate, an explicit no
+    may carry one empty labelled support placeholder (a provider compatibility
+    shape, never support or an inferred verdict). Missing, duplicated, invented
+    or unreadable entries remain model failures, not student failures. The
     permissive parsers stay useful for inspection; grading needs complete output.
     """
     wanted = {label.upper() for label in labels.values()}
     if isinstance(output, GraderOutput):
-        fields = ("item_results", "support")
+        fields = ("item_results",)
     elif isinstance(output, SpanVerdicts):
         fields = ("asserted", "item_results")
     else:
         fields = ("withdrawn",)
     bad = []
     for name in fields:
-        expected = wanted
-        if name == "support":
-            # A reported yes must carry the one quote the protocol requires.
-            # Missing support is a broken model response, not student failure.
-            expected = {
-                label.strip().upper()
-                for entry in output.item_results
-                for label, sep, verdict in [str(entry).partition(":")]
-                if sep and verdict.strip().lower() == "yes" and label.strip().upper() in wanted
-            }
         entries = getattr(output, name)
         seen = set()
-        valid = len(entries) == len(expected)
+        valid = len(entries) == len(wanted)
         for entry in entries:
             label, sep, verdict = str(entry).partition(":")
             label = label.strip().upper()
             valid = valid and (
                 bool(sep)
-                and label in expected
+                and label in wanted
                 and label not in seen
-                and (
-                    bool(verdict.strip())
-                    if name == "support"
-                    else verdict.strip().lower() in {"yes", "no"}
-                )
+                and verdict.strip().lower() in {"yes", "no"}
             )
             seen.add(label)
-        if not valid or seen != expected:
+        if not valid or seen != wanted:
             bad.append(name)
+    if not isinstance(output, GraderOutput) or bad:
+        return bad
+
+    # Verdicts are now complete, unique and explicit; no support entry can
+    # supply a missing verdict. NO placeholders are optional and carry no
+    # quote. Every YES still needs exactly one nonempty quote, followed by the
+    # unchanged source/span/context checks before any credit is possible.
+    yes = {
+        label.strip().upper()
+        for entry in output.item_results
+        for label, _, verdict in [entry.partition(":")]
+        if verdict.strip().lower() == "yes"
+    }
+    seen = set()
+    valid = True
+    for entry in output.support:
+        label, sep, quote = entry.partition(":")
+        label = label.strip().upper()
+        valid = valid and (
+            bool(sep)
+            and label in wanted
+            and label not in seen
+            and (bool(quote.strip()) if label in yes else not quote.strip())
+        )
+        seen.add(label)
+    if not valid or not yes.issubset(seen):
+        bad.append("support")
     return bad
 
 
