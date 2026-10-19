@@ -7,6 +7,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
+import { removeInterruptedTurn } from "../chat/interruptedTurn";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { SessionSummary } from "../chat/SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../chat/SharedContextToggle";
@@ -310,21 +311,9 @@ export { readResumeParam };
 
 // ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
 // directly before it — the user bubble of the same turn, so the re-send
-// (which appends a fresh user bubble) doesn't duplicate either. Pure and
-// exported for Learn.resume.test.ts.
-export function removeInterruptedTurn(
-  messages: ChatMsg[],
-  interruptedId: string,
-  retryText: string,
-): ChatMsg[] {
-  const i = messages.findIndex(m => m.id === interruptedId);
-  if (i === -1) return messages;
-  const next = [...messages.slice(0, i), ...messages.slice(i + 1)];
-  if (i > 0 && next[i - 1]?.role === "user" && next[i - 1].content === retryText) {
-    next.splice(i - 1, 1);
-  }
-  return next;
-}
+// (which appends a fresh user bubble) doesn't duplicate either. Shared with the
+// loop's Retry (chat/interruptedTurn.ts); re-exported for Learn.resume.test.ts.
+export { removeInterruptedTurn };
 
 export function Learn() {
   const { userId, userReady } = useUser();
