@@ -147,12 +147,12 @@ export async function resetDb(): Promise<void> {
   await reseedBaseline();
 }
 
-/** Opt-in question assets for the goal-continuation journey. Diagnostic runs
- * before any learner session; practice runs only after the real probe plan.
+/** Opt-in question assets for the goal-continuation/readiness journeys.
+ * Diagnostic/readiness run before any learner session; practice runs only after the real probe plan.
  * Canonical Python helpers encrypt/hash the asset variants. This writes no
  * attempts, evidence, releases or earned proficiency; the .99 initial prior is
  * a test input expressly challenged by subsequent real route grading. */
-export async function seedGoalContinuationItems(stage: "diagnostic" | "practice"): Promise<void> {
+export async function seedGoalContinuationItems(stage: "diagnostic" | "practice" | "readiness"): Promise<void> {
   requireLocalDbUrl(DB_URL);
   const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
   const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");

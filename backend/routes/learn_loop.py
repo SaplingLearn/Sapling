@@ -93,7 +93,10 @@ from learning import answer_guard, arms, gates, ladder, planner, policy, review,
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
-from learning.evidence import PREREQ_RELATIONSHIP_TYPE, flush_pending
+from learning.evidence import (
+    PREREQ_RELATIONSHIP_TYPE, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
+)
+from learning.planning_history import read_planning_history
 from learning.fsrs import budget_select, order_due
 from learning.gate import learning_loop_active, learning_loop_for_request
 from learning.goals import (
@@ -1268,6 +1271,17 @@ def _refloor(evidence: list, user_id: str, item, posed_at: datetime | None, used
                 if floor >= RUNG_ASSISTED_MIN:
                     row["assisted"] = True
     return max(floor, int(used))
+
+
+def _tag_planning_evidence(pending: list, item, *, synthetic_idk: bool, previously_seen: bool) -> None:
+    """Actual probe/check grades, goal or not; never answers or inferred history."""
+    provenance = PlanningProvenance(
+        check_item_id=item.id, difficulty=item.difficulty,
+        synthetic_idk=synthetic_idk, previously_seen=previously_seen,
+    ).model_dump()
+    for row in pending:
+        if row.get("question_hash") == item.question_hash and row.get("check_item_id") == item.id:
+            row["planning_provenance"] = provenance
 
 
 def _ledger(write, *args, **kwargs) -> None:
@@ -3209,11 +3223,14 @@ async def _grade_submission(
         rung = _refloor(
             deps.pending_evidence, body.user_id, item, _ts(entry.get("first_shown_at")), rung
         )
-        previously_seen = qh in seen_hashes(body.user_id) if state.get("goal") else False
+        previously_seen = qh in seen_hashes(body.user_id)
+        _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused), previously_seen=previously_seen)
         flushed = True
         flush_pending(deps, course_id or None)  # ONE call: the loop's only evidence write
         _ledger(mark_graded, body.user_id, qh)
-    except BaseException:
+    except BaseException as exc:
+        if isinstance(exc, PlanningPersistenceUnavailable):
+            flushed = False  # strict append failed BEFORE this item's scalar writes
         if not flushed:  # nothing was written: the student may submit again
             try:
                 _update_loop_state(
@@ -3221,6 +3238,8 @@ async def _grade_submission(
                 )
             except Exception:
                 logger.warning("grading claim for %s not released", qh, exc_info=True)
+        if isinstance(exc, PlanningPersistenceUnavailable):
+            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry") from exc
         raise
     correct = bool(outcome.correct)
     verdict = "idk" if idk else ("correct" if correct else "not_yet")
@@ -5095,15 +5114,21 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         if (_probe_doc(renewed).get("current") or {}).get("grading_claim") != claim:
             return {"graded": False, "recorded": False}
         floor = _refloor(deps.pending_evidence, body.user_id, item.item, None, floor)  # A93
+        _tag_planning_evidence(deps.pending_evidence, item.item, synthetic_idk=synthetic_idk,
+                               previously_seen=bool(posed.get("previously_seen", False)) or qh in seen_hashes(body.user_id))
         written = True
         flush_pending(deps, course_id or None)  # ONE call: the probe's only evidence write
         _ledger(mark_graded, body.user_id, qh)
-    except BaseException:
+    except BaseException as exc:
+        if isinstance(exc, PlanningPersistenceUnavailable):
+            written = False
         if not written:  # nothing was written: the student may answer again
             try:
                 _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _release))
             except Exception:
                 logger.warning("probe grading claim for %s not released", qh, exc_info=True)
+        if isinstance(exc, PlanningPersistenceUnavailable):
+            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry") from exc
         raise
 
     correct = bool(outcome.correct)
@@ -5184,12 +5209,21 @@ class _PlanView:
     signature: str | None
 
 
+def _planning_observations(state: dict, user_id: str, course_id: str, nodes) -> list[dict]:
+    try:
+        return read_planning_history(user_id, course_id, nodes)
+    except PlanningPersistenceUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry") from exc
+
+
 def _current_plan(state: dict, user_id: str, course_id: str) -> _PlanView:
     states = _plan_states(user_id, course_id)
     edges = _plan_prereq_edges(user_id, list(states))
     scope = _goal_scope_for(state, states, edges)
     targets = frozenset((state.get("goal") or {}).get("target_node_ids") or [])
-    planning_states = planner.planning_states(states, planning_observations(state))
+    observations = (_planning_observations(state, user_id, course_id, states)
+                    if scope is not None else planning_observations(state))
+    planning_states = planner.planning_states(states, observations)
     parents: dict[str, set[str]] = {}
     for prereq, dependent in edges:
         if prereq != dependent:

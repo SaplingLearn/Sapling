@@ -818,3 +818,188 @@ test("independent prerequisite recovery unlocks a fresh goal plan requiring appr
     expect(approvals).toBe(2);
   } finally { await context.close(); }
 });
+
+test("a new goal session respects an earlier helped prerequisite miss even when its check-in omits that prerequisite", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  // Entirely synthetic inputs, installed before activity. Every subsequent
+  // attempt, hint, grade, posterior and session transition uses real app routes.
+  await seedGoalContinuationItems("readiness");
+  const P = await learningParams([
+    "PROBE_SESSION_CAP", "PROBE_MAX_SKILLS", "BKT_PROFICIENT",
+    "GATE_INDEPENDENT_MIN_S_NOVICE",
+  ]);
+  expect(Number(P.PROBE_MAX_SKILLS)).toBe(3); // the three targets intentionally fill the check-in
+  const binary = "rich-node-loop-binary";
+  const bitwise = "rich-node-loop-bitwise";
+  const twos = "rich-node-loop-twos";
+  // The sanctioned graph writer chooses the independent fixture node's ID.
+  const placeValueRows = await queryRaw(
+    "SELECT id FROM graph_nodes WHERE user_id = $1 AND course_id = 'rich-course-cs101' AND concept_name = 'Binary Place Value'",
+    [USER_LOOP],
+  );
+  expect(placeValueRows).toHaveLength(1);
+  const placeValue = String(placeValueRows[0].id);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  const phase = page.getByTestId("loop-phase");
+
+  async function setTargets(names: string[], text: string) {
+    await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
+    await page.getByTestId("loop-set-goal").click();
+    const editor = page.getByRole("form", { name: "Learning goal" });
+    await editor.getByTestId("loop-goal-text").fill(text);
+    // New sessions begin coursewide, so selection order is the explicit order
+    // confirmed by this learner. Do not rely on alphabetical graph ordering.
+    for (const name of names) await editor.getByRole("checkbox", { name, exact: true }).check();
+    const response = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/goal");
+    await editor.getByTestId("loop-goal-save").click();
+    const saved = await response;
+    expect(saved.status()).toBe(200);
+    const goal = await saved.json();
+    await expect(editor).toBeHidden();
+    await expect(page.getByTestId("loop-goal-summary")).toContainText(text);
+    return goal;
+  }
+
+  async function completeCheckIn(correct: boolean) {
+    const item = page.getByTestId("loop-probe-item");
+    let answered = 0;
+    while (await phase.getAttribute("data-phase") === "probe" && answered < Number(P.PROBE_SESSION_CAP)) {
+      await expect(page.getByTestId("loop-probe-submit")).toBeVisible();
+      const hash = await item.getAttribute("data-question-hash");
+      const result = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/probe/answer");
+      if (correct) {
+        await page.getByTestId("loop-probe-input").fill(GRADER_CORRECT_TOKEN);
+        await page.getByTestId("loop-probe-submit").click();
+      } else {
+        await page.getByTestId("loop-probe-idk").click();
+      }
+      const graded = await result;
+      expect(graded.status()).toBe(200);
+      expect(await graded.json()).toMatchObject({ graded: true, correct });
+      answered += 1;
+      await expect.poll(async () => await phase.getAttribute("data-phase") !== "probe" ||
+        await page.getByTestId("loop-probe-reference").isVisible() ||
+        await item.getAttribute("data-question-hash") !== hash).toBe(true);
+      if (await page.getByTestId("loop-probe-reference").isVisible()) {
+        await page.getByTestId("loop-probe-next").click();
+        await expect.poll(async () => await phase.getAttribute("data-phase") !== "probe" ||
+          await item.getAttribute("data-question-hash") !== hash).toBe(true);
+      }
+    }
+    expect(answered).toBeGreaterThan(0);
+    await expect(phase).toHaveAttribute("data-phase", "plan");
+  }
+
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/learn");
+    await setTargets(["Binary Numbers"], "Check binary foundations first");
+    await completeCheckIn(true);
+    await expect(page.getByTestId(`loop-plan-concept-${binary}`)).toBeVisible();
+    await expect(page.getByTestId(`loop-plan-concept-${bitwise}`)).toHaveCount(0);
+    // Add questions only, using the existing sanctioned asset fixture at the
+    // real plan. No new learner state, releases or history are installed.
+    await seedGoalContinuationItems("practice");
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+    await firstTeachTurn(page);
+    const firstSession = await phase.getAttribute("data-session-id");
+    expect(firstSession).toBeTruthy();
+    await page.getByTestId("loop-check-me").click();
+    const check = page.getByTestId("loop-check-prompt");
+    await expect(check).toBeVisible();
+    await expect(check).toHaveAttribute("data-format", "free");
+    const hash = await check.getAttribute("data-question-hash");
+    expect(hash).toBeTruthy();
+    const [asset] = await queryRaw("SELECT difficulty FROM check_items WHERE question_hash = $1", [hash]);
+    expect(Number(asset.difficulty)).toBe(3);
+
+    // Earn each actual rung with new work and normal server dwell gates. Poll
+    // denials only; once a rung grants, wait for its real hint action to finish.
+    for (const rung of [1, 2]) {
+      await page.getByTestId("loop-attempt-input").fill(`${WORKING_ATTEMPT}; revision ${rung}`);
+      const button = page.getByTestId("loop-hint-button");
+      await expect.poll(async () => {
+        await expect(button).toBeEnabled();
+        const response = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/hint");
+        await button.click();
+        const gate = await response;
+        expect(gate.status()).toBe(200);
+        const result = await gate.json();
+        await expect(button).toBeEnabled();
+        return result.rung ?? 0;
+      }, { timeout: Number(P.GATE_INDEPENDENT_MIN_S_NOVICE) * 1000 + GATE_POLL_MARGIN_MS,
+        intervals: [100, 500, 1_000] }).toBe(rung);
+      await expect(page.getByTestId("loop-hint-reply")).toContainText(LOOP_HINT_BODY);
+    }
+    const submitted = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/check/answer/stream");
+    await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
+    await page.getByTestId("loop-attempt-submit").click();
+    expect((await submitted).status()).toBe(200);
+    await expect(phase).toHaveAttribute("data-phase", "feedback");
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+    const [failure] = await queryRaw(
+      `SELECT e.correct, e.assisted, e.max_rung, e.planning_observation, l.p_known
+         FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
+         JOIN learner_state l ON l.node_id = g.id AND l.user_id = g.user_id
+        WHERE g.user_id = $1 AND e.node_id = $2 AND e.question_hash = $3 AND e.event_type = 'evidence'`,
+      [USER_LOOP, binary, hash],
+    );
+    expect(failure).toMatchObject({ correct: false, assisted: true, max_rung: 2,
+      planning_observation: { node_id: binary, question_hash: hash, difficulty: 3,
+        correct: false, assisted: true, max_rung: 2, independent: false,
+        synthetic_idk: false, previously_seen: false, same_session_recheck: false } });
+    expect(Number(failure.p_known)).toBeGreaterThan(Number(P.BKT_PROFICIENT));
+    await page.getByTestId("loop-close-button").click();
+    await expect(phase).toHaveAttribute("data-phase", "close");
+    await page.getByTestId("loop-new-session").click();
+    await expect(phase).toHaveAttribute("data-phase", "probe");
+    await expect.poll(async () => {
+      const id = await phase.getAttribute("data-session-id");
+      return !!id && id !== firstSession;
+    }).toBe(true);
+    const secondSession = await phase.getAttribute("data-session-id");
+    expect(secondSession).toBeTruthy();
+    expect(secondSession).not.toBe(firstSession);
+    const objective = "Work toward bitwise and two's complement with place value review";
+    const goal = await setTargets(["Bitwise Operators", "Two's Complement", "Binary Place Value"], objective);
+    expect(goal.goal.target_node_ids).toEqual([bitwise, twos, placeValue]);
+    await completeCheckIn(false);
+
+    // This fresh check-in cannot itself explain the prerequisite block: none
+    // of its observations concerns Binary. The earlier journal must supply it.
+    const current = await page.request.get(`/api/learn/loop/plan?${new URLSearchParams({
+      user_id: USER_LOOP, session_id: secondSession!,
+    })}`);
+    expect(current.status()).toBe(200);
+    const plan = await current.json();
+    expect(plan.goal).toEqual(goal.goal);
+    expect(plan.goal_version).toBe(goal.goal_version);
+    // The full goal scope still honestly lists the prerequisite as untested;
+    // it is absent from the three served strands, not erased from the scope.
+    expect(plan.diagnosis.skills.find((s: { node_id: string }) => s.node_id === binary))
+      .toMatchObject({ status: "untested", observations: 0, independent_observations: 0 });
+    const [second] = await queryRaw("SELECT loop_state->'probe' AS probe FROM sessions WHERE id = $1 AND user_id = $2", [secondSession, USER_LOOP]) as {
+      probe: { skills: string[]; history: { node_id: string }[] };
+    }[];
+    expect(second.probe.skills).toEqual([bitwise, twos, placeValue]);
+    expect(second.probe.history.length).toBeGreaterThan(0);
+    expect(second.probe.history.map((row) => row.node_id)).not.toContain(binary);
+    const [stillHigh] = await queryRaw("SELECT p_known FROM learner_state WHERE user_id = $1 AND node_id = $2", [USER_LOOP, binary]);
+    expect(Number(stillHigh.p_known)).toBeGreaterThan(Number(P.BKT_PROFICIENT));
+    expect(plan.concepts.map((c: { node_id: string }) => c.node_id)).not.toContain(bitwise);
+    expect(plan.goal_progress.unresolved_prerequisite_ids).toContain(binary);
+    await expect(page.getByTestId(`loop-plan-concept-${binary}`)).toContainText("Prerequisite for your goal");
+    await expect(page.getByTestId(`loop-plan-concept-${bitwise}`)).toHaveCount(0);
+    await page.reload();
+    await expect(phase).toHaveAttribute("data-session-id", secondSession!);
+    await expect(page.getByTestId("loop-goal-summary")).toContainText(objective);
+    await expect(page.getByTestId(`loop-plan-concept-${binary}`)).toBeVisible();
+    await expect(page.getByTestId(`loop-plan-concept-${bitwise}`)).toHaveCount(0);
+    // Neither closing nor opening another session erased the immutable miss.
+    const rows = await queryRaw("SELECT planning_observation FROM node_mastery_events WHERE node_id = $1 AND question_hash = $2 AND event_type = 'evidence'", [binary, hash]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ planning_observation: failure.planning_observation });
+  } finally { await context.close(); }
+});

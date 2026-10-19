@@ -10,13 +10,23 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from learning.params import (
     CHANNELS,
     GRADER_LOW_CONFIDENCE,
     LADDER_MAX_RUNG,
     PROPAGATION_CHANNEL,
+    PROBE_DIFFICULTY_SHIFT,
     RUNG_ASSISTED_MIN,
     RUNG_NO_CREDIT_MIN,
     STRONG_CHANNELS,
@@ -40,6 +50,61 @@ GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]
 MisconceptionVerdict = Literal[
     "none", "unknown", "slip", "misconception", "gap", "not_known", "novice"
 ]
+
+
+class PlanningPersistenceUnavailable(RuntimeError):
+    """A durable learning-readiness write/read failed; retry, never guess."""
+
+
+class PlanningProvenance(BaseModel):
+    """Trusted item/route provenance, attached only after the final help read."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    check_item_id: StrictStr = Field(min_length=1)
+    difficulty: StrictInt
+    synthetic_idk: StrictBool
+    previously_seen: StrictBool
+
+    @field_validator("difficulty")
+    @classmethod
+    def _known_difficulty(cls, value):
+        if value not in PROBE_DIFFICULTY_SHIFT:
+            raise ValueError("unknown diagnostic difficulty")
+        return value
+
+
+class PlanningObservation(PlanningProvenance):
+    """IDs/flags only; an append-only record of the final actual Evidence."""
+
+    node_id: StrictStr = Field(min_length=1)
+    question_hash: StrictStr = Field(min_length=1)
+    channel: Channel
+    correct: StrictBool
+    idk: StrictBool
+    assisted: StrictBool
+    max_rung: StrictInt = Field(ge=0, le=LADDER_MAX_RUNG)
+    same_session_recheck: StrictBool
+    independent: StrictBool
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        if self.idk and self.correct:
+            raise ValueError("idk cannot be correct")
+        if self.synthetic_idk and not self.idk:
+            raise ValueError("synthetic idk must be an unknown outcome")
+        if self.assisted != (self.max_rung >= RUNG_ASSISTED_MIN):
+            raise ValueError("help flags disagree")
+        expected = not (
+            self.max_rung
+            or self.assisted
+            or self.same_session_recheck
+            or self.synthetic_idk
+            or self.previously_seen
+        )
+        if self.independent is not expected:
+            raise ValueError("independence disagrees with final provenance")
+        return self
+
 
 #: node_mastery_events.event_type for rows written by the evidence path (spec §4).
 EVIDENCE_EVENT_TYPE = "evidence"
@@ -79,6 +144,8 @@ class Evidence(BaseModel):
     # them (spec §4): the durable record is the `misconceptions` row.
     verdict: MisconceptionVerdict | None = None
     wrong_key: str | None = None
+    # NULL/absent for legacy, quiz, review and posttest evidence. Never infer it.
+    planning_provenance: PlanningProvenance | None = None
 
     @model_validator(mode="after")
     def _consistency(self) -> Evidence:
@@ -93,7 +160,36 @@ class Evidence(BaseModel):
             # on max_rung (Hard) and must agree with the assisted BKT weight.
             self.max_rung = RUNG_ASSISTED_MIN
         self.weight = evidence_weight(self)
+        if self.planning_provenance is not None and (
+            self.check_item_id != self.planning_provenance.check_item_id or not self.question_hash
+        ):
+            raise ValueError("planning provenance does not bind this check item")
         return self
+
+
+def planning_observation(ev: Evidence) -> dict | None:
+    """Derive from final Evidence, after refloor and writer-forced rechecks."""
+    provenance = ev.planning_provenance
+    if provenance is None:
+        return None
+    return PlanningObservation(
+        **provenance.model_dump(),
+        node_id=ev.node_id,
+        question_hash=ev.question_hash,
+        channel=ev.channel,
+        correct=ev.correct,
+        idk=ev.idk,
+        assisted=ev.assisted,
+        max_rung=ev.max_rung,
+        same_session_recheck=ev.same_session_recheck,
+        independent=not (
+            ev.max_rung
+            or ev.assisted
+            or ev.same_session_recheck
+            or provenance.synthetic_idk
+            or provenance.previously_seen
+        ),
+    ).model_dump()
 
 
 def is_strong_channel(channel: str) -> bool:

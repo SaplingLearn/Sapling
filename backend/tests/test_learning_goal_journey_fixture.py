@@ -45,7 +45,8 @@ def assets(monkeypatch):
                 "question_hash": "replaced",
                 "graded": False,
             }
-    sessions, writes, deletes, reads = [], [], [], []
+    sessions, writes, deletes, reads, events = [], [], [], [], []
+    graph_nodes = [{"id": f"rich-node-loop-{slug}"} for slug in ("binary", "bitwise", "twos")]
 
     class Table:
         def __init__(self, name):
@@ -56,8 +57,18 @@ def assets(monkeypatch):
             if self.name == "node_mastery_events":
                 # Actual migration schema has node_id and no user_id column.
                 assert set(filters) == {"node_id"}
+                return events
             if self.name == "sessions":
                 return sessions
+            if self.name == "graph_nodes":
+                assert filters["user_id"] == f"eq.{fixture.USER_LOOP}"
+                assert filters["course_id"] == f"eq.{fixture.COURSE_CS}"
+                name = filters.get("concept_name")
+                return [
+                    row
+                    for row in graph_nodes
+                    if not name or f"eq.{row.get('concept_name')}" == name
+                ]
             return []
 
         def delete(self, filters):
@@ -67,7 +78,13 @@ def assets(monkeypatch):
     monkeypatch.setattr(fixture, "_template", lambda item_id: templates[item_id])
     monkeypatch.setattr(fixture.h, "upsert", lambda name, row, **_kw: writes.append((name, row)))
     return SimpleNamespace(
-        templates=templates, sessions=sessions, writes=writes, deletes=deletes, reads=reads
+        templates=templates,
+        sessions=sessions,
+        writes=writes,
+        deletes=deletes,
+        reads=reads,
+        events=events,
+        graph_nodes=graph_nodes,
     )
 
 
@@ -115,6 +132,89 @@ def test_diagnostic_cannot_reset_assets_after_session_started(assets):
     assets.sessions.append({"id": "already-started"})
     with pytest.raises(RuntimeError, match="precede"):
         fixture.seed_goal_continuation_items("diagnostic")
+    assert not assets.writes and not assets.deletes
+
+
+def test_readiness_adds_fourth_owned_source_bound_concept_only_through_graph_writer(
+    assets, monkeypatch
+):
+    from unittest.mock import Mock
+    import services.graph_service as graph
+
+    new_id = "6a5dcebc-6ea4-488e-98e3-ff10d583cf44"
+
+    def create(user_id, payload, course_id):
+        assert user_id == fixture.USER_LOOP and course_id == fixture.COURSE_CS
+        assert payload == {"new_nodes": [{"concept_name": fixture.READINESS_CONCEPT}]}
+        assets.graph_nodes.append({"id": new_id, "concept_name": fixture.READINESS_CONCEPT})
+
+    writer = Mock(side_effect=create)
+    monkeypatch.setattr(graph, "apply_graph_update", writer)
+    fixture.seed_goal_continuation_items("readiness")
+    writer.assert_called_once()
+    assert len(assets.graph_nodes) == 4
+    items = _items(assets)
+    added = [item for item in items if item.concept_key == "binary place value"]
+    assert len(added) == sum(fixture.DIAGNOSTIC_COUNTS.values())
+    assert all(fixture.READINESS_CONCEPT in item.prompt for item in added)
+    assert all(item.source_chunk_ids == ["course-chunk-binary"] for item in added)
+    assert all(item.document_id == "reviewed-course-document" for item in added)
+    assert len({item.question_hash for item in items}) == len(items)
+    original_ids = {
+        row["id"]
+        for name, row in assets.writes
+        if name == "check_items" and row["concept_key"] != "binary place value"
+    }
+    assert all("-diagnostic-" in item_id for item_id in original_ids)
+    assert len(original_ids) == 2 * sum(fixture.DIAGNOSTIC_COUNTS.values())
+    priors = [row for name, row in assets.writes if name == "learner_state"]
+    assert len(priors) == 3 and {row["node_id"] for row in priors} == {
+        "rich-node-loop-binary",
+        "rich-node-loop-bitwise",
+        new_id,
+    }
+    assert all(
+        set(row) == {"user_id", "node_id", "p_known"} and row["p_known"] == fixture.INITIAL_PRIOR
+        for row in priors
+    )
+    assert {name for name, _row in assets.writes} == {"check_items", "learner_state"}
+
+
+@pytest.mark.parametrize("activity", ["session", "evidence-on-third-node"])
+def test_readiness_refuses_any_prior_owned_activity_before_mutating_fixture(
+    assets, monkeypatch, activity
+):
+    from unittest.mock import Mock
+    import services.graph_service as graph
+
+    writer = Mock()
+    monkeypatch.setattr(graph, "apply_graph_update", writer)
+    if activity == "session":
+        assets.sessions.append({"id": "already-started"})
+    else:
+        assets.events.append({"id": "old-twos-evidence"})
+    with pytest.raises(RuntimeError, match="precede"):
+        fixture.seed_goal_continuation_items("readiness")
+    assert not assets.writes and not assets.deletes
+    writer.assert_not_called()
+    if activity != "session":
+        assert any(
+            name == "node_mastery_events" and "rich-node-loop-twos" in filters["node_id"]
+            for name, filters in assets.reads
+        )
+
+
+def test_readiness_refuses_production_environment_even_with_local_url(assets, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(RuntimeError, match="local/test"):
+        fixture.seed_goal_continuation_items("readiness")
+    assert not assets.writes and not assets.deletes
+
+
+def test_readiness_requires_actual_binary_source_chunk_before_fixture_mutations(assets):
+    assets.templates["rich-check-binary-free-d2"]["source_chunk_ids"] = []
+    with pytest.raises(RuntimeError, match="source chunk"):
+        fixture.seed_goal_continuation_items("readiness")
     assert not assets.writes and not assets.deletes
 
 

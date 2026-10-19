@@ -12,8 +12,10 @@ from learning.evidence import (
     EVIDENCE_EVENT_TYPE,
     PREREQ_RELATIONSHIP_TYPE,
     Evidence,
+    PlanningPersistenceUnavailable,
     evidence_weight,
     is_strong_channel,
+    planning_observation,
 )
 from learning.learner_state import LearnerState, read_states, write_state
 from learning.params import (
@@ -704,6 +706,51 @@ def _unknown_columns(exc: Exception, row: dict) -> list[str]:
     ]
 
 
+def _insert_planning_event(event_row: dict) -> None:
+    """Durable tagged evidence BEFORE its scalar writes, with idempotent retry.
+
+    No optional-column downgrade: missing migration or lost provenance must
+    never leave an apparently proficient posterior without its readiness need.
+    Untagged legacy/quiz events retain _insert_mastery_event's old contract.
+    """
+    for attempt in range(2):
+        try:
+            inserted = table("node_mastery_events").insert_ignore_duplicates(event_row, on_conflict="id")
+            if not inserted:
+                # An earlier response may have timed out AFTER commit. The ID
+                # alone is not proof that the canonical record is identical.
+                rows = table("node_mastery_events").select(
+                    ",".join(event_row), filters={"id": f"eq.{event_row['id']}"}, limit=1,
+                )
+                if not rows or len(rows) != 1 or not _same_planning_event(rows[0], event_row):
+                    raise PlanningPersistenceUnavailable("learning evidence identity unavailable")
+            return
+        except Exception as exc:
+            if attempt:
+                raise PlanningPersistenceUnavailable("learning evidence write unavailable") from exc
+            logger.warning("graph: planning evidence append failed; retrying same event id")
+
+
+def _same_planning_event(actual: dict, expected: dict) -> bool:
+    import json
+    import math
+
+    try:
+        left, right = dict(actual), dict(expected)
+        for value in (left, right):
+            value["created_at"] = datetime.fromisoformat(
+                value["created_at"].replace("Z", "+00:00")
+            ).isoformat()
+            for key in ("delta", "weight", "p_before", "p_after", "confidence"):
+                if value.get(key) is not None:
+                    if type(value[key]) not in (int, float) or not math.isfinite(value[key]):
+                        return False
+                    value[key] = float(value[key])
+        return json.dumps({k: left[k] for k in right}, sort_keys=True) == json.dumps(right, sort_keys=True)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def _insert_mastery_event(event_row: dict) -> None:
     """Append one node_mastery_events row without ever taking the caller down.
 
@@ -921,6 +968,24 @@ def _apply_evidence(
         # weight 0.0 (correct after H4..H6) returns p_before unchanged.
         p_after = bkt.update(p_before, ev.channel, ev.correct, weight=w, idk=ev.idk)
 
+        # A tagged grade needs durable readiness provenance before any scalar
+        # or mirrored BKT mutation. A failed append cannot silently lose it.
+        reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
+        event_row = {
+            "id": str(uuid.uuid4()), "node_id": row["id"], "delta": p_after - p_before,
+            "reason": reason, "created_at": now_iso, "event_type": EVIDENCE_EVENT_TYPE,
+            "channel": ev.channel, "correct": ev.correct, "weight": w,
+            "assisted": ev.assisted, "max_rung": ev.max_rung,
+            "p_before": p_before, "p_after": p_after, "session_id": ev.session_id,
+            "check_item_id": ev.check_item_id, "question_hash": ev.question_hash,
+            "confidence": ev.confidence, "grader_backend": ev.grader_backend,
+            "evidence_seq": seq,
+        }
+        provenance = planning_observation(ev)
+        if provenance is not None:
+            event_row["planning_observation"] = provenance
+            _insert_planning_event(event_row)
+
         unassisted = not ev.assisted and ev.max_rung == 0
         st.opps += 1
         if ev.correct and unassisted:
@@ -953,30 +1018,8 @@ def _apply_evidence(
         row["times_studied"] = times
         row["mastery_score"] = p_after
 
-        # node_mastery_events has no idk column (spec §4); the reason keeps
-        # the flag so the journal can be replayed with S_IDK.
-        reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
-        _insert_mastery_event({
-            "id": str(uuid.uuid4()),
-            "node_id": row["id"],
-            "delta": p_after - p_before,
-            "reason": reason,
-            "created_at": now_iso,
-            "event_type": EVIDENCE_EVENT_TYPE,
-            "channel": ev.channel,
-            "correct": ev.correct,
-            "weight": w,
-            "assisted": ev.assisted,
-            "max_rung": ev.max_rung,
-            "p_before": p_before,
-            "p_after": p_after,
-            "session_id": ev.session_id,
-            "check_item_id": ev.check_item_id,
-            "question_hash": ev.question_hash,
-            "confidence": ev.confidence,
-            "grader_backend": ev.grader_backend,  # A22; null when no verdict (idk)
-            "evidence_seq": seq,  # A36: apply order within this call
-        })
+        if provenance is None:
+            _insert_mastery_event(event_row)
         seq += 1
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
         if row.get("course_id"):

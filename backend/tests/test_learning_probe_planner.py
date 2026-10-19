@@ -502,6 +502,48 @@ def probe():
             return stack.enter_context(patch(f"routes.learn_loop.{name}", **kw))
 
         ns = SimpleNamespace(store=store, p_known=p_known)
+        def canonical_history(user_id, course_id, nodes):
+            """These mocked grades represent successful canonical journal writes.
+
+            Reconcile them through the actual Evidence/projection contracts;
+            snapshots with contradictory independence stay unknown.
+            """
+            from learning.evidence import Evidence, PlanningProvenance, planning_observation
+            from learning.goals import planning_observations
+            from learning.planning_history import project_planning_history
+
+            rows = []
+            for index, observation in enumerate(planning_observations(store["doc"])):
+                if not isinstance(observation, dict):
+                    continue
+                qh = observation.get("question_hash")
+                row = {"question_hash": qh, "graph_nodes": {"user_id": user_id, "course_id": course_id}}
+                try:
+                    ev = Evidence(
+                        node_id=observation["node_id"], question_hash=qh,
+                        check_item_id=f"item-{qh}", channel=observation["channel"],
+                        correct=observation["correct"], idk=observation.get("idk", False),
+                        max_rung=observation.get("max_rung", 0),
+                        assisted=observation.get("assisted", False),
+                        same_session_recheck=observation.get("same_session_recheck", False),
+                        planning_provenance=PlanningProvenance(
+                            check_item_id=f"item-{qh}", difficulty=observation["difficulty"],
+                            synthetic_idk=observation.get("synthetic_idk", False),
+                            previously_seen=observation.get("previously_seen", False),
+                        ),
+                    )
+                    metadata = planning_observation(ev)
+                    if metadata["independent"] is not observation.get("independent"):
+                        metadata = None
+                    row.update({**ev.model_dump(), "id": f"event-{index}",
+                                "planning_observation": metadata,
+                                "reason": f"evidence:{ev.channel}" + (":idk" if ev.idk else "")})
+                except (ValueError, KeyError, TypeError):
+                    pass
+                rows.append(row)
+            return project_planning_history(rows, user_id, course_id, nodes)
+
+        ns.history = p("read_planning_history", side_effect=canonical_history)
         ns.gate = p("learning_loop_for_request", return_value=True)
         p("load_loop_state", side_effect=_load)
         stack.enter_context(patch("learning.loop_state_store.load_loop_state", side_effect=_load))
@@ -972,6 +1014,8 @@ def test_probe_answer_idk_goes_through_grade_answer_on_the_items_channel(probe):
     )  # PKG-05 builds the A1 evidence, no grader call
     [ev] = probe.agu.call_args.args[1]["evidence"]
     assert ev["channel"] == "free_response" and ev["idk"] is True and ev["correct"] is False
+    assert ev["planning_provenance"]["synthetic_idk"] is False
+    assert ev["planning_provenance"]["check_item_id"] == ev["check_item_id"]
     assert r.json()["reference_answer"] == "SECRET-REFERENCE"
     obs = probe.store["doc"]["probe"]["history"][-1]
     assert obs["idk"] is True and obs["correct"] is False
@@ -1053,9 +1097,22 @@ def test_probe_second_refusal_is_idk(probe):
     assert probe.agu.call_count == 1
     [ev] = probe.agu.call_args.args[1]["evidence"]
     assert ev["idk"] is True and ev["correct"] is False
+    assert ev["planning_provenance"]["synthetic_idk"] is True
     pr = probe.store["doc"]["probe"]
     assert pr["current"] is None and pr["unavailable"] == [] and pr["history"][-1]["idk"] is True
     assert r.json()["reference_answer"] == "SECRET-REFERENCE"
+
+
+def test_probe_strict_evidence_failure_is_503_without_grade_or_lost_retry_claim(probe):
+    from learning.evidence import PlanningPersistenceUnavailable
+
+    _answer_doc(probe)
+    probe.agu.side_effect = PlanningPersistenceUnavailable("strict append failed")
+    response = client.post(f"{LOOP}/probe/answer", json=_answer(answer="A genuine attempt"))
+    assert response.status_code == 503
+    pr = probe.store["doc"]["probe"]
+    assert pr["history"] == []
+    assert "grading_claim" not in pr["current"]
 
 
 def test_a_disowned_probe_answer_is_asked_again_and_never_becomes_idk(probe):

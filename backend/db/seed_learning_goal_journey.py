@@ -7,6 +7,11 @@ the real diagnostic reaches its plan, practice adds fresh free/teachback level
 3 items. A released free-response class remains a recheck; the new teachback
 class can earn independent evidence through the ordinary grader. No attempt,
 evidence, release, help, goal or session metadata is written here.
+
+The optional pre-activity readiness stage adds an independent fourth fixture
+concept, Binary Place Value. Its source is the rich Binary course chunk; its
+topology and function-model questions are synthetic browser test inputs, never
+real learner evidence or a claim that four concepts were pedagogically verified.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from services.encryption import decrypt_if_present, encrypt_if_present
 SLUGS = ("binary", "bitwise")
 DIAGNOSTIC_COUNTS = {1: 1, 2: 6, 3: 3}
 INITIAL_PRIOR = 0.99  # Test input, never a claim earned by these questions.
+READINESS_CONCEPT = "Binary Place Value"
 
 
 def _require_local() -> None:
@@ -64,14 +70,70 @@ def fixture_item(template: dict, *, slug: str, stage: str, format: str, variant:
     return row
 
 
+def _require_readiness_pristine(sessions: list) -> None:
+    """Check every existing owned course node before changing this fixture."""
+    owned = table("graph_nodes").select(
+        "id", filters={"user_id": f"eq.{USER_LOOP}", "course_id": f"eq.{COURSE_CS}"}
+    )
+    ids = sorted(row["id"] for row in owned if row.get("id"))
+    if (
+        not ids
+        or sessions
+        or table("node_mastery_events").select(
+            "id", filters={"node_id": f"in.({','.join(ids)})"}, limit=1
+        )
+    ):
+        raise RuntimeError("Readiness fixtures must precede every learner session and observation")
+
+
+def _seed_readiness_concept(templates: dict) -> None:
+    from db.e2e_handler_constants import read_constants
+    from services.graph_service import _normalize_concept, apply_graph_update
+
+    # The actual writer owns identity generation, ownership and deduplication.
+    # Tests discover its UUID by exact owner/course/name rather than forcing IDs.
+    apply_graph_update(USER_LOOP, {"new_nodes": [{"concept_name": READINESS_CONCEPT}]}, COURSE_CS)
+    nodes = table("graph_nodes").select(
+        "id",
+        filters={
+            "user_id": f"eq.{USER_LOOP}",
+            "course_id": f"eq.{COURSE_CS}",
+            "concept_name": f"eq.{READINESS_CONCEPT}",
+        },
+        limit=2,
+    )
+    if len(nodes) != 1 or not nodes[0].get("id"):
+        raise RuntimeError("Readiness concept was not created uniquely by the graph writer")
+    (stem,) = read_constants("E2E_LOOP_PROBE_PROMPT")
+    for difficulty, count in DIAGNOSTIC_COUNTS.items():
+        template = templates["binary", difficulty]
+        if not template.get("source_chunk_ids"):
+            raise RuntimeError("Readiness assets require the existing Binary course source chunk")
+        for variant in range(count):
+            row = fixture_item(
+                template, slug="place-value", stage="readiness", format="free", variant=variant
+            )
+            prompt = f"{stem} [{READINESS_CONCEPT}, free, difficulty {difficulty}, readiness variant {variant}]"
+            row["prompt"], row["question_hash"] = encrypt_if_present(prompt), question_hash(prompt)
+            row["concept_key"] = _normalize_concept(READINESS_CONCEPT)
+            h.upsert("check_items", row, on_conflict="course_id,concept_key,question_hash")
+    h.upsert(
+        "learner_state",
+        {"user_id": USER_LOOP, "node_id": nodes[0]["id"], "p_known": INITIAL_PRIOR},
+        on_conflict="user_id,node_id",
+    )
+
+
 def seed_goal_continuation_items(stage: str) -> None:
     _require_local()
-    if stage not in {"diagnostic", "practice"}:
-        raise ValueError("stage must be diagnostic or practice")
+    if stage not in {"diagnostic", "practice", "readiness"}:
+        raise ValueError("stage must be diagnostic, practice or readiness")
     sessions = table("sessions").select(
         "id,ended_at,loop_state", filters={"user_id": f"eq.{USER_LOOP}"}
     )
-    if stage == "diagnostic":
+    if stage in {"diagnostic", "readiness"}:
+        if stage == "readiness":
+            _require_readiness_pristine(sessions)
         if sessions or table("node_mastery_events").select(
             # 0023_graph_integrity: events belong to a node, not user_id.
             "id",
@@ -89,6 +151,11 @@ def seed_goal_continuation_items(stage: str) -> None:
             for slug in SLUGS
             for difficulty in DIAGNOSTIC_COUNTS
         }
+        if stage == "readiness" and any(
+            not templates["binary", difficulty].get("source_chunk_ids")
+            for difficulty in DIAGNOSTIC_COUNTS
+        ):
+            raise RuntimeError("Readiness assets require the existing Binary course source chunk")
         for slug in SLUGS:
             key = templates[slug, 1]["concept_key"]
             table("check_items").delete(
@@ -99,7 +166,7 @@ def seed_goal_continuation_items(stage: str) -> None:
                     row = fixture_item(
                         templates[slug, difficulty],
                         slug=slug,
-                        stage=stage,
+                        stage="diagnostic",
                         format="free",
                         variant=variant,
                     )
@@ -113,6 +180,8 @@ def seed_goal_continuation_items(stage: str) -> None:
                 },
                 on_conflict="user_id,node_id",
             )
+        if stage == "readiness":
+            _seed_readiness_concept(templates)
     else:
         open_plans = [
             row
@@ -135,5 +204,5 @@ def seed_goal_continuation_items(stage: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("diagnostic", "practice"))
+    parser.add_argument("stage", choices=("diagnostic", "practice", "readiness"))
     seed_goal_continuation_items(parser.parse_args().stage)
