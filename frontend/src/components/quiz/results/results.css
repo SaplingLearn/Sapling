@@ -160,6 +160,7 @@
   font-size: var(--fs-md);
   color: var(--text-muted);
   margin: var(--quiz-results-line-gap) 0 0;
+  overflow-wrap: anywhere;
 }
 
 .quiz-missed__actions {

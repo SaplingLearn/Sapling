@@ -20,6 +20,9 @@ import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
+import { LoopLearn } from "../learn/LoopLearn";
+import { useLoopStatus } from "../learn/useLoopStatus";
+import { readResumeParam } from "../learn/resumeParam";
 import {
   startSession,
   startSessionStream,
@@ -83,11 +86,13 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
-// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
-// mastery the same way a full graph refetch would.
+// Mirrors backend/learning/bkt.py::tier_for (learning/params.py BKT_PROFICIENT /
+// BAND_NOVICE_MAX / TIER_UNEXPLORED_MAX, PKG-14b) so a streamed delta classifies
+// mastery the same way a full graph refetch would. Pinned by
+// backend/tests/test_mastery_tier_unification.py.
 function tierForScore(score: number): GraphNode["mastery_tier"] {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }
@@ -114,11 +119,10 @@ function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: st
 // spec sketches. It's a dict keyed by which graph tool wrote
 // (backend/agents/tools/graph.py via services/chat_stream.py
 // merge_graph_updates): `new_nodes` entries are {concept_name,
-// initial_mastery}; `updated_nodes` entries are {concept_name,
-// mastery_delta, reason, event_type}. Neither carries an `id` or an
-// absolute post-update score. `delta.mastery_changes` ({concept, before,
-// after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively via
+// initial_mastery} (PKG-14b: the tutor's mastery-write tool is gone, so no
+// other key is produced). They carry no `id` and no absolute post-update
+// score. `delta.mastery_changes` ({concept, before, after}) IS authoritative
+// for an existing node's new score, so it drives merges for updates; `nodes` entries are read defensively via
 // `rawNodeIdentity` — and any fields we don't recognize are ignored rather
 // than crashing.
 //
@@ -299,12 +303,10 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
-// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
-// session rows used ?session=<id> before both callers unified on ?resume=.
-// Accept both so any bookmarked/legacy link keeps working.
-export function readResumeParam(params: { get(name: string): string | null }): string | null {
-  return params.get("resume") ?? params.get("session");
-}
+// #164: ?resume=<id> (and the legacy ?session=<id>). Moved to
+// components/learn/resumeParam.ts so LoopLearn reads the same deep link
+// without importing this screen (PKG-13); re-exported for its callers.
+export { readResumeParam };
 
 // ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
 // directly before it — the user bubble of the same turn, so the re-send
@@ -325,6 +327,32 @@ export function removeInterruptedTurn(
 }
 
 export function Learn() {
+  const { userId, userReady } = useUser();
+  // Learning loop (PKG-13; post-launch PKG-14b, spec §11.2): one GET decides the
+  // tree — the loop status probe is the only input (never learning_loop_beta; the
+  // server gate decides, spec §7). null → the loading fallback; true → the loop;
+  // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
+  // failure → a retry state, NEVER the legacy tree (the backend delegates the
+  // legacy calls to the loop, so failing open would give a hybrid).
+  const { status: loop, retry } = useLoopStatus(userId, userReady);
+  if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
+  if (loop === "error") {
+    return (
+      <div data-testid="loop-status-error" role="alert" style={{ padding: 40, color: "var(--text-dim)" }}>
+        <p style={{ marginBottom: 12 }}>Couldn&apos;t reach the tutor. Try again.</p>
+        <button type="button" className="btn btn--primary" data-testid="loop-status-retry" onClick={retry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+  if (loop) {
+    return (
+      <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+        <LoopLearn />
+      </Suspense>
+    );
+  }
   return (
     <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
       <LearnInner />
@@ -952,15 +980,6 @@ function LearnInner() {
     setTopic("");
     setTopicDraft("");
     router.replace(`/learn?mode=${mode}`, { scroll: false });
-  };
-
-  const startNextFromSummary = (concept: string) => {
-    setSummary(null);
-    setSessionId(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
   };
 
   const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
@@ -1743,7 +1762,6 @@ function LearnInner() {
         <SessionSummary
           summary={summary}
           onClose={closeSummary}
-          onStartNext={startNextFromSummary}
         />
       )}
     </FullHeightScreen>

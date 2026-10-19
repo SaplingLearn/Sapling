@@ -32,6 +32,14 @@ _REQUEST_ID_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "sapling_request_id", default=None,
 )
 
+# A per-request key the SERVER mints, never read from a header: the X-Request-ID above is
+# caller-controllable (a client may re-send one id on every request), so anything keyed per
+# request for correctness rather than correlation — services/ai_budget.py's usage cache (owner
+# decision A38, HANDOFF-06b (g)) — keys on this instead.
+_REQUEST_KEY_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "sapling_request_key", default=None,
+)
+
 # Defensive: only accept caller-supplied IDs that are 8–128 chars of
 # hex/uuid-ish characters. Anything else, ignore and generate fresh.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_\-]{8,128}$")
@@ -42,6 +50,17 @@ _log = logging.getLogger("sapling.request")
 def current_request_id() -> str | None:
     """Return the current request's ID, or None if outside a request scope."""
     return _REQUEST_ID_CTX.get()
+
+
+def current_request_key() -> str | None:
+    """The current request's server-minted key (never client-supplied), or None outside a
+    request scope. Use it to key per-request state; use current_request_id() for correlation."""
+    return _REQUEST_KEY_CTX.get()
+
+
+def new_request_key() -> str:
+    """Mint a fresh server-side request key. Module-level so tests can monkeypatch."""
+    return uuid.uuid4().hex
 
 
 def new_request_id() -> str:
@@ -60,6 +79,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         rid = incoming if _SAFE_ID.match(incoming) else new_request_id()
         request.state.request_id = rid
         token = _REQUEST_ID_CTX.set(rid)
+        key_token = _REQUEST_KEY_CTX.set(new_request_key())
         start = time.perf_counter()
         try:
             response = await call_next(request)
@@ -101,6 +121,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             # the var still holds this request's id).
             if _REQUEST_ID_CTX.get() == rid:
                 _REQUEST_ID_CTX.reset(token)
+            _REQUEST_KEY_CTX.reset(key_token)
 
         # One log line per request, severity tracking the response code.
         dur_ms = (time.perf_counter() - start) * 1000
@@ -122,13 +143,43 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         #   above, so `rid` is passed explicitly;
         # - only the PATH is recorded, never the full URL — query strings
         #   carry search terms and other user input;
-        # - `route` is the matched FastAPI template (bounded cardinality);
-        #   unmatched requests (e.g. a bare 404) simply omit it;
+        # - `route` is the matched FastAPI template (bounded cardinality). The
+        #   only rows recorded WITHOUT it are no-route responses other than a
+        #   404 — e.g. CORSMiddleware's 400 for a disallowed-Origin preflight,
+        #   which answers before routing runs — and a no-route 404 from a
+        #   request that presented credentials (below);
         # - user_id comes off request.state, stamped by
         #   auth_guard.get_session_user_id on a successful decode (the shared
         #   ASGI scope is the only channel that propagates back out of
         #   BaseHTTPMiddleware's downstream task).
-        if response.status_code >= 400:
+        # - #690: an ANONYMOUS 404 that matched NO route is not recorded. That
+        #   is the internet-scanner traffic (/wp/, /.env, /index.php,
+        #   /robots.txt, the bare API root, ...) — ~9.4k anonymous rows a month
+        #   on prod, burying every 4xx rollup — and it carries no product
+        #   signal: no handler ran. The log line above still records it.
+        #   Everything else is kept: any status from a matched route (a
+        #   handler's own 404, 401, 403, 422), a 405 (a PARTIAL match — the
+        #   path is ours), a no-route non-404 such as a CORS preflight
+        #   rejection, and an unrouted 404 from a request that PRESENTS
+        #   credentials (a session cookie/`auth_token`, or an Authorization
+        #   header): that is one of our own clients — a typo'd frontend URL, a
+        #   renamed or unmounted router, Canopy polling a wrong path — and
+        #   exactly the regression this rollup exists to surface.
+        #
+        #   "Matched" is read off scope["route"], which FastAPI's router stamps
+        #   on a full or partial match. That is a framework detail, not a public
+        #   contract: were an upgrade to stop stamping it, every routed 404
+        #   would look unrouted. The credentials rule bounds that failure to
+        #   anonymous 404s (signed-in users and Canopy keep their rows), and
+        #   test_handler_404_on_real_app_route_emits_under_installed_fastapi
+        #   pins the stamping on the real app under the installed FastAPI.
+        route = request.scope.get("route")
+        anonymous_unrouted_404 = False
+        if response.status_code == 404 and route is None:
+            from services.auth_guard import presents_credentials
+
+            anonymous_unrouted_404 = not presents_credentials(request)
+        if response.status_code >= 400 and not anonymous_unrouted_404:
             # Local import: events_service imports current_request_id from
             # this module at import time, so a top-level import here would be
             # circular.
@@ -140,7 +191,6 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                 "status_code": response.status_code,
                 "duration_ms": round(dur_ms, 1),
             }
-            route = request.scope.get("route")
             template = getattr(route, "path_format", None) or getattr(route, "path", None)
             if template:
                 payload["route"] = template

@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react';
 
 vi.mock('@/lib/api', () => ({
   API_URL: '',
@@ -26,9 +26,6 @@ function Probe() {
 function stubFetch(me: () => Promise<Partial<Response>> | Partial<Response>) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes('/api/users')) {
-      return { ok: true, status: 200, json: async () => ({ users: [] }) } as Response;
-    }
     if (url.includes('/api/auth/me')) {
       return (await me()) as Response;
     }
@@ -179,5 +176,150 @@ describe('#191 setActiveUser persist gate (real provider)', () => {
     await waitFor(() => expect(screen.getByTestId('auth-state').textContent).toBe('in'));
     const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
     expect(saved).toMatchObject({ id: 'u9', name: 'Nine' });
+  });
+});
+
+function NameProbe() {
+  const { userName, userReady } = useUser();
+  return <div data-testid="name">{userReady ? userName : 'loading'}</div>;
+}
+
+describe('roster fetch removed; /me owns the display name', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, '', '/');
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('never requests the /api/users roster and refreshes the name from /me', async () => {
+    // The provider used to fetch every user's decrypted name on each page
+    // load and discard it; /api/users is removed now. A name changed
+    // after login still reaches the header, through /me.
+    seed();
+    const fetchMock = stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ user_id: 'stale-1', name: 'Renamed', roles: [], equipped_cosmetics: {} }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <UserProvider>
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('name').textContent).toBe('Renamed'));
+    const urls = fetchMock.mock.calls.map(([u]) => String(u));
+    expect(urls.some(u => /\/api\/users(\?|$)/.test(u))).toBe(false);
+    // The confirmed name is persisted, so the next page load boots with it.
+    expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({
+      id: 'stale-1',
+      name: 'Renamed',
+    });
+  });
+
+  it("treats a /me answer for a different user as a stale identity", async () => {
+    // Shared browser: localStorage holds user A (stale-1) while the session
+    // cookie belongs to user B. /me answers for the cookie, so its name must
+    // never be shown next to A's id; the client identity is cleared instead.
+    seed();
+    vi.stubGlobal(
+      'fetch',
+      stubFetch(() => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ user_id: 'someone-else', name: 'Other Person', roles: [] }),
+      })),
+    );
+    render(
+      <UserProvider>
+        <Probe />
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
+    expect(screen.getByTestId('name').textContent).not.toBe('Other Person');
+    expect(localStorage.getItem('sapling_user')).toBeNull();
+  });
+});
+
+function SwitchingProbe() {
+  const { userId, userName, isAuthenticated, isAdmin, setActiveUser, signOut } = useUser();
+  return <>
+    <button onClick={() => setActiveUser('new-user', 'New Name')}>Switch account</button>
+    <button onClick={() => setActiveUser(userId, userName)}>Confirm current account</button>
+    <button onClick={() => void signOut()}>Sign out</button>
+    <div data-testid="identity">{isAuthenticated ? `${userId}:${userName}:${isAdmin}` : 'out'}</div>
+    <div data-testid="profile">{userName}:{String(isAdmin)}</div>
+  </>;
+}
+
+describe('profile responses cannot restore an older identity', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.history.replaceState({}, '', '/');
+    seed();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps an in-flight profile response when confirming the same account', async () => {
+    let finish!: (value: Partial<Response>) => void;
+    const response = new Promise<Partial<Response>>(resolve => { finish = resolve; });
+    const fetchMock = stubFetch(() => response);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    fireEvent.click(screen.getByText('Confirm current account'));
+    await act(async () => {
+      finish({ ok: true, status: 200, json: async () => ({ user_id: 'stale-1', name: 'Verified', is_admin: false }) });
+      await response;
+    });
+    expect(screen.getByTestId('identity').textContent).toBe('stale-1:Verified:false');
+  });
+
+  it.each([401, 200])('ignores an older %i response after switching accounts', async status => {
+    let finishOld!: (value: Partial<Response>) => void;
+    const old = new Promise<Partial<Response>>(resolve => { finishOld = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('user_id=stale-1')) return old;
+      return { ok: true, status: 200, json: async () => ({ user_id: 'new-user', name: 'Current Name', is_admin: false }) };
+    }));
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toContain('stale-1'));
+    fireEvent.click(screen.getByText('Switch account'));
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toBe('new-user:Current Name:false'));
+    await act(async () => {
+      finishOld({ ok: status === 200, status, json: async () => ({ user_id: 'stale-1', name: 'Old Admin', is_admin: true }) });
+      await old;
+    });
+    expect(screen.getByTestId('identity').textContent).toBe('new-user:Current Name:false');
+    expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({ id: 'new-user', name: 'Current Name' });
+  });
+
+  it('ignores profile JSON that finishes after sign-out', async () => {
+    let finishBody!: (value: unknown) => void;
+    const body = new Promise(resolve => { finishBody = resolve; });
+    const readBody = vi.fn(() => body);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes('/api/auth/me')
+        ? { ok: true, status: 200, json: readBody }
+        : { ok: true, status: 200 }));
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(readBody).toHaveBeenCalled());
+    fireEvent.click(screen.getByText('Sign out'));
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toBe('out'));
+    await act(async () => {
+      finishBody({ user_id: 'stale-1', name: 'Old Admin', is_admin: true });
+      await body;
+    });
+    expect(screen.getByTestId('identity').textContent).toBe('out');
+    // The profile fields must also remain cleared under a signed-out identity.
+    expect(screen.getByTestId('profile').textContent).toBe(':false');
+    expect(localStorage.getItem('sapling_user')).toBeNull();
   });
 });

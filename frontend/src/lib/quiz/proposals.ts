@@ -14,7 +14,7 @@
  * or build a queue (R4 §2). The full node list is already loaded for the
  * "pick something specific" list, so the rule is reproduced over that instead of
  * fetching a second, thinner answer. The codebase has precedent for mirroring
- * with a citation (`Learn.tsx::tierForScore` mirrors `config.py::get_mastery_tier`).
+ * with a citation (`Learn.tsx::tierForScore` mirrors `learning/bkt.py::tier_for`).
  *
  * TODO(#537-followup: enriched /recommendations) — once the endpoint returns
  * node_id / course_id / mastery_score / last_studied_at, delete this mirror and

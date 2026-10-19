@@ -4,7 +4,7 @@ Unit tests for services/extraction_backends/*.
 Coverage:
   - docling_backend — DocumentConverter is mocked; validates markdown parsing,
     frontmatter stripping, and fallback-page signal logic.
-  - got_ocr_backend — AutoModel.from_pretrained is mocked to simulate both
+  - got_ocr_backend — native Transformers loaders are mocked to simulate both
     success and GotOcrUnavailableError paths.
   - tesseract_backend — relocated logic still works identically.
 """
@@ -169,8 +169,7 @@ class TestGotOcrBackend:
             raise OSError("no weights")
 
         with (
-            patch("transformers.AutoTokenizer.from_pretrained", side_effect=_fail),
-            patch("transformers.AutoModel.from_pretrained", side_effect=_fail),
+            patch("transformers.AutoConfig.from_pretrained", side_effect=_fail),
         ):
             with pytest.raises(GotOcrUnavailableError):
                 extract_page_with_got_ocr(b"fake image")
@@ -181,33 +180,40 @@ class TestGotOcrBackend:
         from services.extraction_backends import got_ocr_backend as g
         # Pretend a model was previously cached in this process
         g._CACHED_MODEL = MagicMock()
-        g._CACHED_TOKENIZER = MagicMock()
+        g._CACHED_PROCESSOR = MagicMock()
         monkeypatch.setenv("GOT_OCR_ENABLED", "false")
         with pytest.raises(GotOcrUnavailableError):
             extract_page_with_got_ocr(b"fake image")
 
-    def test_returns_chat_output(self, monkeypatch):
+    def test_returns_native_generation_output(self, monkeypatch):
         monkeypatch.setenv("GOT_OCR_ENABLED", "true")
 
+        import torch
         mock_model = MagicMock()
-        mock_model.eval = MagicMock(return_value=mock_model)
-        mock_model.chat = MagicMock(return_value="  \\frac{1}{2}  ")
-        mock_tokenizer = MagicMock()
+        mock_model.eval.return_value = mock_model
+        mock_model.device = "cpu"
+        mock_model.dtype = torch.float32
+        mock_model.generate.return_value = torch.tensor([[1, 2, 3, 4]])
+        mock_inputs = {"input_ids": torch.tensor([[1, 2]])}
+        mock_processor = MagicMock()
+        mock_processor.return_value.to.return_value = mock_inputs
+        mock_processor.decode.return_value = "  \\frac{1}{2}  "
 
-        # Provide a minimal valid PNG so Pillow can open it
         from PIL import Image
         buf = io.BytesIO()
         Image.new("RGB", (10, 10), color="white").save(buf, format="PNG")
-        image_bytes = buf.getvalue()
 
         with (
-            patch("transformers.AutoTokenizer.from_pretrained", return_value=mock_tokenizer),
-            patch("transformers.AutoModel.from_pretrained", return_value=mock_model),
+            patch("transformers.AutoConfig.from_pretrained", return_value=MagicMock(model_type="got_ocr2")),
+            patch("transformers.AutoProcessor.from_pretrained", return_value=mock_processor),
+            patch("transformers.AutoModelForImageTextToText.from_pretrained", return_value=mock_model),
         ):
-            result = extract_page_with_got_ocr(image_bytes, ocr_type="format")
+            result = extract_page_with_got_ocr(buf.getvalue(), ocr_type="format")
 
         assert result == "\\frac{1}{2}"
-        mock_model.chat.assert_called_once()
+        mock_model.generate.assert_called_once()
+        mock_processor.return_value.to.assert_called_once_with(device="cpu", dtype=torch.float32)
+        assert mock_processor.decode.call_args.args[0].tolist() == [3, 4]
 
 
 # ── Tesseract backend (relocated) ────────────────────────────────────────────

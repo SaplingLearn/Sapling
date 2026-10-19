@@ -24,9 +24,10 @@
  * rail's state is read off `.progress-dots__dot--{kind}`, which contract §3
  * declares to be that primitive's public CSS API.
  */
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 import { queryRaw } from "./db";
+import { killSwitchLane } from "./lane";
 
 // ── The seeded concept every journey quizzes ──────────────────────────────
 //
@@ -49,14 +50,26 @@ export const CORRECT_LABELS = ["B", "C", "A"] as const;
  *  for — the handler ignores the count so the mastery math stays byte-stable. */
 export const QUIZ_LENGTH = CORRECT_LABELS.length;
 
-/** routes/quiz.py + services/quiz_config.py: +0.03 per correct, −0.02 per wrong. */
-export const MASTERY_PER_CORRECT = 0.03;
-export const MASTERY_PER_WRONG = 0.02;
+/** learning/params.py mirror (pinned by backend/tests/test_quiz_evidence_only.py).
+ *  PKG-14b (spec §11.2): a quiz moves mastery ONLY through graded evidence —
+ *  one unassisted `mc` Evidence per question through the BKT update — for every
+ *  student, in both E2E lanes (the quiz has no legacy path after the cutover). */
+export const BKT_L0 = 0.35;
+export const BKT_T = 0.15;
+export const MC_G = 0.25;
+export const MC_S = 0.1;
 
-/** The mastery a `score`-of-`total` submission leaves behind (unclamped here —
- *  the seeded 0.25 baseline never reaches either bound). */
-export function masteryAfter(before: number, score: number, total: number): number {
-  return before + score * MASTERY_PER_CORRECT - (total - score) * MASTERY_PER_WRONG;
+/** §3.1 correct update + learn step, `n` unassisted `mc` corrects from `before`.
+ *  A node with no `learner_state` row starts from BKT_L0, NOT from its legacy
+ *  `graph_nodes.mastery_score` (HANDOFF-03: the legacy score is not a prior), so
+ *  the seeded 0.25 concept's first quiz reads `before = BKT_L0`. */
+export function bktAfterCorrect(before: number, n: number): number {
+  let p = before;
+  for (let i = 0; i < n; i++) {
+    const post = (p * (1 - MC_S)) / (p * (1 - MC_S) + (1 - p) * MC_G);
+    p = post + (1 - post) * BKT_T;
+  }
+  return p;
 }
 
 /** A wrong label for question `n` — any option that isn't the marked one. */
@@ -79,6 +92,87 @@ export const explanationOf = (n: number, label: string) =>
 export const TUTOR_REPLY =
   "[e2e-function-model] Deterministic tutor reply: every recursive function " +
   "needs a base case so it can stop calling itself.";
+
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_TUTOR_REPLY — the
+ *  loop tutor's rendered turn (learn-loop.spec.ts asserts the same constant). */
+export const LOOP_TUTOR_REPLY =
+  "Key idea: [e2e-function-model] A recursive function needs a base case it is guaranteed to reach.\n\n" +
+  "Try writing the base case for factorial before anything else.\n\n" +
+  "Which input should stop the recursion?";
+
+/** The quiz "Ask about this" sheet's streamed reply in THIS lane (spec §11.4):
+ *  /api/learn/start-session/stream delegates to the loop opener in the default
+ *  lane, and runs the legacy chat_tutor in the kill-switch lane. */
+export const ASK_PANEL_REPLY = killSwitchLane ? TUTOR_REPLY : LOOP_TUTOR_REPLY;
+
+/** Its last paragraph. The loop turn renders as separate paragraphs (split on
+ *  a blank line), so a whole-reply getByText cannot match one element; the last
+ *  paragraph is one rendered block in both lanes and can be counted per reply. */
+export const ASK_PANEL_REPLY_TAIL = ASK_PANEL_REPLY.split("\n\n").at(-1) as string;
+
+/** Every paragraph of this lane's Ask reply is on the sheet. */
+export async function expectAskReply(sheet: Locator, timeout: number): Promise<void> {
+  for (const paragraph of ASK_PANEL_REPLY.split("\n\n")) {
+    await expect(sheet).toContainText(paragraph, { timeout });
+  }
+}
+
+/** Must match backend/services/quiz_ask.py::QUIZ_ASK_HELP_RUNG (=
+ *  learning/params.py RUNG_NO_CREDIT_MIN; pinned by tests/test_quiz_ask_session.py):
+ *  the help a quiz-ask session records on the question it is about (spec §13 A99). */
+export const QUIZ_ASK_HELP_RUNG = 4;
+
+/**
+ * Spec §13 A99, asserted on the database after the "Ask about this" sheet has
+ * streamed its reply, in BOTH lanes: the sheet's session is a `quiz_ask` one —
+ * exactly one help row (source `quiz`, the reveal rung) for this student on the
+ * asked question — and, in the default lane, the session row materialised in
+ * `teach` (no probe: the follow-up chat would otherwise 409). Under the kill
+ * switch the legacy tutor serves it; its row carries no loop document.
+ * Returns the asked question's hash.
+ */
+export async function expectQuizAskSession(userId: string, timeout = 10_000): Promise<string> {
+  let rows: Record<string, unknown>[] = [];
+  await expect
+    .poll(async () => {
+      rows = await queryRaw(
+        `SELECT question_hash, rung, session_id
+           FROM learning_reveals
+          WHERE user_id = $1 AND kind = 'help' AND source = 'quiz'`,
+        [userId],
+      );
+      return rows.length;
+    }, { timeout })
+    .toBe(1);
+  expect(Number(rows[0].rung)).toBe(QUIZ_ASK_HELP_RUNG);
+  const session = await queryRaw(
+    `SELECT loop_state->>'phase' AS phase, loop_state->>'origin' AS origin
+       FROM sessions WHERE id = $1 AND user_id = $2`,
+    [rows[0].session_id, userId],
+  );
+  expect(session).toHaveLength(1);
+  if (killSwitchLane) {
+    expect(session[0].phase).toBeNull();
+  } else {
+    expect(session[0]).toEqual({ phase: "teach", origin: "quiz_ask" });
+  }
+  return String(rows[0].question_hash);
+}
+
+/**
+ * Spec §13 A99: the quiz evidence on the asked question carries the help
+ * floor — its row (one per question, the A100 claim) is graded at the reveal
+ * rung, in both lanes.
+ */
+export async function expectAskedQuestionFloored(nodeId: string, questionHash: string): Promise<void> {
+  const rows = await queryRaw(
+    `SELECT max_rung FROM node_mastery_events
+      WHERE node_id = $1 AND event_type = 'evidence' AND question_hash = $2`,
+    [nodeId, questionHash],
+  );
+  expect(rows).toHaveLength(1);
+  expect(Number(rows[0].max_rung)).toBe(QUIZ_ASK_HELP_RUNG);
+}
 
 // ── Timeouts ──────────────────────────────────────────────────────────────
 //

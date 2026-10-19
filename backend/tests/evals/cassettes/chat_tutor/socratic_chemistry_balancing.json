@@ -1,19 +1,21 @@
 {
-  "text": "Great question! A redox reaction is all about the transfer of electrons.\n\nThe name \"redox\" itself is a clue. What two processes are happening in a redox reaction?",
+  "text": "Great question. It looks like \"Redox Reactions\" is a new topic for you.\n\nTo get started, what do the two parts of the name \"redox\"\u2014\"reduction\" and \"oxidation\"\u2014mean to you?",
   "tool_calls": [
+    {
+      "args": {
+        "concepts": [
+          "Redox Reactions",
+          "Oxidation",
+          "Reduction"
+        ]
+      },
+      "tool_name": "apply_graph_update_tool"
+    },
     {
       "args": {
         "query": "balancing redox equations"
       },
       "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "concepts": [
-          "Redox Reactions"
-        ]
-      },
-      "tool_name": "apply_graph_update_tool"
     }
   ]
 }

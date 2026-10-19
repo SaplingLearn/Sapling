@@ -27,6 +27,10 @@ from main import app
 from services import decisions, events_service, feature_flags, tutor_router
 from tests.agent_run_fakes import run_result
 
+
+# This suite pins the preserved legacy tutor; active-loop ownership has separate regressions.
+pytestmark = pytest.mark.kill_switch
+
 client = TestClient(app)
 
 #: Answers that WOULD change the turn if anything acted on them.

@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "f982ee5b9dcb1cd2feae2a9f13a885c624380a1fa952a5cdf7ecc24e9d83de84",
+  "output": {
+    "evidence": "What specific information is provided in the problem statement?",
+    "reveals_final_answer": false,
+    "rung": 1
+  },
+  "served_sha256": "1e5d9a85925600d6e481aa77f8acc7d20ea05b166660bec03312c45a8e4512e0"
+}

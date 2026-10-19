@@ -1,7 +1,7 @@
 /**
  * Journey #139 — gradebook term switcher + transcript.
  *
- * Two journeys over the `gradebook` testid surface (docs/frontend-testids.md):
+ * Three journeys over the `gradebook` testid surface (docs/frontend-testids.md):
  *
  * 1. Multi-term course resolution — the promoted regression for the #139
  *    404. The card link used to drop the selected term, so
@@ -18,7 +18,14 @@
  *    enrollment row — mutations used to resolve term-blind and would have
  *    landed it on the CURRENT (spring-2026) enrollment.
  *
- * 2. Transcript — the landing's Transcript button opens the cumulative
+ * 2. Term-chip race — a chip clicked while the terms are still loading must
+ *    survive the load. The landing used to show the logged-out demo chips to
+ *    a signed-in user before UserContext hydrated, and the terms load then
+ *    overwrote the click with the current term. It made journey 1 flake on
+ *    fast machines; the terms request is held open here so the race is
+ *    forced, not timed.
+ *
+ * 3. Transcript — the landing's Transcript button opens the cumulative
  *    modal: a real x.xx GPA plus per-semester sections for both seeded
  *    terms.
  *
@@ -93,6 +100,65 @@ test("a course taken in two terms opens the right enrollment from each chip", as
   ).toBeVisible();
   await expect(page.getByText("Projects").first()).toBeVisible();
   await expect(page.getByText("We couldn't load this course.")).toHaveCount(0);
+});
+
+test("no term chip is clickable until the user's own terms have loaded", async ({
+  page,
+}) => {
+  // The race behind the first journey's local flake: the landing's
+  // terms-load effect ran once while `userId` was still '' (UserContext had
+  // not hydrated yet), took the logged-out branch, and put the demo chips
+  // ("Spring 2026", "Fall 2025") on screen for a SIGNED-IN user. A click on
+  // "Fall 2025" landed on a demo chip, and the real terms load then called
+  // setSelected(currentTerm) — snapping back to Spring 2026. Fast machines
+  // clicked inside that window; CI usually didn't.
+  //
+  // Forced here instead of timed: every GET of the user's course list (the
+  // request the chips are built from) is held until the test releases it.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let sawRequest!: () => void;
+  const requested = new Promise<void>((resolve) => (sawRequest = resolve));
+  await page.route(`**/api/graph/${USER_ACTIVE}/courses`, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    sawRequest();
+    await held;
+    await route.fallback();
+  });
+
+  await page.goto("/gradebook");
+  await requested;
+
+  // The request only fires after the render in which identity resolved, so
+  // on the broken build the demo chips are already committed by now. While
+  // the terms are held there must be no chip to click at all.
+  const fallChip = page.getByRole("button", { name: "Fall 2025", exact: true });
+  await expect(page.getByTestId("gradebook-transcript-open")).toBeVisible();
+  await expect(fallChip).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Spring 2026", exact: true })).toHaveCount(0);
+
+  // "Fall 2026" is a real term of rich-user-active that the demo chips don't
+  // have, so its chip being up proves the terms load has been APPLIED; a
+  // click after that is final, never overwritten by a later load.
+  release();
+  await expect(page.getByRole("button", { name: "Fall 2026", exact: true })).toBeVisible();
+  await fallChip.click();
+  await expect(fallChip).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "Spring 2026", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+
+  // And the pick is the one the page acts on: CS101 opens the FALL
+  // enrollment (Exams exists only on the fall-2025 gradebook).
+  await page
+    .getByRole("grid", { name: "Courses" })
+    .getByRole("link")
+    .filter({ hasText: "CS101" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Introduction to Computer Science" }),
+  ).toBeVisible();
+  await expect(page.getByText("Exams").first()).toBeVisible();
 });
 
 test("the transcript modal shows a cumulative GPA and every seeded term", async ({

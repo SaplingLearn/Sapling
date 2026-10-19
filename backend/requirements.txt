@@ -7,11 +7,12 @@ google-auth-oauthlib==1.4.0
 google-api-python-client==2.197.0
 python-dotenv==1.2.2
 pytesseract==0.3.13
-pillow==12.2.0
-pypdf==6.13.3
+pillow==12.3.0
+pypdf==6.21.1
 pypdfium2==5.10.1
 httpx==0.28.1
-cryptography>=42,<46
+# AESGCM column format remains compatible; 50 closes the audited legacy range.
+cryptography>=50,<51
 mammoth==1.12.0
 python-pptx==1.0.2
 recost==0.1.3
@@ -22,8 +23,10 @@ psycopg[binary]>=3.2,<4
 
 # OCR pipeline (Docling = default, GOT-OCR 2.0 = optional GPU fallback)
 docling>=2.15,<3
-transformers>=4.46,<5
-torch>=2.5,<3  # install CPU wheel in CPU-only deployments: pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Native GOT-OCR avoids legacy checkpoint Python; 5.10 also clears the audited
+# Transformers 4.x advisory ranges. Docling's model/chunking deps admit <6.
+transformers>=5.10,<6
+torch>=2.5,<3  # CPU-only deployments: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu (#700)
 
 openpyxl==3.1.5
 beautifulsoup4==4.15.0
@@ -65,19 +68,54 @@ ruff==0.15.18
 # >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
 # the #646 continuation appends run-level `run(instructions=...)` (added in
 # 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
-# requirements.lock pins 1.107.0, which is what CI installs; a local venv may
-# be older (the #707 work was run locally on 1.89.1). Both are above the floor.
-pydantic-ai-slim[google]>=1.11.1,<2
+# The maintained 1.107.7 backport closes the audited 1.x advisories without
+# migrating the run_stream_events contract to 2.x. The lock pairs graph/evals.
+pydantic-ai-slim[google]>=1.107.7,<2
+
+# Jev decision backend (learning loop PKG-15; spec §3.6, §13 A24, ADR 0027).
+# EXACT pin (invariant 24): Jev's confidence thresholds are tuned against one SDK
+# + one model (jev-1.13.0). Imported ONLY by agents/_jev.py.
+typesafe-sdk==0.7.2
+
+# <0.1 (#689): genai-prices is pydantic-ai's usage extractor. From 0.1.0 it
+# returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
+# 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every
+# Gemini run reports 0 tokens, so llm_usage (cost rollups, AI budget caps)
+# records zeros. The Dockerfile installs THIS file, not the lock, so the cap
+# must live here. Lift it only together with a pydantic-ai bump that accepts
+# the new fields — tests/test_agent_usage.py::test_real_gemini_response_*
+# goes red under the broken pairing, and agents/usage.py WARNs on any real run
+# that reports 0 tokens.
+genai-prices<0.1
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 
 # Eval suite (record-and-replay, see backend/tests/evals/_replay.py).
 # Used by `python -m tests.evals.*` and the .github/workflows/evals.yml job.
 # Not imported at runtime by any production code path.
-pydantic-evals>=0.0.5
+pydantic-evals>=1.107.7,<2
 
 # Optional cross-worker cache (#97). Only imported at runtime when REDIS_URL is
 # set; the app runs identically without it (services/cache.py degrades to no-op).
 # Upper bound per #163: services/cache.py only uses the from_url/ping/get/set
 # surface, which is stable across majors, but a major bump shouldn't land silently.
 redis>=5.0,<9
+
+# Read by scripts/lock_constraints.py's `verify` step in the Dockerfile (#694)
+# and by tests/dependency_manifest.py. Listed explicitly so it never depends on
+# arriving transitively; requirements.lock pins the exact version.
+packaging>=24
+
+# Audited security minimums for dependencies already used by the fast stack.
+# README.md and docs/local-supabase.md also support unlocked pip installs;
+# minimums prevent an already-installed vulnerable transitive from satisfying
+# that path. CI and Docker continue to enforce the complete hash-pinned lock.
+# TypeSafe's httpx2 client requires the matching httpcore2 release.
+anyio>=4.14.2,<5
+httpx2==2.12.0
+httpcore2==2.12.0
+httplib2>=0.32.0,<1
+oauthlib>=4.0.0,<5
+pyasn1>=0.6.4,<0.7
+soupsieve>=2.9.0,<3
+urllib3>=2.8.0,<3

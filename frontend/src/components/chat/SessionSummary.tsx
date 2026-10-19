@@ -6,11 +6,13 @@ import type { SessionSummaryData } from "@/lib/api";
 interface SessionSummaryProps {
   summary: SessionSummaryData;
   onClose: () => void;
-  onStartNext?: (concept: string) => void;
 }
 
-export function SessionSummary({ summary, onClose, onStartNext }: SessionSummaryProps) {
-  const { concepts_covered = [], mastery_changes = [], time_spent_minutes = 0, recommended_next = [] } = summary || {};
+/** PKG-14b (spec §11.2): the summary carries only what the backend fills —
+ *  `concepts_covered` and `time_spent_minutes`. The three lists that were
+ *  always empty (mastery changes, new connections, recommended next) are gone. */
+export function SessionSummary({ summary, onClose }: SessionSummaryProps) {
+  const { concepts_covered = [], time_spent_minutes = 0 } = summary || {};
 
   return (
     <div
@@ -54,57 +56,6 @@ export function SessionSummary({ summary, onClose, onStartNext }: SessionSummary
                 <span key={c} className="chip" style={{ textTransform: "none", fontFamily: "var(--font-sans)" }}>
                   {c}
                 </span>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {mastery_changes.length > 0 && (
-          <section style={{ marginBottom: 18 }}>
-            <div className="label-micro" style={{ marginBottom: 8 }}>Mastery changes</div>
-            <div style={{ display: "grid", gap: 6 }}>
-              {mastery_changes.map(m => {
-                const delta = (m.after ?? 0) - (m.before ?? 0);
-                const up = delta >= 0;
-                return (
-                  <div
-                    key={m.concept}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 12px",
-                      borderRadius: "var(--r-sm)",
-                      background: up ? "var(--accent-soft)" : "var(--err-soft)",
-                      color: up ? "var(--accent)" : "var(--err)",
-                      fontSize: 13,
-                    }}
-                  >
-                    <span style={{ fontWeight: 500 }}>{m.concept}</span>
-                    <span className="mono" style={{ fontSize: 12 }}>
-                      {Math.round((m.before ?? 0) * 100)}% → {Math.round((m.after ?? 0) * 100)}%
-                      <span style={{ marginLeft: 8, fontWeight: 600 }}>{up ? "+" : ""}{Math.round(delta * 100)}</span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {recommended_next.length > 0 && (
-          <section style={{ marginBottom: 8 }}>
-            <div className="label-micro" style={{ marginBottom: 8 }}>Recommended next</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {recommended_next.map(c => (
-                <button
-                  key={c}
-                  onClick={() => onStartNext?.(c)}
-                  className="btn btn--sm"
-                  style={{ fontSize: 12 }}
-                >
-                  {c}
-                </button>
               ))}
             </div>
           </section>

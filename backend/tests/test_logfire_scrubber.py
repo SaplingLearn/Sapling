@@ -1,127 +1,195 @@
-"""Tests for the Logfire scrubber that redacts user content.
-
-The scrubber's job is to keep document text out of Logfire spans without
-losing the ability to fingerprint a body for debugging. Two layers:
-
-* `scrub_attribute(name, value)` — pure transformation, used here for
-  fast unit coverage of the redaction logic.
-* `scrub_value(match)` — the Logfire callback shape; takes a real
-  `ScrubMatch` and returns either a sanitized value or `None` (delegating
-  to Logfire's default redaction).
-"""
+"""Hermetic, real-exporter contracts for content-free telemetry."""
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
-from services.logfire_scrubber import (  # noqa: PLC2701
-    _PREVIEW_CHARS,
-    scrub_attribute,
-    scrub_value,
-)
+import pytest
+from pydantic import BaseModel
+
+from services.logfire_scrubber import EXTRA_PATTERNS, scrub_attribute, scrub_value
 
 
-# ── scrub_attribute: pure transformation ────────────────────────────────────
-
-def test_long_prompt_is_truncated_and_fingerprinted():
-    body = "secret student essay text " * 50  # ~1300 chars
+@pytest.mark.parametrize("body", ["", "7", "student@example.invalid", "短い解答", "essay " * 300])
+def test_every_prompt_length_is_redacted_without_a_preview(body):
     result = scrub_attribute("gen_ai.prompt", body)
-
-    assert isinstance(result, str)
-    assert result.startswith(body[:_PREVIEW_CHARS])
-    assert "redacted" in result
-    assert f"{len(body)} chars" in result
-    assert "sha256:" in result
-    # Fingerprint is 16 hex chars.
-    fp = result.split("sha256:")[1].rstrip("]")
-    assert len(fp) == 16
-    assert all(c in "0123456789abcdef" for c in fp)
+    assert result.startswith("[redacted, type:string,") and "sha256:" in result
+    assert f"length:{len(body)}" in result
+    if len(body) > 1:
+        assert body not in result
+    assert len(result.split("sha256:")[1].rstrip("]")) == 16
 
 
-def test_short_string_on_risky_attribute_passes_through():
-    short = "Linear Regression"
-    assert scrub_attribute("user_prompt", short) == short
-    assert scrub_attribute("messages", short) == short
+@pytest.mark.parametrize(
+    "value",
+    [
+        42,
+        True,
+        None,
+        ["7", "student@example.invalid"],
+        {"UNSAFE_STUDENT_KEY": {"answer": "7", "other": ["student@example.invalid"]}},
+    ],
+)
+def test_whole_risky_value_replaces_nested_keys_values_and_numeric_answers(value):
+    result = scrub_attribute("all_messages_events", value)
+    assert isinstance(result, str) and result.startswith("[redacted,")
+    assert "UNSAFE_STUDENT_KEY" not in result and "student@example.invalid" not in result
+    assert '"answer"' not in result
 
 
-def test_non_risky_attribute_is_untouched_even_when_long():
-    long_request_id = "req-" + "x" * 500
-    assert scrub_attribute("request_id", long_request_id) == long_request_id
-    assert scrub_attribute("http.route", long_request_id) == long_request_id
+def test_unserializable_and_cyclic_values_fail_closed_without_repr():
+    class Sensitive:
+        def __str__(self):
+            pytest.fail("must not stringify unknown objects")
+
+        __repr__ = __str__
+
+    assert scrub_attribute("content", Sensitive()) == "[redacted]"
+    cyclic = []
+    cyclic.append(cyclic)
+    assert scrub_attribute("content", cyclic) == "[redacted]"
+    assert scrub_attribute("content", float("nan")) == "[redacted]"
 
 
-def test_nested_list_redacts_each_string_member():
-    """A list under a risky attribute name is sanitized member-wise."""
-    long_a = "alpha " * 30
-    long_b = "beta " * 30
-    short = "ok"
-    result = scrub_attribute("messages", [long_a, long_b, short, 42])
-    assert isinstance(result, list)
-    assert "redacted" in result[0] and "sha256:" in result[0]
-    assert "redacted" in result[1] and "sha256:" in result[1]
-    assert result[2] == short  # short string unchanged
-    assert result[3] == 42      # non-string passes through
+def test_non_risky_metadata_is_untouched():
+    assert scrub_attribute("request_id", "req-123") == "req-123"
+    assert scrub_attribute("http.route", "/notes/{id}") == "/notes/{id}"
 
 
-def test_nested_dict_redacts_string_values():
-    """A dict under a risky attribute redacts string leaves regardless of key."""
-    body = "long body content " * 20
-    result = scrub_attribute(
-        "all_messages_events",
-        {"role": "user", "content": body, "ts": 12345},
-    )
-    assert isinstance(result, dict)
-    assert result["role"] == "user"   # short, untouched
-    assert "redacted" in result["content"]
-    assert result["ts"] == 12345      # int, untouched
+def test_callback_redacts_routed_content_but_delegates_default_secrets():
+    risky = SimpleNamespace(path=("attributes", "all_messages_events", 0, "content"), value="7")
+    assert scrub_value(risky).startswith("[redacted,")
+    secret = SimpleNamespace(path=("attributes", "password"), value="PRIVATE_PASSWORD")
+    assert scrub_value(secret) is None
 
 
-def test_deeply_nested_structure_recurses():
-    """Pydantic AI's all_messages_events shape: list of dicts with content fields."""
-    body = "deep " * 50
-    payload = [
-        {"role": "user", "parts": [{"content": body, "type": "text"}]},
-        {"role": "model", "parts": [{"content": "ok", "type": "text"}]},
+def test_agent_instrumentation_explicitly_disables_content_and_binary_capture():
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "main.py").read_text())
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "instrument_pydantic_ai"
     ]
-    result = scrub_attribute("all_messages_events", payload)
-    assert isinstance(result, list)
-    inner = result[0]["parts"][0]["content"]
-    assert "redacted" in inner and "sha256:" in inner
-    # The "ok" string under a different risky path is short, passes through.
-    assert result[1]["parts"][0]["content"] == "ok"
+    assert len(calls) == 1
+    kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
+    for name in ("include_content", "include_binary_content"):
+        assert isinstance(kwargs[name], ast.Constant) and kwargs[name].value is False
+    provider = kwargs["tracer_provider"]
+    assert isinstance(provider, ast.Call) and isinstance(provider.func, ast.Name)
+    assert provider.func.id == "content_free_tracer_provider"
 
 
-# ── scrub_value: Logfire callback shape ─────────────────────────────────────
+def test_legacy_json_body_is_redacted_by_the_real_exporter_callback():
+    import logfire
+    from logfire.testing import SimpleSpanProcessor, TestExporter
 
-def _scrub_match(path, value):
-    """Build a ScrubMatch-like duck for the callback. Logfire passes a real
-    ScrubMatch with .path (tuple) and .value attributes; SimpleNamespace
-    matches the shape the callback uses."""
-    return SimpleNamespace(path=path, value=value, pattern_match=None)
+    exporter = TestExporter()
+    logfire.configure(
+        send_to_logfire=False,
+        console=False,
+        additional_span_processors=[SimpleSpanProcessor(exporter)],
+        scrubbing=logfire.ScrubbingOptions(
+            callback=scrub_value, extra_patterns=list(EXTRA_PATTERNS)
+        ),
+    )
+    raw = json.dumps(
+        {"UNSAFE_STUDENT_KEY": {"answer": "SHORT_PRIVATE_7", "email": "student@example.invalid"}}
+    )
+    with logfire.span("synthetic legacy export", user_prompt=raw, request_id="safe-request"):
+        pass
+    blob = json.dumps(exporter.exported_spans_as_dict())
+    assert "UNSAFE_STUDENT_KEY" not in blob and "SHORT_PRIVATE_7" not in blob
+    assert "student@example.invalid" not in blob and "sha256:" in blob and "safe-request" in blob
 
 
-def test_scrub_value_sanitizes_when_path_is_risky():
-    body = "x" * 500
-    match = _scrub_match(("attributes", "gen_ai.prompt"), body)
-    result = scrub_value(match)
-    assert isinstance(result, str)
-    assert "redacted" in result and "sha256:" in result
+def test_agent_tool_result_and_dynamic_output_keys_never_reach_real_exporter(monkeypatch):
+    import logfire
+    from logfire.testing import SimpleSpanProcessor, TestExporter
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.usage import RequestUsage
 
+    class Output(BaseModel):
+        value: dict[str, str]
 
-def test_scrub_value_returns_none_for_non_risky_path():
-    """Lets Logfire apply its default full-redaction for password/secret/etc."""
-    match = _scrub_match(("attributes", "password"), "hunter2")
-    result = scrub_value(match)
-    assert result is None  # delegates to Logfire's default behavior
+    exporter = TestExporter()
+    logfire.configure(
+        send_to_logfire=False,
+        console=False,
+        additional_span_processors=[SimpleSpanProcessor(exporter)],
+        scrubbing=logfire.ScrubbingOptions(
+            callback=scrub_value, extra_patterns=list(EXTRA_PATTERNS)
+        ),
+    )
+    monkeypatch.setattr(Agent, "_instrument_default", Agent._instrument_default)
+    from services.ai_trace_privacy import content_free_tracer_provider
 
+    logfire.instrument_pydantic_ai(
+        include_content=False,
+        include_binary_content=False,
+        tracer_provider=content_free_tracer_provider(),
+    )
+    calls = []
 
-def test_scrub_value_redacts_when_inner_path_segment_is_risky():
-    """The `messages` token inside a deeper path triggers the callback."""
-    body = "y" * 300
-    match = _scrub_match(("attributes", "all_messages_events", 0, "content"), body)
-    result = scrub_value(match)
-    assert isinstance(result, str)
-    assert "redacted" in result
+    def respond(_messages, info):
+        calls.append(True)
+        if len(calls) == 1:
+            parts = [ToolCallPart("read_source", {"learner_text": "PRIVATE_TOOL_ARG"})]
+        else:
+            parts = [
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"value": {"PRIVATE_DYNAMIC_OUTPUT_KEY": "SHORT_PRIVATE_7"}},
+                )
+            ]
+        return ModelResponse(
+            parts,
+            usage=RequestUsage(input_tokens=23, output_tokens=11),
+            model_name="synthetic-model",
+        )
+
+    agent = Agent(
+        FunctionModel(respond, model_name="synthetic-model"),
+        instructions="PRIVATE_SYSTEM_INSTRUCTION",
+        output_type=Output,
+    )
+
+    @agent.tool_plain
+    def read_source(learner_text: str) -> dict[str, str]:
+        assert learner_text == "PRIVATE_TOOL_ARG"
+        return {"PRIVATE_DYNAMIC_TOOL_KEY": "student@example.invalid"}
+
+    result = agent.run_sync(
+        [
+            "PRIVATE_STUDENT_PROMPT",
+            BinaryContent(data=b"PRIVATE_BINARY_CONTENT", media_type="image/png"),
+        ]
+    )
+    assert (
+        result.output.value == {"PRIVATE_DYNAMIC_OUTPUT_KEY": "SHORT_PRIVATE_7"} and len(calls) == 2
+    )
+    spans = exporter.exported_spans_as_dict()
+    blob = json.dumps(spans)
+    for private in (
+        "PRIVATE_SYSTEM_INSTRUCTION",
+        "PRIVATE_TOOL_ARG",
+        "PRIVATE_DYNAMIC_OUTPUT_KEY",
+        "SHORT_PRIVATE_7",
+        "PRIVATE_DYNAMIC_TOOL_KEY",
+        "student@example.invalid",
+        "PRIVATE_STUDENT_PROMPT",
+        "PRIVATE_BINARY_CONTENT",
+    ):
+        assert private not in blob
+    assert spans and "synthetic-model" in blob
+    assert any(s["attributes"].get("gen_ai.usage.input_tokens") == 23 for s in spans)
 
 
 # ── instrument_fastapi wiring: no request bodies/headers may egress ──────────
@@ -135,6 +203,7 @@ def test_scrub_value_redacts_when_inner_path_segment_is_risky():
 # the source via a `request_attributes_mapper` that returns None, keeps headers
 # off (`capture_headers=False`), and keeps the extra argument/endpoint spans off
 # (`extra_spans=False`). These guards fail loudly if any of that regresses.
+
 
 def _instrument_fastapi_kwargs():
     """Parse main.py (no import/side effects) and return the keyword
@@ -228,9 +297,7 @@ def test_request_body_does_not_appear_in_exported_spans():
     )
 
     secret = "MITOCHONDRIA_POWERHOUSE_ESSAY_BODY"
-    TestClient(app).post(
-        "/notes/note-123", json={"title": "Bio Notes", "body": secret + " " * 0}
-    )
+    TestClient(app).post("/notes/note-123", json={"title": "Bio Notes", "body": secret + " " * 0})
 
     spans = exporter.exported_spans_as_dict()
     assert spans, "instrument_fastapi should emit a request span"

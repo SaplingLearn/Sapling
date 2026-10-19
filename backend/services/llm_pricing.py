@@ -48,6 +48,15 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "jev-preview": (0.000042, 0.0),
 }
 
+# Cached-input rates per 1K tokens (spec §13 A21): 10% of the input rate —
+# Flash-Lite $0.01/M, Flash $0.03/M, Pro $0.125/M. A model missing here bills
+# cached input at its full input rate (the no-cache upper bound), never lower.
+CACHED_INPUT_PRICING: dict[str, float] = {
+    "gemini-2.5-pro": 0.000125,
+    "gemini-2.5-flash": 0.00003,
+    "gemini-2.5-flash-lite": 0.00001,
+}
+
 #: Model FAMILIES priced by prefix, consulted only when a served id has no
 #: exact entry above. Jev responses report the versioned id that actually
 #: served (`jev-1.14.0` the day the vendor ships it, whatever alias was
@@ -143,12 +152,17 @@ def _rates_for(model: str) -> tuple[float, float] | None:
     return None
 
 
-def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
-    """Compute USD cost for a call, or ``None`` if the model isn't priced.
+def cost_usd(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int | None = None,
+) -> float | None:
+    """Compute USD cost, or None for an unknown model.
 
-    Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
-    ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
-    and warns once.
+    Round to COST_SCALE decimal places to preserve micro-dollar decision costs.
+    Cached input is included in prompt_tokens and billed at the cached rate,
+    clamped to the actual prompt count.
     """
     rates = _rates_for(model)
     if rates is None:
@@ -169,8 +183,12 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | 
         return None
 
     in_rate, out_rate = rates
+    canonical = model if model in MODEL_PRICING else _canonical_model(model)
+    cached = min(max(int(cached_tokens or 0), 0), int(prompt_tokens))
+    cached_rate = CACHED_INPUT_PRICING.get(canonical, in_rate)
     cost = (
-        Decimal(str(in_rate)) * Decimal(int(prompt_tokens))
+        Decimal(str(in_rate)) * Decimal(int(prompt_tokens) - cached)
+        + Decimal(str(cached_rate)) * Decimal(cached)
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
     return float(cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP))

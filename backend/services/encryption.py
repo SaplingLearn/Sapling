@@ -33,6 +33,8 @@ ROLLOUT NOTES
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -67,6 +69,17 @@ def _load_key() -> bytes:
 
 _KEY = _load_key()
 _AESGCM = AESGCM(_KEY)
+
+
+def derive_key(purpose: str) -> bytes:
+    """A 32-byte server secret for `purpose`, derived from ENCRYPTION_KEY as
+    HMAC-SHA256(key, "sapling/" + purpose): deterministic, never the AES key
+    itself, and a different key for every purpose. For keyed hashes a client
+    must not be able to recompute (e.g. the check items' correct-option slot,
+    learning-loop spec §13 A37) — never for encryption."""
+    if not purpose:
+        raise ValueError("derive_key needs a non-empty purpose")
+    return hmac.new(_KEY, f"sapling/{purpose}".encode("utf-8"), hashlib.sha256).digest()
 
 
 def encrypt(value: str) -> str:

@@ -21,7 +21,8 @@
  *
  * The scripted quiz is a fixed three questions whose correct labels are B, C, A
  * (`agents/function_handlers_e2e.py::E2E_QUIZ_CORRECT_LABELS`) and the tutor
- * always answers `E2E_TUTOR_REPLY`. Both constants are mirrored in
+ * answers `E2E_TUTOR_REPLY` (kill-switch lane) or the loop's `E2E_LOOP_TUTOR_REPLY`
+ * (default lane — PKG-14b, spec §11.4). The constants are mirrored in
  * `support/quizStack.ts` — KEEP IN SYNC. Every journey asserts the scripted stem
  * before it answers, which doubles as the loud guard that the stack really is in
  * function mode rather than talking to live Gemini.
@@ -38,16 +39,22 @@ import {
   NOTE_CS_WEEK1_TITLE,
   SEEDED_RECURSION_ATTEMPT,
   SEEDED_RECURSION_MASTERY,
-  TUTOR_REPLY,
+  ASK_PANEL_REPLY_TAIL,
   answerAtEnd,
   chooseOption,
+  expectAskReply,
+  expectAskedQuestionFloored,
+  expectQuizAskSession,
   primeQuizBrowser,
   scriptedStem,
 } from "./support/quizStack";
+import { BKT_L0, bktAfterCorrect } from "./support/quiz";
 import { USER_ACTIVE } from "./support/stack";
 
-/** routes/quiz.py: 3 correct of 3 → delta = 3 × 0.03 = +0.09. */
-const ALL_CORRECT_DELTA = 3 * 0.03;
+/** PKG-14b (spec §11.2): 3 unassisted `mc` corrects from the BKT prior (the
+ *  seeded node has no learner_state row, HANDOFF-03) → 0.978259, in both lanes
+ *  — the quiz has no legacy path after the cutover. */
+const ALL_CORRECT_AFTER = bktAfterCorrect(BKT_L0, 3);
 
 /** The one attempt row this journey created — the seeded baseline attempts are
  *  namespaced `rich-*` and the route mints uuid4 ids. */
@@ -124,10 +131,10 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
   await expect(page.getByTestId("quiz-results-score")).toHaveText("3 of 3 correct");
   await expect(page.getByTestId("quiz-results-perfect")).toBeVisible();
 
-  // ── DB: the score really moved, by exactly the all-correct delta ─────────
+  // ── DB: the score really moved, to exactly the all-correct posterior ─────
   const masteryAfter = await masteryOf(NODE_RECURSION);
   expect(masteryAfter).toBeGreaterThan(masteryBefore);
-  expect(masteryAfter).toBeCloseTo(SEEDED_RECURSION_MASTERY + ALL_CORRECT_DELTA, 10);
+  expect(masteryAfter).toBeCloseTo(ALL_CORRECT_AFTER, 5);
 
   const attempts = await appAttemptsFor(NODE_RECURSION);
   expect(attempts).toHaveLength(1);
@@ -146,9 +153,12 @@ test("a quiz launched from the tree moves mastery and returns to the node panel"
   const newRow = page.getByTestId(`tree-node-recent-quiz-${attemptId}`);
   await expect(newRow).toBeVisible({ timeout: 30_000 });
   await expect(newRow).toContainText("3/3");
-  // `formatMasteryDelta` renders +9% for 0.25 → 0.34. The sign is the point:
-  // an all-correct quiz can never render a negative move.
-  await expect(newRow).toContainText("+9% mastery");
+  // `formatMasteryDelta` renders the attempt's p_delta (p_after − p_before of
+  // the evidence: BKT_L0 0.35 → 0.978259 = +63%). The sign is the point: an
+  // all-correct quiz can never render a negative move.
+  await expect(newRow).toContainText(
+    `+${Math.round((ALL_CORRECT_AFTER - BKT_L0) * 100)}% mastery`,
+  );
   await expect(page.getByTestId(`tree-node-recent-quiz-${SEEDED_RECURSION_ATTEMPT}`)).toBeVisible();
 });
 
@@ -282,14 +292,21 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
     "Scripted E2E fixture: option B is the marked answer for question 1.",
   );
 
-  // The streamed reply, byte-for-byte the function-mode constant.
-  await expect(sheet.getByText(TUTOR_REPLY)).toHaveCount(1, { timeout: 60_000 });
+  // The streamed reply, byte-for-byte the function-mode constant of THIS lane
+  // (spec §11.4): the loop opener's turn by default, the legacy tutor's under
+  // the kill switch.
+  await expectAskReply(sheet, 60_000);
+  await expect(sheet.getByText(ASK_PANEL_REPLY_TAIL)).toHaveCount(1, { timeout: 60_000 });
+  // Spec §13 A99: a quiz-ask session — the help on question 1 is recorded, and
+  // (default lane) the session teaches from the first turn instead of probing,
+  // which is why the follow-up below is served rather than 409'd.
+  const askedHash = await expectQuizAskSession(USER_ACTIVE);
 
   // A follow-up streams again into the same session.
   await page.getByTestId("quiz-ask-input").fill("Can you give me one more example?");
   await page.getByTestId("quiz-ask-send").click();
   await expect(sheet).toContainText("Can you give me one more example?");
-  await expect(sheet.getByText(TUTOR_REPLY)).toHaveCount(2, { timeout: 60_000 });
+  await expect(sheet.getByText(ASK_PANEL_REPLY_TAIL)).toHaveCount(2, { timeout: 60_000 });
 
   // ── Closing puts the student back on the exact same item ─────────────────
   await page.getByTestId("quiz-ask-panel-close").click();
@@ -323,6 +340,8 @@ test("Ask about this seeds the tutor, streams, and leaves the attempt intact", a
   expect(finished.id).toBe(midAttempt.id);
   expect(finished.completed_at).not.toBeNull();
   expect(Number(finished.score)).toBe(2);
+  // …and its evidence on the asked question carries the help floor (A99).
+  await expectAskedQuestionFloored(NODE_RECURSION, askedHash);
 
   // ── The handoff was real: the tutor now lists the session it opened ──────
   const sessionsAfter = await page.request.get(`/api/learn/sessions/${USER_ACTIVE}?limit=50`);

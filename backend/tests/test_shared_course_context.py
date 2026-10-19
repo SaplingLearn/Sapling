@@ -414,6 +414,14 @@ class TestUpdateCourseContext(unittest.TestCase):
 
 class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
+    @staticmethod
+    def _evidence_rpc(table_factory):
+        from test_learning_evidence_apply import _AtomicEvidenceRPC
+
+        # Exercise the real Evidence planner/receipt path, while these tests
+        # isolate its post-commit context effect from the network/database.
+        return patch("learning.evidence_transaction.rpc", side_effect=_AtomicEvidenceRPC(table_factory))
+
     @patch("services.academics.user_offering_ids_for_course", return_value=["off-1"])
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context")
@@ -435,12 +443,11 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         mock_table.side_effect = _table
 
         from services.graph_service import apply_graph_update
-        apply_graph_update(
-            "user1",
-            {"updated_nodes": [{"concept_name": "Loops", "mastery_delta": 0.1}],
-             "new_nodes": [],
-             "new_edges": []}
-        )
+        with self._evidence_rpc(_table):
+            apply_graph_update(
+                "user1",
+                {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
+            )
 
         mock_uoff.assert_called_once_with("user1", "course-1")
         mock_update_ctx.assert_called_once_with("off-1")
@@ -466,14 +473,15 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         mock_table.side_effect = _table
 
         from services.graph_service import apply_graph_update
-        try:
-            apply_graph_update(
-                "user1",
-                {"updated_nodes": [{"concept_name": "Loops", "mastery_delta": 0.05}],
-                 "new_nodes": [], "new_edges": []}
-            )
-        except RuntimeError:
-            self.fail("apply_graph_update raised RuntimeError from update_course_context")
+        with self._evidence_rpc(_table):
+            try:
+                apply_graph_update(
+                    "user1",
+                    {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
+                )
+            except RuntimeError:
+                self.fail("apply_graph_update raised RuntimeError from update_course_context")
+        mock_update_ctx.assert_called_once_with("off-1")
 
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context")
@@ -492,11 +500,11 @@ class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
         mock_table.side_effect = _table
 
         from services.graph_service import apply_graph_update
-        apply_graph_update(
-            "user1",
-            {"updated_nodes": [{"concept_name": "GenericConcept", "mastery_delta": 0.1}],
-             "new_nodes": [], "new_edges": []}
-        )
+        with self._evidence_rpc(_table):
+            apply_graph_update(
+                "user1",
+                {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
+            )
         mock_update_ctx.assert_not_called()
 
 

@@ -20,6 +20,9 @@ interface CustomSelectProps<T extends string = string> {
   align?: "left" | "right";
   className?: string;
   style?: React.CSSProperties;
+  /** E2E surface (docs/frontend-testids.md): `data-testid` on the trigger
+   *  button; each option gets `<testId>-option-<value>`. Omitted: no testids. */
+  testId?: string;
 }
 
 export function CustomSelect<T extends string = string>({
@@ -33,6 +36,7 @@ export function CustomSelect<T extends string = string>({
   align = "left",
   className,
   style,
+  testId,
 }: CustomSelectProps<T>) {
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
@@ -113,6 +117,7 @@ export function CustomSelect<T extends string = string>({
     >
       <button
         type="button"
+        data-testid={testId}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
@@ -175,6 +180,7 @@ export function CustomSelect<T extends string = string>({
             return (
               <li
                 key={opt.value}
+                data-testid={testId ? `${testId}-option-${opt.value}` : undefined}
                 role="option"
                 aria-selected={isSelected}
                 aria-disabled={opt.disabled}

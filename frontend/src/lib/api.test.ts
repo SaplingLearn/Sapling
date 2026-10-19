@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  answerReview,
   extractSyllabus,
   getCourses,
+  getLoopStatus,
+  getReviewNext,
+  getReviewSummary,
   uploadAvatar,
   uploadDocument,
   uploadDocumentStream,
@@ -311,5 +315,44 @@ describe('fetchJSON coded-error envelope', () => {
     expect(err.body).toBeUndefined();
     expect(err.code).toBeUndefined();
     expect(err.message).toBe('<html>502 Bad Gateway</html>');
+  });
+});
+
+describe('learning-loop review client (PKG-12)', () => {
+  const ok = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  it('getLoopStatus: 200 from the gate-only /review/active is active, same-origin with credentials', async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockResolvedValue(ok({ active: true }));
+    await expect(getLoopStatus('u 1')).resolves.toEqual({ active: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/learn/loop/review/active?user_id=u+1');
+    expect(init?.credentials).toBe('include');
+  });
+
+  it('getLoopStatus: the gate 404 is inactive; any other failure rejects', async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockResolvedValueOnce(new Response('{"detail":"learning loop not enabled"}', { status: 404 }));
+    await expect(getLoopStatus('u1')).resolves.toEqual({ active: false });
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    await expect(getLoopStatus('u1')).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('getReviewNext / answerReview hit the loop review routes', async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation(async () => ok({}));
+    await getReviewNext('u1', 'c1');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/learn/loop/review/next?user_id=u1&course_id=c1');
+    await getReviewNext('u1');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/learn/loop/review/next?user_id=u1');
+    const body = { user_id: 'u1', session_id: 's', kind: 'flashcard' as const, item_id: 'f1', rating: 3 };
+    await answerReview(body);
+    const [url, init] = fetchMock.mock.calls[2];
+    expect(url).toBe('/api/learn/loop/review/answer');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual(body);
+    await getReviewSummary('u1', 'c1');
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/learn/loop/review/summary?user_id=u1&course_id=c1');
   });
 });

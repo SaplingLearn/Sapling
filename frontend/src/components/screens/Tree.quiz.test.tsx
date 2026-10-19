@@ -115,7 +115,7 @@ function attempt(over: Partial<AttemptSummary> & { quiz_id: string }): AttemptSu
     difficulty: "medium",
     mastery_before: 0.4,
     mastery_after: 0.44,
-    mastery_delta: 0.04,
+    p_delta: 0.04,
     created_at: "2026-08-20T10:00:00Z",
     completed_at: "2026-08-20T10:05:00Z",
     ...over,
@@ -267,9 +267,9 @@ describe("Recent quizzes", () => {
       limit: 100,
       offset: 0,
       attempts: [
-        attempt({ quiz_id: "q-up", score: 3, total: 3, mastery_delta: 0.04, completed_at: "2026-08-21T10:00:00Z" }),
-        attempt({ quiz_id: "q-down", score: 1, total: 4, mastery_delta: -0.02, completed_at: "2026-08-20T10:00:00Z" }),
-        attempt({ quiz_id: "q-null", score: 2, total: 3, mastery_delta: null, completed_at: "2026-08-19T10:00:00Z" }),
+        attempt({ quiz_id: "q-up", score: 3, total: 3, p_delta: 0.04, completed_at: "2026-08-21T10:00:00Z" }),
+        attempt({ quiz_id: "q-down", score: 1, total: 4, p_delta: -0.02, completed_at: "2026-08-20T10:00:00Z" }),
+        attempt({ quiz_id: "q-null", score: 2, total: 3, p_delta: null, completed_at: "2026-08-19T10:00:00Z" }),
       ],
     });
     const user = userEvent.setup();
