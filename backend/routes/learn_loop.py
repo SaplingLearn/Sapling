@@ -4663,12 +4663,14 @@ def _name_in_answer(name: str, item) -> bool:
     return bool(words) and words <= set(_WORD.findall(answer))
 
 
-async def _model_close(draft, *, user_id: str, request_id: str) -> object | None:
+async def _model_close(
+    draft, *, user_id: str, request_id: str, session_id: str | None = None
+) -> object | None:
     """One close run under CLOSE_RUN_TIMEOUT_S (a timed-out run is the
     unavailable agent: the deterministic close is stored)."""
     try:
         return await asyncio.wait_for(
-            run_session_close(draft, user_id=user_id, request_id=request_id),
+            run_session_close(draft, user_id=user_id, request_id=request_id, session_id=session_id),
             CLOSE_RUN_TIMEOUT_S,
         )
     except TimeoutError:
@@ -4759,7 +4761,9 @@ async def close_session(
                             raise
                         limited = True
                 if not limited:
-                    out = await _model_close(draft, user_id=user_id, request_id=request_id)
+                    out = await _model_close(
+                        draft, user_id=user_id, request_id=request_id, session_id=session_id
+                    )
             record = (
                 served_close(out, draft, items)
                 if out is not None
