@@ -62,10 +62,16 @@ export function TopicChecklistPanel({ userId, courseId, semester, semesters = []
     setBusy(true);
     setError("");
     try {
-      const result = topicId
-        ? await setTopicReviewed(userId, courseId, topicId, !!checked, scopedSemester, abort.signal)
-        : await refreshTopicChecklist(userId, courseId, scopedSemester, abort.signal);
-      if (generation.current === version && !abort.signal.aborted) setData(result);
+      if (topicId) {
+        const progress = await setTopicReviewed(userId, courseId, topicId, !!checked, scopedSemester, abort.signal);
+        // Freshness is not recomputed by a checkmark; keep the last read's.
+        if (generation.current === version && !abort.signal.aborted) {
+          setData((prev) => ({ needs_refresh: prev?.needs_refresh ?? false, warnings: prev?.warnings ?? [], ...progress }));
+        }
+      } else {
+        const result = await refreshTopicChecklist(userId, courseId, scopedSemester, abort.signal);
+        if (generation.current === version && !abort.signal.aborted) setData(result);
+      }
     } catch {
       if (generation.current === version && !abort.signal.aborted) setError("Could not save the checklist. Please try again.");
     } finally {

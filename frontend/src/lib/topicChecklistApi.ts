@@ -50,8 +50,13 @@ export function refreshTopicChecklist(userId: string, courseId: string, semester
   return fetchJSON<TopicChecklist>(path(userId, courseId, "/refresh", semester), { method: "POST", signal });
 }
 
+/** A checkmark changes progress, never evidence: the server re-derives topic
+ *  state without re-reading sources, so freshness (`needs_refresh`/`warnings`)
+ *  is not part of this response — keep the values from the last read. */
+export type TopicChecklistProgress = Omit<TopicChecklist, "needs_refresh" | "warnings">;
+
 export function setTopicReviewed(userId: string, courseId: string, topicId: string, checked: boolean, semester?: string, signal?: AbortSignal) {
-  return fetchJSON<TopicChecklist>(path(userId, courseId, `/topics/${encodeURIComponent(topicId)}`, semester), {
+  return fetchJSON<TopicChecklistProgress>(path(userId, courseId, `/topics/${encodeURIComponent(topicId)}`, semester), {
     method: "PATCH", body: JSON.stringify({ checked }), signal,
   });
 }

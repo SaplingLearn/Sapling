@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from agents.topic_checklist import TopicOutline, topic_checklist_agent
+from services import academics
 from services import topic_checklist_service as svc
 from services.encryption import decrypt_json, encrypt_if_present
 
@@ -97,7 +98,22 @@ def state(monkeypatch):
                          "mastery_score": 0.3, "mastery_tier": "struggling", "times_studied": 1,
                          "last_studied_at": "2026-10-11T12:00:00Z"}],
     }
-    monkeypatch.setattr(svc, "table", lambda name: MemoryTable(db, name))
+    reads = []
+
+    class LoggedTable(MemoryTable):
+        def select(self, columns="*", filters=None, order=None, limit=None, offset=None):
+            reads.append((self.name, columns, dict(filters or {})))
+            return super().select(columns, filters, order, limit, offset)
+
+    def service_table(name):
+        # CLAUDE.md: term/offering/enrollment resolution goes through
+        # services/academics.py, never direct reads from this service.
+        assert name not in {"enrollments", "course_offerings", "terms"}, name
+        return LoggedTable(db, name)
+
+    monkeypatch.setattr(svc, "table", service_table)
+    monkeypatch.setattr(academics, "table", lambda name: MemoryTable(db, name))
+    db["_reads"] = reads
     monkeypatch.setattr(svc, "current_term", lambda: {"id": "fall"})
     monkeypatch.setattr(svc, "term_id_for_label", lambda label: {"Fall 2026": "fall", "Spring 2026": "spring"}.get(label))
 
@@ -137,7 +153,8 @@ def test_live_priorities_and_manual_checkmark_do_not_raise_mastery(state):
     recursion = result["topics"][0]
     assert recursion["name"] == "Recursion" and recursion["priority"] == "high"
     assert recursion["status"] == "needs_review" and recursion["review_reasons"] == ["Weak mastery"]
-    assert recursion["prerequisite_gaps"] == ["Functions"]
+    # Functions is not a tracked graph node: unknown, not a gap.
+    assert recursion["prerequisite_gaps"] == []
     before = copy.deepcopy(db["graph_nodes"])
     checked = svc.set_reviewed("u", "course", recursion["id"], True)
     assert checked["topics"][0]["checked"] is True
@@ -196,8 +213,8 @@ def test_sources_and_assessments_are_owner_offering_scoped(state):
     ])
     svc.refresh_checklist("u", "course", "Fall 2026")
     payload = calls[0]
-    assert {s["id"] for s in payload["sources"]} == {"course-description", "document:doc", "assessment:exam", "concept:n"}
-    assert [a["id"] for a in payload["assessments"]] == ["exam"]
+    assert {s["id"] for s in payload["sources"]} == {"course-description", "document:doc", "assessment:exam", "assessment:late", "concept:n"}
+    assert [a["id"] for a in payload["assessments"]] == ["exam", "late"]
     assert "SECRET" not in str(payload) and "OLD" not in str(payload)
     scope = svc.resolve_scope("u", "course", "Spring 2026")
     assert scope["enrollment_id"] == "old-enr"
@@ -335,13 +352,39 @@ def test_review_dates_accept_legacy_utc_and_topic_keys_normalize_names(state):
     assert svc.topic_key("  RECURSION  ") == svc.topic_key("Recursion")
 
 
-def test_assessment_window_changes_invalidate_the_cached_outline(state):
-    db, _ = state
+def test_passing_days_do_not_invalidate_the_cached_outline(state):
+    """The evidence hash must not move just because today moved: a
+    today-relative assessment window changed it as exams entered or left the
+    window, and needs_refresh auto-triggers a paid regeneration."""
+    db, calls = state
+    svc.refresh_checklist("u", "course")
     scope = svc.resolve_scope("u", "course", None)
     before = svc.build_snapshot("u", scope, NOW.date())
-    after = svc.build_snapshot("u", scope, NOW.date().replace(day=16))
-    assert before["hash"] != after["hash"]
-    assert after["payload"]["assessments"] == []
+    for later in (NOW.date().replace(day=16), NOW.date().replace(month=11, day=20)):
+        assert svc.build_snapshot("u", scope, later)["hash"] == before["hash"]
+    assert not svc.get_checklist("u", "course")["needs_refresh"]
+    # A material change (a new exam) still invalidates it.
+    db["assignments"].append({"id": "quiz2", "enrollment_id": "enr", "title": "Recursion quiz",
+                              "assignment_type": "quiz", "due_date": "2026-10-20"})
+    assert svc.build_snapshot("u", scope, NOW.date())["hash"] != before["hash"]
+
+
+def test_assessment_window_still_governs_display_and_urgency(state, monkeypatch):
+    db, _ = state
+    result = svc.refresh_checklist("u", "course")
+    assert [a["id"] for a in result["assessments"]] == ["exam"]
+    recursion = next(t for t in result["topics"] if t["name"] == "Recursion")
+    assert [a["id"] for a in recursion["assessments"]] == ["exam"]
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(svc, "datetime", Later)
+    later = svc.get_checklist("u", "course")
+    assert not later["needs_refresh"] and later["assessments"] == []
+    assert next(t for t in later["topics"] if t["name"] == "Recursion")["assessments"] == []
 
 
 def test_generation_rate_limit_and_cached_reads(state):
@@ -385,3 +428,63 @@ def test_unicode_and_metadata_cannot_bypass_source_budget(state):
     snapshot = svc.build_snapshot("u", svc.resolve_scope("u", "course", None), NOW.date())
     assert snapshot["truncated"] and len(snapshot["nodes"]) == 1200
     assert sum(len(json.dumps(s)) for s in snapshot["payload"]["sources"]) <= svc.MAX_SOURCE_CHARS
+
+
+def test_prerequisite_gaps_count_only_known_weak_unreviewed_prerequisites(state):
+    db, _ = state
+    db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-11T12:00:00Z")
+    db["graph_nodes"].append({**db["graph_nodes"][0], "id": "fn", "concept_name": "Functions",
+                              "mastery_score": 0.3})
+    recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
+    assert recursion["status"] == "mastered"
+    assert recursion["prerequisite_gaps"] == ["Functions"] and recursion["priority"] == "high"
+    # The student's own checkmark on the prerequisite closes the gap.
+    checked = svc.set_reviewed("u", "course", svc.topic_key("Functions"), True)
+    recursion = next(t for t in checked["topics"] if t["name"] == "Recursion")
+    assert recursion["prerequisite_gaps"] == [] and recursion["priority"] == "normal"
+
+
+def test_untracked_prerequisite_alone_does_not_raise_priority(state):
+    db, _ = state
+    db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-11T12:00:00Z")
+    recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
+    assert recursion["prerequisite_gaps"] == [] and recursion["priority"] == "normal"
+
+
+def test_checkmark_does_not_rebuild_the_evidence_snapshot(state, monkeypatch):
+    """A checkbox changes progress, never evidence: no document/catalog text
+    is read or decrypted, and freshness is left to the GET/refresh."""
+    db, _ = state
+    db["course_chunks"] = [{"id": "cat", "course_id": "CAS CS 111", "category": "catalog",
+                            "chunk_text": encrypt_if_present("Catalog text")}]
+    initial = svc.refresh_checklist("u", "course")
+    db["_reads"].clear()
+
+    def no_decrypt(value):
+        raise AssertionError("set_reviewed decrypted evidence text")
+
+    monkeypatch.setattr(svc, "decrypt_if_present", no_decrypt)
+    result = svc.set_reviewed("u", "course", svc.topic_key("Recursion"), True)
+    text_columns = {"summary", "extracted_text", "concept_notes", "chunk_text", "notes"}
+    for name, columns, _ in db["_reads"]:
+        assert not text_columns & set(columns.split(",")), (name, columns)
+    assert "needs_refresh" not in result and "warnings" not in result
+    recursion = next(t for t in result["topics"] if t["name"] == "Recursion")
+    before = next(t for t in initial["topics"] if t["name"] == "Recursion")
+    assert recursion["checked"] and recursion["sources"] == before["sources"]
+    assert recursion["assessments"] == before["assessments"]
+
+
+def test_graph_edges_are_read_for_this_course_only(state):
+    db, _ = state
+    svc.build_snapshot("u", svc.resolve_scope("u", "course", None), NOW.date())
+    edge_reads = [f for name, _, f in db["_reads"] if name == "graph_edges"]
+    assert edge_reads and all(f.get("source_node_id", "").startswith("in.(") for f in edge_reads)
+    assert all("n" in f["source_node_id"][len("in.("):-1].split(",") for f in edge_reads)
+
+
+def test_no_tracked_nodes_means_no_edge_read(state):
+    db, _ = state
+    db["graph_nodes"] = []
+    svc.build_snapshot("u", svc.resolve_scope("u", "course", None), NOW.date())
+    assert not [r for r in db["_reads"] if r[0] == "graph_edges"]
