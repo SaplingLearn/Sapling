@@ -917,26 +917,52 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
     with empty responses and never wrote the LoopTurnOut — Gemini only takes
     the structured (JSON) turn with no tools declared (the agent now declares
     no tools after a tool round, so this is the rescue for what is left). So: a
-    budget check FIRST (invariant 23; None at the hard level), one counted
+    budget check FIRST (invariant 23; None at the hard level or when the
+    existing slot exceeds the refreshed tier ceiling), one counted
     tutor call (A39), then `continuation_plan` run on the SAME slot with every
     tool removed — the safety property, `override(tools=[], toolsets=[])`
     (pinned). Returns the rendered turn (the output validator still judges it
     against deps.loop_turn)."""
-    decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
-    if decision.level == "hard":
+    decision = ai_budget.check(
+        turn.user_id, "tutor", turn.band, **turn.budget_counters(include_current_run=True)
+    )
+    if decision.level == "hard" or (turn.tier == "deep" and decision.tier_ceiling != "deep"):
+        # Never rescue on the old deep slot after the known primary work has
+        # lowered its allowance. Replanning/rerouting would be a different turn.
         return None
     plan = continuation_plan(
         assembled=turn.assembled, run_kwargs=turn.run_kwargs, messages=messages
     )
     ai_budget.count_tutor_call(turn.user_id)
-    with turn.agent.override(tools=[], toolsets=[]):
-        result = record_agent_usage(
-            await turn.agent.run(plan.prompt, **plan.run_kwargs),
-            feature=plan.feature,
-            task=turn.slot,
-            user_id=turn.user_id,
-            session_id=turn.session_id,
-        )
+    usage = RunUsage()
+    result = None
+    try:
+        with turn.agent.override(tools=[], toolsets=[]):
+            result = await turn.agent.run(plan.prompt, usage=usage, **plan.run_kwargs)
+    finally:
+        # A failed continuation still consumed its bounded model requests.
+        # Keep an incomplete bill explicitly partial; never invent missing tokens.
+        if result is None:
+            logger.warning(
+                "Loop continuation ended without final output; usage is incomplete "
+                "(known model requests=%s); in-flight token usage may be missing",
+                usage.requests,
+            )
+        if result is not None or usage.requests:
+            billed = result if result is not None else UnfinishedRun(usage)
+            turn.run_requests += _requests_of(billed)
+            try:
+                record_agent_usage(
+                    billed,
+                    feature=plan.feature,
+                    task=turn.slot,
+                    user_id=turn.user_id,
+                    session_id=turn.session_id,
+                )
+            except Exception:
+                # The canonical helper never raises. Keep instrumentation from
+                # replacing a provider error or cancellation if that changes.
+                logger.debug("Loop continuation usage hook failed", exc_info=True)
     return turn.render(result.output)
 
 
@@ -1610,10 +1636,19 @@ class _LoopTurn:
     def slot(self) -> str:
         return LOOP_TIER_SLOTS[self.tier]
 
-    def budget_counters(self) -> dict:
+    def budget_counters(self, *, include_current_run: bool = False) -> dict:
+        tutor = int(self.state.get("tutor_requests") or 0)
+        deep = int(self.state.get("deep_requests") or 0)
+        if include_current_run and self.run_requests:
+            # The current turn has not completed/saved yet. Mirror _apply_turn's
+            # existing units without mutating its counters: ordinary turns add
+            # one, while confronting deep turns count every known model request.
+            tutor += 1
+            if self.tier == "deep":
+                deep += self.run_requests if self.confront_used is not None else 1
         return {
-            "session_tutor_requests": int(self.state.get("tutor_requests") or 0),
-            "session_deep_requests": int(self.state.get("deep_requests") or 0),
+            "session_tutor_requests": tutor,
+            "session_deep_requests": deep,
             "arm_session": bool(self.arm),  # PKG-14 (A20): both variants of an arm alike
         }
 
@@ -2703,11 +2738,16 @@ async def _stream_turn(turn: _LoopTurn):
         return
     usage = RunUsage()
 
+    def record_incomplete_usage(known_usage) -> None:
+        # Completed responses from an exhausted/cancelled stream still cost.
+        # An in-flight response may report nothing; never invent its token bill.
+        if known_usage is not None and _requests_of(UnfinishedRun(known_usage)):
+            turn.record_usage(UnfinishedRun(known_usage))
+
     async def fallback(messages: list) -> dict:
         """Rung 1 (m2): the SAME planned turn — no second plan(), no second
         retrieval — billed for the failed streamed run and continued from its
         messages (tool results) by the tool-less continuation."""
-        turn.record_usage(UnfinishedRun(usage))
         reply = await _continue_turn(turn, messages)
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
 
@@ -2725,6 +2765,7 @@ async def _stream_turn(turn: _LoopTurn):
             on_complete=turn.complete,
             nonstream_fallback=fallback,
             on_usage=turn.record_usage,
+            on_incomplete_usage=record_incomplete_usage,
             request_id=turn.request_id,
             transform=turn.redact,
             transform_final=turn.serve,

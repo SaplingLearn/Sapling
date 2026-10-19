@@ -1412,6 +1412,8 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
         session_id="s1",  # PKG-14b (A92): the continuation's usage row names its session
         band="develop",
         slot="loop_tutor",
+        tier="standard",
+        run_requests=0,
         agent=agent,
         assembled="PREFIX\n\nhi",
         render=render_turn,  # the turn's served render (fix round 2: the H2 hint question)
@@ -1422,7 +1424,7 @@ def test_loop_continuation_is_tool_less_budget_checked_and_capped():
             "message_history": ["H"],
             "usage_limits": LOOP_LIMITS,
         },
-        budget_counters=lambda: {
+        budget_counters=lambda **kwargs: {
             "session_tutor_requests": 0,
             "session_deep_requests": 0,
             "arm_session": False,

@@ -523,6 +523,7 @@ async def stream_structured_turn(
     on_complete: Callable[[str, dict, list], dict | None],
     nonstream_fallback: Callable[[list], Awaitable[dict]] | None = None,
     on_usage: Callable[[Any], None] | None = None,
+    on_incomplete_usage: Callable[[Any], None] | None = None,
     request_id: str = "",
     transform: Callable[[str], str] | None = None,
     transform_final: Callable[[str], str] | None = None,
@@ -559,8 +560,14 @@ async def stream_structured_turn(
     (the caller persists — and may re-check — what the model actually wrote),
     while the flushed tokens and `done.data["reply"]` carry the TRANSFORMED
     render, so the client's streamed text and `done.reply` always agree.
-    `on_usage(run.result)` runs once after the run completes, before
-    on_complete (guarded, as in stream_agent_turn).
+    `on_usage(run.result)` runs once after the producer completes, before
+    on_complete (guarded, as in stream_agent_turn), even if the consumer
+    disconnects before receiving the final event. If no result exists,
+    `on_incomplete_usage(run_kwargs.get("usage"))` receives the usage known
+    after the producer has unwound. It can account for completed responses
+    on an exhausted, failed or cancelled run, but an in-flight response may
+    not have reported its usage: this is a lower bound, not a complete bill.
+    Neither callback retries the model or persists a tutor reply.
 
     `transform_final` (default: `transform`) makes the FINAL text instead —
     a caller whose partial filter hides text (the loop's leak cut) may serve a
@@ -656,7 +663,28 @@ async def stream_structured_turn(
         except Exception as exc:
             outcome["error"] = exc
         finally:
-            queue.put_nowait(_END)
+            # The producer owns settlement: a consumer can close at any yield,
+            # before the ordinary final-result path runs. Wait until the agent
+            # contexts unwind so every usage count they did report is included.
+            try:
+                result = outcome.get("result")
+                if result is not None:
+                    if on_usage is not None:
+                        on_usage(result)
+                else:
+                    usage = run_kwargs.get("usage")
+                    logger.warning(
+                        "Structured run ended without final output; usage is %s "
+                        "(known model requests=%s); in-flight token usage may be missing",
+                        "incomplete" if usage is not None else "unavailable",
+                        getattr(usage, "requests", "unknown"),
+                    )
+                    if on_incomplete_usage is not None:
+                        on_incomplete_usage(usage)
+            except Exception:
+                logger.debug("structured usage hook failed; usage row dropped", exc_info=True)
+            finally:
+                queue.put_nowait(_END)
 
     producer = asyncio.create_task(_produce())
     streamed_any = False  # any token relayed this turn (retracted or not)
@@ -721,12 +749,6 @@ async def stream_structured_turn(
         async for ev in _rung1_fallback_events(fallback, request_id):
             yield ev
         return
-
-    if on_usage is not None:
-        try:
-            on_usage(run_result)
-        except Exception:
-            logger.debug("on_usage hook failed; usage row dropped", exc_info=True)
 
     # Flush: the final render includes the last field's trailing sentence,
     # which no partial could mark complete.
