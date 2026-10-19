@@ -175,13 +175,19 @@ Anything that forwards spans or exception state is on the student-data path.
     Nothing reaches PostHog — no event, no exception, no `$ai_generation`,
     not even a personless one — for:
     - a student with `user_settings.analytics_opt_out = true` (the settings
-      toggle, PATCH `/api/profile/{user_id}/settings`; the frontend also sets
-      it when the browser sends Do Not Track / Global Privacy Control);
+      toggle, PATCH `/api/profile/{user_id}/settings`). Only the student
+      sets it: nothing writes it from a Do Not Track / Global Privacy Control
+      signal. (Corrected 2026-10-19: an earlier wording said the frontend sets
+      it under DNT/GPC; nothing ever did);
     - any request carrying `Sec-GPC: 1` or `DNT: 1`, whoever the user is —
-      **per request only**. Work that runs outside the request (the index
-      sweeper, DBOS workflows, scripts) has no browser signal and follows the
-      stored `analytics_opt_out` alone. This is a known, deliberate
-      limitation: persisting a header would turn a browser signal into a
+      **per request only**. Under the signal the browser loads no posthog-js
+      (no pageviews), and the backend drops every event captured during that
+      request, including its BackgroundTasks. Work that runs outside the
+      request (the index sweeper's `rag.index_failed` / `rag.index_recovered`
+      / `rag.relevance_scored`, DBOS-resumed pipelines, scripts) has no
+      browser signal and follows the stored `analytics_opt_out` alone, so it
+      is still sent under the student's id unless they opted out. This is a
+      known, deliberate limitation: persisting a header would turn a browser signal into a
       stored choice the student never made. The frontend's toggle, which
       also defaults on under DNT/GPC, is how a student makes it stored;
     - an opted-out student's request, even for events that name no user —

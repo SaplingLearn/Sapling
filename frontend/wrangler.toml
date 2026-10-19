@@ -27,6 +27,12 @@ directory = ".open-next/assets"
 # are kept as explicit fallbacks. IMPORTANT: these `[vars]` are RUNTIME-only —
 # the /api rewrite and NEXT_PUBLIC_* inlining are baked at BUILD time, so the
 # staging Workers Build must ALSO set DEPLOY_ENV=staging as a build variable.
+#
+# Product analytics (PostHog) is the same story: NEXT_PUBLIC_POSTHOG_KEY is
+# inlined at build time, so it is set ONLY as a Workers Builds build variable
+# (dashboard: Workers & Pages → frontend / frontend-staging → Settings → Build
+# → Variables and secrets), never here. Unset = analytics off. See
+# src/lib/analytics.ts and frontend/.env.example.
 [vars]
 DEPLOY_ENV = "production"
 NEXT_PUBLIC_API_URL = "https://api.saplinglearn.com"

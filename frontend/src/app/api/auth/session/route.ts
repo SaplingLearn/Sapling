@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { signSession, SESSION_MAX_AGE } from '@/lib/sessionToken';
+import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from '@/lib/sessionToken';
 import { sanitizeCookieDomain } from '@/lib/cookieDomain';
 import { resolveFrontendEnv } from '@/lib/deployGuard';
 
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
   try {
     const token = await signSession(verifiedUserId);
     const response = NextResponse.json({ ok: true });
-    response.cookies.set('sapling_session', token, {
+    response.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
@@ -124,7 +124,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set('sapling_session', '', {
+  response.cookies.set(SESSION_COOKIE_NAME, '', {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',

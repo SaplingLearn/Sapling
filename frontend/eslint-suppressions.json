@@ -116,6 +116,11 @@
       "count": 2
     }
   },
+  "src/components/screens/Settings.tsx": {
+    "no-restricted-syntax": {
+      "count": 15
+    }
+  },
   "src/components/screens/Social.tsx": {
     "@typescript-eslint/no-explicit-any": {
       "count": 9

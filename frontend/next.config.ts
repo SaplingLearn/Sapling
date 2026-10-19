@@ -4,6 +4,7 @@ import type { NextConfig } from "next";
 // foot of this file for why it is not simply invoked.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
+import { TRAILING_SLASH_REDIRECT } from "./src/lib/trailingSlashRedirect";
 
 // Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
 // branch exists to fail the build when DEPLOY_ENV disagrees with explicit
@@ -100,6 +101,12 @@ const nextConfig: NextConfig = {
     "react-kapsule",
     "three",
   ],
+  // PostHog's endpoints end in a slash (`/ingest/e/`, `/ingest/flags/?v=2`);
+  // Next's default trailing-slash redirect would 308 every analytics batch
+  // before the /ingest route handler (src/app/ingest/[...path]/route.ts) sees
+  // it. With this set, the page routes' own slash normalisation is kept by the
+  // `redirects()` entry below instead.
+  skipTrailingSlashRedirect: true,
   async rewrites() {
     return [
       { source: "/api/auth/session", destination: "/api/auth/session" },
@@ -109,6 +116,11 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       { source: "/auth", destination: "/", permanent: false },
+      // Stand-in for the trailing-slash redirect `skipTrailingSlashRedirect`
+      // turns off (see above): Next's `trailingSlash: false` built-in, for
+      // every path except `/ingest/*` (PostHog's endpoints need the slash).
+      // The rule and why it is shaped that way: src/lib/trailingSlashRedirect.ts.
+      TRAILING_SLASH_REDIRECT,
     ];
   },
   async headers() {

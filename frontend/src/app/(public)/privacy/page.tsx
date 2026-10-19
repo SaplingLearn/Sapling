@@ -107,6 +107,7 @@ const sections = [
         label: "Information collected automatically:",
         list: [
           "Basic usage data and session metadata to maintain and improve the Service",
+          "Product analytics, only while you are signed in and have not turned it off: the pages of the app you view, with basic browser and device details (but not your IP address); actions you take in the app, such as signing in, starting or finishing a quiz, messaging the tutor or uploading a document, with details like scores, counts and the IDs of the items involved; for each AI response we generate for you, the AI model used, the number of tokens processed and the cost; and reports of errors on our servers. Each record is tied to your Sapling account ID, not your name or email. We do not record what you type, or the text of your notes, documents, messages or AI responses. Analytics stores nothing in your browser (no cookies or local storage)",
         ],
       },
     ],
@@ -130,6 +131,7 @@ const sections = [
     body: "We do not sell your personal data. We share information only in the following limited circumstances:",
     highlights: [
       { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
+      { label: "Product analytics:", text: "We use PostHog, hosted in the United States, to understand how the Service is used so we can improve it. For signed-in users who have not turned analytics off, PostHog receives: the pages of the app you view, sent from your browser (never from our public pages or sign-in screens); records of actions you take in the app, sent from our servers; for each AI response we generate for you, the AI model, the number of tokens processed, the cost and a request reference, but never your prompt or the AI's reply; and reports of errors on our servers, showing the type of error and where in our code it happened, without the error message. Page views include basic browser and device details (browser and operating-system type, screen size, language, time zone and the referring page) but not your IP address: our servers relay them to PostHog without it, and we turn off location lookup. All of it is tied to your Sapling account ID, which is based on your Google account's ID number. Nothing is sent for anyone who is signed out. PostHog does not receive your name, email address, IP address, what you type, or the content of your notes, documents or messages; we do not record your screen, and analytics stores nothing in your browser (no cookies or local storage). You can turn product analytics off at any time under Settings → Data. The choice is saved to your account, applies wherever you sign in, and stops all of the above within about a minute. If your browser sends a Do Not Track or Global Privacy Control signal, we send no page views from it, and we don't share actions from requests that carry the signal. Records of some background processing on your documents can still be shared unless you turn product analytics off in Settings → Data." },
       { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
       { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
     ],
@@ -208,7 +210,7 @@ export default function PrivacyPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: May 3, 2026</span>
+              <span style={META}>Last updated: October 16, 2026</span>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>

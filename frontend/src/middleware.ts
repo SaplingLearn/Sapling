@@ -1,18 +1,15 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { verifySession } from '@/lib/sessionToken'
+import { SESSION_COOKIE_NAME, verifySession } from '@/lib/sessionToken'
 import { resolveFrontendEnv, detectHostConfigMismatch } from '@/lib/deployGuard'
+import { isAppShellRoute } from '@/lib/appRoutes'
 
-// Every route in the (shell) group is gated here. #189: /profile/[userId]
-// was the one shell route missing from both this list and config.matcher, so
-// the middleware never ran there and an unauthenticated visitor could
-// enumerate /profile/<any-id>. Gate it consistently with its siblings.
-const PROTECTED = [
-  '/dashboard', '/learn', '/quiz', '/study', '/tree',
-  '/library', '/calendar', '/social',
-  '/settings', '/achievements', '/admin',
-  '/gradebook', '/course-planner', '/notetaker', '/profile'
-]
+// Every route in the (shell) group is gated here — the list is
+// lib/appRoutes.ts SHELL_PREFIXES (one source for middleware, robots, the
+// UserProvider and analytics). #189: /profile/[userId] was once missing from
+// both this list and config.matcher, so the middleware never ran there and an
+// unauthenticated visitor could enumerate /profile/<any-id>; middleware.test.ts
+// now pins config.matcher to SHELL_PREFIXES.
 
 // This middleware runs on the SERVER, so it needs an origin reachable from the
 // server — which is not always the browser-facing one. Under docker compose the
@@ -47,7 +44,7 @@ function redirectToSignin(request: NextRequest, errorCode?: string) {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  const isProtected = PROTECTED.some(p => pathname.startsWith(p))
+  const isProtected = isAppShellRoute(pathname)
   if (!isProtected) return NextResponse.next()
 
   // Defence-in-depth for the "wrong environment on this worker" deploy footgun:
@@ -67,7 +64,7 @@ export async function middleware(request: NextRequest) {
     return redirectToSignin(request, 'env_misconfig')
   }
 
-  const token = request.cookies.get('sapling_session')?.value
+  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value
   if (!token) return redirectToSignin(request)
 
   const session = await verifySession(token)
@@ -81,7 +78,7 @@ export async function middleware(request: NextRequest) {
     try {
       res = await fetch(
         `${API_URL}/api/auth/me?user_id=${encodeURIComponent(session.userId)}`,
-        { signal: controller.signal, headers: { Cookie: `sapling_session=${token}` } },
+        { signal: controller.signal, headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` } },
       )
     } finally {
       clearTimeout(timeout)
