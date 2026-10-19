@@ -77,6 +77,7 @@ const NO_CHECK_ITEMS_COPY =
   "No check items for this course yet. You can still learn with the tutor; nothing is graded until the course has items.";
 const PLAN_DONE_COPY = "That's every concept in today's plan — close the session when you're ready.";
 const NO_ITEM_COPY = "No check is ready for this concept yet — keep going with the tutor.";
+const NO_FRESH_PRACTICE_COPY = "Fresh practice questions are unavailable for these concepts in this session. You can review source material with the tutor; source review does not assess or complete your goal. Starting another session will not replenish these questions.";
 const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
@@ -191,6 +192,7 @@ export function LoopLearn() {
   // never silently selects targets, and nothing is inherited across courses.
   const [goal, setGoal] = useState<LoopGoal | null>(null);
   const [goalProgress, setGoalProgress] = useState<LoopGoalProgress | null>(null);
+  const [practiceUnavailable, setPracticeUnavailable] = useState<string[]>([]);
   const [diagnosis, setDiagnosis] = useState<LoopDiagnosis | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
   const [scopeLoading, setScopeLoading] = useState(false);
@@ -291,9 +293,12 @@ export function LoopLearn() {
     if (payload.goal !== undefined) setGoal(payload.goal);
     if (payload.diagnosis !== undefined) setDiagnosis(payload.diagnosis);
     if (payload.goal_progress !== undefined) setGoalProgress(payload.goal_progress);
+    if (payload.goal === null) setPracticeUnavailable([]);
+    else if (payload.practice_unavailable_node_ids !== undefined) setPracticeUnavailable(payload.practice_unavailable_node_ids);
   }, []);
   const paused = state.budgetPause;
   const item = state.item;
+  const exhaustedPracticeAttempt = practiceUnavailable.some((id) => goalProgress?.attempted_node_ids.includes(id));
 
   // A daily (or per-minute) pause lifts at its reset time — never earlier, and
   // a session cap never (a new session starts fresh, A39). Owner question in
@@ -412,6 +417,7 @@ export function LoopLearn() {
     setReadOnly(null);
     setGoal(null);
     setGoalProgress(null);
+    setPracticeUnavailable([]);
     setDiagnosis(null);
     setScopeReady(false);
     setScopeLoading(false);
@@ -454,6 +460,8 @@ export function LoopLearn() {
     if (g !== gen.current) return;
     setPlanLoading(true);
     setLoadError(null);
+    setPlan(null);
+    setPlanGoalVersion(undefined);
     try {
       const r = await getLoopPlan(sid, userId);
       if (g !== gen.current) return;
@@ -1102,7 +1110,7 @@ export function LoopLearn() {
       }
       dispatch({ type: "phase", phase: r.phase });
       if (r.check) applyActivated(r.check);
-      else setCheckNote(r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
+      else setCheckNote(r.practice_unavailable_node_ids?.length ? null : r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
     } catch (err) {
       if (g !== gen.current || epoch !== turnEpoch.current) return;
       const { status, detail } = extractErrorDetail(err);
@@ -1309,7 +1317,7 @@ export function LoopLearn() {
     </div>
   );
 
-  const notices = (paused || noCheckItems || topicOffer) && (
+  const notices = (paused || noCheckItems || topicOffer || practiceUnavailable.length > 0) && (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
       {paused && (
         <BudgetPausedBanner
@@ -1335,6 +1343,26 @@ export function LoopLearn() {
           style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
         >
           {NO_CHECK_ITEMS_COPY}
+        </div>
+      )}
+      {practiceUnavailable.length > 0 && (
+        <div data-testid="loop-practice-unavailable" role="status"
+          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 14, lineHeight: 1.5 }}>
+          <p style={{ margin: "0 0 6px" }}>{NO_FRESH_PRACTICE_COPY}</p>
+          <p style={{ margin: "0 0 8px", overflowWrap: "anywhere" }}>Practice unavailable: {practiceUnavailable.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</p>
+          {exhaustedPracticeAttempt && <p style={{ margin: "0 0 8px" }}>This session already moved past those concepts. Once new questions are available, start a new session to practise them.</p>}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <Link data-testid="loop-practice-sources" href="/library" className="btn btn--sm btn--ghost" style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal", justifyContent: "center", textAlign: "center" }}>Review source material</Link>
+            {!exhaustedPracticeAttempt && (state.phase === "plan" || (teaching && !item && !feedbackPending)) && (
+              <button data-testid="loop-practice-refresh" type="button" className="btn btn--sm"
+                style={{ minHeight: 44, flex: "1 1 130px", whiteSpace: "normal" }} disabled={sessionTransitionBusy || streaming || checkBusy}
+                onClick={() => {
+                  if (!sessionId) return;
+                  if (state.phase === "plan") void loadPlan(sessionId, gen.current);
+                  else void checkMe();
+                }}>Check for fresh practice</button>
+            )}
+          </div>
         </div>
       )}
       {topicOffer && (
@@ -1599,7 +1627,7 @@ export function LoopLearn() {
           {goalProgress.status === "continue_available"
             ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
             : goalProgress.status === "needs_more_practice"
-              ? "Your goal still needs prerequisite practice. No fresh next step is available in this session; review your material or start another session."
+              ? "Your goal still needs prerequisite practice. Review source material; more practice is needed before the goal can continue."
               : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
           {goalProgress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {goalProgress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
           {goalProgress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {goalProgress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}

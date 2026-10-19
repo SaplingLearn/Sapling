@@ -2534,6 +2534,10 @@ def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
         plan["attempted"] = list(dict.fromkeys([*attempted_nodes(state), state["concept"]]))
         if not no_items:
             plan["checked_nodes"] = list(dict.fromkeys([*(plan.get("checked_nodes") or []), state["concept"]]))
+        else:
+            plan["practice_unavailable_node_ids"] = list(dict.fromkeys([
+                *(plan.get("practice_unavailable_node_ids") or []), state["concept"],
+            ]))
     plan["cursor"] = int(plan.get("cursor") or 0) + 1
     if plan["cursor"] >= len(approved):
         plan["done"] = True
@@ -2573,14 +2577,21 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
     concept = state.get("concept")
     if not concept:
         return None
-    excluded = seen_hashes(user_id) | revealed_hashes(user_id) | set(state.get("steps") or {})
+    try:
+        excluded = seen_hashes(user_id) | revealed_hashes(user_id) | set(state.get("steps") or {})
+    except Exception as exc:
+        if state.get("goal"):
+            raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
+        raise
     while True:
         item = None
-        key = _concept_key_for_node(user_id, concept)
-        if key:
-            items = list_items(course_id, key)
-            reserve = posttest_reserve_hash(items)
-            exclude = excluded | ({reserve} if reserve else set())
+        try:
+            items, exclude = _practice_pool(user_id, course_id, concept, excluded)
+        except Exception as exc:
+            if state.get("goal"):
+                raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
+            raise
+        if items:
             item = _isomorph_after_unknown(state, concept, items, exclude)
             band, _ = _band_for(user_id, concept)
             rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
@@ -2612,6 +2623,39 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
         if not _advance_cursor(state, no_items=True):
             return None
         concept = state["concept"]
+
+
+def _practice_pool(user_id: str, course_id: str, node_id: str, excluded: set[str]) -> tuple[list, set[str]]:
+    """The same eligible bank for planning and actual check activation.
+
+    A probe's practice reserve is eligible here; the delayed posttest reserve
+    is not. Difficulty is not an availability filter: selection uses the
+    nearest difficulty and rotates through all supported check formats.
+    Failed reads propagate, never masquerade as an empty bank.
+    """
+    key = _concept_key_for_node(user_id, node_id)
+    if not key:
+        return [], excluded
+    items = list_items(course_id, key)
+    reserve = posttest_reserve_hash(items)
+    return items, excluded | ({reserve} if reserve else set())
+
+
+def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_ids) -> set[str]:
+    """Read-only, owner-scoped goal preflight. A read outage is not depletion."""
+    if not node_ids:
+        return set()
+    try:
+        excluded = seen_hashes(user_id) | revealed_hashes(user_id) | set(state.get("steps") or {})
+        unavailable = set()
+        for node in node_ids:
+            items, excluded_for_node = _practice_pool(user_id, course_id, node, excluded)
+            if not any(item.question_hash not in excluded_for_node and item.format in CHECK_ITEM_FORMATS
+                       and is_servable(item) for item in items):
+                unavailable.add(node)
+        return unavailable
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
 
 
 def _pose_payload(item) -> dict:
@@ -4138,6 +4182,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         out = {"phase": _loop_phase(saved), "plan_done": bool(plan.get("done")) and _loop_phase(saved) != "plan", "check": None}
         if saved.get("goal") and isinstance(plan.get("goal_progress"), dict):
             out["goal_progress"] = plan["goal_progress"]
+        if saved.get("goal"):
+            out["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
         return out
     item = get_check_item(saved["steps"][qh]["check_item_id"])
     pose = _pose_payload(item)
@@ -4593,6 +4639,8 @@ def _learning_scope_payload(state: dict) -> dict:
     progress = plan.get("goal_progress")
     if state.get("goal") and isinstance(progress, dict):
         payload["goal_progress"] = copy.deepcopy(progress)
+    if state.get("goal"):
+        payload["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
     return payload
 
 
@@ -5269,6 +5317,7 @@ class _PlanView:
     ready: frozenset[str]
     proposal: planner.Plan
     signature: str | None
+    practice_unavailable: frozenset[str]
 
 
 def _planning_observations(state: dict, user_id: str, course_id: str, nodes) -> list[dict]:
@@ -5297,17 +5346,30 @@ def _current_plan(state: dict, user_id: str, course_id: str) -> _PlanView:
 
     ready = planner.prerequisite_ready(planning_states, edges, transitive=True) if scope is not None else frozenset(states)
     attempted = set(attempted_nodes(state)) if scope is not None else set()
+    fringe = planner.outer_fringe(planning_states, edges)
+    reviews = list(dict.fromkeys(_plan_due_reviews(user_id, list(states)) + [
+        n for n in sorted(targets) if planning_states[n] >= BKT_PROFICIENT
+    ]))
+    proficient = frozenset(n for n, p in planning_states.items() if p >= BKT_PROFICIENT)
+    candidates = (set(fringe) | set(reviews) | {s for n in fringe for s in siblings(n) if s in proficient}
+                  if scope is not None else set())
+    unavailable = (_goal_practice_unavailable(
+        user_id, course_id, state, sorted(candidates & scope & ready - attempted),
+    ) if scope is not None else set())
+    previous = state.get("plan") if isinstance(state.get("plan"), dict) else {}
+    # Activation may have lost its last item after approval. Preserve that
+    # exhausted attempt; new assets never reset this session's finite frontier.
+    unavailable |= set(previous.get("practice_unavailable_node_ids") or []) & attempted
     proposal = planner.plan(
-        planner.outer_fringe(planning_states, edges),
-        list(dict.fromkeys(_plan_due_reviews(user_id, list(states)) + [
-            n for n in sorted(targets) if planning_states[n] >= BKT_PROFICIENT
-        ])),
+        fringe,
+        reviews,
         siblings,
-        (lambda n: n in scope and n in ready and n not in attempted) if scope is not None else None,
-        proficient=frozenset(n for n, p in planning_states.items() if p >= BKT_PROFICIENT),
+        (lambda n: n in scope and n in ready and n not in attempted and n not in unavailable) if scope is not None else None,
+        proficient=proficient,
     )
     return _PlanView(states, planning_states, scope, targets, ready, proposal,
-                     scope_signature(targets, scope, edges) if scope is not None else None)
+                     scope_signature(targets, scope, edges) if scope is not None else None,
+                     frozenset(unavailable))
 
 
 def _continue_goal(session_id: str, user_id: str, course_id: str, state: dict) -> dict:
@@ -5333,6 +5395,7 @@ def _continue_goal(session_id: str, user_id: str, course_id: str, state: dict) -
         if not plan.get("done") or attempted_nodes(doc) != attempted or doc.get("current"):
             raise _StateConflict()
         plan["goal_progress"] = progress
+        plan["practice_unavailable_node_ids"] = sorted(view.practice_unavailable)
         if view.proposal.concepts:
             for key in ("proposed", "proposed_kinds", "scope_signature"):
                 plan.pop(key, None)
@@ -5365,6 +5428,7 @@ def plan_get(request: Request, user_id: str = Query(...), session_id: str = Quer
         plan_doc["goal_version"] = version
         if view.scope is not None:
             plan_doc["scope_signature"] = view.signature
+            plan_doc["practice_unavailable_node_ids"] = sorted(view.practice_unavailable)
             plan_doc["goal_progress"] = goal_progress(doc, view.planning_states, view.scope,
                                                        continue_available=bool(ids))
         doc["plan"] = plan_doc
@@ -5423,6 +5487,8 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
             allowed = view.scope & view.ready - set(attempted_nodes(doc))
             if not set(chosen) <= allowed:
                 raise HTTPException(status_code=409, detail="Goal prerequisites changed; review the current plan")
+            if _goal_practice_unavailable(body.user_id, course_id, doc, chosen):
+                raise HTTPException(status_code=409, detail="Fresh practice is unavailable; review the current plan")
         proposed = plan_doc.get("proposed") or []
         if len(set(chosen)) != len(chosen) or not set(chosen) <= set(proposed):
             raise HTTPException(

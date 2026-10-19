@@ -562,6 +562,9 @@ def probe():
         ns.seen = p("seen_hashes", return_value=set())
         ns.read_states = p("read_states", side_effect=_read_states)
         ns.names = p("_plan_node_names", side_effect=lambda _u, ids: {i: f"name-{i}" for i in ids})
+        # Most planner tests model an available bank. Dedicated availability
+        # tests restore the real preflight and bind an explicit item inventory.
+        ns.practice = p("_goal_practice_unavailable", return_value=set())
         ns.due = p("_plan_due_reviews", return_value=[])
         ns.grade = p("grade_answer", new_callable=AsyncMock)
         ns.grade.side_effect = _grader(correct=True)

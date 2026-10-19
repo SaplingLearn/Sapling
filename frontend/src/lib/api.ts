@@ -1032,6 +1032,9 @@ export interface LoopLearningScope {
   goal?: LoopGoal | null;
   diagnosis?: LoopDiagnosis | null;
   goal_progress?: LoopGoalProgress | null;
+  /** Goal-frontier concepts without a fresh, non-reserved practice item.
+   *  These remain unresolved; teaching/source review does not assess them. */
+  practice_unavailable_node_ids?: string[];
 }
 export interface LoopGoalProgress {
   status: 'continue_available' | 'needs_more_practice' | 'session_plan_finished';

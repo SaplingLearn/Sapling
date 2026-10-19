@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const search = vi.hoisted(() => ({ params: new URLSearchParams() }));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), prefetch: vi.fn() }));
+const viewport = vi.hoisted(() => ({ mobile: false }));
+vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => viewport.mobile }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => search.params,
   usePathname: () => "/learn",
@@ -66,6 +68,7 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  viewport.mobile = false;
   search.params = new URLSearchParams();
   Object.values(api).forEach((f) => f.mockReset());
   router.replace.mockReset();
@@ -1649,5 +1652,114 @@ describe("explicit goal frontier continuation", () => {
     const text = screen.getByTestId("loop-goal-progress").textContent;
     expect(text).toContain(completion === "needs_more_practice" ? "still needs prerequisite practice" : "does not establish mastery");
     expect(text).not.toContain("goal complete");
+  });
+});
+
+describe("explicit goal fresh-practice preflight", () => {
+  const goal = { text: "Understand assignment", target_node_ids: ["target"] };
+  const progress = { status: "needs_more_practice", target_node_ids: ["target"], remaining_target_node_ids: ["target"], unresolved_prerequisite_ids: ["foundation"], attempted_node_ids: [] };
+  const available = { goal, goal_version: 1, practice_unavailable_node_ids: [], concepts: [{ node_id: "foundation", concept_name: "Scalar Data Types", kind: "new", reason: "prerequisite", p_known: 0.2 }] };
+  const unavailable = { goal, goal_version: 1, goal_progress: progress, practice_unavailable_node_ids: ["foundation"], concepts: [], order: [], phase: "teach", empty: true };
+
+  function scopedPlan() {
+    api.getGraph.mockResolvedValue({ nodes: [
+      { id: "foundation", concept_name: "Scalar Data Types", course_id: "c1", mastery_score: 0.2 },
+      { id: "target", concept_name: "Variables and Assignment", course_id: "c1", mastery_score: 0.3 },
+    ], edges: [], stats: {} });
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "plan", phase: "plan", goal, goal_version: 1 }));
+  }
+
+  it.each([false, true])("offers honest source review before any approval or model call (phone=%s)", async (mobile) => {
+    viewport.mobile = mobile;
+    scopedPlan();
+    api.getLoopPlan.mockResolvedValue(unavailable);
+    render(<LoopLearn />);
+    const notice = await screen.findByTestId("loop-practice-unavailable");
+    expect(notice.textContent).toContain("does not assess or complete your goal");
+    expect(notice.textContent).toContain("Starting another session will not replenish");
+    await waitFor(() => expect(notice.textContent).toContain("Scalar Data Types"));
+    expect(screen.getByTestId("loop-practice-sources").getAttribute("href")).toBe("/library");
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(screen.queryByTestId("loop-teach-start")).toBeNull();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+    expect(screen.getByTestId("loop-goal-progress").textContent).not.toContain("start another session");
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Let's review the course sources.", phase: "teach" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Review my source material." } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(await screen.findByText("Let's review the course sources.")).toBeTruthy();
+    expect(api.streamLoopChat).toHaveBeenCalledExactlyOnceWith("s2", "u1", "Review my source material.", expect.any(Object));
+  });
+
+  it("requires fresh explicit approval when new practice becomes available in the untouched source-review path", async () => {
+    scopedPlan();
+    api.getLoopPlan.mockResolvedValueOnce(unavailable).mockResolvedValueOnce(available);
+    api.nextLoopCheck.mockResolvedValue({ phase: "plan", check: null, goal, goal_version: 1, practice_unavailable_node_ids: [], goal_progress: { ...progress, status: "continue_available" } });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["foundation"] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-practice-refresh"));
+    await screen.findByTestId("loop-plan-concept-foundation");
+    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-plan-approve"));
+    await waitFor(() => expect(api.approveLoopPlan).toHaveBeenCalledExactlyOnceWith("s2", "u1", ["foundation"], 1));
+  });
+
+  it("reloads a depleted plan after approval409 and never retains the stale approval button", async () => {
+    scopedPlan();
+    api.getLoopPlan.mockResolvedValueOnce(available).mockResolvedValueOnce(unavailable);
+    api.approveLoopPlan.mockRejectedValueOnce(new ApiError("depleted", 409, { body: { detail: "Fresh practice is unavailable; review the current plan" } }));
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-plan-approve"));
+    await screen.findByTestId("loop-practice-unavailable");
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(screen.queryByTestId("loop-plan-concept-foundation")).toBeNull();
+    expect(api.approveLoopPlan).toHaveBeenCalledTimes(1);
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+  });
+
+  it("removes stale approval immediately while an availability refresh is pending or fails", async () => {
+    scopedPlan();
+    const refreshed = deferred<typeof unavailable>();
+    api.getLoopPlan.mockResolvedValueOnce({ ...available, practice_unavailable_node_ids: ["target"] }).mockReturnValueOnce(refreshed.promise);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-plan-approve");
+    fireEvent.click(screen.getByTestId("loop-practice-refresh"));
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    await act(async () => { refreshed.resolve(unavailable); });
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+  });
+
+  it("preserves exhausted attempt limits on resume and does not promise same-session recovery", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ goal, practice_unavailable_node_ids: ["foundation"], goal_progress: { ...progress, attempted_node_ids: ["foundation"] } }));
+    await resumedTeach();
+    expect(screen.getByTestId("loop-practice-unavailable").textContent).toContain("Once new questions are available, start a new session");
+    expect(screen.queryByTestId("loop-practice-refresh")).toBeNull();
+    expect(api.nextLoopCheck).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("drops an obsolete availability result when another session is selected", async () => {
+    const oldPlan = deferred<typeof unavailable>();
+    scopedPlan();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z"), open("s3", "teach", "2026-09-20T10:00:00Z")]));
+    api.getLoopSessionStatus.mockImplementation(async (sid: string) => sid === "s2"
+      ? status({ loop_phase: "plan", phase: "plan", goal })
+      : status({ session_id: "s3", loop_phase: "teach", phase: "teach", goal: null }));
+    api.getLoopPlan.mockReturnValue(oldPlan.promise);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.getLoopPlan).toHaveBeenCalledWith("s2", "u1"));
+    fireEvent.click(screen.getByTestId("loop-session-s3"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s3"));
+    await act(async () => { oldPlan.resolve(unavailable); });
+    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
   });
 });
