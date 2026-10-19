@@ -12,7 +12,10 @@ module-local call to such a helper is then itself checked under the same
 rule. Cross-module runner indirection is NOT tracked: keep the run and its
 ``record_agent_usage`` wrap in the same module, or this guard goes blind.
 
-(The second invariant this guard used to enforce — ``_log_gemini_usage`` in
+(The checklist uses a deliberately separate durable receipt path, checked by
+``_durable_checklist_site`` below: queueing it too would double bill.
+
+The second invariant this guard used to enforce — ``_log_gemini_usage`` in
 the direct-Gemini helpers — died with ``services/gemini_service.py`` in
 #151b / ADR 0024: agents are the only LLM seam left to instrument.)
 """
@@ -69,6 +72,35 @@ def _returned_call(stmt: ast.AST) -> ast.Call | None:
     return value if isinstance(value, ast.Call) else None
 
 
+def _named_calls(fn: ast.AST) -> set[str]:
+    names = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                names.add(f"{node.func.value.id}.{node.func.attr}")
+    return names
+
+
+def _durable_checklist_site(py: Path, fn: ast.AST, functions: list) -> bool:
+    # Narrow alternative instrumentation contract: this one known paid path
+    # collects SDK usage and every dispatch, then prepares and atomically writes
+    # a strict stable receipt. All other sites still require the ordinary hook.
+    if py != BACKEND / "services/topic_checklist_service.py" or fn is None or fn.name != "_generate":
+        return False
+    by_name = {f.name: f for f in functions}
+    generated = _named_calls(fn)
+    finished = _named_calls(by_name.get("_finish_generation", ast.Pass()))
+    refreshed = _named_calls(by_name.get("refresh_checklist", ast.Pass()))
+    return (
+        {"ChecklistDispatches", "ChecklistGeneration", "topic_checklist_agent.run"} <= generated
+        and {"prepare_checklist_usage_receipt", "checklist_budget.reconcile"} <= finished
+        and {"checklist_budget.admit", "_generate", "_finish_generation"} <= refreshed
+        and not _calls_record_usage(fn)
+    )
+
+
 def _module_offenders(py: Path) -> list[str]:
     """Uninstrumented agent-run call sites in one module, as ``path:line``."""
     tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
@@ -106,7 +138,7 @@ def _module_offenders(py: Path) -> list[str]:
                 and innermost.name in runners
                 and any(_returned_call(s) is node for s in ast.walk(innermost))
             )
-            if not deferred_to_callers and not any(_calls_record_usage(f) for f in stack):
+            if not deferred_to_callers and not any(_calls_record_usage(f) for f in stack) and not _durable_checklist_site(py, innermost, functions):
                 offenders.append(f"{py.relative_to(BACKEND)}:{node.lineno}")
         for child in ast.iter_child_nodes(node):
             walk(child, stack)
@@ -133,3 +165,18 @@ def test_every_agent_run_site_records_usage():
         "These agent-run call sites have no enclosing record_agent_usage call "
         f"(uninstrumented LLM spend): {offenders}"
     )
+
+
+def test_durable_checklist_contract_cannot_hide_missing_settlement(tmp_path, monkeypatch):
+    # The exception is path- and function-specific, and requires the whole
+    # admission/collection/strict-receipt/settlement chain in that module.
+    module = BACKEND / "services/topic_checklist_service.py"
+    text = module.read_text()
+    assert _module_offenders(module) == []
+    tree = ast.parse(text)
+    functions = [n for n in ast.walk(tree) if isinstance(n, _FUNC_DEFS)]
+    generate = next(f for f in functions if f.name == "_generate")
+    assert _durable_checklist_site(module, generate, functions)
+    assert not _durable_checklist_site(tmp_path / "other.py", generate, functions)
+    for missing in ("_finish_generation", "refresh_checklist"):
+        assert not _durable_checklist_site(module, generate, [f for f in functions if f.name != missing])

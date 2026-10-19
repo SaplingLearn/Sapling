@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -16,7 +17,6 @@ from agents._run import run_agent_sync
 from agents.topic_checklist import (
     CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent,
 )
-from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import page_all, table
 from learning.bkt import in_mastered_tier, is_weak
 from services.academics import (
@@ -28,7 +28,10 @@ from services.academics import (
 )
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_json
 from services.request_limits import check_rate_limit
-from services import ai_budget
+from services import ai_budget, checklist_budget
+from services.checklist_budget_run import ChecklistDispatches
+from services.request_context import current_request_id
+from services.usage_receipts import UsageReceiptUnavailable, prepare_checklist_usage_receipt
 
 logger = logging.getLogger(__name__)
 REVIEW_AFTER_DAYS = 7
@@ -344,40 +347,67 @@ def get_checklist(user_id: str, course_id: str, semester: str | None = None) -> 
     return present(scope, build_snapshot(user_id, scope, now.date()), _cache(scope), now)
 
 
-async def _generate(payload: dict, user_id: str) -> TopicOutline:
+@dataclass
+class ChecklistGeneration:
+    usage: RunUsage
+    dispatches: ChecklistDispatches
+    outline: TopicOutline | None = None
+    error: BaseException | None = None
+
+
+async def _generate(payload: dict, user_id: str, reservation: checklist_budget.Reservation) -> ChecklistGeneration:
     usage = RunUsage()
+    dispatches = ChecklistDispatches(reservation=reservation)
     try:
         result = await asyncio.wait_for(topic_checklist_agent.run(
             json.dumps(payload), deps=payload, usage=usage, usage_limits=CHECKLIST_LIMITS,
+            capabilities=[dispatches],
         ), timeout=GENERATION_TIMEOUT_SECONDS)
-    except BaseException:
-        # Validation/timeouts can still have billed provider usage. Keep it in
-        # the canonical ledger even when no valid outline can be cached.
+        return ChecklistGeneration(usage, dispatches, result.output)
+    except BaseException as error:
+        # A response may be billed even when output validation fails. Preserve
+        # actual responses and an independent count of handlers entered. Never
+        # queue a duplicate analytics bill alongside the durable receipt.
+        return ChecklistGeneration(usage, dispatches, error=error)
+
+
+def _finish_generation(generation: ChecklistGeneration, payload: dict) -> None:
+    tracker = generation.dispatches
+    content = None
+    if generation.error is None:
         try:
-            record_agent_usage(
-                UnfinishedRun(usage), feature="topic_checklist", task="topic_checklist", user_id=user_id,
+            validate_evidence(generation.outline, payload)
+            content = encrypt_json(generation.outline.model_dump())
+        except Exception as error:
+            generation.error = error
+    receipt = None
+    no_dispatch = tracker.dispatched == 0 or tracker.nonbillable_test
+    if not no_dispatch:
+        try:
+            receipt = prepare_checklist_usage_receipt(
+                operation_id=tracker.reservation.operation_id,
+                user_id=tracker.reservation.user_id, approved_model=checklist_budget.MODEL,
+                responses=tuple(tracker.responses), dispatched_requests=tracker.dispatched,
+                usage=generation.usage,
+                # A semantic/validation failure does not erase complete bills.
+                completed=tracker.dispatched == len(tracker.responses),
+                dispatched_at=tracker.reservation.dispatch_at,
+                request_id=current_request_id(),
             )
-        except BaseException:
-            # Accounting is best-effort and must never replace the actual
-            # model exception, timeout or cancellation already in flight.
-            logger.warning("Could not record failed checklist usage", exc_info=True)
-        logger.warning(
-            "Checklist generation did not finish; only known usage is available "
-            "(requests=%d, input_tokens=%d, output_tokens=%d). "
-            "In-flight provider usage may be incomplete.",
-            usage.requests, usage.input_tokens, usage.output_tokens,
-        )
-        raise
-    # Attribution explicitly names the student for the per-user cost rollups.
+        except UsageReceiptUnavailable:
+            content = None
+            if generation.error is None:
+                generation.error = RuntimeError("Checklist bill is incomplete")
     try:
-        record_agent_usage(
-            result, feature="topic_checklist", task="topic_checklist", user_id=user_id,
-        )
+        checklist_budget.reconcile(tracker.reservation, receipt=receipt, content=content,
+                                   no_dispatch=no_dispatch)
     except Exception:
-        # The canonical hook is never-raises. A broken hook must not turn a
-        # valid outline into another paid generation attempt or a cache miss.
-        logger.warning("Could not record completed checklist usage", exc_info=True)
-    return result.output
+        if generation.error is not None and not isinstance(generation.error, Exception):
+            logger.warning("Checklist cancellation left usage pending reconciliation")
+            raise generation.error
+        raise
+    if generation.error is not None:
+        raise generation.error
 
 
 def _current_checklist(user_id: str, course_id: str, semester: str | None):
@@ -402,30 +432,45 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
         now, scope, snapshot, cache = _current_checklist(user_id, course_id, semester)
         if not _needs_generation(snapshot, cache):
             return present(scope, snapshot, cache, now)
+        # SQL coalesces an already-committed same-hash cache before its atomic
+        # capacity check. Do not deny a now-free cross-worker hit via a stale
+        # Python budget preflight first.
+        reservation = checklist_budget.admit(user_id, scope["enrollment_id"], snapshot["hash"])
+        if reservation is None:
+            return present(scope, snapshot, _cache(scope), now)
         try:
-            decision = ai_budget.check(user_id, "generation")
-        except ai_budget.AIBudgetUnavailable:
-            raise HTTPException(503, "AI usage is temporarily unavailable. Please try again.") from None
-        if decision.level == "hard":
-            raise ai_budget.AIBudgetExceeded(decision)
-        retry = check_rate_limit(f"topic-checklist:{user_id}", limit=6, window_sec=60)
-        if retry is not None:
-            raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
-        try:
+            try:
+                decision = ai_budget.check(user_id, "generation")
+            except ai_budget.AIBudgetUnavailable:
+                raise HTTPException(503, "AI usage is temporarily unavailable. Please try again.") from None
+            if decision.level == "hard":
+                raise ai_budget.AIBudgetExceeded(decision)
+            retry = check_rate_limit(f"topic-checklist:{user_id}", limit=6, window_sec=60)
+            if retry is not None:
+                raise HTTPException(429, "Please wait before generating another checklist.", headers={"Retry-After": str(retry)})
             prior = TopicOutline.model_validate(decrypt_json(cache["content"])) if cache else None
-            outline = run_agent_sync(_generate({**snapshot["payload"],
+        except BaseException:
+            # No model handler/coroutine has been entered. A failed ACK here
+            # leaves only a reclaimable prepared lease, never a possible bill.
+            try:
+                checklist_budget.reconcile(reservation, no_dispatch=True)
+            except Exception:
+                logger.warning("Could not release an unused checklist reservation")
+            raise
+        try:
+            generation = run_agent_sync(_generate({**snapshot["payload"],
                 "existing_topic_names": [t.name for t in prior.topics] if prior else [],
-            }, user_id))
-            validate_evidence(outline, snapshot["payload"])
+            }, user_id, reservation))
+            _finish_generation(generation, snapshot["payload"])
+        except HTTPException:
+            raise
         except Exception:
             logger.exception("Topic checklist generation failed")
-            raise HTTPException(503, "Topic generation is temporarily unavailable. Please try again.") from None
-        cache = {
-            "enrollment_id": scope["enrollment_id"], "input_hash": snapshot["hash"],
-            "content": encrypt_json(outline.model_dump()), "generated_at": now.isoformat(),
-        }
-        table("topic_checklists").upsert(cache, on_conflict="enrollment_id")
-        return present(scope, snapshot, cache, now)
+            raise HTTPException(503, "Topic generation is temporarily unavailable. Please retry; any unconfirmed usage remains reserved.",
+                                headers={"Retry-After": "120"}) from None
+        # Cache publication and the stable bill were one database transaction.
+        # A newer operation/ownership change can fence this result out safely.
+        return present(scope, snapshot, _cache(scope), now)
 
 
 def set_reviewed(user_id: str, course_id: str, key: str, checked: bool, semester: str | None = None) -> dict:
