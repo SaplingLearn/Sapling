@@ -522,3 +522,12 @@ def test_decision_router_resolves_like_any_flag(monkeypatch):
 def test_decision_router_is_server_only_and_off_first():
     fd = ff.REGISTRY["decision_router"]
     assert fd.variants == ("off", "jev", "jev_shadow") and not fd.client_visible
+
+
+def test_tutor_view_is_client_visible_and_off_first():
+    """Redesign prompt 04: the /learn?view=tutor switch reads this flag on the
+    client; unconfigured (or unreadable) it resolves to "off" — the studio."""
+    fd = ff.REGISTRY["tutor_view"]
+    assert fd.variants == ("off", "on") and fd.client_visible
+    with patch("services.feature_flags.table", side_effect=_tables(flags=[])):
+        assert ff.explain("tutor_view", "u1").variant == "off"

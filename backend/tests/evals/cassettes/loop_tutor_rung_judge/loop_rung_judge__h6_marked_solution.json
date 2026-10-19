@@ -1,0 +1,10 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "74ab91921bd2a8d12bd2f89f4f2a0d6fd383c874689dfd5d9f502891ffd37304",
+  "output": {
+    "evidence": "when n equals 0, factorial returns 1 directly instead of calling itself, so the recursion stops there.",
+    "reveals_final_answer": true,
+    "rung": 6
+  },
+  "served_sha256": "53b30cb7ff76bdb005e6948a8e0ed42191d3e003f710fda4384638a1617dfb8b"
+}

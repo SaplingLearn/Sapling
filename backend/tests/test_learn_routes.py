@@ -11,6 +11,10 @@ from fastapi.testclient import TestClient
 from main import app
 from tests.agent_run_fakes import run_result, textless_run_result
 
+# Spec §11.5 (PKG-14b): this module drives the legacy /api/learn/* path (or the
+# upload hook's flag-off branch), so it runs as an explicit kill-switch test.
+pytestmark = pytest.mark.kill_switch
+
 client = TestClient(app)
 
 

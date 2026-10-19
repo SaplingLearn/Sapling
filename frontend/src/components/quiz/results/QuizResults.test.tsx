@@ -13,9 +13,18 @@ import { buildMissedItems } from "./MissedList";
 // seed. The mock renders the seed so the assertion is on the props, not on
 // whatever the real sheet does with them.
 vi.mock("../question/AskPanel", () => ({
-  AskPanel: (props: { open: boolean; seed: Record<string, string>; conceptName: string }) =>
+  AskPanel: (props: {
+    open: boolean;
+    seed: Record<string, string>;
+    conceptName: string;
+    quizAsk?: { attemptId: string; questionIndex: number };
+  }) =>
     props.open ? (
-      <div data-testid="quiz-ask-panel" data-concept={props.conceptName}>
+      <div
+        data-testid="quiz-ask-panel"
+        data-concept={props.conceptName}
+        data-quiz-ask={props.quizAsk ? JSON.stringify(props.quizAsk) : ""}
+      >
         {JSON.stringify(props.seed)}
       </div>
     ) : null,
@@ -279,6 +288,11 @@ describe("QuizResults", () => {
     fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
     const panel = screen.getByTestId("quiz-ask-panel");
     expect(panel).toHaveAttribute("data-concept", "Recursion");
+    // spec §13 A99: the panel names the row's question (attempt + index)
+    expect(JSON.parse(panel.getAttribute("data-quiz-ask") || "null")).toEqual({
+      attemptId: "attempt-1",
+      questionIndex: 1, // question 102 is the attempt's second item
+    });
     expect(JSON.parse(panel.textContent ?? "{}")).toEqual({
       stem: STEMS[102],
       chosenLabel: "A",
@@ -287,6 +301,41 @@ describe("QuizResults", () => {
       correctText: "It recurses forever and overflows the stack",
       explanation: "Without a base case the recursion never stops.",
     });
+  });
+
+  it.each(["short_answer", "numeric", "symbolic"] as const)("shows the actual missed %s response and expected answer while preserving its tutor identity", (type) => {
+    const written = item(102);
+    written.question = { ...written.question, type, options: [] };
+    const result = {
+      ...RESULT,
+      results: RESULT.results.map((row) => row.question_id === "102"
+        ? { ...row, selected: "the submitted response", correct_answer: "the expected response" }
+        : row),
+    };
+    renderResults({ items: [item(101), written, item(103)], result });
+    const missed = screen.getByTestId("quiz-missed-102");
+    expect(missed).toHaveTextContent("Your answer: the submitted response · Expected: the expected response");
+    expect(missed).not.toHaveTextContent("You chose Your answer");
+    fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
+    const panel = screen.getByTestId("quiz-ask-panel");
+    expect(JSON.parse(panel.getAttribute("data-quiz-ask") || "null"))
+      .toEqual({ attemptId: "attempt-1", questionIndex: 1 });
+    expect(JSON.parse(panel.textContent ?? "{}"))
+      .toMatchObject({ chosenText: "the submitted response", correctText: "the expected response" });
+  });
+
+  it("honestly labels an unanswered written item while still showing the expected answer", () => {
+    const written = item(102);
+    written.question = { ...written.question, type: "short_answer", options: [] };
+    renderResults({ items: [item(101), written, item(103)], result: {
+      ...RESULT,
+      results: RESULT.results.map((row) => row.question_id === "102"
+        ? { ...row, selected: "", correct_answer: "base case" } : row),
+    } });
+    expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent("No answer · Expected: base case");
+    fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
+    expect(JSON.parse(screen.getByTestId("quiz-ask-panel").textContent ?? "{}"))
+      .toMatchObject({ chosenLabel: "", chosenText: "", correctText: "base case" });
   });
 
   it("replaces the review section with the perfect-run line", () => {

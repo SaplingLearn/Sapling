@@ -78,6 +78,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
 from db.connection import like_literal, pg_quote_value, table
+from services.session_modes import NOT_REVIEW
 from services.timestamps import calendar_days_since
 from services.tool_signals import Expect, report_empty_result
 
@@ -514,6 +515,7 @@ def _tutor_recency(user_id: str, scope: CourseScope, concept_name: str) -> _Tuto
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"in.({','.join(scope.offering_ids)})",
+                **NOT_REVIEW,  # learning-loop review sessions are not tutoring
                 # Started recently OR never finished. `started_at` alone
                 # excludes the dashboard's first-class "Where you left off"
                 # resume flow: a session is not auto-ended and has no age

@@ -32,7 +32,13 @@ export interface MissedItem {
   chosenText: string;
   correctLabel: string;
   correctText: string;
+  /** Written results carry answer text rather than multiple-choice labels. */
+  written: boolean;
   explanation: string;
+  /** The question's index in the attempt (`QuizItem.index`) — with the attempt
+   *  id, the AskPanel's `quizAsk` identity (spec §13 A99). null when the
+   *  question is no longer in the session's items. */
+  questionIndex: number | null;
 }
 
 /**
@@ -53,9 +59,10 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
   return result.results
     .filter(r => !r.correct)
     .map(r => {
-      const question = session.items.find(
+      const found = session.items.find(
         item => String(item.question.id) === String(r.question_id),
-      )?.question;
+      );
+      const question = found?.question;
       const written = isWrittenType(question?.type);
       const textFor = (label: string) =>
         written ? label : question?.options.find(o => o.label === label)?.text ?? "";
@@ -63,11 +70,13 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
       return {
         questionId: String(r.question_id),
         stem: question?.question ?? "",
-        chosenLabel: written ? "Your answer" : r.selected,
+        chosenLabel: written ? (r.selected.trim() ? "Your answer" : "") : r.selected,
         chosenText: textFor(r.selected),
         correctLabel: written ? "Expected" : r.correct_answer,
         correctText: textFor(r.correct_answer),
+        written,
         explanation: r.explanation,
+        questionIndex: found ? found.index : null,
       };
     });
 }
@@ -111,9 +120,11 @@ export function MissedList({ items, onAsk, testid = "quiz-missed-list" }: Missed
           >
             {item.stem && <p className="h-serif quiz-missed__stem">{item.stem}</p>}
             <p className="quiz-missed__line">
-              {item.chosenLabel
-                ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
-                : `No answer · the answer is ${item.correctLabel}`}
+              {item.written
+                ? `${item.chosenText.trim() ? `Your answer: ${item.chosenText}` : "No answer"} · Expected: ${item.correctText}`
+                : item.chosenLabel
+                  ? `You chose ${item.chosenLabel} · the answer is ${item.correctLabel}`
+                  : `No answer · the answer is ${item.correctLabel}`}
             </p>
             <div className="quiz-missed__actions">
               {item.explanation && (

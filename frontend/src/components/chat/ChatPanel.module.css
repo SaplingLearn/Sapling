@@ -1,0 +1,356 @@
+/* ChatPanel (redesign prompt 04): the open transcript and bottom composer of
+ * Pen frames ULhG3 (desktop) and rIzSa (mobile), plus the Stop / interrupted /
+ * Retry and "Jump to latest" states of hgkZT.
+ * https://app.pen.dev/s/sxEA2n5Ikk7KWUOanWPghMWYFFS0SbPgbkwkIm9dLYA
+ *
+ * Tokens are the shared --sapling-* set with the legacy role tokens as the
+ * fallback. Classic Learn wraps this panel in `.fa26-chat`, whose !important
+ * overrides on the fa26-* class names still win there. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.logWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sapling-space-5, 24px) var(--sapling-space-1, 4px);
+}
+
+.log:focus-visible {
+  outline: 2px solid var(--sapling-primary, var(--accent));
+  outline-offset: -2px;
+}
+
+.turns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-5, 24px);
+  max-width: var(--sapling-reading-width, 760px);
+}
+
+.turns + .turns {
+  margin-top: var(--sapling-space-5, 24px);
+}
+
+/* Student turn: sage, right-aligned (never the dark olive of the old panel). */
+.userRow {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.userBubble {
+  max-width: min(78%, 560px);
+  padding: 14px 18px;
+  border-radius: var(--sapling-radius-lg, 16px);
+  background: var(--sapling-sage, var(--accent-soft));
+  color: var(--sapling-ink, var(--text));
+  font: 400 16px/1.55 var(--sapling-font-body, var(--font-sans));
+  overflow-wrap: anywhere;
+}
+
+.userText {
+  white-space: pre-wrap;
+}
+
+/* Clov's turn: open text beside the flower mark, no box. */
+.assistantRow {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--sapling-space-3, 12px);
+  align-items: start;
+  min-width: 0;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  color: var(--sapling-primary, var(--accent));
+}
+
+.assistantBody {
+  min-width: 0;
+  color: var(--sapling-ink, var(--text));
+  font: 400 18px/1.6 var(--sapling-font-heading, var(--font-serif));
+  overflow-wrap: break-word;
+}
+
+/* Equations, code and wide tables scroll inside the turn, never the page. */
+.assistantBody :global(pre),
+.assistantBody :global(.katex-display),
+.assistantBody :global(table) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.assistantBody :global(pre),
+.assistantBody :global(code) {
+  font-family: var(--sapling-font-code, var(--font-mono));
+  font-size: 14px;
+}
+
+.thinking {
+  color: var(--sapling-muted, var(--text-muted));
+  font: 400 15px/1.5 var(--sapling-font-body, var(--font-sans));
+}
+
+/* Interrupted / stopped: the partial text stays; the state is said in words. */
+.interrupted {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-top: var(--sapling-space-3, 12px);
+  padding-top: var(--sapling-space-3, 12px);
+  border-top: 1px solid var(--sapling-line, var(--border));
+  font-family: var(--sapling-font-body, var(--font-sans));
+}
+
+.interruptedTitle {
+  margin: 0;
+  font: 500 16px/1.4 var(--sapling-font-heading, var(--font-serif));
+  color: var(--sapling-ink, var(--text));
+}
+
+.interruptedText {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--sapling-muted, var(--text-muted));
+}
+
+.retry,
+.stop,
+.jumpButton {
+  min-height: var(--sapling-control-min, 44px);
+  padding: 8px 20px;
+  border-radius: 999px;
+  font: 500 15px/1.2 var(--sapling-font-body, var(--font-sans));
+  cursor: pointer;
+}
+
+.retry {
+  border: 0;
+  background: var(--sapling-primary, var(--accent));
+  color: var(--sapling-white, #fff);
+}
+
+.retry:hover:not(:disabled) {
+  background: var(--sapling-primary-hover, var(--accent));
+}
+
+.retry:disabled,
+.send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stop,
+.jumpButton {
+  border: 1px solid var(--sapling-line, var(--border));
+  background: var(--sapling-paper, var(--bg-panel));
+  color: var(--sapling-ink, var(--text));
+}
+
+.retry:focus-visible,
+.stop:focus-visible,
+.send:focus-visible,
+.jumpButton:focus-visible {
+  outline: 2px solid var(--sapling-primary, var(--accent));
+  outline-offset: 2px;
+}
+
+/* "A new response is ready while you're reading above." */
+.jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--sapling-space-3, 12px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sapling-space-2, 8px);
+  max-width: calc(100% - 16px);
+}
+
+.jumpNote {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.jumpButton {
+  box-shadow: 0 2px 10px rgba(37, 61, 47, 0.12);
+  white-space: nowrap;
+}
+
+.beforeComposer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sapling-space-3, 12px);
+  flex: 0 0 auto;
+  padding: var(--sapling-space-3, 12px) 0;
+  max-width: var(--sapling-reading-width, 760px);
+}
+
+/* Composer: the prominent bottom field. A conversation input only. */
+.inputBar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: var(--sapling-space-3, 12px) 0 max(var(--sapling-space-3, 12px), env(safe-area-inset-bottom));
+}
+
+.legacyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.composer {
+  display: grid;
+  gap: var(--sapling-space-2, 8px);
+  max-width: var(--sapling-reading-width, 760px);
+  padding: var(--sapling-space-3, 12px) var(--sapling-space-4, 16px);
+  border: 1px solid var(--sapling-line, var(--border));
+  border-radius: var(--sapling-radius-lg, 16px);
+  background: var(--sapling-white, var(--bg-input));
+}
+
+.composer:focus-within {
+  border-color: var(--sapling-primary, var(--accent));
+}
+
+/* The field draws no outline of its own (the box is the field), so the box
+ * carries the same 2px ring as every other redesign control; a border-colour
+ * change alone was too faint to find by keyboard (prompt 05 keyboard pass). */
+.composer:has(.field:focus-visible) {
+  outline: 2px solid var(--sapling-primary, var(--accent));
+  outline-offset: 2px;
+}
+
+.field {
+  width: 100%;
+  min-height: 52px;
+  max-height: 40dvh;
+  box-sizing: border-box;
+  resize: none;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--sapling-ink, var(--text));
+  /* 16px: readable, and phones do not zoom the page on focus. */
+  font: 400 16px/1.55 var(--sapling-font-body, var(--font-sans));
+}
+
+.field:focus {
+  outline: none;
+}
+
+.field::placeholder {
+  color: var(--sapling-muted, var(--text-muted));
+  opacity: 1;
+}
+
+.field:disabled {
+  cursor: not-allowed;
+}
+
+.reason {
+  margin: 0;
+  font-size: 13px;
+  color: var(--sapling-muted, var(--text-muted));
+}
+
+.composerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sapling-space-3, 12px);
+  min-width: 0;
+}
+
+.lead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sapling-space-2, 8px) var(--sapling-space-5, 24px);
+  min-width: 0;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sapling-muted, var(--text-muted));
+}
+
+.sendGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--sapling-space-2, 8px);
+  flex-shrink: 0;
+}
+
+.send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--sapling-primary, var(--accent));
+  color: var(--sapling-white, #fff);
+  font: 600 20px/1 var(--sapling-font-body, var(--font-sans));
+  cursor: pointer;
+}
+
+.send:hover:not(:disabled) {
+  background: var(--sapling-primary-hover, var(--accent));
+}
+
+@media (max-width: 767px) {
+  .hint {
+    display: none;
+  }
+
+  .assistantBody {
+    font-size: 17px;
+  }
+
+  .userBubble {
+    max-width: 88%;
+  }
+
+  .log {
+    padding-top: var(--sapling-space-4, 16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .log {
+    scroll-behavior: auto;
+  }
+}

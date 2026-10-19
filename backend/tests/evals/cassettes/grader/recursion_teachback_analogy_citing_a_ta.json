@@ -1,0 +1,39 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "86701:no",
+        "32600:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "You have correctly identified the two key aspects of why a base case is necessary for recursive functions. Your explanation clearly states that it stops the recursive calls and prevents infinite recursion leading to a stack overflow. Well done!",
+      "item_results": [
+        "86701:yes",
+        "32600:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "86701: the base case is what stops the calls",
+        "32600: Without it you would keep calling yourself forever until the stack overflows"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "86701:yes",
+        "32600:yes"
+      ],
+      "item_results": [
+        "86701:yes",
+        "32600:yes"
+      ]
+    }
+  ]
+}

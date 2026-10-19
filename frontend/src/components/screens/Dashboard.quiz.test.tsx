@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Quiz entry-point wiring on the dashboard (#537 C2, contract §6):
+ * Quiz entry-point wiring on the LEGACY dashboard (`?layout=legacy`; #537 C2, contract §6):
  *   - The "Try this next" suggest card resolves `?suggest=<name>` to its node
  *     id (same case-insensitive match `suggestNode` already does) and opens
  *     the quiz on that concept, carrying `{kind:"dashboard", returnTo:"/dashboard"}`.
@@ -94,7 +94,10 @@ function apiNode(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   layoutState.pref = "topnav";
-  searchParams = new URLSearchParams();
+  // These pin the LEGACY dashboard (`?layout=legacy`), which keeps its quiz
+  // entry points unchanged; the redesigned workspace's own suggest / due
+  // review behaviour is covered in components/dashboard/DashboardWorkspace.test.tsx.
+  searchParams = new URLSearchParams("layout=legacy");
   window.localStorage.clear();
   globalThis.ResizeObserver = class {
     observe() {}
@@ -117,7 +120,7 @@ afterEach(() => {
 
 describe("Dashboard — suggest card entry (?suggest=<name>)", () => {
   it("resolves the concept name to its node id and opens the quiz on that concept", async () => {
-    searchParams = new URLSearchParams("suggest=recursion"); // case-insensitive match
+    searchParams = new URLSearchParams("layout=legacy&suggest=recursion"); // case-insensitive match
 
     render(<Dashboard />);
 

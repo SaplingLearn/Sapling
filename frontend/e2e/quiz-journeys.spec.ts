@@ -64,10 +64,12 @@ import {
   QUIZ_LENGTH,
   STREAM_TIMEOUT,
   SUBMIT_TIMEOUT,
-  TUTOR_REPLY,
   answerAsYouGo,
   answerAtEnd,
   appAttempts,
+  expectAskReply,
+  expectAskedQuestionFloored,
+  expectQuizAskSession,
   chooseAndSubmit,
   expectLocation,
   expectOnQuestion,
@@ -459,8 +461,12 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   await expect(seed).toContainText(optionTextOf(1, correct));
   await expect(seed).toContainText(explanationOf(1, correct));
 
-  // The streamed reply, byte-for-byte the function-mode constant.
-  await expect(sheet).toContainText(TUTOR_REPLY, { timeout: STREAM_TIMEOUT });
+  // The streamed reply, byte-for-byte the function-mode constant of THIS lane
+  // (spec §11.4): the loop opener's turn by default, the legacy tutor's under
+  // the kill switch.
+  await expectAskReply(sheet, STREAM_TIMEOUT);
+  // Spec §13 A99: a quiz-ask session (help recorded; default lane: teach, no probe).
+  const askedHash = await expectQuizAskSession(USER_ACTIVE);
 
   await page.getByTestId("quiz-ask-panel-close").click();
   await expect(sheet).toHaveCount(0);
@@ -488,6 +494,8 @@ test("ask-without-abandoning: the tutor opens over the question, streams, closes
   expect(attempts).toHaveLength(1);
   expect(attempts[0].completed_at).not.toBeNull();
   expect(Number(attempts[0].score)).toBe(QUIZ_LENGTH - 1);
+  // …and the asked question's evidence carries the help floor (A99).
+  await expectAskedQuestionFloored(NODE_ID, askedHash);
 
   // The dashboard exit (R-10): a quiz reached from the dashboard says so, and
   // goes back there rather than to the tree — or, as before #537, to /learn.

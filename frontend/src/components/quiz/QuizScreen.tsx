@@ -18,6 +18,7 @@ import React, { useMemo } from "react";
 import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
+import { StudyNavigation } from "../fa26/Navigation";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
@@ -198,7 +199,13 @@ export function QuizScreen() {
   return (
     <FullHeightScreen className="quiz-root" style={rootStyle}>
       <DisclaimerModal />
-      <TopBar title="Quiz" subtitle="Test what you know." actions={<AIDisclaimerChip />} />
+      <TopBar title="Study" subtitle="Test what you know." actions={<AIDisclaimerChip />} />
+      {layout === "home" && <div className="fa26-study-header"><label className="fa26-study-course">Course: <select className="fa26-course-select" aria-label="Quiz course" value={entry.course || ""} onChange={event => {
+        const next = new URLSearchParams(query);
+        ["concept", "topic", "scope", "attempt"].forEach(key => next.delete(key));
+        if (event.target.value) next.set("course", event.target.value); else next.delete("course");
+        window.history.replaceState(null, "", `/quiz${next.size ? `?${next}` : ""}`);
+      }}><option value="">All</option>{home.courses.map(course => <option key={course.course_id} value={course.course_id}>{course.course_code || course.course_name}</option>)}</select></label><StudyNavigation /></div>}
       <div className={`quiz-body quiz-body--${layout}`}>
         {/* Home is full-bleed: its resume strip has to reach both edges under
             the TopBar, so the screen wraps its own content (`.quiz-col--home`

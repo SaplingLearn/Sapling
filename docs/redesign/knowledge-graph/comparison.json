@@ -1,0 +1,23 @@
+{
+  "referenceSHA": "e596208cd4242f3c8a17c21b875237d91b32bb2f5e3ad543a5f1105d12022fd0",
+  "dimensions": {
+    "width": 893,
+    "height": 601
+  },
+  "sourceToReact": {
+    "maxChannelDelta": 0,
+    "meanChannelDelta": 0,
+    "changedPixels": 0,
+    "pixelsAbove8": 0,
+    "pixelsAbove32": 0,
+    "totalPixels": 536693
+  },
+  "nativePenToChromium": {
+    "maxChannelDelta": 82,
+    "meanChannelDelta": 0.15465638642575924,
+    "changedPixels": 16587,
+    "pixelsAbove8": 4088,
+    "pixelsAbove32": 387,
+    "totalPixels": 536693
+  }
+}

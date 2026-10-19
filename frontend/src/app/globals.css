@@ -902,6 +902,19 @@ body { font-size: 14px; line-height: 1.5; }
   transform: translateX(100%);
 }
 .sheet--right[data-visible] { transform: none; }
+/* Bottom variant: the phone context sheet. Full width, safe-area aware,
+   at most 92dvh tall so the page edge stays visible above it. */
+.sheet-backdrop--bottom { align-items: flex-end; }
+.sheet--bottom {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 92dvh;
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  transform: translateY(100%);
+}
+.sheet--bottom[data-visible] { transform: none; }
 .sheet__header {
   display: flex;
   align-items: center;

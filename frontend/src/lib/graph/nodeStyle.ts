@@ -107,17 +107,18 @@ export function radiusFor(mastery: number, isRoot = false): number {
 }
 
 /**
- * score → tier. Mirrors `backend/config.py::get_mastery_tier`
- * (MASTERY_MASTERED_MIN 0.75 / MASTERY_LEARNING_MIN 0.45 /
- * MASTERY_STRUGGLING_MIN 0.1), pinned by the table test next to this file.
+ * score → tier. Mirrors `backend/learning/bkt.py::tier_for` (learning/params.py
+ * BKT_PROFICIENT 0.95 / BAND_NOVICE_MAX 0.30 / TIER_UNEXPLORED_MAX 0.10,
+ * PKG-14b), pinned by the table test next to this file and by
+ * backend/tests/test_mastery_tier_unification.py.
  *
  * Read the server's `mastery_tier` string wherever there is one — every graph
  * node carries it. This exists for the one case that has a score and no tier:
  * the quiz submit response's `mastery_after` (#537 R-12).
  */
 export function tierFor(score: number): MasteryTier {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }
@@ -159,3 +160,41 @@ export const NODE_STROKE_OPACITY = 0.4;
 
 /** The soft halo behind an `organism` node: a blurred disc at `r + pad`. */
 export const GLOW = { pad: 8, opacity: 0.15, blur: 3 } as const;
+
+/**
+ * The approved source graph palette (Figma master `JSs7K` / `3457:3774`, the
+ * Dashboard redesign handoff, prompt 07). The `sapling` graph appearance
+ * paints every concept by its SERVER tier with exactly these colours, so the
+ * four-state legend beside it describes the marks truthfully: fill = tier
+ * (`mastery_tier`, server-classified), size = mastery estimate, and no
+ * per-course hue or tier opacity on top. Course identity is carried by the
+ * brown hub each concept hangs off, never by colour.
+ *
+ * Deliberately separate from the FA26 (#727) appearance's near-identical
+ * values, which /tree still uses unchanged.
+ */
+export const SOURCE_GRAPH_PALETTE = {
+  mastered: "#A3B06D",
+  learning: "#FCC98A",
+  struggling: "#EF908F",
+  unexplored: "#DECDC1",
+  hub: "#6C462F",
+} as const;
+
+/** The readable name of each tier — the legend, the topic list and the
+ *  selected-concept panel all say the same words. */
+export const TIER_LABEL: Record<MasteryTier, string> = {
+  mastered: "Mastered",
+  learning: "Learning",
+  struggling: "Struggling",
+  unexplored: "Unexplored",
+};
+
+/** Fill for one node under the `sapling` appearance: hub brown for a course
+ *  hub, else its server tier's source colour (an unknown tier reads as
+ *  unexplored rather than inventing a state). */
+export function sourceFillFor(n: { is_subject_root?: boolean; mastery_tier?: string | null }): string {
+  if (n.is_subject_root) return SOURCE_GRAPH_PALETTE.hub;
+  const t = n.mastery_tier as MasteryTier | undefined;
+  return (t && t in TIER_LABEL ? SOURCE_GRAPH_PALETTE[t] : SOURCE_GRAPH_PALETTE.unexplored);
+}

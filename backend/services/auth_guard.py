@@ -28,9 +28,27 @@ from services.session_tokens import SESSION_COOKIE_NAME
 # that failed" should use error.*, and "denial decisions" auth.permission_denied.
 
 
+def presented_session_token(request: Request) -> str | None:
+    """The raw session token the request carries, UNVERIFIED — the one place
+    that knows where a session token may come from (the `auth_token` query
+    param, then the `sapling_session` cookie). `_decode_session` verifies what
+    this returns; `presents_credentials` only asks whether it is there."""
+    return request.query_params.get("auth_token") or request.cookies.get(SESSION_COOKIE_NAME)
+
+
+def presents_credentials(request: Request) -> bool:
+    """Whether the request CLAIMS an identity: a session token (see
+    `presented_session_token`) or an `Authorization` header (the bearer that
+    server-to-server callers such as Canopy's metrics poll send). Presence
+    only — nothing is verified, decoded or logged. Used by RequestIDMiddleware
+    to tell our own clients' unrouted 404s from anonymous scanner noise
+    (#690)."""
+    return bool(presented_session_token(request) or request.headers.get("authorization"))
+
+
 def _decode_session(request: Request) -> dict:
     """Extract and verify the session token from query params or cookies."""
-    token = request.query_params.get("auth_token") or request.cookies.get(SESSION_COOKIE_NAME)
+    token = presented_session_token(request)
     if not token or not SESSION_SECRET:
         raise HTTPException(status_code=401, detail="Not authenticated")
 

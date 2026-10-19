@@ -7,6 +7,8 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
+import { removeInterruptedTurn } from "../chat/interruptedTurn";
+import { SaplingAction, StatusMessage } from "@/components/sapling";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { SessionSummary } from "../chat/SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../chat/SharedContextToggle";
@@ -20,6 +22,9 @@ import { useConfirm } from "@/lib/useConfirm";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
+import { LoopLearn } from "../learn/LoopLearn";
+import { useLoopStatus } from "../learn/useLoopStatus";
+import { readResumeParam } from "../learn/resumeParam";
 import {
   startSession,
   startSessionStream,
@@ -83,11 +88,13 @@ function normalizeMode(input: string | null): Mode {
   return (VALID_MODES as string[]).includes(input) ? (input as Mode) : "socratic";
 }
 
-// Mirrors backend/config.py::get_mastery_tier so a streamed delta classifies
-// mastery the same way a full graph refetch would.
+// Mirrors backend/learning/bkt.py::tier_for (learning/params.py BKT_PROFICIENT /
+// BAND_NOVICE_MAX / TIER_UNEXPLORED_MAX, PKG-14b) so a streamed delta classifies
+// mastery the same way a full graph refetch would. Pinned by
+// backend/tests/test_mastery_tier_unification.py.
 function tierForScore(score: number): GraphNode["mastery_tier"] {
-  if (score >= 0.75) return "mastered";
-  if (score >= 0.45) return "learning";
+  if (score >= 0.95) return "mastered";
+  if (score >= 0.3) return "learning";
   if (score >= 0.1) return "struggling";
   return "unexplored";
 }
@@ -114,11 +121,10 @@ function rawNodeIdentity(raw: Record<string, unknown>): { id?: string; name?: st
 // spec sketches. It's a dict keyed by which graph tool wrote
 // (backend/agents/tools/graph.py via services/chat_stream.py
 // merge_graph_updates): `new_nodes` entries are {concept_name,
-// initial_mastery}; `updated_nodes` entries are {concept_name,
-// mastery_delta, reason, event_type}. Neither carries an `id` or an
-// absolute post-update score. `delta.mastery_changes` ({concept, before,
-// after}) IS authoritative for an existing node's new score, so it drives
-// merges for updates; `nodes` entries are read defensively via
+// initial_mastery} (PKG-14b: the tutor's mastery-write tool is gone, so no
+// other key is produced). They carry no `id` and no absolute post-update
+// score. `delta.mastery_changes` ({concept, before, after}) IS authoritative
+// for an existing node's new score, so it drives merges for updates; `nodes` entries are read defensively via
 // `rawNodeIdentity` — and any fields we don't recognize are ignored rather
 // than crashing.
 //
@@ -299,36 +305,61 @@ export function applyGraphDeltaAssembly(
   setGraphEdges(prev => mergeGraphEdges(prev, edges));
 }
 
-// #164: Dashboard's "Where you left off" cards push /learn?resume=<id>; Tree's
-// session rows used ?session=<id> before both callers unified on ?resume=.
-// Accept both so any bookmarked/legacy link keeps working.
-export function readResumeParam(params: { get(name: string): string | null }): string | null {
-  return params.get("resume") ?? params.get("session");
-}
+// #164: ?resume=<id> (and the legacy ?session=<id>). Moved to
+// components/learn/resumeParam.ts so LoopLearn reads the same deep link
+// without importing this screen (PKG-13); re-exported for its callers.
+export { readResumeParam };
 
 // ADR 0020 Retry: drop the interrupted assistant bubble and — when it sits
 // directly before it — the user bubble of the same turn, so the re-send
-// (which appends a fresh user bubble) doesn't duplicate either. Pure and
-// exported for Learn.resume.test.ts.
-export function removeInterruptedTurn(
-  messages: ChatMsg[],
-  interruptedId: string,
-  retryText: string,
-): ChatMsg[] {
-  const i = messages.findIndex(m => m.id === interruptedId);
-  if (i === -1) return messages;
-  const next = [...messages.slice(0, i), ...messages.slice(i + 1)];
-  if (i > 0 && next[i - 1]?.role === "user" && next[i - 1].content === retryText) {
-    next.splice(i - 1, 1);
-  }
-  return next;
-}
+// (which appends a fresh user bubble) doesn't duplicate either. Shared with the
+// loop's Retry (chat/interruptedTurn.ts); re-exported for Learn.resume.test.ts.
+export { removeInterruptedTurn };
 
 export function Learn() {
+  const { userId, userReady } = useUser();
+  // Learning loop (PKG-13; post-launch PKG-14b, spec §11.2): one GET decides the
+  // tree — the loop status probe is the only input (never learning_loop_beta; the
+  // server gate decides, spec §7). null → the loading fallback; true → the loop;
+  // false (the kill switch: {active: false} / the gate's 404) → legacy; any other
+  // failure → a retry state, NEVER the legacy tree (the backend delegates the
+  // legacy calls to the loop, so failing open would give a hybrid).
+  const { status: loop, retry } = useLoopStatus(userId, userReady);
+  if (loop === null) return <GateLoading />;
+  if (loop === "error") {
+    // Never the legacy tree and never a hybrid: the student retries the gate.
+    return (
+      <div data-testid="loop-status-error" className="sapling-surface" style={GATE_STYLE}>
+        {/* StatusMessage's error tone is the role=alert announcement. */}
+        <StatusMessage tone="error">Couldn&apos;t reach the tutor. Try again.</StatusMessage>
+        <div style={{ marginTop: 12 }}>
+          <SaplingAction data-testid="loop-status-retry" onClick={retry}>Try again</SaplingAction>
+        </div>
+      </div>
+    );
+  }
+  if (loop) {
+    return (
+      <Suspense fallback={<GateLoading />}>
+        <LoopLearn />
+      </Suspense>
+    );
+  }
   return (
-    <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+    <Suspense fallback={<GateLoading />}>
       <LearnInner />
     </Suspense>
+  );
+}
+
+const GATE_STYLE: React.CSSProperties = { padding: 40, maxWidth: 560 };
+
+/** The gate's wait, announced once (role=status), on the redesign surface. */
+function GateLoading() {
+  return (
+    <div className="sapling-surface" style={GATE_STYLE}>
+      <StatusMessage tone="pending">Loading…</StatusMessage>
+    </div>
   );
 }
 
@@ -465,7 +496,7 @@ function LearnInner() {
 
   // Collapsible knowledge-map rail (desktop only). `dragWidth` is non-null
   // only mid-drag, when it drives the live width and the CSS transition is off.
-  const [railOpen, setRailOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(false);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const railDragRef = useRef<{ startX: number; startWidth: number; width: number; moved: boolean; pointerId: number } | null>(null);
   const [railHydrated, setRailHydrated] = useState(false);
@@ -954,17 +985,6 @@ function LearnInner() {
     router.replace(`/learn?mode=${mode}`, { scroll: false });
   };
 
-  const startNextFromSummary = (concept: string) => {
-    setSummary(null);
-    setSessionId(null);
-    setMessages([]);
-    setTopicDraft(concept);
-    setTopic(concept);
-    router.replace(`/learn?topic=${encodeURIComponent(concept)}&mode=${mode}`, { scroll: false });
-  };
-
-  const modeOptions = useMemo(() => MODES.map(m => ({ value: m.id, label: m.name, description: m.tip })), []);
-
   // Scope the course picker to the active semester (falls back to all
   // courses when no semester is selected). The suggest/highlight logic that
   // sat next to this pre-revamp now lives up top with the rail-focus state.
@@ -1234,11 +1254,11 @@ function LearnInner() {
       <FullHeightScreen className="fade-in">
         <DisclaimerModal />
         <TopBar
-          title="Start a session"
+          title="Clov"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."
           actions={<AIDisclaimerChip />}
         />
-        <div
+        <div className="fa26-tutor-start"
           style={{
             padding: 32,
             display: "grid",
@@ -1248,8 +1268,10 @@ function LearnInner() {
             overflowY: "auto",
           }}
         >
-          <div className="card" style={{ padding: "var(--pad-xl)" }}>
-            <div className="label-micro" style={{ marginBottom: 8 }}>Course (optional)</div>
+          <div className="card fa26-tutor-form" style={{ padding: "var(--pad-xl)" }}>
+            <h2>Start A New Session</h2>
+            <p>Choose a topic and a learning mode. Clov will guide you from there.</p>
+            <div className="fa26-tutor-field"><div className="label-micro" style={{ marginBottom: 8 }}>Course <small>(optional)</small></div>
             <CustomSelect<string>
               value={selectedCourseId}
               options={[
@@ -1259,7 +1281,7 @@ function LearnInner() {
               onChange={setSelectedCourseId}
               style={{ width: "100%", marginBottom: 16 }}
             />
-            <div className="label-micro" style={{ marginBottom: 8 }}>Topic</div>
+            </div><div className="fa26-tutor-field"><div className="label-micro" style={{ marginBottom: 8 }}>Topic</div>
             <TopicPicker
               value={topicDraft}
               onChange={setTopicDraft}
@@ -1269,7 +1291,7 @@ function LearnInner() {
               selectedCourseId={selectedCourseId}
               activeSemester={activeSemester}
             />
-            <div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
+            </div><div className="fa26-tutor-field"><div className="label-micro" style={{ marginBottom: 8 }}>Mode</div>
             <div style={{ marginBottom: 20 }}>
               <Toggle
                 options={MODES.map(m => ({ value: m.id, label: m.name, title: m.tip }))}
@@ -1277,15 +1299,15 @@ function LearnInner() {
                 onChange={setMode}
               />
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            </div><div className="fa26-tutor-start-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} align="left" />
               <button data-testid="tutor-start" className="btn btn--primary" onClick={handleStart} disabled={!topicDraft.trim() || !userId}>
-                <Icon name="sparkle" size={13} /> Start learning
+                <Icon name="sparkle" size={13} /> Start Session
               </button>
             </div>
           </div>
 
-          <div className="card" style={{ padding: "var(--pad-lg)" }}>
+          <div className="card fa26-tutor-recent" style={{ padding: "var(--pad-lg)" }}>
             <div className="label-micro" style={{ marginBottom: 10 }}>Recent sessions</div>
             {recentSessions.length === 0 && (
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No recent sessions yet.</div>
@@ -1305,6 +1327,7 @@ function LearnInner() {
   return (
     <FullHeightScreen>
       <DisclaimerModal />
+      <TopBar title="Clov" />
 
       {isMobile && (
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
@@ -1330,24 +1353,15 @@ function LearnInner() {
 
       <div style={{ display: "flex", flex: 1, minHeight: 0, position: "relative" }}>
         {(!isMobile || mobileTab === "chat") && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-            <TopBar
-              breadcrumb={<BackToLearnLink onClick={handleBackToLearn} />}
-              title={topic}
-              subtitle={`${cardCourse?.course_code ? `${cardCourse.course_code} · ` : ""}${MODES.find(m => m.id === mode)?.name ?? mode} Tutor · ${messages.length} Messages`}
-              actions={
-                <>
+          <div className="fa26-chat" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+            <div className="fa26-chat__bar">
+              <span>{topic}{cardCourse?.course_code ? ` · ${cardCourse.course_code}` : ""} · {MODES.find(m => m.id === mode)?.name ?? mode}</span>
+              <AIDisclaimerChip />
+              <details className="fa26-chat__options">
+                <summary>Session options</summary>
+                <div>
+                  <BackToLearnLink onClick={handleBackToLearn} />
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
-                  <button
-                    className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
-                    onClick={endConfirm.trigger}
-                    title={endConfirm.armed ? "Click again to confirm" : "End session"}
-                  >
-                    {endConfirm.armed ? "Confirm end" : "End session"}
-                  </button>
-                </>
-              }
-            />
             <div style={{ display: "flex", gap: 6, padding: "10px 32px", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
               {MODES.map(m => (
                 <button
@@ -1367,11 +1381,18 @@ function LearnInner() {
                 </button>
               ))}
               <div style={{ flex: 1 }} />
-              <AIDisclaimerChip />
               <ModelToggle pref={modelPref} onChange={setModelPref} />
+            </div>
+                </div>
+              </details>
+              <button className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
+                onClick={endConfirm.trigger} title={endConfirm.armed ? "Click again to confirm" : "End session"}>
+                {endConfirm.armed ? "Confirm end" : "End session"}
+              </button>
             </div>
             <ChatPanel
               messages={messages}
+              placeholder="Ask Clov…"
               onSend={send}
               onAction={handleAction}
               disabled={sending || starting}
@@ -1384,6 +1405,8 @@ function LearnInner() {
 
         {(!isMobile || mobileTab === "graph") && (
           <aside
+            inert={!isMobile && !railOpen && !railDragging}
+            aria-hidden={!isMobile && !railOpen && !railDragging ? true : undefined}
             style={{
               width: isMobile ? "100%" : railW,
               minWidth: isMobile ? undefined : railW,
@@ -1743,7 +1766,6 @@ function LearnInner() {
         <SessionSummary
           summary={summary}
           onClose={closeSummary}
-          onStartNext={startNextFromSummary}
         />
       )}
     </FullHeightScreen>
@@ -1859,7 +1881,7 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
   };
 
   return (
-    <div
+    <div className="fa26-session-row"
       style={{
         display: "flex",
         alignItems: "center",

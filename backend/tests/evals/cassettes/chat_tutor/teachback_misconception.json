@@ -1,17 +1,4 @@
 {
-  "text": "You've got the first part exactly right! An object in motion will stay in motion.\n\nBut you've hit on a really common misconception with the second part. A force isn't needed to *keep* an object moving. An object in motion will coast at a constant velocity all on its own, forever, as long as no forces act on it.\n\nThe key is that a force *changes* an object's motion \u2014 it makes it speed up, slow down, or change direction.\n\nHere's a question: if you slide a book across a table, it slows down and stops. Why does that happen, according to Newton's First Law?",
-  "tool_calls": [
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Newton's First Law",
-            "mastery_delta": -0.05,
-            "reason": "Misconception about the role of force."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "text": "You're on the right track! You've correctly captured the main idea: an object in motion tends to stay in motion.\n\nYour statement \"Force makes things keep moving\" is a really common misconception. Newton's insight was that you don't need a force to *keep* something moving. An object will happily coast forever at a constant velocity.\n\nA force is only needed to *change* an object's motion \u2014 to make it speed up, slow down, or change direction.\n\nConsider this: if you push a book across a table, it quickly stops. If you slide a hockey puck across the ice, it goes much farther. Why the difference?",
+  "tool_calls": []
 }

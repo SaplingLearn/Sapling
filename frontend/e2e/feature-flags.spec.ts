@@ -10,12 +10,16 @@ import { FRONTEND_URL, USER_ACTIVE } from "./support/stack";
 const USER_ADMIN = "rich-user-admin"; // seeded with the admin role
 
 test("admin sets a user rule on hide_quiz and the student gets it (#620)", async ({ browser, page }) => {
+  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
+  const adminCtx = await browser.newContext({ storageState: adminState });
+  const baseline = await adminCtx.request.patch(`${FRONTEND_URL}/api/admin/flags/hide_quiz`, {
+    data: { default_variant: "off", rollout_percent: 0, rollout_variant: null },
+  });
+  expect(baseline.ok()).toBeTruthy();
   // Baseline: the student sees hide_quiz off.
   const before = await page.request.get(`${FRONTEND_URL}/api/flags`);
   expect((await before.json()).flags.hide_quiz).toBe("off");
 
-  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
-  const adminCtx = await browser.newContext({ storageState: adminState });
   const admin = await adminCtx.newPage();
   await admin.goto(`${FRONTEND_URL}/admin`);
   await admin.getByTestId("admin-tab-flags").click();
@@ -50,12 +54,23 @@ test("admin sets a user rule on hide_quiz and the student gets it (#620)", async
 });
 
 test("hiding a feature drops it from the nav and redirects its route (#620)", async ({ browser, page }) => {
+  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
+  const adminCtx = await browser.newContext({ storageState: adminState });
+  // DB reset removes the preceding test's user override, but the backend's
+  // in-process flag snapshot outlives that reset. Establish the off baseline
+  // through the real admin write, which also invalidates that snapshot.
+  const baseline = await adminCtx.request.patch(`${FRONTEND_URL}/api/admin/flags/hide_quiz`, {
+    data: { default_variant: "off", rollout_percent: 0, rollout_variant: null },
+  });
+  expect(baseline.ok()).toBeTruthy();
   await page.goto(`${FRONTEND_URL}/dashboard`);
+  // Quiz lives in the desktop sidebar's "More" group, collapsed by default
+  // (the open state is remembered, so it stays open across the reload below).
+  await page.getByTestId("nav-more").click();
+  await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByTestId("nav-link-quiz")).toBeVisible();
 
   // Hide Quiz for everyone, through the API the /admin tab uses.
-  const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
-  const adminCtx = await browser.newContext({ storageState: adminState });
   const res = await adminCtx.request.patch(`${FRONTEND_URL}/api/admin/flags/hide_quiz`, {
     data: { default_variant: "on", rollout_percent: 0, rollout_variant: null },
   });
@@ -65,11 +80,15 @@ test("hiding a feature drops it from the nav and redirects its route (#620)", as
   // Flags load once per page load: a fresh load picks the change up.
   await page.reload();
   await expect(page.getByTestId("nav-link-tree")).toBeVisible();
+  await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("nav-more-region")).toHaveAttribute("data-open");
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 
   // A typed URL (and anything below it) lands on the dashboard.
   await page.goto(`${FRONTEND_URL}/quiz`);
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("app-shell")).toBeVisible();
+  await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("nav-more-region")).toHaveAttribute("data-open");
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 });

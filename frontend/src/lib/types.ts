@@ -20,6 +20,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   strength: number;
+  relationship_type?: string;
 }
 
 export interface KnowledgeGraph {
@@ -36,11 +37,11 @@ export interface GraphStats {
   streak: number;
 }
 
+/** PKG-14b: the tutor writes only new concepts and edges — no tutor tool moves
+ *  mastery (the retired `updated_nodes` / `recommended_next` fields are gone). */
 export interface GraphUpdate {
   new_nodes: { concept_name: string; subject: string; initial_mastery: number }[];
-  updated_nodes: { concept_name: string; mastery_delta: number; reason: string }[];
   new_edges: { source: string; target: string; strength: number }[];
-  recommended_next: string[];
 }
 
 export interface MasteryChange {
@@ -66,10 +67,7 @@ export interface ChatResponse {
 
 export interface SessionSummary {
   concepts_covered: string[];
-  mastery_changes: MasteryChange[];
-  new_connections: { source: string; target: string }[];
   time_spent_minutes: number;
-  recommended_next: string[];
 }
 
 export interface QuizQuestion {

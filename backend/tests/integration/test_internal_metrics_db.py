@@ -22,8 +22,10 @@ Rows go in over raw psycopg (the lane's rule: never assert through the layer
 under test); the read goes through the app, exactly as Canopy's poll does.
 
 The lane re-seeds the rich baseline before every test, so the row-backed tables
-are NOT empty: those assertions are deltas (after minus before). `events` and
-`llm_usage` are not seeded, which the tests that rely on it assert first.
+are NOT empty: those assertions are deltas (after minus before). Since PKG-13 the
+seed also writes an `llm_usage` row (the budget-cap journey's spend), so this
+module clears `events` and `llm_usage` before each test (`_empty_sources`) —
+the tests that rely on empty sources still assert it first.
 """
 import re
 import time
@@ -32,6 +34,17 @@ import uuid
 import pytest
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _empty_sources(db_conn):
+    """Start every test with no `events` / `llm_usage` rows: the reseeded
+    baseline carries the budget-cap journey's `llm_usage` row (PKG-13), which
+    would otherwise read as a measured source here. Runs after the lane's
+    truncate + reseed (db_conn is the lane's local-only connection)."""
+    db_conn.execute("DELETE FROM llm_usage")
+    db_conn.execute("DELETE FROM events")
+    yield
 
 URL = "/api/internal/metrics"
 TOKEN = "itest-canopy-metrics-token-5b1f0c7e9a3d4f68"

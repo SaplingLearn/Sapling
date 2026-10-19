@@ -1,0 +1,36 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "75530:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "",
+      "item_results": [
+        "75530:yes",
+        "54811:yes"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "75530: It's the case where the function stops recursing.",
+        "54811: without it calls never end / stack overflows"
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "75530:yes"
+      ],
+      "item_results": [
+        "75530:yes"
+      ]
+    }
+  ]
+}

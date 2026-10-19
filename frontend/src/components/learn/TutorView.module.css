@@ -1,0 +1,529 @@
+/* Clov tutor view of /learn (redesign prompt 04). Pen frames s3Kxuz, wRolX,
+ * ULhG3, rIzSa, W14qiJ, QgtPP, Z0WKXz, lzEyB, HHU6e, WCplx, cSgSE, hgkZT:
+ * https://app.pen.dev/s/sxEA2n5Ikk7KWUOanWPghMWYFFS0SbPgbkwkIm9dLYA
+ * Layout and type only; the loop's behaviour lives in LoopLearn. */
+
+/* ── Top bar ──────────────────────────────────────────────────────────── */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sapling-space-3);
+  /* Room for the shell's notification / settings / report utilities, as the
+   * studio heading leaves (LoopLearn.module.css .heading). */
+  padding-right: 120px;
+  padding-bottom: var(--sapling-space-4);
+  border-bottom: 1px solid var(--sapling-line);
+  min-width: 0;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--sapling-space-3);
+  min-width: 0;
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
+}
+
+.crumbCourse {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.crumbSep {
+  color: var(--sapling-muted);
+}
+
+.crumbTitle {
+  color: var(--sapling-ink);
+  white-space: nowrap;
+}
+
+.barActions {
+  display: flex;
+  align-items: center;
+  gap: var(--sapling-space-2);
+  margin-left: auto;
+}
+
+.barButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sapling-space-2);
+  min-width: var(--sapling-control-min);
+  min-height: var(--sapling-control-min);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sapling-ink);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
+  cursor: pointer;
+}
+
+.barButton:hover,
+.barButton[aria-expanded="true"] {
+  background: var(--sapling-sage);
+}
+
+.barButton:focus-visible,
+.chip:focus-visible,
+.starter:focus-visible,
+.menuItem:focus-visible,
+.historyRow:focus-visible,
+.primaryLink:focus-visible,
+.textLink:focus-visible,
+.search:focus-visible {
+  outline: 2px solid var(--sapling-primary);
+  outline-offset: 2px;
+}
+
+.dots {
+  letter-spacing: 1px;
+  font-size: var(--sapling-text-eyebrow);
+}
+
+.menu {
+  position: relative;
+}
+
+.menuPanel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 240px;
+  padding: var(--sapling-space-2);
+  border: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-lg);
+  background: var(--sapling-paper);
+  box-shadow: 0 8px 24px rgba(37, 61, 47, 0.14);
+}
+
+.menuList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--sapling-control-min);
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--sapling-radius-md);
+  background: transparent;
+  color: var(--sapling-ink);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: var(--sapling-sage);
+}
+
+.menuItem:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Context chips ────────────────────────────────────────────────────── */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sapling-space-3);
+}
+
+.chip {
+  min-height: var(--sapling-control-min);
+  min-width: 120px;
+  padding: 8px 24px;
+  border: 1px solid var(--sapling-line);
+  border-radius: 999px;
+  background: var(--sapling-paper);
+  color: var(--sapling-ink);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
+  cursor: pointer;
+}
+
+.chip[data-active] {
+  border-color: var(--sapling-sage);
+  background: var(--sapling-sage);
+  color: var(--sapling-primary);
+  font-weight: 600;
+}
+
+/* ── Context panels ───────────────────────────────────────────────────── */
+.context {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-4);
+  min-width: 0;
+}
+
+.contextSection {
+  display: grid;
+  gap: var(--sapling-space-2);
+  padding-bottom: var(--sapling-space-4);
+  border-bottom: 1px solid var(--sapling-line);
+}
+
+.contextLead {
+  margin: 0;
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
+}
+
+.goalText {
+  margin: 0;
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  margin: 0;
+  color: var(--sapling-muted);
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
+}
+
+.route {
+  display: grid;
+  gap: var(--sapling-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.route li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: var(--sapling-space-3);
+  align-items: start;
+}
+
+.routeMark {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  border: 1.5px solid var(--sapling-line);
+  border-radius: 50%;
+}
+
+.route li[data-current] .routeMark {
+  border: 6px solid var(--sapling-primary);
+}
+
+.routeName {
+  margin: 0;
+  font: 500 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
+}
+
+.routeDetail {
+  margin: 2px 0 0;
+  color: var(--sapling-muted);
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
+}
+
+.materials {
+  display: grid;
+  gap: var(--sapling-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.material {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--sapling-space-3);
+  color: var(--sapling-primary);
+}
+
+.materialName {
+  margin: 0;
+  color: var(--sapling-ink);
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
+  overflow-wrap: anywhere;
+}
+
+.primaryLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--sapling-control-min);
+  padding: 10px 24px;
+  border-radius: 999px;
+  background: var(--sapling-primary);
+  color: var(--sapling-white);
+  font: 600 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
+  text-decoration: none;
+}
+
+.textLink {
+  color: var(--sapling-primary);
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+
+.focusCard {
+  display: grid;
+  gap: 6px;
+  padding: var(--sapling-space-4) var(--sapling-space-5);
+  border-radius: var(--sapling-radius-lg);
+  background: var(--sapling-sage);
+}
+
+.focusName {
+  margin: 0;
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
+}
+
+/* ── History ──────────────────────────────────────────────────────────── */
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-5);
+}
+
+.search {
+  width: 100%;
+  min-height: var(--sapling-control-min);
+  box-sizing: border-box;
+  padding: 8px 18px;
+  border: 1px solid var(--sapling-line);
+  border-radius: 999px;
+  background: var(--sapling-chat-surface);
+  color: var(--sapling-ink);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
+}
+
+.historySection {
+  display: grid;
+  gap: var(--sapling-space-2);
+}
+
+.historyHeading {
+  margin: 0;
+  color: var(--sapling-muted);
+  font: 600 var(--sapling-text-eyebrow)/var(--sapling-leading-eyebrow) var(--sapling-font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.historyList {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historyRow {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--sapling-control-min);
+  padding: 12px 16px;
+  border: 0;
+  border-radius: var(--sapling-radius-md);
+  background: transparent;
+  color: var(--sapling-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.historyRow[data-open] {
+  background: var(--sapling-sage);
+}
+
+.historyRow:hover {
+  background: var(--sapling-sage);
+}
+
+.historyRow[aria-current="true"] {
+  outline: 1.5px solid var(--sapling-primary);
+}
+
+.historyTopic {
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
+  overflow-wrap: anywhere;
+}
+
+.historyMeta {
+  color: var(--sapling-muted);
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
+}
+
+/* ── Welcome ──────────────────────────────────────────────────────────── */
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sapling-space-4);
+  width: 100%;
+  max-width: 848px;
+  margin: 0 auto;
+  padding: var(--sapling-space-6) 0 var(--sapling-space-4);
+  text-align: center;
+}
+
+.welcomeMark {
+  color: var(--sapling-primary);
+}
+
+.welcomeTitle {
+  margin: 0;
+  font: 500 var(--sapling-text-page)/var(--sapling-leading-page) var(--sapling-font-heading);
+  color: var(--sapling-ink);
+  text-wrap: balance;
+}
+
+.welcomeLead {
+  margin: 0;
+  color: var(--sapling-muted);
+  font-size: var(--sapling-text-body);
+  line-height: var(--sapling-leading-body)
+}
+
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sapling-space-3);
+  width: 100%;
+  margin: var(--sapling-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.starter {
+  min-height: var(--sapling-control-min);
+  min-width: 200px;
+  padding: 10px 28px;
+  border: 1px solid var(--sapling-line);
+  border-radius: 999px;
+  background: var(--sapling-paper);
+  color: var(--sapling-ink);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
+  cursor: pointer;
+}
+
+.starter:hover {
+  background: var(--sapling-sage);
+}
+
+.planCard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sapling-space-4);
+  width: 100%;
+  max-width: 768px;
+  box-sizing: border-box;
+  margin-top: var(--sapling-space-5);
+  padding: var(--sapling-space-5);
+  border-radius: var(--sapling-radius-lg);
+  background: color-mix(in srgb, var(--sapling-sage) 70%, var(--sapling-chat-surface));
+  text-align: left;
+}
+
+.planCardText {
+  display: grid;
+  gap: var(--sapling-space-2);
+}
+
+.planCardTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--sapling-space-3);
+  margin: 0;
+  color: var(--sapling-ink);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
+}
+
+.planCardTitle :global(.sapling-icon) {
+  color: var(--sapling-primary);
+}
+
+.welcomeComposer {
+  display: grid;
+  gap: var(--sapling-space-2);
+  width: 100%;
+  max-width: 848px;
+  margin-top: var(--sapling-space-6);
+  text-align: left;
+}
+
+.footnote {
+  margin: 0;
+  color: var(--sapling-muted);
+  font-size: var(--sapling-text-meta);
+  text-align: center;
+  line-height: var(--sapling-leading-meta)
+}
+
+/* The FA26 shell moves its utilities to the very top on a phone. */
+@media (max-width: 700px) {
+  .bar {
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .barLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--sapling-space-2);
+  }
+
+  .chip {
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: var(--sapling-text-control);
+    white-space: nowrap;
+  line-height: var(--sapling-leading-control)
+}
+
+  .starters {
+    display: grid;
+    justify-content: stretch;
+    gap: var(--sapling-space-2);
+  }
+
+  .starter {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .planCard {
+    padding: var(--sapling-space-4);
+  }
+
+  .planCard > :global(.sapling-action) {
+    flex: 1 1 100%;
+  }
+
+  .welcome {
+    padding-top: var(--sapling-space-4);
+  }
+}

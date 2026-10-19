@@ -154,8 +154,8 @@ describe("ConceptNode — the growth variant", () => {
 
   it("takes its opacity from tierFor(after), the one place a tier is derived (R-12)", () => {
     const { container } = render(
-      // after 0.8 → mastered, though the passed-in tier says struggling.
-      <ConceptNode size={64} {...BASE} variant={{ kind: "growth", before: 0.1, after: 0.8 }} />,
+      // after 0.97 → mastered (PKG-14b cut 0.95), though the passed-in tier says struggling.
+      <ConceptNode size={64} {...BASE} variant={{ kind: "growth", before: 0.1, after: 0.97 }} />,
     );
     expect(num(body(container), "opacity")).toBe(opacityFor("mastered"));
   });

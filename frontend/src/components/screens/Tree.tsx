@@ -7,6 +7,7 @@ import { useScrollLock } from "@/lib/useScrollLock";
 import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { SOURCE_GRAPH_PALETTE } from "@/lib/graph/nodeStyle";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
@@ -21,6 +22,7 @@ import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
 import { TopicChecklistPanel } from "../TopicChecklistPanel";
+import { NodeConnections } from "../graph/NodeConnections";
 import type { AttemptSummary } from "@/lib/quiz/types";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
@@ -32,7 +34,7 @@ const ATTEMPT_HISTORY_LIMIT = 100;
 /** Rows in the node panel's "Recent quizzes" block. */
 const RECENT_QUIZ_ROWS = 5;
 
-/** `mastery_delta` is a 0–1 fraction (`routes/quiz.py:1780`,
+/** `p_delta` is a 0–1 fraction (`routes/quiz.py::attempt history`,
  *  `mastery_after - mastery_before`); the panel speaks in whole percent, the
  *  same unit as the Mastery tile above it. `null` is "the attempt recorded no
  *  move", not zero — say so with an em dash rather than inventing a number. */
@@ -50,10 +52,10 @@ function attemptTime(a: AttemptSummary): number {
 }
 
 const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "var(--state-mastery)" },
-  learning: { label: "Learning", color: "var(--state-progress)" },
-  struggling: { label: "Struggling", color: "var(--state-struggle)" },
-  unexplored: { label: "Unexplored", color: "var(--state-neutral)" },
+  mastered: { label: "Mastered", color: SOURCE_GRAPH_PALETTE.mastered },
+  learning: { label: "Learning", color: SOURCE_GRAPH_PALETTE.learning },
+  struggling: { label: "Struggling", color: SOURCE_GRAPH_PALETTE.struggling },
+  unexplored: { label: "Unexplored", color: SOURCE_GRAPH_PALETTE.unexplored },
 };
 
 export function Tree() {
@@ -120,6 +122,7 @@ export function Tree() {
           source: e.source as string,
           target: e.target as string,
           strength: e.strength,
+          relationship_type: e.relationship_type,
         })),
       );
       setSessions(sessionsRes.sessions || []);
@@ -334,6 +337,10 @@ export function Tree() {
       <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
         {selected.name}
       </h2>
+      <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 16px", overflowWrap: "anywhere" }}>
+        {selected.description?.trim() || "No description is available yet."}
+      </p>
+      <NodeConnections node={selected} nodes={nodes} edges={edges} onSelect={setSelected} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
         <div className="card" style={{ padding: 12 }}>
           <div className="label-micro">Mastery</div>
@@ -403,7 +410,7 @@ export function Tree() {
                   {relativeStudied(a.completed_at || a.created_at)}
                 </span>
                 <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.mastery_delta)} mastery
+                  {a.score ?? "—"}/{a.total ?? "—"} · {formatMasteryDelta(a.p_delta)} mastery
                 </span>
               </div>
             ))
@@ -578,11 +585,13 @@ export function Tree() {
             <GraphPanelSkeleton />
           ) : (
             <KnowledgeGraph
+          appearance="sapling"
               nodes={filteredNodes}
               edges={filteredEdges}
               width={size.w}
               height={size.h}
               highlightId={suggestId || selected?.id}
+              selectedId={selected?.id}
               onNodeClick={(n) => setSelected(n)}
             />
           )}
@@ -638,6 +647,7 @@ export function Tree() {
             nodes={filteredNodes}
             edges={filteredEdges}
             highlightId={suggestId || selected?.id}
+            selectedId={selected?.id}
             onNodeClick={(n) => { setSelected(n); setFullscreen(false); }}
           />
         </div>
@@ -647,10 +657,11 @@ export function Tree() {
 }
 
 function FullscreenGraph({
-  nodes, edges, highlightId, onNodeClick,
+  nodes, edges, highlightId, selectedId, onNodeClick,
 }: {
   nodes: GraphNode[]; edges: GraphEdge[];
   highlightId?: string;
+  selectedId?: string;
   onNodeClick: (n: GraphNode) => void;
 }) {
   const [size, setSize] = React.useState({ w: 1200, h: 700 });
@@ -663,11 +674,13 @@ function FullscreenGraph({
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
       <KnowledgeGraph
+          appearance="sapling"
         nodes={nodes}
         edges={edges}
         width={size.w}
         height={size.h}
         highlightId={highlightId}
+        selectedId={selectedId}
         onNodeClick={onNodeClick}
       />
     </div>

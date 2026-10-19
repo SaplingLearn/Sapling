@@ -21,7 +21,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { type GraphEdge, type GraphNode } from "@/lib/data";
-import { radiusFor, shadeFor } from "@/lib/graph/nodeStyle";
+import { radiusFor, shadeFor, sourceFillFor } from "@/lib/graph/nodeStyle";
 import { IS_TEST_MODE } from "@/lib/testMode";
 
 // `react-force-graph-3d`'s default export touches `document` at
@@ -34,11 +34,16 @@ const ForceGraph3D = dynamic(
 );
 
 type Props = {
+  /** `sapling`: paint by server tier in the approved source palette, so the
+   *  Dashboard's four-state legend holds in 3D too. Anything else: the
+   *  original course-hue shading. */
+  appearance?: "fa26" | "sapling";
   nodes: GraphNode[];
   edges: GraphEdge[];
   width?: number;
   height?: number;
   highlightId?: string;
+  selectedId?: string | null;
   onNodeClick?: (n: GraphNode) => void;
 };
 
@@ -74,6 +79,8 @@ const SR_ONLY: React.CSSProperties = {
 };
 
 export function KnowledgeGraph3D({
+  appearance,
+  selectedId = null,
   nodes,
   edges,
   width = 800,
@@ -118,10 +125,16 @@ export function KnowledgeGraph3D({
   const nodeColor = React.useCallback(
     (raw: object) => {
       const n = raw as FG3DNode;
+      if (appearance === "sapling") {
+        // Selection reads as the olive ring colour; everything else keeps its
+        // tier fill (a highlight must not repaint a node's state).
+        if (selectedId && n.id === selectedId) return "#416207";
+        return sourceFillFor(n);
+      }
       if (n.id === highlightId) return "#8a9a5b";
       return shadeFor(n.color || "#8a9a5b", n.id, "hex");
     },
-    [highlightId],
+    [highlightId, appearance, selectedId],
   );
 
   const nodeLabel = React.useCallback((raw: object) => {

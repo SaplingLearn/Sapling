@@ -115,7 +115,7 @@ function attempt(over: Partial<AttemptSummary> & { quiz_id: string }): AttemptSu
     difficulty: "medium",
     mastery_before: 0.4,
     mastery_after: 0.44,
-    mastery_delta: 0.04,
+    p_delta: 0.04,
     created_at: "2026-08-20T10:00:00Z",
     completed_at: "2026-08-20T10:05:00Z",
     ...over,
@@ -129,6 +129,23 @@ function renderTree() {
     </ToastProvider>,
   );
 }
+
+it("shows saved descriptions and preserves relationship metadata through the API mapping", async () => {
+  mockedGraph.mockResolvedValueOnce({
+    nodes: [
+      apiNode({ id: RECURSION, concept_name: "Recursion", description: "Solving a problem using smaller instances of itself." }),
+      apiNode({ id: POINTERS, concept_name: "Pointers" }),
+    ],
+    edges: [{ id: "edge-1", source: POINTERS, target: RECURSION, strength: 0.7, relationship_type: "prerequisite" }],
+  } as unknown as Awaited<ReturnType<typeof getGraph>>);
+  const user = userEvent.setup();
+  renderTree();
+  await selectNode(user, RECURSION);
+  expect(screen.getByText("Solving a problem using smaller instances of itself.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Pointers.*Prerequisite.*Pointers → Recursion/ }));
+  expect(screen.getByRole("heading", { name: "Pointers" })).toBeInTheDocument();
+  expect(screen.getByText("No description is available yet.")).toBeInTheDocument();
+});
 
 /** Opens a node's detail panel through the graph, the way a student does. */
 async function selectNode(user: ReturnType<typeof userEvent.setup>, id: string) {
@@ -267,9 +284,9 @@ describe("Recent quizzes", () => {
       limit: 100,
       offset: 0,
       attempts: [
-        attempt({ quiz_id: "q-up", score: 3, total: 3, mastery_delta: 0.04, completed_at: "2026-08-21T10:00:00Z" }),
-        attempt({ quiz_id: "q-down", score: 1, total: 4, mastery_delta: -0.02, completed_at: "2026-08-20T10:00:00Z" }),
-        attempt({ quiz_id: "q-null", score: 2, total: 3, mastery_delta: null, completed_at: "2026-08-19T10:00:00Z" }),
+        attempt({ quiz_id: "q-up", score: 3, total: 3, p_delta: 0.04, completed_at: "2026-08-21T10:00:00Z" }),
+        attempt({ quiz_id: "q-down", score: 1, total: 4, p_delta: -0.02, completed_at: "2026-08-20T10:00:00Z" }),
+        attempt({ quiz_id: "q-null", score: 2, total: 3, p_delta: null, completed_at: "2026-08-19T10:00:00Z" }),
       ],
     });
     const user = userEvent.setup();

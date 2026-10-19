@@ -24,7 +24,12 @@ export interface SheetProps {
   children: React.ReactNode;
   /** Panel width in px. Capped at the viewport by the stylesheet. */
   width?: number;
-  side?: "right";
+  /** "right" (default) slides in from the right; "bottom" is the phone
+   *  context sheet: full width, rising from the bottom edge, capped height. */
+  side?: "right" | "bottom";
+  /** Extra class on the backdrop, e.g. a token scope such as
+   *  `sapling-surface` (the sheet portals out of its caller's subtree). */
+  className?: string;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
   zIndex?: number;
   testid?: string;
@@ -40,6 +45,7 @@ export function Sheet({
   initialFocusRef,
   zIndex = 100,
   testid,
+  className,
 }: SheetProps) {
   const titleId = `sheet-title-${React.useId()}`;
   const { mounted, visible, panelRef, onKeyDown } = useOverlayBehaviour({
@@ -52,7 +58,7 @@ export function Sheet({
 
   return createPortal(
     <div
-      className="sheet-backdrop"
+      className={className ? `sheet-backdrop sheet-backdrop--${side} ${className}` : `sheet-backdrop sheet-backdrop--${side}`}
       data-visible={visible || undefined}
       style={{ zIndex }}
       onKeyDown={onKeyDown}

@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
+from routes import graph, learn, learn_loop, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification
 from routes.profile import router as profile_router
 from routes.admin_flags import router as admin_flags_router
 from routes.flags import router as flags_router
@@ -32,7 +32,7 @@ from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
-from services import quiz_config, quiz_errors
+from services import ai_budget, quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
@@ -42,6 +42,7 @@ from services.storage_service import (
     ensure_bucket_exists,
 )
 from services.durable import init_dbos, shutdown_dbos
+from services.check_item_service import shutdown_draft_pool
 from services.index_sweeper import start_sweeper, stop_sweeper
 from services.local_seed_watcher import (
     start_watcher as start_local_seed_watcher,
@@ -132,8 +133,22 @@ async def _lifespan(_app: FastAPI):
     from services import decisions
     decisions.warn_removed_env()
     yield
+    # A38 low-severity 4: drop queued check-item drafting (non-daemon workers,
+    # each run up to FLEX_TIMEOUT_S) so a deploy's SIGTERM does not wait on it.
+    # First (A38 fix round, m8): before the event drain stops, so no drafting
+    # starts after it, and before any other step whose failure could skip it.
+    shutdown_draft_pool()
     await stop_local_seed_watcher()
     await stop_sweeper()
+    # PKG-15 (review minor 7): let in-flight Jev decision shadows finish (bounded) so
+    # their decision.shadow + llm_usage rows reach the event drain below, then close the
+    # Jev clients. Both are no-ops when Jev never ran (JEV_ENABLED=false).
+    from agents import _jev
+    from services import learning_decisions
+
+    await learning_decisions.shutdown_shadows()
+    await _jev.aclose_clients()
+
     # Let in-flight tutor-router decisions finish first: each one emits a
     # decision.made row through the Jev client and the events worker closed
     # below (bounded by the router's own backstop).
@@ -294,9 +309,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         headers={"X-Request-ID": rid} if rid else {},
     )
 
+# PKG-06b (spec §3.5, A20): an over-budget model call answers 429 {"detail": "ai budget reached", "reset_at": …}.
+app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
+# Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch).
+app.include_router(learn_loop.router, prefix="/api/learn/loop")
 app.include_router(quiz.router,        prefix="/api/quiz")
 app.include_router(calendar.router,    prefix="/api/calendar")
 app.include_router(social.router,      prefix="/api/social")
@@ -346,36 +366,6 @@ def health():
         # actually the code answering (#516). "unknown" off Railway.
         "commit": build_commit(),
     }
-
-
-@app.get("/api/users")
-def list_users(request: Request):
-    """List users with decrypted display names.
-
-    The display name now lives on `user_profiles` (migration 0024 moved it out of
-    `users`); it is 🔒 encrypted there. Resolve it via services.profiles, which
-    decrypts. `users.room_id` was likewise renamed to `current_room_id` by 0024 —
-    select the new column but keep the legacy `room_id` response key.
-
-    Requires an authenticated session: this returns decrypted legal names,
-    so an unauthenticated caller must never reach the roster (401).
-    """
-    from services.auth_guard import get_session_user_id
-    get_session_user_id(request)  # 401 if unauthenticated
-    from db.connection import table
-    from services.profiles import get_display_names
-    rows = table("users").select("id,current_room_id")
-    names = get_display_names([r.get("id") for r in rows if r.get("id")])
-    users = [
-        {
-            "id": r.get("id"),
-            "name": names.get(r.get("id"), ""),
-            "room_id": r.get("current_room_id"),
-        }
-        for r in rows
-    ]
-    users.sort(key=lambda u: (u["name"] or "").lower())
-    return {"users": users}
 
 
 @app.get("/api/gemini-test")

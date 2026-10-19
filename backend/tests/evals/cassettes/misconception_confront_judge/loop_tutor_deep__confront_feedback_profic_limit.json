@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "50276ca0a1fad4c096719f704bca8e7cce9629bb624b051d0e0b75ca762f274e",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": true,
+    "evidence": "Let's test that idea with a different function, such as f(x) = (x^2 - 4) / (x - 2) at the point x=2.\n\nWhat is the limit of (x^2 - 4) / (x - 2) as x approaches 2?",
+    "only_states_correction": false
+  },
+  "served_sha256": "eb0fa00115e5e116f380072c7b22708c4901924fcee717d9beeebeb74dabbca8"
+}

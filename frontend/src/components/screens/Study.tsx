@@ -2,6 +2,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
+import { StudyNavigation } from "../fa26/Navigation";
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
@@ -20,15 +21,6 @@ const MarkdownChat = dynamic(
 // Study's initial bundle. Fallbacks keep the resting visuals identical while
 // the chunk loads: an identically-styled static pill, and the same flex
 // wrapper minus the crossfade.
-const StudyToggleHighlight = dynamic(
-  () => import("./StudyMotion").then((m) => m.StudyToggleHighlight),
-  {
-    ssr: false,
-    loading: () => (
-      <span style={{ position: "absolute", inset: 0, background: "var(--accent-soft)", zIndex: -1 }} />
-    ),
-  },
-);
 // The mode transition wraps the pane CONTENT, so it must not depend on the
 // motion chunk (#490 review): a lazy wrapper either gates the panes behind
 // the chunk fetch (next/dynamic's fallback can't carry children) or remounts
@@ -72,6 +64,9 @@ import {
   type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { DueQueue } from "../learn/DueQueue";
+import { RetentionCheck } from "../learn/RetentionCheck";
+import { useLoopStatus } from "../learn/useLoopStatus";
 
 type Mode = "guide" | "cards";
 
@@ -129,41 +124,7 @@ export function Study() {
     [courses, activeSemester],
   );
 
-  const actions = (
-    <>
-      <AIDisclaimerChip />
-      <div
-        style={{
-          position: "relative",
-          display: "flex",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          overflow: "hidden",
-          isolation: "isolate",
-        }}
-      >
-        {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => setMode(v)}
-            style={{
-              position: "relative",
-              padding: "6px 14px",
-              fontSize: 12,
-              fontWeight: 600,
-              background: "transparent",
-              color: mode === v ? "var(--accent)" : "var(--text-dim)",
-              transition: "color 220ms cubic-bezier(.2,.85,.35,1)",
-              zIndex: 1,
-            }}
-          >
-            {mode === v && <StudyToggleHighlight />}
-            {label}
-          </button>
-        ))}
-      </div>
-    </>
-  );
+  const actions = <AIDisclaimerChip />;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
@@ -172,6 +133,7 @@ export function Study() {
         subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
+      <div className="fa26-study-header"><span>Study from your course material</span><StudyNavigation active={mode} onSelect={setMode} /></div>
       <StudyModePanel mode={mode}>
         {mode === "guide" ? (
           <GuideMode
@@ -606,7 +568,8 @@ function FlashcardsMode({
   semesterReady: boolean;
 }) {
   const toast = useToast();
-  const { userId } = useUser();
+  const retentionCourse = useSearchParams().get("retention-course") ?? "";
+  const { userId, userReady } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const [courseId, setCourseId] = React.useState<string>("all");
   const [topicFilter, setTopicFilter] = React.useState<string>("all");
@@ -617,6 +580,9 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
+  // A failed status read is not an inactive learning loop: retain the legacy
+  // flashcards and offer a retry so the student can still reach due reviews.
+  const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
 
   React.useEffect(() => {
     if (!userId) return;
@@ -733,6 +699,16 @@ function FlashcardsMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {loopActive === true && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
+        {loopActive === true && <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />}
+        {loopActive === "error" && (
+          <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
+            <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>
+            <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
+              Retry due reviews
+            </button>
+          </div>
+        )}
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <FilterPills
             options={[

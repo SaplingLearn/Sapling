@@ -125,12 +125,22 @@ function useGraphMode(): [Mode, (m: Mode) => void] {
 }
 
 type Props = {
+  appearance?: "fa26" | "sapling";
   nodes: GraphNode[];
   edges: GraphEdge[];
   width?: number;
   height?: number;
   highlightId?: string;
+  /** The page's selected node (drawn with a ring). Identity only. */
+  selectedId?: string | null;
   onNodeClick?: (n: GraphNode) => void;
+  /** false = a static 2D overview (the phone preview): no pan/zoom, no
+   *  2D/3D toggle, normal page scrolling over it. The persisted 2D/3D
+   *  preference is neither read for it nor rewritten. Default true. */
+  interactive?: boolean;
+  /** Bounded Pen overview keeps only its authored +/− controls. Full-map
+   * exploration retains reset/fit and the saved 2D/3D preference. */
+  viewControls?: "all" | "zoom" | "none";
 };
 
 const SR_ONLY: React.CSSProperties = {
@@ -218,7 +228,9 @@ export function KnowledgeGraph(props: Props) {
 
   // THE one encoding of the #538 rule: a persisted/synced "3d" wish is
   // ignored — not rewritten — while WebGL2 is unavailable.
-  const effective: Mode = webglOk ? mode : "2d";
+  const interactive = props.interactive !== false;
+  const overview = props.appearance === "sapling" && props.viewControls === "zoom";
+  const effective: Mode = webglOk && interactive && !overview ? mode : "2d";
   const next: Mode = effective === "2d" ? "3d" : "2d";
   const { width = 800, height = 480 } = props;
   const descId = React.useId();
@@ -261,7 +273,7 @@ export function KnowledgeGraph(props: Props) {
           <KnowledgeGraph3D {...props} />
         )}
       </ErrorBoundary>
-      <button
+      {interactive && !overview && <button
         type="button"
         data-testid="graph-mode-toggle"
         className="btn btn--ghost btn--sm"
@@ -288,12 +300,14 @@ export function KnowledgeGraph(props: Props) {
           borderRadius: "var(--r-sm)",
           boxShadow: "var(--shadow-sm)",
           zIndex: 5,
+          // The redesign's 44px touch target (Dashboard); /tree keeps its chip.
+          ...(props.appearance === "sapling" ? { minWidth: 44, minHeight: 44, fontSize: 13 } : null),
           ...(webglOk ? null : { opacity: 0.55, cursor: "not-allowed" }),
         }}
       >
         {effective.toUpperCase()}
-      </button>
-      {!webglOk && (
+      </button>}
+      {interactive && !overview && !webglOk && (
         <span id={descId} style={SR_ONLY}>
           3D requires WebGL, which this browser doesn&apos;t have available.
         </span>

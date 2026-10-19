@@ -5,6 +5,7 @@ Called synchronously after events to grant achievements when thresholds are met.
 
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
+from services.session_modes import NOT_REVIEW
 from services import gradebook_service
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
@@ -50,7 +51,7 @@ def _get_user_stat(user_id: str, trigger_type: str) -> int:
         return 0
 
     if trigger_type == "session_count":
-        return _count_rows("sessions", {"user_id": f"eq.{user_id}"})
+        return _count_rows("sessions", {"user_id": f"eq.{user_id}", **NOT_REVIEW})
 
     if trigger_type == "documents_uploaded":
         return _count_rows("documents", {"user_id": f"eq.{user_id}"})
@@ -189,7 +190,7 @@ def _session_stat(user_id: str, trigger_type: str) -> int:
     check_achievements compares it with `<`.
     """
     rows = table("sessions").select(
-        "started_at,ended_at", filters={"user_id": f"eq.{user_id}"}
+        "started_at,ended_at", filters={"user_id": f"eq.{user_id}", **NOT_REVIEW}
     ) or []
     lower_is_better = trigger_type in LOWER_IS_BETTER
     best = NO_QUALIFYING_VALUE if lower_is_better else 0

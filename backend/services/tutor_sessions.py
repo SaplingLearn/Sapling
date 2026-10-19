@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from fastapi import HTTPException
 
 from db.connection import table
+from services.session_modes import NOT_REVIEW, REVIEW_MODE
 
 # Maps session_id -> pending payload (cleared on first chat, end-session discard, or delete).
 PENDING_SESSIONS: dict[str, dict] = {}
@@ -74,9 +75,9 @@ def session_owned_by(
         return False
     pending = PENDING_SESSIONS.get(session_id)
     if pending is not None:
-        return allow_pending and pending.get("user_id") == user_id
+        return allow_pending and pending.get("user_id") == user_id and pending.get("mode") != REVIEW_MODE
     rows = table("sessions").select(
-        "user_id", filters={"id": f"eq.{session_id}"}, limit=1
+        "user_id", filters={"id": f"eq.{session_id}", **NOT_REVIEW}, limit=1
     )
     owner = rows[0].get("user_id") if rows else None
     return bool(owner) and owner == user_id

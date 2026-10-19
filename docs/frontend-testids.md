@@ -84,7 +84,7 @@ renders the element.
 | Topic Checklist | `topic-checklist` | `frontend/src/components/TopicChecklistPanel.tsx` (course-scoped outline and study checkmarks) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
-| Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
+| Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`; `?layout=legacy` keeps the pre-redesign screen) and the Today learning workspace in `frontend/src/components/dashboard/` (redesign prompt 07: `DashboardWorkspace`, `NextStepPanel`, `KnowledgeMap`, `ConceptDetail`, `TopicList`, `FullMap`, `Sections`) |
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
@@ -93,6 +93,8 @@ renders the element.
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
+| Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) |
+| Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
@@ -135,19 +137,41 @@ route:
 | --- | --- |
 | `pending-gate` | approval-gate page root |
 | `pending-signout` | "Sign out" |
-| `onboarding-gate` | first-run onboarding page root |
-| `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
-| `onboarding-back` | "Back" (absent on step 0) |
-| `onboarding-close` | "×" close/exit control |
-| `onboarding-input` | the shared `TextInput` default; every simultaneous instance overrides it (below) |
+
+### `onboarding`
+
+Six standalone Pen screens outside the application shell. The real profile and
+enrollment save happens when Courses is confirmed; materials and goal setup are
+optional. No learning session starts before the review's explicit Start check-in.
+
+| testid | element |
+| --- | --- |
+| `onboarding-gate` | full-page onboarding root; `data-step` is `1`–`6` after account confirmation |
+| `onboarding-step` | visible step number and label; the progress bar also exposes the current step through ARIA |
+| `onboarding-continue` | primary advance/save/confirm button; "Start check-in" on the final review |
+| `onboarding-back` | "Back" (absent on the first screen) |
+| `onboarding-close` | "Finish later"; opens the account-aware exit confirmation |
 | `onboarding-first-name` / `onboarding-last-name` | the two name fields — they render side by side |
-| `onboarding-school` | school field (disabled; BU-only today) |
-| `onboarding-chip-input-${field}` / `onboarding-chip-add-${field}` | majors/minors editor — `field` is `majors` or `minors`, since both render at once |
-| `onboarding-chip-remove-${field}-${value}` | one chip's remove control |
+| `onboarding-school` | read-only school field (BU-only today) |
+| `onboarding-year` | native class-year select; values `freshman`, `sophomore`, `junior`, `senior`, `graduate`, `other` |
+| `onboarding-chip-input-majors` / `onboarding-chip-input-minors` | comma-separated academic choices, with native suggestions; majors required, minors optional |
 | `onboarding-course-search` | course search field |
-| `onboarding-course-result-${course.id}` | one course search result |
+| `onboarding-course-result-${course.id}` | native course checkbox inside its visible result label |
 | `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
-| `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
+| `onboarding-save-error` | required profile/course save or start validation error; choices remain available for retry |
+| `onboarding-skip-materials` | "Skip for now"; course files remain optional |
+| `onboarding-goal-course` | native select containing confirmed enrolled courses |
+| `onboarding-goal-course-scope` / `onboarding-goal-concept-scope` | explicit whole-course versus confirmed-concept scope radios |
+| `onboarding-target-${node.id}` | one real concept from the selected course, confirmed with a native checkbox |
+| `onboarding-objective` | optional objective; enabled for selected-concept scope and never used to infer target IDs |
+
+The materials screen reuses all `upload-modal-*` IDs below. The implementation
+journey uses the real `upload-journey.pdf` fixture and FunctionModel pipeline,
+then verifies profile, enrollment, document and goal-scoped session persistence
+through `e2e/support/db.ts`. Set `ONBOARDING_EVIDENCE_DIR` to capture all six
+desktop screens and the 320px review during that journey. The phone test checks
+viewport fit, browser draft recovery and failed-request retries; it does not
+claim physical soft-keyboard testing.
 
 ### `setup`
 
@@ -171,8 +195,14 @@ route:
 | `upload-modal-file-row-{idx}` | a queued file row |
 | `upload-modal-file-remove-{idx}` | remove that row |
 | `upload-modal-file-reanalyze-{idx}` | "Re-analyze" (processed rows) |
-| `upload-modal-file-retry-{idx}` | "Retry" (error/aborted rows) |
+| `upload-modal-file-retry-{idx}` | "Retry" (error/timed-out/cancelled rows) |
+| `upload-modal-file-cancel-{idx}` | "Cancel" one running upload (replaces remove while it runs) |
+| `upload-modal-file-progress-{idx}` | live progress block; `data-phase` = `sending` (transport) or `processing` (server pipeline) |
+| `upload-modal-file-error-{idx}` | the row's failure/cancel reason |
 | `upload-modal-file-copy-request-id-{idx}` | "copy" the support reference |
+| `upload-modal-rejected` | files not queued, each with its reason (type, size, 5-file cap) |
+| `upload-modal-no-course` | "Add a course first" note (no enrolled or added course) |
+| `upload-modal-summary` | footer queue/partial-result line |
 | `upload-modal-cancel` | footer "Cancel" |
 | `upload-modal-submit` | footer "Start upload" |
 | `upload-modal-done` | footer "Done" (replaces submit once every row finished) |
@@ -181,7 +211,8 @@ route:
 
 | testid | element |
 | --- | --- |
-| `tutor-messages` | conversation log (`role="log"`) |
+| `tutor-messages` | the scrolling conversation (a focusable `role="region"` named "Conversation"). Its settled turns are the inner `role="log"` live region; a streaming reply sits outside it (`aria-busy`) so tokens are not announced one by one (redesign prompt 04) |
+| `tutor-jump-latest` | "Jump to latest" — shown when a reply lands while the reader is scrolled up reviewing history; the transcript never jumps on its own then |
 | `tutor-input` | message `<textarea>` |
 | `tutor-send` | send button |
 | `tutor-stop` | stop-streaming button (visible only while a streamed reply is in flight, #349) |
@@ -189,8 +220,8 @@ route:
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |
 | `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`), suffixed with the session's own id per the stable-domain-id rule |
-| `tutor-interrupted` | the "Interrupted" marker inside a stopped/failed assistant bubble (ADR 0020, #356; the partial text stays in the bubble itself) |
-| `tutor-retry` | the Retry button inside that marker — re-dispatches the interrupted turn |
+| `tutor-interrupted` | the interrupted block inside a stopped/failed assistant turn (ADR 0020, #356; the partial text stays in the turn itself). Says why in words: stopped, interrupted, offline, or paused |
+| `tutor-retry` | "Retry response" inside that block — re-dispatches the interrupted turn. In the loop: only the latest conversational turn of the current session, disabled while another turn or retry runs or chat is paused; never on a graded submission |
 | `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
 | `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
@@ -302,6 +333,7 @@ quiz journey is what drives them.
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
 | `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-legend` | the shared four-state map key (`graph/SaplingMapLegend`) under every `appearance="sapling"` map (Home, Learn's rail, the tutor's Map panel) |
 | `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
@@ -318,7 +350,15 @@ never collide in the DOM.
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
 | `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
-| `nav-link-<route>` | a SideNav destination row (`SideNav.tsx` `NavLink`), `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`); a feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0 |
+| `nav-link-<route>` | a shell destination row, `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`, `nav-link-admin`). Rendered by the desktop sidebar (`fa26/Sidebar.tsx`: the six Pen rows, the More group, Settings), by the phone rail below 768px (`fa26/Navigation.tsx` `PhoneRail`), and by the legacy `SideNav.tsx` `NavLink`; only the nav on screen carries testids, so a locator never matches two. Knowledge keeps `nav-link-tree` (its href is `/tree`). A feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0. Rows in a collapsed More group are in the DOM but `visibility: hidden` + `inert`: open `nav-more` before asserting one is visible |
+| `nav-link-tutor-view` | the sidebar's Tutor row (`/learn?view=tutor`); exists only while the `tutor_view` flag is on and `hide_tutor` is off. Switching between Learn and Tutor from `/learn` preserves its course, resume and other query context and changes only `view` |
+| `nav-more` | the sidebar's More disclosure button (`aria-expanded`, `aria-controls` → `nav-more-region`); collapsed by default, open state remembered in localStorage `sapling_nav_more_open`, forced open when the current route lives in it |
+| `nav-more-region` | the More group's collapsible region (`data-open` when expanded, `inert` when collapsed) |
+| `nav-pill` | the sidebar's single active-row pill (`data-shown` once placed; its `transform` is the active row's offset) |
+| `nav-account` | the sidebar's account row (initial, name, "Personal workspace") |
+| `app-sidebar` | the desktop sidebar root (`fa26/Sidebar.tsx`); `data-animated` once its transitions are armed (never under reduced motion), `data-collapsed` while folded to the 68px icon rail |
+| `nav-collapse` | the sidebar header's collapse/expand toggle (`aria-expanded` = sidebar expanded, `aria-controls` → `app-sidebar`); state remembered in localStorage `sapling_nav_collapsed` |
+| `nav-tip` | the collapsed rail's label tooltip (hover/focus on a row; decorative, `aria-hidden`) |
 | `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
 
 ### `social`
@@ -370,10 +410,32 @@ never collide in the DOM.
 
 | testid | element |
 | --- | --- |
-| `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
-| `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
-| `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
-| `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
+| `dashboard-courses-key-toggle` | the "Course progress" disclosure in the map toolbar (workspace; `aria-expanded`, starts collapsed, mounts once enrollments load) — on `?layout=legacy` the "My courses" key overlay toggle |
+| `dashboard-course-code` | a course row's code/name label inside the expanded course progress — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
+| `dashboard-courses-manage` | "Courses & semesters" inside the expanded course progress (legacy: the cog in the key) — opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
+| `dashboard-resume-{sessionId}` | a "Recent sessions" row (legacy: "Where you left off" card) — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
+| `dashboard-surface` / `dashboard-workspace` | the workspace's `SaplingSurface` token scope / its page root |
+| `dashboard-greeting` / `dashboard-quote` | the Home `h1` (main's greeting; accessible name = the whole greeting) / the quote that fades in under it |
+| `dashboard-scope-line` / `dashboard-meta` | "All courses · All semesters" under the Today heading / the date + real streak line |
+| `dashboard-next` | the goal + next-step region; `data-state` = the discovered learner state (`pending`, `error`, `no-course`, `no-concepts`, `loop-open`, `loop-none`, `legacy-open`, `legacy-none`) |
+| `dashboard-goal` / `dashboard-goal-text` / `dashboard-goal-scope` | the saved goal block (only what the open session confirmed) |
+| `dashboard-next-title` / `dashboard-next-reason` / `dashboard-next-details` | the next activity, its server-grounded reason, honest limitation lines |
+| `dashboard-next-action` | THE one primary action (`data-href` = its destination; disabled "Checking…" while discovery is pending) |
+| `dashboard-next-plan` / `dashboard-next-last-session` / `dashboard-next-library` | subordinate next-step links |
+| `dashboard-discovery-error` (+ `-retry`) / `dashboard-discovery-stale` (+ `-retry`) | discovery failed (nothing started) / last answer kept after a failed re-check |
+| `dashboard-map` / `dashboard-map-canvas` / `dashboard-map-preview` | the bounded map card / its interactive desktop canvas / the static phone preview |
+| `dashboard-map-counts` / `dashboard-semester-scope` / `dashboard-course-filter` | counts of exactly what the canvas renders / the semester label / the course `<select>` |
+| `dashboard-map-loading` / `dashboard-map-error` (+ `-retry`) / `dashboard-map-stale` (+ `-retry`) / `dashboard-map-empty` | per-resource map states |
+| `dashboard-view-topics` / `dashboard-open-map` | open the topic list sheet / the full map dialog |
+| `dashboard-topics` / `dashboard-topic-list` / `dashboard-topic-{nodeId}` | the topic list sheet / its list / one topic (or "Course overview" hub) button, suffixed with the graph node id; concept rows also carry `data-node-id` |
+| `dashboard-concept` | the selected topic panel (desktop column; `data-node-id`); children `-back`, `-state`, `-explanation`, `-evidence`, `-course-counts`, `-practice`, `-confirm`, `-confirm-go`, `-confirm-cancel`, `-quiz`, `-library` |
+| `dashboard-sheet-concept-*` / `dashboard-full-map-concept-*` | the same panel inside the phone sheet (`dashboard-concept-sheet`) / the full map (`dashboard-full-map`, `dashboard-full-map-close`, `dashboard-full-map-side`, `dashboard-full-map-hint`) |
+| `dashboard-selection-cleared` | a selection that left the view was cleared |
+| `dashboard-suggest` (+ `-show`, `-quiz`, `-dismiss`, `-missing`, `-pick-{nodeId}`) | the `?suggest=` notice: a real match, a same-name choice, or an unknown suggestion |
+| `dashboard-notes` / `dashboard-note-{noteId}` / `dashboard-notes-loading` / `-error` (+ `-retry`) / `-stale` / `-empty` / `-off` | Recent notes (the Notetaker's `notes` rows, ≤2) and their states; `dashboard-open-notetaker`, `dashboard-view-library` |
+| `dashboard-coming` / `dashboard-assignment-{assignmentId}` / `dashboard-coming-empty` / `dashboard-assignments-*` / `dashboard-open-calendar` | Coming up (dated assignments) and its states |
+| `dashboard-sessions` / `dashboard-sessions-*` / `dashboard-open-learn` | Recent sessions and its states |
+| `dashboard-announce` | the polite live region announcing selection changes |
 
 `dashboard-review-due` also lives in `screens/Dashboard.tsx`; it is documented
 with the `quiz` surface it links into.
@@ -495,22 +557,203 @@ screen; don't add a fifth prefix here without a reason as strong as these.
 
 ### `library`
 
-Added with the upload → SSE → library journey (#387).
+Added with the upload → SSE → library journey (#387); reworked by the cream-and-sage redesign (prompt 03). The old sidebar `library-course-filter-{all,uncategorized,courseId}` buttons became one labelled `<select>`.
 
 | testid | element |
 | --- | --- |
-| `library-upload` | TopBar "Upload" button that opens the upload modal (disabled with zero courses) |
-| `library-search` | TopBar "Search documents…" input |
-| `library-course-scan` | TopBar "Scan <course>" button (only while a course filter is active) |
-| `library-doc-{docId}` | one document card (grid view) / row (list view), suffixed with the document's id |
-| `library-course-filter-all` | sidebar "All" course filter |
-| `library-course-filter-uncategorized` | sidebar "Uncategorized" course filter |
-| `library-course-filter-{courseId}` | sidebar per-course filter row |
-| `library-detail-close` | detail panel × close |
-| `library-detail-scan` | detail panel "Scan" / "Re-scan" concept-scan button |
-| `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
-| `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
+| `library` | screen root |
+| `library-heading` | page heading |
+| `library-upload` | "Upload material" (disabled while loading, offline, or with zero courses; `library-upload-hint` says why) |
+| `library-upload-hint` | why Upload is unavailable |
+| `library-add-course` | "Add a course" beside Upload (zero courses) — opens the course manager |
+| `library-offline` | offline notice |
+| `library-search` | search input (file name + summary) |
+| `library-course-filter` | Course `<select>`: all / uncategorized / one per distinct course. `/library?course=<course_id>` pre-selects an enrolled course once the courses load (prompt 05) |
+| `library-category-filter` | Category `<select>` |
+| `library-filetype-filter` | File type `<select>` (from the file-name extension; not the category) |
+| `library-view-list` / `library-view-grid` | layout toggle (`aria-pressed`) |
+| `library-loading` | initial skeleton |
+| `library-load-error` (+ `-retry`) | initial fetch failure with Retry |
+| `library-refresh-error` (+ `-retry`) | refresh failure; prior materials stay |
+| `library-courses-error` (+ `-retry`) | the course list failed to load |
+| `library-results-count` | "N materials" / "Showing N of M materials" |
+| `library-refresh` | Refresh |
+| `library-manage-courses` | opens the course manager |
+| `library-course-scan` | "Scan <course>" (only while a specific course is selected) |
+| `library-course-scan-status` (+ `-retry`) | course scan progress/result/error |
+| `library-empty` | genuinely empty library (`library-empty-upload` / `library-empty-add-course`) |
+| `library-no-matches` | filters match nothing |
+| `library-clear-filters` | "Clear filters" |
+| `library-list` / `library-grid` | the result container per layout |
+| `library-doc-{docId}` | one material row (list) / card (grid); `aria-pressed` + `data-selected` when selected |
+| `library-detail` | selected-material rail (desktop `aside`) or phone sheet (`role=dialog`) |
+| `library-detail-empty` | rail placeholder when nothing is selected |
+| `library-detail-panel` | the selected material's detail content |
+| `library-detail-close` | close the detail (rail × on desktop; the sheet's Close on phones) |
+| `library-detail-scan` | "Scan to knowledge graph" / "Scan again" |
+| `library-detail-scan-status` (+ `-retry`) | scan progress / real counts / error |
+| `library-detail-ask-clov` | link to `/learn?course=<course_id>` |
+| `library-detail-delete` | "Delete material" (click-twice confirm) |
+| `library-detail-delete-error` (+ `-retry`) | failed delete; the material stays |
+| `library-concepts-toggle-all` | "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+
+### `review`
+
+Added with the learning loop's daily review queue (PKG-12). Owner:
+`frontend/src/components/learn/DueQueue.tsx` (PKG-12; launch polish PKG-13 — the
+launch Study surface, spec §11.3). Rendered above the
+Flashcards filter bar in `screens/Study.tsx` only when `getLoopStatus` reports the
+loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the gate's 404 → absent).
+
+| testid | element |
+| --- | --- |
+| `review-due-panel` | the "Due today" panel root |
+| `review-budget` | chip: minutes left of today's review budget |
+| `review-empty` | "All caught up — nothing is due right now." (no item and nothing due; never shown beside a stale item; makes no "due later" claim — `/review/summary` counts today, as of its read) |
+| `review-budget-paused` | the budget pause banner (PKG-13, spec §3.5): a review call answered 429 `ai budget reached` ("AI tutor paused until <time>. Flashcards and review keep working.") or `/review/summary` reports `paused` > 0 novice concepts ("<n> concept(s) paused until your daily AI budget resets. …"); `role="status"`, `data-reset-at`, `data-session-capped` |
+| `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
+| `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
+| `review-answer-input` | free-response answer textarea (a `free` check) |
+| `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22) |
+| `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
+| `review-submit` | "Check" / "Try again" — sends a check answer |
+| `review-flip` | "Show answer" on a flashcard |
+| `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
+| `review-hint` | the result line: verdict + corrective hint (with the answer when wrong), "Grader unavailable", or the A33 own-words prompt |
+| `review-graded` | "Your answer is already recorded" — a resend met `409 already graded` (the answer counted) |
+| `review-next` | "Next" — polls `/review/next` after a graded answer (also while paused, so review keeps moving) |
+
+### `loop`
+
+Added with the learning loop's student UI (PKG-13; spec §9, §11.3). Owner:
+`frontend/src/components/learn/LoopLearn.tsx`. `Learn()` (`screens/Learn.tsx`)
+mounts it when `getLoopStatus` reports the loop active; the legacy `tutor`
+screen only when it reports inactive (the kill switch, PKG-14b). The chat log
+inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
+(`tutor-messages`, `tutor-input`, `tutor-send`, `tutor-stop`) stay.
+
+| testid | element |
+| --- | --- |
+| `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
+| `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view="tutor"` in the Clov tutor view (prompt 04) |
+| `loop-view-tutor` | "Open Clov tutor" in the studio heading — switches to `/learn?view=tutor` (same session; shown only while the `tutor_view` flag is on) |
+| `loop-heading` | the Learning Studio page heading (`PageHeading`): course eyebrow, a title naming the server phase, the course select / map link / End session actions (redesign prompt 02) |
+| `loop-phase-strip` | the read-only Check-in / Plan / Learn / Wrap-up indicator (`PhaseStrip`); `data-phase`; `aria-current="step"` on the server's current stage. Never a control |
+| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3); below the workspace on a phone; hidden while `loop-sessions-error` shows (a failed list never invites a start) |
+| `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
+| `loop-new-session` | start a new session — the only path to a new probe while a session is open. With an open session it opens `loop-new-session-confirm` first; with none (closed, read-only, none yet) it starts directly |
+| `loop-new-session-confirm` | the new-session confirmation dialog (`role="dialog"`, `aria-modal`). Confirming wraps up (`/close`) the open session being left and waits for that close before starting, so sessions do not pile up open; a 409 or failure keeps the dialog and starts nothing |
+| `loop-new-session-cancel` | "Keep this session" — closes the dialog, nothing is closed or started, focus returns to the opener (disabled while the close is in flight) |
+| `loop-new-session-confirm-start` | "Wrap up and start new" (then "Try again" after a failed close) |
+| `loop-new-session-error` | why the open session could not be wrapped up (e.g. "A check is still being graded — close again in a moment.") |
+| `loop-course-select` | the course switcher (`CustomSelect`'s trigger; `testId` prop), shown with more than one enrolled course; options are `loop-course-select-option-{courseId}` |
+| `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
+| `loop-sessions-retry` | retry — never falls through to a new session or probe |
+| `loop-no-course` | the student has no enrolled course |
+| `loop-no-course-link` | the knowledge-map link inside `loop-no-course` |
+| `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
+| `loop-start-retry` | retry the start |
+| `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
+| `loop-topic-start` | "Start a session on <topic>" (through the same confirmation as `loop-new-session`) |
+| `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
+| `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
+| `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
+| `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
+| `loop-no-check-items` | "No check items for this course yet" (A23) |
+| `loop-practice-unavailable` | #673 practice preflight: no fresh practice for the listed goal-frontier concepts in this session (`practice_unavailable_node_ids`); source review is offered and never counts as assessment; plan approval is not shown |
+| `loop-practice-sources` | "Review source material" inside `loop-practice-unavailable` (`/library`) |
+| `loop-practice-refresh` | "Check for fresh practice" — re-reads the plan (plan phase) or `/check/next` (teaching, no item, no pending feedback); hidden once the session already moved past those concepts |
+| `loop-pending-grade` | a saved grade whose checking did not finish (#673 `pending_grade`, check or probe): no new pose, re-answer, goal edit, close or new session until it is recovered |
+| `loop-recover-grade` | "Finish checking saved answer" — replays the saved grade (`/check/answer/stream` or `/probe/answer`, `idk: false`, no answer text) |
+| `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
+| `loop-rail` | the learning-route context (`ContextPanel`): "Your learning route" (`loop-route`), the course knowledge map (`KnowledgeGraph`, original colours) and source links. A rail from 1024px; below that the same content is a labelled sheet opened by `loop-route-trigger` (the tree link stays in the heading) |
+| `loop-route-trigger` | "Route & sources" — opens the `loop-rail` sheet below 1024px (`aria-haspopup="dialog"`) |
+| `loop-route` / `loop-route-{nodeId}` | the route list: the server plan's order and reasons when this view has the plan, else the confirmed goal concepts; status text is only the plan reason, the check-in evidence label and the concept the last turn named ("Current focus") — never a mastery claim |
+| `loop-goal-summary` | the session's learning scope (`GoalSummary`): the confirmed goal text and its concepts, or "Explore the whole course"; loading and failure states inside it |
+| `loop-set-goal` | "Set goal" / "Edit goal" inside `loop-goal-summary` — probe and plan only |
+| `loop-goal-retry` | "Retry learning scope" when `GET /status` failed |
+| `loop-goal-new-session` | while teaching the goal is read-only: "New session" for a new goal, through `loop-new-session-confirm` |
+| `loop-goal-progress` | the server's `goal_progress` status (continue_available / needs_more_practice / session_plan_finished) — practice finished is not mastery |
+| `loop-goal-no-concepts` | the goal editor's no-concepts state, with whole-course and Library recovery |
+| `loop-close-note` | a wrap-up that could not run yet (409) outside the close view |
+| `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
+| `loop-probe-item` | the current probe card; `data-question-hash` |
+| `loop-probe-input` | free/teachback probe answer textarea |
+| `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22) |
+| `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
+| `loop-probe-submit` | submit the probe answer (`/probe/answer`) |
+| `loop-probe-idk` | "I don't know" (submits `idk: true`, no answer text) |
+| `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
+| `loop-probe-retry` | the next probe item failed to load — retry (`/probe/next`, same session) |
+| `loop-probe-next` | "Next" under the reference — the next probe item, or the plan after the probe's last answer |
+| `loop-plan-concept-{nodeId}` | one planned concept (name, kind chip: Review / New / Related; a band chip only when the response carries one) |
+| `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
+| `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
+| `loop-plan-adjust` | "Adjust goal or scope" under the plan — opens the goal editor (plan phase only) |
+| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`); the check card (and, in the studio, the Continue / Check me / Start with / seed row) sit above it, outside `ChatPanel`. In the tutor view that row sits between the transcript and the composer — still outside the scroll box |
+| `loop-seed-confused` / `loop-seed-example` | "I'm confused" / "Another example" — ordinary chat turns through `/chat/stream` (prompt 04); never a grade |
+| `loop-materials-link` | the composer's "Course materials" link to `/library?course=<course_id>` (plain `/library` with no course) in the studio (the tutor uses `tutor-materials-open`); never an attachment |
+| `loop-recovery-note` | status-first recovery: a graded submission's feedback stream broke ("may already be graded, so it wasn't sent again"), a 409 already graded, or a Retry that found the turn already saved |
+| `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
+| `loop-check-me` | "Check me" ("Check my understanding" / after feedback "Try another check" in the tutor view): posts `/check/next` when no item is current (A27) |
+| `loop-check-prompt` | the current knowledge check (the pose `check.prompt`, A17/A27, plus its answer form and hint); `data-question-hash`, `data-format` |
+| `loop-attempt-input` | free/teachback attempt textarea |
+| `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
+| `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
+| `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
+| `loop-attempt-idk` | "I don't know" in the attempt box (`idk: true`) |
+| `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
+| `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
+| `loop-hint-reply` | the hint turn's text when allowed |
+| `loop-continue` | "Continue" ("Continue learning" in the tutor view) after feedback — sends the next chat turn. While a committed grade's feedback is still pending (#673) it reads "Retry feedback" in both views and `loop-check-me` stays disabled |
+| `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
+| `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
+| `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
+| `loop-close-summary` | the close summary text |
+| `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
+| `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
+| `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
+| `loop-close-study-link` | the "Review what's due" link inside `loop-close-done` (`/study?mode=cards`) |
+
+### `tutor` view of the loop (redesign prompt 04)
+
+`/learn?view=tutor`, shown only while the `tutor_view` flag is on. Owners:
+`frontend/src/components/learn/TutorView.tsx` (presentation) inside
+`LoopLearn.tsx` (the one controller). Every `loop-*` id above keeps its meaning
+in this view; these are the view's own.
+
+| testid | element |
+| --- | --- |
+| `tutor-bar` | the top bar: course, "Clov tutor", History, `loop-new-session`, the menu |
+| `tutor-history-open` | "History" — opens `tutor-history-sheet` (`aria-haspopup="dialog"`) |
+| `tutor-history-sheet` / `tutor-history` | "Your conversations": the sheet and its content |
+| `tutor-history-search` | filters both lists by topic (client side) |
+| `tutor-history-open-{sessionId}` | an open loop session — resumes at its own phase (`aria-current="true"` on the current one) |
+| `tutor-history-past-{sessionId}` | a closed or legacy session in this course (`GET /api/learn/sessions/{user}`) — opens read-only |
+| `tutor-history-error` | the past-session read failed ("Retry past sessions"); open sessions still list |
+| `tutor-history-new-session` | "Start a new session" (through `loop-new-session-confirm` when one is open) |
+| `tutor-menu` / `tutor-menu-{goal,materials,map,end,studio}` | the session-actions disclosure and its items (`end` = End session & review, `studio` = switch to the studio) |
+| `tutor-context-{goal,materials,map}` | the context chips; `aria-expanded` on the open one |
+| `tutor-context-panel` / `tutor-context-close` | the context panel beside the column from 1024px, and its close (focus returns to the chip) |
+| `tutor-context-sheet` / `tutor-context-back` | below 1024px the same content is one labelled sheet; "Back to conversation" |
+| `tutor-goal-plan` / `tutor-route-{nodeId}` | Goal & plan: the goal (read-only while teaching), the plan in order with each concept's reason and check-in evidence |
+| `tutor-goal-new-session` / `tutor-goal-edit` | a new goal while teaching (confirmed new session) / "Adjust goal or scope" in probe and plan |
+| `tutor-materials` | Materials: this course's Library documents (names and categories only) |
+| `tutor-materials-open` | the composer's "Materials" control — opens the Materials context |
+| `tutor-materials-error` / `tutor-materials-empty` / `tutor-materials-library` | load failure ("Retry materials"), no materials, and "Open course Library" (`/library?course=<course_id>`; Library pre-selects that course) |
+| `tutor-map` / `tutor-map-full` | Map: the real `KnowledgeGraph` (original colours) and the link to `/tree` |
+| `tutor-goal-line` | "Goal · <goal text>" above the conversation heading while teaching |
+| `tutor-welcome` | the start view — only after session discovery succeeded and found nothing open |
+| `tutor-starter-{n}` | a starter prompt: fills the composer, sends nothing |
+| `tutor-welcome-start` | "Start check-in" — starts the guided session |
+| `tutor-welcome-composer` (`-input`, `-send`) | the welcome composer (`SaplingComposer`): a question starts the guided session with it as the topic |
+
+`loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
+on the FEEDBACK turn, after the item closed, so the affordance (inside the check
+card) could never render, and a hint then has no item (`/hint` → `no_active_item`).
+Where a novice offer should live is PKG-07's open question (HANDOFF-13).
 
 ### `landing-graph`
 

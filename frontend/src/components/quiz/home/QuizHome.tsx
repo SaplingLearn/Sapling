@@ -440,7 +440,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
 
   const alternatives = (
     <>
-      {home.alternatives.map(alt => (
+      {home.alternatives.filter(alt => !entry.course || alt.node.course_id === entry.course).map(alt => (
         <button
           key={alt.node.id}
           type="button"
@@ -576,11 +576,11 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     }
 
     return (
-      <>
-        {proposal}
+      <div className="quiz-home__main-grid">
+        <div>{proposal}</div>
         {card && (
-          <>
-            <hr className="quiz-home__rule" />
+          <section aria-label="Choose a topic">
+            <h2 className="h-serif">Choose a topic</h2>
             {hasMore && (
               <>
                 <div className="label-micro quiz-eyebrow quiz-home__section-eyebrow">
@@ -590,14 +590,24 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
                 <hr className="quiz-home__rule quiz-home__rule--tight" />
               </>
             )}
+            <div className="fa26-topic-list">
+              {home.nodes.filter(node => !node.is_subject_root && (!entry.course || node.course_id === entry.course) && !home.alternatives.some(alt => alt.node.id === node.id)).map(node => (
+                <button data-testid={`quiz-topic-${node.id}`} type="button" className="quiz-home__row" key={node.id} onClick={() => openConcept(node.id)}>
+                  <span className="fa26-topic-dot" data-tier={node.mastery_tier} />
+                  <span className="h-serif quiz-home__row-name">{node.concept_name}</span>
+                  <span className="quiz-home__row-spacer" />
+                  <span className="quiz-home__row-meta">{Math.round(node.mastery_score * 100)}% mastered</span>
+                </button>
+              ))}
+            </div>
             <div className="quiz-home__pick-open">
               <Button variant="link" data-testid="quiz-pick-open" onClick={() => setPicking(true)}>
                 Pick something specific →
               </Button>
             </div>
-          </>
+          </section>
         )}
-      </>
+      </div>
     );
   };
 

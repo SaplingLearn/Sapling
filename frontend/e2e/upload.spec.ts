@@ -44,8 +44,10 @@
  */
 import path from "node:path";
 
+import type { Page } from "@playwright/test";
+
 import { queryRaw } from "./support/db";
-import { expect, test } from "./support/fixtures";
+import { expect, killSwitchLane, test } from "./support/fixtures";
 import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
 
 const FIXTURE_PDF = path.join(__dirname, "fixtures", "upload-journey.pdf");
@@ -56,6 +58,19 @@ const FIXTURE_NAME = "upload-journey.pdf";
 const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
+
+/**
+ * The Library's Upload button, inside the shell's <main> only. React streams a
+ * shell page (Suspense, from (shell)/loading.tsx) into a hidden
+ * `<div hidden id="S:N">` and moves it into place on reveal; on a cold or busy
+ * page the client render can land in <main> while that hidden server copy
+ * still exists, and `getByTestId` then resolves to two disabled buttons
+ * (pre-existing; surfaced by the tutor branch's timing, redesign prompt 05).
+ * Scoping to <main> keeps the assertion strict about the rendered page.
+ */
+function appShellUpload(page: Page) {
+  return page.getByTestId("app-shell").getByTestId("library-upload");
+}
 
 /**
  * Journey (#186): a course added inline from the upload modal must be
@@ -74,7 +89,12 @@ test("a course added inline is immediately selectable for the queued file (#186)
   page,
 }) => {
   await page.goto("/library");
-  const uploadButton = page.getByTestId("library-upload");
+  // Scoped to the shell's <main>: until React reveals the streamed page, the
+  // server's copy of it sits in a hidden `<div hidden id="S:0">` at the end of
+  // <body> — (shell)/loading.tsx makes every shell page a Suspense boundary —
+  // so an unscoped locator can briefly match BOTH copies, and a strict-mode
+  // violation fails at once instead of retrying (see appShellUpload).
+  const uploadButton = appShellUpload(page);
   await expect(uploadButton).toBeEnabled();
   await uploadButton.click();
   await expect(page.getByTestId("upload-modal")).toBeVisible();
@@ -132,7 +152,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   // Enabled only once the courses fetch lands (the seeded rich-user-active
   // has enrollments), so this wait also covers the library's initial load.
-  const uploadButton = page.getByTestId("library-upload");
+  const uploadButton = appShellUpload(page);
   await expect(uploadButton).toBeEnabled();
   await uploadButton.click();
 
@@ -189,6 +209,18 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(doc.summary ?? "").not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
   expect(doc.summary ?? "").not.toContain("gradient descent");
 
+  // PKG-14b kill-switch drill (spec §11.1 item 3b, §11.6): under the kill
+  // switch the upload hook drafts NO check items (the ingest hook is gated on
+  // LEARNING_LOOP_ENABLED). The default lane drafts them; its count is the
+  // check-items journeys' business, not this one's.
+  if (killSwitchLane) {
+    const drafted = (await queryRaw(
+      "SELECT count(*)::int AS n FROM check_items WHERE $1 = ANY(source_document_ids)",
+      [doc.id],
+    )) as { n: number }[];
+    expect(drafted[0].n).toBe(0);
+  }
+
   // Phase-3 side effect: the scripted concepts were merged into the
   // course knowledge graph (plaintext columns — safe to assert exactly).
   const nodes = await queryRaw(
@@ -233,17 +265,10 @@ test("upload → SSE → document appears in library and Postgres", async ({
     "the document's offering must resolve to an abstract course",
   ).toBeTruthy();
 
-  const courseFilter = page.getByTestId(`library-course-filter-${courseId}`);
+  const courseFilter = page.getByLabel("Course", { exact: true });
   await expect(courseFilter).toBeVisible();
-  await courseFilter.click();
-
-  // The uploaded doc matches its course's filter — not dropped, not stuck
-  // under "Uncategorized".
+  await courseFilter.selectOption(courseId!);
   await expect(card).toBeVisible();
-
-  const uncategorizedFilter = page.getByTestId(
-    "library-course-filter-uncategorized",
-  );
-  await uncategorizedFilter.click();
+  await courseFilter.selectOption("uncategorized");
   await expect(card).not.toBeVisible();
 });

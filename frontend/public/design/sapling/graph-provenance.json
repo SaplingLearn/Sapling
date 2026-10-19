@@ -1,0 +1,24 @@
+{
+  "source": "Sapling-Complete-Wireframes.pen",
+  "master": "JSs7K",
+  "figmaNodeId": "3457:3774",
+  "viewport": {
+    "width": 893,
+    "height": 601
+  },
+  "sha256": "8a3e55c640872a9316dbdb82c25e206746224eb127cbb6207f691ef3ec065c95",
+  "paths": 74,
+  "gradients": 21,
+  "nodes": 22,
+  "edges": 21,
+  "usage": "Sapling implementation asset, supplied by the user. No independent redistribution license inferred. Fixture course labels must not replace authenticated student content.",
+  "nativeReference": {
+    "file": "graph-pen-reference.svg",
+    "sha256": "e596208cd4242f3c8a17c21b875237d91b32bb2f5e3ad543a5f1105d12022fd0",
+    "htmlSha256": "7809dbce8bc9a7d440111093361db91afbcd666bd4ef85a4c2693914e0c2f2ce",
+    "paths": 74,
+    "gradients": 21,
+    "paintModel": "Normalized object-space coordinates derived from native center, rotation, size and bounds; retain anisotropic gradientTransform.",
+    "authority": "Current native Pen JSs7K geometry and paints. Canonical original SVG is archived separately."
+  }
+}

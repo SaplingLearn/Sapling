@@ -34,6 +34,15 @@ export const USER_SECOND = "rich-user-second";
  * gates on it. */
 export const USER_NEW = "rich-user-new";
 
+/** The seeded loop users (db/seed_local_rich.py::seed_learning_loop). After
+ * PKG-14b they are ordinary students — the loop is everyone's default and the
+ * build-phase staff/QA toggle is retired (nothing reads it). "Lou Loop" walks
+ * the loop and resume journeys; "Casey Cap" carries today's spend past the
+ * novice budget allowance and one due flashcard (spec §13 A26, the budget-cap
+ * journey). */
+export const USER_LOOP = "rich-user-loop";
+export const USER_CAPPED = "rich-user-capped";
+
 async function isUp(url: string): Promise<boolean> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3_000) });

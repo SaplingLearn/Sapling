@@ -4,8 +4,9 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 import { CustomSelect } from "./CustomSelect";
-import { useScrollLock } from "@/lib/useScrollLock";
+import { useOverlayBehaviour } from "./Dialog";
 import { useToast } from "./ToastProvider";
+import { BotanicalIcon, SaplingAction, StatusMessage } from "@/components/sapling";
 import {
   uploadDocumentStream,
   updateDocumentCategory,
@@ -15,19 +16,33 @@ import {
   type OnboardingCourse,
   type UploadEvent,
 } from "@/lib/api";
+import styles from "./DocumentUploadModal.module.css";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
 const ALLOWED = /\.(pdf|docx|pptx)$/i;
 const UPLOAD_TIMEOUT_MS = 4 * 60 * 1000;
+/** AbortController reason for a learner-initiated cancel (vs the timeout). */
+const CANCEL_REASON = "cancelled";
 
-type UploadStatus = "pending" | "uploading" | "processed" | "error" | "aborted";
+type UploadStatus = "pending" | "uploading" | "processed" | "error" | "aborted" | "cancelled";
 
-interface UploadItem {
+/**
+ * Where an uploading row is. "sending" lasts until the server's first SSE
+ * event (the file has arrived); "processing" is the server-side pipeline,
+ * which only ends with the `result` event. Transport finishing is never
+ * shown as the file being ready.
+ */
+type UploadPhase = "sending" | "processing";
+
+export interface UploadItem {
   id: string;
   file: File;
   courseId: string;
   status: UploadStatus;
+  phase?: UploadPhase;
+  /** 1-based pipeline stage reported by the server's step names. */
+  stage?: number;
   error?: string;
   docId?: string;
   category?: string;
@@ -66,10 +81,23 @@ const CATEGORY_OPTIONS = [
   { value: "other", label: "Other" },
 ];
 
+/** The server pipeline's step names (routes/documents.py upload stream),
+ *  grouped into the stages a learner can follow. */
+export const PIPELINE_STAGES = ["Received", "Reading", "Classifying", "Summarizing", "Linking concepts"] as const;
+const STEP_STAGE: Record<string, number> = {
+  start: 1,
+  extracting_text: 2, extracted_text: 2,
+  classify: 3, classified: 3,
+  extract: 4, extracted: 4,
+  graph_update: 5, graph_updated: 5, finalize: 5,
+};
+
+interface Rejected { name: string; reason: string }
+
 export function DocumentUploadModal({ open, userId, courses, onClose, onComplete }: Props) {
   const toast = useToast();
-  const [mounted, setMounted] = React.useState(false);
   const [items, setItems] = React.useState<UploadItem[]>([]);
+  const [rejected, setRejected] = React.useState<Rejected[]>([]);
   const [dragging, setDragging] = React.useState(false);
   const [courseQuery, setCourseQuery] = React.useState("");
   const [courseResults, setCourseResults] = React.useState<OnboardingCourse[]>([]);
@@ -79,13 +107,11 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   // just-added course must be merged locally to be selectable right away.
   const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
 
-  React.useEffect(() => setMounted(true), []);
-
-  useScrollLock(open);
 
   React.useEffect(() => {
     if (!open) {
       setItems([]);
+      setRejected([]);
       setCourseQuery("");
       setCourseResults([]);
       setExtraCourses([]);
@@ -106,26 +132,44 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   }, [courses, extraCourses]);
 
   const activeUploads = items.filter(it => it.status === "uploading").length;
+  const processedCount = items.filter(it => it.status === "processed").length;
+  const failedCount = items.filter(it => it.status === "error" || it.status === "aborted" || it.status === "cancelled").length;
 
   const handleClose = () => {
     if (activeUploads > 0) {
       if (!window.confirm(`${activeUploads} upload${activeUploads === 1 ? "" : "s"} still running. Abort and close?`)) return;
-      items.forEach(it => it.abort?.abort());
+      items.forEach(it => it.abort?.abort(CANCEL_REASON));
     }
+    // Files that already finished stay saved; let the library pick them up
+    // even when the learner leaves through Close/Cancel instead of Done.
+    if (items.some(it => it.status === "processed")) onComplete(items);
     onClose();
   };
 
+  const courseSearchRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const { mounted, panelRef, onKeyDown } = useOverlayBehaviour({ open, onClose: handleClose, initialFocusRef: courseSearchRef });
+  const titleId = React.useId();
+  const limitsId = React.useId();
+
   const addFiles = (fileList: File[]) => {
     const defaultCourseId = allCourses[0]?.course_id || "";
+    const room = Math.max(0, MAX_FILES - items.length);
+    const nextRejected: Rejected[] = fileList.slice(room).map(f => ({
+      name: f.name,
+      reason: `not added: at most ${MAX_FILES} files per upload.`,
+    }));
     const candidates = fileList
-      .slice(0, MAX_FILES - items.length)
+      .slice(0, room)
       .filter(f => {
         if (!ALLOWED.test(f.name)) {
           toast.error(`${f.name}: only PDF / DOCX / PPTX are accepted.`);
+          nextRejected.push({ name: f.name, reason: "only PDF / DOCX / PPTX are accepted." });
           return false;
         }
         if (f.size > MAX_SIZE) {
           toast.error(`${f.name}: exceeds the 100 MB limit.`);
+          nextRejected.push({ name: f.name, reason: "exceeds the 100 MB limit." });
           return false;
         }
         return true;
@@ -136,6 +180,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         courseId: defaultCourseId,
         status: "pending",
       }));
+    setRejected(nextRejected);
     if (candidates.length === 0) return;
     setItems(prev => [...prev, ...candidates]);
   };
@@ -154,14 +199,19 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
         ? crypto.randomUUID()
         : `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     setItems(prev => prev.map(i => i.id === item.id ? {
-      ...i, status: "uploading", abort: ac, progress: "Starting upload…", requestId,
+      ...i, status: "uploading", phase: "sending", stage: 0, abort: ac, progress: "Sending file…", requestId,
     } : i));
+    // The terminal in-band failure message, so the row shows the server's
+    // reason instead of the generic "stream ended" error the client throws.
+    let inBandFailure: string | null = null;
+    let reachedServer = false;
     try {
       const fd = new FormData();
       fd.append("file", item.file);
       fd.append("course_id", item.courseId);
       fd.append("user_id", userId);
       const resp = await uploadDocumentStream(fd, (ev: UploadEvent) => {
+        reachedServer = true;
         // Mirror backend SaplingEvent.message into the row's live label.
         if (ev.type === "status" && ev.step === "done") return; // final state covered below
 
@@ -178,18 +228,26 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           // event with it). Anything else we treat as informational and skip
           // toasting to avoid double-firing alongside the catch-block toast.
           if (ev.step === "failed") {
+            inBandFailure = ev.message;
             toast.error(`Upload failed: ${ev.message}`);
           }
-          setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
+          setItems(prev => prev.map(i => i.id === item.id ? { ...i, phase: "processing", progress: ev.message } : i));
           return;
         }
 
-        setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
+        const stage = STEP_STAGE[ev.step];
+        setItems(prev => prev.map(i => i.id === item.id ? {
+          ...i,
+          phase: "processing",
+          progress: ev.message,
+          stage: stage ? Math.max(stage, i.stage ?? 0) : Math.max(1, i.stage ?? 0),
+        } : i));
       }, ac.signal, requestId);
       clearTimeout(timeout);
       setItems(prev => prev.map(i => i.id === item.id ? {
         ...i,
         status: "processed",
+        phase: undefined,
         progress: undefined,
         docId: resp?.id,
         category: resp?.classification?.category || resp?.category || "other",
@@ -199,12 +257,18 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     } catch (err: any) {
       clearTimeout(timeout);
       const aborted = ac.signal.aborted;
-      const errorMsg = aborted
-        ? "Processing took longer than 4 minutes — try a smaller file."
-        : String(err?.message || err);
+      const cancelled = aborted && ac.signal.reason === CANCEL_REASON;
+      const errorMsg = cancelled
+        ? reachedServer
+          ? "Cancelled. The server had already received this file, so it may still finish and appear in your library after a refresh."
+          : "Cancelled before the file was sent."
+        : aborted
+          ? "Processing took longer than 4 minutes — try a smaller file."
+          : inBandFailure ?? String(err?.message || err);
       setItems(prev => prev.map(i => i.id === item.id ? {
         ...i,
-        status: aborted ? "aborted" : "error",
+        status: cancelled ? "cancelled" : aborted ? "aborted" : "error",
+        phase: undefined,
         progress: undefined,
         error: errorMsg,
       } : i));
@@ -292,32 +356,34 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   if (!open || !mounted) return null;
 
   return createPortal(
-    <div
-      onClick={handleClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(19,38,16,0.45)",
-        zIndex: 200, display: "grid", placeItems: "center", padding: 20,
-      }}
-    >
+    <div className={`sapling-surface ${styles.backdrop}`} onClick={handleClose}>
       <div
         data-testid="upload-modal"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={limitsId}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
         onClick={e => e.stopPropagation()}
-        className="card slide-up"
-        style={{ width: "min(720px, 100%)", maxHeight: "88vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
+        className={`slide-up ${styles.panel}`}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
+        <div className={styles.header}>
           <div>
-            <div className="label-micro">Upload</div>
-            <div className="h-serif" style={{ fontSize: 20 }}>Add course materials</div>
+            <p className="sapling-eyebrow">Upload</p>
+            <h2 id={titleId} className={styles.title}>Add course materials</h2>
           </div>
-          <button data-testid="upload-modal-close" className="btn btn--ghost btn--sm" onClick={handleClose} aria-label="Close">
+          <button data-testid="upload-modal-close" type="button" className={styles.iconButton} onClick={handleClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
         </div>
 
-        <div style={{ padding: 20, overflowY: "auto" }}>
+        <div className={styles.body}>
           <div
             data-testid="upload-modal-dropzone"
+            className={styles.dropzone}
+            data-dragging={dragging || undefined}
             onDragOver={e => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={e => {
@@ -325,23 +391,21 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
               setDragging(false);
               addFiles(Array.from(e.dataTransfer.files));
             }}
-            style={{
-              border: `2px dashed ${dragging ? "var(--accent)" : "var(--border-strong)"}`,
-              borderRadius: "var(--r-md)", padding: 28, textAlign: "center",
-              background: dragging ? "var(--accent-soft)" : "var(--bg-subtle)",
-              transition: "all var(--dur-fast) var(--ease)",
-            }}
           >
-            <div className="h-serif" style={{ fontSize: 17, marginBottom: 6 }}>
+            <BotanicalIcon name="paper" size={30} className={styles.paper} />
+            <p className={styles.dropTitle}>
               {dragging ? "Drop to add files" : "Drag & drop up to 5 files"}
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+            </p>
+            <p id={limitsId} className={styles.dropLimits}>
               PDF, DOCX, PPTX · max 100 MB each
-            </div>
-            <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
-              <Icon name="up" size={12} /> Browse
+            </p>
+            <label data-testid="upload-modal-browse" className={`btn btn--primary sapling-action sapling-action--primary ${styles.browse}`}
+              role="button" tabIndex={0} aria-label="Browse files"
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInputRef.current?.click(); } }}>
+              <Icon name="up" size={14} /> Browse
               <input
                 data-testid="upload-modal-file-input"
+                ref={fileInputRef}
                 type="file"
                 multiple
                 accept=".pdf,.docx,.pptx"
@@ -354,33 +418,49 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </label>
           </div>
 
+          {rejected.length > 0 && (
+            <div className={styles.block}>
+              <StatusMessage tone="error" title="Some files weren't added" testid="upload-modal-rejected">
+                <ul className={styles.rejectedList}>
+                  {rejected.map((r, i) => (
+                    <li key={`${r.name}-${i}`}><span className={styles.fileName}>{r.name}</span>: {r.reason}</li>
+                  ))}
+                </ul>
+              </StatusMessage>
+            </div>
+          )}
+
+          {allCourses.length === 0 && (
+            <div className={styles.block}>
+              <StatusMessage tone="info" title="Add a course first" testid="upload-modal-no-course">
+                Every material is saved to a course. Search for yours below, then pick it for each file.
+              </StatusMessage>
+            </div>
+          )}
+
           {allCourses.length < 10 && (
-            <div style={{ marginTop: 16 }}>
-              <div className="label-micro" style={{ marginBottom: 6 }}>+ Add a course</div>
+            <div className={styles.block}>
+              <label htmlFor={`${titleId}-course-search`} className={styles.label}>+ Add a course</label>
               <input
+                id={`${titleId}-course-search`}
                 data-testid="upload-modal-course-search"
+                aria-label="Search for a course to add"
+                ref={courseSearchRef}
                 value={courseQuery}
                 onChange={e => setCourseQuery(e.target.value)}
                 placeholder="Search a course to add"
-                style={{
-                  width: "100%", padding: "7px 12px", fontSize: 13,
-                  border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-                  background: "var(--bg-input)",
-                }}
+                className={styles.input}
               />
               {courseResults.length > 0 && (
-                <div style={{ marginTop: 6, border: "1px solid var(--border)", borderRadius: "var(--r-sm)", maxHeight: 140, overflowY: "auto" }}>
+                <div className={styles.results}>
                   {courseResults.map(c => (
                     <button
                       key={c.id}
+                      type="button"
                       data-testid={`upload-modal-course-result-${c.id}`}
                       disabled={addingCourse}
                       onClick={() => addCourseInline(c)}
-                      style={{
-                        width: "100%", padding: "7px 12px", fontSize: 12,
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        borderBottom: "1px solid var(--border)", textAlign: "left",
-                      }}
+                      className={styles.result}
                     >
                       <span><strong>{c.course_code}</strong> · {c.course_name}</span>
                       <Icon name="plus" size={12} />
@@ -391,154 +471,185 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
             </div>
           )}
 
-          <div style={{ marginTop: 20 }}>
+          <div className={styles.block}>
             {items.length === 0 && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Files you add will appear here.</div>
+              <p className={styles.muted}>Files you add will appear here.</p>
             )}
-            {items.map((item, idx) => (
-              <div
-                key={item.id}
-                data-testid={`upload-modal-file-row-${idx}`}
-                className="card"
-                style={{ padding: 14, marginBottom: 10, display: "flex", flexDirection: "column", gap: 10 }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{
-                    width: 28, height: 36, borderRadius: "var(--r-xs)",
-                    background: "var(--accent-soft)", color: "var(--accent)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <Icon name="doc" size={14} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {item.file.name}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                      {(item.file.size / 1024 / 1024).toFixed(1)} MB · {item.file.name.split(".").pop()?.toUpperCase()}
-                    </div>
-                  </div>
-                  <StatusBadge status={item.status} />
-                  <button
-                    data-testid={`upload-modal-file-remove-${idx}`}
-                    className="btn btn--ghost btn--sm"
-                    disabled={item.status === "uploading"}
-                    onClick={() => {
-                      if (item.status === "uploading") item.abort?.abort();
-                      setItems(prev => prev.filter(i => i.id !== item.id));
-                    }}
+            <ul className={styles.files}>
+              {items.map((item, idx) => {
+                const fileTitleId = `${item.id}-name`;
+                return (
+                  <li
+                    key={item.id}
+                    data-testid={`upload-modal-file-row-${idx}`}
+                    data-status={item.status}
+                    className={styles.file}
                   >
-                    <Icon name="x" size={12} />
-                  </button>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Course:</span>
-                  <CustomSelect
-                    size="sm"
-                    value={item.courseId || ""}
-                    onChange={(v) => setItemField(item.id, p => ({ ...p, courseId: v }))}
-                    placeholder="Pick a course"
-                    ariaLabel="Course"
-                    options={allCourses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
-                  />
-                  {item.status === "processed" && (
-                    <>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Category:</span>
+                    <div className={styles.fileHead}>
+                      <BotanicalIcon name="paper" size={22} className={styles.paper} />
+                      <div className={styles.fileText}>
+                        <div id={fileTitleId} className={styles.fileName}>{item.file.name}</div>
+                        <div className={styles.muted}>
+                          {(item.file.size / 1024 / 1024).toFixed(1)} MB · {item.file.name.split(".").pop()?.toUpperCase()}
+                        </div>
+                      </div>
+                      <StatusBadge status={item.status} phase={item.phase} />
+                      {item.status === "uploading" ? (
+                        <button
+                          type="button"
+                          data-testid={`upload-modal-file-cancel-${idx}`}
+                          className={styles.textButton}
+                          onClick={() => item.abort?.abort(CANCEL_REASON)}
+                          aria-label={`Cancel uploading ${item.file.name}`}
+                        >
+                          Cancel
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid={`upload-modal-file-remove-${idx}`}
+                          className={styles.iconButton}
+                          aria-label={`Remove ${item.file.name}`}
+                          onClick={() => setItems(prev => prev.filter(i => i.id !== item.id))}
+                        >
+                          <Icon name="x" size={12} />
+                        </button>
+                      )}
+                    </div>
+                    <div className={styles.fileControls}>
+                      <span className={styles.muted}>Course:</span>
                       <CustomSelect
                         size="sm"
-                        value={item.category || "other"}
-                        onChange={(v) => handleCategoryChange(item, v)}
-                        options={CATEGORY_OPTIONS}
-                        ariaLabel="Category"
+                        value={item.courseId || ""}
+                        onChange={(v) => setItemField(item.id, p => ({ ...p, courseId: v }))}
+                        placeholder="Pick a course"
+                        ariaLabel="Course"
+                        disabled={item.status === "uploading"}
+                        options={allCourses.map(c => ({ value: c.course_id, label: c.course_code || c.course_name }))}
                       />
-                      <button data-testid={`upload-modal-file-reanalyze-${idx}`} className="btn btn--ghost btn--sm" onClick={() => reanalyze(item)}>
-                        <Icon name="sparkle" size={12} /> Re-analyze
-                      </button>
-                    </>
-                  )}
-                  {(item.status === "error" || item.status === "aborted") && (
-                    <button data-testid={`upload-modal-file-retry-${idx}`} className="btn btn--ghost btn--sm" onClick={() => retry(item)}>
-                      <Icon name="sparkle" size={12} /> Retry
-                    </button>
-                  )}
-                </div>
-                {item.status === "uploading" && item.progress && (
-                  <div
-                    aria-live="polite"
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-muted)",
-                      fontStyle: "italic",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {item.progress}
-                  </div>
-                )}
-                {item.summary && (
-                  <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{item.summary}</div>
-                )}
-                {item.conceptNames && item.conceptNames.length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {item.conceptNames.slice(0, 4).map(t => (
-                      <span key={t} className="chip chip--accent">{t}</span>
-                    ))}
-                  </div>
-                )}
-                {item.error && (
-                  <div style={{ fontSize: 11, color: "var(--err)" }}>{item.error}</div>
-                )}
-                {item.status === "error" && item.requestId && (
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", gap: 6, alignItems: "center" }}>
-                    <span>Reference: {item.requestId.slice(0, 8)}…</span>
-                    <button
-                      type="button"
-                      data-testid={`upload-modal-file-copy-request-id-${idx}`}
-                      onClick={() => {
-                        const rid = item.requestId || "";
-                        if (navigator.clipboard) {
-                          navigator.clipboard.writeText(rid).then(
-                            () => toast.info("Copied"),
-                            () => toast.error("Couldn't copy"),
-                          );
-                        }
-                      }}
-                      className="btn btn--ghost btn--sm"
-                      style={{ padding: "0 6px", fontSize: 10 }}
-                    >
-                      copy
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+                      {item.status === "processed" && (
+                        <>
+                          <span className={styles.muted}>Category:</span>
+                          <CustomSelect
+                            size="sm"
+                            value={item.category || "other"}
+                            onChange={(v) => handleCategoryChange(item, v)}
+                            options={CATEGORY_OPTIONS}
+                            ariaLabel="Category"
+                          />
+                          <button type="button" data-testid={`upload-modal-file-reanalyze-${idx}`} className={styles.textButton} onClick={() => reanalyze(item)}>
+                            <Icon name="sparkle" size={12} /> Re-analyze
+                          </button>
+                        </>
+                      )}
+                      {(item.status === "error" || item.status === "aborted" || item.status === "cancelled") && (
+                        <button type="button" data-testid={`upload-modal-file-retry-${idx}`} className={styles.textButton} onClick={() => retry(item)}>
+                          <Icon name="sparkle" size={12} /> Retry
+                        </button>
+                      )}
+                    </div>
+                    {item.status === "uploading" && (
+                      <UploadProgress item={item} testid={`upload-modal-file-progress-${idx}`} />
+                    )}
+                    {item.summary && (
+                      <p className={styles.summary}>{item.summary}</p>
+                    )}
+                    {item.conceptNames && item.conceptNames.length > 0 && (
+                      <div className={styles.chips}>
+                        {item.conceptNames.slice(0, 4).map(t => (
+                          <span key={t} className={styles.chip}>{t}</span>
+                        ))}
+                      </div>
+                    )}
+                    {item.error && (
+                      <p className={styles.error} data-testid={`upload-modal-file-error-${idx}`}>
+                        <span aria-hidden="true">⚠ </span>{item.error}
+                      </p>
+                    )}
+                    {item.status === "error" && item.requestId && (
+                      <div className={styles.reference}>
+                        <span>Reference: {item.requestId.slice(0, 8)}…</span>
+                        <button
+                          type="button"
+                          data-testid={`upload-modal-file-copy-request-id-${idx}`}
+                          onClick={() => {
+                            const rid = item.requestId || "";
+                            if (navigator.clipboard) {
+                              navigator.clipboard.writeText(rid).then(
+                                () => toast.info("Copied"),
+                                () => toast.error("Couldn't copy"),
+                              );
+                            }
+                          }}
+                          className={styles.textButton}
+                        >
+                          copy
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderTop: "1px solid var(--border)" }}>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        <div className={styles.footer}>
+          <p className={styles.muted} aria-live="polite" data-testid="upload-modal-summary">
             {items.length} file{items.length === 1 ? "" : "s"} queued
             {activeUploads > 0 && ` · ${activeUploads} uploading`}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button data-testid="upload-modal-cancel" className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
+            {allFinished && processedCount > 0 && failedCount > 0 &&
+              ` · ${processedCount} saved, ${failedCount} not saved (retry above)`}
+          </p>
+          <div className={styles.footerActions}>
+            <SaplingAction tone="quiet" data-testid="upload-modal-cancel" onClick={handleClose}>Cancel</SaplingAction>
             {allFinished ? (
-              <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={done}>Done</button>
+              <SaplingAction data-testid="upload-modal-done" onClick={done}>Done</SaplingAction>
             ) : (
-              <button
+              <SaplingAction
                 data-testid="upload-modal-submit"
-                className="btn btn--sm btn--primary"
                 disabled={items.length === 0 || items.every(i => i.status !== "pending")}
                 onClick={startAll}
               >
-                <Icon name="up" size={12} /> Start upload
-              </button>
+                <Icon name="up" size={14} /> Start upload
+              </SaplingAction>
             )}
           </div>
         </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+function UploadProgress({ item, testid }: { item: UploadItem; testid: string }) {
+  const sending = item.phase !== "processing";
+  const stage = Math.min(item.stage ?? 0, PIPELINE_STAGES.length);
+  const label = sending
+    ? "Sending file to Sapling…"
+    : `Processing on Sapling · step ${Math.max(stage, 1)} of ${PIPELINE_STAGES.length}: ${PIPELINE_STAGES[Math.max(stage, 1) - 1]}`;
+  return (
+    <div className={styles.progress} data-testid={testid} data-phase={sending ? "sending" : "processing"}>
+      <div
+        className={styles.progressTrack}
+        role="progressbar"
+        aria-label={`Upload progress for ${item.file.name}`}
+        aria-valuemin={0}
+        aria-valuemax={PIPELINE_STAGES.length}
+        aria-valuenow={sending ? 0 : Math.max(stage, 1)}
+        aria-valuetext={label}
+      >
+        <span
+          className={styles.progressFill}
+          data-indeterminate={sending || undefined}
+          style={{ width: sending ? undefined : `${(Math.max(stage, 1) / (PIPELINE_STAGES.length + 1)) * 100}%` }}
+        />
+      </div>
+      <p className={styles.progressLabel}>{label}</p>
+      {!sending && item.progress && (
+        <p aria-live="polite" className={styles.progressMessage}>{item.progress}</p>
+      )}
+    </div>
   );
 }
 
@@ -564,21 +675,24 @@ function extractConceptNames(resp: any): string[] {
   return [];
 }
 
-function StatusBadge({ status }: { status: UploadStatus }) {
-  const meta = statusMeta(status);
+function StatusBadge({ status, phase }: { status: UploadStatus; phase?: UploadPhase }) {
+  const meta = statusMeta(status, phase);
   return (
-    <span className={`chip ${meta.cls}`} style={{ fontSize: 10 }}>
+    <span className={styles.badge} data-tone={meta.tone}>
       {meta.label}
     </span>
   );
 }
 
-function statusMeta(s: UploadStatus): { label: string; cls: string } {
+function statusMeta(s: UploadStatus, phase?: UploadPhase): { label: string; tone: string } {
   switch (s) {
-    case "pending": return { label: "queued", cls: "" };
-    case "uploading": return { label: "processing…", cls: "chip--info" };
-    case "processed": return { label: "done", cls: "chip--accent" };
-    case "aborted": return { label: "aborted", cls: "chip--warn" };
-    case "error": return { label: "error", cls: "chip--err" };
+    case "pending": return { label: "Queued", tone: "neutral" };
+    case "uploading": return phase === "processing"
+      ? { label: "Processing…", tone: "pending" }
+      : { label: "Sending…", tone: "pending" };
+    case "processed": return { label: "Saved", tone: "success" };
+    case "aborted": return { label: "Timed out", tone: "error" };
+    case "cancelled": return { label: "Cancelled", tone: "neutral" };
+    case "error": return { label: "Failed", tone: "error" };
   }
 }

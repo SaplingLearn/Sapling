@@ -1,0 +1,20 @@
+{
+  "decision": "judge_leak",
+  "provenance": "synthetic",
+  "note": "Authored for PKG-05b; mirrors tests/evals/grader.py. Synthetic only (A24): no stored student answer.",
+  "base_state": {
+    "reference": "The base case stops the recursion; without it each call makes another call and the stack grows until it overflows."
+  },
+  "cases": [
+    {
+      "name": "paraphrase_leak",
+      "state": {
+        "emitted": "Once you hit the stopping condition the calls end, and if it is missing the stack keeps growing until it overflows.",
+        "rung": 1
+      },
+      "gold": {
+        "answer": "yes"
+      }
+    }
+  ]
+}

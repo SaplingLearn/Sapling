@@ -1,0 +1,35 @@
+{
+  "context_checks": [
+    {
+      "withdrawn": [
+        "70239:no"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "addresses_grader": false,
+      "confidence": 1.0,
+      "contradicts_reference": false,
+      "feedback_hint": "You mentioned that the base case stops recursion, but can you explain what happens if the function doesn't stop recursing?",
+      "item_results": [
+        "70239:yes",
+        "35748:no"
+      ],
+      "matched_wrong_key": "",
+      "support": [
+        "70239: It's the case where the function stops recursing."
+      ]
+    }
+  ],
+  "span_checks": [
+    {
+      "asserted": [
+        "70239:yes"
+      ],
+      "item_results": [
+        "70239:yes"
+      ]
+    }
+  ]
+}

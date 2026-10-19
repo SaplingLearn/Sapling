@@ -1,0 +1,319 @@
+/* The shell's desktop sidebar: the approved Pen nav (frames Xnuwg, u1gDw),
+ * tightened twice at Andres's request (2026-10-19).
+ *
+ * Expanded: 216px sage panel. Header 56px (112px wordmark at 25/20, the
+ * collapse toggle 32px square 18px from the right edge). Rows are 36px tall
+ * on a 40px pitch (4px gap), inset 16px; 22px icons sit 12px into the row
+ * (x 28), 14px labels 10px after them (x 60); the active label is semibold.
+ * The 11px eyebrow sits 16px under the header and 8px over the first row;
+ * More, its list and the footer keep the 4px rhythm; the footer divider sits
+ * 14px under the rows and 8px over Settings; the account row is 44px, 14px
+ * off the bottom, its initial in the same 22px slot as the icons.
+ *
+ * Collapsed: a 68px icon rail. The inset drops to 13px, so every 42px row
+ * keeps its icon 10px in and centred (13 + 10 + 11 = x 34). Labels, the eyebrow, the
+ * wordmark and the account name fade out (then hide) BEFORE the width
+ * shrinks, and fade in AFTER it grows; rows keep their y, so the pill only
+ * changes its inset. <main> is the flex sibling, so it reflows with the width.
+ *
+ * Scoped by the module: nothing here reaches another surface. */
+
+.sidebar {
+  --nav-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --nav-dur: 240ms;
+  --nav-dur-fast: 170ms;
+  --nav-fade: 120ms;
+  --nav-row: 36px;
+  --nav-icon: 22px;
+  --nav-gap: 4px;
+  --nav-inset: 16px;
+  /* Expanding: grow first, then fade in. Collapsing swaps these. */
+  --nav-shrink-delay: 0s;
+  --nav-fade-delay: var(--nav-dur);
+  --nav-vis-delay: var(--nav-dur);
+  flex: none;
+  width: 216px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--sapling-sage);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+  position: relative;
+  z-index: 25;
+}
+.sidebar[data-collapsed] {
+  width: 68px;
+  --nav-shrink-delay: var(--nav-fade);
+  --nav-fade-delay: 0s;
+  --nav-vis-delay: var(--nav-fade);
+}
+
+/* Anything that disappears in the rail. */
+.sidebar[data-collapsed] .fade { opacity: 0; visibility: hidden; }
+
+.header {
+  position: relative;
+  flex: none;
+  height: 56px;
+}
+.brand {
+  position: absolute;
+  top: 20px;
+  left: 25px;
+  display: block;
+  width: 112px;
+  border-radius: var(--sapling-radius-sm);
+}
+/* Anchored to the right edge: in the 68px rail it lands centred (18 + 32 + 18). */
+.toggle {
+  position: absolute;
+  top: 20px;
+  right: 18px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--sapling-radius-md);
+  background: transparent;
+  color: var(--sapling-muted);
+  cursor: pointer;
+  transition: background-color var(--nav-dur-fast) var(--nav-ease), color var(--nav-dur-fast) var(--nav-ease);
+}
+.toggle:is(:hover, :focus-visible) { background: rgb(247 244 233 / 55%); color: var(--sapling-ink); }
+.sidebar .toggle:focus-visible { outline: 2px solid var(--sapling-primary); outline-offset: -2px; }
+
+/* Everything between the header and the account row scrolls together when
+   the viewport is short, so the pill (inside .content) scrolls with its row.
+   No visible scrollbar; wheel, touch and keyboard still scroll it. */
+.track {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.track::-webkit-scrollbar { display: none; }
+.content {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--nav-inset);
+}
+.sidebar[data-collapsed] .content { padding: 0 13px; }
+.sidebar[data-collapsed] .item { padding-inline: 10px; }
+
+.eyebrow {
+  margin: 16px 12px 8px;
+  font: 500 11px/16px var(--sapling-font-body);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--sapling-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--nav-gap);
+}
+
+.item {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--nav-row);
+  overflow: hidden;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--sapling-radius-md);
+  background: transparent;
+  color: var(--sapling-ink);
+  font: 400 14px/20px var(--sapling-font-body);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--nav-dur-fast) var(--nav-ease),
+    color var(--nav-dur-fast) var(--nav-ease),
+    transform 120ms var(--nav-ease);
+}
+.item[aria-current="page"] .label { font-weight: 600; }
+.item:not([aria-current="page"]):is(:hover, :focus-visible) { background: rgb(247 244 233 / 55%); }
+.item:active { transform: scale(0.98); }
+/* Inset, so the ring survives the More group's clipping box. */
+.sidebar .item:focus-visible { outline: 2px solid var(--sapling-primary); outline-offset: -2px; }
+
+/* Before the pill has measured its row (server render, first paint) the
+   active row carries the same paper fill itself, so nothing shifts. */
+.track:not([data-pill]) .item[aria-current="page"] { background: var(--sapling-paper); }
+
+.icon {
+  flex: none;
+  width: var(--nav-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sapling-primary);
+}
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ONE pill for the whole sidebar: translateY tweens it between rows. */
+.pill {
+  position: absolute;
+  top: 0;
+  left: var(--nav-inset);
+  right: var(--nav-inset);
+  height: var(--nav-row);
+  border-radius: var(--sapling-radius-md);
+  background: var(--sapling-paper);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.sidebar[data-collapsed] .pill { left: 13px; right: 13px; }
+.pill[data-shown] { opacity: 1; }
+
+/* More: a quiet disclosure under the six. */
+.more { margin-top: var(--nav-gap); }
+.moreButton { color: var(--sapling-muted); }
+.moreButton .icon { color: var(--sapling-muted); }
+.chevronSlot { margin-left: auto; display: flex; flex: none; }
+.moreButton[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+.moreRegion {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.moreRegion[data-open] { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+.moreInner { min-height: 0; overflow: hidden; }
+.moreList { padding-top: var(--nav-gap); }
+
+/* Bottom: divider, Settings. margin-top:auto pins it down when it fits. */
+.footer { margin-top: auto; padding: 14px 0 10px; }
+.footer::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin: 0 10px 8px;
+  background: var(--sapling-line);
+}
+.sidebar[data-collapsed] .footer::before { margin-inline: 4px; }
+.footer .icon { color: var(--sapling-ink); }
+
+.account {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0 var(--nav-inset) 14px;
+  padding-left: 12px;
+  white-space: nowrap;
+}
+.sidebar[data-collapsed] .account { margin-inline: 13px; padding-left: 10px; }
+.avatar {
+  flex: none;
+  width: var(--nav-icon);
+  height: var(--nav-icon);
+  display: grid;
+  place-items: center;
+  font: 600 14px/1 var(--sapling-font-body);
+  color: var(--sapling-ink);
+}
+.who { min-width: 0; display: grid; gap: 2px; }
+.who strong, .who small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.who strong { font: 600 14px/1.3 var(--sapling-font-body); }
+.who small { font: 400 12px/1.35 var(--sapling-font-body); color: var(--sapling-muted); }
+
+/* The rail's label tooltip (fixed, so the rail's clipping never cuts it). */
+.tip {
+  position: fixed;
+  z-index: 60;
+  transform: translateY(-50%);
+  padding: 6px 10px;
+  border-radius: var(--sapling-radius-md);
+  background: var(--sapling-ink);
+  color: var(--sapling-paper);
+  font: 500 13px/1.2 var(--sapling-font-body);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.sidebar[data-animated] .tip { animation: tip-in var(--nav-dur-fast) var(--nav-ease); }
+@keyframes tip-in { from { opacity: 0; } }
+
+/* ── Motion: armed one frame after mount, never under reduced motion ──── */
+.sidebar[data-animated] {
+  transition: width var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay);
+}
+.sidebar[data-animated] :is(.content, .account) {
+  transition:
+    padding var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay),
+    margin var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay);
+}
+.sidebar[data-animated] .fade {
+  transition:
+    opacity var(--nav-fade) linear var(--nav-fade-delay),
+    visibility 0s linear var(--nav-vis-delay);
+}
+.sidebar[data-animated] .pill {
+  transition:
+    transform var(--nav-dur) var(--nav-ease),
+    opacity var(--nav-dur-fast) var(--nav-ease),
+    left var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay),
+    right var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay);
+}
+/* (Re)appearing: placed instantly, faded in, never slid in from elsewhere. */
+.sidebar[data-animated] .pill[data-jump] {
+  transition:
+    opacity var(--nav-dur-fast) var(--nav-ease),
+    left var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay),
+    right var(--nav-dur) var(--nav-ease) var(--nav-shrink-delay);
+}
+.sidebar[data-animated] .chevron { transition: transform var(--nav-dur) var(--nav-ease); }
+.sidebar[data-animated] .moreRegion {
+  transition:
+    grid-template-rows var(--nav-dur) var(--nav-ease),
+    opacity var(--nav-dur) var(--nav-ease),
+    visibility 0s linear var(--nav-dur);
+}
+.sidebar[data-animated] .moreRegion[data-open] {
+  transition:
+    grid-template-rows var(--nav-dur) var(--nav-ease),
+    opacity var(--nav-dur) var(--nav-ease),
+    visibility 0s linear 0s;
+}
+
+/* Phone: the shell shows the compact rail instead (Navigation.tsx). */
+@media (max-width: 767px) {
+  .sidebar { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .sidebar *, .sidebar *::before, .sidebar *::after { transition: none !important; animation: none !important; }
+  .item:active { transform: none; }
+}
+
+@media (forced-colors: active) {
+  .item[aria-current="page"] { outline: 2px solid CanvasText; outline-offset: -2px; }
+}
