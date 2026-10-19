@@ -4,6 +4,7 @@ import { Suspense, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { API_URL } from '@/lib/api';
+import { postSignInRoute } from '@/lib/localSeed';
 
 function CallbackInner() {
   const searchParams = useSearchParams();
@@ -100,11 +101,10 @@ function CallbackInner() {
         profileConfirmed: meOk,
       })) return;
 
-      if (onboardingCompleted) {
-        router.replace('/dashboard');
-      } else {
-        router.replace('/onboarding');
-      }
+      // #715: a new account on a local backend waits for its sample data;
+      // anywhere else this is /onboarding, as before. (Popup mode returned
+      // above: the opener's SignInModal makes the same call.)
+      router.replace(await postSignInRoute(onboardingCompleted));
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

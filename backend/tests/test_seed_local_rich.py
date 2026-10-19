@@ -1,4 +1,3 @@
-from collections import defaultdict
 from copy import deepcopy
 
 import pytest
@@ -9,6 +8,7 @@ from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
 from services.encryption import decrypt, encrypt
 from services import profiles
+from tests.seed_memory_db import MemoryDatabase
 
 
 def test_guard_refuses_non_local(monkeypatch):
@@ -55,57 +55,6 @@ def test_guard_rejects_loopback_substrings_and_malformed_urls(monkeypatch, url):
     monkeypatch.setenv("SUPABASE_URL", url)
     with pytest.raises(SystemExit, match="not local"):
         rich._guard_local()
-
-
-class MemoryDatabase:
-    """Persist writes between CLI runs, rather than echoing mocked payloads."""
-
-    def __init__(self):
-        self.rows = defaultdict(list)
-        self.writes = []
-
-    def table(self, name):
-        db = self
-
-        class Handle:
-            def select(self, columns="*", filters=None, limit=None, offset=None, order=None):
-                rows = [row for row in db.rows[name] if all(
-                    str(row.get(key)) == value.removeprefix("eq.")
-                    for key, value in (filters or {}).items()
-                )]
-                if order:
-                    rows = sorted(rows, key=lambda row: row.get("id", ""))
-                rows = rows[offset or 0:]
-                if limit:
-                    rows = rows[:limit]
-                return deepcopy(rows)
-
-            def select_with_count(self, columns="*", filters=None, limit=None, offset=None, order=None):
-                count = len(self.select(columns, filters=filters))
-                return self.select(columns, filters=filters, limit=limit, offset=offset, order=order), count
-
-            def insert(self, row):
-                if row.get("id"):
-                    assert not any(saved.get("id") == row["id"] for saved in db.rows[name])
-                db.rows[name].append(deepcopy(row))
-                db.writes.append((name, "insert"))
-                return [deepcopy(row)]
-
-            def update(self, row, filters):
-                matching = self.select(filters=filters)
-                for saved in db.rows[name]:
-                    if saved in matching:
-                        saved.update(deepcopy(row))
-                db.writes.append((name, "update"))
-                return self.select(filters=filters)
-
-            def upsert(self, row, on_conflict):
-                filters = {key: f"eq.{row[key]}" for key in on_conflict.split(",")}
-                if self.select(filters=filters):
-                    return self.update(row, filters)
-                return self.insert(row)
-
-        return Handle()
 
 
 @pytest.fixture
@@ -324,3 +273,43 @@ def test_owner_room_messages_carry_the_owner_name(local_database):
     _seed_personal()
     mine = [row for row in local_database.rows["room_messages"] if row["user_id"] == "user-personal"]
     assert mine and all(row["user_name"] == "Real Developer" for row in mine)
+
+
+# ── seed_owner: the callable both the CLI and the local-seed watcher run ────
+
+
+def test_seed_owner_is_quiet_and_returns_what_it_created(local_database, capsys):
+    """The watcher seeds in a backend thread: no stdout summary, a count instead."""
+    owner = {"id": "user-personal", "onboarding_completed": False}
+    created = rich.seed_owner(owner, report=False)
+    assert created > 0
+    assert capsys.readouterr().out == ""
+    assert local_database.rows["users"][0]["onboarding_completed"] is True
+    assert rich.seed_owner({"id": "user-personal", "onboarding_completed": True}, report=False) == 0
+
+
+def test_seed_owner_counts_only_its_own_run(local_database):
+    """h.counts is process-global; a second owner's run must not inherit the first's."""
+    local_database.rows["users"].append({"id": "user-other", "onboarding_completed": False})
+    rich.seed_owner({"id": "user-personal"}, report=False)
+    before = len(local_database.writes)
+    second = rich.seed_owner({"id": "user-other"}, report=False)
+    inserts = [write for write in local_database.writes[before:] if write[1] == "insert"]
+    assert second == len(inserts) > 0
+
+
+def test_seed_owner_refuses_outside_local_without_exiting(local_database, monkeypatch):
+    """A watcher thread must get an exception, never SystemExit."""
+    monkeypatch.setenv("SUPABASE_URL", "https://prod.supabase.co")
+    with pytest.raises(RuntimeError, match="local"):
+        rich.seed_owner({"id": "user-personal"}, report=False)
+    assert local_database.writes == []
+
+
+def test_owner_seed_marker_is_the_owners_copy_of_the_sample_enrollment(local_database):
+    marker = rich.owner_seed_marker_id("user-personal")
+    assert marker.startswith("rich-owner-")
+    assert marker != rich.owner_seed_marker_id("user-other")
+    assert not any(row["id"] == marker for row in local_database.rows["enrollments"])
+    _seed_personal()
+    assert any(row["id"] == marker for row in local_database.rows["enrollments"])

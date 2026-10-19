@@ -11,13 +11,14 @@ Run (from backend/ with the local stack up and backend/.env active):
 
 Pass --owner-email or --owner-user-id after signing in to populate your own
 account. Owner mode inserts missing sample rows without resetting existing data.
+A local backend does this by itself on sign-in (services/local_seed_watcher.py,
+which calls seed_owner); the flags are the manual fallback.
 """
 from __future__ import annotations
 
 import os
 import sys
 import argparse
-from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,16 +29,12 @@ from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
 
 
 def _guard_local() -> None:
-    # Same set as routes/auth.py TEST_AUTH_ENVS: e2e-up.sh accepts APP_ENV=test.
-    if os.getenv("APP_ENV", "").strip().lower() not in {"local", "test"}:
+    # The two halves of h.is_local_backend, split only for the message: the
+    # CLI, the owner-seed watcher and its status route share one definition.
+    if not h.local_app_env():
         sys.exit("REFUSING: rich seeding requires APP_ENV=local or APP_ENV=test.")
-    url = (os.getenv("SUPABASE_URL") or "").strip()
-    try:
-        parsed = urlparse(url)
-        local = parsed.scheme in {"http", "https"} and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
-    except ValueError:
-        local = False
-    if not local:
+    if not h.local_supabase_url():
+        url = (os.getenv("SUPABASE_URL") or "").strip()
         sys.exit(f"REFUSING: SUPABASE_URL {url!r} is not local — seed_local_rich only writes to local.")
 
 
@@ -900,6 +897,44 @@ def _seed_owner_chunks(writer) -> None:
         })
 
 
+def owner_seed_marker_id(owner_id: str) -> str:
+    """The id the owner seed gives its copy of the sample CS enrollment.
+
+    Deterministic (OwnerSeedWriter's uuid5 scheme), so "has this account been
+    seeded?" needs no new column: the local-seed watcher looks for this row.
+    """
+    from db.seed_local_owner import OwnerSeedWriter
+
+    return OwnerSeedWriter(owner_id)._id("enrollments", ENR_ACTIVE_CS_F25)
+
+
+def seed_owner(owner: dict, *, report: bool = True) -> int:
+    """Copy the rich dataset onto an existing account; returns rows created.
+
+    `owner` is a users row with at least `id` (and `onboarding_completed`).
+    The CLI prints the per-table summary (`report=True`); the backend's
+    local-seed watcher passes report=False and logs the count instead.
+    Raises — never exits — when the backend is not local, so a watcher thread
+    gets an ordinary exception. Not re-entrant: h.counts is process-global.
+    """
+    if not h.is_local_backend():
+        raise RuntimeError("REFUSING: the owner seed only writes to a local stack.")
+    from db.seed_local_owner import OwnerSeedWriter
+
+    h.reset_counts()
+    writer = OwnerSeedWriter(owner["id"])
+    _seed_dataset(writer)
+    _seed_owner_chunks(writer)
+    # OAuth creates the profile; retain its name, email, and settings. Completing
+    # onboarding only after seeding succeeds lets a fresh sign-in see the dashboard
+    # (and is what tells the watcher a seed finished rather than stopped midway).
+    if not owner.get("onboarding_completed"):
+        table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
+    if report:
+        return h.print_summary(_SUMMARY_ORDER, f"Seed summary (owner {owner['id']}):")
+    return sum(h.counts[name]["created"] for name in _SUMMARY_ORDER if name in h.counts)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Seed realistic data into a local Supabase stack.")
     owner_group = parser.add_mutually_exclusive_group()
@@ -916,20 +951,13 @@ def main(argv: list[str] | None = None) -> None:
         h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
         return
 
-    from db.seed_local_owner import OwnerSeedWriter, resolve_owner
+    from db.seed_local_owner import resolve_owner
 
     try:
         owner = resolve_owner(email=args.owner_email, user_id=args.owner_user_id)
     except ValueError as exc:
         parser.exit(1, f"{exc}\n")
-    writer = OwnerSeedWriter(owner["id"])
-    _seed_dataset(writer)
-    _seed_owner_chunks(writer)
-    # OAuth creates the profile; retain its name, email, and settings. Completing
-    # onboarding only after seeding succeeds lets a fresh sign-in see the dashboard.
-    if not owner.get("onboarding_completed"):
-        table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
-    h.print_summary(_SUMMARY_ORDER, f"Seed summary (owner {owner['id']}):")
+    seed_owner(owner)
 
 
 if __name__ == "__main__":

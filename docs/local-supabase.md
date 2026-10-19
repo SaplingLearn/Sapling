@@ -90,36 +90,64 @@ staging/prod are unaffected:
   skips the `/pending` approval wall (prod keeps the real approval gate).
 
 The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in with
-Google creates *your* user (`user_<google-id>`) — a fresh account that goes through
-onboarding — not the seeded `seed-user-demo`; the seed is reference/sample data.
+Google creates *your* user (`user_<google-id>`), not the seeded `seed-user-demo`;
+on a local backend that account is filled with the rich sample dataset (below).
 
-### Put the rich sample dataset on your own account (#684)
+### Your own account gets the rich sample dataset automatically (#684, #715)
 
-After signing in with Google once, run this from `backend/` in your activated
-local virtual environment (using your signed-in email):
+On a local backend, signing in with Google is enough. A new account lands on a
+**"Setting up your sample data…"** screen (`/setting-up`) instead of
+`/onboarding`, and moves on to the dashboard once the data is in (a few
+seconds). If seeding fails, the screen shows the error and a **Continue
+anyway** link to `/onboarding`.
+
+How it works: `services/local_seed_watcher.py` is a backend lifespan task that
+runs only on a local backend. Every ~2 seconds it lists the real Google
+accounts (`users.id` starting with `user_`; the `rich-*`/`seed-*`/`it-*`
+fixtures are never touched) and runs the owner seed below for each one that
+does not have it yet, one at a time. "Has it" means the owner seed's copy of
+the sample CS enrollment exists **and** onboarding is complete, so an account
+whose seed stopped midway is finished on a later pass. Existing accounts are
+seeded the first time the watcher sees them, including accounts that went
+through onboarding by hand. The hold screen polls
+`GET /api/auth/local-seed` (`{state: pending|seeding|ready|failed, error?}`),
+and a `pending` answer wakes the watcher immediately. A failed account is
+retried with a backoff (10 s, doubling, capped at 5 minutes); its error stays
+in the backend log and on the hold screen until a retry succeeds.
+
+The seed adds the active rich user's five enrollments, graph and mastery
+history, documents and private chunks, notes, quizzes, gradebook, study guides,
+chat sessions, flashcards, and rooms. It completes local onboarding; your
+Google identity, profile, approval, settings, and existing study data remain
+intact. No admin role is granted.
+
+Use **All semesters**, or choose Fall 2025, Spring 2026, or Fall 2026, to
+inspect the fixture's term-specific courses. Re-seeding inserts nothing and
+preserves edits to the sample data. Each developer gets independent sample
+records; the normal `rich-user-*` E2E fixtures keep their original IDs and
+ownership. If you delete the sample CS (Fall 2025) enrollment, the next backend
+restart counts the account as unseeded and re-adds any sample rows that are
+missing.
+
+The watcher, the status route and the seed all refuse every environment except
+**`APP_ENV=local`** or **`test`** (what `make e2e-up` accepts) with an exact
+loopback Supabase host (`127.0.0.1`, `localhost`, or `::1`). Anywhere else the
+watcher never starts, `GET /api/auth/local-seed` returns 404, and sign-in routes
+a new account to `/onboarding` exactly as before.
+
+#### Manual fallback
+
+The same seed still runs by hand from `backend/` in your activated local
+virtual environment (after signing in once):
 
 ```bash
 python -m db.seed_local_rich --owner-email you@gmail.com
 ```
 
-The command finds your existing account by decrypting local user emails. It
-adds the active rich user's five enrollments, graph and mastery history,
-documents and private chunks, notes, quizzes, gradebook, study guides, chat
-sessions, flashcards, and rooms. It completes local onboarding so you can
-reload into the dashboard; your Google identity, profile, approval, settings,
-and existing study data remain intact. No admin role is granted.
-
-Reload the app and use **All semesters**, or choose Fall 2025, Spring 2026, or
-Fall 2026 to inspect the fixture's term-specific courses. Rerunning the same
-command inserts nothing and preserves edits to the sample data. Each developer
-gets independent sample records; the normal `rich-user-*` E2E fixtures retain
-their original IDs and ownership.
-
-`--owner-user-id` also accepts your existing account ID (shown by
-`GET /api/auth/me` in your signed-in browser), as an alternative to email.
-Unknown or ambiguous accounts fail before any data is written. Seeding refuses
-all environments except **`APP_ENV=local`** or **`test`** (what `make e2e-up` accepts), and requires an exact loopback
-Supabase host (`127.0.0.1`, `localhost`, or `::1`).
+The command finds your existing account by decrypting local user emails.
+`--owner-user-id` also accepts your account ID (shown by `GET /api/auth/me` in
+your signed-in browser), as an alternative to email. Unknown or ambiguous
+accounts fail before any data is written.
 
 The chunks use encrypted text and deterministic synthetic 768-dimensional
 embeddings: the fixtures exercise storage and retrieval without calling a
@@ -127,7 +155,7 @@ model, and are not a semantic-search relevance benchmark.
 
 `scripts/local-db-reset.sh` still resets and seeds the standard demo dataset;
 `SEED_RICH=1` additionally seeds the normal rich accounts. A reset removes your
-OAuth account too, so sign in again and rerun the owner command afterward.
+OAuth account too; sign in again and the watcher seeds the new account.
 `python -m e2e_oracles` continues to check the normal `rich-user-active` dataset;
 pass `--user` with your account ID to check your graph and API list counts.
 

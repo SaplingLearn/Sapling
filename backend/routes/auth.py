@@ -5,6 +5,7 @@ Google OAuth sign-in with unified calendar access.
 Restricts sign-in to @bu.edu email accounts only.
 """
 
+import asyncio
 import json
 import base64
 import hashlib
@@ -735,3 +736,35 @@ async def mint_test_session(request: Request):
         path="/",
     )
     return response
+
+
+# ── GET /api/auth/local-seed ──────────────────────────────────────────────────
+
+
+@router.get("/local-seed", include_in_schema=False)
+async def local_seed_status(request: Request):
+    """Where the signed-in account's local sample data stands (#715). LOCAL ONLY.
+
+    On a developer's local stack, services/local_seed_watcher.py copies the
+    rich sample dataset onto each Google account. The post-sign-in routing asks
+    here first: `pending`/`seeding` sends a new account to the hold screen
+    instead of /onboarding, `ready` straight to the dashboard, `failed` (with
+    `error`) offers to continue to onboarding anyway.
+
+    404 — the frontend's cue to keep its normal routing — whenever the watcher
+    would not run (any non-local backend, gated per REQUEST on the same
+    predicate as the seed CLI's guard, checked before the session) and for a
+    non-Google fixture account, which the watcher never seeds. A `pending`
+    answer wakes the watcher so a fresh sign-in waits one seed, not a poll.
+    """
+    from services import local_seed_watcher
+
+    if not local_seed_watcher.watcher_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    user_id = get_session_user_id(request)
+    if not local_seed_watcher.is_oauth_account(user_id):
+        raise HTTPException(status_code=404, detail="Not Found")
+    status = await asyncio.to_thread(local_seed_watcher.status_for, user_id)
+    if status["state"] == "pending":
+        local_seed_watcher.nudge()
+    return status
