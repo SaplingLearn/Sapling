@@ -41,22 +41,36 @@
   overflow: hidden;
   position: relative;
 }
-.fa26-main { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 0 32px 24px 0; position: relative; }
-.fa26-navigation { width: 104px; flex: 0 0 104px; display: flex; flex-direction: column; align-items: center; padding: 20px 0 8px; z-index: 25; }
-.fa26-brand { display: flex; color: var(--fa26-forest); width: 46px; height: 72px; margin-bottom: 12px; }
-.fa26-navigation nav { display: grid; gap: 12px; }
-.fa26-nav-group { background: var(--fa26-sage); padding: 10px 3px; border-radius: 25px; display: grid; }
-.fa26-nav-item { width: 40px; height: 39px; display: grid; place-items: center; color: var(--fa26-forest); position: relative; border-radius: 20px; }
-.fa26-nav-item[aria-current="page"] { color: var(--fa26-brown); }
-.fa26-nav-item:hover { background: rgb(243 238 232 / 35%); }
-.fa26-nav-label { position: absolute; left: 50px; background: var(--fa26-ink); color: var(--fa26-paper); padding: 6px 10px; border-radius: 5px; font-size: 12px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 120ms; }
-.fa26-nav-item:is(:hover, :focus-visible) .fa26-nav-label { opacity: 1; }
-.fa26-profile { margin-top: auto; position: relative; padding-top: 16px; }
-.fa26-profile-button { background: var(--fa26-forest); color: var(--fa26-paper); width: 46px; height: 46px; border-radius: 50%; font-family: var(--font-display); font-weight: 700; font-size: 34px; display: grid; place-items: center; line-height: 1; }
-.fa26-more-tools { position: absolute; left: 58px; bottom: 0; min-width: 220px; display: grid; padding: 14px; gap: 2px; background: var(--fa26-paper); box-shadow: var(--shadow-lg); border: 1px solid var(--border); border-radius: 12px; }
+.fa26-main { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 0 38px 24px; position: relative; }
+/* Approved Pen 01–04 sidebar: 216px, visible labels, authored wordmark and
+   botanical assets. This replaces the temporary FA26 icon-pill navigation. */
+.fa26-navigation { box-sizing: border-box; width: 216px; flex: 0 0 216px; height: 100%; display: flex; flex-direction: column; padding: 26px 16px 44px; overflow-y: auto; background: var(--sapling-sage); color: var(--sapling-ink); font-family: var(--sapling-font-body); z-index: 25; }
+.fa26-brand { display: flex; flex-shrink: 0; color: var(--sapling-primary); width: 150px; height: 44.55px; margin: 0 10px; }
+.fa26-brand-mobile { display: none; }
+.fa26-workspace-label { margin: 36px 10px 12px; color: var(--sapling-muted); font-size: 11px; line-height: 15px; font-weight: 400; letter-spacing: 1.4px; text-transform: uppercase; }
+.fa26-primary-nav { flex-shrink: 0; }
+.fa26-nav-group { display: grid; gap: 10px; }
+.fa26-nav-item { box-sizing: border-box; width: 184px; min-height: 46px; display: flex; align-items: center; gap: 15px; padding: 0 13px; color: var(--sapling-ink); position: relative; border-radius: 6px; }
+.fa26-nav-item > :is(.sapling-icon, svg) { flex-shrink: 0; color: var(--sapling-primary); }
+.fa26-nav-item[aria-current="page"] { background: var(--sapling-paper); font-weight: 700; }
+.fa26-nav-item:hover { background: var(--sapling-paper); }
+.fa26-nav-label { font-size: 16px; line-height: 22px; font-weight: 500; }
+.fa26-nav-item[aria-current="page"] .fa26-nav-label { font-weight: 700; }
+.fa26-sidebar-footer { margin: auto 10px 0; padding-top: 11px; border-top: 1px solid var(--sapling-line); }
+.fa26-settings-link { width: 164px; min-height: 44px; padding: 0 2px; gap: 18px; }
+.fa26-settings-link > svg { color: var(--sapling-ink); }
+.fa26-settings-link .fa26-nav-label { font-size: 15px; font-weight: 400; }
+.fa26-profile { position: relative; margin-top: 44px; }
+.fa26-profile-button { width: 164px; min-height: 40px; display: flex; align-items: center; gap: 12px; padding: 0; color: var(--sapling-ink); text-align: left; border-radius: 6px; font-family: var(--sapling-font-body); }
+.fa26-profile-button:hover { background: var(--sapling-paper); }
+.fa26-profile-initial { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; font-size: 15px; font-weight: 500; }
+.fa26-profile-copy { display: grid; gap: 2px; min-width: 0; }
+.fa26-profile-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 19px; font-weight: 700; }
+.fa26-profile-copy > span { font-size: 12px; line-height: 16px; white-space: nowrap; color: var(--sapling-muted); }
+.fa26-more-tools { position: fixed; left: 224px; bottom: 44px; min-width: 220px; max-width: calc(100vw - 240px); max-height: calc(100dvh - 88px); overflow-y: auto; display: grid; padding: 14px; gap: 2px; color: var(--sapling-ink); background: var(--sapling-paper); box-shadow: var(--shadow-lg); border: 1px solid var(--sapling-line); border-radius: 12px; }
 .fa26-more-tools strong { padding: 8px; }
-.fa26-more-tools a { padding: 9px; border-radius: 5px; font-size: 14px; }
-.fa26-more-tools a:hover { background: var(--fa26-leaf); }
+.fa26-more-tools a { min-height: 44px; padding: 11px 9px; border-radius: 5px; font-size: 14px; }
+.fa26-more-tools a:hover { background: var(--sapling-sage); }
 .fa26-utilities { position: absolute; right: 30px; top: 34px; display: flex; gap: 4px; z-index: 20; color: var(--fa26-forest); }
 .fa26-utilities :is(a, button) { width: 32px; height: 36px; display: grid; place-items: center; border-radius: 5px; }
 .fa26-utilities :is(a, button):hover { background: var(--fa26-leaf); }
@@ -155,9 +169,23 @@
   .fa26-shell .fa26-study-header { align-items: stretch; flex-direction: column; }
 }
 @media (max-width: 700px) {
-  .fa26-navigation { width: 64px; flex-basis: 64px; padding-top: 14px; }
-  .fa26-brand { width: 34px; height: 58px; margin-bottom: 12px; }
+  /* Keep the compact navigation usable on existing phone layouts. Desktop
+     fidelity does not consume 216px of a phone's reading area. */
+  .fa26-navigation { width: 64px; flex-basis: 64px; padding: 14px 10px 8px; }
+  .fa26-brand { width: 34px; height: 58px; margin: 0 5px 12px; }
+  .fa26-brand .sapling-wordmark { display: none; }
+  .fa26-brand-mobile { display: flex; }
   .fa26-brand svg { width: 34px; height: 54px; }
+  .fa26-workspace-label { display: none; }
+  .fa26-nav-group { gap: 0; padding: 4px 2px; }
+  .fa26-nav-item { width: 40px; min-height: 44px; padding: 0; justify-content: center; }
+  .fa26-nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .fa26-sidebar-footer { margin: auto 0 0; padding-top: 12px; border-top: 0; }
+  .fa26-settings-link { width: 44px; }
+  .fa26-profile { margin-top: 12px; }
+  .fa26-profile-button { width: 44px; min-height: 44px; justify-content: center; }
+  .fa26-profile-initial { color: var(--sapling-paper); background: var(--sapling-primary); }
+  .fa26-profile-copy { display: none; }
   .fa26-main { padding: 0 14px 16px 0; }
   .fa26-utilities { top: 19px; right: 12px; gap: 0; }
   .fa26-utilities :is(a, button) { width: 27px; height: 30px; }
@@ -178,7 +206,13 @@
   .fa26-tutor-form { padding: 22px !important; }
   .fa26-tutor-form h2 { font-size: 28px; }
   .fa26-study-tabs :is(a, button) { min-width: 0; font-size: 14px; padding: 10px 8px; }
-  .fa26-more-tools { left: 49px; max-width: calc(100vw - 90px); }
+  .fa26-more-tools { left: 68px; bottom: 16px; max-width: calc(100vw - 80px); max-height: calc(100dvh - 32px); }
+}
+@media (min-width: 701px) and (max-height: 730px) {
+  .fa26-navigation { padding-bottom: 24px; }
+  .fa26-workspace-label { margin-top: 20px; }
+  .fa26-nav-group { gap: 4px; }
+  .fa26-profile { margin-top: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .fa26-shell *, .fa26-shell *::before, .fa26-shell *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }

@@ -48,7 +48,9 @@ vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api"
 
 import { ApiError } from "@/lib/api";
 import { LoopLearn } from "./LoopLearn";
+import { readOnboardingIntent, recordOnboardingSession, writeOnboardingIntent } from "@/lib/onboardingHandoff";
 
+const budgetResetAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const course = { course_id: "c1", course_name: "Intro CS", course_code: "CS 101" }; // the EnrolledCourse fields LoopLearn reads
 const open = (id: string, phase: string, started: string) => ({ session_id: id, topic: `t ${id}`, started_at: started, phase });
 const probeItem = { done: false, check_item_id: "i1", question_hash: "qh", node_id: "n1", format: "free", difficulty: 1, prompt: "What is a base case?", options: null };
@@ -69,6 +71,7 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   viewport.compact = false;
   search.params = new URLSearchParams();
   Object.values(api).forEach((f) => f.mockReset());
@@ -482,11 +485,11 @@ describe("LoopLearn — A26", () => {
   it("a capped student still gets a session and the probe; the opener's budget notice shows the banner", async () => {
     // spec §13 A27: at the hard level the opener is a template carrying `budget`, never a 429.
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
-    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "template", budget: { level: "hard", reset_at: "2026-09-27T00:00:00Z", scope: "daily_usd", session_capped: false } });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "template", budget: { level: "hard", reset_at: budgetResetAt, scope: "daily_usd", session_capped: false } });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
     const banner = await screen.findByTestId("loop-budget-paused");
-    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    expect(banner.getAttribute("data-reset-at")).toBe(budgetResetAt);
     expect(banner.getAttribute("data-session-capped")).toBe("false");
     expect(banner.textContent).toContain("Tutor chat paused until");
     expect(banner.textContent).toContain("Practice and review keep working");
@@ -497,19 +500,19 @@ describe("LoopLearn — A26", () => {
 
   it("renders the budget pause banner from a 429 body (Check me on a paused novice concept)", async () => {
     api.nextLoopCheck.mockRejectedValue(
-      new ApiError("ai budget reached", 429, { body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z" } }),
+      new ApiError("ai budget reached", 429, { body: { detail: "ai budget reached", reset_at: budgetResetAt } }),
     );
     await resumedTeach();
     fireEvent.click(await screen.findByTestId("loop-check-me"));
     const banner = await screen.findByTestId("loop-budget-paused");
-    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    expect(banner.getAttribute("data-reset-at")).toBe(budgetResetAt);
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"); // phase unchanged
     expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("A39: a session-capped 429 renders the session copy with no reset time", async () => {
     api.nextLoopCheck.mockRejectedValue(
-      new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z", scope: "session_requests", session_capped: true } }),
+      new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: budgetResetAt, scope: "session_requests", session_capped: true } }),
     );
     await resumedTeach();
     fireEvent.click(await screen.findByTestId("loop-check-me"));
@@ -540,7 +543,7 @@ describe("LoopLearn — A26", () => {
   it("renders the budget pause banner from a hard `budget` stream event; the chat input is disabled", async () => {
     // PKG-07 at the hard level: `phase`, then `budget`, then the stream ends with no `done`.
     api.streamLoopChat.mockImplementation(async (_s: string, _u: string, _m: string, h: { onBudget?: (b: object) => void }) => {
-      h.onBudget?.({ level: "hard", reset_at: "2026-09-27T00:00:00Z", scope: "daily_usd", session_capped: false });
+      h.onBudget?.({ level: "hard", reset_at: budgetResetAt, scope: "daily_usd", session_capped: false });
       throw new Error("Chat stream ended without a done event.");
     });
     await resumedTeach();
@@ -548,7 +551,7 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     const banner = await screen.findByTestId("loop-budget-paused");
-    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    expect(banner.getAttribute("data-reset-at")).toBe(budgetResetAt);
     expect(api.streamLoopChat).toHaveBeenCalledWith("s2", "u1", "why?", expect.any(Object));
     expect(toast.error).not.toHaveBeenCalled(); // the pause is not an error
     expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(true);
@@ -922,7 +925,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
   it("m: a 429 on start-session shows a start card with a retry, never an empty probe", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.startLoopSession
-      .mockRejectedValueOnce(new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: "2026-09-27T00:00:00Z" } }))
+      .mockRejectedValueOnce(new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: budgetResetAt } }))
       .mockResolvedValue({ session_id: "s9", initial_message: "" });
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
@@ -998,7 +1001,7 @@ describe("LoopLearn — PKG-13 fix round", () => {
     api.resumeSession.mockResolvedValue({ session: { id: "legacy-1", topic: "Old" }, messages: [] });
     render(<LoopLearn />);
     await screen.findByTestId("loop-readonly-transcript");
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/learn", { scroll: false }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/learn?course=c1", { scroll: false }));
     expect(router.replace).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByTestId("loop-session-s2"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2"));
@@ -1641,6 +1644,7 @@ describe("explicit goals and honest diagnostic coverage", () => {
     fireEvent.click(screen.getByTestId("loop-course-select"));
     fireEvent.click(screen.getByTestId("loop-course-select-option-c2"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("other"));
+    expect(router.replace).toHaveBeenLastCalledWith("/learn?course=c2", { scroll: false });
     await screen.findByTestId("loop-probe-item");
     expect(screen.queryByRole("form", { name: "Learning goal" })).toBeNull();
     await openGoalEditor();
@@ -2119,5 +2123,271 @@ describe("explicit goal fresh-practice preflight", () => {
     expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
     expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
     expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
+  });
+});
+
+describe("LoopLearn — explicit onboarding goal handoff", () => {
+  const intendedGoal = { text: "Trace recursion independently", target_node_ids: ["n1"] };
+  const actualGraph = { nodes: [{ id: "n1", concept_name: "Recursion", course_id: "c1", is_subject_root: false, mastery_score: 0, mastery_tier: "unexplored", times_studied: 0, last_studied_at: null, subject: "CS" }], edges: [], stats: {} };
+  function confirmedBegin(goal: typeof intendedGoal | null = intendedGoal) {
+    search.params = new URLSearchParams("course=c1");
+    expect(writeOnboardingIntent({ userId: "u1", courseId: "c1", goal })).toBe(true);
+    api.getGraph.mockResolvedValue(actualGraph);
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "onboarding-session", initial_message: "Let's find your starting point." });
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, goal });
+  }
+
+  it("starts with the confirmed real goal before the first probe, then consumes the intent", async () => {
+    confirmedBegin();
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledExactlyOnceWith("u1", "c1", "Intro CS", undefined, intendedGoal);
+    expect(api.startLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.nextLoopProbe.mock.invocationCallOrder[0]);
+    expect(api.nextLoopProbe).toHaveBeenCalledExactlyOnceWith("onboarding-session", "u1");
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")).toBeNull();
+  });
+
+  it("passes an explicit whole-course choice as null", async () => {
+    confirmedBegin(null);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledExactlyOnceWith("u1", "c1", "Intro CS", undefined, null);
+  });
+
+  it("retains invalidated targets and never falls back to a generic course probe", async () => {
+    confirmedBegin();
+    api.getGraph.mockResolvedValue({ nodes: [], edges: [], stats: {} });
+    render(<LoopLearn />);
+    await screen.findByText(/Your course or selected concepts changed/);
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")?.goal).toEqual(intendedGoal);
+    expect(screen.getByRole("link", { name: "Review onboarding choices" }).getAttribute("href")).toBe("/onboarding");
+  });
+
+  it("revalidates enrollment before using the pending goal", async () => {
+    confirmedBegin();
+    api.getCourses.mockResolvedValueOnce({ courses: [course] }).mockResolvedValue({ courses: [] });
+    render(<LoopLearn />);
+    await screen.findByText(/Your course or selected concepts changed/);
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")).toBeTruthy();
+  });
+
+  it("does not silently diagnose a fallback course when the onboarding course is no longer enrolled", async () => {
+    confirmedBegin();
+    api.getCourses.mockResolvedValue({ courses: [{ ...course, course_id: "c2" }] });
+    render(<LoopLearn />);
+    await screen.findByText(/This course is no longer enrolled/);
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.listLoopSessionsFor).not.toHaveBeenCalled();
+  });
+
+  it("keeps an existing teaching session untouched until the learner chooses to resume it", async () => {
+    confirmedBegin();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-onboarding-scope");
+    expect(api.resumeSession).not.toHaveBeenCalled();
+    expect(api.getLoopSessionStatus).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-onboarding-resume"));
+    await screen.findByText("welcome back");
+    expect(api.resumeSession).toHaveBeenCalledWith("s2");
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")?.goal).toEqual(intendedGoal);
+  });
+
+  it("requires the existing wrap-up confirmation before a new goal-based check-in", async () => {
+    confirmedBegin();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-onboarding-start"));
+    await screen.findByTestId("loop-new-session-confirm");
+    expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1");
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-new-session-confirm-start"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(api.startLoopSession).toHaveBeenCalledExactlyOnceWith("u1", "c1", "Intro CS", undefined, intendedGoal);
+    expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
+    expect(readOnboardingIntent("u1", "c1")).toBeNull();
+  });
+
+  it("retains a failed start and discovers a possibly landed session before retrying", async () => {
+    confirmedBegin();
+    api.startLoopSession.mockRejectedValue(new Error("connection interrupted"));
+    render(<LoopLearn />);
+    await screen.findByText(/Couldn't begin your check-in/);
+    expect(readOnboardingIntent("u1", "c1")?.goal).toEqual(intendedGoal);
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("server-landed", "probe", "2026-09-21T10:00:00Z")]));
+    fireEvent.click(screen.getByTestId("loop-onboarding-start"));
+    await screen.findByText("You have a session to continue.");
+    expect(api.listLoopSessionsFor).toHaveBeenCalledTimes(2);
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")).toBeTruthy();
+  });
+
+  it("does not replay a start after the first probe fails", async () => {
+    confirmedBegin();
+    api.nextLoopProbe.mockRejectedValue(new Error("probe unavailable"));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-retry");
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(readOnboardingIntent("u1", "c1")?.startedSessionId).toBe("onboarding-session");
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    fireEvent.click(screen.getByTestId("loop-probe-retry"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(2);
+    expect(readOnboardingIntent("u1", "c1")).toBeNull();
+  });
+
+  it("reuses a lazy accepted opener after reload instead of starting a second session", async () => {
+    confirmedBegin();
+    const intent = readOnboardingIntent("u1", "c1")!;
+    recordOnboardingSession(intent, "accepted-before-reload");
+    api.getLoopSessionStatus.mockResolvedValue(status({ session_id: "accepted-before-reload", loop_phase: "probe", phase: "probe", goal: intendedGoal }));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).toHaveBeenCalledExactlyOnceWith("accepted-before-reload", "u1");
+    expect(screen.getByTestId("loop-session-accepted-before-reload").getAttribute("aria-current")).toBe("true");
+    expect(readOnboardingIntent("u1", "c1")).toBeNull();
+  });
+
+  it.each([false, true])("recovers the pending second course when reload has genuinely empty search params (accepted opener: %s)", async (accepted) => {
+    confirmedBegin();
+    sessionStorage.clear();
+    search.params = new URLSearchParams(); // URL cleanup removed ?course=c2.
+    const secondCourse = { course_id: "c2", course_name: "Calculus", course_code: "MA 101" };
+    const secondGoal = { text: "Explain a limit", target_node_ids: ["n2"] };
+    writeOnboardingIntent({ userId: "u1", courseId: "c2", goal: secondGoal });
+    if (accepted) recordOnboardingSession(readOnboardingIntent("u1", "c2")!, "accepted-course-2");
+    api.getCourses.mockResolvedValue({ courses: [course, secondCourse] });
+    api.getGraph.mockResolvedValue({ ...actualGraph, nodes: [{ ...actualGraph.nodes[0], id: "n2", course_id: "c2", concept_name: "Limits" }] });
+    api.getLoopSessionStatus.mockResolvedValue(status({ session_id: "accepted-course-2", loop_phase: "probe", phase: "probe", goal: secondGoal }));
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, node_id: "n2", goal: secondGoal });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.listLoopSessionsFor).toHaveBeenCalledWith("u1", "c2", null);
+    expect(api.listLoopSessionsFor.mock.calls.every((call) => call[1] === "c2")).toBe(true);
+    if (accepted) {
+      expect(api.startLoopSession).not.toHaveBeenCalled();
+      expect(api.nextLoopProbe).toHaveBeenCalledExactlyOnceWith("accepted-course-2", "u1");
+    } else {
+      expect(api.startLoopSession).toHaveBeenCalledExactlyOnceWith("u1", "c2", "Calculus", undefined, secondGoal);
+    }
+    expect(readOnboardingIntent("u1", "c2")).toBeNull();
+  });
+
+  it("retains the chosen second course through two reloads after the intent is consumed", async () => {
+    confirmedBegin();
+    sessionStorage.clear();
+    search.params = new URLSearchParams("course=c2");
+    const secondCourse = { course_id: "c2", course_name: "Calculus", course_code: "MA 101" };
+    const secondGoal = { text: "Explain a limit", target_node_ids: ["n2"] };
+    writeOnboardingIntent({ userId: "u1", courseId: "c2", goal: secondGoal });
+    api.getCourses.mockResolvedValue({ courses: [course, secondCourse] });
+    api.getGraph.mockResolvedValue({ ...actualGraph, nodes: [{ ...actualGraph.nodes[0], id: "n2", course_id: "c2", concept_name: "Limits" }] });
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, node_id: "n2", goal: secondGoal });
+    let current = render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(readOnboardingIntent("u1", "c2")).toBeNull();
+    expect(api.startLoopSession).toHaveBeenCalledExactlyOnceWith("u1", "c2", "Calculus", undefined, secondGoal);
+    const materialized = { ...open("onboarding-session", "probe", "2026-09-21T10:00:00Z"), course_id: "c2" };
+    api.listLoopSessionsFor.mockImplementation(async (_user: string, id: string) => listed(id === "c2" ? [materialized] : []));
+    api.getLoopSessionStatus.mockResolvedValue(status({ session_id: "onboarding-session", loop_phase: "probe", phase: "probe", goal: secondGoal }));
+    for (let reload = 0; reload < 2; reload++) {
+      expect(router.replace).toHaveBeenLastCalledWith("/learn?course=c2", { scroll: false });
+      const canonical = router.replace.mock.calls.at(-1)![0] as string;
+      current.unmount();
+      search.params = new URLSearchParams(canonical.split("?")[1]);
+      current = render(<LoopLearn />);
+      await screen.findByTestId("loop-probe-item");
+      expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("onboarding-session");
+      expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+      expect(readOnboardingIntent("u1", "c2")).toBeNull();
+    }
+    expect(api.listLoopSessionsFor.mock.calls.every((call) => call[1] === "c2")).toBe(true);
+  });
+
+  it("does not replace a lost pending goal with a generic probe on reload", async () => {
+    confirmedBegin();
+    recordOnboardingSession(readOnboardingIntent("u1", "c1")!, "lost-opener");
+    api.getLoopSessionStatus.mockResolvedValue(status({ session_id: "lost-opener", loop_phase: "probe", phase: "probe", goal: null }));
+    render(<LoopLearn />);
+    await screen.findByText(/This pending check-in is no longer available/);
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")?.goal).toEqual(intendedGoal);
+  });
+
+  it("does not inherit another account's intent", async () => {
+    confirmedBegin();
+    sessionStorage.clear();
+    writeOnboardingIntent({ userId: "another-user", courseId: "c1", goal: intendedGoal });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledExactlyOnceWith("u1", "c1", "Intro CS", "");
+    expect(readOnboardingIntent("another-user", "c1")?.goal).toEqual(intendedGoal);
+  });
+
+  it("does not pose an existing probe until the learner explicitly resumes its unchanged scope", async () => {
+    confirmedBegin();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-onboarding-scope");
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-onboarding-resume"));
+    await screen.findByTestId("loop-probe-item");
+    expect(api.nextLoopProbe).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")).toBeTruthy();
+  });
+
+  it("starts only once when StrictMode repeats discovery effects", async () => {
+    confirmedBegin();
+    render(<React.StrictMode><LoopLearn /></React.StrictMode>);
+    await screen.findByTestId("loop-probe-item");
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not pose or consume a pending intent after the learning screen was left during start", async () => {
+    confirmedBegin();
+    const starting = deferred<{ session_id: string; initial_message: string }>();
+    api.startLoopSession.mockReturnValue(starting.promise);
+    const view = render(<LoopLearn />);
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+    view.unmount();
+    await act(async () => { starting.resolve({ session_id: "late-session", initial_message: "Late opener" }); });
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")?.goal).toEqual(intendedGoal);
+  });
+
+  it("honors an explicit resume deep link without replacing it with a pending onboarding goal", async () => {
+    confirmedBegin();
+    search.params = new URLSearchParams("course=c1&resume=s2");
+    const current = { ...open("s2", "teach", "2026-09-21T10:00:00Z"), course_id: "c1" };
+    api.listLoopSessionsFor.mockResolvedValue(listed([current], current));
+    render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    expect(api.resumeSession).toHaveBeenCalledWith("s2");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+    expect(readOnboardingIntent("u1", "c1")).toBeTruthy();
   });
 });

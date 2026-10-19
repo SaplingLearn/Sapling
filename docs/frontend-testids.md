@@ -137,18 +137,41 @@ route:
 | --- | --- |
 | `pending-gate` | approval-gate page root |
 | `pending-signout` | "Sign out" |
-| `onboarding-gate` | first-run onboarding page root |
-| `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
-| `onboarding-back` | "Back" (absent on step 0) |
-| `onboarding-close` | "×" close/exit control |
-| `onboarding-input` | the shared `TextInput` default; every simultaneous instance overrides it (below) |
+
+### `onboarding`
+
+Six standalone Pen screens outside the application shell. The real profile and
+enrollment save happens when Courses is confirmed; materials and goal setup are
+optional. No learning session starts before the review's explicit Start check-in.
+
+| testid | element |
+| --- | --- |
+| `onboarding-gate` | full-page onboarding root; `data-step` is `1`–`6` after account confirmation |
+| `onboarding-step` | visible step number and label; the progress bar also exposes the current step through ARIA |
+| `onboarding-continue` | primary advance/save/confirm button; "Start check-in" on the final review |
+| `onboarding-back` | "Back" (absent on the first screen) |
+| `onboarding-close` | "Finish later"; opens the account-aware exit confirmation |
 | `onboarding-first-name` / `onboarding-last-name` | the two name fields — they render side by side |
-| `onboarding-school` | school field (disabled; BU-only today) |
-| `onboarding-chip-input-${field}` / `onboarding-chip-add-${field}` | majors/minors editor — `field` is `majors` or `minors`, since both render at once |
-| `onboarding-chip-remove-${field}-${value}` | one chip's remove control |
+| `onboarding-school` | read-only school field (BU-only today) |
+| `onboarding-year` | native class-year select; values `freshman`, `sophomore`, `junior`, `senior`, `graduate`, `other` |
+| `onboarding-chip-input-majors` / `onboarding-chip-input-minors` | comma-separated academic choices, with native suggestions; majors required, minors optional |
 | `onboarding-course-search` | course search field |
-| `onboarding-course-result-${course.id}` | one course search result |
+| `onboarding-course-result-${course.id}` | native course checkbox inside its visible result label |
 | `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
+| `onboarding-save-error` | required profile/course save or start validation error; choices remain available for retry |
+| `onboarding-skip-materials` | "Skip for now"; course files remain optional |
+| `onboarding-goal-course` | native select containing confirmed enrolled courses |
+| `onboarding-goal-course-scope` / `onboarding-goal-concept-scope` | explicit whole-course versus confirmed-concept scope radios |
+| `onboarding-target-${node.id}` | one real concept from the selected course, confirmed with a native checkbox |
+| `onboarding-objective` | optional objective; enabled for selected-concept scope and never used to infer target IDs |
+
+The materials screen reuses all `upload-modal-*` IDs below. The implementation
+journey uses the real `upload-journey.pdf` fixture and FunctionModel pipeline,
+then verifies profile, enrollment, document and goal-scoped session persistence
+through `e2e/support/db.ts`. Set `ONBOARDING_EVIDENCE_DIR` to capture all six
+desktop screens and the 320px review during that journey. The phone test checks
+viewport fit, browser draft recovery and failed-request retries; it does not
+claim physical soft-keyboard testing.
 
 ### `setup`
 

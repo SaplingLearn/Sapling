@@ -1,0 +1,55 @@
+{
+  "source": "Native Pen MCP Export from active Sapling-Complete-Wireframes.pen",
+  "exported_at": "2026-10-19",
+  "canvas": "NEW REDESIGN / 05 / Onboarding",
+  "frames": [
+    {
+      "step": 1,
+      "node": "km1LR",
+      "file": "km1LR.png",
+      "width": 1440,
+      "height": 960,
+      "sha256": "4635781ddf4264b8799152a6511c0a005e7ea882793c7c177c2b76b77cac4c27"
+    },
+    {
+      "step": 2,
+      "node": "n3xUk",
+      "file": "n3xUk.png",
+      "width": 1440,
+      "height": 960,
+      "sha256": "28c2fc8b7bd81ccf499604c744e4fd8ecfd06f0a4a1ef10aee65f03b28d895e3"
+    },
+    {
+      "step": 3,
+      "node": "X0pxMA",
+      "file": "X0pxMA.png",
+      "width": 1440,
+      "height": 960,
+      "sha256": "ec9d10e5f25ccab9079af6b7dbe8776e2366d227fbd944bb1c8626096eb036b0"
+    },
+    {
+      "step": 4,
+      "node": "F4WT9A",
+      "file": "F4WT9A.png",
+      "width": 1440,
+      "height": 960,
+      "sha256": "ff676256f4168e246b12bebd746ac87647c818920bc47c971ee693c9281ce0dc"
+    },
+    {
+      "step": 5,
+      "node": "R388oC",
+      "file": "R388oC.png",
+      "width": 1440,
+      "height": 960,
+      "sha256": "ecc0dbd091d2a02cecef32bd9c07f4c11a0519d7fc0d694e6c67abeae518cb6c"
+    },
+    {
+      "step": 6,
+      "node": "rbWgL",
+      "file": "rbWgL.png",
+      "width": 1440,
+      "height": 960,
+      "sha256": "1042e3251d1a6e75c56d3aa5afa5ac01d1c41ed6a079a5d5feaf0f9dd63556c2"
+    }
+  ]
+}
