@@ -15,7 +15,6 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { TopBar } from "../TopBar";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
@@ -70,7 +69,18 @@ import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
 import styles from "./LoopLearn.module.css";
-import { DiagnosisSummary, GoalEditor } from "./LearningScope";
+import { DiagnosisSummary, GoalEditor, skillEvidenceLabel } from "./LearningScope";
+import { NewSessionConfirm } from "./NewSessionConfirm";
+import {
+  BotanicalIcon,
+  ChoiceGroup,
+  ContextPanel,
+  GoalSummary,
+  PageHeading,
+  PhaseStrip,
+  SaplingAction,
+  StatusMessage,
+} from "@/components/sapling";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -105,32 +115,24 @@ const ALREADY_GRADED_DETAIL = "already graded";
 const MAX_TIMER_MS = 2_147_483_647;
 
 const BAND_LABEL: Record<string, string> = { novice: "Getting started", develop: "Developing", profic: "Proficient" };
-const KIND_LABEL: Record<string, { label: string; chip: string }> = {
-  review: { label: "Review", chip: "chip chip--warn" },
-  new: { label: "New", chip: "chip chip--accent" },
-  sibling: { label: "Related", chip: "chip chip--info" },
+const KIND_LABEL: Record<string, { label: string }> = {
+  review: { label: "Review" },
+  new: { label: "New" },
+  sibling: { label: "Related" },
 };
-const STEPS: { label: string; phases: LoopPhase[] }[] = [
-  { label: "Check-in", phases: ["probe"] },
-  { label: "Plan", phases: ["plan"] },
-  { label: "Learn", phases: ["teach", "check", "feedback"] },
-  { label: "Wrap-up", phases: ["close"] },
-];
+/** Why the server put a concept in the plan (planner `reason`). */
+const REASON_LABEL: Record<string, string> = {
+  prerequisite: "Prerequisite for your goal",
+  goal: "Your selected goal",
+  review: "Due for review",
+  related: "Related practice",
+};
+/** The phase strip (components/sapling LOOP_STAGES) groups the server phases:
+ *  Check-in = probe, Plan = plan, Learn = teach/check/feedback, Wrap-up = close. */
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
-const RAIL_WIDTH = 300;
+/** Below this width the learning-route rail becomes a labelled sheet. */
+const RAIL_BREAKPOINT = 1024;
 const RAIL_GRAPH_HEIGHT = 240;
-
-const FIELD_STYLE: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 14,
-  lineHeight: 1.45,
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-md)",
-  background: "var(--bg-input)",
-  resize: "vertical",
-  boxSizing: "border-box",
-};
 
 let msgSeq = 0;
 const msgId = (prefix: string) => `${prefix}-${Date.now()}-${++msgSeq}`;
@@ -169,7 +171,10 @@ export function LoopLearn() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const isMobile = useIsMobile();
+  const compact = useIsMobile(RAIL_BREAKPOINT);
+  // A phone keeps the learning flow first: the open-sessions strip moves below
+  // the workspace (in DOM order too, so focus order matches what is seen).
+  const phone = useIsMobile();
   const [state, dispatch] = useReducer(reduceLoopEvent, undefined, initialLoopState);
   const [deepLink] = useState(() => readDeepLink(searchParams));
 
@@ -230,6 +235,12 @@ export function LoopLearn() {
   const [close, setClose] = useState<LoopCloseResponse | null>(null);
   const [closeBusy, setCloseBusy] = useState(false);
   const [closeNote, setCloseNote] = useState<string | null>(null);
+  // New-session confirmation: leaving an open session is never one click.
+  const [confirmNew, setConfirmNew] = useState<{ topic?: string; mode?: string } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  // Phone/tablet: the learning-route context lives in a labelled sheet.
+  const [routeOpen, setRouteOpen] = useState(false);
 
   // Knowledge map
   const [graphLoading, setGraphLoading] = useState(false);
@@ -423,6 +434,10 @@ export function LoopLearn() {
     setClose(null);
     setCloseBusy(false);
     setCloseNote(null);
+    // A pending new-session confirmation belonged to the session being left.
+    setConfirmNew(null);
+    setConfirmBusy(false);
+    setConfirmError(null);
     countedAttempt.current = null;
   }, [invalidateHint]);
 
@@ -522,38 +537,48 @@ export function LoopLearn() {
     }
   }, [clearSessionView]);
 
-  /** Start a session and its probe. `closeCurrent` (the "New session" button):
-   *  the open session being left is closed first (A60's wrap-up), so sessions
-   *  do not pile up open; a close that cannot run now (409) starts nothing. */
+  /** Wrap up the open session being left (A60's close) before a new one
+   *  starts, so sessions do not pile up open. Only ever runs from the
+   *  new-session confirmation. A close that cannot run now (409) or fails
+   *  starts nothing: the reason comes back for the dialog to show. */
+  const wrapUpCurrent = useCallback(async (): Promise<{ ok: true } | { ok: false; reason: string | null }> => {
+    const leaving = sessionRef.current;
+    if (!leaving || !isOpenPhase(state.phase)) return { ok: true };
+    const g0 = gen.current;
+    setStarting(true);
+    try {
+      await closeLoopSession(leaving, userId);
+    } catch (err) {
+      if (g0 !== gen.current) return { ok: false, reason: null };
+      setStarting(false);
+      const { status, detail } = extractErrorDetail(err);
+      if (status === 409 && detail === SESSION_CLOSED_DETAIL) {
+        // already closed elsewhere: nothing to wrap up
+      } else if (status === 409 && detail) {
+        return { ok: false, reason: CLOSE_RETRY_COPY[detail] ?? detail };
+      } else {
+        const pause = budgetPauseOf(err);
+        return {
+          ok: false,
+          reason: pause
+            ? "Wrap-up is paused for now. Your current session is still open."
+            : humanizeError(err, "Couldn't wrap up the current session."),
+        };
+      }
+    }
+    dropFromPicker(leaving);
+    if (g0 !== gen.current) return { ok: false, reason: null };
+    return { ok: true };
+  }, [state.phase, userId, dropFromPicker]);
+
+  /** Start a session and its probe. Never closes anything itself: leaving an
+   *  open session goes through the confirmation (`requestNewSession`). */
   const newSession = useCallback(async (
-    { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
+    { topic, mode }: { topic?: string; mode?: string } = {},
   ) => {
     if (!courseId || !userId) return;
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
-    const leaving = sessionRef.current;
-    if (closeCurrent && leaving && isOpenPhase(state.phase)) {
-      const g0 = gen.current;
-      setStarting(true);
-      try {
-        await closeLoopSession(leaving, userId);
-      } catch (err) {
-        if (g0 !== gen.current) return;
-        setStarting(false);
-        const { status, detail } = extractErrorDetail(err);
-        if (status === 409 && detail === SESSION_CLOSED_DETAIL) {
-          // already closed elsewhere: nothing to wrap up
-        } else if (status === 409 && detail) {
-          setCloseNote(CLOSE_RETRY_COPY[detail] ?? detail);
-          return;
-        } else {
-          reportError(err, "Couldn't wrap up the current session.");
-          return;
-        }
-      }
-      dropFromPicker(leaving);
-      if (g0 !== gen.current) return;
-    }
     const g = ++gen.current;
     clearSessionView();
     setSessionId(null);
@@ -593,7 +618,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, state.phase, clearSessionView, nextProbe, reportError, dropFromPicker, applyLearningScope]);
+  }, [courseId, userId, course, clearSessionView, nextProbe, reportError, applyLearningScope]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
@@ -1087,6 +1112,41 @@ export function LoopLearn() {
     }
   };
 
+  // ── New session: confirmed whenever an open session would be wrapped up ──
+  const sessionIsOpen = !!sessionId && !readOnly && isOpenPhase(state.phase);
+  const requestNewSession = (opts: { topic?: string; mode?: string } = {}) => {
+    if (!courseId || starting) return;
+    if (sessionIsOpen) {
+      setConfirmError(null);
+      setConfirmNew(opts);
+      return;
+    }
+    void newSession(opts); // nothing open to leave (closed, read-only or none)
+  };
+  const cancelNewSession = () => {
+    if (confirmBusy) return; // a close in flight cannot be taken back
+    setConfirmNew(null);
+    setConfirmError(null);
+  };
+  /** Confirm: wait for the close to succeed, THEN start. A 409 or a failed
+   *  close keeps the dialog (and the current session) and starts nothing. */
+  const confirmNewSession = async () => {
+    if (!confirmNew || confirmBusy) return;
+    const request = confirmNew;
+    setConfirmBusy(true);
+    setConfirmError(null);
+    const outcome = await wrapUpCurrent();
+    if (!mounted.current) return;
+    setConfirmBusy(false);
+    if (!outcome.ok) {
+      if (outcome.reason) setConfirmError(outcome.reason);
+      else setConfirmNew(null); // superseded by another switch
+      return;
+    }
+    setConfirmNew(null);
+    await newSession(request);
+  };
+
   // ── Derived view data ──────────────────────────────────────────────────
   const conceptNames = useMemo(() => {
     const names = new Map<string, string>();
@@ -1108,7 +1168,6 @@ export function LoopLearn() {
   const learner = state.focusNodeId ? state.learnerState[state.focusNodeId] : undefined;
   const treeHref = focusNodeId ? `/tree?node=${encodeURIComponent(focusNodeId)}` : "/tree";
   const teaching = TEACHING.includes(state.phase);
-  const stepIndex = STEPS.findIndex((s) => s.phases.includes(state.phase));
   const streaming = streamingText !== null;
   // The card shows the current pose and hint; the log hides those rows while
   // the item is current (live and after a reload alike), so nothing renders twice.
@@ -1122,177 +1181,194 @@ export function LoopLearn() {
   }, [messages, item, hint]);
   const topicOffer =
     deepLink.topic && sessionId && teaching && !starting && openSessions !== null ? deepLink.topic : null;
+  /** The learning route: the server's plan order when this view has it, else
+   *  the confirmed goal concepts. Status text is only what the server said
+   *  (plan reason, check-in evidence, the concept the last turn named) — never
+   *  a mastery claim. */
+  const routeItems = useMemo(() => {
+    const evidence = new Map((diagnosis?.skills ?? []).map((skill) => [skill.node_id, skill.status]));
+    const source = plan && plan.length > 0
+      ? plan.map((c) => ({
+        id: c.node_id,
+        name: c.concept_name || conceptNames.get(c.node_id) || "Concept",
+        why: c.reason ? REASON_LABEL[c.reason] : KIND_LABEL[c.kind]?.label,
+      }))
+      : (goal?.target_node_ids ?? []).map((id) => ({
+        id, name: conceptNames.get(id) ?? "Selected concept", why: REASON_LABEL.goal,
+      }));
+    return source.map((entry) => ({
+      ...entry,
+      current: teaching && state.focusNodeId === entry.id,
+      evidence: evidence.has(entry.id) ? `Check-in: ${skillEvidenceLabel(evidence.get(entry.id))}` : null,
+    }));
+  }, [plan, goal, diagnosis, conceptNames, teaching, state.focusNodeId]);
 
   // ── Render ─────────────────────────────────────────────────────────────
   const noCourses = courses !== null && courses.length === 0;
   const loadingSessions =
     !sessionsError && !noCourses && !readOnly && loadError !== "start" &&
     (openSessions === null || (!sessionId && starting));
+  const showScope = !!sessionId && !readOnly;
+  const canEditGoal = showScope && (state.phase === "probe" || state.phase === "plan");
+  const showLearningChrome = !sessionsError && !noCourses && !readOnly;
+  // A failed session list must never invite a start that could duplicate an
+  // open session it could not see: the strip waits for the Retry.
+  const showSessions = !sessionsError && !noCourses;
+  const courseLabel = course ? course.course_code || course.course_name : null;
+  const studio = studioCopy({
+    blocked: sessionsError || noCourses || loadingSessions || (loadError === "start" && !sessionId),
+    readOnly: !!readOnly,
+    editingGoal: goalEditor,
+    phase: state.phase,
+    courseName: course?.course_name ?? null,
+    noCourses,
+  });
+  const openGoalEditor = () => { setGoalEditor(true); setGoalError(null); };
 
-  const header = (
-    <TopBar
-      title={course ? course.course_name : "Learn"}
-      subtitle={
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {course?.course_code && <span>{course.course_code} ·</span>}
-          {STEPS.map((s, i) => (
-            <span
-              key={s.label}
-              aria-current={i === stepIndex ? "step" : undefined}
-              style={{
-                color: i === stepIndex ? "var(--accent)" : i < stepIndex ? "var(--text-dim)" : "var(--text-muted)",
-                fontWeight: i === stepIndex ? 600 : 400,
-              }}
-            >
-              {i > 0 && <span aria-hidden style={{ color: "var(--text-muted)", marginRight: 6 }}>›</span>}
-              {s.label}
-            </span>
-          ))}
-        </span>
-      }
-      actions={
-        <>
-          {courses && courses.length > 1 && (
-            <CustomSelect<string>
-              testId="loop-course-select"
-              value={courseId ?? ""}
-              options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
-              onChange={(v) => {
-                ++gen.current;
-                clearSessionView();
-                setSessionId(null);
-                sessionRef.current = null;
-                setOpenSessions(null);
-                setCourseId(v);
-              }}
-              ariaLabel="Course"
-              size="sm"
-            />
-          )}
-          {sessionId && !readOnly && (state.phase === "probe" || state.phase === "plan") && (
-            <button ref={goalButton} type="button" className="btn btn--sm" data-testid="loop-set-goal"
-              disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady}
-              onClick={() => { setGoalEditor(true); setGoalError(null); }}>
-              {goal ? "Edit goal" : "Set goal"}
-            </button>
-          )}
-          <Link data-testid="loop-tree-link" href={treeHref} className="btn btn--sm btn--ghost">
-            Knowledge map
-          </Link>
-          {teaching && sessionId && (
-            <button
-              data-testid="loop-close-button"
-              className="btn btn--sm"
-              onClick={() => void doClose()}
-              disabled={closeBusy}
-              title="Wrap up this session"
-            >
-              {closeBusy ? "Closing…" : "End session"}
-            </button>
-          )}
-          <AIDisclaimerChip />
-        </>
-      }
-    />
+  const heading = (
+    <div className={styles.heading}>
+      <PageHeading
+        testid="loop-heading"
+        eyebrow={courseLabel ? <>Learning studio <span aria-hidden="true">/</span> {courseLabel}</> : "Learning studio"}
+        title={studio.title}
+        description={studio.description}
+        actions={
+          <>
+            {courses && courses.length > 1 && (
+              <CustomSelect<string>
+                testId="loop-course-select"
+                value={courseId ?? ""}
+                options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
+                onChange={(v) => {
+                  ++gen.current;
+                  clearSessionView();
+                  setSessionId(null);
+                  sessionRef.current = null;
+                  setOpenSessions(null);
+                  setCourseId(v);
+                }}
+                ariaLabel="Course"
+                size="sm"
+              />
+            )}
+            <Link data-testid="loop-tree-link" href={treeHref} className={styles.headerLink}>
+              Knowledge map
+            </Link>
+            {teaching && sessionId && (
+              <SaplingAction
+                tone="secondary"
+                data-testid="loop-close-button"
+                onClick={() => void doClose()}
+                disabled={closeBusy}
+                title="Wrap up this session"
+              >
+                {closeBusy ? "Closing…" : "End session"}
+              </SaplingAction>
+            )}
+            <AIDisclaimerChip />
+          </>
+        }
+      />
+    </div>
   );
 
   const sessionStrip = (
-    <div
-      className={styles.sessionStrip}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 32px",
-        borderBottom: "1px solid var(--border)",
-        overflowX: "auto",
-      }}
-    >
-      <span className="label-micro" style={{ flexShrink: 0 }}>Open sessions</span>
-      <div data-testid="loop-session-picker" role="list" style={{ display: "flex", gap: 6, flex: 1, minWidth: 0 }}>
+    <section className={styles.sessions} aria-label="Your sessions">
+      <span className={styles.sessionsLabel}>Open sessions</span>
+      <div data-testid="loop-session-picker" role="list" className={styles.sessionList}>
         {(openSessions ?? []).map((s) => {
           const current = s.session_id === sessionId;
           return (
-            <div role="listitem" key={s.session_id} style={{ flexShrink: 0 }}>
+            <div role="listitem" key={s.session_id} className={styles.sessionItem}>
               <button
+                type="button"
                 data-testid={`loop-session-${s.session_id}`}
                 aria-current={current ? "true" : undefined}
-                className={current ? "chip chip--accent" : "chip"}
-                style={{ cursor: current ? "default" : "pointer", whiteSpace: "nowrap" }}
+                className={styles.sessionChip}
                 onClick={() => { if (!current) void resume(s); }}
                 title={current ? "Current session" : `Resume “${s.topic}”`}
               >
-                {s.topic || "Session"}
-                <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>{shortDate(s.started_at)}</span>
+                <span className={styles.sessionTopic}>{s.topic || "Session"}</span>
+                <span className={styles.sessionDate}>{shortDate(s.started_at)}</span>
+                {current && <span className="sapling-visually-hidden"> (current session)</span>}
               </button>
             </div>
           );
         })}
         {openSessions !== null && openSessions.length === 0 && (
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>None yet</span>
+          <span className={styles.muted}>None yet</span>
         )}
       </div>
-      <button
+      <SaplingAction
+        tone="secondary"
         data-testid="loop-new-session"
-        className="btn btn--sm"
-        style={{ flexShrink: 0 }}
-        onClick={() => void newSession({ closeCurrent: true })}
+        className={styles.newSession}
+        onClick={() => requestNewSession()}
         disabled={!courseId || starting}
-        title="Wrap up this session and start a new one"
+        title={sessionIsOpen ? "Wrap up this session and start a new one" : "Start a new session"}
       >
         + New session
-      </button>
+      </SaplingAction>
+    </section>
+  );
+
+  const goalStrip = showScope && (
+    <div className={styles.goalStrip} data-testid="loop-goal-summary">
+      {scopeError ? (
+        <StatusMessage tone="error" testid="loop-goal" onRetry={() => void retryLearningScope()} retryLabel="Retry learning scope">
+          Couldn&apos;t load this session&apos;s learning scope. Nothing was changed.
+        </StatusMessage>
+      ) : !scopeReady ? (
+        <StatusMessage tone="pending">Loading learning scope…</StatusMessage>
+      ) : (
+        <GoalSummary
+          heading={goal ? "Your goal" : "Your scope"}
+          goal={goal ? goal.text || "Selected concepts" : "Explore the whole course"}
+          scope={goal ? goal.target_node_ids.map((id) => conceptNames.get(id) ?? "Selected concept").join(" + ") : undefined}
+          action={canEditGoal ? (
+            <SaplingAction
+              ref={goalButton}
+              tone="quiet"
+              data-testid="loop-set-goal"
+              disabled={starting || probeBusy || planBusy || goalBusy || !scopeReady}
+              onClick={openGoalEditor}
+            >
+              {goal ? "Edit goal" : "Set goal"}
+            </SaplingAction>
+          ) : teaching ? (
+            <>
+              <span className={styles.goalNote}>To change your goal, start a new session.</span>
+              <SaplingAction
+                tone="quiet"
+                data-testid="loop-goal-new-session"
+                disabled={!courseId || starting}
+                onClick={() => requestNewSession()}
+              >
+                New session
+              </SaplingAction>
+            </>
+          ) : null}
+        />
+      )}
     </div>
   );
 
-  const notices = (paused || noCheckItems || topicOffer) && (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
-      {paused && (
-        <BudgetPausedBanner
-          testId="loop-budget-paused"
-          resetAt={paused.resetAt}
-          sessionCapped={paused.sessionCapped}
-          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped)}
-        >
-          {" "}
-          <Link
-            data-testid="loop-budget-study-link"
-            href="/study?mode=cards"
-            style={{ color: "var(--accent)", fontWeight: 500 }}
-          >
-            Review flashcards
-          </Link>
-        </BudgetPausedBanner>
-      )}
-      {noCheckItems && (
-        <div
-          data-testid="loop-no-check-items"
-          role="status"
-          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
-        >
-          {NO_CHECK_ITEMS_COPY}
-        </div>
-      )}
-      {topicOffer && (
-        // ?topic= while a session is open: resume won (a reload never starts a
-        // probe, §11.3); the link's concept is one click away, never automatic.
-        <div
-          data-testid="loop-topic-offer"
-          role="status"
-          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}
-        >
-          <span style={{ color: "var(--text-dim)" }}>You picked “{topicOffer}”. This session is still open.</span>
-          <button
-            data-testid="loop-topic-start"
-            className="btn btn--sm"
-            disabled={starting}
-            onClick={() => void newSession({ closeCurrent: true, topic: topicOffer, mode: deepLink.mode })}
-          >
-            Start a session on {topicOffer}
-          </button>
-        </div>
-      )}
-    </div>
+  const progressNote = goalProgress && goal && (
+    <StatusMessage
+      tone="info"
+      testid="loop-goal-progress"
+      title={goalProgress.status === "continue_available"
+        ? "A next step is ready"
+        : goalProgress.status === "needs_more_practice" ? "More practice needed" : "Planned practice finished"}
+    >
+      {goalProgress.status === "continue_available"
+        ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
+        : goalProgress.status === "needs_more_practice"
+          ? "Your goal still needs prerequisite practice. No fresh next step is available in this session; review your material or start another session."
+          : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
+      {goalProgress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {goalProgress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
+      {goalProgress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {goalProgress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
+    </StatusMessage>
   );
 
   const learnerChip = (
@@ -1301,8 +1377,8 @@ export function LoopLearn() {
       data-node-id={learner?.node_id ?? ""}
       data-p-known={learner ? String(learner.p_known) : ""}
       data-band={learner?.band ?? ""}
-      className="chip"
-      style={{ visibility: learner ? "visible" : "hidden" }}
+      className={styles.learnerChip}
+      hidden={!learner}
     >
       {learner
         ? `${conceptNames.get(learner.node_id) ?? "This concept"} · ${BAND_LABEL[learner.band] ?? learner.band}`
@@ -1310,94 +1386,131 @@ export function LoopLearn() {
     </span>
   );
 
+  const phaseRow = showLearningChrome && (
+    <div className={styles.phaseRow}>
+      <PhaseStrip phase={sessionId ? state.phase : null} testid="loop-phase-strip" />
+      <div className={styles.phaseSide}>
+        {learnerChip}
+        {compact && (
+          <button
+            type="button"
+            className={`sapling-context-trigger ${styles.routeTrigger}`}
+            aria-haspopup="dialog"
+            aria-expanded={routeOpen}
+            data-testid="loop-route-trigger"
+            onClick={() => setRouteOpen(true)}
+          >
+            <BotanicalIcon name="paper" size={18} />
+            Route &amp; sources
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const notices = (paused || noCheckItems || topicOffer || (closeNote && state.phase !== "close")) && (
+    <div className={styles.notices}>
+      {paused && (
+        <BudgetPausedBanner
+          testId="loop-budget-paused"
+          resetAt={paused.resetAt}
+          sessionCapped={paused.sessionCapped}
+          message={tutorPauseMessage(paused.resetAt, paused.sessionCapped)}
+        >
+          {" "}
+          <Link data-testid="loop-budget-study-link" href="/study?mode=cards" className={styles.textLink}>
+            Review flashcards
+          </Link>
+        </BudgetPausedBanner>
+      )}
+      {noCheckItems && (
+        <StatusMessage tone="info" testid="loop-no-check-items">{NO_CHECK_ITEMS_COPY}</StatusMessage>
+      )}
+      {topicOffer && (
+        // ?topic= while a session is open: resume won (a reload never starts a
+        // probe, §11.3); the link's concept is one confirmed click away, never automatic.
+        <div data-testid="loop-topic-offer" role="status" className={styles.topicOffer}>
+          <span>You picked “{topicOffer}”. This session is still open.</span>
+          <SaplingAction
+            tone="secondary"
+            data-testid="loop-topic-start"
+            disabled={starting}
+            onClick={() => requestNewSession({ topic: topicOffer, mode: deepLink.mode })}
+          >
+            Start a session on {topicOffer}
+          </SaplingAction>
+        </div>
+      )}
+      {closeNote && state.phase !== "close" && (
+        <StatusMessage tone="info" testid="loop-close-note">{closeNote}</StatusMessage>
+      )}
+    </div>
+  );
+
   let body: React.ReactNode;
   if (sessionsError) {
     body = (
-      <CenteredCard testId="loop-sessions-error">
-        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Couldn&apos;t load your sessions</div>
-        <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
+      <div className={styles.centerState} data-testid="loop-sessions-error">
+        <StatusMessage tone="error" title="Couldn't load your sessions">
           Nothing was started. Try again to pick up where you left off.
-        </p>
-        <button data-testid="loop-sessions-retry" className="btn btn--primary" onClick={retrySessions}>
-          Retry
-        </button>
-      </CenteredCard>
+        </StatusMessage>
+        <SaplingAction data-testid="loop-sessions-retry" onClick={retrySessions}>Retry</SaplingAction>
+      </div>
     );
   } else if (noCourses) {
     body = (
-      <CenteredCard testId="loop-no-course">
-        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Add a course to start learning</div>
-        <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
+      <div className={styles.centerState} data-testid="loop-no-course">
+        <h2 className={styles.panelTitle}>Add a course to start learning</h2>
+        <p className={styles.panelLead}>
           The tutor works course by course — add one from your{" "}
-          <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.
+          <Link data-testid="loop-no-course-link" href="/tree" className={styles.textLink}>knowledge map</Link>.
         </p>
-      </CenteredCard>
+      </div>
     );
   } else if (readOnly) {
     body = (
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px" }}>
-        <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span className="chip">Read-only</span>
-            <span style={{ fontSize: 14, color: "var(--text-dim)" }}>
-              {readOnly.topic ? `“${readOnly.topic}” — ` : ""}an earlier session. Start a new one to keep learning.
-            </span>
-            <div style={{ flex: 1 }} />
-            <button
-              data-testid="loop-readonly-new-session"
-              className="btn btn--primary btn--sm"
-              onClick={() => void newSession()}
-            >
-              Start a new session
-            </button>
-          </div>
-          <div
-            data-testid="loop-readonly-transcript"
-            className="card"
-            style={{ padding: "var(--pad-lg)", display: "flex", flexDirection: "column", gap: 12 }}
-          >
-            {readOnly.messages.length === 0 && (
-              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No messages in this session.</div>
-            )}
-            {readOnly.messages.map((m) => (
-              <div key={m.id} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-                <div className="label-micro" style={{ marginBottom: 2 }}>{m.role === "user" ? "You" : "Tutor"}</div>
-                <div
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    fontSize: 14,
-                    padding: "8px 12px",
-                    borderRadius: "var(--r-md)",
-                    background: m.role === "user" ? "var(--accent-soft)" : "var(--bg-soft)",
-                  }}
-                >
-                  {m.content}
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className={styles.panel}>
+        <div className={styles.readOnlyBar}>
+          <span className={styles.tag}>Read-only</span>
+          <span className={styles.muted}>
+            {readOnly.topic ? `“${readOnly.topic}” — ` : ""}an earlier session. Start a new one to keep learning.
+          </span>
+          <SaplingAction data-testid="loop-readonly-new-session" onClick={() => requestNewSession()}>
+            Start a new session
+          </SaplingAction>
+        </div>
+        <div data-testid="loop-readonly-transcript" className={styles.transcript}>
+          {readOnly.messages.length === 0 && <p className={styles.muted}>No messages in this session.</p>}
+          {readOnly.messages.map((m) => (
+            <div key={m.id} className={styles.transcriptRow} data-role={m.role}>
+              <p className={styles.transcriptWho}>{m.role === "user" ? "You" : "Tutor"}</p>
+              <div className={styles.transcriptText}>{m.content}</div>
+            </div>
+          ))}
         </div>
       </div>
     );
   } else if (loadError === "start" && !sessionId) {
     body = (
-      <CenteredCard testId="loop-start-error">
-        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Couldn&apos;t start a session</div>
-        <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
+      <div className={styles.centerState} data-testid="loop-start-error">
+        <StatusMessage tone="error" title="Couldn't start a session">
           Nothing was started. Try again in a moment.
-        </p>
-        <button
+        </StatusMessage>
+        <SaplingAction
           data-testid="loop-start-retry"
-          className="btn btn--primary"
           disabled={starting}
           onClick={() => void newSession({ topic: deepLink.topic, mode: deepLink.mode })}
         >
           Try again
-        </button>
-      </CenteredCard>
+        </SaplingAction>
+      </div>
     );
   } else if (loadingSessions) {
-    body = <div style={{ padding: 40, color: "var(--text-dim)" }}>{starting ? "Starting your session…" : "Loading…"}</div>;
+    body = (
+      <div className={styles.centerState}>
+        <StatusMessage tone="pending">{starting ? "Starting your session…" : "Loading your sessions…"}</StatusMessage>
+      </div>
+    );
   } else if (goalEditor) {
     body = <GoalEditor key={`${sessionId}:${courseId}`} goal={goal}
       nodes={railGraph.nodes.filter((node) => !node.is_subject_root)} busy={goalBusy} error={goalError}
@@ -1433,81 +1546,131 @@ export function LoopLearn() {
         loadFailed={loadError === "plan"}
         onApprove={() => void approvePlan()}
         onRetry={() => { if (sessionId) void loadPlan(sessionId, gen.current); }}
+        onAdjust={canEditGoal && scopeReady && !goalBusy ? openGoalEditor : undefined}
       />
     );
   } else if (state.phase === "close") {
     body = <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} />;
   } else {
     const firstConcept = plan?.[0];
-    const chatHeader = (
-      <div style={{ padding: "14px 32px 0", display: "flex", flexDirection: "column", gap: 10 }}>
-        {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
-        {item ? (
-          <CheckCard
-            item={item}
-            draft={attempt}
-            setDraft={setAttempt}
-            busy={attemptBusy || streaming}
-            hint={hint}
-            hintBusy={hintBusy}
-            hintRetry={hintRetry}
-            onSubmit={() => void submitAttempt(false)}
-            onIdk={() => void submitAttempt(true)}
-            onHint={() => void askHint()}
-          />
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {state.phase === "feedback" && (
-              <button
-                data-testid="loop-continue"
-                className="btn btn--sm btn--primary"
-                onClick={() => send(CONTINUE_MESSAGE)}
-                disabled={!!paused || streaming}
-              >
-                Continue
-              </button>
-            )}
-            <button
-              data-testid="loop-check-me"
-              className="btn btn--sm"
-              onClick={() => void checkMe()}
-              disabled={checkBusy || streaming}
-              title="Get a question on this concept"
-            >
-              Check me
-            </button>
-            {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
-              <button
-                data-testid="loop-teach-start"
-                className="btn btn--sm btn--ghost"
-                onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
-                disabled={streaming}
-              >
-                Start with {firstConcept.concept_name}
-              </button>
-            )}
-            {checkNote && <span role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{checkNote}</span>}
-          </div>
-        )}
-        {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
-      </div>
-    );
     body = (
-      <div data-testid="loop-messages" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <ChatPanel
-          messages={visibleMessages}
-          onSend={send}
-          header={chatHeader}
-          streamingText={streamingText}
-          onStop={stop}
-          disabled={!!paused}
-          placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
-        />
+      <div className={styles.teach}>
+        <div className={styles.teachTop}>
+          {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
+          {item ? (
+            <CheckCard
+              item={item}
+              draft={attempt}
+              setDraft={setAttempt}
+              busy={attemptBusy || streaming}
+              hint={hint}
+              hintBusy={hintBusy}
+              hintRetry={hintRetry}
+              onSubmit={() => void submitAttempt(false)}
+              onIdk={() => void submitAttempt(true)}
+              onHint={() => void askHint()}
+            />
+          ) : (
+            <div className={styles.teachActions}>
+              {state.phase === "feedback" && (
+                <SaplingAction
+                  data-testid="loop-continue"
+                  onClick={() => send(CONTINUE_MESSAGE)}
+                  disabled={!!paused || streaming}
+                >
+                  Continue
+                </SaplingAction>
+              )}
+              {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
+                <SaplingAction
+                  data-testid="loop-teach-start"
+                  onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
+                  disabled={streaming}
+                >
+                  Start with {firstConcept.concept_name}
+                </SaplingAction>
+              )}
+              <SaplingAction
+                tone="secondary"
+                data-testid="loop-check-me"
+                onClick={() => void checkMe()}
+                disabled={checkBusy || streaming}
+                title="Get a question on this concept"
+              >
+                {checkBusy ? "Getting a question…" : "Check me"}
+              </SaplingAction>
+              {checkNote && <span role="status" className={styles.muted}>{checkNote}</span>}
+            </div>
+          )}
+        </div>
+        <div data-testid="loop-messages" className={styles.conversation}>
+          <ChatPanel
+            messages={visibleMessages}
+            onSend={send}
+            streamingText={streamingText}
+            onStop={stop}
+            disabled={!!paused}
+            placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
+          />
+        </div>
       </div>
     );
   }
 
-  const showRail = !isMobile && !sessionsError && !noCourses;
+  const routeEmpty = teaching
+    ? "Your approved plan guides this session. Use Check me when you're ready for a question."
+    : state.phase === "close"
+      ? "This session is wrapped up."
+      : "Your route appears once the check-in builds a plan.";
+  const routeContext = (
+    <div className={styles.route}>
+      <section aria-labelledby="loop-route-heading" className={styles.routeSection}>
+        <h2 id="loop-route-heading" className={styles.railTitle}>Your learning route</h2>
+        {routeItems.length > 0 ? (
+          <ol className={styles.routeList} data-testid="loop-route">
+            {routeItems.map((entry) => (
+              <li key={entry.id} data-testid={`loop-route-${entry.id}`} data-current={entry.current || undefined}>
+                <span className={styles.routeMark} aria-hidden="true" />
+                <div>
+                  <p className={styles.routeName}>{entry.name}</p>
+                  <p className={styles.routeDetail}>
+                    {[entry.current ? "Current focus" : null, entry.why, entry.evidence].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className={styles.muted}>{routeEmpty}</p>
+        )}
+      </section>
+      <section aria-labelledby="loop-map-heading" className={styles.routeSection}>
+        <h2 id="loop-map-heading" className={styles.railTitle}>Knowledge map</h2>
+        {railGraph.nodes.length > 0 ? (
+          <RailGraph nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
+        ) : (
+          <p className={styles.muted}>Concepts appear here as you learn.</p>
+        )}
+      </section>
+      <section aria-labelledby="loop-sources-heading" className={styles.routeSection}>
+        <h2 id="loop-sources-heading" className={styles.railTitle}>Keep your sources close.</h2>
+        <ul className={styles.sourceLinks}>
+          <li>
+            <Link href="/library" className={styles.sourceLink}>
+              <BotanicalIcon name="paper" size={20} />
+              <span>Course materials in Library</span>
+            </Link>
+          </li>
+          <li>
+            <Link href="/study?mode=cards" className={styles.sourceLink}>
+              <BotanicalIcon name="library" size={20} />
+              <span>Review flashcards</span>
+            </Link>
+          </li>
+        </ul>
+      </section>
+    </div>
+  );
 
   return (
     <FullHeightScreen className={styles.screen}>
@@ -1516,62 +1679,41 @@ export function LoopLearn() {
         data-testid="loop-phase"
         data-phase={state.phase}
         data-session-id={sessionId ?? ""}
-        style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+        className={styles.studio}
       >
-        {header}
-        {sessionStrip}
-        {sessionId && !readOnly && (
-          <div className={styles.scopeSummary} data-testid="loop-goal-summary">
-            {scopeError ? <><span>Couldn&apos;t load this session&apos;s learning scope. </span>
-              <button type="button" data-testid="loop-goal-retry" className="btn btn--sm" onClick={() => void retryLearningScope()}>Retry learning scope</button></>
-              : !scopeReady ? "Loading learning scope…"
-                : goal ? <><strong>Goal: </strong>{goal.text || "Selected concepts"}<span> · {goal.target_node_ids.map((id) => conceptNames.get(id) ?? "Selected concept").join(", ")}</span></>
-                  : "Scope: Explore the whole course"}
-          </div>
-        )}
-        {goalProgress && goal && <div data-testid="loop-goal-progress" role="status" className={styles.scopeSummary}>
-          {goalProgress.status === "continue_available"
-            ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
-            : goalProgress.status === "needs_more_practice"
-              ? "Your goal still needs prerequisite practice. No fresh next step is available in this session; review your material or start another session."
-              : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
-          {goalProgress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {goalProgress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
-          {goalProgress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {goalProgress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
-        </div>}
-        {notices}
-        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 32px 0" }}>
-              {learnerChip}
-            </div>
-            {body}
-          </div>
-          {showRail && (
-            <aside
-              data-testid="loop-rail"
-              aria-label="Knowledge map"
-              style={{
-                width: RAIL_WIDTH,
-                flexShrink: 0,
-                borderLeft: "1px solid var(--border)",
-                background: "var(--bg-subtle)",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-                padding: 14,
-                overflowY: "auto",
-              }}
+        <div className={styles.top}>
+          {heading}
+          {!phone && showSessions && sessionStrip}
+          {goalStrip}
+          {progressNote}
+          {phaseRow}
+          {notices}
+        </div>
+        <div className={styles.workspace}>
+          <div className={styles.main}>{body}</div>
+          {showLearningChrome && (
+            <ContextPanel
+              label="Learning route and sources"
+              breakpoint={RAIL_BREAKPOINT}
+              open={routeOpen}
+              onOpenChange={setRouteOpen}
+              hideTrigger
+              testid="loop-rail"
             >
-              <div className="label-micro">Knowledge map</div>
-              {railGraph.nodes.length > 0 ? (
-                <RailGraph nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} />
-              ) : (
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Concepts appear here as you learn.</div>
-              )}
-            </aside>
+              {routeContext}
+            </ContextPanel>
           )}
         </div>
+        {phone && showSessions && <div className={styles.sessionsBottom}>{sessionStrip}</div>}
       </div>
+      <NewSessionConfirm
+        open={confirmNew !== null}
+        topic={confirmNew?.topic ?? null}
+        busy={confirmBusy}
+        error={confirmError}
+        onCancel={cancelNewSession}
+        onConfirm={() => void confirmNewSession()}
+      />
     </FullHeightScreen>
   );
 }
@@ -1581,20 +1723,35 @@ function isOpenPhase(phase: LoopPhase): boolean {
   return phase !== "close";
 }
 
-// ── Pieces ─────────────────────────────────────────────────────────────────
-
-function CenteredCard({ testId, children }: { testId: string; children: React.ReactNode }) {
-  return (
-    <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
-      <div data-testid={testId} className="card" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
-        {children}
-      </div>
-    </div>
-  );
+/** The studio's page title and lead for where the learner is. The phase is the
+ *  server's; this only names it. "Wrap up", never "Review": closing a session
+ *  is not a delayed retention check. */
+function studioCopy({ blocked, readOnly, editingGoal, phase, courseName, noCourses }: {
+  blocked: boolean; readOnly: boolean; editingGoal: boolean; phase: LoopPhase; courseName: string | null; noCourses: boolean;
+}): { title: string; description?: string } {
+  if (noCourses) return { title: "Start with a course." };
+  if (blocked) return { title: courseName ?? "Pick up where you left off." };
+  if (readOnly) return { title: "An earlier session.", description: "Read-only. Nothing here changes your progress." };
+  if (editingGoal) return { title: "Choose what to work on." };
+  switch (phase) {
+    case "probe":
+      return {
+        title: "Find your starting point.",
+        description: "A few questions so the tutor knows where to start. Answer what you can — “I don't know yet” is a fine answer.",
+      };
+    case "plan":
+      return { title: "Review your plan.", description: "Built from your check-in. Nothing starts until you approve it." };
+    case "close":
+      return { title: "Wrap up and reflect." };
+    default:
+      return { title: "Work through your plan." };
+  }
 }
 
+// ── Pieces ─────────────────────────────────────────────────────────────────
+
 /** The knowledge-map rail: `KnowledgeGraph` fed as Learn.tsx's
- *  SidebarKnowledgeGraph feeds it (measured width, fixed height). */
+ *  SidebarKnowledgeGraph feeds it (measured width, fixed height, original colours). */
 function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string }) {
   const [width, setWidth] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
@@ -1606,7 +1763,7 @@ function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: G
     return () => ro.disconnect();
   }, []);
   return (
-    <div ref={ref} style={{ width: "100%" }}>
+    <div ref={ref} className={styles.railGraph}>
       {width > 0 && (
         <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={RAIL_GRAPH_HEIGHT} highlightId={highlightId} />
       )}
@@ -1614,53 +1771,127 @@ function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: G
   );
 }
 
-function OptionList({
-  options,
-  selected,
-  onSelect,
-  testIdPrefix,
-  disabled,
-}: {
-  options: { letter: string; text: string }[];
-  selected: string;
-  onSelect: (letter: string) => void;
-  testIdPrefix: string;
-  disabled?: boolean;
-}) {
-  // Served options in stored order; the UI never marks one correct (A22).
+/** Clov's line: the approved flower mark beside a sentence from the tutor. */
+function ClovNote({ children }: { children: React.ReactNode }) {
   return (
-    <div role="radiogroup" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {options.map((o) => {
-        const on = selected === o.letter;
-        return (
-          <button
-            key={o.letter}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            data-testid={`${testIdPrefix}-${o.letter}`}
-            disabled={disabled}
-            onClick={() => onSelect(o.letter)}
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "flex-start",
-              textAlign: "left",
-              padding: "9px 12px",
-              borderRadius: "var(--r-md)",
-              border: `1px solid ${on ? "var(--accent-border)" : "var(--border)"}`,
-              background: on ? "var(--accent-soft)" : "var(--bg-panel)",
-              fontSize: 14,
-              cursor: disabled ? "default" : "pointer",
-              color: "var(--text)",
-            }}
-          >
-            <strong style={{ minWidth: 16 }}>{o.letter}</strong>
-            <span>{o.text}</span>
-          </button>
-        );
-      })}
+    <div className={styles.clovNote}>
+      <BotanicalIcon name="clov" size={28} label="Clov" />
+      <p className={styles.clovText}>{children}</p>
     </div>
+  );
+}
+
+/** A served prompt. Fenced code (```…```) renders as a code block; everything
+ *  else stays the server's text, line breaks kept. Nothing is rewritten. */
+function PromptText({ text, id }: { text: string; id?: string }) {
+  const parts: { code?: string; text?: string }[] = [];
+  const fence = /```[^\n`]*\n?([\s\S]*?)```/g;
+  let last = 0;
+  for (let m = fence.exec(text); m; m = fence.exec(text)) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) });
+    parts.push({ code: m[1].replace(/\n$/, "") });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return (
+    <div id={id} className={styles.prompt}>
+      {parts.map((part, i) => part.code !== undefined
+        ? <pre key={i} className={styles.code}><code>{part.code}</code></pre>
+        : part.text!.trim() && <p key={i} className={styles.promptText}>{part.text!.replace(/^\n+|\n+$/g, "")}</p>)}
+    </div>
+  );
+}
+
+/** The explicit answer form shared by the check-in and knowledge checks:
+ *  mc_reason = the served options in served order (a native radio group; sage
+ *  means SELECTED only) plus an optional reason; free/teachback = answer text;
+ *  "I don't know yet" submits idk. Only `onSubmit`/`onIdk` ever grade. */
+function AnswerForm({
+  kind, item, draft, setDraft, busy, promptId, onSubmit, onIdk, aside,
+}: {
+  kind: "probe" | "attempt";
+  item: LoopCheckItem;
+  draft: Draft;
+  setDraft: React.Dispatch<React.SetStateAction<Draft>>;
+  busy: boolean;
+  promptId: string;
+  onSubmit: () => void;
+  onIdk: () => void;
+  /** Extra controls in the action row (the check's Hint). */
+  aside?: React.ReactNode;
+}) {
+  const mc = item.format === "mc_reason";
+  const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const answerId = React.useId();
+  const reasonId = React.useId();
+  const probe = kind === "probe";
+  return (
+    <form
+      className={styles.answerForm}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (canSubmit) onSubmit();
+      }}
+    >
+      {mc ? (
+        <>
+          <ChoiceGroup
+            legend={<span className="sapling-visually-hidden">Choose an answer</span>}
+            describedBy={promptId}
+            options={(item.options ?? []).map((o) => ({
+              value: o.letter, letter: o.letter, label: o.text, testid: `loop-${kind}-option-${o.letter}`,
+            }))}
+            value={draft.option || null}
+            onChange={(letter) => setDraft((d) => ({ ...d, option: letter }))}
+            disabled={busy}
+          />
+          <div className={styles.field}>
+            <label htmlFor={reasonId} className={styles.fieldLabel}>
+              {probe ? "Check-in reasoning" : "Your reasoning"} <span className={styles.fieldHint}>(optional)</span>
+            </label>
+            <input
+              id={reasonId}
+              data-testid={`loop-${kind}-reason`}
+              className={styles.input}
+              placeholder="In one sentence, what helped you choose?"
+              value={draft.reason}
+              disabled={busy}
+              onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
+            />
+          </div>
+        </>
+      ) : (
+        <div className={styles.field}>
+          <label htmlFor={answerId} className={styles.fieldLabel}>{probe ? "Check-in answer" : "Your answer"}</label>
+          <textarea
+            id={answerId}
+            data-testid={`loop-${kind}-input`}
+            aria-describedby={promptId}
+            className={styles.input}
+            rows={3}
+            placeholder={item.format === "teachback" ? "Explain it in your own words" : probe ? "Your answer" : "Your answer — this is what gets checked"}
+            value={draft.answer}
+            disabled={busy}
+            onChange={(e) => setDraft((d) => ({ ...d, answer: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) {
+                e.preventDefault();
+                onSubmit();
+              }
+            }}
+          />
+        </div>
+      )}
+      <div className={styles.answerActions}>
+        <SaplingAction type="submit" data-testid={`loop-${kind}-submit`} disabled={!canSubmit}>
+          {busy ? "Checking…" : "Submit answer"}
+        </SaplingAction>
+        <SaplingAction tone="secondary" data-testid={`loop-${kind}-idk`} disabled={busy} onClick={onIdk}>
+          I don&apos;t know yet
+        </SaplingAction>
+        {aside}
+      </div>
+    </form>
   );
 }
 
@@ -1685,134 +1916,64 @@ function ProbePanel({
   onNext: () => void;
   onRetry: () => void;
 }) {
-  const mc = item?.format === "mc_reason";
-  const canSubmit = !!item && !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const headingId = React.useId();
+  const promptId = React.useId();
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          <div className="h-serif" style={{ fontSize: 22 }}>Quick check-in</div>
-          <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
-            A few questions so the tutor knows where to start. Answer what you can — &ldquo;I don&apos;t know&rdquo; is a
-            fine answer.
-          </p>
+    <div className={styles.panel}>
+      {greeting && <ClovNote>{greeting}</ClovNote>}
+      {!item && busy && <StatusMessage tone="pending">Loading the next question…</StatusMessage>}
+      {!item && !busy && loadFailed && (
+        <div className={styles.retryRow}>
+          <StatusMessage tone="error">The next question didn&apos;t load. Your earlier answers are saved.</StatusMessage>
+          <SaplingAction tone="secondary" data-testid="loop-probe-retry" onClick={onRetry}>Try again</SaplingAction>
         </div>
-        <DiagnosisSummary diagnosis={diagnosis} names={names} />
-        {greeting && (
-          <div
-            style={{
-              fontSize: 14,
-              lineHeight: 1.5,
-              padding: "10px 14px",
-              borderRadius: "var(--r-md)",
-              background: "var(--bg-soft)",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <div className="label-micro" style={{ marginBottom: 2 }}>Tutor</div>
-            {greeting}
-          </div>
-        )}
-        {!item && busy && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Loading the next question…</div>}
-        {!item && !busy && loadFailed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
-            <span>The next question didn&apos;t load.</span>
-            <button data-testid="loop-probe-retry" className="btn btn--sm" onClick={onRetry}>
-              Try again
-            </button>
-          </div>
-        )}
-        {item && (
-          <div
-            data-testid="loop-probe-item"
-            data-question-hash={item.question_hash}
-            data-difficulty={item.difficulty}
-            className="card"
-            style={{ padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 12 }}
-          >
-            <div className="label-micro">Question {count + (reference === null ? 1 : 0)}</div>
-            <div style={{ fontSize: 16, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
-            {reference === null ? (
-              <>
-                {mc ? (
-                  <>
-                    <OptionList
-                      options={item.options ?? []}
-                      selected={draft.option}
-                      onSelect={(letter) => setDraft((d) => ({ ...d, option: letter }))}
-                      testIdPrefix="loop-probe-option"
-                      disabled={busy}
-                    />
-                    <input
-                      data-testid="loop-probe-reason"
-                      aria-label="Check-in reasoning"
-                      style={FIELD_STYLE}
-                      placeholder="In one sentence: why?"
-                      value={draft.reason}
-                      disabled={busy}
-                      onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
-                    />
-                  </>
-                ) : (
-                  <textarea
-                    data-testid="loop-probe-input"
-                    aria-label="Check-in answer"
-                    style={FIELD_STYLE}
-                    rows={3}
-                    placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
-                    value={draft.answer}
-                    disabled={busy}
-                    onChange={(e) => setDraft((d) => ({ ...d, answer: e.target.value }))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
-                    }}
-                  />
-                )}
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
-                    {busy ? "Checking…" : "Submit"}
-                  </button>
-                  <button data-testid="loop-probe-idk" className="btn btn--ghost" disabled={busy} onClick={onIdk}>
-                    I don&apos;t know
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div
-                  data-testid="loop-probe-reference"
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: "var(--r-md)",
-                    background: "var(--bg-soft)",
-                    fontSize: 14,
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  <div className="label-micro" style={{ marginBottom: 4 }}>Here&apos;s the answer</div>
-                  {reference}
-                </div>
-                <button
-                  data-testid="loop-probe-next"
-                  className="btn btn--primary"
-                  style={{ alignSelf: "flex-start" }}
-                  disabled={busy}
-                  onClick={onNext}
-                >
+      )}
+      {item && (
+        <section
+          data-testid="loop-probe-item"
+          data-question-hash={item.question_hash}
+          data-difficulty={item.difficulty}
+          aria-labelledby={headingId}
+          className={styles.question}
+        >
+          <h2 id={headingId} className="sapling-eyebrow">
+            Check-in <span aria-hidden="true">·</span> Question {count + (reference === null ? 1 : 0)}
+          </h2>
+          <PromptText text={item.prompt} id={promptId} />
+          {reference === null ? (
+            <AnswerForm
+              kind="probe"
+              item={item}
+              draft={draft}
+              setDraft={setDraft}
+              busy={busy}
+              promptId={promptId}
+              onSubmit={onSubmit}
+              onIdk={onIdk}
+            />
+          ) : (
+            <>
+              <div data-testid="loop-probe-reference" className={styles.reference}>
+                <p className="sapling-eyebrow">Here&apos;s the answer</p>
+                <div className={styles.referenceText}>{reference}</div>
+              </div>
+              <div className={styles.answerActions}>
+                <SaplingAction data-testid="loop-probe-next" disabled={busy} onClick={onNext}>
                   Next
-                </button>
-              </>
-            )}
-          </div>
-        )}
-        {note && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{note}</div>}
-      </div>
+                </SaplingAction>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+      {note && <StatusMessage tone="info">{note}</StatusMessage>}
+      <DiagnosisSummary diagnosis={diagnosis} names={names} />
     </div>
   );
 }
 
 function PlanPanel({
-  plan, busy, loadFailed, onApprove, onRetry, diagnosis, names,
+  plan, busy, loadFailed, onApprove, onRetry, onAdjust, diagnosis, names,
 }: {
   diagnosis: LoopDiagnosis | null;
   names: Map<string, string>;
@@ -1821,75 +1982,74 @@ function PlanPanel({
   loadFailed: boolean;
   onApprove: () => void;
   onRetry: () => void;
+  /** Open the goal editor (plan phase only). */
+  onAdjust?: () => void;
 }) {
+  const listHeading = React.useId();
+  const approveHeading = React.useId();
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div
-        className="card"
-        style={{ maxWidth: 640, margin: "0 auto", padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 14 }}
-      >
-        <div>
-          <div className="h-serif" style={{ fontSize: 22 }}>Today&apos;s plan</div>
-          <p style={{ margin: "4px 0 0", fontSize: 14, color: "var(--text-dim)" }}>
-            Built from your check-in: anything due for review first, then what&apos;s next to learn.
-          </p>
+    <div className={styles.panel}>
+      {plan === null && !loadFailed && <StatusMessage tone="pending">Building your plan…</StatusMessage>}
+      {plan === null && loadFailed && (
+        <div className={styles.retryRow}>
+          <StatusMessage tone="error">Today&apos;s plan didn&apos;t load. Nothing was approved.</StatusMessage>
+          <SaplingAction tone="secondary" data-testid="loop-plan-retry" onClick={onRetry}>Try again</SaplingAction>
         </div>
-        <DiagnosisSummary diagnosis={diagnosis} names={names} />
-        {plan === null && !loadFailed && <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Building your plan…</div>}
-        {plan === null && loadFailed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "var(--text-muted)" }}>
-            <span>Today&apos;s plan didn&apos;t load.</span>
-            <button data-testid="loop-plan-retry" className="btn btn--sm" onClick={onRetry}>
-              Try again
-            </button>
+      )}
+      {plan !== null && plan.length === 0 && (
+        <StatusMessage tone="info">Nothing to plan right now — ask the tutor anything.</StatusMessage>
+      )}
+      {plan && plan.length > 0 && (
+        <>
+          <ClovNote>Based on your check-in, here&apos;s a path we can work through together.</ClovNote>
+          <section aria-labelledby={listHeading} className={styles.planSection}>
+            <h2 id={listHeading} className="sapling-eyebrow">Proposed plan, in order</h2>
+            <ol className={styles.planList}>
+              {plan.map((c, i) => {
+                const kind = KIND_LABEL[c.kind];
+                return (
+                  <li key={c.node_id} data-testid={`loop-plan-concept-${c.node_id}`} className={styles.planItem}>
+                    <span className={styles.planIndex} aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+                    <div className={styles.planBody}>
+                      <h3 className={styles.planName}>{c.concept_name || "Concept"}</h3>
+                      {c.reason && (
+                        <p data-testid={`loop-plan-reason-${c.node_id}`} className={styles.planReason}>
+                          {REASON_LABEL[c.reason] ?? "Related practice"}
+                        </p>
+                      )}
+                      {(c.band || kind) && (
+                        <p className={styles.planTags}>
+                          {kind && <span className={styles.tag} data-kind={c.kind}>{kind.label}</span>}
+                          {c.band && <span className={styles.tag}>{BAND_LABEL[c.band] ?? c.band}</span>}
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        </>
+      )}
+      <DiagnosisSummary diagnosis={diagnosis} names={names} />
+      {plan && plan.length > 0 && (
+        <section aria-labelledby={approveHeading} className={styles.approve}>
+          <h2 id={approveHeading} className={styles.panelTitle}>Does this plan work for you?</h2>
+          <p className={styles.panelLead}>
+            Review the goal and scope before you begin. A prerequisite comes before the goal it supports.
+          </p>
+          <div className={styles.answerActions}>
+            <SaplingAction data-testid="loop-plan-approve" disabled={busy} onClick={onApprove}>
+              {busy ? "Saving…" : "Approve and start learning"}
+            </SaplingAction>
+            {onAdjust && (
+              <SaplingAction tone="quiet" data-testid="loop-plan-adjust" disabled={busy} onClick={onAdjust}>
+                Adjust goal or scope
+              </SaplingAction>
+            )}
           </div>
-        )}
-        {plan !== null && plan.length === 0 && (
-          <div style={{ fontSize: 14, color: "var(--text-muted)" }}>Nothing to plan right now — ask the tutor anything.</div>
-        )}
-        {plan && plan.length > 0 && (
-          <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-            {plan.map((c, i) => {
-              const kind = KIND_LABEL[c.kind];
-              return (
-                <li
-                  key={c.node_id}
-                  data-testid={`loop-plan-concept-${c.node_id}`}
-                  className={styles.planItem}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 12px",
-                    borderRadius: "var(--r-md)",
-                    background: "var(--bg-soft)",
-                  }}
-                >
-                  <span style={{ width: 22, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{i + 1}</span>
-                  <span style={{ flex: "1 1 100px", minWidth: 0, overflowWrap: "anywhere", fontSize: 14, fontWeight: 500 }}>{c.concept_name || "Concept"}
-                    {c.reason && <span data-testid={`loop-plan-reason-${c.node_id}`} style={{ display: "block", marginTop: 4, fontWeight: 400, fontSize: 12, color: "var(--text-dim)" }}>
-                      {c.reason === "prerequisite" ? "Prerequisite for your goal" : c.reason === "goal" ? "Your selected goal" : c.reason === "review" ? "Due for review" : "Related practice"}
-                    </span>}
-                  </span>
-                  {c.band && <span className="chip">{BAND_LABEL[c.band] ?? c.band}</span>}
-                  {kind && <span className={kind.chip}>{kind.label}</span>}
-                </li>
-              );
-            })}
-          </ol>
-        )}
-        {plan && plan.length > 0 && (
-          <button
-            data-testid="loop-plan-approve"
-            className="btn btn--primary"
-            style={{ alignSelf: "flex-start" }}
-            disabled={busy}
-            onClick={onApprove}
-          >
-            {busy ? "Saving…" : "Start learning"}
-          </button>
-        )}
-      </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1908,93 +2068,54 @@ function CheckCard({
   onIdk: () => void;
   onHint: () => void;
 }) {
-  const mc = item.format === "mc_reason";
-  const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
+  const headingId = React.useId();
+  const promptId = React.useId();
   return (
-    <div
-      className="card"
-      style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, borderColor: "var(--accent-border)" }}
+    <section
+      data-testid="loop-check-prompt"
+      data-question-hash={item.question_hash}
+      data-format={item.format}
+      aria-labelledby={headingId}
+      className={styles.question}
     >
-      <div
-        data-testid="loop-check-prompt"
-        data-question-hash={item.question_hash}
-        data-format={item.format}
-        style={{ display: "flex", flexDirection: "column", gap: 4 }}
-      >
-        <div className="label-micro">Check your understanding</div>
-        <div style={{ fontSize: 15, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{item.prompt}</div>
-      </div>
-      {mc ? (
-        <>
-          <OptionList
-            options={item.options ?? []}
-            selected={draft.option}
-            onSelect={(letter) => setDraft((d) => ({ ...d, option: letter }))}
-            testIdPrefix="loop-attempt-option"
-            disabled={busy}
-          />
-          <input
-            data-testid="loop-attempt-reason"
-            aria-label="Your reasoning"
-            style={FIELD_STYLE}
-            placeholder="In one sentence: why?"
-            value={draft.reason}
-            disabled={busy}
-            onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
-          />
-        </>
-      ) : (
-        <textarea
-          data-testid="loop-attempt-input"
-          aria-label="Your answer"
-          style={FIELD_STYLE}
-          rows={2}
-          placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer — this is what gets checked"}
-          value={draft.answer}
-          disabled={busy}
-          onChange={(e) => setDraft((d) => ({ ...d, answer: e.target.value }))}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
-          }}
-        />
-      )}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button data-testid="loop-attempt-submit" className="btn btn--sm btn--primary" disabled={!canSubmit} onClick={onSubmit}>
-          Submit answer
-        </button>
-        <button data-testid="loop-attempt-idk" className="btn btn--sm btn--ghost" disabled={busy} onClick={onIdk}>
-          I don&apos;t know
-        </button>
-        <div style={{ flex: 1 }} />
-        <button data-testid="loop-hint-button" className="btn btn--sm" disabled={hintBusy || busy} onClick={onHint}>
-          {hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
-        </button>
-      </div>
+      <h2 id={headingId} className="sapling-eyebrow">Knowledge check</h2>
+      <PromptText text={item.prompt ?? ""} id={promptId} />
+      <AnswerForm
+        kind="attempt"
+        item={item}
+        draft={draft}
+        setDraft={setDraft}
+        busy={busy}
+        promptId={promptId}
+        onSubmit={onSubmit}
+        onIdk={onIdk}
+        aside={
+          <SaplingAction
+            tone="quiet"
+            data-testid="loop-hint-button"
+            className={styles.hintButton}
+            disabled={hintBusy || busy}
+            onClick={onHint}
+          >
+            {hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
+          </SaplingAction>
+        }
+      />
       {hint && "denied" in hint && (
-        <div
-          data-testid="loop-hint-denied"
-          data-reason={hint.denied}
-          role="status"
-          style={{ fontSize: 13, color: "var(--text-muted)" }}
-        >
-          {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
+        <div data-testid="loop-hint-denied" data-reason={hint.denied}>
+          <StatusMessage tone="info" title="No hint yet">
+            {HINT_DENIED_COPY[hint.denied] ?? HINT_DENIED_FALLBACK}
+          </StatusMessage>
         </div>
       )}
       {hint && "reply" in hint && (
-        <div
-          data-testid="loop-hint-reply"
-          style={{
-            fontSize: 14,
-            padding: "8px 12px",
-            borderRadius: "var(--r-md)",
-            background: "var(--info-soft)",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {hint.reply}
+        <div className={styles.hintBox}>
+          <p className="sapling-eyebrow">Hint</p>
+          <div data-testid="loop-hint-reply" className={styles.hintText}>{hint.reply}</div>
         </div>
       )}
-    </div>
+      <p className={styles.checkNote}>Submit your answer to continue. Chat messages don&apos;t submit a check.</p>
+    </section>
   );
 }
 
@@ -2008,38 +2129,35 @@ function ClosePanel({
   courseId: string | null;
 }) {
   if (!close) {
-    if (!note) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Wrapping up…</div>;
+    if (!note) return <div className={styles.panel}><StatusMessage tone="pending">Wrapping up…</StatusMessage></div>;
     return (
-      <CenteredCard testId="loop-close-done">
-        <p style={{ margin: "0 0 12px", fontSize: 14, color: "var(--text-dim)" }}>{note}</p>
-        <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
-          Review what&apos;s due
-        </Link>
-      </CenteredCard>
+      <div className={styles.panel}>
+        <div data-testid="loop-close-done" className={styles.closeDone}>
+          <p className={styles.panelLead}>{note}</p>
+          <Link data-testid="loop-close-study-link" href="/study?mode=cards" className={styles.textLink}>
+            Review what&apos;s due
+          </Link>
+        </div>
+      </div>
     );
   }
   const rec = close.close;
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "20px 32px 32px" }}>
-      <div
-        className="card"
-        style={{ maxWidth: 640, margin: "0 auto", padding: "var(--pad-xl)", display: "flex", flexDirection: "column", gap: 16 }}
-      >
-        <div className="h-serif" style={{ fontSize: 22 }}>Session wrap-up</div>
-        <p data-testid="loop-close-summary" style={{ margin: 0, fontSize: 15, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>
-          {rec.summary}
-        </p>
+    <div className={styles.panel}>
+      <section aria-labelledby="loop-close-heading" className={styles.closeSection}>
+        <h2 id="loop-close-heading" className={styles.panelTitle}>Session wrap-up</h2>
+        <p data-testid="loop-close-summary" className={styles.closeSummary}>{rec.summary}</p>
         {rec.concepts.length > 0 && (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+          <ul className={styles.closeConcepts}>
             {rec.concepts.map((c) => {
               const dir = c.p_after > c.p_before ? "up" : c.p_after < c.p_before ? "down" : "same";
               return (
-                <li key={c.node_id} style={{ display: "flex", gap: 8, fontSize: 14 }}>
-                  <span aria-hidden style={{ color: dir === "up" ? "var(--accent)" : "var(--text-muted)" }}>
+                <li key={c.node_id} data-direction={dir}>
+                  <span aria-hidden="true" className={styles.closeArrow}>
                     {dir === "up" ? "↑" : dir === "down" ? "↓" : "→"}
                   </span>
-                  <span>{names.get(c.node_id) ?? "A concept"}</span>
-                  <span style={{ color: "var(--text-muted)" }}>
+                  <span className={styles.closeConceptName}>{names.get(c.node_id) ?? "A concept"}</span>
+                  <span className={styles.muted}>
                     {dir === "up" ? "stronger" : dir === "down" ? "worth another look" : "about the same"}
                   </span>
                 </li>
@@ -2047,38 +2165,33 @@ function ClosePanel({
             })}
           </ul>
         )}
-        {/* A60: the self-evaluation is a reflection prompt only — nothing is saved. */}
-        <div
-          data-testid="loop-close-self-eval"
-          style={{ padding: "12px 14px", borderRadius: "var(--r-md)", background: "var(--bg-soft)" }}
-        >
-          <div className="label-micro" style={{ marginBottom: 4 }}>Reflect</div>
-          <div style={{ fontSize: 15, fontStyle: "italic" }}>{rec.self_eval}</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
-            Take a moment with it — it&apos;s just for you, nothing is saved.
-          </div>
+      </section>
+      {/* A60: the self-evaluation is a reflection prompt only — nothing is saved. */}
+      <div data-testid="loop-close-self-eval" className={styles.reflect}>
+        <p className="sapling-eyebrow">Reflect</p>
+        <p className={styles.reflectText}>{rec.self_eval}</p>
+        <p className={styles.fieldHint}>Take a moment with it — it&apos;s just for you, nothing is saved.</p>
+      </div>
+      {rec.if_then && (
+        <div data-testid="loop-close-if-then" className={styles.ifThen}>
+          <p className="sapling-eyebrow">Your plan for next time</p>
+          <p className={styles.reflectText}>{rec.if_then}</p>
         </div>
-        {rec.if_then && (
-          <div
-            data-testid="loop-close-if-then"
-            style={{ padding: "12px 14px", borderRadius: "var(--r-md)", background: "var(--accent-soft)" }}
+      )}
+      <div data-testid="loop-close-done" className={styles.closeDone}>
+        <span>Session closed.</span>
+        <Link data-testid="loop-close-study-link" href="/study?mode=cards" className={styles.textLink}>
+          Review what&apos;s due
+        </Link>
+        {courseId && (
+          <Link
+            data-testid="loop-close-retention-link"
+            href={`/study?mode=cards&retention-course=${encodeURIComponent(courseId)}`}
+            className={styles.textLink}
           >
-            <div className="label-micro" style={{ marginBottom: 4 }}>Your plan for next time</div>
-            <div style={{ fontSize: 15 }}>{rec.if_then}</div>
-          </div>
-        )}
-        <div
-          data-testid="loop-close-done"
-          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 14, color: "var(--text-dim)" }}
-        >
-          <span>Session closed.</span>
-          <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
-            Review what&apos;s due
-          </Link>
-          {courseId && <Link data-testid="loop-close-retention-link" href={`/study?mode=cards&retention-course=${encodeURIComponent(courseId)}`} style={{ color: "var(--accent)" }}>
             Check retention after time away
-          </Link>}
-        </div>
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -2091,25 +2204,26 @@ const RATING_CHOICES: { value: LoopRating; label: string }[] = [
 ];
 
 /** PKG-14 (spec §3.4): "How hard did these feel?" after every
- *  ZPD_RATING_EVERY_N_CHECKS graded checks; the server says when (done.ask_rating). */
+ *  ZPD_RATING_EVERY_N_CHECKS graded checks; the server says when (done.ask_rating).
+ *  A perceived-difficulty answer only — never mastery evidence. */
 function RatingPrompt({ onRate }: { onRate: (rating: LoopRating) => void }) {
   return (
     <div
       data-testid="loop-rating"
       role="group"
       aria-label="How hard did these questions feel?"
-      style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13 }}
+      className={styles.rating}
     >
-      <span style={{ color: "var(--text-muted)" }}>How hard did these questions feel?</span>
+      <span className={styles.muted}>How hard did these questions feel?</span>
       {RATING_CHOICES.map((c) => (
-        <button
+        <SaplingAction
           key={c.value}
+          tone="secondary"
           data-testid={`loop-rating-${c.value}`}
-          className="btn btn--sm btn--ghost"
           onClick={() => onRate(c.value)}
         >
           {c.label}
-        </button>
+        </SaplingAction>
       ))}
     </div>
   );

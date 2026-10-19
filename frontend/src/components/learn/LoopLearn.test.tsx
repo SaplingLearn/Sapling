@@ -30,6 +30,9 @@ vi.mock("next/dynamic", () => ({
 }));
 vi.mock("../graph/KnowledgeGraph", () => ({ KnowledgeGraph: () => <div data-testid="kg-stub" /> }));
 vi.mock("../DisclaimerModal", () => ({ DisclaimerModal: () => null }));
+// Desktop by default (the rail); a test flips it to exercise the phone sheet.
+const viewport = vi.hoisted(() => ({ compact: false }));
+vi.mock("@/lib/useIsMobile", () => ({ useIsMobile: () => viewport.compact, MOBILE_BREAKPOINT: 768 }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));
@@ -60,6 +63,7 @@ const turn = (over: object = {}) => ({ reply: "ok", graph_update: {}, mastery_ch
 const listed = (sessions: object[], resume: object | null = null) => ({ sessions, resume });
 
 beforeEach(() => {
+  viewport.compact = false;
   search.params = new URLSearchParams();
   Object.values(api).forEach((f) => f.mockReset());
   router.replace.mockReset();
@@ -179,6 +183,10 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     render(<LoopLearn />);
     await screen.findByText("welcome back");
     fireEvent.click(screen.getByTestId("loop-new-session"));
+    // leaving an open session is confirmed first; nothing is closed yet
+    expect(await screen.findByRole("dialog", { name: "Start a new session?" })).toBeTruthy();
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-new-session-confirm-start"));
     await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
     expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
     expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
@@ -192,9 +200,11 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     render(<LoopLearn />);
     await screen.findByText("welcome back");
     fireEvent.click(screen.getByTestId("loop-new-session"));
+    fireEvent.click(await screen.findByTestId("loop-new-session-confirm-start"));
     expect(await screen.findByText(/close again in a moment/i)).toBeTruthy();
     expect(api.startLoopSession).not.toHaveBeenCalled();
     expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
+    expect(screen.getByTestId("loop-new-session-confirm")).toBeTruthy(); // the reason stays in the dialog
   });
 
   it("a ?resume= id that is not an open loop session opens read-only and never starts a probe", async () => {
@@ -860,6 +870,9 @@ describe("LoopLearn — PKG-13 fix round", () => {
     api.nextLoopProbe.mockResolvedValue(probeItem);
     render(<LoopLearn />);
     fireEvent.click(await screen.findByTestId("loop-topic-start"));
+    expect(await screen.findByRole("dialog", { name: "Start a session on Recursion?" })).toBeTruthy();
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-new-session-confirm-start"));
     await waitFor(() => expect(api.startLoopSession.mock.calls[0].slice(0, 3)).toEqual(["u1", "c1", "Recursion"]));
     expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1");
   });
@@ -989,6 +1002,8 @@ describe("LoopLearn — session isolation and learning evidence", () => {
     render(<LoopLearn />);
     await screen.findByText("welcome back");
     fireEvent.click(screen.getByTestId("loop-new-session"));
+    fireEvent.click(await screen.findByTestId("loop-new-session-confirm-start"));
+    await waitFor(() => expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1"));
     fireEvent.click(screen.getByTestId("loop-session-s1"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
     await act(async () => { finish({ close: closeRecord, model_written: false, close_phase: "teach" }); });
@@ -1175,7 +1190,8 @@ describe("explicit goals and honest diagnostic coverage", () => {
     fireEvent.click(screen.getByTestId("loop-goal-save"));
     await waitFor(() => expect(api.setLoopGoal).toHaveBeenCalledWith("s2", "u1", null));
     await screen.findByTestId("loop-probe-item");
-    expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
+    expect(screen.getByTestId("loop-goal-summary").textContent).not.toContain(objective.text);
   });
 
   it("ignores a saved goal response after the learner switches sessions", async () => {
@@ -1195,7 +1211,8 @@ describe("explicit goals and honest diagnostic coverage", () => {
     await screen.findByTestId("loop-probe-item");
     const count = api.nextLoopProbe.mock.calls.length;
     await act(async () => { finish({ phase: "probe", goal: objective, diagnosis, goal_version: 1 }); });
-    expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
+    expect(screen.getByTestId("loop-goal-summary").textContent).not.toContain(objective.text);
     expect(api.nextLoopProbe).toHaveBeenCalledTimes(count);
   });
 
@@ -1267,7 +1284,9 @@ it("a rejected goal change restores teaching instead of pretending to restart th
   expect(screen.queryByRole("form", { name: "Learning goal" })).toBeNull();
   expect(screen.queryByTestId("loop-set-goal")).toBeNull();
   expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
-  expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
+  expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
+  // teaching: the goal is read-only; a new goal is a confirmed new session
+  expect(screen.getByTestId("loop-goal-summary").textContent).toContain("To change your goal, start a new session.");
 });
 
 describe("hint ownership within a learning session", () => {
@@ -1383,5 +1402,200 @@ describe("explicit goal frontier continuation", () => {
     const text = screen.getByTestId("loop-goal-progress").textContent;
     expect(text).toContain(completion === "needs_more_practice" ? "still needs prerequisite practice" : "does not establish mastery");
     expect(text).not.toContain("goal complete");
+  });
+});
+
+describe("redesign: new-session confirmation", () => {
+  it("Cancel keeps the current session exactly as it was and returns focus", async () => {
+    await resumedTeach();
+    const trigger = screen.getByTestId("loop-new-session");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session?" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("loop-new-session-cancel")));
+    fireEvent.click(screen.getByTestId("loop-new-session-cancel"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+    expect(screen.getByText("welcome back")).toBeTruthy();
+  });
+
+  it("Escape cancels too; nothing is closed", async () => {
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    const dialog = await screen.findByRole("dialog", { name: "Start a new session?" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("Confirm waits for the close to succeed before starting, and cannot be dismissed meanwhile", async () => {
+    let finish: (value: unknown) => void = () => {};
+    api.closeLoopSession.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    fireEvent.click(await screen.findByTestId("loop-new-session-confirm-start"));
+    await waitFor(() => expect(api.closeLoopSession).toHaveBeenCalledWith("s2", "u1"));
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect((screen.getByTestId("loop-new-session-confirm-start") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("loop-new-session-cancel") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await act(async () => { finish({ close: closeRecord, model_written: false, close_phase: "teach" }); });
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a failed close explains itself in the dialog and starts nothing; Try again can still succeed", async () => {
+    api.closeLoopSession
+      .mockRejectedValueOnce(new ApiError("down", 503))
+      .mockResolvedValueOnce({ close: closeRecord, model_written: false, close_phase: "teach" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    fireEvent.click(await screen.findByTestId("loop-new-session-confirm-start"));
+    expect(await screen.findByTestId("loop-new-session-error")).toBeTruthy();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
+    expect(screen.getByTestId("loop-new-session-confirm-start").textContent).toBe("Try again");
+    fireEvent.click(screen.getByTestId("loop-new-session-confirm-start"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+  });
+
+  it("asks nothing when no session is open: after wrap-up, New session starts directly", async () => {
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-summary");
+    fireEvent.click(screen.getByTestId("loop-new-session"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.closeLoopSession).toHaveBeenCalledTimes(1); // the End session close only
+  });
+
+  it("while teaching, the goal is read-only and a new goal goes through the same confirmation", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ goal: { text: "Understand recursion", target_node_ids: ["n1"] } }));
+    await resumedTeach();
+    expect(screen.queryByTestId("loop-set-goal")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-goal-new-session"));
+    expect(await screen.findByRole("dialog", { name: "Start a new session?" })).toBeTruthy();
+    expect(api.setLoopGoal).not.toHaveBeenCalled();
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("redesign: studio structure and accessible controls", () => {
+  it("the phase strip shows the server phase only; it is not a control", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [] });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["n1"] });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-plan-concept-n1");
+    const strip = screen.getByRole("list", { name: "Learning progress" });
+    expect(strip.querySelector('[aria-current="step"]')?.textContent).toContain("Plan");
+    expect(strip.querySelectorAll("button, a")).toHaveLength(0);
+    fireEvent.click(screen.getByTestId("loop-plan-approve"));
+    await waitFor(() => expect(strip.querySelector('[aria-current="step"]')?.textContent).toContain("Learn"));
+  });
+
+  it("mc_reason renders the served options as one native radio group in served order; sage means selected only", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem({ ...pose, format: "mc_reason", options: [{ letter: "B", text: "second served first" }, { letter: "A", text: "x" }] });
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.value)).toEqual(["B", "A"]); // stored order, never re-sorted
+    expect(new Set(radios.map((r) => r.name)).size).toBe(1); // one group: one tab stop, arrow keys move
+    expect(radios.every((r) => !r.checked)).toBe(true);
+    fireEvent.click(radios[1]);
+    expect(radios[1].checked).toBe(true);
+    expect(screen.getByTestId("loop-attempt-option-A").getAttribute("data-selected")).toBe("true");
+    expect(screen.getByTestId("loop-check-prompt").querySelector("[data-correct], [aria-invalid]")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Your reasoning (optional)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Submit answer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "I don't know yet" })).toBeTruthy();
+  });
+
+  it("Enter in the reasoning field submits the explicit answer once, never as chat", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem({ ...pose, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    fireEvent.click(screen.getByTestId("loop-attempt-option-B"));
+    const reason = screen.getByTestId("loop-attempt-reason");
+    fireEvent.change(reason, { target: { value: "because" } });
+    fireEvent.submit(reason.closest("form")!);
+    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalledTimes(1));
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith("s2", "u1", "qh7", { option: "B", reason: "because", idk: false }, expect.any(Object));
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+  });
+
+  it("an empty answer cannot be submitted; the draft survives a failed submission", async () => {
+    api.streamLoopCheckAnswer.mockRejectedValue(new ApiError("down", 503));
+    await withCheckItem();
+    expect((screen.getByTestId("loop-attempt-submit") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "my working" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledTimes(2)); // status-first reconcile
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledTimes(1); // never repeated on its own
+  });
+
+  it("fenced code in a prompt renders as a code block, the text unchanged", async () => {
+    await withCheckItem({ ...pose, prompt: "What makes this recursive?\n```python\ndef f(n):\n    return f(n - 1)\n```" });
+    const code = screen.getByTestId("loop-check-prompt").querySelector("pre code");
+    expect(code?.textContent).toBe("def f(n):\n    return f(n - 1)");
+    expect(screen.getByText("What makes this recursive?")).toBeTruthy();
+  });
+
+  it("the desktop rail lists the plan route in server order with its reasons, never a mastery claim", async () => {
+    const diagnosis = { status: "limited", stop_reason: null, skills: [{ node_id: "n2", status: "untested", floor_difficulty: null, ceiling_difficulty: null,
+      independent_correct: 0, independent_incorrect: 0, independent_observations: 0, observations: 0, tested_difficulties: [], available_difficulties: [1], contradictory_difficulties: [] }] };
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "plan", phase: "plan", diagnosis }));
+    api.getLoopPlan.mockResolvedValue({ diagnosis, concepts: [
+      { node_id: "n2", concept_name: "Binary", kind: "new", p_known: 0.2, reason: "prerequisite" },
+      { node_id: "n1", concept_name: "Bitwise", kind: "new", p_known: 0.3, reason: "goal" },
+    ], order: [] });
+    render(<LoopLearn />);
+    const rail = await screen.findByRole("complementary", { name: "Learning route and sources" });
+    await waitFor(() => expect(rail.querySelectorAll("[data-testid^='loop-route-n']")).toHaveLength(2));
+    const rows = Array.from(rail.querySelectorAll("[data-testid^='loop-route-n']")).map((r) => r.textContent);
+    expect(rows[0]).toContain("Binary");
+    expect(rows[0]).toContain("Prerequisite for your goal");
+    expect(rows[0]).toContain("Check-in: Not assessed");
+    expect(rows[1]).toContain("Your selected goal");
+    expect(rail.textContent).not.toMatch(/mastered|mastery/i);
+  });
+
+  it("on a phone the route is a labelled sheet behind a trigger, not a rail", async () => {
+    viewport.compact = true;
+    await resumedTeach();
+    expect(screen.queryByTestId("loop-rail")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const trigger = screen.getByTestId("loop-route-trigger");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
+    fireEvent.click(trigger);
+    const sheet = await screen.findByRole("dialog", { name: "Learning route and sources" });
+    expect(sheet.textContent).toContain("Your learning route");
+    expect(sheet.textContent).toContain("Concepts appear here as you learn.");
+    expect(screen.getByTestId("loop-tree-link")).toBeTruthy(); // the map link stays outside the sheet
+  });
+
+  it("the session list loads visibly and starts nothing while it does", async () => {
+    let finish: (value: unknown) => void = () => {};
+    api.listLoopSessionsFor.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.listLoopSessionsFor).toHaveBeenCalled());
+    expect(screen.getByText("Loading your sessions…")).toBeTruthy();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    await act(async () => { finish(listed([open("s2", "teach", "2026-09-21T10:00:00Z")])); });
+    await screen.findByText("welcome back");
+    expect(api.startLoopSession).not.toHaveBeenCalled();
   });
 });
