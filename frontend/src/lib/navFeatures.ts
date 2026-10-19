@@ -101,10 +101,10 @@ const destination = (href: string): NavItem => {
   return item;
 };
 
-/** Pen order: Today, Learn, Knowledge, Library, Tutor, Calendar. The testids
+/** Pen order (Today renamed Home, 2026-10-19): Home, Learn, Knowledge, Library, Tutor, Calendar. The testids
  *  keep the `nav-link-<route>` convention E2E already asserts on. */
 export const SIDEBAR_PRIMARY: SidebarEntry[] = [
-  { key: "dashboard", href: "/dashboard", label: "Today", icon: "today", testid: "nav-link-dashboard" },
+  { key: "dashboard", href: "/dashboard", label: "Home", icon: "today", testid: "nav-link-dashboard" },
   { key: "learn", href: "/learn", label: "Learn", icon: "learn", testid: "nav-link-learn", flag: destination("/learn").flag },
   { key: "tree", href: "/tree", label: "Knowledge", icon: "knowledge", testid: "nav-link-tree", flag: destination("/tree").flag },
   { key: "library", href: "/library", label: "Library", icon: "library", testid: "nav-link-library", flag: destination("/library").flag },

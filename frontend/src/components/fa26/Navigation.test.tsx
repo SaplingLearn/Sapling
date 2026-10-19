@@ -127,7 +127,7 @@ describe("Pen sidebar", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     const six = within(nav).getAllByRole("list")[0];
     expect(within(six).getAllByRole("link").map(a => [a.textContent, a.getAttribute("href")])).toEqual([
-      ["Today", "/dashboard"], ["Learn", "/learn"], ["Knowledge", "/tree"],
+      ["Home", "/dashboard"], ["Learn", "/learn"], ["Knowledge", "/tree"],
       ["Library", "/library"], ["Tutor", "/learn?view=tutor"], ["Calendar", "/calendar"],
     ]);
     expect(screen.getByTestId("nav-link-tutor-view")).toHaveAttribute("href", "/learn?view=tutor");
@@ -202,7 +202,7 @@ describe("Pen sidebar", () => {
     expect(screen.getByTestId("nav-link-admin")).toHaveAttribute("href", "/admin");
   });
 
-  it("holds flagged destinations back until flags load; Today and Settings stay", () => {
+  it("holds flagged destinations back until flags load; Home and Settings stay", () => {
     flagState.ready = false;
     render(<Sidebar />);
     expect(screen.getByTestId("nav-link-dashboard")).toBeTruthy();
@@ -369,7 +369,7 @@ describe("collapsible sidebar", () => {
     render(<Sidebar />);
     expect(screen.getByTestId("nav-link-library")).not.toHaveAttribute("aria-label");
     fireEvent.click(toggle());
-    for (const [id, name] of [["nav-link-dashboard", "Today"], ["nav-link-learn", "Learn"], ["nav-link-tree", "Knowledge"],
+    for (const [id, name] of [["nav-link-dashboard", "Home"], ["nav-link-learn", "Learn"], ["nav-link-tree", "Knowledge"],
       ["nav-link-library", "Library"], ["nav-link-tutor-view", "Tutor"], ["nav-link-calendar", "Calendar"],
       ["nav-link-settings", "Settings"], ["nav-more", "More"]]) {
       expect(screen.getByTestId(id), id).toHaveAttribute("aria-label", name);
