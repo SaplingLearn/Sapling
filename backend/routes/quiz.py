@@ -456,9 +456,9 @@ def _resolved_difficulty(wire_questions: list[dict]) -> str:
 
 
 # The wire contract every emitted question must satisfy (#543 E3). The
-# agent schema already pins 4 options, but the route is the boundary the
-# stored questions_json and every grading path trust, so it validates
-# rather than assuming.
+# agent schema carries no option bound (agents/quiz.py: nested array bounds
+# 400 on Gemini), so the route is the only check on option count, and it is
+# the boundary the stored questions_json and every grading path trust.
 _MIN_OPTIONS = 2
 # What the agent must emit for a multiple-choice item (the system prompt's "4
 # options"). Checked per item in _agent_question_to_wire, not in the agent's
