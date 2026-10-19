@@ -150,6 +150,52 @@ async function expectPhoneLegend(main: Locator) {
   expect(boxes[2]!.y).toBeGreaterThan(boxes[0]!.y);
 }
 
+async function expectPaintInsideGraph(svg: Locator) {
+  // Wait for the ResizeObserver to measure the new slot first, otherwise an
+  // old oversized SVG can briefly intersect its own stale desktop bounds.
+  await expect.poll(() => svg.evaluate((el) => {
+    const slot = el.closest('[data-testid="graph-container"]')?.parentElement;
+    if (!slot) return Infinity;
+    const box = el.getBoundingClientRect();
+    const available = slot.getBoundingClientRect();
+    return Math.max(Math.abs(box.width - available.width), Math.abs(box.height - available.height));
+  }), { message: "the resized SVG has measured its current graph slot" }).toBeLessThanOrEqual(1);
+  await expect.poll(() => svg.evaluate((el) => {
+    const viewport = el.getBoundingClientRect();
+    return Array.from(el.querySelectorAll('[data-testid="graph-node-circle"]')).filter((mark) => {
+      const box = mark.getBoundingClientRect();
+      return Math.min(box.right, viewport.right) - Math.max(box.left, viewport.left) >= 1 &&
+        Math.min(box.bottom, viewport.bottom) - Math.max(box.top, viewport.top) >= 1;
+    }).length;
+  }), { message: "at least one real painted node intersects the SVG after pan or resize" }).toBeGreaterThan(0);
+}
+
+/** Pan from exposed graph background near its right edge to its left edge.
+ * The hit test avoids dragging a node or a control and uses current canvas
+ * bounds, without depending on any authored node coordinates. */
+async function panToLeftLimit(page: Page, svg: Locator) {
+  await svg.scrollIntoViewIfNeeded();
+  const gesture = await svg.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    for (const fractionX of [0.94, 0.88, 0.8]) {
+      for (const fractionY of [0.75, 0.5, 0.25, 0.9, 0.1]) {
+        const x = box.left + box.width * fractionX;
+        const y = box.top + box.height * fractionY;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && (hit === el || el.contains(hit)) && !hit.closest('[data-testid="graph-node"]')) {
+          return { x, y, endX: box.left + 2 };
+        }
+      }
+    }
+    return null;
+  });
+  expect(gesture, "the live SVG has exposed background for a real pan gesture").not.toBeNull();
+  await page.mouse.move(gesture!.x, gesture!.y);
+  await page.mouse.down();
+  await page.mouse.move(gesture!.endX, gesture!.y, { steps: 6 });
+  await page.mouse.up();
+}
+
 test("approved Pen marks retain every live concept, hub, edge and mastery colour", async ({ page }) => {
   const g = await sourceGraph();
   expect(g.nodes.length).toBeGreaterThan(0);
@@ -300,6 +346,62 @@ test("resizing desktop to both phones and back refits the map without losing liv
     }
     expect(await main.evaluate((el) => el.scrollWidth - el.clientWidth), `${width}px shell has no horizontal overflow`).toBeLessThanOrEqual(1);
   }
+  expect(mutations).toEqual([]);
+  expect(await learningState()).toEqual(before);
+});
+
+test("a zoomed, panned map stays visibly inside its SVG after desktop-to-phone resizes", async ({ page }) => {
+  const g = await sourceGraph();
+  const before = await learningState();
+  const mutations = trackLearningMutations(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const main = await dashboard(page);
+  const overview = main.getByTestId("dashboard-map-canvas");
+  await expectFittedCanvas(overview);
+  for (let step = 0; step < 3; step++) await overview.getByTestId("graph-zoom-in").click();
+  const overviewTransform = overview.getByTestId("graph-transform");
+  const beforeOverviewPan = await overviewTransform.getAttribute("transform");
+  await panToLeftLimit(page, overview.locator('svg[data-renderer="pen"]'));
+  await expect(overviewTransform).not.toHaveAttribute("transform", beforeOverviewPan!);
+  await expectPaintInsideGraph(overview.locator('svg[data-renderer="pen"]'));
+
+  await main.getByTestId("dashboard-open-map").click();
+  const full = page.getByTestId("dashboard-full-map");
+  await expect(full).toBeVisible();
+  const svg = full.locator('svg[data-renderer="pen"]');
+  const transform = full.getByTestId("graph-transform");
+  for (let step = 0; step < 3; step++) await full.getByTestId("graph-zoom-in").click();
+  const beforeFullPan = await transform.getAttribute("transform");
+  await panToLeftLimit(page, svg);
+  await expect(transform).not.toHaveAttribute("transform", beforeFullPan!);
+  await expectPaintInsideGraph(svg);
+  await expect(full.getByTestId("dashboard-full-map-concept")).toHaveCount(0);
+
+  // Keep the same interactive full-map instance and its saved desktop pan.
+  // Re-clamping must happen before reset/another gesture can repair it.
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 950 });
+    await expect(full).toBeVisible();
+    await expect(full.getByTestId("graph-node")).toHaveCount(g.nodeCount);
+    await expect(full.getByTestId("graph-edge")).toHaveCount(g.edgeCount);
+    await expectPaintInsideGraph(svg);
+    expect(await full.evaluate((el) => el.scrollWidth - el.clientWidth), `${width}px full map has no horizontal overflow`).toBeLessThanOrEqual(1);
+  }
+
+  await full.getByTestId("graph-zoom-reset").click();
+  await expectPaintInsideGraph(svg);
+  const fitted = await transform.getAttribute("transform");
+  await full.getByTestId("graph-zoom-in").click();
+  await expect(transform).not.toHaveAttribute("transform", fitted!);
+  await full.getByTestId("graph-zoom-fit").click();
+  await expect(transform).toHaveAttribute("transform", fitted!);
+  await expectPaintInsideGraph(svg);
+  await page.keyboard.press("Escape");
+  await expect(full).toHaveCount(0);
+  await expectFittedCanvas(main.getByTestId("dashboard-map-preview"));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expectFittedCanvas(main.getByTestId("dashboard-map-canvas"));
+  await expectPaintInsideGraph(main.locator('svg[data-renderer="pen"]'));
   expect(mutations).toEqual([]);
   expect(await learningState()).toEqual(before);
 });

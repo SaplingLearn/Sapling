@@ -13,6 +13,26 @@ const node = (id: string, course: string, root = false): GraphNode => ({ id, cou
 const nodes = [node("course-a", "CS 101", true), node("concept-a", "CS 101"), node("course-b", "CS 102", true), node("concept-b", "CS 102")];
 const edges = [{ source: "course-a", target: "concept-a", strength: 0.8 }, { source: "concept-a", target: "concept-b", strength: 0.4 }];
 const positions = () => Object.fromEntries(screen.getAllByTestId("graph-node").map(mark => [mark.getAttribute("data-node-id"), mark.getAttribute("transform")]));
+const displayedView = () => {
+  const values = screen.getByTestId("graph-transform").getAttribute("transform")!.match(/translate\(([^,]+), ([^)]+)\) scale\(([^)]+)\)/)!.slice(1).map(Number);
+  return { tx: values[0], ty: values[1], scale: values[2] };
+};
+const panCanvas = (dx: number, dy: number) => {
+  const svg = screen.getByRole("img", { name: "Knowledge graph" });
+  fireEvent.pointerDown(svg, { pointerId: 9, button: 0, clientX: 100, clientY: 100 });
+  fireEvent.pointerMove(svg, { pointerId: 9, clientX: 100 + dx, clientY: 100 + dy });
+  fireEvent.pointerUp(svg, { pointerId: 9, clientX: 100 + dx, clientY: 100 + dy });
+};
+const expectViewBounded = (layout: ReturnType<typeof buildPenGraphLayout>, width: number, height: number) => {
+  const view = displayedView();
+  for (const [position, extent, viewport] of [[view.tx, layout.width * view.scale, width], [view.ty, layout.height * view.scale, height]]) {
+    if (extent <= viewport) expect(position).toBeCloseTo((viewport - extent) / 2, 5);
+    else {
+      expect(position).toBeGreaterThanOrEqual(viewport - extent - 0.00001);
+      expect(position).toBeLessThanOrEqual(0.00001);
+    }
+  }
+};
 
 describe("authored Pen graph", () => {
   it("renders every real ID and relationship as an authored path, including same-name concepts", () => {
@@ -86,6 +106,48 @@ describe("authored Pen graph", () => {
     const phoneWheel = new WheelEvent("wheel", { deltaY: 100, bubbles: true, cancelable: true });
     fireEvent(svg, phoneWheel);
     expect(phoneWheel.defaultPrevented).toBe(false);
+  });
+
+  it("keeps a zoomed and panned map inside a resized viewport, with the next pan and zoom starting from the visible view", () => {
+    const layout = buildPenGraphLayout({ nodes, edges });
+    const view = render(<PenKnowledgeGraph2D nodes={nodes} edges={edges} width={1200} height={808} />);
+    for (let i = 0; i < 7; i++) fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    panCanvas(-100000, -100000);
+    const desktop = displayedView();
+    expect(desktop.tx).toBeLessThan(-2000);
+    view.rerender(<PenKnowledgeGraph2D nodes={nodes} edges={edges} width={320} height={216} />);
+    expectViewBounded(layout, 320, 216);
+    const phone = displayedView();
+    expect(phone.tx).toBeGreaterThan(desktop.tx + 1000);
+    panCanvas(100, 50);
+    expect(displayedView().tx).toBeCloseTo(phone.tx + 100, 5);
+    expect(displayedView().ty).toBeCloseTo(phone.ty + 50, 5);
+    const beforeZoom = displayedView();
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    const afterZoom = displayedView();
+    expect(afterZoom.scale).toBeCloseTo(beforeZoom.scale / 1.2, 5);
+    expect(afterZoom.tx).toBeCloseTo(160 - (160 - beforeZoom.tx) / 1.2, 5);
+    expectViewBounded(layout, 320, 216);
+    expect(screen.getAllByTestId("graph-node")).toHaveLength(nodes.length);
+    expect(screen.getAllByTestId("graph-edge")).toHaveLength(edges.length);
+  });
+
+  it("rebinds a zoomed pan when course scope changes without changing real graph membership", () => {
+    const allNodes = Array.from({ length: 90 }, (_, i) => node(`scoped-${i}`, `CS ${Math.floor(i / 30)}`, i % 30 === 0));
+    const allEdges = allNodes.filter((_, i) => i % 30 !== 0).map((value, i) => ({ source: `scoped-${Math.floor(i / 29) * 30}`, target: value.id, strength: 0.7 }));
+    const ownNodes = allNodes.filter(value => value.course_id === "CS 1");
+    const ownIds = new Set(ownNodes.map(value => value.id));
+    const ownEdges = allEdges.filter(value => ownIds.has(value.source) && ownIds.has(value.target));
+    const ownLayout = buildPenGraphLayout({ nodes: ownNodes, edges: ownEdges });
+    const view = render(<PenKnowledgeGraph2D nodes={allNodes} edges={allEdges} width={1200} height={808} />);
+    for (let i = 0; i < 7; i++) fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    panCanvas(-100000, -100000);
+    const allCourses = displayedView();
+    view.rerender(<PenKnowledgeGraph2D nodes={ownNodes} edges={ownEdges} width={1200} height={808} />);
+    expectViewBounded(ownLayout, 1200, 808);
+    expect(displayedView()).not.toEqual(allCourses);
+    expect(screen.getAllByTestId("graph-node").map(mark => mark.getAttribute("data-node-id")).sort()).toEqual([...ownIds].sort());
+    expect(screen.getAllByTestId("graph-edge")).toHaveLength(ownEdges.length);
   });
 
   it("captures a node gesture on that node and releases the same holder", () => {

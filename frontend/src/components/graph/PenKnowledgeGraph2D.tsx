@@ -51,7 +51,23 @@ function PenKnowledgeGraph2DImpl({
   const prefix = React.useId().replace(/:/g, "");
   const fitScale = Math.min(width / Math.max(1, layout.width), height / Math.max(1, layout.height));
   const fitted = { tx: (width - layout.width * fitScale) / 2, ty: (height - layout.height * fitScale) / 2, scale: fitScale };
-  const shown = interactive ? { tx: fitted.tx + view.tx, ty: fitted.ty + view.ty, scale: fitted.scale * view.scale } : fitted;
+  const clampView = (next: View): View => {
+    const scale = fitScale * next.scale;
+    const bounded = (value: number, extent: number, viewport: number, origin: number) => {
+      if (extent <= viewport) return (viewport - extent) / 2 - origin;
+      return Math.max(viewport - extent - origin, Math.min(-origin, value));
+    };
+    return {
+      scale: next.scale,
+      tx: bounded(next.tx, layout.width * scale, width, fitted.tx),
+      ty: bounded(next.ty, layout.height * scale, height, fitted.ty),
+    };
+  };
+  // Stored pan distances are viewport pixels. Rebound them synchronously when
+  // a resize or course filter changes the fitted canvas, before it is painted.
+  // New gestures also begin from this displayed view rather than a stale pan.
+  const boundedView = clampView(view);
+  const shown = interactive ? { tx: fitted.tx + boundedView.tx, ty: fitted.ty + boundedView.ty, scale: fitted.scale * boundedView.scale } : fitted;
   const positions = new Map(layout.nodes.map(node => {
     const offset = offsets[node.id];
     // A scope change can repack the same ID against a smaller source canvas.
@@ -74,19 +90,8 @@ function PenKnowledgeGraph2DImpl({
       y: (clientY - (rect?.top ?? 0)) * (rect?.height ? height / rect.height : 1),
     };
   };
-  const clampView = (next: View): View => {
-    const scale = fitScale * next.scale;
-    const bounded = (value: number, extent: number, viewport: number, origin: number) => {
-      if (extent <= viewport) return (viewport - extent) / 2 - origin;
-      return Math.max(viewport - extent - origin, Math.min(-origin, value));
-    };
-    return {
-      scale: next.scale,
-      tx: bounded(next.tx, layout.width * scale, width, fitted.tx),
-      ty: bounded(next.ty, layout.height * scale, height, fitted.ty),
-    };
-  };
-  const zoomAt = (factor: number, anchor: Point) => setView(previous => {
+  const zoomAt = (factor: number, anchor: Point) => setView(stored => {
+    const previous = clampView(stored);
     const nextScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, previous.scale * factor));
     const ratio = nextScale / previous.scale;
     return clampView({
@@ -118,7 +123,7 @@ function PenKnowledgeGraph2DImpl({
     if (!interactive || event.button !== 0) return;
     const captureTarget = capture(event);
     suppressClickRef.current = false;
-    gestureRef.current = { pointerId: event.pointerId, start: svgPoint(event.clientX, event.clientY), origin: { x: view.tx, y: view.ty }, moved: false, captureTarget };
+    gestureRef.current = { pointerId: event.pointerId, start: svgPoint(event.clientX, event.clientY), origin: { x: boundedView.tx, y: boundedView.ty }, moved: false, captureTarget };
   };
   const startNodeDrag = (event: React.PointerEvent<SVGGElement>, node: PenGraphNodeLayout) => {
     if (!interactive || event.button !== 0) return;
@@ -137,7 +142,7 @@ function PenKnowledgeGraph2DImpl({
     gesture.moved = true;
     suppressClickRef.current = true;
     if (!gesture.nodeId) {
-      setView(clampView({ ...view, tx: gesture.origin.x + dx, ty: gesture.origin.y + dy }));
+      setView(clampView({ ...boundedView, tx: gesture.origin.x + dx, ty: gesture.origin.y + dy }));
       return;
     }
     const node = layout.nodes.find(item => item.id === gesture.nodeId);

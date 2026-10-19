@@ -83,6 +83,8 @@ The pure geometry tests exercise exact source coordinates, topology gating, actu
 
 The renderer and application checks must also cover the existing Dashboard and Tutor behavior: course/semester scope, actual counts, ID-based selection, selected concept details, pan/zoom/drag/reset, full map, textual topic list, keyboard activation and focus return, renderer recovery, 2D/3D preference and no-WebGL fallback. Map exploration must remain read-only and must not begin or grade a learning session. Practice must continue through the existing explicit learning controller.
 
+Retained node drag offsets are bounded against the current layout after a course filter repacks it. Stored pan distances are viewport pixels, so the displayed view is also bounded synchronously when the viewport or course scope changes; subsequent gestures start from that visible view. Regression checks cover dragging before filtering, and zooming and panning to a desktop boundary before resizing to a phone or selecting a narrower course scope.
+
 Capture desktop and mobile overviews and selected/full-map states. Exercise 1440, 1024, 768, 390 and 320 CSS-pixel widths and 200% browser zoom. Check long labels, empty data, one course, several courses and a dense map. Phone page scrolling and bottom navigation must remain reachable. The Knowledge sidebar destination and its fullscreen view use the same Sapling 2D appearance as Dashboard and Tutor. Existing default/FA26 renderers remain available for legacy surfaces, and optional 3D retains its own rendering contract.
 
 
