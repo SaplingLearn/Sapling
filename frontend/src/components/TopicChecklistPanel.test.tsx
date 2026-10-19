@@ -123,6 +123,16 @@ describe("Topic checklist integration", () => {
     await waitFor(() => expect(setTopicReviewed).toHaveBeenCalledWith("u", "cs", "recursion", true, "Spring 2026", expect.any(AbortSignal)));
   });
 
+  it("shows a check immediately, before the save resolves", async () => {
+    vi.mocked(setTopicReviewed).mockImplementation(() => new Promise(() => {}));
+    render(<TopicChecklistPanel userId="u" courseId="cs" />);
+    open();
+    const checkbox = await screen.findByRole("checkbox");
+    await waitFor(() => expect(checkbox).not.toBeDisabled());
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+  });
+
   it("keeps a failed check unchecked and aborts requests on unmount", async () => {
     vi.mocked(setTopicReviewed).mockRejectedValue(new Error("500"));
     const view = render(<TopicChecklistPanel userId="u" courseId="cs" />);
