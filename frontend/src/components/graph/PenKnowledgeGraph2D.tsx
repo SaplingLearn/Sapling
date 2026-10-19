@@ -208,8 +208,8 @@ function PenKnowledgeGraph2DImpl({
                 </g>
               </g>
               {(selected || focused || highlighted) && <circle data-testid={selected ? "graph-node-selected-ring" : "graph-node-highlight-ring"} r={node.r + 6} fill="none" stroke="#416207" strokeWidth={2.5} strokeDasharray={highlighted && !selected ? "4 3" : undefined} pointerEvents="none" />}
-              {node.is_subject_root && <text x={0} y={4} textAnchor="middle" fill="#F3EEE8" fontSize={14} fontFamily="var(--font-sans)" fontWeight={600} pointerEvents="none">{truncateLabel(node.name.split(" - ")[0], 12)}</text>}
-              {!node.is_subject_root && active && <text x={0} y={node.r + (selected ? 22 : 16)} textAnchor="middle" fontFamily="var(--font-sans)" fontSize={selected ? 12.5 : 10.5} fontWeight={selected ? 600 : undefined} fill="#253D2F" stroke="#F7F4E9" strokeWidth={4} paintOrder="stroke" pointerEvents="none">{truncateLabel(node.name, selected ? 30 : 18)}</text>}
+              {node.is_subject_root && <text x={0} y={4} textAnchor="middle" fill="#F3EEE8" fontSize={14} fontFamily="var(--sapling-font-body, var(--font-sans))" fontWeight={600} pointerEvents="none">{truncateLabel(node.name.split(" - ")[0], 12)}</text>}
+              {!node.is_subject_root && active && <text x={0} y={node.r + (selected ? 22 : 16)} textAnchor="middle" fontFamily="var(--sapling-font-body, var(--font-sans))" fontSize={selected ? 12.5 : 10.5} fontWeight={selected ? 600 : undefined} fill="#253D2F" stroke="#F7F4E9" strokeWidth={4} paintOrder="stroke" pointerEvents="none">{truncateLabel(node.name, selected ? 30 : 18)}</text>}
             </g>;
           })}
         </g>

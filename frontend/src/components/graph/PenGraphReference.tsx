@@ -45,10 +45,10 @@ export function PenGraphReference({ width = 893, height = 601 }: { width?: numbe
       <filter id={`${prefix}-${filter.id}`} x={filter.x} y={filter.y} width={filter.width} height={filter.height} filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
         <feFlood floodOpacity="0" result="BackgroundImageFix" />
         <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
-        <feMorphology radius="6" operator="dilate" in="SourceAlpha" result="effect1_dropShadow_3457_3774" />
+        <feMorphology radius={filter.spread} operator="dilate" in="SourceAlpha" result="effect1_dropShadow_3457_3774" />
         <feOffset />
         <feComposite in2="hardAlpha" operator="out" />
-        <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.01 0" />
+        <feColorMatrix type="matrix" values={`0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${filter.opacity} 0`} />
         <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3457_3774" />
         <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3457_3774" result="shape" />
       </filter>

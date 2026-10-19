@@ -107,6 +107,13 @@ async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<
   await expect(phase).toHaveAttribute("data-phase", "probe");
   const probeItem = page.getByTestId("loop-probe-item");
   await expect(probeItem).toContainText(LOOP_PROBE_PROMPT);
+  // React can remove the item between separate phase/hash locator reads.
+  // One DOM snapshot observes that transition without waiting on a removed item.
+  const readProbe = () => phase.evaluate((el) => ({
+    phase: el.getAttribute("data-phase"),
+    hash: el.querySelector('[data-testid="loop-probe-item"]')?.getAttribute("data-question-hash") ?? null,
+    reference: !!el.querySelector('[data-testid="loop-probe-reference"]'),
+  }));
 
   let answered = 0;
   while ((await phase.getAttribute("data-phase")) === "probe" && answered < Number(P.PROBE_SESSION_CAP)) {
@@ -120,17 +127,17 @@ async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<
     // Neither case bypasses the diagnostic or assumes a posterior means mastery.
     await expect
       .poll(async () => {
-        if ((await phase.getAttribute("data-phase")) !== "probe") return true;
-        if (!(await probeItem.isVisible())) return false;
-        const now = await probeItem.getAttribute("data-question-hash");
-        return (await page.getByTestId("loop-probe-reference").isVisible()) || (now !== null && now !== qh);
+        const current = await readProbe();
+        return current.phase !== "probe" || current.reference || (current.hash !== null && current.hash !== qh);
       })
       .toBe(true);
-    if (await page.getByTestId("loop-probe-reference").isVisible()) {
+    if ((await readProbe()).reference) {
       expect(difficulty).toBeGreaterThan(1);
       await page.getByTestId("loop-probe-next").click();
-      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-        (await probeItem.getAttribute("data-question-hash")) !== qh).toBe(true);
+      await expect.poll(async () => {
+        const current = await readProbe();
+        return current.phase !== "probe" || (current.hash !== null && current.hash !== qh);
+      }).toBe(true);
     } else {
       expect(difficulty).toBe(1);
       await expect(page.getByTestId("loop-probe-reference")).toHaveCount(0);

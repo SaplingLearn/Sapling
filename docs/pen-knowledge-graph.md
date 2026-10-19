@@ -83,12 +83,12 @@ The pure geometry tests exercise exact source coordinates, topology gating, actu
 
 The renderer and application checks must also cover the existing Dashboard and Tutor behavior: course/semester scope, actual counts, ID-based selection, selected concept details, pan/zoom/drag/reset, full map, textual topic list, keyboard activation and focus return, renderer recovery, 2D/3D preference and no-WebGL fallback. Map exploration must remain read-only and must not begin or grade a learning session. Practice must continue through the existing explicit learning controller.
 
-Capture desktop and mobile overviews and selected/full-map states. Exercise 1440, 1024, 768, 390 and 320 CSS-pixel widths and 200% browser zoom. Check long labels, empty data, one course, several courses and a dense map. Phone page scrolling and bottom navigation must remain reachable. Existing default/FA26 and optional 3D renderers retain their own visual contracts; the new authored geometry is scoped to the Sapling 2D appearance.
+Capture desktop and mobile overviews and selected/full-map states. Exercise 1440, 1024, 768, 390 and 320 CSS-pixel widths and 200% browser zoom. Check long labels, empty data, one course, several courses and a dense map. Phone page scrolling and bottom navigation must remain reachable. The Knowledge sidebar destination and its fullscreen view use the same Sapling 2D appearance as Dashboard and Tutor. Existing default/FA26 renderers remain available for legacy surfaces, and optional 3D retains its own rendering contract.
 
 
 ## Recorded browser comparison — October 19, 2026
 
-Chromium at 1× rendered the complete 893 × 601 native SVG and the React reference over the same paper background. The source-to-React comparison differs at 111 pixels by at most **one RGB level**; mean channel difference is **0.000197 / 255**. Every path and transform is also checked structurally. The comparison against Pen's own PNG has **4,087 pixels above eight RGB levels (0.762%)**, mean channel difference **0.154461 / 255**, and a maximum of 82. The unmasked difference image shows silhouette/glyph rasterization edges; it is not a claim of pixel-identical rasterization between Pen and Chromium.
+Chromium at 1× rendered the complete 893 × 601 native SVG and the React reference over the same paper background. The native source SVG and React reference are **pixel-identical in the same Chromium render: zero changed pixels across 536,693 pixels**. Every path and transform is also checked structurally. The comparison against Pen's own PNG has **4,088 pixels above eight RGB levels (0.762%)**, mean channel difference **0.154656 / 255**, and a maximum of 82. The unmasked difference image shows silhouette/glyph rasterization edges; it is not a claim of pixel-identical rasterization between Pen and Chromium.
 
 - [Original native Pen master](redesign/knowledge-graph/pen-master.png)
 - [Browser reference](redesign/knowledge-graph/browser-reference.png)
@@ -101,5 +101,7 @@ The design reference route `/design-reference/knowledge-graph` is available only
 ![Desktop learner dashboard](redesign/knowledge-graph/desktop.png)
 
 ![Phone learner dashboard](redesign/knowledge-graph/mobile.png)
+
+[Knowledge sidebar page with the same renderer and existing controls](redesign/knowledge-graph/knowledge.png)
 
 The bounded card uses Pen's 48/42-pixel title strips, original graph aspect, 44-pixel map controls, native palette and desktop/phone legend positions. Course progress remains on the count button. Narrow phone cards reserve a separate action row when the existing navigation rail leaves too little horizontal space. ResizeObserver's graph is absolutely positioned inside the aspect-ratio box so its old explicit dimensions cannot hold a resized phone preview open. Card-specific legend/button selectors intentionally outrank the shared primitive CSS.

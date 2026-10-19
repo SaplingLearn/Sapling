@@ -64,11 +64,11 @@ function tierFor(score: number): Tier {
 /** FA26 /tree palette from KnowledgeGraph2D's fillFor. This route has used
  * fully opaque state colours since #727. The classic renderer's opacity ramp
  * remains pinned separately by KnowledgeGraph2D.testmode.test.tsx. */
-const FA26_TIER_FILL: Record<Tier, string> = {
-  mastered: "#a1b06d",
-  learning: "#f8ce91",
-  struggling: "#ef8f97",
-  unexplored: "#decec1",
+const PEN_TIER_FILL: Record<Tier, string> = {
+  mastered: "#A3B06D",
+  learning: "#FCC98A",
+  struggling: "#EF908F",
+  unexplored: "#DECDC1",
 };
 
 /** /tree tier-filter pill labels — the mastery enum surfaced 1:1 (Tree.tsx TIER_META). */
@@ -80,8 +80,6 @@ const TIER_PILL: Record<Tier, string> = {
 };
 
 /** SVG label for a concept node (KnowledgeGraph2D truncates names >18 chars). */
-const conceptLabel = (name: string) =>
-  name.length > 18 ? name.slice(0, 17) + "…" : name;
 
 /** Subject-root hub label (graph_service.get_graph): "CODE - Name". */
 const rootLabel = (code: string | null, name: string | null) =>
@@ -183,6 +181,7 @@ test("renders exactly one node per DB graph node plus one subject root per enrol
 
   await page.goto("/tree");
   const { svgNodes, svgEdges, items } = graphLocators(page);
+  await expect(page.getByTestId("graph-container").locator('svg[data-renderer="pen"]')).toBeVisible();
 
   // Node count, at both render layers: the SVG (one graph-node group per
   // node) and the a11y list (one graph-node-item per entry of the same
@@ -208,6 +207,7 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
 
   await page.goto("/tree");
   const { svgNodes, svgEdges, items } = graphLocators(page);
+  await expect(page.getByTestId("graph-container").locator('svg[data-renderer="pen"]')).toBeVisible();
 
   // Every DB concept node renders exactly once — in the SVG and in the a11y
   // list — and shows its own concept name. Keyed by node id, so this holds
@@ -237,7 +237,7 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
   // MISSING edge still fails here even independent of hub-count coverage).
   expect(await svgEdges.count()).toBeGreaterThanOrEqual(g.expectedEdgeCount);
 
-  // Mastery classification at the render layer: FA26 encodes the tier with
+  // Mastery classification at the render layer: Pen encodes the tier with
   // an opaque state fill. Read every group's id, circle fill and opacity in
   // one pass and key by node id (a label-keyed map could silently
   // collapse two same-named nodes into one entry and mask a wrong class).
@@ -257,15 +257,15 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
     const tier = tierFor(n.mastery_score);
     const got = byId.get(n.id);
     expect(got, `node ${n.id} ("${n.concept_name}") is not in the rendered SVG`).toBeDefined();
-    // FA26 reveals concept names on hover/highlight rather than crowding
+    // Pen reveals concept names on hover/highlight rather than crowding
     // the resting graph. Its force-layout marks keep moving, so use the
     // real keyboard alternative to select/highlight each identity without
     // waiting for a moving circle to satisfy pointer actionability.
     const node = byNodeId(svgNodes, n.id);
     await byNodeId(items, n.id).getByTestId("graph-node-activate").focus();
     await page.keyboard.press("Enter");
-    await expect(node.locator(":scope > text"), `node ${n.id} selected-topic highlight label`).toHaveText(conceptLabel(n.concept_name));
-    expect(got!.fill, `node ${n.id} must render its DB-derived ${tier} fill`).toBe(FA26_TIER_FILL[tier]);
+    await expect(node.locator(":scope > text"), `node ${n.id} selected-topic highlight label`).toHaveText((n.concept_name.length > 30 ? n.concept_name.slice(0, 29) + "…" : n.concept_name));
+    expect(got!.fill, `node ${n.id} must render its DB-derived ${tier} fill`).toBe(PEN_TIER_FILL[tier]);
     expect(
       Number(got!.opacity),
       `node ${n.id} ("${n.concept_name}", mastery_score ${n.mastery_score}) must render as "${tier}"`,

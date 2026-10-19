@@ -5,18 +5,18 @@
     "height": 601
   },
   "sourceToReact": {
-    "maxChannelDelta": 1,
-    "meanChannelDelta": 0.0001968847491334276,
-    "changedPixels": 111,
+    "maxChannelDelta": 0,
+    "meanChannelDelta": 0,
+    "changedPixels": 0,
     "pixelsAbove8": 0,
     "pixelsAbove32": 0,
     "totalPixels": 536693
   },
   "nativePenToChromium": {
     "maxChannelDelta": 82,
-    "meanChannelDelta": 0.1544607438516992,
-    "changedPixels": 16573,
-    "pixelsAbove8": 4087,
+    "meanChannelDelta": 0.15465638642575924,
+    "changedPixels": 16587,
+    "pixelsAbove8": 4088,
     "pixelsAbove32": 387,
     "totalPixels": 536693
   }

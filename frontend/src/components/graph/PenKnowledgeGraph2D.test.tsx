@@ -171,6 +171,8 @@ describe("exact Pen reference fixture", () => {
       });
     });
     expect(svg.querySelectorAll("g[filter] > path")).toHaveLength(1);
+    expect(svg.querySelector("feMorphology")).toHaveAttribute("radius", String(PEN_NATIVE_GRAPH_REFERENCE.filter.spread));
+    expect(svg.querySelector("feComposite + feColorMatrix")).toHaveAttribute("values", `0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${PEN_NATIVE_GRAPH_REFERENCE.filter.opacity} 0`);
     expect(svg.querySelectorAll("image,text")).toHaveLength(0);
   });
 });

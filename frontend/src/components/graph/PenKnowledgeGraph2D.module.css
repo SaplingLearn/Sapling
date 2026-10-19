@@ -23,7 +23,7 @@
   background: #f7f4e9;
   border: 1px solid #d6d8c7;
   border-radius: 5px;
-  font-family: var(--font-sans);
+  font-family: var(--sapling-font-body, var(--font-sans));
   font-size: 22px;
   line-height: 1;
   cursor: pointer;

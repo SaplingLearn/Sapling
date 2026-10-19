@@ -46,6 +46,11 @@ async function signIn(browser: Browser, userId: string, name: string) {
 async function checkInAndApprove(page: Page, cap: number) {
   const phase = page.getByTestId("loop-phase");
   const probeItem = page.getByTestId("loop-probe-item");
+  const readProbe = () => phase.evaluate((el) => ({
+    phase: el.getAttribute("data-phase"),
+    hash: el.querySelector('[data-testid="loop-probe-item"]')?.getAttribute("data-question-hash") ?? null,
+    reference: !!el.querySelector('[data-testid="loop-probe-reference"]'),
+  }));
   let answered = 0;
   while ((await phase.getAttribute("data-phase")) === "probe" && answered < cap) {
     await expect(probeItem).toBeVisible();
@@ -56,17 +61,18 @@ async function checkInAndApprove(page: Page, cap: number) {
     answered += 1;
     await expect
       .poll(async () => {
-        if ((await phase.getAttribute("data-phase")) !== "probe") return true;
-        if (await page.getByTestId("loop-probe-reference").isVisible()) return true;
-        return (await probeItem.getAttribute("data-question-hash")) !== qh;
+        const current = await readProbe();
+        return current.phase !== "probe" || current.reference || (current.hash !== null && current.hash !== qh);
       })
       .toBe(true);
-    if (await page.getByTestId("loop-probe-reference").isVisible()) {
+    if ((await readProbe()).reference) {
       await page.getByTestId("loop-probe-next").click();
       // Wait for the next item or the end of the check-in before looping:
       // /probe/next may end the check-in, and the old form then unmounts.
-      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-        (await probeItem.getAttribute("data-question-hash")) !== qh).toBe(true);
+      await expect.poll(async () => {
+        const current = await readProbe();
+        return current.phase !== "probe" || (current.hash !== null && current.hash !== qh);
+      }).toBe(true);
     }
   }
   await expect(phase).toHaveAttribute("data-phase", "plan");

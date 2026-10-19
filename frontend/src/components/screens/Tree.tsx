@@ -7,6 +7,7 @@ import { useScrollLock } from "@/lib/useScrollLock";
 import { Pill } from "../Pill";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { SOURCE_GRAPH_PALETTE } from "@/lib/graph/nodeStyle";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { GraphPanelSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
@@ -51,10 +52,10 @@ function attemptTime(a: AttemptSummary): number {
 }
 
 const TIER_META: Record<Exclude<Tier, "all">, { label: string; color: string }> = {
-  mastered: { label: "Mastered", color: "var(--state-mastery)" },
-  learning: { label: "Learning", color: "var(--state-progress)" },
-  struggling: { label: "Struggling", color: "var(--state-struggle)" },
-  unexplored: { label: "Unexplored", color: "var(--state-neutral)" },
+  mastered: { label: "Mastered", color: SOURCE_GRAPH_PALETTE.mastered },
+  learning: { label: "Learning", color: SOURCE_GRAPH_PALETTE.learning },
+  struggling: { label: "Struggling", color: SOURCE_GRAPH_PALETTE.struggling },
+  unexplored: { label: "Unexplored", color: SOURCE_GRAPH_PALETTE.unexplored },
 };
 
 export function Tree() {
@@ -584,12 +585,13 @@ export function Tree() {
             <GraphPanelSkeleton />
           ) : (
             <KnowledgeGraph
-          appearance="fa26"
+          appearance="sapling"
               nodes={filteredNodes}
               edges={filteredEdges}
               width={size.w}
               height={size.h}
               highlightId={suggestId || selected?.id}
+              selectedId={selected?.id}
               onNodeClick={(n) => setSelected(n)}
             />
           )}
@@ -645,6 +647,7 @@ export function Tree() {
             nodes={filteredNodes}
             edges={filteredEdges}
             highlightId={suggestId || selected?.id}
+            selectedId={selected?.id}
             onNodeClick={(n) => { setSelected(n); setFullscreen(false); }}
           />
         </div>
@@ -654,10 +657,11 @@ export function Tree() {
 }
 
 function FullscreenGraph({
-  nodes, edges, highlightId, onNodeClick,
+  nodes, edges, highlightId, selectedId, onNodeClick,
 }: {
   nodes: GraphNode[]; edges: GraphEdge[];
   highlightId?: string;
+  selectedId?: string;
   onNodeClick: (n: GraphNode) => void;
 }) {
   const [size, setSize] = React.useState({ w: 1200, h: 700 });
@@ -670,12 +674,13 @@ function FullscreenGraph({
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
       <KnowledgeGraph
-          appearance="fa26"
+          appearance="sapling"
         nodes={nodes}
         edges={edges}
         width={size.w}
         height={size.h}
         highlightId={highlightId}
+        selectedId={selectedId}
         onNodeClick={onNodeClick}
       />
     </div>
