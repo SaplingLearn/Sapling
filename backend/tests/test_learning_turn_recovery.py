@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -132,6 +133,59 @@ def test_late_turn_cannot_change_a_closed_session(gate_on, seams):
         learn_loop._LoopTurn._apply_turn(turn, doc, {})
     assert error.value.status_code == 409
     assert doc == before
+
+
+def test_late_interruption_after_legitimate_close_is_info_only_without_reopening(
+    gate_on, seams, caplog
+):
+    from learning.loop_state_store import LoopSessionClosed
+    from routes import learn_loop
+
+    seams.store["doc"] = {"phase": "close", "served_at": NOW - 10}
+    before = copy.deepcopy(seams.store)
+    turn = SimpleNamespace(session_id="s1", activity_id="cancelled-worker")
+    with (
+        patch("routes.learn_loop.update_loop_state", side_effect=LoopSessionClosed("s1")) as update,
+        caplog.at_level(logging.INFO, logger="routes.learn_loop"),
+    ):
+        learn_loop._LoopTurn.touch_served_at(turn)
+    assert update.call_count == 1 and update.call_args.kwargs == {"require_open": True}
+    assert seams.store == before
+    assert learn_loop._FAILED_TURN_ANCHORS["s1"] == NOW
+    records = [r for r in caplog.records if "Tutor interruption timing" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelno == logging.INFO
+    assert records[0].getMessage() == "Tutor interruption timing skipped: session already closed"
+    assert records[0].exc_info is None
+    seams.save_msg.assert_not_called()
+    seams.flush.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [
+    (503, "this session is closed"),
+    (409, "loop state changed, retry"),
+    None,
+], ids=["503-is-not-expected-close", "other-409", "database-error"])
+def test_unexpected_interruption_write_failures_still_warn_with_traceback(
+    gate_on, seams, caplog, failure
+):
+    from routes import learn_loop
+
+    error = (learn_loop.HTTPException(status_code=failure[0], detail=failure[1])
+             if failure is not None else RuntimeError("Synthetic database failure"))
+    before = copy.deepcopy(seams.store)
+    turn = SimpleNamespace(session_id="s1", activity_id="cancelled-worker")
+    with (
+        patch("routes.learn_loop._update_loop_state", side_effect=error) as update,
+        caplog.at_level(logging.INFO, logger="routes.learn_loop"),
+    ):
+        learn_loop._LoopTurn.touch_served_at(turn)
+    assert update.call_count == 1
+    assert update.call_args.kwargs == {"require_open": True, "require_existing": True}
+    assert seams.store == before and learn_loop._FAILED_TURN_ANCHORS["s1"] == NOW
+    records = [r for r in caplog.records if "Tutor interruption timing" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelno == logging.WARNING
+    assert records[0].getMessage() == "Tutor interruption timing could not be stored"
+    assert records[0].exc_info is not None and records[0].exc_info[1] is error
 
 
 def test_cancelled_real_route_turn_keeps_durable_interruption(gate_on, seams):

@@ -2214,8 +2214,12 @@ class _LoopTurn:
                     require_open=True,
                     require_existing=True,
                 )
-            except Exception:
-                logger.warning("Tutor interruption timing could not be stored", exc_info=True)
+            except Exception as exc:
+                if (isinstance(exc, HTTPException) and exc.status_code == 409
+                        and exc.detail == _SESSION_CLOSED):
+                    logger.info("Tutor interruption timing skipped: session already closed")
+                else:
+                    logger.warning("Tutor interruption timing could not be stored", exc_info=True)
 
     def _scan_set(self):
         """A93: the posed-and-ungraded items (`posed_items`), read ONCE per turn
