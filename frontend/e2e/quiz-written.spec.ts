@@ -14,6 +14,9 @@ test("written quiz: equivalent answers survive reload and produce persisted resu
   await page.getByTestId("quiz-start").click();
   const written = page.getByTestId("quiz-written-answer");
   await expect(written).toBeVisible({ timeout: SUBMIT_TIMEOUT });
+  // The grading rules are on screen, not only in the visually hidden keyboard hint.
+  await expect(page.getByTestId("quiz-format-hint")).toBeVisible();
+  await expect(page.getByTestId("quiz-format-hint")).toContainText("Write a brief answer");
   await written.fill("termination condition");
   await page.getByTestId("quiz-submit-answer").click();
   await expect(page.getByTestId("quiz-panel")).toContainText("E2E written question 2", { timeout: SUBMIT_TIMEOUT });
@@ -24,6 +27,7 @@ test("written quiz: equivalent answers survive reload and produce persisted resu
   await page.evaluate(() => localStorage.removeItem("sapling_quiz_session"));
   await page.goto(`/quiz?attempt=${attempts[0].id}`);
   await expect(page.getByTestId("quiz-panel")).toContainText("E2E written question 2", { timeout: SUBMIT_TIMEOUT });
+  await expect(page.getByTestId("quiz-format-hint")).toContainText("Enter only the number");
   await written.fill("50%");
   await page.getByTestId("quiz-submit-answer").click();
   await expect(page.getByTestId("quiz-panel")).toContainText("E2E written question 3", { timeout: SUBMIT_TIMEOUT });

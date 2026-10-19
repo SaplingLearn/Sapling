@@ -245,6 +245,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
 | `quiz-written-answer` | labeled written-answer textarea for short answers, numeric answers, and algebra |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer textarea |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
