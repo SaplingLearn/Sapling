@@ -9,6 +9,7 @@ number. No LLM, no db: this module is data + arithmetic.
 from __future__ import annotations
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -146,6 +147,22 @@ class Evidence(BaseModel):
     wrong_key: str | None = None
     # NULL/absent for legacy, quiz, review and posttest evidence. Never infer it.
     planning_provenance: PlanningProvenance | None = None
+    # A route-owned grading claim, never supplied by a model or a client.
+    # One flush batch uses one identity for transactional replay/reconciliation.
+    operation_id: str | None = None
+
+    @field_validator("operation_id")
+    @classmethod
+    def _operation_identity(cls, value):
+        if value is None:
+            return value
+        try:
+            canonical = str(UUID(value))
+        except (ValueError, TypeError, AttributeError):
+            raise ValueError("Invalid evidence operation identity") from None
+        if canonical != value:
+            raise ValueError("Evidence operation identity must be a canonical UUID")
+        return value
 
     @model_validator(mode="after")
     def _consistency(self) -> Evidence:
