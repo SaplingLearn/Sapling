@@ -44,6 +44,8 @@
  */
 import path from "node:path";
 
+import type { Page } from "@playwright/test";
+
 import { queryRaw } from "./support/db";
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { BACKEND_URL, USER_ACTIVE } from "./support/stack";
@@ -56,6 +58,19 @@ const FIXTURE_NAME = "upload-journey.pdf";
 const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
+
+/**
+ * The Library's Upload button, inside the shell's <main> only. React streams a
+ * shell page (Suspense, from (shell)/loading.tsx) into a hidden
+ * `<div hidden id="S:N">` and moves it into place on reveal; on a cold or busy
+ * page the client render can land in <main> while that hidden server copy
+ * still exists, and `getByTestId` then resolves to two disabled buttons
+ * (pre-existing; surfaced by the tutor branch's timing, redesign prompt 05).
+ * Scoping to <main> keeps the assertion strict about the rendered page.
+ */
+function appShellUpload(page: Page) {
+  return page.getByTestId("app-shell").getByTestId("library-upload");
+}
 
 /**
  * Journey (#186): a course added inline from the upload modal must be
@@ -74,7 +89,12 @@ test("a course added inline is immediately selectable for the queued file (#186)
   page,
 }) => {
   await page.goto("/library");
-  const uploadButton = page.getByTestId("library-upload");
+  // Scoped to the shell's <main>: until React reveals the streamed page, the
+  // server's copy of it sits in a hidden `<div hidden id="S:0">` at the end of
+  // <body> — (shell)/loading.tsx makes every shell page a Suspense boundary —
+  // so an unscoped locator can briefly match BOTH copies, and a strict-mode
+  // violation fails at once instead of retrying (see appShellUpload).
+  const uploadButton = appShellUpload(page);
   await expect(uploadButton).toBeEnabled();
   await uploadButton.click();
   await expect(page.getByTestId("upload-modal")).toBeVisible();
@@ -132,7 +152,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   // Enabled only once the courses fetch lands (the seeded rich-user-active
   // has enrollments), so this wait also covers the library's initial load.
-  const uploadButton = page.getByTestId("library-upload");
+  const uploadButton = appShellUpload(page);
   await expect(uploadButton).toBeEnabled();
   await uploadButton.click();
 
