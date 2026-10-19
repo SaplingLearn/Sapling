@@ -23,3 +23,19 @@ export async function postSignInRoute(onboardingCompleted: boolean): Promise<str
   }
   return '/onboarding';
 }
+
+/**
+ * Where /onboarding should send a local account instead, or null to stay.
+ * Covers every way past postSignInRoute (a tab running older code, a dev-server
+ * reload mid-sign-in, a typed URL). A failed seed stays, because that is where
+ * the hold screen's "Continue anyway" points.
+ */
+export async function onboardingRedirect(): Promise<string | null> {
+  try {
+    const { state } = await getLocalSeedStatus();
+    if (state === 'pending' || state === 'seeding' || state === 'ready') return SETUP_ROUTE;
+  } catch {
+    // 404 (not a local backend), 401, network: stay on onboarding.
+  }
+  return null;
+}

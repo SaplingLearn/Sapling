@@ -5,7 +5,7 @@
  * else GET /api/auth/local-seed 404s and the routing is exactly what it was.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { postSignInRoute, SETUP_ROUTE } from './localSeed';
+import { onboardingRedirect, postSignInRoute, SETUP_ROUTE } from './localSeed';
 
 function stubStatus(status: number, body: unknown = {}) {
   const fetchMock = vi.fn(async () => ({
@@ -61,5 +61,24 @@ describe('#715 postSignInRoute', () => {
   it('falls back to /onboarding on an unknown state', async () => {
     stubStatus(200, { state: 'weird' });
     expect(await postSignInRoute(false)).toBe('/onboarding');
+  });
+});
+
+// A tab still running pre-#715 code, a dev-server reload mid-sign-in, or a
+// typed URL can all land a local account on /onboarding. The page asks once.
+describe('#715 onboardingRedirect', () => {
+  it.each(['pending', 'seeding', 'ready'])('moves a %s account to the setup screen', async (state) => {
+    stubStatus(200, { state });
+    expect(await onboardingRedirect()).toBe(SETUP_ROUTE);
+  });
+
+  it('leaves a failed seed on onboarding, so "Continue anyway" cannot loop', async () => {
+    stubStatus(200, { state: 'failed', error: 'boom' });
+    expect(await onboardingRedirect()).toBeNull();
+  });
+
+  it.each([404, 401, 500])('stays on onboarding when the status answers %s', async (code) => {
+    stubStatus(code, { detail: 'x' });
+    expect(await onboardingRedirect()).toBeNull();
   });
 });
