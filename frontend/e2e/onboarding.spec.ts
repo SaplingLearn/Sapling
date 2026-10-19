@@ -65,7 +65,7 @@ async function evidence(page: Page, name: string) {
   await fs.mkdir(EVIDENCE_DIR, { recursive: true });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   await page.getByRole("heading", { level: 1 }).focus();
-  await page.screenshot({ path: path.join(EVIDENCE_DIR, `${name}.png`), animations: "disabled" });
+  await page.screenshot({ path: path.join(EVIDENCE_DIR, `${name}.png`), animations: "disabled", fullPage: (page.viewportSize()?.width ?? 1440) < 768 });
 }
 
 async function noHorizontalOverflow(page: Page) {

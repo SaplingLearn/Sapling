@@ -8,14 +8,16 @@ This is stacked on PR [#728](https://github.com/SaplingLearn/Sapling/pull/728), 
 
 The source is the active `Sapling-Complete-Wireframes.pen` file, [shared in Pen](https://app.pen.dev/s/sxEA2n5Ikk7KWUOanWPghMWYFFS0SbPgbkwkIm9dLYA). These source images were freshly exported through the native Pen MCP on October 19, 2026, without reading or modifying the encrypted document. [The export manifest](onboarding-source/manifest.json) records native frame IDs, dimensions and image hashes.
 
-| Screen | Native Pen node | Desktop source |
-| --- | --- | --- |
-| 1. Profile | `km1LR` | [1440 × 960](onboarding-source/km1LR.png) |
-| 2. Academic context | `n3xUk` | [1440 × 960](onboarding-source/n3xUk.png) |
-| 3. Courses | `X0pxMA` | [1440 × 960](onboarding-source/X0pxMA.png) |
-| 4. Materials | `F4WT9A` | [1440 × 960](onboarding-source/F4WT9A.png) |
-| 5. Goal | `R388oC` | [1440 × 960](onboarding-source/R388oC.png) |
-| 6. Check-in review | `rbWgL` | [1440 × 960](onboarding-source/rbWgL.png) |
+| Screen | Native Pen node | Desktop source | Production browser |
+| --- | --- | --- | --- |
+| 1. Profile | `km1LR` | [1440 × 960](onboarding-source/km1LR.png) | [Profile](onboarding-review/01-profile-desktop.png) |
+| 2. Academic context | `n3xUk` | [1440 × 960](onboarding-source/n3xUk.png) | [Academic context](onboarding-review/02-academics-desktop.png) |
+| 3. Courses | `X0pxMA` | [1440 × 960](onboarding-source/X0pxMA.png) | [Courses](onboarding-review/03-courses-desktop.png) |
+| 4. Materials | `F4WT9A` | [1440 × 960](onboarding-source/F4WT9A.png) | [Materials](onboarding-review/04-materials-desktop.png) |
+| 5. Goal | `R388oC` | [1440 × 960](onboarding-source/R388oC.png) | [Goal](onboarding-review/05-goal-desktop.png) |
+| 6. Check-in review | `rbWgL` | [1440 × 960](onboarding-source/rbWgL.png) | [Check-in review](onboarding-review/06-review-desktop.png) |
+
+Additional production captures show the [320px phone review](onboarding-review/06-review-phone-320.png), the [shared desktop sidebar after onboarding](onboarding-review/07-check-in-sidebar-desktop.png), and [recovery into the selected non-default course](onboarding-review/08-recovered-math-check-in-desktop.png). They come from the isolated browser journeys, not a production deployment.
 
 The six onboarding frames are standalone cream canvases: they do **not** contain a sidebar. The post-onboarding application retains the latest #728 sidebar from `u1gDw`: full sage background, authored wordmark, Today / Learn / Knowledge / Library / Tutor / Calendar, and Settings/profile at the bottom. Existing additional tools remain in its More disclosure, with their feature flags intact. Learn and Tutor links preserve the current course while changing the view.
 
