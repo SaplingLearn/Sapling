@@ -63,6 +63,14 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("decision_router", ("off", "jev", "jev_shadow"),
             "Tutor turn router on the Jev decision seam (ADR 0027). jev_shadow "
             "also runs flash-lite to measure agreement.", False),
+    # Redesign prompt 04: the conversation-first Clov tutor VIEW of /learn
+    # (`/learn?view=tutor`). It is the same learning-loop controller, session,
+    # goal, plan and grading as the Learning Studio — presentation only, no
+    # route or API of its own. Client-visible: the frontend offers the view
+    # and its Studio/Tutor switch only while "on"; off ignores ?view=tutor.
+    FlagDef("tutor_view", ("off", "on"),
+            "Offer the Clov tutor view of /learn (?view=tutor): the same learning "
+            "loop, conversation-first. Off shows the Learning Studio only.", True),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
