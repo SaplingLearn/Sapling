@@ -8,6 +8,7 @@ import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
 import { removeInterruptedTurn } from "../chat/interruptedTurn";
+import { SaplingAction, StatusMessage } from "@/components/sapling";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { SessionSummary } from "../chat/SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../chat/SharedContextToggle";
@@ -324,28 +325,41 @@ export function Learn() {
   // failure → a retry state, NEVER the legacy tree (the backend delegates the
   // legacy calls to the loop, so failing open would give a hybrid).
   const { status: loop, retry } = useLoopStatus(userId, userReady);
-  if (loop === null) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>;
+  if (loop === null) return <GateLoading />;
   if (loop === "error") {
+    // Never the legacy tree and never a hybrid: the student retries the gate.
     return (
-      <div data-testid="loop-status-error" role="alert" style={{ padding: 40, color: "var(--text-dim)" }}>
-        <p style={{ marginBottom: 12 }}>Couldn&apos;t reach the tutor. Try again.</p>
-        <button type="button" className="btn btn--primary" data-testid="loop-status-retry" onClick={retry}>
-          Try again
-        </button>
+      <div data-testid="loop-status-error" className="sapling-surface" style={GATE_STYLE}>
+        {/* StatusMessage's error tone is the role=alert announcement. */}
+        <StatusMessage tone="error">Couldn&apos;t reach the tutor. Try again.</StatusMessage>
+        <div style={{ marginTop: 12 }}>
+          <SaplingAction data-testid="loop-status-retry" onClick={retry}>Try again</SaplingAction>
+        </div>
       </div>
     );
   }
   if (loop) {
     return (
-      <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+      <Suspense fallback={<GateLoading />}>
         <LoopLearn />
       </Suspense>
     );
   }
   return (
-    <Suspense fallback={<div style={{ padding: 40, color: "var(--text-dim)" }}>Loading…</div>}>
+    <Suspense fallback={<GateLoading />}>
       <LearnInner />
     </Suspense>
+  );
+}
+
+const GATE_STYLE: React.CSSProperties = { padding: 40, maxWidth: 560 };
+
+/** The gate's wait, announced once (role=status), on the redesign surface. */
+function GateLoading() {
+  return (
+    <div className="sapling-surface" style={GATE_STYLE}>
+      <StatusMessage tone="pending">Loading…</StatusMessage>
+    </div>
   );
 }
 
