@@ -61,7 +61,13 @@ async function checkInAndApprove(page: Page, cap: number) {
         return (await probeItem.getAttribute("data-question-hash")) !== qh;
       })
       .toBe(true);
-    if (await page.getByTestId("loop-probe-reference").isVisible()) await page.getByTestId("loop-probe-next").click();
+    if (await page.getByTestId("loop-probe-reference").isVisible()) {
+      await page.getByTestId("loop-probe-next").click();
+      // Wait for the next item or the end of the check-in before looping:
+      // /probe/next may end the check-in, and the old form then unmounts.
+      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
+        (await probeItem.getAttribute("data-question-hash")) !== qh).toBe(true);
+    }
   }
   await expect(phase).toHaveAttribute("data-phase", "plan");
   await page.getByTestId("loop-plan-approve").click();

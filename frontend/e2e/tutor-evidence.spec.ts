@@ -80,7 +80,12 @@ test("tutor evidence: start, check-in, plan, active, check, history, context, in
     await expect.poll(async () => (await root.getAttribute("data-phase")) !== "probe" ||
       (await page.getByTestId("loop-probe-reference").isVisible()) ||
       (await item.getAttribute("data-question-hash")) !== qh).toBe(true);
-    if (await page.getByTestId("loop-probe-reference").isVisible()) await page.getByTestId("loop-probe-next").click();
+    if (await page.getByTestId("loop-probe-reference").isVisible()) {
+      await page.getByTestId("loop-probe-next").click();
+      // /probe/next may end the check-in: wait for the next item or the plan.
+      await expect.poll(async () => (await root.getAttribute("data-phase")) !== "probe" ||
+        (await item.getAttribute("data-question-hash")) !== qh).toBe(true);
+    }
   }
   await expect(root).toHaveAttribute("data-phase", "plan");
   await expect(page.locator("[data-testid^='loop-plan-concept-']").first()).toBeVisible();
