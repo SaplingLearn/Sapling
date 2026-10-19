@@ -240,6 +240,9 @@ def test_cross_session_same_hash_race_reconciles_final_receipt_provenance(db_con
     for value in values:
         [event] = journal(db_conn, value["node_id"])
         assert receipts[value["operation_id"]]["observations"] == [event["planning_observation"]]
+    # The barrier and unseen assertion apply only to the two racing workers.
+    # This later operation intentionally observes both committed exposures.
+    monkeypatch.setattr(tx, "rpc", real)
     apply(evidence(nodes[0], tagged=False, session_id="later-session", question_hash=shared))
     for operation, saved in receipts.items():
         assert tx.read_receipt(USER_ACTIVE, operation) == saved
