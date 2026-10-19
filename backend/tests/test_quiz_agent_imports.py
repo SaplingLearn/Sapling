@@ -32,5 +32,6 @@ def test_quiz_question_fields_align_with_route_contract():
         "correct_answer",
         "explanation",
         "concept",
+        "accepted_answers",
     }
     assert fields == expected

@@ -46,12 +46,14 @@ AgentTask = Literal[
     "concept_scan", "concept_describe",
     "ocr_vision",
     "decision",
+    "topic_checklist",
 ]
 
 
 # Defaults are conservative. Bumping a model up costs more; the env var
 # escape hatch lets us A/B without redeploying.
 _DEFAULTS: dict[AgentTask, str] = {
+    "topic_checklist": "gemini-2.5-flash",
     "classifier": "gemini-2.5-flash-lite",
     "summary": "gemini-2.5-flash-lite",
     "concepts": "gemini-2.5-flash",

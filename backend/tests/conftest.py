@@ -160,6 +160,7 @@ _GENERATE_TOP_LEVEL_KEYS = frozenset({
 _GENERATE_OPTIONAL_TOP_LEVEL_KEYS = frozenset({"source"})
 #: The keyless projection's per-question and per-option shapes (#546).
 _KEYLESS_QUESTION_KEYS = frozenset({
+    "type", "material_context",
     "id", "question", "concept_tested", "difficulty", "options",
 })
 _KEYLESS_OPTION_KEYS = frozenset({"label", "text"})

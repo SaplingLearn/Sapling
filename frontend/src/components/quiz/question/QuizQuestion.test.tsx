@@ -110,6 +110,7 @@ function makeActions(): QuizActions {
     setConfig: vi.fn(),
     start: vi.fn(),
     select: vi.fn(),
+    write: vi.fn(),
     submitAnswer: vi.fn(),
     next: vi.fn(),
     finish: vi.fn(),
@@ -157,6 +158,29 @@ afterEach(() => {
 // ── the screen ────────────────────────────────────────────────────────────
 
 describe("QuizQuestion — the question", () => {
+  it("lets a fully recorded written quiz proceed to results after cross-device resume", () => {
+    const actions = makeActions();
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "at-end" },
+      items: [item(0, { question: { ...question(1), type: "numeric", options: [] }, answerText: "1/2",
+        verdict: { isCorrect: true, correctIndex: -1, explanation: "" } })] }), actions);
+    fireEvent.click(screen.getByRole("button", { name: "See results" }));
+    expect(actions.next).toHaveBeenCalledOnce();
+  });
+  it.each(["short_answer", "numeric", "symbolic"] as const)("supports %s without answer choices", type => {
+    const actions = makeActions();
+    const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
+    const view = renderScreen(session, actions);
+    const input = screen.getByRole("textbox", { name: "Your answer" });
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.change(input, { target: { value: "2(x+1)" } });
+    expect(actions.write).toHaveBeenCalledWith("2(x+1)");
+    fireEvent.keyDown(input, { key: "a" });
+    expect(actions.select).not.toHaveBeenCalled();
+    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: "2(x+1)" }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
+    fireEvent.click(screen.getByTestId("quiz-submit-answer"));
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
   it("renders the stem, the options and the progress rail", () => {
     renderScreen(makeSession({ cursor: 1, items: [item(0, { verdict: { isCorrect: true, correctIndex: 1, explanation: "" }, selectedIndex: 1 }), item(1), item(2)] }));
 

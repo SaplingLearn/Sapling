@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
+import { isWrittenType } from "@/lib/quiz/types";
 import { AskPanel, type AskSeed } from "./AskPanel";
 import { LeaveDialog } from "./LeaveDialog";
 import "./question.css";
@@ -118,11 +119,14 @@ export function QuizQuestion({
   const total = items.length;
   const options = item?.question.options ?? [];
   const selectedIndex = item?.selectedIndex ?? null;
+  const written = isWrittenType(item?.question.type);
+  const hasAnswer = written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null;
   const answeredCount = items.filter(i => i.verdict !== null).length;
   const isLast = cursor >= total - 1;
   // R-2: every answer is recorded server-side either way; the feedback mode
   // only decides whether the verdict is ever shown.
-  const showVerdict = session.config.feedback === "as-you-go" && item?.verdict != null;
+  const showVerdict = item?.verdict != null && (session.config.feedback === "as-you-go"
+    || (phase === "answered" && isLast && items.every(i => i.verdict !== null)));
 
   /**
    * A quiz call is in flight. Straight off the hook (`useQuizSession`'s
@@ -172,9 +176,9 @@ export function QuizQuestion({
   // ── Actions ──────────────────────────────────────────────────────────
 
   const submit = useCallback(() => {
-    if (phase !== "active" || busy || selectedIndex === null) return;
+    if (phase !== "active" || busy || !hasAnswer) return;
     actions.submitAnswer();
-  }, [actions, busy, phase, selectedIndex]);
+  }, [actions, busy, phase, hasAnswer]);
 
   const flag = () => {
     const wasFlagged = item?.flagged ?? false;
@@ -211,10 +215,10 @@ export function QuizQuestion({
     return {
       label: "Submit",
       testid: "quiz-submit-answer",
-      enabled: phase === "active" && !busy && selectedIndex !== null,
+      enabled: phase === "active" && !busy && hasAnswer,
       activate: submit,
     };
-  }, [actions, busy, isLast, phase, selectedIndex, showVerdict, submit]);
+  }, [actions, busy, isLast, phase, hasAnswer, showVerdict, submit]);
 
   // ── Keyboard (§5 B2) ─────────────────────────────────────────────────
 
@@ -349,10 +353,10 @@ export function QuizQuestion({
   const askSeed: AskSeed = {
     stem: item?.question.question ?? "",
     chosenLabel: (selectedIndex !== null ? options[selectedIndex]?.label : undefined) ?? "—",
-    chosenText: (selectedIndex !== null ? options[selectedIndex]?.text : undefined) ?? "nothing",
+    chosenText: written ? item?.answerText ?? "nothing" : (selectedIndex !== null ? options[selectedIndex]?.text : undefined) ?? "nothing",
     correctLabel: correctLabel ?? "—",
     correctText:
-      (verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.text : undefined) ?? "",
+      verdict?.correctAnswer ?? (verdict && verdict.correctIndex >= 0 ? options[verdict.correctIndex]?.text : undefined) ?? "",
     explanation: verdict?.explanation ?? "",
   };
 
@@ -370,13 +374,43 @@ export function QuizQuestion({
         {header}
 
         <h2 className="quiz-question__stem h-serif">{item?.question.question ?? ""}</h2>
+        {item?.question.material_context && (
+          <p className="label-micro" data-testid="quiz-material-context">
+            {item.question.material_context === "course_material" ? "Course material provided for this question"
+              : item.question.material_context === "catalog" ? "Course catalog context provided"
+                : "General concept practice · no matching course material retrieved"}
+          </p>
+        )}
 
         <p className="quiz-question__hint" id="quiz-keyboard-hint">
+          {written ? (item?.question.type === "symbolic"
+            ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
+            : item?.question.type === "numeric"
+            ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
+            : "Write a brief answer. Capitalization and extra spacing do not affect your score.") : <>
           Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
           moves to the next question. Escape leaves the quiz.
+          </>}
         </p>
 
-        <div
+        {written ? (
+          <div className="quiz-question__written">
+            <label htmlFor="quiz-written-answer" className="label-micro">Your answer</label>
+            <textarea
+              id="quiz-written-answer"
+              data-testid="quiz-written-answer"
+              className="quiz-question__written-input"
+              aria-describedby="quiz-keyboard-hint"
+              rows={item?.question.type === "short_answer" ? 4 : 2}
+              maxLength={2000}
+              value={item?.answerText ?? ""}
+              disabled={!selectable}
+              onChange={event => actions.write?.(event.target.value)}
+              autoComplete="off"
+              spellCheck={item?.question.type === "short_answer"}
+            />
+          </div>
+        ) : <div
           ref={optionsRef}
           className="quiz-question__options"
           role="radiogroup"
@@ -399,7 +433,7 @@ export function QuizQuestion({
               testid={`quiz-answer-option-${option.label}`}
             />
           ))}
-        </div>
+        </div>}
 
         <div
           ref={feedbackRef}
@@ -413,6 +447,8 @@ export function QuizQuestion({
               <span>
                 {verdict.isCorrect
                   ? "Correct."
+                  : verdict.correctAnswer
+                    ? `Not quite — the expected answer is ${verdict.correctAnswer}.`
                   : correctLabel
                     ? `Not quite — the answer is ${correctLabel}.`
                     : "Not quite."}
