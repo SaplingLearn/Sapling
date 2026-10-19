@@ -709,7 +709,10 @@ def test_bu_browser_flow_harvests_only_gradescope_cookies_and_closes_browser():
 
     with (
         patch.object(gs, "PLAYWRIGHT_AVAILABLE", True),
-        patch.object(gs, "sync_playwright", playwright),
+        # create=True keeps these hermetic in an env without the optional
+        # playwright wheel (the module then never binds these names).
+        patch.object(gs, "sync_playwright", playwright, create=True),
+        patch.object(gs, "PlaywrightTimeoutError", TimeoutError, create=True),
         patch.object(gs, "_first_visible", side_effect=first_visible),
     ):
         result = gs.login_via_bu_sso("student", "private-password")
@@ -730,7 +733,10 @@ def test_bu_browser_never_fills_credentials_on_an_untrusted_redirect(url):
     playwright.return_value.__enter__.return_value.chromium.launch.return_value = browser
     with (
         patch.object(gs, "PLAYWRIGHT_AVAILABLE", True),
-        patch.object(gs, "sync_playwright", playwright),
+        # create=True keeps these hermetic in an env without the optional
+        # playwright wheel (the module then never binds these names).
+        patch.object(gs, "sync_playwright", playwright, create=True),
+        patch.object(gs, "PlaywrightTimeoutError", TimeoutError, create=True),
         patch.object(gs, "_first_visible", return_value=MagicMock()) as find,
     ):
         with pytest.raises(gs.GradescopeAuthError, match="secure WebLogin"):
