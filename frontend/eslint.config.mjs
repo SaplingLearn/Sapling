@@ -86,6 +86,7 @@ const eslintConfig = [
       "src/components/screens/Learn.tsx",
       // Learning loop (PKG-13): the loop-path Learn screen and its budget banner.
       "src/components/learn/LoopLearn.tsx",
+      "src/components/learn/TutorView.tsx",
       "src/components/learn/BudgetPausedBanner.tsx",
       "src/components/screens/Library.tsx",
       "src/components/screens/Calendar.tsx",

@@ -182,7 +182,8 @@ route:
 
 | testid | element |
 | --- | --- |
-| `tutor-messages` | conversation log (`role="log"`) |
+| `tutor-messages` | the scrolling conversation (a focusable `role="region"` named "Conversation"). Its settled turns are the inner `role="log"` live region; a streaming reply sits outside it (`aria-busy`) so tokens are not announced one by one (redesign prompt 04) |
+| `tutor-jump-latest` | "Jump to latest" — shown when a reply lands while the reader is scrolled up reviewing history; the transcript never jumps on its own then |
 | `tutor-input` | message `<textarea>` |
 | `tutor-send` | send button |
 | `tutor-stop` | stop-streaming button (visible only while a streamed reply is in flight, #349) |
@@ -190,8 +191,8 @@ route:
 | `tutor-action-confused` | "I'm confused" |
 | `tutor-action-skip` | "Skip" |
 | `tutor-session-resume-{sessionId}` | a "Recent sessions" row's resume button (`screens/Learn.tsx`), suffixed with the session's own id per the stable-domain-id rule |
-| `tutor-interrupted` | the "Interrupted" marker inside a stopped/failed assistant bubble (ADR 0020, #356; the partial text stays in the bubble itself) |
-| `tutor-retry` | the Retry button inside that marker — re-dispatches the interrupted turn |
+| `tutor-interrupted` | the interrupted block inside a stopped/failed assistant turn (ADR 0020, #356; the partial text stays in the turn itself). Says why in words: stopped, interrupted, offline, or paused |
+| `tutor-retry` | "Retry response" inside that block — re-dispatches the interrupted turn. In the loop: only the latest conversational turn of the current session, disabled while another turn or retry runs or chat is paused; never on a graded submission |
 | `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
 | `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
@@ -552,7 +553,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | --- | --- |
 | `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
 | `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
-| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
+| `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists); `data-view="tutor"` in the Clov tutor view (prompt 04) |
+| `loop-view-tutor` | "Open Clov tutor" in the studio heading — switches to `/learn?view=tutor` (same session; shown only while the `tutor_view` flag is on) |
 | `loop-heading` | the Learning Studio page heading (`PageHeading`): course eyebrow, a title naming the server phase, the course select / map link / End session actions (redesign prompt 02) |
 | `loop-phase-strip` | the read-only Check-in / Plan / Learn / Wrap-up indicator (`PhaseStrip`); `data-phase`; `aria-current="step"` on the server's current stage. Never a control |
 | `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3); below the workspace on a phone; hidden while `loop-sessions-error` shows (a failed list never invites a start) |
@@ -601,9 +603,12 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
 | `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
 | `loop-plan-adjust` | "Adjust goal or scope" under the plan — opens the goal editor (plan phase only) |
-| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`); the check card and the Continue / Check me / Start with row sit above it, outside `ChatPanel` |
+| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`); the check card (and, in the studio, the Continue / Check me / Start with / seed row) sit above it, outside `ChatPanel`. In the tutor view that row sits between the transcript and the composer — still outside the scroll box |
+| `loop-seed-confused` / `loop-seed-example` | "I'm confused" / "Another example" — ordinary chat turns through `/chat/stream` (prompt 04); never a grade |
+| `loop-materials-link` | the composer's "Course materials" link to `/library` in the studio (the tutor uses `tutor-materials-open`); never an attachment |
+| `loop-recovery-note` | status-first recovery: a graded submission's feedback stream broke ("may already be graded, so it wasn't sent again"), a 409 already graded, or a Retry that found the turn already saved |
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
-| `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
+| `loop-check-me` | "Check me" ("Check my understanding" / after feedback "Try another check" in the tutor view): posts `/check/next` when no item is current (A27) |
 | `loop-check-prompt` | the current knowledge check (the pose `check.prompt`, A17/A27, plus its answer form and hint); `data-question-hash`, `data-format` |
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
@@ -613,7 +618,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
-| `loop-continue` | "Continue" after feedback — sends the next chat turn |
+| `loop-continue` | "Continue" ("Continue learning" in the tutor view) after feedback — sends the next chat turn |
 | `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
 | `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
@@ -622,6 +627,39 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
 | `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |
 | `loop-close-study-link` | the "Review what's due" link inside `loop-close-done` (`/study?mode=cards`) |
+
+### `tutor` view of the loop (redesign prompt 04)
+
+`/learn?view=tutor`, shown only while the `tutor_view` flag is on. Owners:
+`frontend/src/components/learn/TutorView.tsx` (presentation) inside
+`LoopLearn.tsx` (the one controller). Every `loop-*` id above keeps its meaning
+in this view; these are the view's own.
+
+| testid | element |
+| --- | --- |
+| `tutor-bar` | the top bar: course, "Clov tutor", History, `loop-new-session`, the menu |
+| `tutor-history-open` | "History" — opens `tutor-history-sheet` (`aria-haspopup="dialog"`) |
+| `tutor-history-sheet` / `tutor-history` | "Your conversations": the sheet and its content |
+| `tutor-history-search` | filters both lists by topic (client side) |
+| `tutor-history-open-{sessionId}` | an open loop session — resumes at its own phase (`aria-current="true"` on the current one) |
+| `tutor-history-past-{sessionId}` | a closed or legacy session in this course (`GET /api/learn/sessions/{user}`) — opens read-only |
+| `tutor-history-error` | the past-session read failed ("Retry past sessions"); open sessions still list |
+| `tutor-history-new-session` | "Start a new session" (through `loop-new-session-confirm` when one is open) |
+| `tutor-menu` / `tutor-menu-{goal,materials,map,end,studio}` | the session-actions disclosure and its items (`end` = End session & review, `studio` = switch to the studio) |
+| `tutor-context-{goal,materials,map}` | the context chips; `aria-expanded` on the open one |
+| `tutor-context-panel` / `tutor-context-close` | the context panel beside the column from 1024px, and its close (focus returns to the chip) |
+| `tutor-context-sheet` / `tutor-context-back` | below 1024px the same content is one labelled sheet; "Back to conversation" |
+| `tutor-goal-plan` / `tutor-route-{nodeId}` | Goal & plan: the goal (read-only while teaching), the plan in order with each concept's reason and check-in evidence |
+| `tutor-goal-new-session` / `tutor-goal-edit` | a new goal while teaching (confirmed new session) / "Adjust goal or scope" in probe and plan |
+| `tutor-materials` | Materials: this course's Library documents (names and categories only) |
+| `tutor-materials-open` | the composer's "Materials" control — opens the Materials context |
+| `tutor-materials-error` / `tutor-materials-empty` / `tutor-materials-library` | load failure ("Retry materials"), no materials, and "Open course Library" (`/library`) |
+| `tutor-map` / `tutor-map-full` | Map: the real `KnowledgeGraph` (original colours) and the link to `/tree` |
+| `tutor-goal-line` | "Goal · <goal text>" above the conversation heading while teaching |
+| `tutor-welcome` | the start view — only after session discovery succeeded and found nothing open |
+| `tutor-starter-{n}` | a starter prompt: fills the composer, sends nothing |
+| `tutor-welcome-start` | "Start check-in" — starts the guided session |
+| `tutor-welcome-composer` (`-input`, `-send`) | the welcome composer (`SaplingComposer`): a question starts the guided session with it as the topic |
 
 `loop-hint-offer` was removed in the PKG-13 fix round: PKG-07 sends `hint_offer`
 on the FEEDBACK turn, after the item closed, so the affordance (inside the check
