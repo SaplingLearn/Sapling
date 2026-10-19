@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Dashboard / Today learning workspace (redesign prompt 07) — behaviour.
+ * Dashboard / Home learning workspace (redesign prompt 07) — behaviour.
  *
  *  - Arrival is READ-ONLY: only the read clients are called; no session,
  *    goal, plan, probe/check, answer, close or note mutation ever runs, and

@@ -1,5 +1,5 @@
 /**
- * Journey — the Dashboard / Today learning workspace (redesign prompt 07).
+ * Journey — the Dashboard / Home learning workspace (redesign prompt 07).
  *
  * The old dashboard.spec only proved a seeded course renders. These pin the
  * redesign's behaviour against the real stack and database:

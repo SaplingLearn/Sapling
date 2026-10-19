@@ -29,102 +29,14 @@ import { buildQuizHref } from "@/lib/quiz/source";
 import { dueSet } from "@/lib/quiz/proposals";
 import { SaplingSurface } from "../sapling";
 import { DashboardWorkspace } from "../dashboard/DashboardWorkspace";
+import { QUOTES, Typewriter, getGreetingPrefix } from "../dashboard/Greeting";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
 const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
 
-const QUOTES = [
-  "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
-  "The roots of education are bitter, but the fruit is sweet. — Aristotle",
-  "Live as if you were to die tomorrow. Learn as if you were to live forever. — Gandhi",
-  "An investment in knowledge pays the best interest. — Franklin",
-  "The beautiful thing about learning is that no one can take it away from you. — B.B. King",
-  "Tell me and I forget. Teach me and I remember. Involve me and I learn. — Franklin",
-];
-
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
   return { source: e.source as string, target: e.target as string, strength: e.strength };
-}
-
-function getGreetingPrefix(d: Date) {
-  const h = d.getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
-}
-
-// Pre-revamp typing animation (main@929658f:app/dashboard/page.tsx:257-284):
-//  - Types one char every 55ms.
-//  - Thin forest-green vertical bar '|' cursor, weight 200, blinks 530ms.
-//  - When the text finishes typing, wait 300ms then hide the cursor
-//    entirely (no perpetual blinking).
-//  - Exposes an onDone callback so the parent can fade the quote in once
-//    the greeting settles.
-function Typewriter({
-  text,
-  speed = 55,
-  onDone,
-}: {
-  text: string;
-  speed?: number;
-  onDone?: () => void;
-}) {
-  const [shown, setShown] = React.useState("");
-  const [done, setDone] = React.useState(false);
-  const [cursorOn, setCursorOn] = React.useState(true);
-
-  // Keep onDone in a ref so the typing effect only restarts when text
-  // or speed changes — not on every parent re-render.
-  const onDoneRef = React.useRef(onDone);
-  React.useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
-
-  React.useEffect(() => {
-    setShown("");
-    setDone(false);
-    setCursorOn(true);
-    let i = 0;
-    let settleTimer: ReturnType<typeof setTimeout> | null = null;
-    const iv = setInterval(() => {
-      i += 1;
-      setShown(text.slice(0, i));
-      if (i >= text.length) {
-        clearInterval(iv);
-        settleTimer = setTimeout(() => {
-          setDone(true);
-          onDoneRef.current?.();
-        }, 300);
-      }
-    }, speed);
-    return () => {
-      clearInterval(iv);
-      if (settleTimer) clearTimeout(settleTimer);
-    };
-  }, [text, speed]);
-
-  React.useEffect(() => {
-    if (done) { setCursorOn(false); return; }
-    const blink = setInterval(() => setCursorOn((v) => !v), 530);
-    return () => clearInterval(blink);
-  }, [done]);
-
-  return (
-    <span>
-      {shown}
-      <span
-        aria-hidden
-        style={{
-          opacity: done ? 0 : cursorOn ? 1 : 0,
-          marginLeft: 1,
-          color: "var(--accent)",
-          fontWeight: 200,
-          transition: "opacity 0.1s",
-        }}
-      >
-        |
-      </span>
-    </span>
-  );
 }
 
 const STREAK_SHIELD_PATH =
@@ -197,7 +109,7 @@ function getWeekDays(today: Date) {
 }
 
 /**
- * /dashboard. The default is the Today learning workspace (redesign prompt
+ * /dashboard. The default is the Home learning workspace (redesign prompt
  * 07, components/dashboard/). `?layout=legacy` keeps the pre-FA26
  * dashboard reachable exactly as before, including the legacy top-nav
  * layout preference (`useLayoutPref` "topnav" → the 3-column panels).

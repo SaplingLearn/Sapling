@@ -1,5 +1,5 @@
 /**
- * Visual evidence for the Dashboard / Today learning workspace (redesign
+ * Visual evidence for the Dashboard / Home learning workspace (redesign
  * prompt 07). Gated on DASHBOARD_EVIDENCE_DIR exactly as
  * redesign-evidence.spec.ts is gated on REDESIGN_EVIDENCE_DIR: unset, the
  * normal lane collects and skips it. Set, it writes `<phase>/<step>.png`

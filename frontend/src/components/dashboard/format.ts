@@ -28,7 +28,7 @@ export function dueLabel(iso: string): string {
   return `Due ${day}, ${time}`;
 }
 
-/** "Wednesday, March 11" for the Today line. */
+/** "Wednesday, March 11" for the Home date line. */
 export function longDate(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 }

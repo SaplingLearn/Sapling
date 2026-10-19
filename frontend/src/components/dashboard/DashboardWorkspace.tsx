@@ -1,6 +1,6 @@
 "use client";
 /**
- * Dashboard / Today — the learning workspace (redesign prompt 07; frames
+ * Dashboard / Home — the learning workspace (redesign prompt 07; frames
  * Xnuwg / bj5Ap / cCYac). One bounded map at left and an open learning
  * context at right: the saved goal, the ONE next activity with its reason
  * and a single state-appropriate action, then at most two real notes and
@@ -46,6 +46,7 @@ import { KnowledgeMap } from "./KnowledgeMap";
 import { NextStepPanel } from "./NextStepPanel";
 import { ComingUp, RecentNotes, RecentSessions, type ListedNote } from "./Sections";
 import { TopicList } from "./TopicList";
+import { HomeGreeting } from "./Greeting";
 import { longDate } from "./format";
 import { hasData, useResource } from "./useResource";
 import { useLearningDiscovery } from "./useLearningDiscovery";
@@ -58,7 +59,7 @@ const toEdge = (e: ApiEdge): GraphEdge => ({ source: e.source as string, target:
 export function DashboardWorkspace() {
   const router = useRouter();
   const search = useSearchParams();
-  const { userId, userReady } = useUser();
+  const { userId, userReady, userName } = useUser();
   const [activeSemester, , semesterHydrated] = useActiveSemester();
   const isPhone = useIsMobile();
   const { status: loopStatus, retry: retryLoop } = useLoopStatus(userId, userReady);
@@ -225,7 +226,7 @@ export function DashboardWorkspace() {
   };
   const highlightId = showSuggest && suggestMatches.length === 1 ? suggestMatches[0].id : undefined;
 
-  // ── Today line (client clock: no SSR/CSR drift) ───────────────────────
+  // ── Date line (client clock: no SSR/CSR drift) ────────────────────────
   const [today, setToday] = React.useState<string | null>(null);
   React.useEffect(() => setToday(longDate(now())), []);
   const streak = graph.data?.stats?.streak ?? 0;
@@ -262,8 +263,8 @@ export function DashboardWorkspace() {
   return (
     <div className={styles.page} data-testid="dashboard-workspace">
       <header className={styles.header}>
-        <div>
-          <h1 className={styles.title}>Today</h1>
+        <div className={styles.headingText}>
+          <HomeGreeting userName={userName} titleClassName={styles.title} quoteClassName={styles.quote} />
           <p className={styles.scopeLine} data-testid="dashboard-scope-line">
             {filterLabel} · {semesterLabel}
           </p>
