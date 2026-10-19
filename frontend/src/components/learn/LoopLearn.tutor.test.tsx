@@ -565,6 +565,20 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     expect(await within(sheet).findByText("No past sessions in this course yet.")).toBeTruthy();
   });
 
+  it("keyboard: the session menu is a disclosure; Escape closes it and returns focus", async () => {
+    await resumedTeach();
+    const toggle = screen.getByTestId("tutor-menu");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const item = screen.getByTestId("tutor-menu-goal");
+    item.focus();
+    fireEvent.keyDown(item, { key: "Escape" });
+    expect(screen.queryByTestId("tutor-menu-goal")).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+  });
+
   it("'+ New session' in the bar confirms first; Cancel keeps the conversation", async () => {
     await resumedTeach();
     fireEvent.click(screen.getByTestId("loop-new-session"));
