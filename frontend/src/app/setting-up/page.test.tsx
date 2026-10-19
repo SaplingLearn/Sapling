@@ -3,7 +3,8 @@
  * #715: the hold screen a new local account waits on while the backend copies
  * the sample dataset onto it. It polls GET /api/auth/local-seed; `ready` goes
  * to the dashboard, `failed` shows why and lets the developer continue to
- * onboarding anyway, and a non-local backend (404) never holds anyone here.
+ * onboarding anyway (while still polling: the backend retries on a backoff),
+ * and a non-local backend (404) never holds anyone here.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -75,15 +76,31 @@ describe('#715 setting-up hold screen', () => {
   });
 
   it('shows the error and a way on to onboarding when the seed failed', async () => {
-    const fetchMock = stubAnswers({ status: 200, body: { state: 'failed', error: 'RuntimeError: boom' } });
+    stubAnswers({ status: 200, body: { state: 'failed', error: 'RuntimeError: boom' } });
     render(<SettingUpPage />);
     await waitFor(() => expect(screen.getByTestId('setup-error').textContent).toContain('RuntimeError: boom'));
     const link = screen.getByTestId('setup-continue');
     expect(link.getAttribute('href')).toBe('/onboarding');
     expect(replace).not.toHaveBeenCalled();
-    // A failure is terminal for this screen: no more polling.
-    await new Promise(r => setTimeout(r, 50));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps polling after a failure, since the backend retries, and moves on once ready', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const fetchMock = stubAnswers(
+      { status: 200, body: { state: 'failed', error: 'RuntimeError: boom' } },
+      { status: 200, body: { state: 'seeding' } },
+      { status: 200, body: { state: 'ready' } },
+    );
+    render(<SettingUpPage />);
+    await waitFor(() => expect(screen.getByTestId('setup-error')).toBeTruthy());
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // A retry in flight does not take the way out away mid-read.
+    expect(screen.getByTestId('setup-continue')).toBeTruthy();
+    expect(replace).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
+    expect(refreshProfile).toHaveBeenCalled();
   });
 
   it('never holds anyone on a non-local backend (404)', async () => {

@@ -13,7 +13,10 @@ const POLL_MS = 2000;
  * developer's local stack, while the backend copies the rich sample dataset
  * onto it (services/local_seed_watcher.py). Polls GET /api/auth/local-seed:
  * `ready` → the dashboard (the seed completed onboarding server-side);
- * `failed` → the error plus "Continue anyway" to /onboarding. A 404 means the
+ * `failed` → the error plus "Continue anyway" to /onboarding, and the polling
+ * goes on: the backend retries a failed seed on a backoff, so a later `ready`
+ * still moves on to the dashboard. The error stays up through a retry rather
+ * than flickering away with the way out. A 404 means the
  * backend is not local, so there is nothing to wait for — straight on to
  * /onboarding; a 401 means no session — back to the landing page. Anything
  * else (a restarting dev backend) just keeps polling.
@@ -43,7 +46,6 @@ export default function SettingUpPage() {
         }
         if (status.state === 'failed') {
           setError(status.error || 'The sample data could not be created.');
-          return;
         }
       } catch (err) {
         if (cancelled) return;
@@ -101,6 +103,9 @@ export default function SettingUpPage() {
             style={{ color: 'var(--err)', fontSize: 12.5, maxWidth: 520, wordBreak: 'break-word' }}
           >
             {error}
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+            Retrying in the background; this page moves on by itself if it works.
           </div>
           <a
             data-testid="setup-continue"
