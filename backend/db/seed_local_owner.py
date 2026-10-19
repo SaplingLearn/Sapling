@@ -7,6 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 from db import seed_helpers as h
 from db.connection import page_all, table
 from services.encryption import decrypt
+from services.profiles import get_display_name
 
 _ACTIVE = "rich-user-active"
 _PEER = "rich-user-second"
@@ -22,15 +23,23 @@ def resolve_owner(*, email: str | None = None, user_id: str | None = None) -> di
     else:
         wanted = (email or "").strip().casefold()
         rows = []
+        undecryptable = 0
         for row in page_all(table("users"), "id,email,onboarding_completed", order="id"):
             if not row.get("email"):
                 continue
             try:
                 stored_email = decrypt(row["email"]).strip().casefold()
-            except Exception as exc:
-                raise ValueError("Could not decrypt local user emails. Check the local ENCRYPTION_KEY.") from exc
+            except Exception:
+                # One stray row under another key must not block every other account.
+                undecryptable += 1
+                continue
             if stored_email == wanted:
                 rows.append(row)
+        if not rows and undecryptable:
+            raise ValueError(
+                f"No account matched, and {undecryptable} local user email(s) could not be "
+                "decrypted. Check the local ENCRYPTION_KEY, or use --owner-user-id."
+            )
     if len(rows) != 1:
         raise ValueError(
             "Expected exactly one existing account. Sign in locally with Google first; "
@@ -50,7 +59,15 @@ class OwnerSeedWriter:
     def __init__(self, owner_id: str):
         self.owner_id = owner_id
         self.ids = {_ACTIVE: owner_id}
-        self.invite_prefix = hashlib.sha256(owner_id.encode()).hexdigest()[:16]
+        self._name: str | None = None
+        # Upper-case: the join route upper-cases what the user types.
+        self.invite_prefix = hashlib.sha256(owner_id.encode()).hexdigest()[:16].upper()
+
+    def _owner_name(self) -> str:
+        # Room chat renders the stored user_name, not the profile.
+        if self._name is None:
+            self._name = get_display_name(self.owner_id) or "You"
+        return self._name
 
     def _id(self, table_name: str, source_id: str) -> str:
         value = str(uuid5(NAMESPACE_URL, f"sapling-rich-owner:{self.owner_id}:{table_name}:{source_id}"))
@@ -74,6 +91,8 @@ class OwnerSeedWriter:
         source_id = source.get("id")
         if source_id and table_name not in _SHARED | {"users"}:
             row["id"] = self._id(table_name, source_id)
+        if table_name == "room_messages" and row.get("user_id") == self.owner_id:
+            row["user_name"] = self._owner_name()
         if table_name == "rooms":
             row["invite_code"] = f"OWNER-{self.invite_prefix}-{source['invite_code']}"
 

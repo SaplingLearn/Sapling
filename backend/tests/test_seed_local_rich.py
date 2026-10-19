@@ -8,6 +8,7 @@ from db import seed_helpers as h, seed_local_owner as owner_seed
 from e2e_oracles import judges
 from e2e_oracles.gather import _CIPHERTEXT_MANIFEST
 from services.encryption import decrypt, encrypt
+from services import profiles
 
 
 def test_guard_refuses_non_local(monkeypatch):
@@ -23,6 +24,13 @@ def test_guard_allows_local(monkeypatch):
     rich._guard_local()  # no raise
 
 
+def test_guard_allows_test_environment(monkeypatch):
+    # scripts/e2e-up.sh accepts APP_ENV=test; its rich seed must not abort.
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    rich._guard_local()
+
+
 @pytest.mark.parametrize("url", ["http://localhost:54321", "http://[::1]:54321"])
 def test_guard_accepts_other_exact_loopback_hosts(monkeypatch, url):
     monkeypatch.setenv("APP_ENV", "local")
@@ -30,8 +38,8 @@ def test_guard_accepts_other_exact_loopback_hosts(monkeypatch, url):
     rich._guard_local()
 
 
-@pytest.mark.parametrize("environment", ["production", "staging", "test", "dev", "development", ""])
-def test_guard_requires_exact_local_environment(monkeypatch, environment):
+@pytest.mark.parametrize("environment", ["production", "staging", "dev", "development", ""])
+def test_guard_refuses_non_local_environments(monkeypatch, environment):
     monkeypatch.setenv("APP_ENV", environment)
     monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
     with pytest.raises(SystemExit, match="APP_ENV=local"):
@@ -105,7 +113,7 @@ def local_database(monkeypatch):
     db = MemoryDatabase()
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
-    for module in (rich, h, owner_seed):
+    for module in (rich, h, owner_seed, profiles):
         monkeypatch.setattr(module, "table", db.table)
     db.rows["roles"] = [{"id": "11111111-2222-4333-8444-555555555555", "slug": "admin"}]
     db.rows["users"] = [{
@@ -148,6 +156,15 @@ def test_owner_dataset_populates_all_surfaces_and_is_a_true_noop_on_rerun(local_
     assert len(local_database.writes) == writes
 
 
+def test_owner_chunks_key_on_course_code_and_invite_codes_are_joinable(local_database):
+    _seed_personal()
+    codes = {row["course_code"] for row in local_database.rows["courses"]}
+    # Retrieval filters course_chunks on the course code, never the courses id.
+    assert {row["course_id"] for row in local_database.rows["course_chunks"]} <= codes
+    # The join route upper-cases the typed code before its exact-match lookup.
+    assert all(row["invite_code"] == row["invite_code"].upper() for row in local_database.rows["rooms"])
+
+
 def test_owner_seed_keeps_oracle_ciphertext_and_foreign_keys_clean(local_database):
     _seed_personal()
     for table_name, pk, column in _CIPHERTEXT_MANIFEST:
@@ -162,7 +179,7 @@ def test_owner_seed_keeps_oracle_ciphertext_and_foreign_keys_clean(local_databas
         "assignments": {"enrollment_id": "enrollments", "category_id": "gradebook_categories"},
         "documents": {"user_id": "users", "offering_id": "course_offerings"},
         "notes": {"user_id": "users", "offering_id": "course_offerings"},
-        "course_chunks": {"doc_id": "documents", "uploader_id": "users", "course_id": "courses"},
+        "course_chunks": {"doc_id": "documents", "uploader_id": "users"},
         "rooms": {"created_by": "users", "owner_id": "users"},
         "room_members": {"room_id": "rooms", "user_id": "users"},
         "room_messages": {"room_id": "rooms", "user_id": "users"},
@@ -290,3 +307,20 @@ def test_email_lookup_pages_past_the_postgrest_row_cap(local_database):
         {"id": f"a-{i:04d}", "email": encrypt(f"user{i}@example.test")} for i in range(1001)
     ] + local_database.rows["users"]
     assert owner_seed.resolve_owner(email="developer@gmail.com")["id"] == "user-personal"
+
+
+def test_email_lookup_skips_a_row_encrypted_under_another_key(local_database):
+    local_database.rows["users"].insert(0, {"id": "a-stray", "email": "not-ciphertext"})
+    assert owner_seed.resolve_owner(email="developer@gmail.com")["id"] == "user-personal"
+
+
+def test_email_lookup_names_the_key_when_nothing_matches_and_rows_were_unreadable(local_database):
+    local_database.rows["users"].insert(0, {"id": "a-stray", "email": "not-ciphertext"})
+    with pytest.raises(ValueError, match="ENCRYPTION_KEY"):
+        owner_seed.resolve_owner(email="nobody@gmail.com")
+
+
+def test_owner_room_messages_carry_the_owner_name(local_database):
+    _seed_personal()
+    mine = [row for row in local_database.rows["room_messages"] if row["user_id"] == "user-personal"]
+    assert mine and all(row["user_name"] == "Real Developer" for row in mine)

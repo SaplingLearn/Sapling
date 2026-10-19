@@ -118,7 +118,7 @@ their original IDs and ownership.
 `--owner-user-id` also accepts your existing account ID (shown by
 `GET /api/auth/me` in your signed-in browser), as an alternative to email.
 Unknown or ambiguous accounts fail before any data is written. Seeding refuses
-all environments except **`APP_ENV=local`**, and requires an exact loopback
+all environments except **`APP_ENV=local`** or **`test`** (what `make e2e-up` accepts), and requires an exact loopback
 Supabase host (`127.0.0.1`, `localhost`, or `::1`).
 
 The chunks use encrypted text and deterministic synthetic 768-dimensional

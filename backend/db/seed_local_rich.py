@@ -28,8 +28,9 @@ from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
 
 
 def _guard_local() -> None:
-    if os.getenv("APP_ENV", "").strip().lower() != "local":
-        sys.exit("REFUSING: rich seeding requires APP_ENV=local.")
+    # Same set as routes/auth.py TEST_AUTH_ENVS: e2e-up.sh accepts APP_ENV=test.
+    if os.getenv("APP_ENV", "").strip().lower() not in {"local", "test"}:
+        sys.exit("REFUSING: rich seeding requires APP_ENV=local or APP_ENV=test.")
     url = (os.getenv("SUPABASE_URL") or "").strip()
     try:
         parsed = urlparse(url)
@@ -881,10 +882,13 @@ def _seed_owner_chunks(writer) -> None:
     # Synthetic nonzero embeddings exercise local retrieval without billable
     # model calls. They are fixtures, not semantic embeddings of these texts.
     embedding = [1.0] + [0.0] * 767
-    courses_by_offering = {oid: cid for oid, cid, *_ in _OFFERINGS}
+    # course_chunks keys on the course CODE (what index_document writes and
+    # retrieve_chunks filters on), not the courses-table id.
+    codes = {cid: code for cid, code, *_ in _COURSES}
+    course_code_by_offering = {oid: codes[cid] for oid, cid, *_ in _OFFERINGS}
     for doc_id, _, off_id, _, category, _, _, _, extracted in _DOCUMENTS:
         writer.insert_if_absent("course_chunks", f"{doc_id}-chunk-0", {
-            "course_id": courses_by_offering[off_id],
+            "course_id": course_code_by_offering[off_id],
             "doc_id": doc_id,
             "uploader_id": USER_ACTIVE,
             "chunk_index": 0,
