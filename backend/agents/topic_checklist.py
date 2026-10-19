@@ -24,6 +24,12 @@ MAX_SOURCE_IDS = 30
 MAX_ASSESSMENT_IDS = 20
 
 
+def _clip(value, limit: int):
+    """Keep the first `limit` entries of a raw list input, in model order.
+    Anything that is not a list is left for normal validation to reject."""
+    return value[:limit] if isinstance(value, list) else value
+
+
 def normalized_name(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
@@ -37,35 +43,43 @@ class ChecklistTopic(BaseModel):
     assessment_ids: list[str] = Field(default_factory=list)
     importance: float = Field(ge=0, le=1)
 
-    @field_validator("prerequisites", mode="after")
+    # The clips run BEFORE item validation, as decoding-time maxItems did: a
+    # malformed surplus entry past the cap is discarded, never a reason to
+    # reject the valid prefix and spend an output retry.
+    @field_validator("prerequisites", mode="before")
     @classmethod
-    def _clip_prerequisites(cls, prerequisites: list[str]) -> list[str]:
-        return prerequisites[:MAX_PREREQUISITES]
+    def _clip_prerequisites(cls, prerequisites):
+        return _clip(prerequisites, MAX_PREREQUISITES)
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def _clip_source_ids(cls, source_ids):
+        return _clip(source_ids, MAX_SOURCE_IDS)
 
     @field_validator("source_ids", mode="after")
     @classmethod
-    def _require_and_clip_source_ids(cls, source_ids: list[str]) -> list[str]:
+    def _require_source_ids(cls, source_ids: list[str]) -> list[str]:
         # Every topic cites evidence: empty stays a validation error, so the
         # output retry still fires exactly as it did for the old min_length=1.
         if not source_ids:
             raise ValueError("Each topic must cite at least one source_id.")
-        return source_ids[:MAX_SOURCE_IDS]
+        return source_ids
 
-    @field_validator("assessment_ids", mode="after")
+    @field_validator("assessment_ids", mode="before")
     @classmethod
-    def _clip_assessment_ids(cls, assessment_ids: list[str]) -> list[str]:
-        return assessment_ids[:MAX_ASSESSMENT_IDS]
+    def _clip_assessment_ids(cls, assessment_ids):
+        return _clip(assessment_ids, MAX_ASSESSMENT_IDS)
 
 
 class TopicOutline(BaseModel):
     topics: list[ChecklistTopic]
 
-    @field_validator("topics", mode="after")
+    @field_validator("topics", mode="before")
     @classmethod
-    def _clip_topics(cls, topics: list[ChecklistTopic]) -> list[ChecklistTopic]:
+    def _clip_topics(cls, topics):
         # Runs before validate_hierarchy, so a reference to a clipped topic is
         # a dangling reference there, as it was under decoding-time maxItems.
-        return topics[:MAX_TOPICS]
+        return _clip(topics, MAX_TOPICS)
 
     @model_validator(mode="after")
     def validate_hierarchy(self):

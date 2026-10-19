@@ -26,9 +26,7 @@ import pytest
 
 pytestmark = pytest.mark.live_llm
 
-_OPTED_IN = (
-    os.getenv("RUN_LIVE_TOPIC_CHECKLIST") == "1" and bool(os.getenv("GEMINI_API_KEY"))
-)
+_OPTED_IN = os.getenv("RUN_LIVE_TOPIC_CHECKLIST") == "1"
 
 _PAYLOAD = {
     "course": {"code": "CAS CS 111", "name": "Introduction to Computer Science 1"},
@@ -50,6 +48,9 @@ _PAYLOAD = {
     reason="opt-in live test: set RUN_LIVE_TOPIC_CHECKLIST=1 (and GEMINI_API_KEY)",
 )
 def test_real_model_serves_the_topic_checklist_schema():
+    # Opted in but unconfigured is a failure, never a silent skip: the run
+    # was asked to check the live schema and must not report success unchecked.
+    assert os.getenv("GEMINI_API_KEY"), "RUN_LIVE_TOPIC_CHECKLIST=1 needs GEMINI_API_KEY"
     from agents._providers import model_name_for
     from agents.topic_checklist import MAX_TOPICS, topic_checklist_agent
     from services.topic_checklist_service import validate_evidence

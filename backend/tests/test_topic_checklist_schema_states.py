@@ -158,3 +158,20 @@ def test_over_cap_output_is_clipped_without_spending_a_retry():
     assert calls["n"] == 1
     assert len(result.output.topics) == MAX_TOPICS
     assert all(len(t.source_ids) == MAX_SOURCE_IDS for t in result.output.topics)
+
+
+def test_malformed_surplus_past_the_caps_is_discarded_not_fatal():
+    """Clipping runs BEFORE item validation, as decoding-time maxItems did:
+    surplus a bounded schema never generated must not reject the valid
+    prefix (and spend an output retry) now either."""
+    outline = TopicOutline.model_validate({"topics": [
+        _topic(i, source_ids=["s1"] * MAX_SOURCE_IDS + [None],
+               assessment_ids=["a1"] * MAX_ASSESSMENT_IDS + [{"bad": 1}],
+)
+        for i in range(MAX_TOPICS)
+    ] + [{"name": "malformed surplus, missing every other field"}]})
+    assert len(outline.topics) == MAX_TOPICS
+    assert all(len(t.source_ids) == MAX_SOURCE_IDS for t in outline.topics)
+    assert all(len(t.assessment_ids) == MAX_ASSESSMENT_IDS for t in outline.topics)
+    topic = ChecklistTopic.model_validate(_topic(prerequisites=[f"P{i}" for i in range(MAX_PREREQUISITES)] + [7]))
+    assert topic.prerequisites == [f"P{i}" for i in range(MAX_PREREQUISITES)]
