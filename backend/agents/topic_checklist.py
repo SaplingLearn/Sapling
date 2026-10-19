@@ -4,10 +4,24 @@ from __future__ import annotations
 import hashlib
 import unicodedata
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from agents._providers import model_for
+
+# Array caps, enforced by OUR validation after the call, never by the schema
+# Gemini compiles. Constrained decoding multiplies array bounds: each
+# `maxItems` nested inside the bounded `topics` list is repeated per topic,
+# and #726's bounds 400'd every live refresh on gemini-2.5-flash ("too many
+# states for serving"). Measured live 2026-10-19: array bounds -> 400, array
+# bounds removed with the string bounds kept -> served. So lists carry no
+# length bounds; the validators below clip them to the first N in model order
+# (what decoding-time maxItems did). Pinned by
+# tests/test_topic_checklist_schema_states.py.
+MAX_TOPICS = 60
+MAX_PREREQUISITES = 10
+MAX_SOURCE_IDS = 30
+MAX_ASSESSMENT_IDS = 20
 
 
 def normalized_name(value: str) -> str:
@@ -18,14 +32,40 @@ class ChecklistTopic(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1, max_length=500)
     parent: str = Field(default="", max_length=120)
-    prerequisites: list[str] = Field(default_factory=list, max_length=10)
-    source_ids: list[str] = Field(min_length=1, max_length=30)
-    assessment_ids: list[str] = Field(default_factory=list, max_length=20)
+    prerequisites: list[str] = Field(default_factory=list)
+    source_ids: list[str]
+    assessment_ids: list[str] = Field(default_factory=list)
     importance: float = Field(ge=0, le=1)
+
+    @field_validator("prerequisites", mode="after")
+    @classmethod
+    def _clip_prerequisites(cls, prerequisites: list[str]) -> list[str]:
+        return prerequisites[:MAX_PREREQUISITES]
+
+    @field_validator("source_ids", mode="after")
+    @classmethod
+    def _require_and_clip_source_ids(cls, source_ids: list[str]) -> list[str]:
+        # Every topic cites evidence: empty stays a validation error, so the
+        # output retry still fires exactly as it did for the old min_length=1.
+        if not source_ids:
+            raise ValueError("Each topic must cite at least one source_id.")
+        return source_ids[:MAX_SOURCE_IDS]
+
+    @field_validator("assessment_ids", mode="after")
+    @classmethod
+    def _clip_assessment_ids(cls, assessment_ids: list[str]) -> list[str]:
+        return assessment_ids[:MAX_ASSESSMENT_IDS]
 
 
 class TopicOutline(BaseModel):
-    topics: list[ChecklistTopic] = Field(max_length=60)
+    topics: list[ChecklistTopic]
+
+    @field_validator("topics", mode="after")
+    @classmethod
+    def _clip_topics(cls, topics: list[ChecklistTopic]) -> list[ChecklistTopic]:
+        # Runs before validate_hierarchy, so a reference to a clipped topic is
+        # a dangling reference there, as it was under decoding-time maxItems.
+        return topics[:MAX_TOPICS]
 
     @model_validator(mode="after")
     def validate_hierarchy(self):
