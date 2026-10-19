@@ -17,7 +17,7 @@ The source is the active `Sapling-Complete-Wireframes.pen` file, [shared in Pen]
 | 5. Goal | `R388oC` | [1440 × 960](onboarding-source/R388oC.png) |
 | 6. Check-in review | `rbWgL` | [1440 × 960](onboarding-source/rbWgL.png) |
 
-The six onboarding frames are standalone cream canvases: they do **not** contain a sidebar. The post-onboarding application uses the sidebar from `u1gDw`: full sage background, authored wordmark, Today / Learn / Knowledge / Library / Tutor / Calendar, and Settings/profile at the bottom. Existing additional tools remain in the account menu, with their feature flags intact.
+The six onboarding frames are standalone cream canvases: they do **not** contain a sidebar. The post-onboarding application retains the latest #728 sidebar from `u1gDw`: full sage background, authored wordmark, Today / Learn / Knowledge / Library / Tutor / Calendar, and Settings/profile at the bottom. Existing additional tools remain in its More disclosure, with their feature flags intact. Learn and Tutor links preserve the current course while changing the view.
 
 At 1440 × 960 the onboarding progress track begins at `(440, 110)`, is 560px wide, and the Aleo 40px/600 heading begins at y=202. The main action is 560 × 52px at `(440, 832)`. The form uses the native cream/sage/olive palette, Aleo and SUSE fonts, and existing approved SVG assets. Larger content and editing/error states scroll rather than hiding controls. The phone layout remains usable; this PR's fidelity target is desktop.
 
@@ -30,6 +30,7 @@ At 1440 × 960 the onboarding progress track begins at `(440, 110)`, is 560px wi
 - Goal scope is the whole course or 1–12 explicitly selected real concepts. Whole-course exploration has no focused objective; selected concepts carry the learner's exact objective, capped at 500 characters. Text does not infer target IDs.
 - The final Start check-in click creates a user-scoped pending learning intent. The learning controller revalidates enrollment and concept ownership before starting with that scope, and discovers existing sessions before offering resume or confirmed wrap-up/new. It never silently overwrites a teaching goal.
 - A start response can represent a lazy opener that is not yet in the database. Its accepted session ID stays with the pending intent until the first successful probe persists it. Refresh and retry recover that same opener rather than starting a second or default-course session.
+- After the pending intent is consumed, the canonical `/learn?course=<id>` URL retains the course across repeated refreshes and Tutor view changes. Transient resume/topic/mode instructions are consumed separately.
 - Merely viewing or refreshing the onboarding review does not probe, grade, plan or create a learning session. Plans still require explicit approval after diagnosis.
 
 The handoff's copy corrections are retained: local draft persistence is distinguished from account saves, and the goal action says **Confirm goal & continue**, rather than implying a draft has already been saved as an active learning goal. Source example names, course codes, file names and goal text are replaced by actual user/API data.

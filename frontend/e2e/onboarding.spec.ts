@@ -264,7 +264,7 @@ test("desktop onboarding: six Pen screens → real upload → confirmed goal →
     expect(JSON.stringify(session.loop_state)).not.toContain(OBJECTIVE);
     expect(await decryptTexts([session.loop_state.goal!.text_encrypted])).toEqual([OBJECTIVE]);
     await expect(page.getByTestId("loop-goal-summary")).toContainText(OBJECTIVE);
-    const sidebar = page.getByRole("complementary", { name: "Primary navigation" });
+    const sidebar = page.getByRole("complementary", { name: "Sidebar" });
     const selectedLearn = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Learn", exact: true });
     await expect(selectedLearn).toHaveAttribute("aria-current", "page");
     const sidebarBox = await sidebar.boundingBox();
@@ -275,7 +275,9 @@ test("desktop onboarding: six Pen screens → real upload → confirmed goal →
       expect(Math.abs(actual! - expected!)).toBeLessThanOrEqual(1.5);
     }
     await expect(sidebar).toHaveCSS("background-color", "rgb(229, 235, 221)");
-    await expect(selectedLearn).toHaveCSS("background-color", "rgb(247, 244, 233)");
+    const selectedPill = page.getByTestId("nav-pill");
+    await expect(selectedPill).toHaveAttribute("data-shown");
+    await expect(selectedPill).toHaveCSS("background-color", "rgb(247, 244, 233)");
     await evidence(page, "07-check-in-sidebar-desktop");
     await page.reload();
     await expect(phase).toHaveAttribute("data-session-id", session.id, { timeout: 30_000 });

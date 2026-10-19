@@ -1,0 +1,216 @@
+/* The shell's desktop sidebar: the approved Pen nav (frames Xnuwg, u1gDw).
+ * Geometry is measured off the 1440px exports: 216px sage panel, wordmark at
+ * 24/24, rows 46px tall on a 55px pitch inset 16px, icon slot at 14px, label
+ * at 66px from the panel edge, divider 184px above the bottom edge.
+ * Scoped by the module: nothing here reaches another surface. */
+
+.sidebar {
+  --nav-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --nav-dur: 240ms;
+  --nav-dur-fast: 170ms;
+  --nav-row: 46px;
+  --nav-gap: 9px;
+  flex: 0 0 216px;
+  width: 216px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--sapling-sage);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+  position: relative;
+  z-index: 25;
+}
+
+.brand {
+  display: block;
+  flex: none;
+  width: 150px;
+  margin: 25px 0 0 25px;
+  border-radius: var(--sapling-radius-sm);
+}
+
+/* Everything between the wordmark and the account row scrolls together when
+   the viewport is short, so the pill (inside .content) scrolls with its row. */
+.track {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.content {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px;
+}
+
+.eyebrow {
+  margin: 38px 10px 11px;
+  font: 500 11px/16px var(--sapling-font-body);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--sapling-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--nav-gap);
+}
+
+/* The Pen top-aligns a row's contents: icon ink 10px down, label glyphs 15px. */
+.item {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  width: 100%;
+  min-height: var(--nav-row);
+  padding: 10px 13px 0;
+  border: 0;
+  border-radius: var(--sapling-radius-md);
+  background: transparent;
+  color: var(--sapling-ink);
+  font: 400 16px/1.25 var(--sapling-font-body);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--nav-dur-fast) var(--nav-ease),
+    color var(--nav-dur-fast) var(--nav-ease),
+    transform 120ms var(--nav-ease);
+}
+.item[aria-current="page"] .label { font-weight: 600; }
+.item:not([aria-current="page"]):is(:hover, :focus-visible) { background: rgb(247 244 233 / 55%); }
+.item:active { transform: scale(0.98); }
+/* Inset, so the ring survives the More group's clipping box. */
+.sidebar .item:focus-visible { outline: 2px solid var(--sapling-primary); outline-offset: -2px; }
+
+/* Before the pill has measured its row (server render, first paint) the
+   active row carries the same paper fill itself, so nothing shifts. */
+.track:not([data-pill]) .item[aria-current="page"] { background: var(--sapling-paper); }
+
+.icon {
+  flex: none;
+  width: 22px;
+  display: flex;
+  justify-content: center;
+  color: var(--sapling-primary);
+}
+/* Line icons (Lucide, the legacy set) carry ~2.5px of inner padding. */
+.icon > svg { margin-top: -2px; }
+.label {
+  min-width: 0;
+  margin-top: 1px;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ONE pill for the whole sidebar: translateY tweens it between rows. */
+.pill {
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: var(--nav-row);
+  border-radius: var(--sapling-radius-md);
+  background: var(--sapling-paper);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.pill[data-shown] { opacity: 1; }
+.sidebar[data-animated] .pill {
+  transition: transform var(--nav-dur) var(--nav-ease), opacity var(--nav-dur-fast) var(--nav-ease);
+}
+/* (Re)appearing: placed instantly, faded in, never slid in from elsewhere. */
+.sidebar[data-animated] .pill[data-jump] { transition: opacity var(--nav-dur-fast) var(--nav-ease); }
+
+/* More: a quiet disclosure under the six. */
+.more { margin-top: var(--nav-gap); }
+.moreButton { color: var(--sapling-muted); }
+.moreButton .icon { color: var(--sapling-muted); }
+.chevron { margin: 2px 0 0 auto; flex: none; }
+.moreButton[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+.moreRegion {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+.moreRegion[data-open] { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+.moreInner { min-height: 0; overflow: hidden; }
+.moreList { padding-top: var(--nav-gap); }
+.sidebar[data-animated] .chevron { transition: transform var(--nav-dur) var(--nav-ease); }
+.sidebar[data-animated] .moreRegion {
+  transition:
+    grid-template-rows var(--nav-dur) var(--nav-ease),
+    opacity var(--nav-dur) var(--nav-ease),
+    visibility 0s linear var(--nav-dur);
+}
+.sidebar[data-animated] .moreRegion[data-open] {
+  transition:
+    grid-template-rows var(--nav-dur) var(--nav-ease),
+    opacity var(--nav-dur) var(--nav-ease),
+    visibility 0s linear 0s;
+}
+
+/* Bottom: divider, Settings. margin-top:auto pins it down when it fits. */
+.footer { margin-top: auto; padding: 24px 0 33px; }
+.footer::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin: 0 10px 14px;
+  background: var(--sapling-line);
+}
+.footer .icon { color: var(--sapling-ink); }
+
+.account {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 56px;
+  margin: 0 16px 34px;
+  padding-left: 14px;
+}
+.avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font: 600 15px/1 var(--sapling-font-body);
+  color: var(--sapling-ink);
+}
+.who { min-width: 0; display: grid; gap: 4px; }
+.who strong, .who small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.who strong { font: 600 15px/1.3 var(--sapling-font-body); }
+.who small { font: 400 12px/1.35 var(--sapling-font-body); color: var(--sapling-muted); }
+
+/* Phone: the shell shows the compact rail instead (Navigation.tsx). */
+@media (max-width: 767px) {
+  .sidebar { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar *, .sidebar *::before, .sidebar *::after { transition: none !important; }
+  .item:active { transform: none; }
+}
+
+@media (forced-colors: active) {
+  .item[aria-current="page"] { outline: 2px solid CanvasText; outline-offset: -2px; }
+}

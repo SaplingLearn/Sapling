@@ -436,18 +436,90 @@ completion. tutor-view.spec and redesign-journey.spec pass too.
 (`libraryHref`, `?course=`). Switching this link is a one-line change, but it
 changes Jose's assertion, so it was left as he wrote it.
 
+## Sidebar: Pen nav
+
+Jose's "preserve the existing vertical sidebar exactly" meant the 216 px
+sidebar drawn in every Pen frame, not #727's green icon rail. The desktop shell
+now uses it (`frontend/src/components/fa26/Sidebar.tsx` + `Sidebar.module.css`).
+Measured against Xnuwg at 1440 px, every row, icon, label, the divider and the
+account row land within 1 px of the export (0.75 % of the 216 px strip differs
+at 6 % fuzz, almost all of it glyph antialiasing).
+
+- **Destinations** (from `lib/navFeatures.ts` `SIDEBAR_PRIMARY`, which names
+  `NAV_SECTIONS` entries, so the hide flags still come from the one list):
+  Today `/dashboard`, Learn `/learn`, Knowledge `/tree`, Library `/library`,
+  Tutor `/learn?view=tutor`, Calendar `/calendar`. Then a divider, Settings, and
+  the account row (initial, name, "Personal workspace"; not interactive, as in
+  the Pen).
+- **Knowledge → `/tree`.** It is the existing full knowledge map (graph,
+  filters, search, fullscreen); no other full-map route exists.
+- **Learn and Tutor** are two views of `/learn`. Tutor shows only while
+  `tutor_view` is on. Both hide under `hide_tutor`. Exactly one is current:
+  Tutor when `?view=tutor` and the tutor view is offered, otherwise Learn.
+  `LoopLearn` now follows `?view=` when it changes on the mounted route, so the
+  two sidebar links switch views like the in-page switch (same session, no
+  request).
+- **More.** Quiz, Study, Social, Achievements, Grades, Notetaker, Course Planner
+  (and Admin, for admins) sit in a quiet disclosure under the six. It is
+  collapsed by default and remembered in localStorage (`sapling_nav_more_open`,
+  every access in try/catch, falls back to memory). It opens for a route it
+  holds, with that row current. The same `hide_*` flags apply, and More
+  disappears when they empty it. Escape inside the group closes it and returns
+  focus to the button.
+- **Utilities.** The bell (notification settings), Settings and Report an issue
+  stay in the top-right utility cluster where #727 put them. Settings is also in
+  the sidebar footer. The Pen's top bar (semester, search, info) is not built.
+  The old account popover's links (Settings, Grades, Course planner,
+  Achievements, Community, Admin) all moved to More or the footer.
+- **Phone is unchanged.** Below 768 px (`useIsMobile`, the same edge in CSS)
+  the shell still shows #727's rail. Both navs are rendered and CSS shows one,
+  so the server render is right on a phone. Only the visible nav carries
+  testids. The Pen phone nav (cCYac bottom bar, More sheet) is the next step,
+  after review of the desktop sidebar.
+- **Layout.** `<main>` keeps `app-shell` and its scroll container and gains a
+  32 px left gutter from 768 px. Checked at 1440/1024/768 (sidebar) and 390/320
+  (rail) with no horizontal page overflow. One page fix: between 768 and 959 px
+  the dashboard's graph column fell to ~220 px beside the sidebar, so it stacks
+  there as it does on a phone.
+- **Knowledge icon gap.** The handoff ships no approved Knowledge vector (both
+  manifests list Today, Learn, Library, Tutor, Calendar, paper, Clov). The Pen
+  draws Lucide's pre-1.0 `git-branch`. The app ships `lucide-react` 1.14, whose
+  `GitBranch` is a redrawn variant (the branch joins the trunk mid-way), and
+  that is what renders. Nothing was drawn by hand. Settings uses Lucide
+  `Settings`, the More button Lucide `Ellipsis`, and More rows keep their legacy
+  line icons.
+- **Motion.** One cream pill tweens `translateY` to the new row on a route
+  change. It is placed without a transition on mount and whenever it reappears.
+  Rows fade background and colour on hover and focus, and scale to 0.98 when
+  pressed. More expands with `grid-template-rows` 0fr→1fr and an opacity fade,
+  and its chevron turns. Curves and durations are `--nav-ease` /
+  `--nav-dur` (240 ms) / `--nav-dur-fast` (170 ms). Under reduced motion the
+  transitions are never armed (JS) and zeroed (CSS). In real Chromium the pill
+  read `translateY(180px)` 60 ms into a 66→231 px move; under reduced motion it
+  was already at 231.
+- **Tests.** `fa26/Navigation.test.tsx` covers the six rows and hrefs, the
+  approved icons, Learn vs Tutor by `?view=`, `tutor_view` off, hide flags in
+  the six and in More, More dropping when empty, Admin, flags loading, the
+  disclosure (state, storage, blocked storage, keyboard, Escape and focus
+  return), forced-open routes, the pill (one element, placement, a measured
+  transform change on a route change) and reduced motion, and the
+  desktop/phone switch. `lib/navFeatures.test.ts` pins that every destination
+  appears exactly once (six or More) and tests the active-key mapping.
+  `LoopLearn.tutor.test.tsx` covers the `?view=` follow.
+- **E2E.** `feature-flags.spec.ts` now opens More before asserting
+  `nav-link-quiz` is visible. Watch it, `viewport-fit.spec.ts` (main is 112 px
+  narrower on desktop), `tutor-view.spec.ts`, `redesign-journey.spec.ts`,
+  `redesign-evidence.spec.ts`, `learn-loop.spec.ts`, `dashboard.spec.ts` and
+  `gallery-shots.spec.ts` in the merged gate run.
+
 ## Decisions pending for Andres
 
-1. **Phone bottom tab bar** (AS0Yn). This is a shell-wide change and is not
-   implemented. Phones keep the FA26 64 px rail, and every surface passed at 390
-   and 320 with it.
-2. **Learn vs Tutor nav entries.**
-   - The Tutor agent's proposal: during the rollout, keep the single "Clov" rail
-     entry → `/learn`, and reach the tutor from "Open Clov tutor" in the studio.
-   - If two entries are wanted (the wireframes' pencil and tree icons), point them
-     at `/learn` and `/learn?view=tutor`, keep both under `hide_tutor`
-     (`navFlagForPath('/learn')`), and mark the active one by `view`.
-   - No new route or store is needed either way.
+1. **Phone bottom tab bar** (AS0Yn / cCYac). Still not implemented: it follows
+   your review of the desktop sidebar. Phones keep the FA26 64 px rail, and
+   every surface passed at 390 and 320 with it.
+2. **Learn vs Tutor nav entries.** Resolved by the Pen sidebar (above): two
+   entries, `/learn` and `/learn?view=tutor`, both under `hide_tutor`, Tutor only
+   while `tutor_view` is on, active by `view`.
 3. **`tutor_view` rollout.**
    - The flag is declared in `services/feature_flags.py` (`off` | `on`,
      client-visible) and defaults to off, so production behaviour does not change

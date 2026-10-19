@@ -366,6 +366,18 @@ export function LoopLearn() {
     canonicalUrl.current = href;
     router.replace(href, { scroll: false });
   }, [courseId, router, pathname, viewParam]);
+  // The sidebar's Learn and Tutor links change only `?view=` on this mounted
+  // route. Follow that presentation choice, then canonicalise it with this
+  // course; neither navigation nor a view change starts another session.
+  const urlView: LoopView = searchParams.get("view") === "tutor" ? "tutor" : "learn";
+  const lastUrlView = useRef(urlView);
+  useEffect(() => {
+    if (lastUrlView.current === urlView) return;
+    lastUrlView.current = urlView;
+    setViewParam(urlView);
+    setContextTab(null);
+    setHistoryOpen(false);
+  }, [urlView]);
   const switchView = (next: LoopView) => {
     setViewParam(next);
     setContextTab(null);

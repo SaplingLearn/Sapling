@@ -64,10 +64,10 @@ test("hiding a feature drops it from the nav and redirects its route (#620)", as
   });
   expect(baseline.ok()).toBeTruthy();
   await page.goto(`${FRONTEND_URL}/dashboard`);
-  // The approved Pen sidebar keeps secondary tools in the account menu.
-  // Open that real destination list so absence cannot pass simply because
-  // the menu is collapsed.
-  await page.getByRole("button", { name: "Account and more tools" }).click();
+  // Quiz lives in the desktop sidebar's "More" group, collapsed by default
+  // (the open state is remembered, so it stays open across the reload below).
+  await page.getByTestId("nav-more").click();
+  await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByTestId("nav-link-quiz")).toBeVisible();
 
   // Hide Quiz for everyone, through the API the /admin tab uses.
@@ -80,15 +80,15 @@ test("hiding a feature drops it from the nav and redirects its route (#620)", as
   // Flags load once per page load: a fresh load picks the change up.
   await page.reload();
   await expect(page.getByTestId("nav-link-tree")).toBeVisible();
-  await page.getByRole("button", { name: "Account and more tools" }).click();
-  await expect(page.getByRole("region", { name: "More tools" })).toBeVisible();
+  await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("nav-more-region")).toHaveAttribute("data-open");
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 
   // A typed URL (and anything below it) lands on the dashboard.
   await page.goto(`${FRONTEND_URL}/quiz`);
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("app-shell")).toBeVisible();
-  await page.getByRole("button", { name: "Account and more tools" }).click();
-  await expect(page.getByRole("region", { name: "More tools" })).toBeVisible();
+  await expect(page.getByTestId("nav-more")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("nav-more-region")).toHaveAttribute("data-open");
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 });

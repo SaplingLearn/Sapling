@@ -1,63 +1,54 @@
 "use client";
 
-import React, { Suspense } from "react";
+import React from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { GitBranch, Settings } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useFlagMap } from "@/context/FlagsContext";
 import { navFlagForPath } from "@/lib/navFeatures";
-import { BOTANICAL_ASSETS, BotanicalIcon, SaplingWordmark, type BotanicalIconName } from "../sapling/BotanicalIcon";
-import { DesignSprout } from "./DesignIcon";
+import { useIsMobile } from "@/lib/useIsMobile";
+import { DesignIcon, DesignSprout } from "./DesignIcon";
+import { Sidebar } from "./Sidebar";
 
-type SidebarItem = { href: string; label: string; icon?: BotanicalIconName };
-
-// The approved 01–04 Pen sidebar. Learn and Tutor remain two views of the
-// same controller; both inherit the /learn destination's hide_tutor flag.
-const PRIMARY: SidebarItem[] = [
-  { href: "/dashboard", label: "Today", icon: "today" },
-  { href: "/learn", label: "Learn", icon: "learn" },
-  { href: "/tree", label: "Knowledge" },
+const PRIMARY = [
+  { href: "/dashboard", label: "Dashboard", icon: "home" },
   { href: "/library", label: "Library", icon: "library" },
-  { href: "/learn?view=tutor", label: "Tutor", icon: "tutor" },
+  { href: "/quiz", label: "Study", icon: "study" },
+  { href: "/learn", label: "Clov", icon: "clov" },
+];
+const SECONDARY = [
+  { href: "/tree", label: "Knowledge Map", icon: "tree" },
   { href: "/calendar", label: "Calendar", icon: "calendar" },
+  { href: "/notetaker", label: "Notes", icon: "notes" },
 ];
 
-const MORE_TOOLS = [
-  { href: "/quiz", label: "Quiz", testId: "quiz" },
-  { href: "/study?mode=guide", label: "Study guides", testId: "study" },
-  { href: "/study?mode=cards", label: "Flashcards", testId: "flashcards" },
-  { href: "/notetaker", label: "Notes", testId: "notetaker" },
-  { href: "/gradebook", label: "Grades", testId: "gradebook" },
-  { href: "/course-planner", label: "Course planner", testId: "course-planner" },
-  { href: "/achievements", label: "Achievements", testId: "achievements" },
-  { href: "/social", label: "Community", testId: "social" },
-];
-
-function SidebarBrand() {
-  return <Link href="/dashboard" className="fa26-brand" aria-label="Sapling home">
-    <SaplingWordmark width={150} decorative />
-    <span className="fa26-brand-mobile"><DesignSprout /></span>
-  </Link>;
-}
-
-// The query-aware active state needs its own boundary for statically rendered
-// routes. Keep the rail's width while Next resolves the client URL; flagged
-// links are never exposed by a loading fallback.
+/**
+ * The shell's navigation: the Pen sidebar on desktop, #727's compact rail on
+ * a phone (below useIsMobile's 768px, the same edge as the CSS switch).
+ *
+ * Both are rendered and CSS shows exactly one at every width, so the server
+ * render is already right on a phone and nothing jumps at hydration. Only the
+ * shown one carries data-testids, so an E2E locator never matches two
+ * elements (before hydration the desktop one has them, the server's guess).
+ */
 export function Navigation() {
-  return <Suspense fallback={<aside className="fa26-navigation" aria-label="Primary navigation" aria-busy="true"><SidebarBrand /></aside>}>
-    <SidebarNavigation />
-  </Suspense>;
+  const phone = useIsMobile();
+  return <>
+    <Sidebar testids={!phone} />
+    <PhoneRail testids={phone} />
+  </>;
 }
 
-function SidebarNavigation() {
+/** #727's compact rail, kept unchanged as the phone navigation. */
+export function PhoneRail({ testids = true }: { testids?: boolean }) {
   const pathname = usePathname() || "/dashboard";
-  const searchParams = useSearchParams();
-  const tutorView = searchParams?.get("view") === "tutor";
   const { userName, isAdmin } = useUser();
+  // #620 hide_<feature> flags, keyed by destination through lib/navFeatures
+  // (the same table NavFeatureGate redirects on). Flagged destinations wait for
+  // the flags to load so a hidden feature never flashes into the nav.
   const { flags, ready } = useFlagMap();
   const visible = (href: string) => {
-    const flag = navFlagForPath(href.split("?")[0]);
+    const flag = navFlagForPath(href);
     return !flag || (ready && flags[flag] !== "on");
   };
   const [moreOpen, setMoreOpen] = React.useState(false);
@@ -65,7 +56,6 @@ function SidebarNavigation() {
   const more = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!moreOpen) return;
-    more.current?.querySelector<HTMLAnchorElement>("a")?.focus();
     const close = (event: PointerEvent) => {
       if (!more.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setMoreOpen(false);
     };
@@ -76,51 +66,32 @@ function SidebarNavigation() {
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
   }, [moreOpen]);
-  const active = (href: string) => {
-    if (href === "/learn" || href === "/learn?view=tutor") {
-      return (pathname === "/learn" || pathname.startsWith("/learn/")) && (href.includes("?") === tutorView);
-    }
-    return pathname === href || pathname.startsWith(href + "/");
-  };
-  const destination = (href: string) => {
-    if (pathname !== "/learn" || (href !== "/learn" && href !== "/learn?view=tutor")) return href;
-    // Switching views is not a new course/session choice. Keep the same
-    // resume/course/deep-link context, just as the in-screen view control does.
-    const params = new URLSearchParams(searchParams?.toString());
-    if (href.includes("?")) params.set("view", "tutor");
-    else params.delete("view");
-    return `/learn${params.size ? `?${params}` : ""}`;
-  };
-  const accountName = userName?.trim() || "Your account";
+  const active = (href: string) => href === "/quiz"
+    ? ["/quiz", "/study", "/flashcards"].some(path => pathname === path || pathname.startsWith(path + "/"))
+    : pathname === href || pathname.startsWith(href + "/");
   return <aside className="fa26-navigation" aria-label="Primary navigation">
-    <SidebarBrand />
-    <p className="fa26-workspace-label">Your workspace</p>
-    <nav aria-label="Primary" className="fa26-primary-nav">
-      <div className="fa26-nav-group">
-        {PRIMARY.filter(item => visible(item.href)).map(item => <Link key={item.href} href={destination(item.href)} aria-label={item.label} title={item.label}
-          data-testid={`nav-link-${item.href.includes("?") ? "tutor" : item.href.slice(1)}`} aria-current={active(item.href) ? "page" : undefined} className="fa26-nav-item">
-          {item.icon ? <BotanicalIcon name={item.icon} size={22} style={{ height: BOTANICAL_ASSETS[item.icon].height }} /> : <GitBranch size={22} aria-hidden="true" />}
-          <span className="fa26-nav-label">{item.label}</span>
+    <Link href="/dashboard" className="fa26-brand" aria-label="Sapling home"><DesignSprout /></Link>
+    <nav aria-label="Primary">
+      {[PRIMARY, SECONDARY].map((group, index) => <div className="fa26-nav-group" key={index}>
+        {group.filter(item => visible(item.href)).map(item => <Link key={item.href} href={item.href} aria-label={item.label} title={item.label}
+          data-testid={testids ? `nav-link-${item.href.slice(1)}` : undefined} aria-current={active(item.href) ? "page" : undefined} className="fa26-nav-item">
+          <DesignIcon name={item.icon} /><span className="fa26-nav-label">{item.label}</span>
         </Link>)}
-      </div>
+      </div>)}
     </nav>
-    <div className="fa26-sidebar-footer">
-      <Link href="/settings" className="fa26-nav-item fa26-settings-link" data-testid="nav-link-settings" aria-current={active("/settings") ? "page" : undefined}>
-        <Settings size={20} aria-hidden="true" /><span className="fa26-nav-label">Settings</span>
-      </Link>
-      <div className="fa26-profile">
-        <button ref={trigger} type="button" className="fa26-profile-button" aria-label="Account and more tools"
-          aria-expanded={moreOpen} aria-controls="fa26-more-tools" onClick={() => setMoreOpen(!moreOpen)}>
-          <span className="fa26-profile-initial" aria-hidden="true">{accountName.charAt(0).toUpperCase()}</span>
-          <span className="fa26-profile-copy"><strong>{accountName}</strong><span>Personal workspace</span></span>
-        </button>
-        {moreOpen && <div ref={more} id="fa26-more-tools" className="fa26-more-tools" role="region" aria-label="More tools">
-          <strong>{accountName}</strong>
-          {[...MORE_TOOLS, ...(isAdmin ? [{ href: "/admin", label: "Admin", testId: "admin" }] : [])]
-            .filter(item => visible(item.href))
-            .map(item => <Link key={item.href} href={item.href} data-testid={`nav-link-${item.testId}`} onClick={() => setMoreOpen(false)}>{item.label}</Link>)}
-        </div>}
-      </div>
+    <div className="fa26-profile">
+      <button ref={trigger} type="button" className="fa26-profile-button" aria-label="Account and more tools"
+        aria-expanded={moreOpen} aria-controls="fa26-more-tools" onClick={() => setMoreOpen(!moreOpen)}>
+        {userName?.trim().charAt(0).toUpperCase() || "S"}
+      </button>
+      {moreOpen && <div ref={more} id="fa26-more-tools" className="fa26-more-tools">
+        <strong>{userName || "Your account"}</strong>
+        {[{ href: "/settings", label: "Settings" }, { href: "/gradebook", label: "Grades" },
+          { href: "/course-planner", label: "Course planner" }, { href: "/achievements", label: "Achievements" },
+          { href: "/social", label: "Community" }, ...(isAdmin ? [{ href: "/admin", label: "Admin" }] : [])]
+          .filter(item => visible(item.href))
+          .map(item => <Link key={item.href} href={item.href} data-testid={testids ? `nav-link-${item.href.slice(1)}` : undefined} onClick={() => setMoreOpen(false)}>{item.label}</Link>)}
+      </div>}
     </div>
   </aside>;
 }
