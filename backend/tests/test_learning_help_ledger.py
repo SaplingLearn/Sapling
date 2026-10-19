@@ -10,6 +10,7 @@ unassisted grade in session B."""
 from __future__ import annotations
 
 from collections import defaultdict
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -235,10 +236,18 @@ def test_the_hint_route_records_the_granted_rung(gate_on, seams):
 def _grade_appends(seams, rung_seen: list):
     async def grade(item, answer, *, deps, node_id, max_rung=0, **kw):
         rung_seen.append(max_rung)
-        deps.pending_evidence.append(
-            {"question_hash": answer.question_hash, "max_rung": max_rung, "assisted": max_rung > 0}
-        )
-        return _routes.CORRECT
+        from learning.evidence import Evidence
+
+        row = Evidence(
+            node_id=node_id, channel="free_response", correct=True,
+            question_hash=answer.question_hash, check_item_id=item.id,
+            session_id=deps.session_id, max_rung=max_rung,
+            same_session_recheck=kw.get("same_session_recheck", False),
+            confidence=_routes.CORRECT.confidence, grader_backend=_routes.CORRECT.grader_backend,
+        ).model_dump(mode="json")
+        deps.pending_evidence.append(row)
+        # Match grade_answer: its outcome and pending batch share this final row.
+        return SimpleNamespace(**{**vars(_routes.CORRECT), "evidence": row})
 
     seams.grade.side_effect = grade
 
@@ -264,6 +273,12 @@ def test_the_check_route_rereads_the_floor_inside_the_claim_before_the_write(gat
     assert rung_seen and rung_seen[0] < params.RUNG_NO_CREDIT_MIN  # graded with what was known …
     ((ev,),) = written  # … written with what is known right before the write
     assert ev["max_rung"] == params.RUNG_NO_CREDIT_MIN and ev["assisted"] is True
+    from learning.evidence import Evidence, planning_observation
+    canonical = Evidence.model_validate(ev)
+    assert canonical.weight == 0.0
+    assert planning_observation(canonical)["independent"] is False
+    assert canonical.operation_id in seams.receipts
+    assert seams.receipts[canonical.operation_id]["observations"][0]["max_rung"] == params.RUNG_NO_CREDIT_MIN
     graded.assert_called_once_with("u1", "qh-1")
 
 

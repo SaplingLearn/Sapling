@@ -14,8 +14,9 @@ showed it still paid about one call per offering per active interval, per
 instance, for text nothing reads.) With the loop off, the pre-series behaviour
 is byte-identical (pinned below).
 
-The graph and the class aggregation run for real here, on a small in-memory
-PostgREST stand-in; only the model call is mocked.
+The graph math and class aggregation run for real here, on small in-memory
+table/RPC stand-ins; the model call is mocked. This is a side-effect test, not
+proof of PostgreSQL transaction/locking behavior (the DB lane covers that).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import logging
 from pathlib import Path
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -167,8 +168,29 @@ def _agent(summary: str = "Class summary.") -> AsyncMock:
 
 @contextmanager
 def _world(db: _DB, agent_run: AsyncMock):
+    from test_learning_evidence_apply import _AtomicEvidenceRPC
+
+    # The shared RPC emulator commits the real graph writer's prepared plan.
+    # Wrap these tables rather than replacing the graph calculation: committed
+    # mirrors must be visible to the subsequent real class aggregation reads.
+    tables = {}
+
+    def atomic_table(name):
+        if name not in tables:
+            actual = db.table(name)
+            wrapped = MagicMock()
+            wrapped.select.side_effect = actual.select
+            wrapped.select.return_value = actual.rows
+            wrapped.insert.side_effect = actual.insert
+            wrapped.update.side_effect = actual.update
+            wrapped.upsert.side_effect = actual.upsert
+            tables[name] = wrapped
+        return tables[name]
+
+    atomic = _AtomicEvidenceRPC(atomic_table)
     with (
         patch("services.graph_service.table", side_effect=db.table),
+        patch("learning.evidence_transaction.rpc", side_effect=atomic),
         patch("learning.learner_state.table", side_effect=db.table),
         patch("services.course_context_service.table", side_effect=db.table),
         patch("services.academics.table", side_effect=db.table),
@@ -176,7 +198,7 @@ def _world(db: _DB, agent_run: AsyncMock):
         patch("services.achievement_service.check_achievements"),
         patch.object(ccs.course_summary_agent, "run", new=agent_run),
     ):
-        yield
+        yield atomic
 
 
 @pytest.fixture
@@ -209,7 +231,7 @@ def test_with_the_loop_on_no_flush_calls_the_model_not_even_on_a_tier_change(loo
     not on the answer path, and not off it. The numbers stay current."""
     db = _world_db()
     run = _agent()
-    with _world(db, run):
+    with _world(db, run) as atomic:
         for off in OFFERINGS:
             ccs.update_course_context(off)
         p = db.one("graph_nodes", id="n1")["mastery_score"]
@@ -223,6 +245,7 @@ def test_with_the_loop_on_no_flush_calls_the_model_not_even_on_a_tier_change(loo
 
         p = _flush(db, {"node_id": "n1", "channel": "free_response", "correct": True})
         assert bkt.tier_for(p) == "learning"
+        assert len(atomic.receipts) == len(atomic.committed_events) == len(WITHIN_TIER) + 1
     run.assert_not_awaited()
     for off in OFFERINGS:
         row = db.one("offering_summary", offering_id=off)
@@ -444,7 +467,7 @@ def test_a_failed_course_context_refresh_is_logged_not_raised(payload, caplog):
 
     db = _world_db()
     with (
-        _world(db, _agent()),
+        _world(db, _agent()) as atomic,
         patch(
             "services.course_context_service.update_course_context",
             side_effect=RuntimeError("DB down"),
@@ -452,6 +475,7 @@ def test_a_failed_course_context_refresh_is_logged_not_raised(payload, caplog):
         caplog.at_level(logging.WARNING, logger="services.graph_service"),
     ):
         apply_graph_update(USER, payload, COURSE)
+    assert len(atomic.receipts) == len(atomic.committed_events) == 1
     hits = [r for r in caplog.records if "course-context refresh failed" in r.getMessage()]
     assert [r.levelno for r in hits] == [logging.WARNING] * len(OFFERINGS)
     assert all(r.exc_info for r in hits)
@@ -550,7 +574,7 @@ def test_legacy_graph_update_calls_the_refresh_with_the_offering_only(loop_off):
 
     db = _world_db()
     with (
-        _world(db, _agent()),
+        _world(db, _agent()) as atomic,
         patch("services.course_context_service.update_course_context") as refresh,
     ):
         # PKG-14b: graded evidence is the one mastery-moving payload left;
@@ -558,5 +582,6 @@ def test_legacy_graph_update_calls_the_refresh_with_the_offering_only(loop_off):
         apply_graph_update(
             USER, {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}, COURSE
         )
+    assert len(atomic.receipts) == len(atomic.committed_events) == 1
     assert [c.args for c in refresh.call_args_list] == [(off,) for off in OFFERINGS]
     assert all(c.kwargs == {} for c in refresh.call_args_list)

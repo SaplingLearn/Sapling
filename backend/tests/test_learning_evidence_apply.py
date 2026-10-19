@@ -5,8 +5,9 @@ tests/test_graph_service.py::_bulk_factory."""
 from __future__ import annotations
 
 import re
+from copy import deepcopy
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import get_args
 from unittest.mock import MagicMock, patch
 
@@ -487,6 +488,99 @@ def test_empty_evidence_key_is_the_legacy_path(evidence_value):
 # ── apply_graph_update evidence path ──────────────────────────────────────────
 
 
+class _AtomicEvidenceRPC:
+    """Hermetic transport emulator, not proof of PostgreSQL transactions.
+
+    Fake table methods expose only acknowledged final rows to math assertions.
+    Journal rejection aborts the whole fake commit; receipts make successful
+    replay idempotent. Real lock/rollback behavior has separate DB tests.
+    """
+    def __init__(self, factory):
+        self.factory = factory
+        self.calls = []
+        self.receipts = {}
+        self.committed_events = []
+        self.committed_states = {}
+        self.committed_nodes = {}
+        self.plans = []
+        self.committed_plans = {}
+
+    def __call__(self, name, params):
+        self.calls.append((name, deepcopy(params)))
+        user = params["p_user_id"]
+        if name == "learning_evidence_receipt":
+            receipt = self.receipts.get(params["p_operation_id"])
+            if receipt is None:
+                return {"status": "missing"}
+            if receipt["user_id"] != user:
+                return {"status": "conflict"}
+            return {"status": "committed", "receipt": deepcopy(receipt)}
+        if name == "learning_evidence_snapshot":
+            course = params["p_course_id"]
+            requested = set(params["p_node_ids"])
+            nodes = self.factory("graph_nodes").select("*", filters={"user_id": f"eq.{user}"})
+            owned = {r["id"]: {"user_id": user, "evidence_version": 0, **deepcopy(r)} for r in nodes
+                     if r.get("user_id", user) == user and (course is None or r.get("course_id") == course)}
+            owned.update({key: deepcopy(value) for key, value in self.committed_nodes.items() if key in owned})
+            if not requested <= owned.keys():
+                return {"status": "ownership"}
+            raw_edges = self.factory("graph_edges").select("*", filters={"user_id": f"eq.{user}", "relationship_type": "eq.prerequisite"})
+            edges = []
+            ids = set(requested)
+            for edge in raw_edges:
+                source, target = edge["source_node_id"], edge["target_node_id"]
+                if (edge.get("relationship_type", "prerequisite") != "prerequisite"
+                    or edge.get("user_id", user) != user or source not in owned or target not in owned
+                    or owned[source].get("course_id") != owned[target].get("course_id")
+                    or not ({source, target} & requested)):
+                    continue
+                edges.append({"source": source, "target": target})
+                ids.update((source, target))
+            states = self.factory("learner_state").select("*", filters={"user_id": f"eq.{user}", "node_id": f"in.({','.join(sorted(ids))})"})
+            states = {r["node_id"]: {"evidence_version": 0, **deepcopy(r)} for r in states
+                      if r["node_id"] in ids and r.get("user_id", user) == user}
+            states.update({key: deepcopy(value) for key, value in self.committed_states.items() if key in ids})
+            checks = [
+                {**check,
+                 "count": sum(e.get("session_id") == check["session_id"] and e.get("question_hash") == check["question_hash"] for e in self.committed_events),
+                 "global_count": sum(e.get("question_hash") == check["question_hash"] for e in self.committed_events)}
+                for check in params["p_checks"]
+            ]
+            return {"status": "snapshot", "nodes": [owned[key] for key in sorted(ids)],
+                    "states": list(states.values()), "edges": edges, "checks": checks}
+        assert name == "learning_evidence_commit", name
+        plan = deepcopy(params["p_plan"])
+        self.plans.append(plan)
+        operation = params["p_operation_id"]
+        existing = self.receipts.get(operation)
+        if existing is not None:
+            if (existing["input_fingerprint"] != params["p_input_fingerprint"] or existing["user_id"] != user
+                or existing["course_id"] != params["p_course_id"] or self.committed_plans[operation] != plan):
+                return {"status": "conflict"}
+            return {"status": "replay", "receipt": deepcopy(existing)}
+        # Validate the entire journal before exposing any fake scalar writes.
+        # An exception represents transaction rollback, not a dropped event.
+        for event in plan["events"]:
+            self.factory("node_mastery_events").insert(deepcopy(event))
+        for state in plan["state_rows"]:
+            self.factory("learner_state").upsert(deepcopy(state), on_conflict="user_id,node_id")
+            self.committed_states[state["node_id"]] = {**deepcopy(state), "evidence_version": self.committed_states.get(state["node_id"], {}).get("evidence_version", 0) + 1}
+        for mirror in plan["mirrors"]:
+            payload = {key: value for key, value in mirror.items() if key != "id"}
+            self.factory("graph_nodes").update(deepcopy(payload), filters={"id": f"eq.{mirror['id']}", "user_id": f"eq.{user}"})
+            base = next(r for r in self.factory("graph_nodes").select.return_value if r["id"] == mirror["id"])
+            self.committed_nodes[mirror["id"]] = {"user_id": user, "evidence_version": 0, **deepcopy(base), **deepcopy(mirror)}
+        self.committed_events.extend(deepcopy(plan["events"]))
+        receipt = {"operation_id": operation, "user_id": user, "course_id": params["p_course_id"],
+                   "input_fingerprint": params["p_input_fingerprint"], "changes": deepcopy(plan["changes"]),
+                   "posteriors": {r["id"]: r["mastery_score"] for r in plan["mirrors"]},
+                   "observations": [deepcopy(e["planning_observation"]) for e in plan["events"]
+                                    if e.get("planning_observation") is not None]}
+        self.receipts[operation] = receipt
+        self.committed_plans[operation] = deepcopy(plan)
+        return {"status": "committed", "receipt": deepcopy(receipt)}
+
+
 def _evidence_factory(nodes, edges=(), states=()):
     """Per-table mocks. learner_state.select returns `states` regardless of the
     filter (read_states maps by node_id); graph_edges.select returns every edge
@@ -507,6 +601,7 @@ def _evidence_factory(nodes, edges=(), states=()):
             mocks[name] = m
         return mocks[name]
 
+    factory.rpc = _AtomicEvidenceRPC(factory)
     return factory, mocks
 
 
@@ -545,8 +640,9 @@ def _apply(payload, nodes=NODES, edges=EDGES, states=(), now=None, **kwargs):
     from services.graph_service import apply_graph_update
 
     factory, mocks = _evidence_factory(nodes, edges, states)
-    clock = patch("services.graph_service.datetime", wraps=datetime)
+    clock = patch("learning.evidence_transaction.datetime", wraps=datetime)
     with (
+        patch("learning.evidence_transaction.rpc", side_effect=factory.rpc),
         patch("services.graph_service.table", side_effect=factory),
         patch("learning.learner_state.table", side_effect=factory),
         patch("services.graph_service.touch_streak_safe") as streak,
@@ -558,6 +654,15 @@ def _apply(payload, nodes=NODES, edges=EDGES, states=(), now=None, **kwargs):
         fake_dt.now.return_value = now or NOW
         result = apply_graph_update("u1", payload, course_id="c1", **kwargs)
     return result, mocks, streak
+
+
+def _prefix_states(evidences, *, node_id="n1", **kwargs):
+    """Preserve every intermediate math assertion across atomic final writes."""
+    rows = []
+    for size in range(1, len(evidences) + 1):
+        _, mocks, _ = _apply({"evidence": evidences[:size]}, **kwargs)
+        rows.append(next(row for row in _state_writes(mocks) if row["node_id"] == node_id))
+    return rows
 
 
 def _event_rows(mocks):
@@ -679,8 +784,9 @@ class TestApplyEvidence:
         a, b = _event_rows(mocks)
         assert b["p_before"] == pytest.approx(a["p_after"])
         assert mocks["learner_state"].select.call_count == 1
-        (_, upd_a), (_, upd_b) = _node_updates(mocks)
-        assert (upd_a["times_studied"], upd_b["times_studied"]) == (2, 3)
+        [(_, update)] = _node_updates(mocks)
+        assert update["times_studied"] == 3
+        assert len(_state_writes(mocks)) == 1, "one final row per concept commits atomically"
 
     def test_existing_state_is_read_decayed(self):
         from learning import bkt
@@ -784,18 +890,13 @@ class TestApplyEvidence:
         assert st["max_streak_unassisted"] == 2
 
     def test_counters_follow_the_evidence_mapping(self):
-        _, mocks, _ = _apply(
-            {
-                "evidence": [
-                    {"node_id": "n1", "channel": "free_response", "correct": True},  # strong
-                    {"node_id": "n1", "channel": "mc", "correct": True},  # not strong
-                    {"node_id": "n1", "channel": "free_response", "correct": True, "max_rung": 2},
-                    {"node_id": "n1", "channel": "mc_reasoned", "correct": True},  # strong
-                ]
-            },
-            edges=[],
-        )
-        a, b, c, d = [w for w in _state_writes(mocks) if w["node_id"] == "n1"]
+        evidences = [
+            {"node_id": "n1", "channel": "free_response", "correct": True},
+            {"node_id": "n1", "channel": "mc", "correct": True},
+            {"node_id": "n1", "channel": "free_response", "correct": True, "max_rung": 2},
+            {"node_id": "n1", "channel": "mc_reasoned", "correct": True},
+        ]
+        a, b, c, d = _prefix_states(evidences, edges=[])
         assert (a["opps"], a["streak_unassisted"], a["n_strong_unassisted"]) == (1, 1, 1)
         assert (b["opps"], b["streak_unassisted"], b["n_strong_unassisted"]) == (2, 2, 1)
         assert (c["opps"], c["streak_unassisted"], c["n_strong_unassisted"]) == (3, 0, 1)
@@ -803,42 +904,21 @@ class TestApplyEvidence:
         assert [w["max_streak_unassisted"] for w in (a, b, c, d)] == [1, 2, 2, 2]
 
     def test_same_session_recheck_is_not_a_first_attempt(self):
-        """Spec §3.3 / ZPD STATE: the streak and the strong-channel count take
-        unassisted FIRST-attempt corrects. A re-check of a question already
-        asked this session (the student has seen the answer) counts as an
-        opportunity only: it neither extends nor breaks the streak."""
+        """Rechecks count opportunities without extending a successful streak."""
         seen = {"channel": "free_response", "session_id": "s", "question_hash": "q"}
-        _, mocks, _ = _apply(
-            {
-                "evidence": [
-                    {"node_id": "n1", "correct": True, **seen},
-                    {"node_id": "n1", "correct": True, **seen},  # detected in-call
-                    {"node_id": "n1", "correct": True, **seen},
-                    {
-                        "node_id": "n1",
-                        "channel": "mc_reasoned",
-                        "correct": True,
-                        "same_session_recheck": True,  # flagged by the caller
-                    },
-                ]
-            },
-            edges=[],
-        )
-        writes = [w for w in _state_writes(mocks) if w["node_id"] == "n1"]
+        evidences = [
+            {"node_id": "n1", "correct": True, **seen},
+            {"node_id": "n1", "correct": True, **seen},
+            {"node_id": "n1", "correct": True, **seen},
+            {"node_id": "n1", "channel": "mc_reasoned", "correct": True, "same_session_recheck": True},
+        ]
+        writes = _prefix_states(evidences, edges=[])
         assert [w["opps"] for w in writes] == [1, 2, 3, 4]
         assert [w["streak_unassisted"] for w in writes] == [1, 1, 1, 1]
         assert [w["n_strong_unassisted"] for w in writes] == [1, 1, 1, 1]
         assert writes[-1]["max_streak_unassisted"] == 1
-        _, mocks, _ = _apply(
-            {
-                "evidence": [
-                    {"node_id": "n1", "correct": True, **seen},
-                    {"node_id": "n1", "correct": False, **seen},
-                ]
-            },
-            edges=[],
-        )
-        assert [w["streak_unassisted"] for w in _state_writes(mocks)] == [1, 0], (
+        wrong = [{"node_id": "n1", "correct": True, **seen}, {"node_id": "n1", "correct": False, **seen}]
+        assert [w["streak_unassisted"] for w in _prefix_states(wrong, edges=[])] == [1, 0], (
             "a wrong re-check still breaks the streak"
         )
 
@@ -984,9 +1064,7 @@ class TestApplyEvidence:
             "no journal row for propagation"
         )
         calls = mocks["graph_edges"].select.call_args_list
-        assert len(calls) == 2
-        assert {c.kwargs["filters"].get("source_node_id") for c in calls} == {"eq.n1", None}
-        assert {c.kwargs["filters"].get("target_node_id") for c in calls} == {"eq.n1", None}
+        assert len(calls) == 1, "one owned prerequisite snapshot includes both directions"
         for call in calls:
             f = call.kwargs["filters"]
             assert f["user_id"] == "eq.u1" and f["relationship_type"] == "eq.prerequisite"
@@ -1017,8 +1095,9 @@ class TestApplyEvidence:
         assert dict(_node_updates(mocks))["eq.n0"]["mastery_score"] == pytest.approx(posterior)
         assert (writes["n0"]["opps"], writes["n0"]["streak_unassisted"]) == (7, 3)
         assert writes["n0"]["fsrs_s"] == 10.0, "propagation never touches FSRS"
-        # n0 was not an evidence node, so its state was one extra read.
-        assert mocks["learner_state"].select.call_count == 2
+        # The atomic snapshot includes the target and its prerequisite state.
+        assert mocks["learner_state"].select.call_count == 1
+        assert mocks["learner_state"].select.call_args.kwargs["filters"]["node_id"] == "in.(n0,n1,n2)"
 
     def test_propagation_keeps_the_targets_decay_anchor(self):
         """A propagated observation is not a check on the target (spec §1:
@@ -1123,9 +1202,10 @@ class TestApplyEvidence:
                 * 4
             }
         )
-        assert [w["node_id"] for w in _state_writes(mocks)] == ["n1"] * 4, "parent n0 unwritten"
-        assert [f for f, _ in _node_updates(mocks)] == ["eq.n1"] * 4
-        assert "graph_edges" not in mocks, "no edge read for evidence that cannot propagate"
+        assert [w["node_id"] for w in _state_writes(mocks)] == ["n1"], "parent n0 unwritten"
+        assert [f for f, _ in _node_updates(mocks)] == ["eq.n1"]
+        assert _state_writes(mocks)[0]["opps"] == 4
+        assert len(_event_rows(mocks)) == 4, "each original observation remains journaled"
 
     def test_propagation_carries_the_evidences_own_weight(self):
         """The propagated observation's weight is WEIGHT_PROPAGATION times the
@@ -1170,21 +1250,22 @@ class TestApplyEvidence:
             )
         )
 
-    def test_unowned_node_is_skipped_with_a_warning(self, caplog):
-        with caplog.at_level("WARNING"):
-            result, mocks, streak = _apply(
-                {"evidence": [{"node_id": "ghost", "channel": "mc", "correct": True}]}, edges=[]
-            )
-        assert result == []
-        assert (
-            _state_writes(mocks) == [] and _event_rows(mocks) == [] and _node_updates(mocks) == []
-        )
-        assert "learner_state" not in mocks, "an unowned node's state is never read either"
-        streak.assert_not_called()
-        assert any(
-            "ghost" in r.getMessage() and "not owned or outside course" in r.getMessage()
-            for r in caplog.records
-        )
+    @pytest.mark.parametrize("node", ["ghost", "foreign"])
+    def test_unowned_or_missing_target_rejects_the_entire_batch(self, node):
+        from learning.evidence import PlanningPersistenceUnavailable
+        nodes = [*NODES, {"id": "foreign", "user_id": "other", "concept_name": "Foreign", "course_id": "c1"}]
+        factory, mocks = _evidence_factory(nodes, [], [])
+        payload = {"evidence": [
+            {"node_id": "n1", "channel": "mc", "correct": True},
+            {"node_id": node, "channel": "mc", "correct": True},
+        ]}
+        with patch(__name__ + "._evidence_factory", return_value=(factory, mocks)):
+            with pytest.raises(PlanningPersistenceUnavailable):
+                _apply(payload, nodes=nodes, edges=[])
+        assert _state_writes(mocks) == _event_rows(mocks) == _node_updates(mocks) == []
+        assert "learner_state" not in mocks, "foreign target fails before any learner state read"
+        assert factory.rpc.receipts == {}
+        assert not any(name == "learning_evidence_commit" for name, _ in factory.rpc.calls)
 
     def test_invalid_evidence_raises_before_any_read_or_write(self):
         from services.graph_service import apply_graph_update
@@ -1777,209 +1858,84 @@ class TestGraderBackend:
 # ── the journal on an environment a migration has not reached (CodeRabbit PR #673) ──
 
 
-def _apply_with_unknown_columns(unknown: set[str], payload=None, caplog=None, errors=()):
-    """One evidence row whose node_mastery_events insert 400s (PGRST204) while it
-    names any column in `unknown`, as PostgREST does before the migration that
-    adds it is applied — naming the first one, as PostgREST does. `errors` are
-    raised first, one per attempt. Returns (attempted rows, learner_state writes)."""
-    from services.graph_service import apply_graph_update
-
+@contextmanager
+def _journal_transport(*, unknown=(), errors=(), payload=None):
     factory, mocks = _evidence_factory(NODES, [], ())
-    attempts: list[dict] = []
+    attempts = []
     queued = list(errors)
-
-    def _insert(row):
-        attempts.append(dict(row))
+    def insert(row):
+        attempts.append(deepcopy(row))
         if queued:
             raise queued.pop(0)
-        missing = sorted(unknown & set(row))
+        missing = sorted(set(unknown) & row.keys())
         if missing:
-            raise RuntimeError(
-                f"PGRST204 Could not find the '{missing[0]}' column of "
-                "'node_mastery_events' in the schema cache"
-            )
+            raise RuntimeError(f"PGRST204 Could not find the '{missing[0]}' column of 'node_mastery_events'")
         return []
-
-    factory("node_mastery_events").insert.side_effect = _insert
-    clock = patch("services.graph_service.datetime", wraps=datetime)
-    with (
-        patch("services.graph_service.table", side_effect=factory),
-        patch("learning.learner_state.table", side_effect=factory),
-        patch("services.graph_service.touch_streak_safe"),
-        patch("services.course_context_service.update_course_context"),
-        patch("services.academics.user_offering_ids_for_course", return_value=[]),
-        patch("services.achievement_service.check_achievements"),
-        clock as fake_dt,
-    ):
-        fake_dt.now.return_value = NOW
-        apply_graph_update(
-            "u1",
-            payload
-            or {
-                "evidence": [
-                    {
-                        "node_id": "n1",
-                        "channel": "free_response",
-                        "correct": True,
-                        "grader_backend": "gemini",
-                    }
-                ]
-            },
-            course_id="c1",
-        )
-    return attempts, _state_writes(mocks)
+    factory("node_mastery_events").insert.side_effect = insert
+    data = payload or {"evidence": [{"node_id": "n1", "channel": "free_response", "correct": True,
+                                    "grader_backend": "gemini"}]}
+    with patch(__name__ + "._evidence_factory", return_value=(factory, mocks)):
+        yield attempts, mocks, factory.rpc, lambda: _apply(data, edges=[])
 
 
 class TestJournalBeforeAMigration:
-    """A route that runs before 20260927182054_learning_mastery_event_seq.sql or
-    20260927093149_learning_grader_backend.sql (or the older 20260814051517
-    event_type migration) must still journal the evidence:
-    learner_state and graph_nodes are already written when the journal insert
-    runs, so a lost row is a silent gap in the replayable history."""
+    """Missing schema and durable journal failures reject the whole batch.
 
-    def test_a_missing_grader_backend_column_keeps_the_row_and_its_event_type(self, caplog):
-        from learning.evidence import EVIDENCE_EVENT_TYPE
+    No event column is dropped and no scalar-only success is returned. These
+    are RPC-emulated unit assertions; real SQL rollback has a separate gate.
+    """
+    @pytest.mark.parametrize("columns", [
+        {"grader_backend"}, {"evidence_seq"}, {"event_type"},
+        {"grader_backend", "event_type"}, {"node_id"},
+    ])
+    def test_missing_columns_fail_closed_without_downgrading_event(self, columns):
+        from learning.evidence import PlanningPersistenceUnavailable
+        with _journal_transport(unknown=columns) as (attempts, mocks, transport, apply):
+            with pytest.raises(PlanningPersistenceUnavailable):
+                apply()
+            assert len(attempts) == 2 and attempts[0] == attempts[1]
+            assert {"grader_backend", "evidence_seq", "event_type", "node_id"} <= attempts[0].keys()
+            mocks["learner_state"].upsert.assert_not_called()
+            mocks["graph_nodes"].update.assert_not_called()
+            assert transport.committed_events == [] and transport.receipts == {}
 
-        with caplog.at_level("WARNING", logger="services.graph_service"):
-            attempts, writes = _apply_with_unknown_columns({"grader_backend"})
-        assert len(writes) == 1  # learner_state was written before the journal
-        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
-            (True, True),
-            (False, True),
-        ]
-        landed = attempts[-1]
-        assert landed["event_type"] == EVIDENCE_EVENT_TYPE and landed["channel"] == "free_response"
-        assert landed["correct"] is True and landed["p_after"] > landed["p_before"]
-        assert any(
-            "grader_backend" in r.getMessage() and "20260927093149" in r.getMessage()
-            for r in caplog.records
-            if r.levelname == "WARNING"
-        )
+    def test_transient_check_violation_retries_same_plan_then_commits_all_rows(self):
+        violation = RuntimeError('23514 violates constraint node_mastery_events_grader_backend_check')
+        with _journal_transport(errors=[violation]) as (attempts, mocks, transport, apply):
+            result, _, _ = apply()
+            assert result and len(attempts) == 2 and attempts[0] == attempts[1]
+            assert "grader_backend" in attempts[0]
+            commits = [args for name, args in transport.calls if name == "learning_evidence_commit"]
+            assert len(commits) == 2 and commits[0] == commits[1]
+            mocks["learner_state"].upsert.assert_called_once()
+            mocks["graph_nodes"].update.assert_called_once()
+            assert len(transport.committed_events) == len(transport.receipts) == 1
 
-    def test_a_missing_evidence_seq_column_keeps_the_row_and_the_older_columns(self, caplog):
-        """A36's evidence_seq (20260927182054) postdates the learner_state migration
-        the evidence path needs, like grader_backend: a code-first deploy degrades
-        the row to a NULL evidence_seq (as the migration's own header describes
-        rows written before it) instead of losing it (a33 verification)."""
-        with caplog.at_level("WARNING", logger="services.graph_service"):
-            attempts, writes = _apply_with_unknown_columns({"evidence_seq"})
-        assert len(writes) == 1
-        assert [("evidence_seq" in a, "grader_backend" in a) for a in attempts] == [
-            (True, True),
-            (False, True),
-        ]
-        assert attempts[-1]["event_type"] and attempts[-1]["channel"] == "free_response"
-        assert any("20260927182054" in r.getMessage() for r in caplog.records)
+    def test_repeated_constraint_failure_preserves_no_scalar_or_journal_success(self):
+        from learning.evidence import PlanningPersistenceUnavailable
+        violation = RuntimeError('23514 violates constraint node_mastery_events_grader_backend_check')
+        with _journal_transport(errors=[violation, violation]) as (attempts, mocks, transport, apply):
+            with pytest.raises(PlanningPersistenceUnavailable):
+                apply()
+            assert len(attempts) == 2 and attempts[0] == attempts[1]
+            mocks["learner_state"].upsert.assert_not_called()
+            mocks["graph_nodes"].update.assert_not_called()
+            assert transport.committed_events == [] and transport.receipts == {}
 
-    def test_both_optional_columns_missing_still_lands_the_row(self):
-        attempts, _ = _apply_with_unknown_columns({"grader_backend", "event_type"})
-        assert len(attempts) == 3
-        landed = attempts[-1]
-        assert "grader_backend" not in landed and "event_type" not in landed
-        # everything the PKG-03 migration added is kept: it is applied whenever
-        # the evidence path runs at all (read_states needs learner_state first)
-        assert {"channel", "correct", "weight", "p_before", "p_after", "reason"} <= set(landed)
-        assert landed["reason"] == "evidence:free_response"
-
-    def test_the_ladder_follows_migration_order_newest_first(self):
-        """Each retry drops one more migration's columns, newest first. Migrations
-        apply in timestamp order, so an environment that lacks a column also lacks
-        every newer one: the ladder never drops a column the environment has."""
-        from services.graph_service import _JOURNAL_OPTIONAL_COLUMNS
-
-        migrations = [m for m, _ in _JOURNAL_OPTIONAL_COLUMNS]
-        assert migrations == sorted(migrations, reverse=True)
-        migrations_dir = Path(__file__).resolve().parents[1] / "db" / "migrations"
-        assert set(migrations) <= {p.name for p in migrations_dir.glob("*.sql")}
-        for migration, columns in _JOURNAL_OPTIONAL_COLUMNS:
-            ddl = (migrations_dir / migration).read_text()
-            for column in columns:
-                assert re.search(rf"ADD COLUMN IF NOT EXISTS {column}\b", ddl), (migration, column)
-
-    def test_only_the_column_the_error_names_is_dropped(self):
-        """PostgREST names the unknown column; only that one is dropped, so a
-        column the environment has is never lost to a rung it did not need."""
-        attempts, _ = _apply_with_unknown_columns({"event_type"})
-        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
-            (True, True),
-            (True, False),
-        ]
-
-    def test_a_dead_journal_still_never_raises(self, caplog):
-        with caplog.at_level("WARNING", logger="services.graph_service"):
-            attempts, writes = _apply_with_unknown_columns(
-                {"grader_backend", "event_type", "node_id"}
-            )
-        # event_type, then grader_backend, are named and dropped; node_id is no
-        # optional column, so that error gets one unchanged retry and is logged
-        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
-            (True, True),
-            (True, False),
-            (False, False),
-            (False, False),
-        ]
-        assert len(writes) == 1
-        [lost] = [r for r in caplog.records if "journal row is lost" in r.getMessage()]
-        assert lost.levelname == "ERROR" and lost.exc_info and "node_id" in str(lost.exc_info[1])
-
-    def test_every_retry_logs_the_error_it_follows(self, caplog):
-        """A retry never hides the failure before it: each warning carries the
-        exception, whatever the next attempt does."""
-        with caplog.at_level("WARNING", logger="services.graph_service"):
-            _apply_with_unknown_columns({"grader_backend"})
-        [warning] = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert warning.exc_info and "PGRST204" in str(warning.exc_info[1])
-
-    def test_a_check_violation_keeps_the_column_and_is_logged(self, caplog):
-        """A non-schema error (a CHECK violation, a transient 5xx) never drops a
-        column: the row is retried once unchanged and the error is logged — the
-        constraint name mentions grader_backend, but it is not an unknown column."""
-        violation = RuntimeError(
-            '23514 new row for relation "node_mastery_events" violates check '
-            'constraint "node_mastery_events_grader_backend_check"'
-        )
-        with caplog.at_level("WARNING", logger="services.graph_service"):
-            attempts, _ = _apply_with_unknown_columns(set(), errors=[violation])
-        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
-            (True, True),
-            (True, True),
-        ]
-        [warning] = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert (
-            warning.exc_info[1] is violation and "retrying once unchanged" in warning.getMessage()
-        )
-
-    def test_a_repeated_check_violation_loses_the_row_loudly(self, caplog):
-        violation = RuntimeError(
-            '23514 violates check constraint "node_mastery_events_grader_backend_check"'
-        )
-        with caplog.at_level("WARNING", logger="services.graph_service"):
-            attempts, writes = _apply_with_unknown_columns(set(), errors=[violation, violation])
-        assert len(attempts) == 2 and all("grader_backend" in a for a in attempts)
-        assert len(writes) == 1  # learner_state was written before the journal
-        [lost] = [r for r in caplog.records if r.levelname == "ERROR"]
-        assert lost.exc_info[1] is violation and "journal row is lost" in lost.getMessage()
-
-    def test_the_http_error_body_names_the_column(self):
-        """db.connection raises httpx.HTTPStatusError, whose message omits the
-        PostgREST body: the column name is read off the response body too."""
+    def test_postgrest_schema_body_is_not_permission_to_drop_provenance(self):
         import httpx
-
-        request = httpx.Request("POST", "http://db/rest/v1/node_mastery_events")
-        body = (
-            '{"code":"PGRST204","message":"Could not find the \'grader_backend\' column of '
-            "'node_mastery_events' in the schema cache\"}"
-        )
-        error = httpx.HTTPStatusError(
-            "Client error '400 Bad Request'",
-            request=request,
-            response=httpx.Response(400, request=request, text=body),
-        )
-        attempts, _ = _apply_with_unknown_columns(set(), errors=[error])
-        assert [("grader_backend" in a, "event_type" in a) for a in attempts] == [
-            (True, True),
-            (False, True),
-        ]
+        from learning.evidence import PlanningPersistenceUnavailable
+        request = httpx.Request("POST", "http://db/rest/v1/rpc/learning_evidence_commit")
+        body = {"code": "PGRST204", "message": "Could not find the 'grader_backend' column"}
+        error = httpx.HTTPStatusError("400 Bad Request", request=request,
+            response=httpx.Response(400, request=request, json=body))
+        with _journal_transport(errors=[error, error]) as (attempts, mocks, transport, apply):
+            with pytest.raises(PlanningPersistenceUnavailable):
+                apply()
+            assert len(attempts) == 2 and attempts[0] == attempts[1]
+            assert all("grader_backend" in row for row in attempts)
+            mocks["learner_state"].upsert.assert_not_called()
+            mocks["graph_nodes"].update.assert_not_called()
 
 
 # ── evidence_seq (reopened for the live sequence-test finding; spec §4, §13 A36) ──
@@ -2005,8 +1961,9 @@ class TestEvidenceSeq:
                 {"node_id": "n1", "channel": "free_response", "correct": True},
             ],
         )
-        clock = patch("services.graph_service.datetime", wraps=datetime)
+        clock = patch("learning.evidence_transaction.datetime", wraps=datetime)
         with (
+            patch("learning.evidence_transaction.rpc", side_effect=factory.rpc),
             patch("services.graph_service.table", side_effect=factory),
             patch("learning.learner_state.table", side_effect=factory),
             patch("services.graph_service.touch_streak_safe"),
@@ -2049,17 +2006,13 @@ class TestEvidenceSeq:
             ("n2", 2),
         ]
 
-    def test_skipped_evidence_takes_no_seq(self):
-        _, mocks, _ = _apply(
-            {
-                "evidence": [
-                    {"node_id": "ghost", "channel": "mc", "correct": True},
-                    {"node_id": "n1", "channel": "mc", "correct": True},
-                    {"node_id": "n1", "channel": "mc", "correct": False},
-                ]
-            },
-            edges=[],
-        )
+    def test_rejected_batch_cannot_leave_partial_sequence_rows(self):
+        from learning.evidence import PlanningPersistenceUnavailable
+        valid = [{"node_id": "n1", "channel": "mc", "correct": True},
+                 {"node_id": "n1", "channel": "mc", "correct": False}]
+        with pytest.raises(PlanningPersistenceUnavailable):
+            _apply({"evidence": [{"node_id": "ghost", "channel": "mc", "correct": True}, *valid]}, edges=[])
+        _, mocks, _ = _apply({"evidence": valid}, edges=[])
         assert [r["evidence_seq"] for r in _event_rows(mocks)] == [0, 1]
 
     def test_each_call_starts_at_zero(self):

@@ -246,6 +246,34 @@
   font-size: 14px;
 }
 
+/* #673 practice preflight notice: copy lines and a wrapping action row. */
+.practiceNotice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-2);
+  min-width: 0;
+}
+
+.practiceLine {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.practiceActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sapling-space-2) var(--sapling-space-3);
+}
+
+.practiceActions > * {
+  flex: 1 1 160px;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
+  text-decoration: none;
+}
+
 .topicOffer {
   display: flex;
   flex-wrap: wrap;

@@ -1216,8 +1216,8 @@ def main(argv: list[str] | None = None) -> None:
         _seed_dataset()
         # Global config, not per-user data: the owner seed leaves flags alone.
         seed_feature_flags()
-        # The learning-loop E2E fixture (fixed loop/capped users + shared course
-        # assets) is not per-owner data: the owner seed leaves it alone too.
+        # The deterministic loop QA users/assets belong only to the shared
+        # test fixture, never to a signed-in developer's owner dataset.
         seed_learning_loop()
         h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
         return

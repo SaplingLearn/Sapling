@@ -20,6 +20,16 @@ from services.graph_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def atomic_evidence_transport(monkeypatch):
+    from learning import evidence_transaction
+    from test_learning_evidence_apply import _AtomicEvidenceRPC
+
+    transport = _AtomicEvidenceRPC(lambda name: gs.table(name))
+    monkeypatch.setattr(evidence_transaction, "rpc", transport)
+    return transport
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _mock_table(data: dict):
@@ -602,61 +612,47 @@ class TestApplyGraphUpdate:
         assert result == []
 
     def _apply_with_failing_events(self, fail_times):
-        """Run one graded evidence whose node_mastery_events insert fails
-        `fail_times` times. Returns the payloads it attempted."""
-        existing = [
-            {"id": "n1", "concept_name": "X", "mastery_score": 0.5,
-             "times_studied": 0, "course_id": "c1"}
-        ]
+        """A journal rejection represents whole-transaction rollback."""
+        from learning.evidence import PlanningPersistenceUnavailable
+        existing = [{"id": "n1", "concept_name": "X", "mastery_score": 0.5,
+                     "times_studied": 0, "course_id": "c1"}]
         factory, mocks = _bulk_factory(existing_nodes=existing)
         attempts = []
-
-        def _insert(payload):
+        def insert(payload):
             attempts.append(payload)
             if len(attempts) <= fail_times:
                 raise RuntimeError("PGRST204 column event_type does not exist")
             return []
-
-        mocks_holder = {}
-
-        def wrapped(name):
-            m = factory(name)
-            if name == "node_mastery_events" and name not in mocks_holder:
-                m.insert.side_effect = _insert
-                mocks_holder[name] = m
-            return m
-
-        # PKG-14b: the flat-delta path is gone; graded evidence is the one
-        # journal writer left, and it names event_type='evidence'.
+        factory("node_mastery_events").insert.side_effect = insert
         graph_update = {"evidence": [{"node_id": "n1", "channel": "mc", "correct": True}]}
-        with patch("services.graph_service.table", side_effect=wrapped), \
-             patch("learning.learner_state.table", side_effect=wrapped), \
+        error, result = None, None
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("learning.learner_state.table", side_effect=factory), \
              patch("services.graph_service.touch_streak_safe"), \
              patch("services.course_context_service.update_course_context"):
-            result = apply_graph_update("u1", graph_update, course_id="c1")
-        return attempts, result
+            try:
+                result = apply_graph_update("u1", graph_update, course_id="c1")
+            except PlanningPersistenceUnavailable as exc:
+                error = exc
+        return attempts, result, mocks, error
 
-    def test_event_type_rejection_retries_without_it(self):
-        """The E7 ordering hazard: a deploy that takes this code before the
-        migration lands gets a 400 for the unknown column. Degrade to the
-        pre-E7 row rather than costing the student their graded quiz."""
-        attempts, result = self._apply_with_failing_events(fail_times=1)
-        assert len(attempts) == 2
+    def test_transient_commit_failure_retries_identical_full_event(self):
+        attempts, result, mocks, error = self._apply_with_failing_events(fail_times=1)
+        assert error is None and result and result[0]["after"] > result[0]["before"]
+        assert len(attempts) == 2 and attempts[0] == attempts[1]
         assert attempts[0]["event_type"] == "evidence"
-        assert "event_type" not in attempts[1]
-        # The mastery change is still reported, so submit writes its score.
-        assert result and result[0]["after"] > result[0]["before"]
+        assert "grader_backend" in attempts[0] and "evidence_seq" in attempts[0]
+        mocks["learner_state"].upsert.assert_called_once()
+        mocks["graph_nodes"].update.assert_called_once()
 
-    def test_a_dead_event_table_never_takes_the_caller_down(self):
-        """quiz submit calls this AFTER its atomic completed_at claim and
-        BEFORE writing score/answers_json, and does not wrap it — so raising
-        here permanently loses a graded attempt, and the retry 409s. The
-        journal is not worth the quiz."""
-        attempts, result = self._apply_with_failing_events(fail_times=99)
-        # event_type is named and dropped; the next error names no column the
-        # row still has, so it gets one unchanged retry, then the row is lost
-        assert len(attempts) == 3 and "event_type" not in attempts[-1]
-        assert result and result[0]["after"] > result[0]["before"]
+    def test_unavailable_journal_rejects_whole_evidence_batch(self):
+        from learning.evidence import PlanningPersistenceUnavailable
+        attempts, result, mocks, error = self._apply_with_failing_events(fail_times=99)
+        assert isinstance(error, PlanningPersistenceUnavailable) and result is None
+        assert len(attempts) == 2 and attempts[0] == attempts[1]
+        assert all(row["event_type"] == "evidence" for row in attempts)
+        mocks["learner_state"].upsert.assert_not_called()
+        mocks["graph_nodes"].update.assert_not_called()
 
     def test_edge_upsert_uses_unique_conflict(self):
         """A new edge is written via UNIQUE-backed upsert (no select-then-insert);

@@ -178,16 +178,18 @@ def close_band(draft: CloseDraft) -> str | None:
 
 
 async def run_session_close(
-    draft: CloseDraft, *, user_id: str, request_id: str
+    draft: CloseDraft, *, user_id: str, request_id: str, session_id: str | None = None
 ) -> SessionClose | None:
     """One close run, or None (hard budget level, or the agent unavailable for
     any reason, a failing budget read included). The WARNING names the
-    exception class only: its message may echo the transcript."""
+    exception class only: its message may echo the transcript. Optional
+    session_id attributes both successful and known billed failed runs."""
     deps = SaplingDeps(
         user_id=user_id,
         course_id=None,
         supabase=None,
         request_id=request_id,
+        session_id=session_id,
         feature="session_close",
         # reached only through routes.learn_loop.close_session, behind the gate
         # read once at route entry (A38 00); the close agent has no tools
@@ -208,11 +210,13 @@ async def run_session_close(
     except Exception as exc:  # honest degrade — the caller stores fallback_close
         if usage.requests or usage.total_tokens:  # a failed run that was billed
             record_agent_usage(
-                UnfinishedRun(usage), feature="session_close", task="session_close", user_id=user_id
+                UnfinishedRun(usage), feature="session_close", task="session_close",
+                user_id=user_id, session_id=session_id,
             )
         logger.warning("session_close unavailable (%s); storing fallback close", type(exc).__name__)
         return None
-    record_agent_usage(result, feature="session_close", task="session_close", user_id=user_id)
+    record_agent_usage(result, feature="session_close", task="session_close",
+                       user_id=user_id, session_id=session_id)
     return result.output
 
 

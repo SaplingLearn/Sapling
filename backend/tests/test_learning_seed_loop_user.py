@@ -254,14 +254,25 @@ def test_no_learner_state_seeded(recorder):
     assert "learner_state" not in recorder.rows
 
 
-def test_main_runs_the_loop_step_and_summarises_its_tables():
-    import inspect
+def test_main_runs_the_loop_step_and_summarises_its_tables(recorder, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    calls = []
+    original_sessions = seed.seed_sessions
+    original_loop = seed.seed_learning_loop
 
-    # #715 moved the per-table steps into _seed_dataset (shared with the owner
-    # seed); the loop step still runs after all of them, sessions included.
-    src = inspect.getsource(seed.main)
-    assert src.index("_seed_dataset()") < src.index("seed_learning_loop()")
-    assert "seed_sessions" in inspect.getsource(seed._seed_dataset)
+    def sessions(writer=seed_helpers):
+        calls.append("sessions")
+        return original_sessions(writer)
+
+    def loop():
+        calls.append("loop")
+        return original_loop()
+
+    monkeypatch.setattr(seed, "seed_sessions", sessions)
+    monkeypatch.setattr(seed, "seed_learning_loop", loop)
+    seed.main([])
+    assert calls == ["sessions", "loop"]
     for name in (
         "user_settings",
         "check_items",

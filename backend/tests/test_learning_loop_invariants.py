@@ -77,6 +77,11 @@ EVIDENCE_WRITERS = {
 #: The only route handlers allowed to reach an EVIDENCE_WRITERS function.
 EVIDENCE_WRITER_CALLERS = {"check_answer", "check_answer_stream", "probe_answer", "review_answer"}
 _EVIDENCE_CALLS = {"grade_answer", "flush_pending", "apply_graph_update"}
+CHECKPOINT_CALLERS = {
+    "_flush_grade_checkpoint": {"_finish_check_checkpoint", "_finish_probe_checkpoint"},
+    "_finish_check_checkpoint": {"_grade_submission"},
+    "_finish_probe_checkpoint": {"_probe_submission"},
+}
 #: Modules that WRITE check_items.source_chunk_ids at generation (PKG-04; HANDOFF-04
 #: §Symbols: services/check_item_service.py::_build_row copies the draft's chunk ids —
 #: agents/check_items.py only drafts them as `chunk_ids` and never names the column).
@@ -207,11 +212,13 @@ def _learning_files(module: str, root: pathlib.Path) -> list[pathlib.Path]:
 
 GRAPH_TABLES = ("graph_nodes", "graph_edges", "node_mastery_events", "learner_state")
 GRAPH_WRITER = "services/graph_service.py"
-GRAPH_WRITER_FUNCS = ("apply_graph_update", "_apply_evidence")
+GRAPH_WRITER_FUNCS = ("apply_graph_update", "_apply_evidence", "_calculate_evidence")
 GRAPH_ENTRY = GRAPH_WRITER_FUNCS[0]
 # Writers that name neither table() nor write_state at a call site, so the
 # halves below cannot see a second caller: reachable only via GRAPH_ENTRY.
 GRAPH_PRIVATE_WRITERS = GRAPH_WRITER_FUNCS[1:]
+TRANSACTION_MODULE = "learning/evidence_transaction.py"
+TRANSACTION_ENTRY = "commit_evidence_transaction"
 # learning/learner_state.py is the learner_state table-access module (spec §2).
 # Its one write, table("learner_state").upsert inside write_state, runs only
 # through write_state, and the second half of inv_01 pins every write_state
@@ -427,9 +434,10 @@ def _private_writer_offenders(rel: str, source: str) -> list[str]:
     would be a second entry point the table/write_state halves cannot see."""
     tree = ast.parse(source)
     entry = [
-        (fn.lineno, fn.end_lineno)
+        (fn.lineno, fn.end_lineno, fn.name)
         for fn in tree.body
-        if rel == GRAPH_WRITER and isinstance(fn, ast.FunctionDef) and fn.name == GRAPH_ENTRY
+        if rel == GRAPH_WRITER and isinstance(fn, ast.FunctionDef)
+        and fn.name in (GRAPH_ENTRY, "_apply_evidence")
     ]
     offenders = []
     for node in ast.walk(tree):
@@ -445,7 +453,8 @@ def _private_writer_offenders(rel: str, source: str) -> list[str]:
             continue
         if name not in GRAPH_PRIVATE_WRITERS:
             continue
-        if any(lo <= node.lineno <= hi for lo, hi in entry):
+        caller = GRAPH_ENTRY if name == "_apply_evidence" else "_apply_evidence"
+        if any(lo <= node.lineno <= hi and fn == caller for lo, hi, fn in entry):
             continue
         offenders.append(
             f"{rel}:{node.lineno} references {name} outside {GRAPH_WRITER}::{GRAPH_ENTRY}"
@@ -453,10 +462,89 @@ def _private_writer_offenders(rel: str, source: str) -> list[str]:
     return offenders
 
 
+def _transaction_writer_offenders(rel: str, source: str) -> list[str]:
+    """One graph entry → one RPC transport; no import alias/escaped handle.
+
+    Reads/checkpoint recovery use read_receipt, never the committing function.
+    The RPC transport itself must use the canonical unaliased db.connection.rpc
+    binding without rebinding it. Protected literal RPC identities cannot be
+    invoked from another application module.
+    """
+    tree = ast.parse(source)
+    scopes = [(n.lineno, n.end_lineno, n.name) for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    errors = []
+    rpc_names = {"rpc"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "db.connection":
+            rpc_names.update(a.asname or a.name for a in node.names if a.name == "rpc")
+    for _ in range(len(list(ast.walk(tree)))):
+        before = set(rpc_names)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name) and node.value.id in rpc_names:
+                rpc_names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+        if rpc_names == before:
+            break
+
+    def scope(line):
+        return next((name for lo, hi, name in scopes if lo <= line <= hi), None)
+
+    for node in ast.walk(tree):
+        name = None
+        if isinstance(node, ast.Name):
+            name = node.id
+        elif isinstance(node, ast.Attribute):
+            name = node.attr
+        elif isinstance(node, ast.alias):
+            name = node.name.rsplit(".", 1)[-1]
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            name = node.value
+        if name == TRANSACTION_ENTRY and not (
+            rel == GRAPH_WRITER and scope(node.lineno) == "_apply_evidence"
+        ):
+            errors.append(f"{rel}:{node.lineno} escapes the evidence transaction entry")
+        if isinstance(node, ast.Call) and node.args and (
+            isinstance(node.func, ast.Name) and node.func.id in rpc_names
+            or isinstance(node.func, ast.Attribute) and node.func.attr == "rpc"
+        ):
+            identities = [part.value for part in ast.walk(node.args[0])
+                          if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                          and part.value.startswith("learning_evidence_")]
+            for identity in identities:
+                allowed = "read_receipt" if identity == "learning_evidence_receipt" else TRANSACTION_ENTRY
+                if rel != TRANSACTION_MODULE or scope(node.lineno) != allowed:
+                    errors.append(f"{rel}:{node.lineno} escapes the evidence RPC adapter")
+    if rel == TRANSACTION_MODULE:
+        imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == "db.connection"]
+        valid = any(any(a.name == "rpc" and a.asname is None for a in n.names) for n in imports)
+        rebound = any(isinstance(n, ast.Name) and n.id == "rpc" and isinstance(n.ctx, ast.Store) for n in ast.walk(tree))
+        shadow = any(isinstance(n, ast.arg) and n.arg == "rpc" for n in ast.walk(tree))
+        if not valid or rebound or shadow:
+            errors.append(f"{rel} must retain the canonical RPC binding")
+    return errors
+
+
+@pytest.mark.parametrize("source,rel,offends", [
+    ("from learning.evidence_transaction import commit_evidence_transaction as write", "routes/x.py", True),
+    ("import learning.evidence_transaction as tx\nf=tx.commit_evidence_transaction", "services/x.py", True),
+    ('getattr(tx,"commit_evidence_transaction")({})', "scripts/x.py", True),
+    ('rpc("learning_evidence_commit",{})', "routes/x.py", True),
+    ('rpc("learning_evidence_"+"commit",{})', "services/x.py", True),
+    ('from db.connection import rpc as r\nf=r\nf("learning_evidence_commit",{})', "services/x.py", True),
+    ('inventory={"learning_evidence_commit(text,text,uuid,text,jsonb)":"required"}', "scripts/x.py", False),
+    ('from learning.evidence_transaction import read_receipt\nread_receipt(u,op)', "routes/x.py", False),
+    ('from db.connection import rpc\ndef commit_evidence_transaction():\n return rpc("learning_evidence_commit",{})', TRANSACTION_MODULE, False),
+    ('from other import rpc\ndef commit_evidence_transaction():\n return rpc("learning_evidence_commit",{})', TRANSACTION_MODULE, True),
+    ('from db.connection import rpc\ndef commit_evidence_transaction(rpc):\n return rpc("learning_evidence_commit",{})', TRANSACTION_MODULE, True),
+])
+def test_inv_01_transaction_entry_cannot_escape_the_single_writer(source, rel, offends):
+    assert bool(_transaction_writer_offenders(rel, source)) is offends
+
+
 def test_inv_01_single_graph_writer():
     offenders: list[str] = []
     for rel, path in _application_py_files():
         text = path.read_text()
+        offenders += _transaction_writer_offenders(rel, text)
         if any(name in text for name in GRAPH_PRIVATE_WRITERS):
             offenders += _private_writer_offenders(rel, text)
         if rel != GRAPH_WRITER:
@@ -483,7 +571,7 @@ def test_inv_01_single_graph_writer():
         if isinstance(fn, ast.FunctionDef) and fn.name in GRAPH_WRITER_FUNCS
     ]
     calls = _write_state_call_lines(writer)
-    assert calls, "graph_service never calls write_state — PKG-03 not wired"
+    assert calls == [], "Evidence must use the atomic RPC, never unconditional scalar writes"
     for line in calls:
         assert any(lo <= line <= hi for lo, hi in allowed), (
             f"{GRAPH_WRITER}:{line} calls write_state outside {GRAPH_WRITER_FUNCS}"
@@ -511,11 +599,13 @@ def test_inv_01_single_graph_writer():
         for p in BACKEND.rglob("*.py")
         if "venv" not in p.parts and "write_metrics" in p.read_text()
     )
-    assert callers == [
+    expected = {
         LEARNER_STATE_MODULE,
         METRICS_SCRIPT,
         "tests/test_learning_loop_invariants.py",
-    ] + sorted(c for c in callers if c.startswith("tests/test_learning_zpd_metrics")), (
+        "tests/integration/test_learning_evidence_transaction_db.py",
+    } | {c for c in callers if c.startswith("tests/test_learning_zpd_metrics")}
+    assert set(callers) == expected, (
         f"write_metrics is the metrics script's seam only: {callers}"
     )
 
@@ -1783,10 +1873,13 @@ def _evidence_scan(source: str) -> list[str]:
                 leaf = node.attr
             else:
                 continue
-            if leaf in _EVIDENCE_CALLS and not (is_def and name in EVIDENCE_WRITERS):
+            checkpoint_flush = leaf == "flush_pending" and name == "_flush_grade_checkpoint"
+            if leaf in _EVIDENCE_CALLS and not (is_def and (name in EVIDENCE_WRITERS or checkpoint_flush)):
                 offenders.append(f"{name}:{node.lineno} reaches {leaf}")
             if leaf in EVIDENCE_WRITERS and not (is_def and name in EVIDENCE_WRITER_CALLERS):
                 offenders.append(f"{name}:{node.lineno} reaches the evidence writer {leaf}")
+            if leaf in CHECKPOINT_CALLERS and not (is_def and name in CHECKPOINT_CALLERS[leaf]):
+                offenders.append(f"{name}:{node.lineno} reaches checkpoint helper {leaf}")
     return offenders
 
 
@@ -1797,6 +1890,19 @@ def test_inv_26_evidence_scan_self_test():
         "async def check_answer_stream(b):\n    return await x(_grade_submission(b))\n"
     )
     assert _evidence_scan(ok) == []
+    checkpoint = (
+        "def _flush_grade_checkpoint(cp):\n    flush_pending(cp)\n"
+        "def _finish_check_checkpoint(cp):\n    _flush_grade_checkpoint(cp)\n"
+        "def _finish_probe_checkpoint(cp):\n    _flush_grade_checkpoint(cp)\n"
+        "def _grade_submission(cp):\n    _finish_check_checkpoint(cp)\n"
+        "def _probe_submission(cp):\n    _finish_probe_checkpoint(cp)\n"
+    )
+    assert _evidence_scan(checkpoint) == []
+    for helper in CHECKPOINT_CALLERS:
+        assert _evidence_scan(f"def check_next(cp):\n    return {helper}(cp)\n")
+    assert _evidence_scan("def _finish_check_checkpoint(cp):\n    return grade_answer(cp)\n")
+    assert _evidence_scan("def _grade_submission(cp):\n    return _flush_grade_checkpoint(cp)\n")
+    assert _evidence_scan("def _probe_submission(cp):\n    return _finish_check_checkpoint(cp)\n")
     assert _evidence_scan("async def chat(b):\n    await grade_answer(1)\n") == [
         "chat:2 reaches grade_answer"
     ]
@@ -1949,10 +2055,37 @@ MISCONCEPTIONS_IMPORTERS_ALLOWED = {
     "agents/tools/check.py",
     "routes/learn_loop.py",
     "learning/learner_brief.py",
+    # Encrypted checkpoint validation reuses only the pure Attempt/key schema;
+    # the narrower AST guard below forbids any store/read/write hook here.
+    "learning/grade_checkpoint.py",
     # PKG-10 fix round 3 (R3-1, spec §13 A76): the review grades through
     # recheck_after_release — the one re-check decision — and imports nothing else
     "learning/review.py",
 }
+
+
+def _checkpoint_misconception_import_offenders(source: str) -> list[int]:
+    bad = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "learning.misconceptions" and node.level == 0:
+                if any(n.name not in {"Attempt", "is_key"} or n.asname for n in node.names):
+                    bad.append(node.lineno)
+            elif (module.startswith("learning.misconceptions")
+                  or (node.level and module == "misconceptions")
+                  or (module == "learning" and any(n.name == "misconceptions" for n in node.names))):
+                bad.append(node.lineno)
+        elif isinstance(node, ast.Import) and any(
+            n.name.startswith("learning.misconceptions") for n in node.names
+        ):
+            bad.append(node.lineno)
+        elif isinstance(node, ast.Call) and any(
+            isinstance(arg, ast.Constant) and arg.value == "learning.misconceptions"
+            for arg in node.args
+        ):
+            bad.append(node.lineno)
+    return bad
 
 
 def test_inv_17_rollup_not_a_tutor_tool():
@@ -1980,6 +2113,24 @@ def test_inv_17_rollup_not_a_tutor_tool():
     assert importers <= MISCONCEPTIONS_IMPORTERS_ALLOWED, (
         f"unexpected importers: {importers - MISCONCEPTIONS_IMPORTERS_ALLOWED}"
     )
+    assert not _checkpoint_misconception_import_offenders(
+        (LEARNING / "grade_checkpoint.py").read_text()
+    ), "grade checkpoint may import only canonical pure Attempt/is_key validation"
+
+
+@pytest.mark.parametrize("source,blocked", [
+    ("from learning.misconceptions import Attempt, is_key", False),
+    ("from learning.misconceptions import record", True),
+    ("from learning.misconceptions import record as is_key", True),
+    ("from learning.misconceptions import Attempt as A", True),
+    ("import learning.misconceptions as m", True),
+    ("from learning import misconceptions", True),
+    ("from .misconceptions import record", True),
+    ('m = __import__("learning.misconceptions")', True),
+    ('m = importlib.import_module("learning.misconceptions")', True),
+])
+def test_grade_checkpoint_misconception_validation_import_guard(source, blocked):
+    assert bool(_checkpoint_misconception_import_offenders(source)) is blocked
 
 
 def test_inv_17_scan_self_test():

@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from tests.integration.conftest import COURSE_CS, USER_ACTIVE
-from tests.integration.test_learning_goals_db import _node, _session
+from tests.integration.test_learning_goals_db import _node, _practice_bank, _session
 
 pytestmark = pytest.mark.integration
 
@@ -40,6 +40,8 @@ def _prepare():
     from db.connection import table
 
     foundation, target = _node("Durable foundation"), _node("Durable target")
+    _practice_bank("Durable foundation")
+    _practice_bank("Durable target")
     table("graph_edges").insert(
         {
             "user_id": USER_ACTIVE,

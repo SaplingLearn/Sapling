@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -12,12 +11,11 @@ from learning.evidence import (
     EVIDENCE_EVENT_TYPE,
     PREREQ_RELATIONSHIP_TYPE,
     Evidence,
-    PlanningPersistenceUnavailable,
     evidence_weight,
     is_strong_channel,
     planning_observation,
 )
-from learning.learner_state import LearnerState, read_states, write_state
+from learning.learner_state import LearnerState, state_row
 from learning.params import (
     BKT_L0,
     EDGE_PREREQ_SOURCE_IS_PREREQ,
@@ -658,155 +656,6 @@ def add_node(
     return {"node": node, "already_existed": already_existed}
 
 
-# Columns a later migration added to node_mastery_events, newest migration
-# first. A deploy that takes the code before the migration gets a PostgREST
-# 400 (PGRST204) naming the unknown column, and the retry drops exactly the
-# column the error names, so the row still lands with every column the
-# environment has. The PKG-03 evidence columns (channel … confidence,
-# 20260927024349_learning_learner_state.sql) are not listed: the evidence
-# path reads learner_state, which that same migration creates, before it ever
-# reaches this insert. Every later evidence column is listed (A36's
-# evidence_seq: a row written before its migration has it NULL, as that
-# migration's header says of rows written before it).
-_JOURNAL_OPTIONAL_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("20260927182054_learning_mastery_event_seq.sql", ("evidence_seq",)),
-    ("20260927093149_learning_grader_backend.sql", ("grader_backend",)),
-    ("20260814051517_node_mastery_events_event_type.sql", ("event_type",)),
-)
-_JOURNAL_COLUMN_MIGRATION = {
-    column: migration for migration, columns in _JOURNAL_OPTIONAL_COLUMNS for column in columns
-}
-
-
-def _error_text(exc: Exception) -> str:
-    """The exception's message plus, for db.connection's httpx.HTTPStatusError
-    (whose message omits the body), the PostgREST error body that names the column."""
-    text = str(exc)
-    try:
-        body = exc.response.text  # type: ignore[attr-defined]
-    except Exception:
-        return text
-    return f"{text} {body}" if isinstance(body, str) else text
-
-
-def _unknown_columns(exc: Exception, row: dict) -> list[str]:
-    """The optional columns in `row` that the error reports as unknown —
-    PostgREST's "Could not find the 'x' column" (PGRST204) or Postgres's
-    `column "x" … does not exist` (42703). A CHECK violation whose constraint
-    name contains a column (node_mastery_events_grader_backend_check) names no
-    unknown column."""
-    text = _error_text(exc)
-    return [
-        column
-        for column in _JOURNAL_COLUMN_MIGRATION
-        if column in row
-        and re.search(
-            rf"['\"]{column}['\"]\s+column\b|\bcolumn\s+['\"]?{column}['\"]?(?!\w)", text
-        )
-    ]
-
-
-def _insert_planning_event(event_row: dict) -> None:
-    """Durable tagged evidence BEFORE its scalar writes, with idempotent retry.
-
-    No optional-column downgrade: missing migration or lost provenance must
-    never leave an apparently proficient posterior without its readiness need.
-    Untagged legacy/quiz events retain _insert_mastery_event's old contract.
-    """
-    for attempt in range(2):
-        try:
-            inserted = table("node_mastery_events").insert_ignore_duplicates(event_row, on_conflict="id")
-            if not inserted:
-                # An earlier response may have timed out AFTER commit. The ID
-                # alone is not proof that the canonical record is identical.
-                rows = table("node_mastery_events").select(
-                    ",".join(event_row), filters={"id": f"eq.{event_row['id']}"}, limit=1,
-                )
-                if not rows or len(rows) != 1 or not _same_planning_event(rows[0], event_row):
-                    raise PlanningPersistenceUnavailable("learning evidence identity unavailable")
-            return
-        except Exception as exc:
-            if attempt:
-                raise PlanningPersistenceUnavailable("learning evidence write unavailable") from exc
-            logger.warning("graph: planning evidence append failed; retrying same event id")
-
-
-def _same_planning_event(actual: dict, expected: dict) -> bool:
-    import json
-    import math
-
-    try:
-        left, right = dict(actual), dict(expected)
-        for value in (left, right):
-            value["created_at"] = datetime.fromisoformat(
-                value["created_at"].replace("Z", "+00:00")
-            ).isoformat()
-            for key in ("delta", "weight", "p_before", "p_after", "confidence"):
-                if value.get(key) is not None:
-                    if type(value[key]) not in (int, float) or not math.isfinite(value[key]):
-                        return False
-                    value[key] = float(value[key])
-        return json.dumps({k: left[k] for k in right}, sort_keys=True) == json.dumps(right, sort_keys=True)
-    except (KeyError, TypeError, ValueError):
-        return False
-
-
-def _insert_mastery_event(event_row: dict) -> None:
-    """Append one node_mastery_events row without ever taking the caller down.
-
-    The scalar mastery on graph_nodes (and, for evidence, learner_state) is
-    already written by the time this runs; this table is the JOURNAL. Losing a
-    journal row is a small, observable loss. Letting the insert raise is not:
-    quiz submit calls apply_graph_update AFTER its atomic completed_at claim
-    and BEFORE it writes score/answers_json, and does not wrap the call — so an
-    exception here permanently loses the student's graded attempt, and the
-    retry 409s because the claim already landed.
-
-    Two retries, each logged with the error it follows. An error that reports
-    an optional column (`_JOURNAL_OPTIONAL_COLUMNS`) as unknown — a deploy ahead
-    of that migration — drops exactly that column and tries again, so the row
-    degrades to what the environment can store (E7's event_type; PKG-05's
-    grader_backend, CodeRabbit PR #673; A36's evidence_seq). Any other error (a CHECK violation, a
-    transient 5xx) keeps every column and is retried once unchanged; if it
-    fails again the row is lost and the error is logged. Every failure is
-    logged loudly — a silently-dropped write is the bug class this whole batch
-    exists to end, so this must never be quiet.
-    """
-    row = dict(event_row)
-    retried_unchanged = False
-    while True:
-        try:
-            table("node_mastery_events").insert(row)
-            return
-        except Exception as exc:
-            unknown = _unknown_columns(exc, row)
-            if unknown:
-                logger.warning(
-                    "graph: mastery-event insert failed node=%s; retrying without %s "
-                    "(is migration %s applied?)",
-                    event_row.get("node_id"),
-                    ", ".join(unknown),
-                    ", ".join(sorted({_JOURNAL_COLUMN_MIGRATION[c] for c in unknown})),
-                    exc_info=exc,
-                )
-                row = {k: v for k, v in row.items() if k not in unknown}
-                continue
-            if not retried_unchanged:
-                logger.warning(
-                    "graph: mastery-event insert failed node=%s; retrying once unchanged",
-                    event_row.get("node_id"),
-                    exc_info=exc,
-                )
-                retried_unchanged = True
-                continue
-            logger.error(
-                "graph: mastery-event insert failed node=%s; the scalar mastery is "
-                "written but the journal row is lost", event_row.get("node_id"),
-                exc_info=exc,
-            )
-            return
-
-
 # ── PKG-03: the evidence path (spec §5) ──────────────────────────────────────
 # Everything below up to apply_graph_update runs only when a graph_update
 # carries a non-empty "evidence" list; the legacy keys never reach it.
@@ -922,8 +771,31 @@ def _apply_evidence(
     touched_courses: set,
     now: datetime,
     retention: float | None = None,
-) -> list[dict]:
-    """PKG-03: the BKT + FSRS write path (spec §5). ONLY caller: apply_graph_update.
+    *,
+    _course_id: str | None = None,
+) -> tuple[list[dict], bool]:
+    """All graded evidence commits through one transactional RPC, or none does.
+
+    Untagged quiz/review/posttest provenance remains NULL. Only the graph
+    entry point reaches this transport; no unsafe table-write fallback exists.
+    """
+    from learning.evidence_transaction import commit_evidence_transaction
+
+    def compute(prepared):
+        return _calculate_evidence(user_id, evidences, prepared, retention)
+
+    changes, _receipt, newly_committed = commit_evidence_transaction(
+        user_id, _course_id, evidences, retention, compute
+    )
+    for ev in evidences:
+        row = by_id.get(ev.node_id)
+        if row and row.get("course_id"):
+            touched_courses.add(row["course_id"])
+    return changes, newly_committed
+
+
+def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, retention) -> list[dict]:
+    """The existing Python BKT/FSRS math, preparing rows without database I/O.
 
     Per evidence, in order: ownership → same-session recheck → weight →
     decayed read → bkt.update → counters → FSRS → learner_state → graph_nodes
@@ -936,16 +808,18 @@ def _apply_evidence(
     each carries `evidence_seq` = 0..n−1 in apply order (§13 A36): a replay
     orders by (created_at, evidence_seq). A skipped evidence takes no number.
     """
+    by_id, now = prepared.nodes, prepared.now
     changes: list[dict] = []
     now_iso = now.isoformat()
     owned = [ev.node_id for ev in evidences if ev.node_id in by_id]
     # One batched read; nodes with no row start at the prior. The cache means
     # a later evidence on the same node sees the earlier posterior (elapsed
     # time between the two is zero: they share `now`).
-    states = read_states(user_id, owned, now=now)
+    states = prepared.states
     for node_id in owned:
         states.setdefault(node_id, LearnerState(user_id=user_id, node_id=node_id))
     seen_checks: set[tuple[str, str]] = set()
+    exposed_hashes: set[str] = set()
     seq = 0  # next evidence_seq: counts journaled rows only
 
     for ev in evidences:
@@ -958,9 +832,20 @@ def _apply_evidence(
             continue
         if ev.session_id and ev.question_hash:
             key = (ev.session_id, ev.question_hash)
-            if key in seen_checks and not ev.same_session_recheck:
+            if (key in seen_checks or prepared.prior_check(ev)) and not ev.same_session_recheck:
                 ev = Evidence.model_validate({**ev.model_dump(), "same_session_recheck": True})
             seen_checks.add(key)
+        if ev.question_hash:
+            already_exposed = ev.question_hash in exposed_hashes or prepared.prior_exposure(ev)
+            if (already_exposed and ev.planning_provenance is not None
+                    and not ev.planning_provenance.previously_seen):
+                ev = Evidence.model_validate({
+                    **ev.model_dump(),
+                    "planning_provenance": {
+                        **ev.planning_provenance.model_dump(), "previously_seen": True,
+                    },
+                })
+            exposed_hashes.add(ev.question_hash)
         w = evidence_weight(ev)
 
         st = states[ev.node_id]
@@ -972,7 +857,7 @@ def _apply_evidence(
         # or mirrored BKT mutation. A failed append cannot silently lose it.
         reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
         event_row = {
-            "id": str(uuid.uuid4()), "node_id": row["id"], "delta": p_after - p_before,
+            "id": prepared.event_id(seq), "node_id": row["id"], "delta": p_after - p_before,
             "reason": reason, "created_at": now_iso, "event_type": EVIDENCE_EVENT_TYPE,
             "channel": ev.channel, "correct": ev.correct, "weight": w,
             "assisted": ev.assisted, "max_rung": ev.max_rung,
@@ -984,7 +869,6 @@ def _apply_evidence(
         provenance = planning_observation(ev)
         if provenance is not None:
             event_row["planning_observation"] = provenance
-            _insert_planning_event(event_row)
 
         unassisted = not ev.assisted and ev.max_rung == 0
         st.opps += 1
@@ -1002,41 +886,47 @@ def _apply_evidence(
         st.p_known = p_after
         st.last_evidence_at = now
         _fsrs_after(st, ev, now, retention)
-        write_state(st, now=now)
+        prepared.state_rows[st.node_id] = state_row(st, now)
         st.exists = True
 
         times = (row.get("times_studied") or 0) + 1
-        table("graph_nodes").update(
-            {
+        mirror = {
                 "mastery_score": p_after,
                 "mastery_tier": bkt.tier_for(p_after),
                 "times_studied": times,
                 "last_studied_at": now_iso,
-            },
-            filters={"id": f"eq.{row['id']}"},
-        )
+            }
+        prepared.mirrors[row["id"]] = {**prepared.mirrors.get(row["id"], {}), "id": row["id"], **mirror}
         row["times_studied"] = times
         row["mastery_score"] = p_after
 
-        if provenance is None:
-            _insert_mastery_event(event_row)
+        prepared.events.append(event_row)
         seq += 1
         changes.append({"concept": row["concept_name"], "before": p_before, "after": p_after})
-        if row.get("course_id"):
-            touched_courses.add(row["course_id"])
 
         # The propagated observation carries the evidence's own weight too
         # (spec §5: weight = product of the applicable §3.1 weights) †, and
         # w == 0.0 (correct after H4..H6, §3.3 "no upward BKT evidence")
         # moves no neighbour, so its edges are not even read.
-        targets = _propagation_targets(user_id, ev) if w > 0.0 else []
+        if w > 0.0:
+            parents, children = [], []
+            for edge in prepared.snapshot["edges"]:
+                src, tgt = edge["source"], edge["target"]
+                prereq, dependent = (src, tgt) if EDGE_PREREQ_SOURCE_IS_PREREQ else (tgt, src)
+                if dependent == ev.node_id and prereq != ev.node_id:
+                    parents.append(prereq)
+                elif prereq == ev.node_id and dependent != ev.node_id:
+                    children.append(dependent)
+            targets = bkt.propagate_prereq(ev.correct, parents, children)
+        else:
+            targets = []
         for target_id, channel, target_correct, weight in targets:
             trow = by_id.get(target_id)
             if trow is None or target_id == ev.node_id:
                 continue
             tst = states.get(target_id)
             if tst is None:
-                tst = read_states(user_id, [target_id], now=now).get(target_id) or LearnerState(
+                tst = LearnerState(
                     user_id=user_id, node_id=target_id
                 )
                 states[target_id] = tst
@@ -1044,12 +934,10 @@ def _apply_evidence(
             # call reads it); the row is stored against the kept anchor.
             tst.p_known = bkt.update(tst.p_known, channel, target_correct, weight=weight * w)
             p_stored, tst.last_evidence_at = _keep_decay_anchor(tst, tst.p_known, now)
-            write_state(replace(tst, p_known=p_stored), now=now)
+            prepared.state_rows[tst.node_id] = state_row(replace(tst, p_known=p_stored), now)
             tst.exists = True
-            table("graph_nodes").update(
-                {"mastery_score": tst.p_known, "mastery_tier": bkt.tier_for(tst.p_known)},
-                filters={"id": f"eq.{target_id}"},
-            )
+            mirror = {"mastery_score": tst.p_known, "mastery_tier": bkt.tier_for(tst.p_known)}
+            prepared.mirrors[target_id] = {**prepared.mirrors.get(target_id, {}), "id": target_id, **mirror}
             trow["mastery_score"] = tst.p_known
     return changes
 
@@ -1088,6 +976,10 @@ def apply_graph_update(
         Evidence.model_validate(e.model_dump() if isinstance(e, Evidence) else e)
         for e in raw_evidence
     ]
+    if any(ev.planning_provenance is not None for ev in evidences) and (
+        graph_update.get("new_nodes") or graph_update.get("new_edges")
+    ):
+        raise ValueError("Tagged evidence cannot be mixed with graph topology mutations")
 
     fetch_filters = {"user_id": f"eq.{user_id}"}
     if course_id:
@@ -1154,26 +1046,28 @@ def apply_graph_update(
         norm = _normalize_concept(name)
         return by_name.get(norm) or inserted_in_batch.get(norm)
 
+    newly_committed = False
     if evidences:
         # PKG-03: graded evidence is the only thing that moves p_known on the
         # loop path (spec §1). Legacy keys above are untouched; this block is
         # skipped entirely when the payload carries no evidence.
         by_id = {r["id"]: r for r in existing_rows if r.get("id")}
-        mastery_changes.extend(
-            _apply_evidence(
-                user_id,
-                evidences,
-                by_id,
-                touched_courses,
-                datetime.now(timezone.utc),
-                retention,
-            )
+        evidence_changes, newly_committed = _apply_evidence(
+            user_id,
+            evidences,
+            by_id,
+            touched_courses,
+            datetime.now(timezone.utc),
+            retention,
+            _course_id=course_id,
         )
+        mastery_changes.extend(evidence_changes)
 
-    if mastery_changes:
+    if mastery_changes and newly_committed:
         # services/streak_service.py::touch_streak is the sole writer of
         # streak_count/longest_streak (UTC calendar days); mastery activity
-        # legitimately counts as a study day, so this stays a call site, but
+        # legitimately counts as a study day. Receipt replay is recovery of
+        # earlier activity, never a new study day. This stays a call site, but
         # the maths lives in exactly one place — not duplicated here.
         touch_streak_safe(user_id)
 

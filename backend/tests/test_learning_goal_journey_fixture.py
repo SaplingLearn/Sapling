@@ -218,6 +218,45 @@ def test_readiness_requires_actual_binary_source_chunk_before_fixture_mutations(
     assert not assets.writes and not assets.deletes
 
 
+def test_unavailable_retains_only_canonical_protected_items_without_learner_writes(assets):
+    fixture.seed_goal_continuation_items("unavailable")
+    assert not assets.writes
+    assert assets.deletes == [
+        (
+            "check_items",
+            {
+                "course_id": f"eq.{fixture.COURSE_CS}",
+                "concept_key": f"eq.{slug}",
+                "id": f"neq.rich-check-{slug}-free-d2",
+            },
+        )
+        for slug in fixture.SLUGS
+    ]
+    for slug in fixture.SLUGS:
+        only = _row_to_item(assets.templates[f"rich-check-{slug}-free-d2"])
+        reserve = posttest_reserve_hash([only])
+        assert reserve == only.question_hash
+        assert select_item([only], format="free", difficulty=2, exclude_hashes={reserve}) is None
+
+
+@pytest.mark.parametrize("activity", ["session", "evidence-on-third-node"])
+def test_unavailable_refuses_prior_owned_activity_before_removing_any_asset(assets, activity):
+    if activity == "session":
+        assets.sessions.append({"id": "already-started"})
+    else:
+        assets.events.append({"id": "old-twos-evidence"})
+    with pytest.raises(RuntimeError, match="precede"):
+        fixture.seed_goal_continuation_items("unavailable")
+    assert not assets.writes and not assets.deletes
+
+
+def test_unavailable_reads_all_reserves_before_removing_any_asset(assets):
+    del assets.templates["rich-check-bitwise-free-d2"]
+    with pytest.raises(KeyError):
+        fixture.seed_goal_continuation_items("unavailable")
+    assert not assets.writes and not assets.deletes
+
+
 def test_practice_requires_real_plan_and_never_writes_learner_state(assets):
     with pytest.raises(RuntimeError, match="real"):
         fixture.seed_goal_continuation_items("practice")

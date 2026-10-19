@@ -275,3 +275,11 @@ flock /tmp/claude-$(id -u)/sapling-e2e-stack.lock bash -c '
 ```
 
 Never set `SAPLING_MODEL_MODE` for the hermetic pytest run.
+
+## Refresh 2026-10-19
+
+`feat/redesign-base` re-merged #673 at its new head **ad1b1bd5** (23 commits after a8abd006: learning evidence transactions and replayable grade checkpoints, checklist budget reservation, durable tutor-turn recovery, the LoopLearn hydration/pending-feedback/withdrawal/late-cancellation/practice-preflight behaviours, and Jose's own `6eb31fff` merge of main 84e19c3a). #727 (49c108bf) and main (84e19c3a) had not moved.
+
+- **New migrations from #673:** `20261019125459_checklist_budget.sql`, `20261019131339_learning_evidence_transaction.sql`, `20261019141950_learning_evidence_forward_repair.sql`. All sort after every existing basename (latest before was `20261019010000_learning_planning_observation.sql`), so the runner applies them in order; none was renamed or edited. No `requirements.lock` or `package-lock.json` change.
+- **Conflicts (3), none with #727:** `backend/db/seed_local_rich.py`, `backend/tests/test_learning_seed_loop_user.py`, `backend/tests/test_seed_local_rich.py`. Both this base (6bc91a21) and Jose (6eb31fff) had merged the same main 84e19c3a into #673 and resolved the #715 owner-seed overlap independently. Jose's resolution is the canonical one for his branch (behavioural `main([])` ordering test, `SEED_LOOP_CONCEPTS` node count, owner seed never copies loop QA users/budget), so all three take #673's side. A check confirmed the two main merges differ only in these three files.
+- **#727 overlap:** none new. The merge result equals ad1b1bd5 plus exactly the #727 delta (and this doc) that 35413511 introduced; its ShellFrame/Learn.tsx/#726-checklist resolutions carry over unchanged.
