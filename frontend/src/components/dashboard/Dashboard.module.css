@@ -1,0 +1,375 @@
+/* Dashboard / Today learning workspace (redesign prompt 07).
+ *
+ * Scoped: every rule here is a CSS-module class rendered only by
+ * components/dashboard/*, inside the route's `.sapling-surface`. Nothing here
+ * touches the shell (ShellFrame, the FA26 rail, `.fa26-utilities`) or the
+ * global `.card`. Layout is CSS-first (grid areas + media queries), so the
+ * phone order is right on the first paint, before any client width check.
+ *
+ * DOM order = phone reading order: heading → goal + next step → map →
+ * notes → coming up. Desktop places the map left and the learning context
+ * right with grid areas; focus order keeps the learning action first.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-5);
+  min-height: 100%;
+  padding: 34px 0 var(--sapling-space-6);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+}
+
+/* ── Today heading ───────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sapling-space-2) var(--sapling-space-5);
+  /* the shell's account utilities sit absolutely at the top right */
+  padding-right: 128px;
+}
+.title {
+  margin: 0;
+  font: 500 clamp(32px, 1.6rem + 1.4vw, 44px)/1.1 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+}
+.scopeLine {
+  margin: 6px 0 0;
+  color: var(--sapling-muted);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.meta {
+  margin: 0;
+  color: var(--sapling-muted);
+  font-size: 15px;
+}
+
+/* ── Workspace grid ──────────────────────────────────────────────────── */
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  grid-template-areas:
+    "map context"
+    "notes coming";
+  gap: var(--sapling-space-6) clamp(24px, 3vw, 48px);
+  align-items: start;
+}
+.contextArea { grid-area: context; min-width: 0; }
+.mapArea { grid-area: map; min-width: 0; }
+.notesArea { grid-area: notes; min-width: 0; padding-top: var(--sapling-space-5); border-top: 1px solid var(--sapling-line); }
+.comingArea { grid-area: coming; min-width: 0; padding-top: var(--sapling-space-5); border-top: 1px solid var(--sapling-line); display: grid; gap: var(--sapling-space-6); }
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "context" "map" "notes" "coming";
+  }
+}
+@media (max-width: 700px) {
+  .page { padding-top: 62px; gap: var(--sapling-space-4); }
+  .header { padding-right: 0; }
+  .workspace { gap: var(--sapling-space-5); }
+}
+
+/* ── Shared text bits ────────────────────────────────────────────────── */
+.eyebrow {
+  margin: 0;
+  font: 600 12px/1.4 var(--sapling-font-body);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sapling-primary);
+}
+.h2 {
+  margin: 6px 0 0;
+  font: 500 clamp(22px, 1.1rem + 0.7vw, 30px)/1.25 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+  overflow-wrap: anywhere;
+}
+.h2:focus { outline: none; }
+.h2:focus-visible { outline: 2px solid var(--sapling-primary); outline-offset: 3px; }
+.sectionTitle {
+  margin: 0;
+  font: 500 clamp(20px, 1.05rem + 0.5vw, 25px)/1.3 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+}
+.h3 {
+  margin: 0;
+  font: 600 16px/1.4 var(--sapling-font-body);
+  color: var(--sapling-ink);
+}
+.body { margin: 8px 0 0; font-size: 16px; line-height: 1.55; color: var(--sapling-ink); overflow-wrap: anywhere; }
+.muted { margin: 6px 0 0; font-size: 14px; line-height: 1.5; color: var(--sapling-muted); overflow-wrap: anywhere; }
+.rule { border: 0; border-top: 1px solid var(--sapling-line); margin: var(--sapling-space-5) 0; }
+
+.textLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  color: var(--sapling-primary);
+  font: 600 14px/1.3 var(--sapling-font-body);
+  text-decoration: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.textLink:hover { text-decoration: underline; }
+.textLink:focus-visible,
+.rowLink:focus-visible,
+.topicButton:focus-visible,
+.select:focus-visible,
+.toolButton:focus-visible,
+.mapDialogClose:focus-visible {
+  outline: 2px solid var(--sapling-primary);
+  outline-offset: 3px;
+}
+.linkRow { display: flex; flex-wrap: wrap; gap: 0 var(--sapling-space-5); margin-top: var(--sapling-space-2); }
+
+/* ── Learning context column ─────────────────────────────────────────── */
+.goal { padding-bottom: var(--sapling-space-5); border-bottom: 1px solid var(--sapling-line); }
+.goalText { margin: 6px 0 0; font: 500 clamp(24px, 1.2rem + 0.9vw, 34px)/1.2 var(--sapling-font-heading); overflow-wrap: anywhere; }
+.next { padding-top: var(--sapling-space-5); }
+.primary { width: 100%; margin-top: var(--sapling-space-5); }
+.details { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; color: var(--sapling-muted); font-size: 14px; line-height: 1.5; }
+.pendingLine {
+  height: 14px;
+  margin-top: 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sapling-sage) 80%, var(--sapling-paper));
+}
+.pendingLine + .pendingLine { width: 70%; }
+
+/* Selected concept */
+.back { margin-bottom: var(--sapling-space-2); }
+.stateLine { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; font: 600 15px/1.4 var(--sapling-font-body); color: var(--sapling-primary); }
+.stateBadge { display: inline-flex; align-items: center; gap: 6px; color: var(--sapling-ink); font-weight: 600; }
+.evidence { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 15px; line-height: 1.5; }
+.confirm {
+  margin-top: var(--sapling-space-4);
+  padding: var(--sapling-space-4);
+  border-left: 3px solid var(--sapling-primary);
+  border-radius: var(--sapling-radius-sm);
+  background: var(--sapling-white);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.confirmActions { display: flex; flex-wrap: wrap; gap: var(--sapling-space-3); margin-top: var(--sapling-space-3); }
+
+/* State glyphs: shape + colour, so a state never rests on colour alone. */
+.glyph { width: 12px; height: 12px; flex-shrink: 0; display: inline-block; }
+
+/* ── Map card ────────────────────────────────────────────────────────── */
+.mapCard {
+  border: 1px solid color-mix(in srgb, var(--sapling-primary) 35%, var(--sapling-line));
+  border-radius: var(--sapling-radius-lg);
+  background: color-mix(in srgb, var(--sapling-sage) 22%, var(--sapling-paper));
+  overflow: hidden;
+}
+.mapHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px var(--sapling-space-4);
+  padding: 14px 20px;
+  background: var(--sapling-sage);
+}
+.mapTitle { margin: 0; font: 500 22px/1.3 var(--sapling-font-heading); color: var(--sapling-ink); }
+.counts { margin: 0; color: var(--sapling-muted); font-size: 14px; }
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--sapling-space-4);
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--sapling-line);
+}
+.toolbarSpacer { flex: 1 1 auto; }
+.field { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--sapling-muted); }
+.select {
+  min-height: 44px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-md);
+  background: var(--sapling-paper);
+  color: var(--sapling-ink);
+  font: 500 14px/1.3 var(--sapling-font-body);
+}
+.toolButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--sapling-primary);
+  font: 600 14px/1.3 var(--sapling-font-body);
+  cursor: pointer;
+}
+.toolButton:hover { text-decoration: underline; }
+.semester { font-size: 14px; color: var(--sapling-muted); }
+
+.canvas { position: relative; height: clamp(420px, 58vh, 620px); min-height: 0; }
+.canvasPreview { position: relative; height: 260px; }
+.canvasOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--sapling-space-5);
+  pointer-events: none;
+}
+.canvasOverlay > * { pointer-events: auto; max-width: 440px; }
+.mapStatus { padding: 12px 20px 0; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px var(--sapling-space-5);
+  margin: 0;
+  padding: 10px 20px 14px;
+  list-style: none;
+  font-size: 14px;
+  color: var(--sapling-ink);
+  border-top: 1px solid var(--sapling-line);
+}
+.legend li { display: inline-flex; align-items: center; gap: 8px; }
+.legendNote { color: var(--sapling-muted); }
+
+.courses { padding: 12px 20px 16px; border-bottom: 1px solid var(--sapling-line); display: grid; gap: 12px; }
+.courseRow { display: grid; gap: 4px; }
+.courseRowHead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 14px; }
+.courseCode { font-weight: 600; overflow-wrap: anywhere; }
+.bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--sapling-line); }
+
+.previewActions { display: flex; flex-wrap: wrap; gap: 4px var(--sapling-space-4); padding: 6px 16px; }
+
+/* ── Lists (notes / coming up / sessions / topics) ───────────────────── */
+.sectionHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+.rows { margin: 8px 0 0; padding: 0; list-style: none; }
+.rows > li + li { border-top: 1px solid var(--sapling-line); }
+.rowLink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  color: var(--sapling-ink);
+  text-align: left;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+.rowLink:hover .rowTitle { text-decoration: underline; }
+.rowText { min-width: 0; }
+.rowTitle { display: block; font: 600 16px/1.4 var(--sapling-font-body); overflow-wrap: anywhere; }
+.rowMeta { display: block; margin-top: 2px; font-size: 14px; color: var(--sapling-muted); overflow-wrap: anywhere; }
+.arrow { flex-shrink: 0; color: var(--sapling-primary); }
+.scopeNote { margin: 4px 0 0; font-size: 13px; color: var(--sapling-muted); }
+
+.topicGroup + .topicGroup { margin-top: var(--sapling-space-5); }
+.topicGroupTitle { margin: 0 0 4px; font: 600 15px/1.4 var(--sapling-font-body); color: var(--sapling-ink); }
+.topicButton {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-sm);
+  background: none;
+  color: var(--sapling-ink);
+  text-align: left;
+  font: 400 15px/1.45 var(--sapling-font-body);
+  cursor: pointer;
+}
+.topicButton:hover { background: color-mix(in srgb, var(--sapling-sage) 55%, transparent); }
+.topicButton[aria-pressed="true"] { background: var(--sapling-sage); }
+.topicName { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.topicState { flex-shrink: 0; color: var(--sapling-muted); font-size: 14px; }
+
+/* ── Suggest notice (?suggest=) ──────────────────────────────────────── */
+.suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  border-left: 3px solid var(--sapling-primary);
+  border-radius: var(--sapling-radius-sm);
+  background: var(--sapling-white);
+  font-size: 15px;
+}
+.suggestText { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+
+/* ── Full map dialog ─────────────────────────────────────────────────── */
+.mapDialogBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  background: var(--sapling-paper);
+}
+.mapDialog {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--sapling-paper);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+}
+.mapDialog:focus { outline: none; }
+.mapDialogHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 20px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  background: var(--sapling-sage);
+}
+.mapDialogTitle { margin: 0; font: 500 22px/1.3 var(--sapling-font-heading); }
+.mapDialogClose {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-md);
+  background: var(--sapling-paper);
+  color: var(--sapling-ink);
+  font: 600 14px/1 var(--sapling-font-body);
+  padding: 0 12px;
+  cursor: pointer;
+}
+.mapDialogBody { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); }
+.mapDialogCanvas { position: relative; min-height: 0; min-width: 0; }
+.mapDialogSide {
+  overflow-y: auto;
+  padding: var(--sapling-space-5);
+  padding-bottom: max(var(--sapling-space-5), env(safe-area-inset-bottom));
+  border-left: 1px solid var(--sapling-line);
+}
+@media (max-width: 767px) {
+  .mapDialogBody { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(300px, 1fr) auto; overflow-y: auto; }
+  .mapDialogSide { border-left: 0; border-top: 1px solid var(--sapling-line); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page * { transition: none !important; animation: none !important; }
+}
+.detail { min-width: 0; }

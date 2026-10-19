@@ -20,6 +20,7 @@ import {
   opacityFor,
   radiusFor,
   shadeFor,
+  sourceFillFor,
   truncateLabel,
 } from "@/lib/graph/nodeStyle";
 import { IS_TEST_MODE, random } from "@/lib/testMode";
@@ -43,7 +44,10 @@ export interface GraphComparisonEntry {
 }
 
 type Props = {
-  appearance?: "fa26";
+  /** `fa26`: the #727 tier-coloured look (/tree). `sapling`: the same
+   *  geometry in the approved source palette (Dashboard, prompt 07), with a
+   *  visible selection ring and no hover tooltip. Unset: the course-hue look. */
+  appearance?: "fa26" | "sapling";
   nodes: GraphNode[];
   edges: GraphEdge[];
   width?: number;
@@ -59,6 +63,14 @@ type Props = {
   comparisonColor?: string;
   /** Label for the legend/tooltip — usually the partner's display name. */
   comparisonLabel?: string;
+  /** The node the page has SELECTED (not merely highlighted): drawn with a
+   *  visible olive ring and its name, so the mark and the page's context
+   *  agree. Identity only — selecting changes nothing on the server. */
+  selectedId?: string | null;
+  /** false = a static overview: no pan/zoom/drag handlers, no zoom controls,
+   *  and the page keeps ordinary touch scrolling over it (no swipe trap).
+   *  The phone preview uses this; exploration opens deliberately elsewhere. */
+  interactive?: boolean;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -72,6 +84,13 @@ type DragState =
   | null;
 
 const MIN_ZOOM = 0.4;
+
+/** Paper halo behind a sapling-appearance label. */
+const SOURCE_GRAPH_PALETTE_HALO = "#F7F4E9";
+/** The redesign's 44×44 touch target for the zoom controls (sapling only;
+ *  other appearances keep their compact controls). */
+const ZOOM_TARGET = (on: boolean): React.CSSProperties =>
+  on ? { minWidth: 44, minHeight: 44, display: "grid", placeItems: "center", fontSize: 18 } : {};
 const MAX_ZOOM = 3;
 
 // Visually-hidden but screen-reader-available. Mirrors KnowledgeGraph3D so the
@@ -101,7 +120,13 @@ function KnowledgeGraph2DImpl({
   comparison = null,
   comparisonColor = "#8a7bc4",
   comparisonLabel,
+  selectedId = null,
+  interactive = true,
 }: Props) {
+  // fa26 and sapling share the tier-coloured geometry; only the palette and
+  // the selection affordances differ.
+  const styled = appearance === "fa26" || appearance === "sapling";
+  const sapling = appearance === "sapling";
   const comparisonByName = React.useMemo(() => {
     const map = new Map<string, GraphComparisonEntry>();
     for (const entry of comparison || []) {
@@ -261,14 +286,15 @@ function KnowledgeGraph2DImpl({
   }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const nodeRadius = (n: GraphNode) => appearance === "fa26" ? (n.is_subject_root ? 42 : 14 + n.mastery_score * 12) : radiusFor(n.mastery_score, n.is_subject_root);
+  const nodeRadius = (n: GraphNode) => styled ? (n.is_subject_root ? 42 : 14 + n.mastery_score * 12) : radiusFor(n.mastery_score, n.is_subject_root);
   const courseColor = (n?: GraphNode) => {
     if (!n) return "var(--c-sage)";
     const base = n.color || "var(--c-sage)";
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
-  const fillFor = (n: GraphNode) => appearance !== "fa26" ? courseColor(n)
+  const fillFor = (n: GraphNode) => sapling ? sourceFillFor(n)
+    : appearance !== "fa26" ? courseColor(n)
     : n.is_subject_root ? "#7c614e"
     : n.mastery_tier === "mastered" ? "#a1b06d"
     : n.mastery_tier === "struggling" ? "#ef8f97"
@@ -348,6 +374,8 @@ function KnowledgeGraph2DImpl({
   };
 
   const onNodePointerDown = (e: React.PointerEvent, n: SimNode) => {
+    // A static overview takes no gestures: the page keeps them (no swipe trap).
+    if (!interactive) return;
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
@@ -361,7 +389,7 @@ function KnowledgeGraph2DImpl({
   };
 
   const onSvgPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    if (!interactive || e.button !== 0) return;
     const svg = svgRef.current;
     if (!svg) return;
     svg.setPointerCapture(e.pointerId);
@@ -433,7 +461,7 @@ function KnowledgeGraph2DImpl({
   };
 
   const onWheel = (e: React.WheelEvent) => {
-    if (!svgRef.current) return;
+    if (!interactive || !svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -472,8 +500,9 @@ function KnowledgeGraph2DImpl({
         aria-label="Knowledge graph"
         style={{
           display: "block",
-          cursor: "grab",
-          touchAction: "none",
+          cursor: interactive ? "grab" : "default",
+          // A static overview must not trap the page's own touch scrolling.
+          touchAction: interactive ? "none" : "pan-y",
         }}
         onPointerDown={onSvgPointerDown}
         onPointerMove={onPointerMove}
@@ -494,10 +523,10 @@ function KnowledgeGraph2DImpl({
               const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(String(l.source));
               const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(String(l.target));
               if (!s || !t || s.x == null || t.x == null) return null;
-              const op = appearance === "fa26" ? 0.65 : variant === "constellation" ? 0.35 : 0.2;
+              const op = styled ? 0.65 : variant === "constellation" ? 0.35 : 0.2;
               return (
                 <g key={i}>
-                  {appearance === "fa26" && <defs><linearGradient id={`${gradientPrefix}-edge-${i}`} gradientUnits="userSpaceOnUse"
+                  {styled && <defs><linearGradient id={`${gradientPrefix}-edge-${i}`} gradientUnits="userSpaceOnUse"
                     x1={s.x} y1={s.y} x2={t.x} y2={t.y}
                     ref={element => { if (element) gradientElsRef.current.set(i, element); else gradientElsRef.current.delete(i); }}>
                     <stop offset="0%" stopColor={fillFor(s)} /><stop offset="100%" stopColor={fillFor(t)} />
@@ -512,9 +541,9 @@ function KnowledgeGraph2DImpl({
                   y1={s.y}
                   x2={t.x}
                   y2={t.y}
-                  stroke={appearance === "fa26" ? `url(#${gradientPrefix}-edge-${i})` : "var(--text-muted)"}
+                  stroke={styled ? `url(#${gradientPrefix}-edge-${i})` : "var(--text-muted)"}
                   strokeOpacity={op}
-                  strokeWidth={appearance === "fa26" ? 5 : edgeWidthFor(l.strength)}
+                  strokeWidth={styled ? 5 : edgeWidthFor(l.strength)}
                   strokeLinecap="round"
                 />
                 </g>
@@ -528,8 +557,9 @@ function KnowledgeGraph2DImpl({
               if (n.x == null || n.y == null) return null;
               const r = nodeRadius(n);
               const color = fillFor(n);
-              const op = appearance === "fa26" || n.is_subject_root ? 1 : opacityFor(n.mastery_tier);
+              const op = styled || n.is_subject_root ? 1 : opacityFor(n.mastery_tier);
               const isHl = highlightId === n.id;
+              const isSelected = selectedId != null && selectedId === n.id;
               const isHovered = hovered?.id === n.id;
               const isPinned = n.fx != null && n.fy != null;
               return (
@@ -541,10 +571,12 @@ function KnowledgeGraph2DImpl({
                   }}
                   data-testid="graph-node"
                   data-node-id={n.id}
+                  data-selected={isSelected || undefined}
                   transform={`translate(${n.x}, ${n.y})`}
-                  style={{ cursor: "grab" }}
+                  style={{ cursor: interactive ? (onNodeClick ? "pointer" : "grab") : "default" }}
                   onPointerDown={(ev) => onNodePointerDown(ev, n)}
                   onPointerEnter={(ev) => {
+                    if (!interactive) return;
                     // Seed the tooltip position as it mounts so it opens
                     // under the cursor, not at a stale spot.
                     setTooltipPos({ x: ev.clientX, y: ev.clientY });
@@ -553,11 +585,11 @@ function KnowledgeGraph2DImpl({
                   onPointerLeave={() => setHovered((h) => (h?.id === n.id ? null : h))}
                   onClick={(ev) => {
                     ev.stopPropagation();
-                    if (movedRef.current) return;
+                    if (!interactive || movedRef.current) return;
                     onNodeClick?.(n);
                   }}
                 >
-                  {variant === "organism" && appearance !== "fa26" && (
+                  {variant === "organism" && !styled && (
                     <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
                   )}
                   {isHl && (
@@ -610,32 +642,52 @@ function KnowledgeGraph2DImpl({
                       strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : NODE_STROKE_OPACITY}
                     />
                   )}
+                  {isSelected && (
+                    // The selection ring: olive, static (no animation, so it
+                    // holds under reduced motion), outside the mark.
+                    <circle
+                      data-testid="graph-node-selected-ring"
+                      cx={0}
+                      cy={0}
+                      r={r + 6}
+                      fill="none"
+                      stroke="#416207"
+                      strokeWidth={2.5}
+                      pointerEvents="none"
+                    />
+                  )}
                   {n.is_subject_root && (
                     <text
                       x={0}
-                      y={appearance === "fa26" ? 4 : r + 16}
+                      y={styled ? 4 : r + 16}
                       textAnchor="middle"
                       fontFamily="var(--font-display)"
                       fontSize={13}
                       fontWeight={600}
-                      fill={appearance === "fa26" ? "#f3eee8" : color}
+                      fill={sapling ? "#F7F4E9" : appearance === "fa26" ? "#f3eee8" : color}
                       pointerEvents="none"
                     >
-                      {appearance === "fa26" ? truncateLabel(n.name, 12) : n.name}
+                      {styled ? truncateLabel(n.name, 12) : n.name}
                     </text>
                   )}
-                  {!n.is_subject_root && (appearance !== "fa26" || isHovered || isHl) && (
+                  {!n.is_subject_root && (!styled || isHovered || isHl || isSelected) && (
                     <text
                       x={0}
-                      y={r + 13}
+                      y={r + (isSelected ? 22 : 13)}
                       textAnchor="middle"
                       fontFamily="var(--font-sans)"
-                      fontSize={10.5}
-                      fill="var(--text-dim)"
-                      opacity={0.85}
+                      fontSize={isSelected ? 12.5 : 10.5}
+                      fontWeight={isSelected ? 600 : undefined}
+                      fill={isSelected ? "#253D2F" : "var(--text-dim)"}
+                      opacity={isSelected ? 1 : 0.85}
+                      // A paper halo under the glyphs keeps the label legible
+                      // over edges and neighbouring marks.
+                      stroke={sapling ? SOURCE_GRAPH_PALETTE_HALO : undefined}
+                      strokeWidth={sapling ? 4 : undefined}
+                      paintOrder={sapling ? "stroke" : undefined}
                       pointerEvents="none"
                     >
-                      {truncateLabel(n.name)}
+                      {truncateLabel(n.name, isSelected ? 30 : 18)}
                     </text>
                   )}
                 </g>
@@ -645,7 +697,7 @@ function KnowledgeGraph2DImpl({
         </g>
       </svg>
 
-      <div
+      {interactive && <div
         style={{
           position: "absolute",
           top: 12,
@@ -663,7 +715,8 @@ function KnowledgeGraph2DImpl({
         <button
           data-testid="graph-zoom-in"
           className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          aria-label="Zoom in"
+          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)", ...ZOOM_TARGET(sapling) }}
           onClick={() => setView((v) => {
             const s = Math.min(MAX_ZOOM, v.scale * 1.2);
             const c = clampView(v.tx, v.ty, s);
@@ -676,7 +729,8 @@ function KnowledgeGraph2DImpl({
         <button
           data-testid="graph-zoom-out"
           className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
+          aria-label="Zoom out"
+          style={{ padding: "2px 8px", fontFamily: "var(--font-mono)", ...ZOOM_TARGET(sapling) }}
           onClick={() => setView((v) => {
             const s = Math.max(MIN_ZOOM, v.scale / 1.2);
             const c = clampView(v.tx, v.ty, s);
@@ -689,15 +743,18 @@ function KnowledgeGraph2DImpl({
         <button
           data-testid="graph-zoom-reset"
           className="btn btn--ghost btn--sm"
-          style={{ padding: "2px 8px", fontSize: 10 }}
+          aria-label="Reset view"
+          style={{ padding: "2px 8px", fontSize: 10, ...ZOOM_TARGET(sapling) }}
           onClick={resetView}
           title="Reset view"
         >
           ⟲
         </button>
-      </div>
+      </div>}
 
-      {hovered && !dragRef.current && (
+      {/* The sapling appearance has no hover tooltip: a node's details live
+          in the page's selected-topic panel and topic list, never hover-only. */}
+      {!sapling && hovered && !dragRef.current && (
         <div
           ref={tooltipRef}
           style={{

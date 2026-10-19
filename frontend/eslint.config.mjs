@@ -83,6 +83,14 @@ const eslintConfig = [
       "src/components/ShellFrame.tsx",
       "src/components/screens/Social.tsx",
       "src/components/screens/Dashboard.tsx",
+      // Dashboard / Today learning workspace (redesign prompt 07).
+      "src/components/dashboard/DashboardWorkspace.tsx",
+      "src/components/dashboard/NextStepPanel.tsx",
+      "src/components/dashboard/ConceptDetail.tsx",
+      "src/components/dashboard/KnowledgeMap.tsx",
+      "src/components/dashboard/TopicList.tsx",
+      "src/components/dashboard/FullMap.tsx",
+      "src/components/dashboard/Sections.tsx",
       "src/components/screens/Learn.tsx",
       // Learning loop (PKG-13): the loop-path Learn screen and its budget banner.
       "src/components/learn/LoopLearn.tsx",

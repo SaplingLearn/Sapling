@@ -27,7 +27,8 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { dueSet } from "@/lib/quiz/proposals";
-import { DesignIcon } from "../fa26/DesignIcon";
+import { SaplingSurface } from "../sapling";
+import { DashboardWorkspace } from "../dashboard/DashboardWorkspace";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
@@ -195,7 +196,25 @@ function getWeekDays(today: Date) {
   });
 }
 
+/**
+ * /dashboard. The default is the Today learning workspace (redesign prompt
+ * 07, components/dashboard/). `?layout=legacy` keeps the pre-FA26
+ * dashboard reachable exactly as before, including the legacy top-nav
+ * layout preference (`useLayoutPref` "topnav" → the 3-column panels).
+ */
 export function Dashboard() {
+  const search = useSearchParams();
+  if (search.get("layout") === "legacy") return <LegacyDashboard />;
+  return (
+    <SaplingSurface testid="dashboard-surface">
+      <DashboardWorkspace />
+    </SaplingSurface>
+  );
+}
+
+/** The pre-redesign dashboard (`?layout=legacy`): sidebar 2-column with the
+ *  CoursesKey overlay, or the 3-column top-nav layout. Unchanged behaviour. */
+function LegacyDashboard() {
   const router = useRouter();
   const search = useSearchParams();
   const { userId, userName, userReady } = useUser();
@@ -207,7 +226,6 @@ export function Dashboard() {
   // proper panel on the left. Sidebar layout uses the new 2-column
   // design with the CoursesKey overlay inside the graph panel.
   const useLegacyPanels = layoutPref === "topnav";
-  const useFa26 = search.get("layout") !== "legacy";
 
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
@@ -459,7 +477,7 @@ export function Dashboard() {
         />
         {/* Courses key — sidebar layout only. Top-nav layout uses the
             full My Courses panel in the left column instead. */}
-        {!useFa26 && !useLegacyPanels && (
+        {!useLegacyPanels && (
           <CoursesKey
             courseProgress={courseProgress}
             hasCourses={courses.length > 0}
@@ -975,36 +993,7 @@ export function Dashboard() {
   );
 
   return (
-    <div className={useFa26 ? "fa26-dashboard" : undefined} style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
-      {useFa26 ? <>
-        <TopBar title={`Welcome back, ${userName?.trim().split(" ")[0] || "there"}`} />
-        {suggestBlock}
-        <div className="fa26-dashboard-layout">
-          <div className="fa26-dashboard-graph">{graphBlock}</div>
-          <aside className="fa26-dashboard-aside" aria-label="Learning progress">
-            <div className="fa26-stats">
-              <div className="fa26-stat"><strong>{stats.mastered}</strong><span>Concepts mastered</span></div>
-              <div className="fa26-stat"><strong>{stats.streak}</strong><span>Day study streak</span></div>
-            </div>
-            <section className="fa26-recent">
-              <h2>Where you left off</h2>
-              {sessions.length === 0 && <p>No sessions yet. Start a session with Clov to begin.</p>}
-              {sessions.slice(0, 3).map(s => <button key={s.id} className="fa26-recent-item"
-                data-testid={`dashboard-resume-${s.id}`} onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}>
-                <DesignIcon name="clov" />
-                <div><strong>{s.topic}</strong><small>{courseNameFor(s.course_id)} · Clov Study Session</small><small>{relTime(s.started_at)}</small></div>
-                <Icon name="chev" size={18} />
-              </button>)}
-            </section>
-            <details className="fa26-dashboard-tools">
-              <summary>Courses and study tools</summary>
-              <button data-testid="dashboard-action-18" className="btn btn--sm" onClick={() => setCoursesOpen(true)}>Manage courses</button>
-              <button className="btn btn--sm" data-testid="dashboard-review-due" onClick={() => router.push(reviewDueHref)}>{reviewDueLabel}</button>
-              <button data-testid="dashboard-action-19" className="btn btn--sm" onClick={() => router.push("/calendar")}>Open calendar</button>
-            </details>
-          </aside>
-        </div>
-      </> : <>
+    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
       {isMobile && useLegacyPanels && (
         <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
           {(["courses", "stats"] as const).map(t => (
@@ -1072,8 +1061,6 @@ export function Dashboard() {
         </div>
       )}
 
-
-      </>}
       {fullscreen && (
         <div
           style={{
