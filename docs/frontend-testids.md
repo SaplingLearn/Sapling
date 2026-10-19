@@ -553,9 +553,15 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
 | `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
 | `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
-| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3) |
+| `loop-heading` | the Learning Studio page heading (`PageHeading`): course eyebrow, a title naming the server phase, the course select / map link / End session actions (redesign prompt 02) |
+| `loop-phase-strip` | the read-only Check-in / Plan / Learn / Wrap-up indicator (`PhaseStrip`); `data-phase`; `aria-current="step"` on the server's current stage. Never a control |
+| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3); below the workspace on a phone; hidden while `loop-sessions-error` shows (a failed list never invites a start) |
 | `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
-| `loop-new-session` | start a new session — the only path to a new probe while a session is open; it wraps up (`/close`) the open session being left first, so sessions do not pile up open (a 409 there starts nothing) |
+| `loop-new-session` | start a new session — the only path to a new probe while a session is open. With an open session it opens `loop-new-session-confirm` first; with none (closed, read-only, none yet) it starts directly |
+| `loop-new-session-confirm` | the new-session confirmation dialog (`role="dialog"`, `aria-modal`). Confirming wraps up (`/close`) the open session being left and waits for that close before starting, so sessions do not pile up open; a 409 or failure keeps the dialog and starts nothing |
+| `loop-new-session-cancel` | "Keep this session" — closes the dialog, nothing is closed or started, focus returns to the opener (disabled while the close is in flight) |
+| `loop-new-session-confirm-start` | "Wrap up and start new" (then "Try again" after a failed close) |
+| `loop-new-session-error` | why the open session could not be wrapped up (e.g. "A check is still being graded — close again in a moment.") |
 | `loop-course-select` | the course switcher (`CustomSelect`'s trigger; `testId` prop), shown with more than one enrolled course; options are `loop-course-select-option-{courseId}` |
 | `loop-sessions-error` | `GET /sessions` (or a read-only resume) failed |
 | `loop-sessions-retry` | retry — never falls through to a new session or probe |
@@ -564,14 +570,23 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
 | `loop-start-retry` | retry the start |
 | `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
-| `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
+| `loop-topic-start` | "Start a session on <topic>" (through the same confirmation as `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
-| `loop-rail` | the knowledge-map rail (wide screens only; the tree link stands in on narrow ones) |
+| `loop-rail` | the learning-route context (`ContextPanel`): "Your learning route" (`loop-route`), the course knowledge map (`KnowledgeGraph`, original colours) and source links. A rail from 1024px; below that the same content is a labelled sheet opened by `loop-route-trigger` (the tree link stays in the heading) |
+| `loop-route-trigger` | "Route & sources" — opens the `loop-rail` sheet below 1024px (`aria-haspopup="dialog"`) |
+| `loop-route` / `loop-route-{nodeId}` | the route list: the server plan's order and reasons when this view has the plan, else the confirmed goal concepts; status text is only the plan reason, the check-in evidence label and the concept the last turn named ("Current focus") — never a mastery claim |
+| `loop-goal-summary` | the session's learning scope (`GoalSummary`): the confirmed goal text and its concepts, or "Explore the whole course"; loading and failure states inside it |
+| `loop-set-goal` | "Set goal" / "Edit goal" inside `loop-goal-summary` — probe and plan only |
+| `loop-goal-retry` | "Retry learning scope" when `GET /status` failed |
+| `loop-goal-new-session` | while teaching the goal is read-only: "New session" for a new goal, through `loop-new-session-confirm` |
+| `loop-goal-progress` | the server's `goal_progress` status (continue_available / needs_more_practice / session_plan_finished) — practice finished is not mastery |
+| `loop-goal-no-concepts` | the goal editor's no-concepts state, with whole-course and Library recovery |
+| `loop-close-note` | a wrap-up that could not run yet (409) outside the close view |
 | `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
 | `loop-probe-item` | the current probe card; `data-question-hash` |
 | `loop-probe-input` | free/teachback probe answer textarea |
@@ -585,10 +600,11 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-plan-concept-{nodeId}` | one planned concept (name, kind chip: Review / New / Related; a band chip only when the response carries one) |
 | `loop-plan-retry` | the plan failed to load — retry (`GET /plan`) |
 | `loop-plan-approve` | approve the plan (`/plan/approve`, the proposed ids in order) |
-| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`) |
+| `loop-plan-adjust` | "Adjust goal or scope" under the plan — opens the goal editor (plan phase only) |
+| `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`); the check card and the Continue / Check me / Start with row sit above it, outside `ChatPanel` |
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
 | `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
-| `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
+| `loop-check-prompt` | the current knowledge check (the pose `check.prompt`, A17/A27, plus its answer form and hint); `data-question-hash`, `data-format` |
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
 | `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
