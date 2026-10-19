@@ -95,39 +95,56 @@ on a local backend that account is filled with the rich sample dataset (below).
 
 ### Your own account gets the rich sample dataset automatically (#684, #715)
 
-On a local backend, signing in with Google is enough. A new account lands on a
-**"Setting up your sample data…"** screen (`/setting-up`) instead of
-`/onboarding`, and moves on to the dashboard once the data is in (a few
+On a local backend, signing in with a **new** Google account is enough. It
+lands on a **"Setting up your sample data…"** screen (`/setting-up`) instead
+of `/onboarding`, and moves on to the dashboard once the data is in (a few
 seconds). If seeding fails, the screen shows the error and a **Continue
-anyway** link to `/onboarding`.
+anyway** link to `/onboarding`, and keeps waiting: the backend retries, and if
+a retry succeeds the screen still moves on to the dashboard.
 
 How it works: `services/local_seed_watcher.py` is a backend lifespan task that
-runs only on a local backend. Every ~2 seconds it lists the real Google
-accounts (`users.id` starting with `user_`; the `rich-*`/`seed-*`/`it-*`
-fixtures are never touched) and runs the owner seed below for each one that
-does not have it yet, one at a time. "Has it" means the owner seed's copy of
-the sample CS enrollment exists **and** onboarding is complete, so an account
-whose seed stopped midway is finished on a later pass. Existing accounts are
-seeded the first time the watcher sees them, including accounts that went
-through onboarding by hand. The hold screen polls
-`GET /api/auth/local-seed` (`{state: pending|seeding|ready|failed, error?}`),
-and a `pending` answer wakes the watcher immediately. A failed account is
-retried with a backoff (10 s, doubling, capped at 5 minutes); its error stays
-in the backend log and on the hold screen until a retry succeeds.
+runs only on a local backend. It seeds, one at a time, every account that is a
+real Google sign-in (`users.id` starting with `user_` and `google_id` set; the
+`rich-*`/`seed-*`/`it-*` fixtures and sign-in stubs are never touched), live
+(`deleted_at` is null) and **not yet onboarded**. The seed completes onboarding
+as its last write, so that one column decides everything: a finished seed is
+never redone, a seed that stopped midway is finished on a later pass, and an
+account you already onboarded — one with your own data in it — is left alone.
+For that account, run the [manual command](#manual-fallback) instead.
+
+The watcher idles on a 30-second poll (`LOCAL_SEED_WATCH_INTERVAL_SECONDS`; a
+value that is not a positive number falls back to 30 with a warning), but a
+sign-in does not wait for it: the post-sign-in routing and the hold screen ask
+`GET /api/auth/local-seed` (`{state: pending|seeding|ready|failed, error?}`;
+404 off a local backend and for any account the watcher would not seed), and
+every `pending` answer wakes the watcher at once. `ready` means the account is
+onboarded. A failed account is retried with a backoff (10 s, doubling, capped
+at 5 minutes); its error stays in the backend log and on the hold screen until
+a retry succeeds or you finish onboarding by hand.
 
 The seed adds the active rich user's five enrollments, graph and mastery
 history, documents and private chunks, notes, quizzes, gradebook, study guides,
 chat sessions, flashcards, and rooms. It completes local onboarding; your
 Google identity, profile, approval, settings, and existing study data remain
-intact. No admin role is granted.
+intact. No admin role is granted, and the rich seed's sample feedback and
+issue-report rows are not copied (on your account they would read as
+submissions you made).
 
 Use **All semesters**, or choose Fall 2025, Spring 2026, or Fall 2026, to
 inspect the fixture's term-specific courses. Re-seeding inserts nothing and
 preserves edits to the sample data. Each developer gets independent sample
 records; the normal `rich-user-*` E2E fixtures keep their original IDs and
-ownership. If you delete the sample CS (Fall 2025) enrollment, the next backend
-restart counts the account as unseeded and re-adds any sample rows that are
-missing.
+ownership. Once seeded, the data is yours: drop a sample course and it stays
+dropped, because the watcher never re-runs a finished seed. (Re-running the
+manual command does re-add missing sample rows.)
+
+Known limits, by decision: when your account already has a row the seed would
+create under the same natural key (say, your own enrollment in a sample
+offering), the seed keeps your row and hangs the sample children off it; the
+sample chunks use synthetic ids rather than `rag_service.chunk_id`'s content
+hashes, so a real upload of the same text never dedupes against them; and on a
+non-local backend each new sign-in makes one extra `GET /api/auth/local-seed`
+round trip (a 404) before routing to `/onboarding`.
 
 The watcher, the status route and the seed all refuse every environment except
 **`APP_ENV=local`** or **`test`** (what `make e2e-up` accepts) with an exact
