@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { HeroCard } from "@/components/marketing/HeroCard";
+import { postSignInRoute } from "@/lib/localSeed";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
@@ -171,11 +172,9 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           persist: data.profileConfirmed !== false,
         });
         confirmApproved();
-        if (data.onboardingCompleted) {
-          router.replace("/dashboard");
-        } else {
-          router.replace("/onboarding");
-        }
+        // #715: a new account on a local backend waits for its sample data
+        // on the hold screen; anywhere else this is /onboarding, as before.
+        void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
         onClose();
       } else {
         setLocalError(data.error || "signin_failed");

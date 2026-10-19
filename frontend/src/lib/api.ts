@@ -161,6 +161,15 @@ export interface MeResponse {
 // than this `fetchJSON` wrapper.
 export const getMe = () => fetchJSON<MeResponse>('/api/auth/me');
 
+/** #715: the signed-in account's local sample-data seed (backend
+ * routes/auth.py::local_seed_status). 404 everywhere but a local backend. */
+export type LocalSeedState = 'pending' | 'seeding' | 'ready' | 'failed';
+export interface LocalSeedStatus {
+  state: LocalSeedState;
+  error?: string;
+}
+export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/local-seed');
+
 // Graph
 export const getGraph = (userId: string, semester?: string) =>
   fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(
