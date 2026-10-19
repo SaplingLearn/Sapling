@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
@@ -464,6 +465,29 @@ _MIN_OPTIONS = 2
 # output schema, so one short item is dropped instead of failing the quiz.
 _MCQ_OPTIONS = 4
 _MAX_ANSWER_CHARS = 2000
+# Generation-only guards for items a student cannot answer fairly (found
+# clicking through live quizzes). Applied in _agent_question_to_wire, never in
+# _validate_wire_question, which also re-checks stored attempts on resume.
+# A symbolic key with a 4+ letter run is a word, not a product: the grammar
+# reads "lambda" as a*a*b*d*l*m, so the real answer is wrong and an anagram
+# is right. Short products ("2xy", "mgh") stay allowed.
+_SYMBOLIC_WORD = re.compile(r"[A-Za-z]{4,}")
+# A short-answer key is a term or brief fact (docs/quiz-formats.md); exact
+# matching can never accept a sentence or paragraph key.
+_SHORT_ANSWER_MAX_WORDS = 8
+_SENTENCE_BREAK = re.compile(r"[.!?;]\s+\S")
+
+
+def _unfair_written_key(q: QuizQuestion) -> str | None:
+    """Why this written item's key cannot be fairly matched, or None."""
+    key = q.correct_answer.strip()
+    if q.type == "symbolic" and _SYMBOLIC_WORD.search(key):
+        return "symbolic key is a word"
+    if q.type == "short_answer" and (
+        len(key.split()) > _SHORT_ANSWER_MAX_WORDS or _SENTENCE_BREAK.search(key)
+    ):
+        return "short-answer key is a sentence"
+    return None
 
 
 def _validate_wire_question(wire: dict) -> bool:
@@ -520,7 +544,16 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 
     Returning None lets the caller filter questions out cleanly.
     """
+    if q.question != q.question.rstrip():
+        # Gemini can end a function-call string at an inner double quote
+        # ('...referred to as the "energy currency"' served as '...as the '):
+        # trailing whitespace is the tell of a stem cut off mid-sentence.
+        logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
+        return None
     if q.type in WRITTEN_TYPES:
+        if (reason := _unfair_written_key(q)) is not None:
+            logger.warning("quiz: dropping question id=%d — %s", qid, reason)
+            return None
         if q.options:
             # A written item with answer choices is format drift: drop it here,
             # per item (agents/quiz.py keeps this out of the output schema).

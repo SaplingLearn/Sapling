@@ -454,7 +454,7 @@ export function QuizQuestion({
                 {verdict.isCorrect
                   ? "Correct."
                   : verdict.correctAnswer
-                    ? `Not quite — the expected answer is ${verdict.correctAnswer}.`
+                    ? `Not quite — the expected answer is ${verdict.correctAnswer.replace(/\.+$/, "")}.`
                   : correctLabel
                     ? `Not quite — the answer is ${correctLabel}.`
                     : "Not quite."}

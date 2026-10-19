@@ -196,6 +196,13 @@ describe("QuizQuestion — the question", () => {
     expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
   });
 
+  it("ends the expected-answer feedback with exactly one full stop", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "Cellular respiration." } })] }));
+    expect(screen.getByText("Not quite — the expected answer is Cellular respiration.")).toBeInTheDocument();
+  });
+
   it("keeps the multiple-choice keyboard hint for assistive tech, with no format rules", () => {
     renderScreen(makeSession());
     expect(screen.getByText(/Keyboard: press A to F/)).toHaveClass("quiz-question__hint");
