@@ -229,8 +229,9 @@ for (const kind of ["check", "probe"] as const) {
         expect(actualBody.reason ?? "").toBe("");
         expect((await response).status()).toBe(200);
         if (stream) {
-          const result = await readLoopStream(page, stream, []);
-          expect(loopStreamCompleted(result, 0)).toBe(true);
+          const expectedNotice = ["withdrawn", "recorded"];
+          const result = await readLoopStream(page, stream, expectedNotice);
+          expect(loopStreamCompleted(result, expectedNotice.length), JSON.stringify(result)).toBe(true);
           expect(result).toMatchObject({ status: 200, phase: "feedback", graded: true, finished: true, eof: true, error_count: 0, done_count: 1, nonempty_reply: true });
         } else {
           expect(await (await response).json()).toMatchObject({ graded: true, correct: false });
