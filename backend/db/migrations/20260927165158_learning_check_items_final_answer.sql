@@ -1,0 +1,11 @@
+-- 20260927165158_learning_check_items_final_answer.sql
+-- Learning loop PKG-04, reopened by PKG-06 (spec §4, §13 A34): each check item
+-- states its final answer, copied verbatim from its reference_answer by the
+-- generator, so the tutor's leak check matches a structured answer instead of
+-- parsing reference text for one. The value is encrypted at the app layer
+-- (services/encryption.py) like the item's prompt and reference; it is never
+-- a key and never filtered on (invariant 9). Nullable only so existing rows
+-- migrate: item selection never serves a row whose final_answer is NULL, and
+-- scripts/backfill_check_items.py --regenerate-missing-final-answer redrafts
+-- its concept.
+ALTER TABLE public.check_items ADD COLUMN IF NOT EXISTS final_answer text;

@@ -1,0 +1,11 @@
+{
+  "judge_model": "gemini-2.5-pro",
+  "judge_prompt_hash": "6e581de775a96ddb89905e619dd18828ee5589dd5c542a96ad1df1157a25d686",
+  "output": {
+    "affirms_misconception": false,
+    "confronts": false,
+    "evidence": "What might be an indeterminate form you've encountered when evaluating limits?",
+    "only_states_correction": true
+  },
+  "served_sha256": "032f92d8c9db18b3e973aeb8dfc4fe6ee285133d4bfb003798b3cbd3fae1b709"
+}

@@ -29,7 +29,8 @@ def run() -> None:
 
     # ── 3. POST /api/onboarding/profile -> enrollment resolves to OFFERING_ID ─
     # OnboardingBody requires: user_id, first_name, last_name, year,
-    # majors (min_length=1), minors, course_ids (min_length=1), learning_style.
+    # majors (min_length=1), minors, course_ids (min_length=1). (PKG-14b: no
+    # learning_style — the step is gone and the field is ignored.)
     r = client.post(
         "/api/onboarding/profile",
         json={
@@ -40,7 +41,6 @@ def run() -> None:
             "majors": ["CS"],
             "minors": [],
             "course_ids": [COURSE_ID],
-            "learning_style": "visual",
         },
     )
     # The fixture seeds OFFERING_ID = the current-term offering for COURSE_ID, so

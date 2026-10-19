@@ -21,6 +21,10 @@ from fastapi.testclient import TestClient
 from main import app
 from tests.agent_run_fakes import run_result
 
+
+# This suite pins the preserved legacy tutor; active-loop ownership has separate regressions.
+pytestmark = pytest.mark.kill_switch
+
 client = TestClient(app)
 
 OWNER = "user_owner"
@@ -401,7 +405,7 @@ class TestRequireSessionOwner:
             require_session_owner(SESSION, OWNER)
         call = tables.mocks["sessions"].select.call_args
         assert call.args[0] == "user_id"
-        assert call.kwargs["filters"] == {"id": f"eq.{SESSION}"}
+        assert call.kwargs["filters"] == {"id": f"eq.{SESSION}", "mode": "neq.review"}
 
 
 # ── Concurrent materialisation of one pending session ────────────────────────

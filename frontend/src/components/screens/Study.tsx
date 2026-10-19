@@ -72,6 +72,9 @@ import {
   type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { DueQueue } from "../learn/DueQueue";
+import { RetentionCheck } from "../learn/RetentionCheck";
+import { useLoopStatus } from "../learn/useLoopStatus";
 
 type Mode = "guide" | "cards";
 
@@ -606,7 +609,8 @@ function FlashcardsMode({
   semesterReady: boolean;
 }) {
   const toast = useToast();
-  const { userId } = useUser();
+  const retentionCourse = useSearchParams().get("retention-course") ?? "";
+  const { userId, userReady } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const [courseId, setCourseId] = React.useState<string>("all");
   const [topicFilter, setTopicFilter] = React.useState<string>("all");
@@ -617,6 +621,9 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
+  // A failed status read is not an inactive learning loop: retain the legacy
+  // flashcards and offer a retry so the student can still reach due reviews.
+  const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
 
   React.useEffect(() => {
     if (!userId) return;
@@ -733,6 +740,16 @@ function FlashcardsMode({
   return (
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {loopActive === true && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
+        {loopActive === true && <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />}
+        {loopActive === "error" && (
+          <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
+            <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>
+            <button type="button" className="btn btn--sm" onClick={retryLoopStatus} data-testid="review-status-retry">
+              Retry due reviews
+            </button>
+          </div>
+        )}
         <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <FilterPills
             options={[

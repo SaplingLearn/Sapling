@@ -173,6 +173,13 @@ command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
   || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
+# PKG-14b (spec §11.4): the E2E lane is chosen in the SHELL. load_dotenv() would
+# fill an unset LEARNING_LOOP_ENABLED from backend/.env for the backend while
+# Playwright (this shell) sees it unset, so the two halves would disagree.
+if grep -qE '^[[:space:]]*(export[[:space:]]+)?LEARNING_LOOP_ENABLED=' backend/.env; then
+  echo "e2e-up: remove LEARNING_LOOP_ENABLED from backend/.env — the lane is chosen in the shell (spec §11.4)" >&2
+  exit 2
+fi
 # $VENV_PY is resolved in local-common.sh and accepts both the POSIX
 # (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
 [ -n "${VENV_PY:-}" ] \
@@ -208,6 +215,14 @@ fi
 MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
 if [ "$MODEL_MODE" = "function" ]; then
   export SAPLING_FLAG_DECISION_ROUTER="${SAPLING_FLAG_DECISION_ROUTER:-jev}"
+  # Scripted models and 0.01x hint gates compress a full diagnostic/teaching
+  # session (including grading subcalls and observer decisions) into seconds.
+  # Give only this deterministic lane room for that burst. Real-model stacks
+  # keep config.py's production default; an explicit caller cap (even 0) wins.
+  export LEARN_RATE_LIMIT_PER_MIN="${LEARN_RATE_LIMIT_PER_MIN:-1000}"
+  # Probe/goal/plan reads use a separate process-local resource guard. DB resets
+  # do not clear that window either; fast adaptive journeys share one user.
+  export LOOP_PROBE_PLAN_READS_PER_MIN="${LOOP_PROBE_PLAN_READS_PER_MIN:-1000}"
 fi
 
 mkdir -p "$E2E_DIR"
@@ -260,6 +275,25 @@ echo "▶ Starting backend (uvicorn on :$BACKEND_PORT, log: .e2e/backend.log)…
 # wants to exercise the real guard.
 export QUIZ_GENERATE_RATE_LIMIT="${QUIZ_GENERATE_RATE_LIMIT:-1000}"
 echo "  ℹ QUIZ_GENERATE_RATE_LIMIT=$QUIZ_GENERATE_RATE_LIMIT for this stack (production default is 8; #537)"
+# Learning loop (PKG-14b, spec §7 / §11.4): the loop is the default — the lane
+# runs the CODE default, so nothing is exported here. Run
+# `LEARNING_LOOP_ENABLED=false make e2e-up` for the kill-switch lane (the legacy
+# Learn screen, tutor and Study UI; /api/learn/loop/* 404s). The seeded loop
+# users are ordinary students now. frontend/e2e/support/fixtures.ts::killSwitchLane
+# is the one lane parse Playwright uses; global-setup.ts asserts the stack agrees.
+# (backend/.env must not name the variable — the preflight fails fast on it.)
+if [ -n "${LEARNING_LOOP_ENABLED+x}" ]; then
+  echo "  ℹ LEARNING_LOOP_ENABLED=$LEARNING_LOOP_ENABLED from the shell (spec §7 parse: false/0/off/no = the kill-switch lane)"
+else
+  echo "  ℹ LEARNING_LOOP_ENABLED unset: the default lane (the loop is on for every student)"
+fi
+# Spec §13 A5: the E2E env scales every GATE_* seconds constant (the ZPD hint
+# gates' independent-work and dwell times) by 0.01, so a journey waits a
+# fraction of a second where a student waits a minute. Production never sets it
+# (config.LEARNING_GATE_TIME_SCALE defaults to 1.0); only the loop reads it.
+export LEARNING_GATE_TIME_SCALE="${LEARNING_GATE_TIME_SCALE:-0.01}"
+echo "  ℹ LEARNING_GATE_TIME_SCALE=$LEARNING_GATE_TIME_SCALE for this stack (spec §13 A5; production is 1.0)"
+
 # ADR 0029 §9: the backend caches the flag snapshot (30 s) and each user's
 # roles (60 s) per process, and the per-test TRUNCATE + re-seed writes the DB
 # directly, which clears neither — one journey's rules would leak into the

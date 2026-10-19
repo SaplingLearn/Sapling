@@ -208,7 +208,9 @@ def test_two_owners_get_independent_datasets_and_sample_fixtures_remain_unchange
     rich.main(["--owner-user-id", "user-second-owner"])
     assert [row for row in local_database.rows["graph_nodes"] if row["user_id"] == rich.USER_ACTIVE] == baseline_nodes
     assert all(row in local_database.rows["assignments"] for row in baseline_assignments)
-    assert len(local_database.rows["graph_nodes"]) == 39
+    # 13 rich-user-active nodes + 13 per owner, plus the learning-loop fixture's
+    # nodes for its two loop users (the no-flag seed only; owners never get them).
+    assert len(local_database.rows["graph_nodes"]) == 39 + len(rich.LOOP_USERS) * len(rich.LOOP_NODES)
     assert len(local_database.rows["rooms"]) == 6
 
 
@@ -321,3 +323,52 @@ def test_owner_seed_existence_probes_select_only_key_columns(local_database):
     assert probes == []
     chunk_probes = {columns for name, columns in local_database.selects if name == "course_chunks"}
     assert chunk_probes == {"id"}
+
+
+# ── PKG-14 final fix round: seeded tiers follow the launch cuts (A95) ────────
+
+
+def _seeded_graph_nodes(monkeypatch) -> list[dict]:
+    """Every graph_nodes row the rich seed writes (seed_graph + the loop users),
+    captured at the helper seam — no database."""
+    from unittest.mock import MagicMock
+
+    rows: list[dict] = []
+
+    def upsert(name, row, **kw):
+        if name == "graph_nodes":
+            rows.append(dict(row))
+
+    monkeypatch.setattr(rich.h, "upsert", upsert)
+    monkeypatch.setattr(rich.h, "insert_if_absent", lambda *a, **k: None)
+    monkeypatch.setattr(rich, "table", lambda name: MagicMock(select=MagicMock(return_value=[])))
+    rich.seed_graph()
+    try:
+        rich.seed_learning_loop()
+    except Exception:  # noqa: BLE001 — only its graph_nodes upserts matter here
+        pass
+    return rows
+
+
+def test_every_seeded_tier_is_tier_for_its_score(monkeypatch):
+    from learning.bkt import tier_for
+
+    rows = _seeded_graph_nodes(monkeypatch)
+    assert rows, "the seed writes no graph_nodes rows"
+    for row in rows:
+        assert row["mastery_tier"] == tier_for(row["mastery_score"]), row["id"]
+
+
+def test_the_seeded_student_covers_every_tier(monkeypatch):
+    """frontend/e2e/graph.spec.ts's journey guard: the rich seed has a node in
+    EVERY tier for rich-user-active — after the launch cuts (mastered ≥ 0.95)."""
+    from learning.bkt import tier_for
+
+    tiers = {
+        tier_for(score)
+        for nodes in rich._GRAPH_NODES.values()
+        for _id, _name, score in nodes
+    }
+    assert tiers == {"mastered", "learning", "struggling", "unexplored"}
+    active = [r for r in _seeded_graph_nodes(monkeypatch) if r["user_id"] == rich.USER_ACTIVE]
+    assert {r["mastery_tier"] for r in active} == tiers

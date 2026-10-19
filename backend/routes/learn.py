@@ -17,7 +17,9 @@ from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
-from services import events_service
+from services.session_modes import NOT_REVIEW, REVIEW_MODE
+from learning.gate import learning_loop_for_request
+from services import ai_budget, events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
@@ -25,6 +27,7 @@ from services.auth_guard import require_self, get_session_user_id
 from services.chat_stream import merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present
 from services.profiles import get_display_name
+from services.quiz_ask import open_quiz_ask
 from services.graph_service import get_graph
 from services.request_context import current_request_id
 from services.streak_service import touch_streak_safe
@@ -66,6 +69,53 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 # stream; 2048 tokens is enough for the agent to plan a multi-step
 # explanation without burning latency the student can feel.
 _PRO_THINKING_BUDGET = 2048
+
+
+def _loop_delegate(name: str):
+    """Loop handler by name, resolved lazily: routes.learn_loop imports THIS
+    module's helpers, so a top-level import would be circular."""
+    from routes import learn_loop
+    return getattr(learn_loop, name)
+
+
+#: PKG-14b (spec §11.2, A20 †): the kill-switch path has no concept band, so it
+#: takes the develop/profic allowance — the same one `check(…, "close")` uses
+#: for a session with no novice-band concept. A band NAME, never a dollar figure.
+KILL_SWITCH_BUDGET_BAND = "develop"
+
+
+def _kill_switch_budget(user_id: str) -> None:
+    """The kill-switch path's cost bound (spec §11.2, A20; PKG-14b). Called by every
+    legacy model-calling handler AFTER the loop delegation and BEFORE any agent runs
+    or any stream opens: a hard decision is the §3.5 429 (`AIBudgetExceeded`, never a
+    mid-stream event); soft changes nothing (the legacy path has no tiers). A passing
+    check counts one tutor call (A39: the daily call-count cap holds even when
+    `llm_usage` cost reads wrong or EVENTS_LOGGING_ENABLED=false). It never creates or
+    biases evidence — the legacy tutor records none."""
+    decision = ai_budget.check(user_id, "tutor", KILL_SWITCH_BUDGET_BAND)
+    if decision.level == "hard":
+        raise ai_budget.AIBudgetExceeded(decision)
+    ai_budget.count_tutor_call(user_id)
+
+
+def _usage_session_id(session_id: str | None, user_id: str) -> str | None:
+    """The `llm_usage.session_id` to record for a legacy turn (A92): the caller's own
+    session only. A body-supplied id that belongs to someone else (or to nobody) is
+    recorded as NULL, so one student cannot move cost onto another's session in the
+    per-session cost report (PKG-14 review). A still-pending lazy session counts
+    when PENDING_SESSIONS records the same user. Never raises — usage recording is
+    best-effort (a failed read records NULL)."""
+    if not session_id:
+        return None
+    pending = PENDING_SESSIONS.get(session_id)
+    if pending is not None:
+        return session_id if pending.get("user_id") == user_id else None
+    try:
+        rows = table("sessions").select("user_id", filters={"id": f"eq.{session_id}"}, limit=1)
+    except Exception:  # noqa: BLE001 — best-effort; never fail a turn over usage
+        logger.warning("llm_usage session ownership read failed; recording NULL", exc_info=True)
+        return None
+    return session_id if rows and rows[0].get("user_id") == user_id else None
 
 
 def _resolve_model_pref(model_pref: str | None):
@@ -262,10 +312,9 @@ async def _continuation_text(
 
     `override(tools=[], toolsets=[])` is what makes that a guarantee rather
     than a hope: the continuation is handed NO tools, so it cannot write even
-    if the model tries. Without it the model could call `update_mastery_tool`
-    again and reintroduce the exact double-apply the writes-guard exists to
-    prevent — a re-run by a quieter name. Because the tutor's own
-    instructions (which demand a mastery call every turn) still reach this
+    if the model tries. Without it the model could call a graph writer
+    (`apply_graph_update_tool`) again and reintroduce the exact double-apply
+    the writes-guard exists to prevent — a re-run by a quieter name. Because the tutor instructions still reach this
     request, `_CONTINUATION_INSTRUCTIONS` tells the model that no tools
     exist on this pass and it must reply with a message, not a call.
 
@@ -302,6 +351,10 @@ async def _continuation_text(
             feature="chat_tutor_continuation",
             task="chat_tutor",
             user_id=getattr(carried.get("deps"), "user_id", None),
+            session_id=_usage_session_id(
+                getattr(carried.get("deps"), "session_id", None),
+                getattr(carried.get("deps"), "user_id", None),
+            ),
             # Explicit: on the streamed path this runs inside the SSE
             # generator, after the request contextvar is gone.
             request_id=request_id,
@@ -581,6 +634,9 @@ def _consume_pending(session_id: str, user_id: str) -> None:
             }
             if pending.get("offering_id"):
                 session_data["offering_id"] = pending["offering_id"]
+            if pending.get("loop_state"):
+                # Quiz-ask loop sessions materialize in teach phase.
+                session_data["loop_state"] = pending["loop_state"]
 
             pending["_row_may_exist"] = True
             table("sessions").upsert(session_data, on_conflict="id", ignore_duplicates=True)
@@ -738,6 +794,7 @@ async def _start_session_agent(
         result = record_agent_usage(
             await agent.run(assembled, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
             request_id=request_id,
         )
         # str — chat_tutor agents return plain Markdown. Safe to read
@@ -808,8 +865,22 @@ async def _start_session_agent(
 @router.post("/start-session")
 async def start_session(body: StartSessionBody, request: Request):
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await _loop_delegate("start_session")(body, request)
+    _kill_switch_budget(body.user_id)
+    session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = open_quiz_ask(body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
     result = await _agent_turn_or_http_error(
-        _start_session_agent(body), what="start-session agent"
+        _start_session_agent(body, session_id), what="start-session agent"
     )
     return {
         "session_id": result["session_id"],
@@ -930,11 +1001,11 @@ async def _chat_via_agent(
     (model_tier, tutor_model))`` — the wire dict, and what the run actually
     ran on (see `_ran_on`), kept out of the dict so it can never leak.
     Graph changes are persisted in-band during the agent run by
-    `apply_graph_update_tool` / `update_mastery_tool` (registered on
-    chat_tutor); the tools also accumulate their payloads on `deps` so the
-    route can echo `graph_update` (for graph_update_json / concepts_covered)
-    and the real `mastery_changes` deltas back to the client. Both are
-    empty when nothing changed this turn.
+    `apply_graph_update_tool` (registered on chat_tutor); the tool also
+    accumulates its payload on `deps` so the route can echo `graph_update`
+    (for graph_update_json / concepts_covered). `mastery_changes` is always
+    empty since PKG-14b (no tutor tool moves mastery; spec §11.6) and stays
+    in the wire shape.
 
     `use_shared_context=False` flips the model into "no class-aggregate"
     mode by appending a constraint instruction to the user message —
@@ -959,6 +1030,7 @@ async def _chat_via_agent(
         result = record_agent_usage(
             await agent.run(user_message, **run_kwargs),
             feature="chat_tutor", task="chat_tutor", user_id=deps.user_id,
+            session_id=_usage_session_id(session_id, deps.user_id),
             request_id=request_id,
         )
         # `.output` alone is a HISTORY read on this path: `_prepare_chat_run`
@@ -1024,8 +1096,7 @@ async def _chat_via_agent(
     response = {
         "reply": reply,
         "graph_update": merged_graph_update,
-        # Real before/after deltas accumulated by update_mastery_tool.
-        # Empty when no mastery moved this turn.
+        # Always empty since PKG-14b (update_mastery_tool is gone, spec §11.6).
         "mastery_changes": deps.mastery_changes,
     }
     # Out of band, never in the wire dict: what this run actually ran on, for
@@ -1114,6 +1185,14 @@ async def _chat_turn_json(
 async def chat(body: ChatBody, request: Request):
     require_self(body.user_id, request)
     require_session_owner(body.session_id, body.user_id)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await _loop_delegate("chat")(body, request)
+    _kill_switch_budget(body.user_id)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _chat_turn_json(body, request), what="chat agent"
@@ -1132,6 +1211,14 @@ async def chat_stream(body: ChatBody, request: Request):
     """
     require_self(body.user_id, request)
     require_session_owner(body.session_id, body.user_id)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await _loop_delegate("chat_stream")(body, request)
+    _kill_switch_budget(body.user_id)
     await _consume_pending_off_loop(body.session_id, body.user_id)
 
     request_id = (
@@ -1211,6 +1298,7 @@ async def chat_stream(body: ChatBody, request: Request):
         # would orphan the row from its turn (and from the turn's decision.made).
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=_usage_session_id(body.session_id, body.user_id),
             request_id=request_id,
         )
         ran["on"] = _ran_on(run_result, agent, run_kwargs, body.model_pref)
@@ -1257,12 +1345,25 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     require_self(body.user_id, request)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await _loop_delegate("start_session_stream")(body, request)
+    _kill_switch_budget(body.user_id)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
         or str(uuid.uuid4())
     )
     session_id = str(uuid.uuid4())
+    # PKG-14 (spec §13 A99): a quiz-ask session's help row, before any tutor text;
+    # A106 (review m2): it runs on the quiz node's course, never the client's
+    target = open_quiz_ask(body, session_id=session_id)
+    if target is not None:
+        body = body.model_copy(update={"course_id": target.course_id})
 
     course_id = body.course_id or _get_course_id_for_topic(body.topic, body.user_id)
     offering_id = resolve_offering(course_id, create=True) if course_id else ""
@@ -1325,6 +1426,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         # request_id, as in /chat/stream: the contextvar is gone by now.
         record_agent_usage(
             run_result, feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+            session_id=session_id,
             request_id=request_id,
         )
 
@@ -1355,12 +1457,16 @@ def end_session(body: EndSessionBody, request: Request):
     else:
         body.user_id = get_session_user_id(request)
     require_session_owner(body.session_id, body.user_id)
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6). No model runs here, so no budget check.
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        loop = _loop_delegate("end_session")(body, request)
+        if loop is not None:
+            return loop
     empty = {
         "concepts_covered": [],
-        "mastery_changes": [],
-        "new_connections": [],
         "time_spent_minutes": 0,
-        "recommended_next": [],
     }
     # Discard under the materialisation lock so a concurrent first turn can't
     # insert the row after we drop the entry. A pending session whose row was
@@ -1377,7 +1483,8 @@ def end_session(body: EndSessionBody, request: Request):
 
     session_rows = table("sessions").select(
         "user_id,started_at",
-        filters={"id": f"eq.{body.session_id}"},
+        # a daily review session is never ended here: no XP, streak or summary (A73)
+        filters={"id": f"eq.{body.session_id}", **NOT_REVIEW},
     )
     if not session_rows:
         if popped is not None:
@@ -1429,12 +1536,10 @@ def end_session(body: EndSessionBody, request: Request):
             except Exception:
                 pass
 
+    # PKG-14b (spec §11.2): the three always-empty lists are gone.
     summary = {
         "concepts_covered": list(concepts_covered),
-        "mastery_changes": [],
-        "new_connections": [],
         "time_spent_minutes": elapsed_minutes,
-        "recommended_next": [],
     }
 
     # #117: session.ended for real (materialized) sessions only — the pending
@@ -1486,7 +1591,7 @@ def list_sessions(user_id: str, request: Request, limit: int = 10):
     require_self(user_id, request)
     sessions = table("sessions").select(
         "id,user_id,topic,mode,offering_id,started_at,ended_at",
-        filters={"user_id": f"eq.{user_id}"},
+        filters={"user_id": f"eq.{user_id}", **NOT_REVIEW},  # review queue rows are not tutor sessions
         order="started_at.desc",
         limit=limit,
     )
@@ -1548,6 +1653,17 @@ def delete_session(session_id: str, request: Request, user_id: str | None = Quer
     # Idempotent and unrevealing (#709 review): a missing OR foreign session is a
     # no-op 200 — nothing is deleted, and the answer never says whether the id
     # exists. A second delete (another tab, a double click) still succeeds.
+    # A known OWNED daily-review row is explicitly refused. Missing and
+    # foreign ids still share #709's idempotent success below. Never delete
+    # the daily queue through the tutor endpoint (that would reset its budget).
+    if session_id not in PENDING_SESSIONS:
+        owner_rows = table("sessions").select(
+            "user_id,mode",
+            filters={"id": f"eq.{session_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        )
+        if owner_rows and owner_rows[0].get("user_id") == user_id and owner_rows[0].get("mode") == REVIEW_MODE:
+            raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
     if not session_owned_by(session_id, user_id):
         return {"deleted": True}
     if session_id in PENDING_SESSIONS:
@@ -1594,7 +1710,7 @@ def resume_session(session_id: str, request: Request):
 
     session_rows = table("sessions").select(
         "id,user_id,topic,mode,started_at,ended_at,offering_id",
-        filters={"id": f"eq.{session_id}"},
+        filters={"id": f"eq.{session_id}", **NOT_REVIEW},  # a review session is never resumed
     )
     if not session_rows:
         raise HTTPException(status_code=404, detail=_SESSION_NOT_FOUND)
@@ -1661,6 +1777,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     result = record_agent_usage(
         await agent.run(assembled, **run_kwargs),
         feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
+        session_id=_usage_session_id(body.session_id, body.user_id),
         request_id=request_id,
     )
     # History-bearing run (`_load_message_history` above), so `.output` alone
@@ -1700,6 +1817,14 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 async def action(body: ActionBody, request: Request):
     require_self(body.user_id, request)
     require_session_owner(body.session_id, body.user_id)
+    # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
+    ai_budget.enforce_rate_limit_for(body.user_id)
+    # Learning loop (spec §7): delegate when the gate is true (the default); below is the
+    # kill-switch path (spec §11.6), cost-bounded by _kill_switch_budget (A20).
+    if learning_loop_for_request(body.user_id):
+        request.state.learning_loop = True  # A38 00: the loop handler reads no second gate
+        return await _loop_delegate("action")(body, request)
+    _kill_switch_budget(body.user_id)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
@@ -1713,8 +1838,10 @@ def mode_switch(body: ModeSwitchBody, request: Request):
     _ensure_session_ready(body.session_id, body.user_id)
     student_name = get_user_name(body.user_id).split()[0]
     session_rows = table("sessions").select(
-        "topic", filters={"id": f"eq.{body.session_id}"}, limit=1
+        "topic,mode", filters={"id": f"eq.{body.session_id}"}, limit=1
     )
+    if session_rows and session_rows[0].get("mode") == REVIEW_MODE:  # never a tutor session (A73)
+        raise HTTPException(status_code=404, detail="Session not found")
     topic = session_rows[0]["topic"] if session_rows else "this topic"
     
     mode_label = MODE_DISPLAY_NAMES.get(body.new_mode, body.new_mode)

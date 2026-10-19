@@ -95,7 +95,7 @@ def state(monkeypatch):
                          "assignment_type": "exam", "due_date": "2026-10-15", "notes": encrypt_if_present("Recursion")},
                         {"id": "late", "enrollment_id": "enr", "title": "Final", "assignment_type": "exam", "due_date": "2026-12-15"}],
         "graph_nodes": [{"id": "n", "user_id": "u", "course_id": "course", "concept_name": "Recursion",
-                         "mastery_score": 0.3, "mastery_tier": "struggling", "times_studied": 1,
+                         "mastery_score": 0.25, "mastery_tier": "struggling", "times_studied": 1,
                          "last_studied_at": "2026-10-11T12:00:00Z"}],
     }
     reads = []
@@ -189,7 +189,35 @@ def test_seven_day_review_boundary_and_unstudied_topics(state):
     assert by_name["Recursion"]["status"] == "needs_review"
     assert by_name["Recursion"]["review_reasons"] == ["Review overdue"]
     checked = svc.set_reviewed("u", "course", svc.topic_key("Recursion"), True)
-    assert next(t for t in checked["topics"] if t["name"] == "Recursion")["status"] == "mastered"
+    assert next(t for t in checked["topics"] if t["name"] == "Recursion")["status"] == "in_progress"
+
+
+@pytest.mark.parametrize("score,status", [
+    (0.0, "needs_review"),
+    (0.1, "needs_review"),
+    (0.299999, "needs_review"),
+    (0.3, "in_progress"),
+    (0.44, "in_progress"),
+    (0.8, "in_progress"),
+    (0.9, "in_progress"),
+    (0.949999, "in_progress"),
+    (0.95, "mastered"),
+    (0.99, "mastered"),
+])
+def test_checklist_status_matches_canonical_graph_presentation_boundaries(state, score, status):
+    db, _ = state
+    # Deliberately stale stored tier: presentation follows the current scalar
+    # and the real BKT helper, never this old label or a checkmark. The graph's
+    # top tier at .95 is separate from strict strong-evidence mastery.
+    db["graph_nodes"][0].update(mastery_score=score, mastery_tier="mastered" if score < 0.95 else "learning")
+    original = copy.deepcopy(db["graph_nodes"])
+    initial = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
+    assert initial["status"] == status
+    assert initial["review_reasons"] == (["Weak mastery"] if status == "needs_review" else [])
+    checked = svc.set_reviewed("u", "course", svc.topic_key("Recursion"), True)
+    topic = next(t for t in checked["topics"] if t["name"] == "Recursion")
+    assert topic["checked"] is True and topic["status"] == status
+    assert db["graph_nodes"] == original
 
 
 def test_mastery_updates_do_not_regenerate_but_new_materials_do(state):
@@ -432,9 +460,9 @@ def test_unicode_and_metadata_cannot_bypass_source_budget(state):
 
 def test_prerequisite_gaps_count_only_known_weak_unreviewed_prerequisites(state):
     db, _ = state
-    db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-11T12:00:00Z")
+    db["graph_nodes"][0].update(mastery_score=0.95, last_studied_at="2026-10-11T12:00:00Z")
     db["graph_nodes"].append({**db["graph_nodes"][0], "id": "fn", "concept_name": "Functions",
-                              "mastery_score": 0.3})
+                              "mastery_score": 0.25})
     recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
     assert recursion["status"] == "mastered"
     assert recursion["prerequisite_gaps"] == ["Functions"] and recursion["priority"] == "high"
@@ -444,9 +472,21 @@ def test_prerequisite_gaps_count_only_known_weak_unreviewed_prerequisites(state)
     assert recursion["prerequisite_gaps"] == [] and recursion["priority"] == "normal"
 
 
+@pytest.mark.parametrize("score,gaps", [(0.299999, ["Functions"]), (0.3, []), (0.44, [])])
+def test_prerequisite_gaps_use_the_same_canonical_weak_boundary(state, score, gaps):
+    db, _ = state
+    db["graph_nodes"][0].update(mastery_score=0.95)
+    db["graph_nodes"].append({**db["graph_nodes"][0], "id": "fn", "concept_name": "Functions", "mastery_score": score})
+    recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
+    assert recursion["prerequisite_gaps"] == gaps
+    assert recursion["priority"] == ("high" if gaps else "normal")
+
+
 def test_untracked_prerequisite_alone_does_not_raise_priority(state):
     db, _ = state
-    db["graph_nodes"][0].update(mastery_score=0.9, last_studied_at="2026-10-11T12:00:00Z")
+    # Keep the target in the graph's top tier so the upcoming exam is not an
+    # independent urgency reason; this test isolates the unknown prerequisite.
+    db["graph_nodes"][0].update(mastery_score=0.95, last_studied_at="2026-10-11T12:00:00Z")
     recursion = next(t for t in svc.refresh_checklist("u", "course")["topics"] if t["name"] == "Recursion")
     assert recursion["prerequisite_gaps"] == [] and recursion["priority"] == "normal"
 

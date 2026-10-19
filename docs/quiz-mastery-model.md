@@ -1,6 +1,12 @@
 # Quiz mastery model — options for the revamp
 
-**Status:** open question, deliberately undecided. #543 landed the seam
+**Status:** decided and superseded by the learning loop (PKG-14b, spec §11.2,
+ADR 0030). The flat per-item delta model below is deleted: a quiz moves mastery
+only through graded evidence — one unassisted `mc` Evidence per question through
+the BKT update (spec §3.1) — for every student, kill switch or not. The rest of
+this page is kept as the record of the options #543 weighed.
+
+**Former status:** open question, deliberately undecided. #543 landed the seam
 (`services/quiz_config.py::mastery_after` + the two named constants) with the
 numbers **unchanged**; the #537 revamp decides the model.
 

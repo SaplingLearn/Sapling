@@ -14,6 +14,7 @@ from agents._run import run_agent_sync
 from agents.topic_checklist import PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent
 from agents.usage import record_agent_usage
 from db.connection import page_all, table
+from learning.bkt import in_mastered_tier, is_weak
 from services.academics import (
     current_term,
     term_for_offering,
@@ -254,9 +255,12 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
         studied = key in reviewed or bool(node and node["times_studied"] > 0)
         timestamps = [_parse_timestamp(reviewed.get(key)), _parse_timestamp(node.get("last_studied_at")) if node else None]
         last = max((t for t in timestamps if t), default=None)
-        weak = studied and score is not None and score < 0.45
+        weak = studied and score is not None and is_weak(score)
         stale = studied and (last is None or now - last >= timedelta(days=REVIEW_AFTER_DAYS))
-        status = "not_started" if not studied else "needs_review" if weak or stale else "mastered" if score is not None and score >= 0.75 else "in_progress"
+        # Match the graph's presentation tier, not strict learning mastery
+        # (which also requires strong unassisted evidence). Checkmarks only
+        # record study/review dates and never supply mastery evidence.
+        status = "not_started" if not studied else "needs_review" if weak or stale else "mastered" if score is not None and in_mastered_tier(score) else "in_progress"
         linked = [assessments[a] for a in topic.assessment_ids if a in assessments]
         linked.sort(key=lambda a: (a["due_date"], a["id"]))
         urgent = bool(linked and date.fromisoformat(linked[0]["due_date"]) <= now.date() + timedelta(days=7))
@@ -265,7 +269,7 @@ def present(scope: dict, snapshot: dict, cache: dict | None, now: datetime) -> d
         # unknown, not a gap.
         prereq_gaps = [p for p in topic.prerequisites if (
             topic_key(p) not in reviewed and normalized_name(p) in nodes
-            and float(nodes[normalized_name(p)]["mastery_score"]) < 0.45
+            and is_weak(float(nodes[normalized_name(p)]["mastery_score"]))
         )]
         topics.append({
             **topic.model_dump(exclude={"source_ids", "assessment_ids", "parent", "prerequisites"}),

@@ -147,6 +147,21 @@ export async function resetDb(): Promise<void> {
   await reseedBaseline();
 }
 
+/** Opt-in question assets for the goal-continuation/readiness journeys.
+ * Diagnostic/readiness run before any learner session; practice runs only after the real probe plan.
+ * Canonical Python helpers encrypt/hash the asset variants. This writes no
+ * attempts, evidence, releases or earned proficiency; the .99 initial prior is
+ * a test input expressly challenged by subsequent real route grading. */
+export async function seedGoalContinuationItems(stage: "diagnostic" | "practice" | "readiness"): Promise<void> {
+  requireLocalDbUrl(DB_URL);
+  const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
+  const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");
+  await execFileAsync(python, ["-m", "db.seed_learning_goal_journey", stage], {
+    cwd: backendDir,
+    timeout: 30_000,
+  });
+}
+
 /**
  * Raw-SQL readback for journey assertions (#392): journeys write through the
  * app and assert directly against Postgres (the #397 posture), so the read

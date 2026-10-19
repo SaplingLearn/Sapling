@@ -41,6 +41,16 @@ answer wins on retries. Written responses are encrypted JSON in
 only the signed-in student's own responses. Final submission grades the
 recorded answers and uses the existing mastery, history, and XP paths.
 
+## Evidence policy
+
+All quiz formats retain the existing conservative `mc` evidence likelihood
+bucket. Written input graded against a deterministic answer key is not promoted
+to strong `free_response` or `mc_reasoned` evidence: those channels require
+rubric/reference-grounded grading or a reason, respectively. The recorded grade
+still uses the same help-ledger floor and rolling 24-hour question replay guard
+as multiple choice. Quiz responses do not acquire learning-check planning
+provenance merely because they are typed.
+
 ## Deployment and verification
 
 Apply `backend/db/migrations/20261018010000_quiz_written_responses.sql`
