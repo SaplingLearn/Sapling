@@ -7,7 +7,7 @@ import { skillEvidenceLabel } from "@/components/learn/LearningScope";
 import { learnHrefForNode, type GraphNode } from "@/lib/data";
 import type { GraphNode as ApiNode } from "@/lib/types";
 import { TIER_LABEL } from "@/lib/graph/nodeStyle";
-import { courseLearnHref, libraryHref, type OpenLoopSession } from "@/lib/dashboard/nextStep";
+import { courseLearnHref, libraryHref, resumeHref, type OpenLoopSession } from "@/lib/dashboard/nextStep";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { relativeTime } from "./format";
 import { StateGlyph, TIERS, tierOf } from "./StateGlyph";
@@ -15,6 +15,7 @@ import styles from "./Dashboard.module.css";
 
 /** An open session the student would leave behind by practising elsewhere. */
 export interface OpenSessionRef {
+  sessionId: string;
   courseId: string | null;
   courseLabel: string | null;
   /** The loop session's goal/progress, when the loop is on and it loaded. */
@@ -86,6 +87,10 @@ export function ConceptDetail({
   const actionLabel = isHub ? `Learn in ${course ?? "this course"}` : "Practice this concept";
   const loop = openSession?.loop ?? null;
   const sameCourse = !!openSession && openSession.courseId === node.course_id;
+  // A session that is still settling — a saved answer being checked, or
+  // feedback not yet served — is finished first; nothing new starts on top
+  // of it (Learn's sessionTransitionBusy / pending-grade guards, #673).
+  const settling = loop ? (loop.pendingGrade ? "grade" : loop.phase === "feedback" ? "feedback" : null) : null;
 
   const startAction = () => {
     if (openSession) setConfirming(true);
@@ -179,14 +184,24 @@ export function ConceptDetail({
       {confirming && openSession && (
         <div id={confirmId} className={styles.confirm} role="group" aria-label="Before you leave this page" data-testid={`${testid}-confirm`}>
           <p style={{ margin: 0 }}>
-            {sameCourse
+            {settling === "grade"
+              ? `Your open session in ${openSession.courseLabel ?? "another course"} has a saved answer that hasn't finished checking. Finish that first; practice is available after.`
+              : settling === "feedback"
+                ? `Your last answer in ${openSession.courseLabel ?? "another course"} is recorded but its feedback is still pending. Finish it first; practice is available after.`
+                : sameCourse
               ? `You already have an open session in ${openSession.courseLabel ?? "this course"}. Learn reopens it first, so nothing you've done is lost; a separate session on this ${isHub ? "course" : "concept"} needs your confirmation there.`
               : `Your open session in ${openSession.courseLabel ?? "another course"} stays saved. ${isHub ? "This opens learning" : `Practising "${node.name}" continues`} in ${course ?? "this course"}.`}
           </p>
           <div className={styles.confirmActions}>
-            <SaplingAction onClick={() => onNavigate(actionHref)} data-testid={`${testid}-confirm-go`}>
-              Continue to Learn
-            </SaplingAction>
+            {settling ? (
+              <SaplingAction onClick={() => onNavigate(resumeHref(openSession.sessionId))} data-testid={`${testid}-confirm-settle`}>
+                {settling === "grade" ? "Finish checking first" : "Finish feedback first"}
+              </SaplingAction>
+            ) : (
+              <SaplingAction onClick={() => onNavigate(actionHref)} data-testid={`${testid}-confirm-go`}>
+                Continue to Learn
+              </SaplingAction>
+            )}
             <SaplingAction tone="secondary" onClick={cancel} data-testid={`${testid}-confirm-cancel`}>
               Cancel
             </SaplingAction>

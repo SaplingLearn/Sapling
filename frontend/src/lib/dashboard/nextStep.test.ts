@@ -21,6 +21,8 @@ const open = (over: Partial<OpenLoopSession> = {}): OpenLoopSession => ({
   goalVersion: 3,
   diagnosis: null,
   goalProgress: null,
+  pendingGrade: null,
+  practiceUnavailable: [],
   statusLoaded: true,
   ...over,
 });
@@ -106,6 +108,17 @@ describe("nextStepFor", () => {
       expect(text).not.toMatch(/\bmin\b|minutes|you've mastered|you have mastered/i);
     }
     expect(step({ kind: "loop-open", session: open({ phase: "close" }) }).reason).toMatch(/isn't the same as mastering/);
+  });
+
+  it("a saved answer that hasn't finished checking is recovered first, in the same session", () => {
+    const s = step({ kind: "loop-open", session: open({ phase: "check", pendingGrade: { kind: "check", question_hash: "h" } }) });
+    expect(s.action).toEqual({ label: "Finish checking", href: "/learn?resume=s1" });
+    expect(s.reason).toMatch(/don't need to answer again/);
+  });
+
+  it("practice-unavailable goal concepts are named as unresolved, not known", () => {
+    const s = step({ kind: "loop-open", session: open({ practiceUnavailable: ["b"] }) });
+    expect(s.details).toContain("1 goal concept has no fresh practice question right now; it stays unresolved.");
   });
 
   it("legacy (kill switch) resumes or starts the legacy tutor", () => {

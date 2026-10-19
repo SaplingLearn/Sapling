@@ -15,7 +15,7 @@
  * durations (the API has none), no motivational filler, no "why next" that
  * the server did not supply.
  */
-import type { LoopDiagnosis, LoopGoal, LoopGoalProgress, LoopPhase } from "@/lib/api";
+import type { LoopDiagnosis, LoopGoal, LoopGoalProgress, LoopPendingGrade, LoopPhase } from "@/lib/api";
 
 /** The phases a resumable loop session can report (GET /status, mapped the
  *  way LoopLearn's `statusPhase` maps them: teach is refined into
@@ -31,6 +31,11 @@ export interface OpenLoopSession {
   goalVersion: number | null;
   diagnosis: LoopDiagnosis | null;
   goalProgress: LoopGoalProgress | null;
+  /** A saved answer whose checking did not finish (#673 ADR 0038): it must be
+   *  recovered in Learn before anything else; never re-answered. */
+  pendingGrade: LoopPendingGrade | null;
+  /** Goal-frontier concepts with no fresh practice item (they stay unresolved). */
+  practiceUnavailable: string[];
   /** False when GET /status failed but the session list proved the session
    *  exists: the action still resumes it, the goal detail is just missing. */
   statusLoaded: boolean;
@@ -164,6 +169,21 @@ export function nextStepFor(state: LearnerState, ctx: NextStepContext): NextStep
       const gaps = diagnosisGaps(s.diagnosis);
       const progress = goalProgressLine(s.goalProgress, ctx.conceptName);
       if (!s.statusLoaded) details.push("Your goal details couldn't load; the session itself is safe and resumes as you left it.");
+      if (s.practiceUnavailable.length > 0) {
+        const n = s.practiceUnavailable.length;
+        details.push(`${n} goal ${n === 1 ? "concept has" : "concepts have"} no fresh practice question right now; ${n === 1 ? "it stays" : "they stay"} unresolved.`);
+      }
+      if (s.pendingGrade) {
+        // Recovery comes first: Learn finishes checking THAT saved answer.
+        return {
+          eyebrow: `Up next · ${s.pendingGrade.kind === "probe" ? PHASE_LABEL.probe : PHASE_LABEL.check}`,
+          title: "Finish checking your saved answer",
+          reason: "Your answer was saved before checking finished. Continue with that saved result — you don't need to answer again.",
+          details,
+          action: { label: "Finish checking", href },
+          links: [],
+        };
+      }
       switch (s.phase) {
         case "probe":
           return {
@@ -196,7 +216,7 @@ export function nextStepFor(state: LearnerState, ctx: NextStepContext): NextStep
           return {
             eyebrow: `Up next · ${PHASE_LABEL.feedback}`,
             title: "Read your feedback",
-            reason: "Your last answer has been graded. Review the feedback, then continue.",
+            reason: "Your answer is recorded. Review its feedback (or retry it if it didn't arrive) before another check.",
             details: [...details, ...(progress ? [progress] : [])],
             action: { label: "Review feedback", href },
             links: [planLink],

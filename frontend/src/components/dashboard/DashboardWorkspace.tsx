@@ -169,9 +169,9 @@ export function DashboardWorkspace() {
   };
   const openSession: OpenSessionRef | null =
     discovery.state.kind === "loop-open"
-      ? { courseId: discovery.state.session.courseId, courseLabel: courseLabel(discovery.state.session.courseId), loop: discovery.state.session }
+      ? { sessionId: discovery.state.session.sessionId, courseId: discovery.state.session.courseId, courseLabel: courseLabel(discovery.state.session.courseId), loop: discovery.state.session }
       : discovery.state.kind === "legacy-open"
-        ? { courseId: discovery.state.courseId, courseLabel: courseLabel(discovery.state.courseId), loop: null }
+        ? { sessionId: discovery.state.sessionId, courseId: discovery.state.courseId, courseLabel: courseLabel(discovery.state.courseId), loop: null }
         : null;
 
   // ── Selection (UI context only — never a server write) ────────────────

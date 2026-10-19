@@ -409,6 +409,30 @@ describe("selection is UI context only; practice is explicit", () => {
     expectNoMutation();
   });
 
+  it.each([
+    ["a pending grade", status("s-cs", "teach", "check", { pending_grade: { kind: "check", question_hash: "h1" } }), "Finish checking first"],
+    ["pending feedback", status("s-cs", "teach", "feedback"), "Finish feedback first"],
+  ])("with %s, Practice never starts anything new — it routes to settling that session", async (_l, st, label) => {
+    m.getLoopSessionStatus.mockResolvedValue(st);
+    await arrive();
+    fireEvent.click(await screen.findByTestId("stub-node-n-vec"));
+    fireEvent.click(await screen.findByTestId("dashboard-concept-practice"));
+    expect(screen.queryByTestId("dashboard-concept-confirm-go")).toBeNull();
+    const settle = screen.getByTestId("dashboard-concept-confirm-settle");
+    expect(settle).toHaveTextContent(label);
+    fireEvent.click(settle);
+    expect(push).toHaveBeenCalledWith("/learn?resume=s-cs");
+    expect(push).not.toHaveBeenCalledWith(expect.stringContaining("topic="));
+    expectNoMutation();
+  });
+
+  it("a pending grade is the next step: finish checking the saved answer", async () => {
+    m.getLoopSessionStatus.mockResolvedValue(status("s-cs", "teach", "check", { pending_grade: { kind: "check", question_hash: "h1" } }));
+    await arrive();
+    await waitFor(async () => expect(await nextAction()).toHaveTextContent("Finish checking"));
+    expect(screen.getByTestId("dashboard-next-title")).toHaveTextContent("Finish checking your saved answer");
+  });
+
   it("without an open session Practice goes straight to Learn with the ids", async () => {
     m.getSessions.mockResolvedValue({ sessions: [] });
     m.listLoopSessionsFor.mockResolvedValue({ sessions: [], resume: null });

@@ -126,6 +126,8 @@ export function useLearningDiscovery(input: DiscoveryInput): { state: LearnerSta
           goalVersion: status?.goal_version ?? null,
           diagnosis: status?.diagnosis ?? null,
           goalProgress: status?.goal_progress ?? null,
+          pendingGrade: status?.pending_grade ?? null,
+          practiceUnavailable: status?.practice_unavailable_node_ids ?? [],
           statusLoaded: status !== null,
         },
       };
