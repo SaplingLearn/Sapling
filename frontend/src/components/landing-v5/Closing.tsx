@@ -16,8 +16,8 @@
  * Not ported; recoverable from the source if it is ever wired up.
  */
 
-import Image from 'next/image';
 import Link from 'next/link';
+import { SaplingWordmark } from '@/components/SaplingWordmark';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 
@@ -53,7 +53,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
       </div>
 
       <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#12201A' }}>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#12201A' }}>
           Ready to <br /> Start <em style={{ color: '#0C5638', paddingRight: 8 }}>Growing?</em>
         </h2>
         <p style={{ margin: '24px 0 0', color: '#61726A', fontSize: 17, fontWeight: 400 }}>
@@ -63,7 +63,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
           <button
             onClick={onGetStarted}
             className="ld-btn-solid"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
           >
             Sign up for Beta Testing
           </button>
@@ -90,8 +90,8 @@ export function SiteFooter() {
     <footer className="ld-footer" style={{ borderTop: '1px solid rgba(18,32,26,0.08)', padding: '48px 32px 44px', position: 'relative', zIndex: 1 }}>
       <div className="ld-footer-row" style={{ maxWidth: 1150, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
-          <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>Sapling · © 2026</span>
+          <SaplingWordmark width={64} />
+          <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>© 2026</span>
         </div>
         <div className="ld-footer-links" style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
           {FOOTER_LINKS.map((l) => (

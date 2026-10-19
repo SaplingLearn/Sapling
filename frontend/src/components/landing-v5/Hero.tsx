@@ -393,7 +393,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-        }} className="font-playfair text-[clamp(4rem,13.5vw,13rem)] font-semibold leading-[1.1] pb-[0.115em] tracking-tight px-4 text-[var(--brand-forest)]">
+        }} className="font-aleo text-[clamp(4rem,13.5vw,13rem)] font-semibold leading-[1.1] pb-[0.115em] tracking-tight px-4 text-[var(--brand-forest)]">
           <span>{heroText1 || ' '}</span>
         </h1>
 
@@ -401,7 +401,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 500ms',
-        }} className="font-playfair text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
+        }} className="font-aleo text-2xl sm:text-3xl md:text-4xl text-[var(--text-dim)] max-w-xl mx-auto mt-2 leading-[1.2] tracking-tight font-medium">
           {heroText2 || ' '}
         </p>
 
@@ -421,7 +421,7 @@ export function Hero({
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 650ms',
-        }} className="font-dm-sans text-base md:text-lg font-medium text-[var(--text)] max-w-[560px] mx-auto mt-6 md:mt-8 leading-[1.55] text-pretty">
+        }} className="font-suse text-base md:text-lg font-medium text-[var(--text)] max-w-[560px] mx-auto mt-6 md:mt-8 leading-[1.55] text-pretty">
           Start with the syllabus for the class you&apos;re taking right now. Sapling reads your
           whole course, learns what you know, and drills what is slipping.
         </p>
@@ -442,7 +442,7 @@ export function Hero({
       {/* Scroll Indicator */}
       <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
         <div className="w-px h-14 landing-divider-v" />
-        <span className="font-jetbrains text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
+        <span className="font-plex-mono text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
       </div>
     </section>
   );

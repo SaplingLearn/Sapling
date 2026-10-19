@@ -68,7 +68,7 @@ export function RoomsDemo() {
             value={partner}
             onChange={(e) => setPartner(e.target.value as Partner)}
             aria-label="Compare with"
-            style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12.5, color: '#33443B', cursor: 'pointer' }}
+            style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, color: '#33443B', cursor: 'pointer' }}
           >
             {PARTNERS.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
@@ -140,9 +140,9 @@ export function RoomsDemo() {
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}
             placeholder="Message the room…"
             aria-label="Message"
-            style={{ flex: 1, minWidth: 0, padding: '9px 12px', borderRadius: 9, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12.5, color: '#33443B', outline: 'none' }}
+            style={{ flex: 1, minWidth: 0, padding: '9px 12px', borderRadius: 9, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, color: '#33443B', outline: 'none' }}
           />
-          <button onClick={send} type="button" className="ld-labsend" style={{ padding: '9px 15px', borderRadius: 9, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+          <button onClick={send} type="button" className="ld-labsend" style={{ padding: '9px 15px', borderRadius: 9, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
             Send
           </button>
         </div>

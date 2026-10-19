@@ -33,11 +33,11 @@
  * engine's scroll handler, not through React.
  */
 
-import Image from 'next/image';
+import { SaplingWordmark } from '@/components/SaplingWordmark';
 import type { NavTheme } from './navTheme';
 
 const TAB: React.CSSProperties = {
-  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 700, fontSize: 16,
+  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 700, fontSize: 16,
   letterSpacing: '0.02em', transition: 'color 400ms', whiteSpace: 'nowrap',
 };
 
@@ -80,21 +80,11 @@ export function Navbar({
           className="ld-nav-logo"
           style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
         >
-          <Image
-            src="/sapling-icon.svg" alt="" width={32} height={32} priority
+          <SaplingWordmark
+            width={132}
             className="ld-nav-mark"
-            style={{ position: 'relative', top: -3, filter: theme.iconFilter, transition: 'filter 500ms' }}
+            style={{ filter: theme.logoFilter, transition: 'filter 500ms' }}
           />
-          <span
-            className="ld-nav-word"
-            style={{
-              fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 25,
-              color: theme.logo, letterSpacing: '-0.02em', lineHeight: 1.1,
-              transition: 'color 500ms',
-            }}
-          >
-            Sapling
-          </span>
         </button>
 
         <div className="ld-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'nowrap', flexShrink: 0 }}>
@@ -109,7 +99,7 @@ export function Navbar({
             onClick={onGetStarted}
             style={{
               background: theme.btnBg, color: theme.btnFg, border: 'none', borderRadius: 7,
-              padding: '11px 21px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 600,
+              padding: '11px 21px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600,
               fontSize: 16, cursor: 'pointer', boxShadow: theme.lift, whiteSpace: 'nowrap',
               transition: 'filter 200ms, background 500ms, color 500ms',
             }}
