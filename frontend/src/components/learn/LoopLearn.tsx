@@ -353,6 +353,18 @@ export function LoopLearn() {
     // the view is not a deep link: it stays in the URL
     router.replace(viewHref(pathname || "/learn", viewParam), { scroll: false });
   }, [deepLink, router, pathname, viewParam]);
+  // The sidebar's Learn and Tutor links change only `?view=` on this mounted
+  // route, so follow the URL when it changes (switchView's own replace lands
+  // here too, as a no-op).
+  const urlView: LoopView = searchParams.get("view") === "tutor" ? "tutor" : "learn";
+  const lastUrlView = useRef(urlView);
+  useEffect(() => {
+    if (lastUrlView.current === urlView) return;
+    lastUrlView.current = urlView;
+    setViewParam(urlView);
+    setContextTab(null);
+    setHistoryOpen(false);
+  }, [urlView]);
   const switchView = (next: LoopView) => {
     setViewParam(next);
     setContextTab(null);

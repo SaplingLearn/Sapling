@@ -1,4 +1,5 @@
 import React from "react";
+import { Settings } from "lucide-react";
 import { BotanicalIcon, type BotanicalIconName } from "../sapling/BotanicalIcon";
 
 /**
@@ -19,6 +20,13 @@ const APPROVED: Partial<Record<string, BotanicalIconName>> = {
 export function DesignIcon({ name, size = 22 }: { name: string; size?: number }) {
   const approved = APPROVED[name];
   if (approved) return <BotanicalIcon name={approved} size={size} />;
+  // #727's hand-drawn gear polygon rendered as a lumpy blob. Use the same
+  // Lucide gear the sidebar's Settings row uses. Filled, Lucide's rounded
+  // teeth read as a flower at 22px, so it stays a line icon with a heavier
+  // stroke to carry the same optical weight as the solid bell and warning.
+  if (name === "settings") {
+    return <Settings size={size} strokeWidth={2.25} className="fa26-gear" data-icon="settings" aria-hidden="true" focusable="false" />;
+  }
   const artwork: Record<string, React.ReactNode> = {
     home: <path d="M2 11 12 2l10 9h-4v10h-5v-6h-3v6H6V11Z" />,
     library: <><rect x="2" y="2" width="8" height="8" rx="2" /><path d="M13 10C12 4 17 1 23 2c0 6-4 9-10 8M10 13c1 6-4 10-9 9 0-6 4-10 9-9" /><rect x="13" y="13" width="8" height="8" rx="2" /></>,
@@ -28,7 +36,6 @@ export function DesignIcon({ name, size = 22 }: { name: string; size?: number })
     calendar: <><path d="M3 5h18v17H3Z" /><path d="M7 1v7m10-7v7M3 10h18" stroke="var(--fa26-sage)" strokeWidth="2" /><path d="m8 15 3 3 5-5" fill="none" stroke="var(--fa26-sage)" strokeWidth="2" /></>,
     notes: <><path d="M7 3h15v15H7Z" /><path d="M2 7h3v15h13v2H2Z" /><path d="M10 7h9m-9 4h9m-9 4h6" stroke="var(--fa26-sage)" strokeWidth="1.5" /></>,
     bell: <><path d="M4 17h16l-3-5V8a5 5 0 0 0-10 0v4Zm5 2h6a3 3 0 0 1-6 0" /><circle cx="12" cy="2" r="2" /></>,
-    settings: <><path d="m9 1 1 3h4l1-3 4 3-1 3 3 3 3 1-1 5-4 1-2 3-1 4-5-1-1-3-4-2-3 1-2-5 3-2V8L1 6l3-4 3 1Z" /><circle cx="12" cy="12" r="4" fill="var(--fa26-paper)" /></>,
     report: <><path d="m12 1 11 20H1Z" /><path d="M12 7v7m0 3v1" stroke="var(--fa26-paper)" strokeWidth="2" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">{artwork[name] ?? artwork.tree}</svg>;

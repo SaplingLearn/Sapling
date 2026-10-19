@@ -462,6 +462,26 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     expect(api.streamLoopChat).not.toHaveBeenCalled();
   });
 
+  it("follows ?view= when the sidebar's Learn/Tutor links change it on the mounted route", async () => {
+    search.params = new URLSearchParams();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "teach", "2026-09-21T10:00:00Z")]));
+    const { rerender } = render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    expect(screen.getByTestId("loop-heading")).toBeTruthy();
+    expect(screen.queryByTestId("tutor-bar")).toBeNull();
+    const lists = api.listLoopSessionsFor.mock.calls.length;
+    search.params = new URLSearchParams("view=tutor");
+    rerender(<LoopLearn />);
+    expect(await screen.findByTestId("tutor-bar")).toBeTruthy();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
+    search.params = new URLSearchParams();
+    rerender(<LoopLearn />);
+    expect(await screen.findByTestId("loop-heading")).toBeTruthy();
+    expect(api.listLoopSessionsFor.mock.calls.length).toBe(lists);
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("Goal & plan: read-only while teaching, with the plan's reasons and a confirmed new-session path", async () => {
     api.getLoopSessionStatus.mockResolvedValue(status({ goal: { text: "Understand recursion", target_node_ids: ["n1"] } }));
     await resumedTeach();
