@@ -53,9 +53,11 @@ QUIZ_MIN_QUESTIONS = 1
 # (~260 in / ~1500 out tokens), while 15- and 20-question schemas are
 # REJECTED outright — HTTP 400 INVALID_ARGUMENT "too many states for
 # serving" — before any generation happens. 10 is therefore the hard
-# ceiling for a single structured call on the quiz task's model tier
-# (matches agents/quiz.py:77-80); raising it requires a model-tier change
-# or batched generation, which is #537 revamp scope.
+# ceiling for a single structured call on the quiz task's model tier;
+# raising it requires a model-tier change or batched generation, which is
+# #537 revamp scope. Since 2026-10-19 the cap is no longer declared in the
+# schema Gemini compiles (nested array bounds 400'd live after #726): it is
+# `agents.quiz.MAX_QUESTIONS`, clipped after the call, and must equal this.
 QUIZ_MAX_QUESTIONS = 10
 
 # The selector values the product offers (config endpoint → client).

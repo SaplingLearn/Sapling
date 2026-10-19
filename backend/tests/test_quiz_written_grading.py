@@ -105,11 +105,18 @@ def test_blank_or_unbounded_accepted_answers_are_filtered_not_fatal():
     assert wire is not None and wire["accepted_answers"] == ["the base case"]
 
 
-def test_quiz_output_schema_keeps_the_constraints_gemini_can_honour():
+def test_quiz_output_list_caps_are_clipped_not_declared_in_the_schema():
+    # The nested maxItems bounds 400'd live on gemini-2.5-flash-lite ("too
+    # many states for serving"); the caps moved into validation. Full
+    # coverage: tests/test_quiz_schema_states.py.
     from agents.quiz import Quiz
     item = Quiz.model_json_schema()["$defs"]["QuizQuestion"]["properties"]
-    assert item["options"]["maxItems"] == 4
-    assert item["accepted_answers"]["maxItems"] == 8
+    assert "maxItems" not in item["options"]
+    assert "maxItems" not in item["accepted_answers"]
+    q = Quiz.model_validate({"questions": [
+        _item(accepted_answers=[f"a{i}" for i in range(12)]),
+    ]}).questions[0]
+    assert len(q.accepted_answers) == 8
 
 
 # ── #726 review: implicit products and scientific-notation ambiguity ──
