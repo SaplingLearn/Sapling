@@ -147,6 +147,15 @@ export function TutorMenu({ items }: { items: TutorMenuItem[] }) {
         aria-controls={panelId}
         aria-label="Session actions"
         onClick={() => setOpen((v) => !v)}
+        // Opening leaves focus on this trigger, so Escape must close from here
+        // too (disclosure pattern), not only from inside the panel.
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
       >
         <span aria-hidden="true" className={styles.dots}>•••</span>
       </button>

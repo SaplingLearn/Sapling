@@ -580,6 +580,18 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it("keyboard: Escape on the menu trigger itself closes the open menu (focus stays on the trigger after opening)", async () => {
+    await resumedTeach();
+    const toggle = screen.getByTestId("tutor-menu");
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("tutor-menu-goal")).toBeTruthy();
+    fireEvent.keyDown(toggle, { key: "Escape" });
+    expect(screen.queryByTestId("tutor-menu-goal")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
+  });
+
   it("'+ New session' in the bar confirms first; Cancel keeps the conversation", async () => {
     await resumedTeach();
     fireEvent.click(screen.getByTestId("loop-new-session"));
