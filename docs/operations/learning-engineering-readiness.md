@@ -18,6 +18,17 @@ ADRs [0030](../decisions/0030-learning-loop-cutover.md),
 [0037](../decisions/0037-atomic-learning-evidence.md), define the applicable
 learning, kill-switch, provenance and durability contracts.
 
+## Current pilot notification decision
+
+For the October 19, 2026 pilot, the project owner deferred outbound failure
+notifications. Keep them disabled; a destination or on-call recipient is not a
+prerequisite for trying the learning flow. Continue verifying structured failure
+signals, native log collection and recovery independently. Record external
+notification delivery and acknowledgement as **deferred**, never passed, and
+do not repeatedly ask for a recipient. Before a broader production rollout,
+record the owner's chosen failure-response policy alongside the remaining hosted
+rollout, rollback and restore checks.
+
 ## What the automation currently verifies
 
 - `.github/workflows/ci.yml` runs the fast backend gate and frontend
@@ -150,7 +161,7 @@ or erase evidence to make a migration or browser test pass.
 | Learning lifecycle | Same goal/version on resume; prerequisite scope; independent/unknown distinction; genuine attempt/help; strict lesson and feedback `done` with no SSE `error`; close/Study | Fixture browser, API/DB/oracles | Bounded real-provider smoke and repeated failure/recovery evaluation |
 | Pending feedback recovery | Failed delivery preserves verdict/evidence; Check me stays blocked; Retry feedback does not regrade; successful delivery precedes next item | Deterministic error, retry, stale request and cross-tab tests | Actual provider failure/recovery on disposable authorized QA, with no replay/reset |
 | Persistence/restart | Same owner/scope/durable evidence after normal process restart; pending turn timing denies false independent-time credit; stale completions are fenced; interrupted grades reconcile without regrading | Isolated DB and cold-worker/process-restart rehearsal | Host termination/rolling-deploy behavior; lazy unmaterialised openers and every grading boundary must be tested explicitly |
-| Costs and telemetry | Completed/incomplete usage visible with request/session join where known; no invented zero-cost receipt; queue/drop failures alert an operator | Hermetic usage/cancellation/drop tests and metadata log scan | Deployed log collection, delivery/alert drill, cost dashboard, reconciliation and response owner |
+| Costs and telemetry | Completed/incomplete usage visible with request/session join where known; no invented zero-cost receipt; queue/drop failures emit controlled operational signals | Hermetic usage/cancellation/drop tests and metadata log scan | Deployed log collection, cost reconciliation and the selected failure-response policy; outbound alert drill only when enabled |
 | Checklist admission and settlement | Participating concurrent requests reserve capacity before paid generation; uncertain bills keep holds; identical settlement replays once; late cache writes are fenced | Real-DB RPC races, expiry/lock waits, rollback, permissions and receipt tests, then bounded provider smoke | Drain old workers, verify configured caps/price policy, observe unknown exposure and reconcile with provider billing |
 | Atomic evidence recovery | One operation receipt covers journal, learner state and graph mirror; stale snapshots retry conservatively and conflicting identity fails closed | Real-DB atomic rollback/replay, concurrent legacy writer and cold-worker checkpoint tests | Rolling deployment/restart at each grade boundary; transcript/session checkpoints remain separate from the evidence transaction |
 | Rollback | Known compatible code artifact, same DB, preserved learner IDs/goal/evidence; re-enable drill | Disposable isolated rollback rehearsal | Backup/restore authorization, host route/image switch and owner sign-off |
@@ -223,7 +234,7 @@ change. A green parent process without setup and teardown evidence is incomplete
 | Saved-grade restart recovery | `backend/tests/test_learning_grade_recovery.py` and real-DB `test_learning_grade_recovery_db.py`: fail before/after evidence acknowledgment, cold reload, identical operation recovery without another grade, owner/goal/close guards, withdrawal handling and one session continuation. |
 | Tutor delivery and interruption | Native wire tests in `test_loop_tutor_native_output.py`, feedback/recovery tests and `test_learning_turn_recovery_db.py`; actual bounded provider lesson and feedback must each finish with one nonempty `done`, no terminal SSE `error`, and metadata-only usage proof. HTTP 200 or navigation alone is insufficient. |
 | Desktop/mobile complete journey | `frontend/e2e/learn-loop.spec.ts` plus component/client tests: current goal, prerequisite approval, genuine attempt/help, feedback, resume and explicit saved-grade recovery, early close and return to Study. Run default and kill-switch lanes with retries visible, oracles and teardown; inspect representative narrow captures. |
-| Operational release and rollback | Read-only health/model-mode/flag/metadata/log verifier; owner-run old-worker drain, live kill/re-enable, compatible rollback on the same DB, and log/accounting failure delivery to an actual operations sink. A local pass does not authorize deployment. |
+| Operational release and rollback | Read-only health/model-mode/flag/metadata/log verifier; owner-run old-worker drain, live kill/re-enable, compatible rollback on the same DB, and the selected failure-response policy. Verify an actual operations sink when outbound notifications are enabled. A local pass does not authorize deployment. |
 
 Engineering completion is assessed against these concrete behavior and integrity
 requirements, with any unsupported environment drill recorded as an explicit
@@ -396,11 +407,13 @@ learner outage, production database reset or a paid model call:
    exception messages as test markers. Platform spend is an alert, not an
    app-wide cap. The per-row DEBUG traceback stays excluded; the aggregate
    WARNING supplies delivery-loss coverage.
-4. Verify the configured rule delivers the event to its selected destination and
-   record receipt/acknowledgement metadata. Missing rule or recipient routing is
-   an unresolved configuration task; do not substitute a local exporter pass or
-   a native log search. A deliberate collector outage must leave the original
-   caller/stderr behavior intact and must not invent a successful delivery.
+4. When outbound notifications are enabled, verify the configured rule delivers
+   the event to its selected destination and record receipt/acknowledgement
+   metadata. An enabled policy with missing routing is an unresolved task; a
+   deliberately deferred policy remains deferred. A local exporter pass or a
+   native log search does not prove external delivery. A deliberate collector
+   outage must leave the original caller/stderr behavior intact and must not
+   invent a successful delivery.
 5. With the same synthetic database, interrupt a worker at an actual saved-grade
    checkpoint/evidence boundary, then start a cold candidate worker. Retry only
    through the ordinary explicit submission recovery path. Verify one grade,

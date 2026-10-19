@@ -35,6 +35,7 @@ from services.extraction_backends.docling_backend import (
 from services.extraction_backends.got_ocr_backend import (
     GotOcrUnavailableError,
     extract_page_with_got_ocr,
+    got_ocr_cache_identity,
 )
 from services.extraction_backends.gemini_vision_backend import (
     GeminiVisionUnavailableError,
@@ -381,11 +382,11 @@ def _ocr_cache_key(file_bytes: bytes) -> str:
     it also carries the vision model and the per-document page cap, both of which
     change the transcription.
 
-    Deliberately not exhaustive: GOT_OCR_MODEL_PATH also changes the output and
-    is NOT in the key, so swapping GOT-OCR weights keeps serving the old weights'
-    text for the rest of the 30-day TTL. The vision knobs are likewise mixed in
-    only while vision is enabled — both omissions exist to avoid invalidating
-    every entry of the configurations that do not use those knobs.
+    The native GOT adapter and checkpoint/revision are included only when the
+    GOT stage can run. This also invalidates legacy GOT transcriptions after
+    migration. Local weights must live in immutable directories; change their
+    path/revision and restart when replacing them. Unused knobs do not
+    invalidate configurations that cannot use those stages.
     """
     key = (
         f"ocr:{hashlib.sha256(file_bytes).hexdigest()}"
@@ -393,6 +394,8 @@ def _ocr_cache_key(file_bytes: bytes) -> str:
     )
     if _gemini_vision_enabled():
         key += f":{vision_model_name()}:{_gemini_vision_max_pages()}"
+    if _engine() == "auto" and _got_ocr_enabled():
+        key += f":got:{got_ocr_cache_identity()}"
     return key
 
 
