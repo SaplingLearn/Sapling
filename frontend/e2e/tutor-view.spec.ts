@@ -92,7 +92,11 @@ test("tutor view: the welcome waits, Start check-in runs the same loop, and Stop
   await setUserFlag(browser, "tutor_view", USER_LOOP, "on");
   const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
   const starts: string[] = [];
-  page.on("request", (r) => { if (r.url().includes("/api/learn/loop/start-session")) starts.push(r.url()); });
+  const answers: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/api/learn/loop/start-session")) starts.push(r.url());
+    if (r.url().includes("/api/learn/loop/check/answer")) answers.push(r.url());
+  });
 
   // 1. Nothing open: the welcome, and nothing starts until the student chooses.
   await page.goto("/learn?view=tutor");
@@ -156,8 +160,10 @@ test("tutor view: the welcome waits, Start check-in runs the same loop, and Stop
   const shown = page.getByTestId("tutor-messages").locator(".fa26-message--user", { hasText: failed });
   await expect(shown).toHaveCount(1);
 
-  // The same session, phase and grading path: nothing here wrote evidence.
+  // The same session, still teaching: a tutor turn may activate a check (the
+  // server's done.check), but nothing here submitted or graded an answer.
   await expect(root).toHaveAttribute("data-session-id", sessionId);
-  await expect(root).toHaveAttribute("data-phase", "teach");
+  expect(["teach", "check"]).toContain(await root.getAttribute("data-phase"));
+  expect(answers).toEqual([]);
   await context.close();
 });

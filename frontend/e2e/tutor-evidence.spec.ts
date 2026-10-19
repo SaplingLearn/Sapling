@@ -148,9 +148,11 @@ test("tutor evidence: start, check-in, plan, active, check, history, context, in
   await shoot(page, "11-offline");
   await context.setOffline(false);
 
-  // The explicit knowledge check.
-  await page.getByTestId("loop-check-me").click();
+  // The explicit knowledge check: a tutor turn may already have posed one
+  // (the server's done.check); otherwise ask for it.
+  if (!(await page.getByTestId("loop-check-prompt").isVisible())) await page.getByTestId("loop-check-me").click();
   await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+  await page.getByTestId("loop-check-prompt").scrollIntoViewIfNeeded();
   await shoot(page, "12-knowledge-check");
 
   // The studio view of the same session, for comparison.
