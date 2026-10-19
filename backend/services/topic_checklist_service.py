@@ -12,9 +12,10 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from pydantic_ai.usage import RunUsage
 
-from agents import WORKER_LIMITS
 from agents._run import run_agent_sync
-from agents.topic_checklist import PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent
+from agents.topic_checklist import (
+    CHECKLIST_LIMITS, PROMPT_VERSION, TopicOutline, normalized_name, topic_checklist_agent,
+)
 from agents.usage import UnfinishedRun, record_agent_usage
 from db.connection import page_all, table
 from learning.bkt import in_mastered_tier, is_weak
@@ -37,6 +38,9 @@ MAX_ASSESSMENTS = 50
 MAX_SOURCE_CHARS = 60000
 EDGE_READ_BATCH = 100
 GENERATION_WAIT_SECONDS = 5.0
+# All counter/generation/validation attempts share this deadline. Cancellation
+# is cooperative and does not prove that remote provider work stopped billing.
+GENERATION_TIMEOUT_SECONDS = 60.0
 
 # Serialize only paid cache misses for one student within this process, across
 # enrollments too. Reference counts retain a lock for waiters and release idle
@@ -344,8 +348,8 @@ async def _generate(payload: dict, user_id: str) -> TopicOutline:
     usage = RunUsage()
     try:
         result = await asyncio.wait_for(topic_checklist_agent.run(
-            json.dumps(payload), deps=payload, usage=usage, usage_limits=WORKER_LIMITS,
-        ), timeout=60)
+            json.dumps(payload), deps=payload, usage=usage, usage_limits=CHECKLIST_LIMITS,
+        ), timeout=GENERATION_TIMEOUT_SECONDS)
     except BaseException:
         # Validation/timeouts can still have billed provider usage. Keep it in
         # the canonical ledger even when no valid outline can be cached.
@@ -357,11 +361,23 @@ async def _generate(payload: dict, user_id: str) -> TopicOutline:
             # Accounting is best-effort and must never replace the actual
             # model exception, timeout or cancellation already in flight.
             logger.warning("Could not record failed checklist usage", exc_info=True)
+        logger.warning(
+            "Checklist generation did not finish; only known usage is available "
+            "(requests=%d, input_tokens=%d, output_tokens=%d). "
+            "In-flight provider usage may be incomplete.",
+            usage.requests, usage.input_tokens, usage.output_tokens,
+        )
         raise
     # Attribution explicitly names the student for the per-user cost rollups.
-    return record_agent_usage(
-        result, feature="topic_checklist", task="topic_checklist", user_id=user_id,
-    ).output
+    try:
+        record_agent_usage(
+            result, feature="topic_checklist", task="topic_checklist", user_id=user_id,
+        )
+    except Exception:
+        # The canonical hook is never-raises. A broken hook must not turn a
+        # valid outline into another paid generation attempt or a cache miss.
+        logger.warning("Could not record completed checklist usage", exc_info=True)
+    return result.output
 
 
 def _current_checklist(user_id: str, course_id: str, semester: str | None):
