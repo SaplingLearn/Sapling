@@ -1,5 +1,7 @@
 """Release verifier safety and failure semantics; no services/DB/models/network."""
 
+import ast
+import hashlib
 import importlib
 import json
 import os
@@ -314,6 +316,98 @@ def test_logs_export_only_category_counts_and_absence_is_not_delivery_proof(tmp_
         empty["status"] == "no_matching_lines"
         and empty["log_window_and_delivery_verified"] is False
     )
+
+
+ACCOUNTING_HOOK_SOURCES = {
+    "agents/usage.py": (
+        "agent_usage_capture",
+        "agent_zero_token_check",
+        "agent_retry_observability",
+    ),
+    "services/chat_stream.py": (
+        "legacy_stream_usage",
+        "structured_stream_usage",
+    ),
+    "routes/learn_loop.py": ("loop_continuation_usage",),
+}
+ACCOUNTING_HOOK_STAGES = tuple(
+    stage for stages in ACCOUNTING_HOOK_SOURCES.values() for stage in stages
+)
+
+
+@pytest.mark.parametrize("stage", ACCOUNTING_HOOK_STAGES)
+def test_actual_private_accounting_warnings_need_attention_without_exporting_content(
+    stage, tmp_path
+):
+    message = f"Usage accounting hook failed (stage={stage}, error_type=%s)"
+    relative_path = next(
+        path for path, stages in ACCOUNTING_HOOK_SOURCES.items() if stage in stages
+    )
+    # Inspect the emitted contract without importing routes, agents or their providers.
+    emitter = ast.parse((Path(__file__).resolve().parents[1] / relative_path).read_text())
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "warning"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == message
+        for node in ast.walk(emitter)
+    )
+    raw = (
+        "PRIVATE_STUDENT_ANSWER WARNING "
+        + message.replace("%s", "RuntimeError")
+        + " PRIVATE_TOKEN_OR_EXCEPTION_MESSAGE\n"
+    ).encode()
+    path = tmp_path / "accounting.log"
+    path.write_bytes(raw)
+    result = verify.audit_log(path)
+    assert result["status"] == "attention"
+    assert result["matching_line_counts"]["usage_incomplete_or_hook_failed"] == 1
+    assert sum(result["matching_line_counts"].values()) == 1
+    assert result["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["bytes"] == len(raw)
+    assert result["raw_lines_exported"] is False
+    assert result["log_window_and_delivery_verified"] is False
+    serialized = json.dumps(result)
+    assert "PRIVATE" not in serialized and "RuntimeError" not in serialized
+    assert stage not in serialized
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "structured usage hook failed; usage row dropped",
+        "could not record model usage",
+        "Structured run ended without final output; usage is incomplete",
+        "Loop continuation ended without final output; usage is unavailable",
+    ],
+)
+def test_prior_usage_failure_messages_remain_visible(message, tmp_path):
+    path = tmp_path / "legacy.log"
+    path.write_text(message + "\n")
+    result = verify.audit_log(path)
+    assert result["status"] == "attention"
+    assert result["matching_line_counts"]["usage_incomplete_or_hook_failed"] == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Usage accounting hook completed",
+        "Usage accounting hook failures: 0",
+        "Usage accounting hooks configured",
+        "Usage capture succeeded",
+        "Hook failed (stage=unrelated)",
+    ],
+)
+def test_successful_accounting_or_unrelated_hooks_do_not_signal_failure(message, tmp_path):
+    path = tmp_path / "normal.log"
+    path.write_text(message + "\n")
+    result = verify.audit_log(path)
+    assert result["status"] == "no_matching_lines"
+    assert not any(result["matching_line_counts"].values())
+    assert result["log_window_and_delivery_verified"] is False
 
 
 def test_default_cli_is_offline_and_never_authorizes_release(monkeypatch, capsys, tmp_path):

@@ -312,8 +312,8 @@ provider/model/request/session usage joins reach the canonical ledger, and an
 isolated induced queue/DB-delivery failure reaches the actual operations sink.
 Useful source signals include `events queue full`, `events flush dropped`,
 `log_llm_usage failed`, incomplete structured usage, accounting hook failures and
-the `ai_budget: platform spend today` alert. Some accounting diagnostics are
-DEBUG-only: verify collection/alert coverage explicitly. Do not turn on raw
+the `ai_budget: platform spend today` alert. Accounting-hook failures emit controlled
+WARNING metadata; verify collection/alert coverage explicitly. Do not turn on raw
 learner/model payload logging to gain visibility.
 
 Use the existing admin `/api/admin/analytics/errors`, `/llm/cost` and

@@ -106,7 +106,7 @@ LOG_PATTERNS = {
         re.I,
     ),
     "usage_incomplete_or_hook_failed": re.compile(
-        r"(?:usage.*(?:incomplete|unavailable))|(?:usage hook failed)|(?:could not record.*usage)",
+        r"(?:usage.*(?:incomplete|unavailable))|(?:usage (?:accounting )?hook failed)|(?:could not record.*usage)",
         re.I,
     ),
     "stream_failure": re.compile(
