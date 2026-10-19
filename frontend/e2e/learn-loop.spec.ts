@@ -497,6 +497,8 @@ for (const width of [1440, 390]) {
         const closeResponse = await closed;
         expect(closeResponse.status()).toBe(200);
         expect(closeResponse.request().postDataJSON()).toMatchObject({ session_id: oldSession, user_id: USER_LOOP });
+        const closePayload = await closeResponse.json();
+        expect(closePayload.close_phase).toBe(resumedPhase);
         const startResponse = await started;
         expect(startResponse.status()).toBe(200);
         const { session_id: freshSession } = await startResponse.json();
@@ -509,12 +511,21 @@ for (const width of [1440, 390]) {
         expect(mutations).toEqual(["/api/learn/loop/close", "/api/learn/loop/start-session"]);
         expect(failures).toEqual([]);
         const sessions = await queryRaw(
-          "SELECT id, ended_at, close_json FROM sessions WHERE user_id = $1 AND id = ANY($2)",
+          "SELECT id, ended_at, close_json, close_phase, loop_state FROM sessions WHERE user_id = $1 AND id = ANY($2)",
           [USER_LOOP, [oldSession, freshSession]],
-        );
+        ) as { id: string; ended_at: string | null; close_json: string | null; close_phase: string | null; loop_state: { phase: string } }[];
         expect(sessions).toHaveLength(2);
-        expect(sessions.find((session) => session.id === oldSession)).toMatchObject({ ended_at: expect.anything(), close_json: expect.anything() });
-        expect(sessions.find((session) => session.id === freshSession)).toMatchObject({ ended_at: null, close_json: null });
+        // Loop closure owns this encrypted record and terminal phase. ended_at
+        // belongs to the separate legacy end-session route, not /loop/close.
+        const previous = sessions.find((session) => session.id === oldSession);
+        expect(previous).toMatchObject({ close_phase: resumedPhase, loop_state: { phase: "close" } });
+        expect(typeof previous?.close_json).toBe("string");
+        const ciphertext = previous!.close_json!;
+        expect(ciphertext.trim().length).toBeGreaterThan(0);
+        const plaintext = await decryptText(ciphertext);
+        expect(plaintext).not.toBe(ciphertext); // Legacy plaintext fallback cannot pass as encryption.
+        expect(JSON.parse(plaintext)).toEqual(closePayload.close);
+        expect(sessions.find((session) => session.id === freshSession)).toMatchObject({ ended_at: null, close_json: null, close_phase: null, loop_state: { phase: "probe" } });
         const stillOpen = await queryRaw(
           "SELECT id FROM sessions WHERE user_id = $1 AND ended_at IS NULL AND close_json IS NULL AND loop_state <> '{}'::jsonb AND mode <> 'review'",
           [USER_LOOP],
