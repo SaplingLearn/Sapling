@@ -84,7 +84,7 @@ renders the element.
 | Topic Checklist | `topic-checklist` | `frontend/src/components/TopicChecklistPanel.tsx` (course-scoped outline and study checkmarks) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
-| Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
+| Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`; `?layout=legacy` keeps the pre-redesign screen) and the Today learning workspace in `frontend/src/components/dashboard/` (redesign prompt 07: `DashboardWorkspace`, `NextStepPanel`, `KnowledgeMap`, `ConceptDetail`, `TopicList`, `FullMap`, `Sections`) |
 | Library | `library` | `frontend/src/components/screens/Library.tsx` (the `/library` document screen — upload trigger, document cards/rows, filters, detail panel) |
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
@@ -378,10 +378,31 @@ never collide in the DOM.
 
 | testid | element |
 | --- | --- |
-| `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
-| `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
-| `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
-| `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
+| `dashboard-courses-key-toggle` | the "Course progress" disclosure in the map toolbar (workspace; `aria-expanded`, starts collapsed, mounts once enrollments load) — on `?layout=legacy` the "My courses" key overlay toggle |
+| `dashboard-course-code` | a course row's code/name label inside the expanded course progress — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
+| `dashboard-courses-manage` | "Courses & semesters" inside the expanded course progress (legacy: the cog in the key) — opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
+| `dashboard-resume-{sessionId}` | a "Recent sessions" row (legacy: "Where you left off" card) — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
+| `dashboard-surface` / `dashboard-workspace` | the workspace's `SaplingSurface` token scope / its page root |
+| `dashboard-scope-line` / `dashboard-meta` | "All courses · All semesters" under the Today heading / the date + real streak line |
+| `dashboard-next` | the goal + next-step region; `data-state` = the discovered learner state (`pending`, `error`, `no-course`, `no-concepts`, `loop-open`, `loop-none`, `legacy-open`, `legacy-none`) |
+| `dashboard-goal` / `dashboard-goal-text` / `dashboard-goal-scope` | the saved goal block (only what the open session confirmed) |
+| `dashboard-next-title` / `dashboard-next-reason` / `dashboard-next-details` | the next activity, its server-grounded reason, honest limitation lines |
+| `dashboard-next-action` | THE one primary action (`data-href` = its destination; disabled "Checking…" while discovery is pending) |
+| `dashboard-next-plan` / `dashboard-next-last-session` / `dashboard-next-library` | subordinate next-step links |
+| `dashboard-discovery-error` (+ `-retry`) / `dashboard-discovery-stale` (+ `-retry`) | discovery failed (nothing started) / last answer kept after a failed re-check |
+| `dashboard-map` / `dashboard-map-canvas` / `dashboard-map-preview` | the bounded map card / its interactive desktop canvas / the static phone preview |
+| `dashboard-map-counts` / `dashboard-semester-scope` / `dashboard-course-filter` | counts of exactly what the canvas renders / the semester label / the course `<select>` |
+| `dashboard-map-loading` / `dashboard-map-error` (+ `-retry`) / `dashboard-map-stale` (+ `-retry`) / `dashboard-map-empty` | per-resource map states |
+| `dashboard-view-topics` / `dashboard-open-map` | open the topic list sheet / the full map dialog |
+| `dashboard-topics` / `dashboard-topic-list` / `dashboard-topic-{nodeId}` | the topic list sheet / its list / one topic (or "Course overview" hub) button, suffixed with the graph node id; concept rows also carry `data-node-id` |
+| `dashboard-concept` | the selected topic panel (desktop column; `data-node-id`); children `-back`, `-state`, `-explanation`, `-evidence`, `-course-counts`, `-practice`, `-confirm`, `-confirm-go`, `-confirm-cancel`, `-quiz`, `-library` |
+| `dashboard-sheet-concept-*` / `dashboard-full-map-concept-*` | the same panel inside the phone sheet (`dashboard-concept-sheet`) / the full map (`dashboard-full-map`, `dashboard-full-map-close`, `dashboard-full-map-side`, `dashboard-full-map-hint`) |
+| `dashboard-selection-cleared` | a selection that left the view was cleared |
+| `dashboard-suggest` (+ `-show`, `-quiz`, `-dismiss`, `-missing`, `-pick-{nodeId}`) | the `?suggest=` notice: a real match, a same-name choice, or an unknown suggestion |
+| `dashboard-notes` / `dashboard-note-{noteId}` / `dashboard-notes-loading` / `-error` (+ `-retry`) / `-stale` / `-empty` / `-off` | Recent notes (the Notetaker's `notes` rows, ≤2) and their states; `dashboard-open-notetaker`, `dashboard-view-library` |
+| `dashboard-coming` / `dashboard-assignment-{assignmentId}` / `dashboard-coming-empty` / `dashboard-assignments-*` / `dashboard-open-calendar` | Coming up (dated assignments) and its states |
+| `dashboard-sessions` / `dashboard-sessions-*` / `dashboard-open-learn` | Recent sessions and its states |
+| `dashboard-announce` | the polite live region announcing selection changes |
 
 `dashboard-review-due` also lives in `screens/Dashboard.tsx`; it is documented
 with the `quiz` surface it links into.

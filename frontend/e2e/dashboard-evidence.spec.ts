@@ -234,3 +234,38 @@ test("after: a loop student's open check-in (Resume check-in)", async ({ browser
     await context.close();
   }
 });
+
+test("after: 200% zoom and a keyboard pass", async ({ browser }) => {
+  test.skip(PHASE !== "after", "redesign-only");
+  test.setTimeout(120_000);
+  // 200 % zoom of a 1440 window = a 720 CSS-px layout at deviceScaleFactor 2.
+  const { context, page } = await signIn(browser, { width: 720, height: 500 }, 2);
+  try {
+    await page.goto("/dashboard");
+    const main = page.getByTestId("app-shell");
+    await expect(main.getByTestId("dashboard-next")).not.toHaveAttribute("data-state", "pending", { timeout: 30_000 });
+    await shot(page, "50-zoom200-arrival");
+    const overflow = await main.evaluate((el) => el.scrollWidth - el.clientWidth);
+    // Keyboard: Tab from the top of main; record each stop and whether it shows a ring.
+    await main.focus();
+    const stops: string[] = [];
+    for (let i = 0; i < 14; i++) {
+      await page.keyboard.press("Tab");
+      stops.push(
+        await page.evaluate(() => {
+          const el = document.activeElement as HTMLElement | null;
+          if (!el || el === document.body) return "BODY";
+          const cs = getComputedStyle(el);
+          const ring = cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0;
+          const label = el.getAttribute("data-testid") || el.getAttribute("aria-label") || (el.textContent || "").trim().slice(0, 40);
+          return `${el.tagName}:${label}${ring ? "" : " [NO VISIBLE FOCUS]"}`;
+        }),
+      );
+    }
+    fs.writeFileSync(path.join(DIR, "keyboard-report.json"), JSON.stringify({ zoom200HorizontalOverflowPx: overflow, tabStops: stops }, null, 2));
+    expect.soft(overflow, "no horizontal overflow at 200% zoom").toBeLessThanOrEqual(1);
+    expect.soft(stops.filter((s) => s.includes("[NO VISIBLE FOCUS]")), "every stop shows a focus ring").toEqual([]);
+  } finally {
+    await context.close();
+  }
+});

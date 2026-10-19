@@ -56,6 +56,17 @@ describe("KnowledgeGraph2D sapling appearance", () => {
     expect(g.querySelector('[data-testid="graph-node-selected-ring"]')).not.toBeNull();
     expect(g.querySelector(":scope > text")?.textContent).toBe("Recursion and its many uses");
     expect(document.querySelectorAll('[data-testid="graph-node-selected-ring"]')).toHaveLength(1);
+    // painted last, so no hub covers its ring or name
+    const all = document.querySelectorAll('[data-testid="graph-node"]');
+    expect(all[all.length - 1].getAttribute("data-node-id")).toBe("l");
+  });
+
+  it("the static preview is fitted to its box (whole map in view)", () => {
+    render(<KnowledgeGraph2D appearance="sapling" nodes={NODES} edges={EDGES} width={200} height={140} interactive={false} />);
+    const t = document.querySelector('svg[aria-label="Knowledge graph"] > g')!.getAttribute("transform")!;
+    const scale = Number(/scale\(([^)]+)\)/.exec(t)![1]);
+    expect(scale).toBeGreaterThan(0);
+    expect(scale).toBeLessThan(1); // shrunk to fit a 200×140 box, not cropped at 1×
   });
 
   it("interactive: named 44px zoom controls and node activation", () => {

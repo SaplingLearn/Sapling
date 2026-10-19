@@ -194,7 +194,7 @@
 .field { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--sapling-muted); }
 .select {
   min-height: 44px;
-  max-width: 100%;
+  max-width: min(100%, 16rem);
   padding: 6px 10px;
   border: 1px solid var(--sapling-line);
   border-radius: var(--sapling-radius-md);

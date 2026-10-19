@@ -85,6 +85,26 @@ type DragState =
 
 const MIN_ZOOM = 0.4;
 
+/** Visual radius of a mark: the fa26/sapling geometry or the classic one. */
+function markRadius(n: GraphNode, styled: boolean): number {
+  return styled ? (n.is_subject_root ? 42 : 14 + n.mastery_score * 12) : radiusFor(n.mastery_score, n.is_subject_root);
+}
+
+/** The transform that shows every mark inside a width×height box (capped
+ *  at 1.2× so a tiny map isn't blown up), or null before layout. */
+function fitTransform(ns: SimNode[], width: number, height: number, styled: boolean) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of ns) {
+    if (n.x == null || n.y == null) continue;
+    const r = markRadius(n, styled) + 6;
+    minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r);
+    minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r);
+  }
+  if (!Number.isFinite(minX)) return null;
+  const scale = Math.min(1.2, (0.94 * width) / Math.max(1, maxX - minX), (0.94 * height) / Math.max(1, maxY - minY));
+  return { scale, tx: width / 2 - ((minX + maxX) / 2) * scale, ty: height / 2 - ((minY + maxY) / 2) * scale };
+}
+
 /** Paper halo behind a sapling-appearance label. */
 const SOURCE_GRAPH_PALETTE_HALO = "#F7F4E9";
 /** The redesign's 44×44 touch target for the zoom controls (sapling only;
@@ -142,6 +162,10 @@ function KnowledgeGraph2DImpl({
   const [, forceRerender] = React.useReducer((x) => x + 1, 0);
   const [hovered, setHovered] = React.useState<GraphNode | null>(null);
   const [view, setView] = React.useState({ tx: 0, ty: 0, scale: 1 });
+  /** The static overview's fitted transform (computed once it settles). */
+  const [fit, setFit] = React.useState<{ tx: number; ty: number; scale: number } | null>(null);
+  /** The reader moved/zoomed the map: a later settle must not yank it back. */
+  const interactedRef = React.useRef(false);
   const dragRef = React.useRef<DragState>(null);
   const movedRef = React.useRef(false);
 
@@ -260,13 +284,33 @@ function KnowledgeGraph2DImpl({
     // Test mode rides the reduced-motion path: the simulation settles
     // synchronously (fixed tick count) instead of animating on rAF, so
     // node coordinates are identical on every load.
+    // A static overview settles synchronously too: it is fitted to its box
+    // once, never animated under a reader's thumb.
     const reducedMotion = IS_TEST_MODE
+      || !interactive
       || (typeof window !== "undefined"
         && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     if (reducedMotion) {
       sim.alpha(1).tick(200).alpha(0).stop();
+      // sapling / static overview: start with the WHOLE map in view.
+      if (sapling || !interactive) {
+        const f = fitTransform(nextNodes, width, height, styled);
+        if (f) {
+          setFit(f);
+          if (interactive && !interactedRef.current) setView(f);
+        }
+      }
     } else {
       sim.alpha(0.9).restart();
+      if (sapling) {
+        // Animated settle: fit once it rests, unless the reader already moved the map.
+        sim.on("end.fit", () => {
+          const f = fitTransform(simNodesRef.current, width, height, styled);
+          if (!f) return;
+          setFit(f);
+          if (!interactedRef.current) setView(f);
+        });
+      }
     }
     // One structural render mounts the node/edge elements at their current
     // coordinates; from here on ticks write positions straight to the DOM.
@@ -277,6 +321,14 @@ function KnowledgeGraph2DImpl({
     };
   }, [dataKey, width, height]);
 
+  // The selected node paints LAST (SVG has no z-index), so its ring and name
+  // sit above a neighbouring hub. Moved after commit, outside render.
+  React.useEffect(() => {
+    if (!selectedId) return;
+    const el = nodeElsRef.current.get(selectedId);
+    if (el?.parentNode && el.parentNode.lastChild !== el) el.parentNode.appendChild(el);
+  }); // every commit: the node elements mount in a later render than the data change
+
   // Stop the simulation on unmount.
   React.useEffect(() => {
     return () => {
@@ -286,7 +338,7 @@ function KnowledgeGraph2DImpl({
   }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const nodeRadius = (n: GraphNode) => styled ? (n.is_subject_root ? 42 : 14 + n.mastery_score * 12) : radiusFor(n.mastery_score, n.is_subject_root);
+  const nodeRadius = (n: GraphNode) => markRadius(n, styled);
   const courseColor = (n?: GraphNode) => {
     if (!n) return "var(--c-sage)";
     const base = n.color || "var(--c-sage)";
@@ -416,6 +468,7 @@ function KnowledgeGraph2DImpl({
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     movedRef.current = true;
+    interactedRef.current = true;
     if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (!n) return;
@@ -462,6 +515,7 @@ function KnowledgeGraph2DImpl({
 
   const onWheel = (e: React.WheelEvent) => {
     if (!interactive || !svgRef.current) return;
+    interactedRef.current = true;
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -474,7 +528,10 @@ function KnowledgeGraph2DImpl({
     });
   };
 
-  const resetView = () => setView({ tx: 0, ty: 0, scale: 1 });
+  const resetView = () => {
+    interactedRef.current = false;
+    setView(sapling && fit ? fit : { tx: 0, ty: 0, scale: 1 });
+  };
 
   const hoveredMastery = hovered
     ? hovered.is_subject_root
@@ -484,6 +541,9 @@ function KnowledgeGraph2DImpl({
 
   const simNodes = simNodesRef.current;
   const simLinks = simLinksRef.current;
+  // The static overview is FITTED to its box (the whole map, never a
+  // cropped corner); an interactive canvas keeps the reader's own pan/zoom.
+  const shown = !interactive && fit ? fit : view;
   // O(1) endpoint resolution for edges whose source/target is still an id
   // string (before the link force swaps in node objects) — replaces the old
   // per-edge .find() over all nodes.
@@ -516,7 +576,7 @@ function KnowledgeGraph2DImpl({
           </filter>
         </defs>
 
-        <g transform={`translate(${view.tx}, ${view.ty}) scale(${view.scale})`}>
+        <g transform={`translate(${shown.tx}, ${shown.ty}) scale(${shown.scale})`}>
           {/* Edges */}
           <g>
             {simLinks.map((l, i) => {
@@ -667,7 +727,8 @@ function KnowledgeGraph2DImpl({
                       fill={sapling ? "#F7F4E9" : appearance === "fa26" ? "#f3eee8" : color}
                       pointerEvents="none"
                     >
-                      {styled ? truncateLabel(n.name, 12) : n.name}
+                      {/* sapling: the hub reads as its course code ("CS101"), not a clipped "CS101 - Int…" */}
+                      {sapling ? truncateLabel(n.name.split(" - ")[0], 12) : styled ? truncateLabel(n.name, 12) : n.name}
                     </text>
                   )}
                   {!n.is_subject_root && (!styled || isHovered || isHl || isSelected) && (
@@ -717,11 +778,11 @@ function KnowledgeGraph2DImpl({
           className="btn btn--ghost btn--sm"
           aria-label="Zoom in"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)", ...ZOOM_TARGET(sapling) }}
-          onClick={() => setView((v) => {
+          onClick={() => { interactedRef.current = true; setView((v) => {
             const s = Math.min(MAX_ZOOM, v.scale * 1.2);
             const c = clampView(v.tx, v.ty, s);
             return { tx: c.tx, ty: c.ty, scale: s };
-          })}
+          }); }}
           title="Zoom in"
         >
           +
@@ -731,11 +792,11 @@ function KnowledgeGraph2DImpl({
           className="btn btn--ghost btn--sm"
           aria-label="Zoom out"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)", ...ZOOM_TARGET(sapling) }}
-          onClick={() => setView((v) => {
+          onClick={() => { interactedRef.current = true; setView((v) => {
             const s = Math.max(MIN_ZOOM, v.scale / 1.2);
             const c = clampView(v.tx, v.ty, s);
             return { tx: c.tx, ty: c.ty, scale: s };
-          })}
+          }); }}
           title="Zoom out"
         >
           −
