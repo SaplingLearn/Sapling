@@ -95,6 +95,42 @@ const caveat = localFont({
   adjustFontFallback: false,
 });
 
+/*
+ * The cream-and-sage redesign faces (Learn / Library / Tutor only): Aleo for
+ * headings, SUSE for body, IBM Plex Mono for code. Lossless WOFF2 conversions
+ * of the handoff's official google/fonts binaries (ttf SHA-256 62b6cb49… Aleo,
+ * 16bda691… SUSE, 6a3412f0… Plex Mono); each family's OFL text sits beside it
+ * in ./fonts. `preload: false`: only the redesign scope
+ * (components/sapling/sapling.css) uses them, so every other route keeps its
+ * current font requests and the faces load when a scoped surface renders.
+ */
+const aleo = localFont({
+  src: './fonts/Aleo-variable.woff2',
+  weight: '100 900',
+  variable: '--font-aleo',
+  display: 'swap',
+  preload: false,
+  fallback: ['Georgia', 'serif'],
+});
+
+const suse = localFont({
+  src: './fonts/SUSE-variable.woff2',
+  weight: '100 900',
+  variable: '--font-suse',
+  display: 'swap',
+  preload: false,
+  fallback: ['system-ui', 'sans-serif'],
+});
+
+const plexMono = localFont({
+  src: './fonts/IBM_Plex_Mono-400.woff2',
+  weight: '400',
+  variable: '--font-plex-mono',
+  display: 'swap',
+  preload: false,
+  fallback: ['ui-monospace', 'monospace'],
+});
+
 const DESCRIPTION =
   'Sapling turns your syllabi, lecture notes, and readings into a living ' +
   'knowledge graph — with an AI tutor, quizzes, and study guides that grow with you.';
@@ -135,7 +171,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-accent="sage"
       data-density="compact"
-      className={`${spectral.variable} ${dmSans.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable} ${caveat.variable}`}
+      className={`${spectral.variable} ${dmSans.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable} ${caveat.variable} ${aleo.variable} ${suse.variable} ${plexMono.variable}`}
     >
       <body>
         <ErrorBoundary>
