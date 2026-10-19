@@ -1,0 +1,356 @@
+/* Sapling cream-and-sage redesign: shared foundation (prompt 01).
+ *
+ * Scope: Learn, Library and Tutor ONLY. Values come from the approved Pen
+ * frames (https://app.pen.dev/s/sxEA2n5Ikk7KWUOanWPghMWYFFS0SbPgbkwkIm9dLYA)
+ * and the handoff's components/tokens.css.
+ *
+ * Two layers:
+ *  1. `--sapling-*` design tokens on :root. They are new, namespaced names, so
+ *     declaring them globally overrides nothing any other route reads.
+ *  2. `.sapling-surface` remaps the app's legacy role tokens (--bg, --text,
+ *     --accent, --border, the FA26 --fa26-* palette, the font roles) to the
+ *     redesign values. ONLY elements inside a surface see the remap. The
+ *     knowledge-graph state colours (--state-*) are deliberately left alone:
+ *     the graph keeps its original colours.
+ *
+ * Every primitive class is prefixed `sapling-` and only styles markup the
+ * primitives in this folder render, so nothing here restyles an existing
+ * component by accident.
+ */
+
+:root {
+  --sapling-paper: #F7F4E9;
+  --sapling-chat-surface: #EEEFE3;
+  --sapling-sage: #E5EBDD;
+  --sapling-ink: #253D2F;
+  --sapling-primary: #416207;
+  --sapling-primary-hover: #344E06;
+  --sapling-muted: #626B5A;
+  --sapling-line: #D6D8C7;
+  --sapling-white: #FFFFFF;
+  --sapling-lavender: #E9E4F2;
+  --sapling-plum: #675574;
+
+  --sapling-font-heading: var(--font-aleo), "Aleo", Georgia, serif;
+  --sapling-font-body: var(--font-suse), "SUSE", system-ui, sans-serif;
+  --sapling-font-code: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, monospace;
+
+  --sapling-space-1: 4px;
+  --sapling-space-2: 8px;
+  --sapling-space-3: 12px;
+  --sapling-space-4: 16px;
+  --sapling-space-5: 24px;
+  --sapling-space-6: 32px;
+  --sapling-radius-sm: 5px;
+  --sapling-radius-md: 6px;
+  --sapling-radius-lg: 16px;
+  --sapling-control-min: 44px;
+  --sapling-reading-width: 760px;
+  --sapling-rail-width: clamp(280px, 26vw, 344px);
+}
+
+/* ── Scope: legacy role tokens remapped for redesigned surfaces ───────── */
+.sapling-surface {
+  --bg: var(--sapling-paper);
+  --bg-panel: var(--sapling-paper);
+  --bg-subtle: var(--sapling-sage);
+  --bg-soft: var(--sapling-chat-surface);
+  --bg-input: var(--sapling-white);
+  --bg-inset: var(--sapling-chat-surface);
+  --bg-topbar: var(--sapling-paper);
+  --text: var(--sapling-ink);
+  --text-dim: color-mix(in srgb, var(--sapling-ink) 70%, var(--sapling-muted));
+  --text-muted: var(--sapling-muted);
+  --accent: var(--sapling-primary);
+  --accent-fg: var(--sapling-white);
+  --accent-soft: var(--sapling-sage);
+  --accent-border: var(--sapling-line);
+  --border: var(--sapling-line);
+  --border-strong: color-mix(in srgb, var(--sapling-line) 55%, var(--sapling-muted));
+  /* FA26 (#727) palette, so its screen CSS reads cream/sage, not tan/clay. */
+  --fa26-paper: var(--sapling-paper);
+  --fa26-tan: var(--sapling-chat-surface);
+  --fa26-leaf: var(--sapling-sage);
+  --fa26-sage: var(--sapling-sage);
+  --fa26-forest: var(--sapling-primary);
+  --fa26-ink: var(--sapling-ink);
+  --fa26-brown: var(--sapling-muted);
+  --font-display: var(--sapling-font-heading);
+  --font-serif: var(--sapling-font-heading);
+  --font-sans: var(--sapling-font-body);
+  --font-mono: var(--sapling-font-code);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+}
+/* The shell's scrollport reads as one cream canvas behind a redesigned page. */
+.fa26-main:has(.sapling-surface) { background: var(--sapling-paper); }
+.sapling-surface :is(code, pre, kbd, samp) { font-family: var(--sapling-font-code); }
+
+.sapling-visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ── Botanical icons: exact approved SVG geometry, tinted by currentColor ─ */
+.sapling-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+  background-color: currentColor;
+  -webkit-mask: var(--sapling-icon-src) center / contain no-repeat;
+  mask: var(--sapling-icon-src) center / contain no-repeat;
+}
+@media (forced-colors: active) {
+  .sapling-icon { forced-color-adjust: none; background-color: CanvasText; }
+}
+.sapling-wordmark { display: block; height: auto; max-width: 100%; }
+
+/* ── Headings ─────────────────────────────────────────────────────────── */
+.sapling-eyebrow {
+  margin: 0;
+  font: 600 12px/1.4 var(--sapling-font-body);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sapling-primary);
+  overflow-wrap: anywhere;
+}
+.sapling-page-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sapling-space-4) var(--sapling-space-5);
+  min-width: 0;
+}
+.sapling-page-heading__text { flex: 1 1 320px; min-width: 0; }
+.sapling-page-heading__title {
+  margin: var(--sapling-space-2) 0 0;
+  font: 500 clamp(28px, 1.6rem + 1.2vw, 40px)/1.15 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+  overflow-wrap: anywhere;
+}
+.sapling-page-heading__description {
+  margin: var(--sapling-space-2) 0 0;
+  max-width: 60ch;
+  font: 400 16px/1.5 var(--sapling-font-body);
+  color: var(--sapling-muted);
+}
+.sapling-page-heading__actions { display: flex; flex-wrap: wrap; gap: var(--sapling-space-3); }
+.sapling-section-heading {
+  margin: 0;
+  font: 500 clamp(20px, 1.1rem + 0.5vw, 25px)/1.3 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+  overflow-wrap: anywhere;
+}
+.sapling-section-heading--h3 { font-size: 18px; }
+
+/* ── Actions ──────────────────────────────────────────────────────────── */
+.btn.sapling-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sapling-space-2);
+  min-height: var(--sapling-control-min);
+  min-width: var(--sapling-control-min);
+  padding: 10px 18px;
+  border: 1px solid var(--sapling-primary);
+  border-radius: var(--sapling-radius-md);
+  font: 600 15px/1.3 var(--sapling-font-body);
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.btn.sapling-action--primary { color: var(--sapling-white); background: var(--sapling-primary); }
+.btn.sapling-action--primary:hover:not(:disabled) { background: var(--sapling-primary-hover); }
+.btn.sapling-action--secondary { color: var(--sapling-primary); background: var(--sapling-paper); }
+.btn.sapling-action--secondary:hover:not(:disabled) { background: var(--sapling-sage); }
+.btn.sapling-action--quiet { color: var(--sapling-primary); background: transparent; border-color: transparent; }
+.btn.sapling-action--quiet:hover:not(:disabled) { background: var(--sapling-sage); }
+.btn.sapling-action:disabled { opacity: 0.5; cursor: not-allowed; }
+:is(.sapling-action, .sapling-selectable, .sapling-context-trigger):focus-visible,
+.sapling-choice:has(input:focus-visible),
+.sapling-composer__field:focus-visible {
+  outline: 2px solid var(--sapling-primary);
+  outline-offset: 3px;
+}
+
+/* ── Selected state: sage + an explicit text/ARIA state, never colour alone */
+.sapling-selectable {
+  display: flex;
+  align-items: center;
+  gap: var(--sapling-space-3);
+  width: 100%;
+  min-height: var(--sapling-control-min);
+  padding: var(--sapling-space-3) var(--sapling-space-4);
+  border: 0;
+  border-bottom: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-sm);
+  background: transparent;
+  color: var(--sapling-ink);
+  font: 400 15px/1.45 var(--sapling-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+.sapling-selectable > * { min-width: 0; overflow-wrap: anywhere; }
+.sapling-selectable:hover { background: color-mix(in srgb, var(--sapling-sage) 55%, transparent); }
+.sapling-selectable[data-selected="true"] { background: var(--sapling-sage); }
+
+.sapling-choices { min-width: 0; margin: 0; padding: 0; border: 0; font-family: var(--sapling-font-body); }
+.sapling-choices legend {
+  margin-bottom: var(--sapling-space-4);
+  padding: 0;
+  font: 500 clamp(19px, 1rem + 0.6vw, 25px)/1.35 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+  overflow-wrap: anywhere;
+}
+.sapling-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sapling-space-3);
+  min-height: var(--sapling-control-min);
+  padding: var(--sapling-space-3) var(--sapling-space-4);
+  border-bottom: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-sm);
+  color: var(--sapling-ink);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.sapling-choice > span { min-width: 0; overflow-wrap: anywhere; }
+.sapling-choice[data-selected="true"] { background: var(--sapling-sage); }
+.sapling-choice input { width: 18px; height: 18px; margin: 3px 0 0; flex-shrink: 0; accent-color: var(--sapling-primary); }
+.sapling-choice__letter { font-weight: 600; color: var(--sapling-primary); }
+.sapling-choices:disabled .sapling-choice { cursor: default; opacity: 0.65; }
+
+/* ── Goal summary (restrained lavender goal context) ──────────────────── */
+.sapling-goal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sapling-space-3) var(--sapling-space-5);
+  padding: var(--sapling-space-4) var(--sapling-space-5);
+  border-radius: var(--sapling-radius-md);
+  background: var(--sapling-lavender);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+}
+.sapling-goal__main { flex: 1 1 280px; min-width: 0; }
+.sapling-goal__eyebrow { color: var(--sapling-plum); }
+.sapling-goal__text { margin: 4px 0 0; font: 500 clamp(17px, 1rem + 0.3vw, 20px)/1.4 var(--sapling-font-heading); overflow-wrap: anywhere; }
+.sapling-goal__scope { margin: 0; color: var(--sapling-plum); font-size: 14px; overflow-wrap: anywhere; }
+
+/* ── Phase strip (read-only display of the server phase) ─────────────── */
+.sapling-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sapling-space-3) var(--sapling-space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--sapling-muted);
+  font: 500 14px/1.4 var(--sapling-font-body);
+}
+.sapling-phases li { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.sapling-phases__mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid var(--sapling-line);
+  border-radius: 50%;
+  font-size: 13px;
+}
+.sapling-phases [data-state="done"] .sapling-phases__mark { color: var(--sapling-white); background: var(--sapling-primary); border-color: var(--sapling-primary); }
+.sapling-phases [aria-current="step"] { color: var(--sapling-ink); font-weight: 700; }
+.sapling-phases [aria-current="step"] .sapling-phases__mark { color: var(--sapling-white); background: var(--sapling-primary); border-color: var(--sapling-primary); }
+
+/* ── Status / retry message: text + icon; an error is never a red surface ─ */
+.sapling-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sapling-space-3);
+  padding: var(--sapling-space-3) var(--sapling-space-4);
+  border-left: 3px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-sm);
+  background: var(--sapling-white);
+  color: var(--sapling-ink);
+  font: 400 15px/1.5 var(--sapling-font-body);
+}
+.sapling-status__icon { flex-shrink: 0; margin-top: 2px; color: var(--sapling-muted); }
+.sapling-status__body { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.sapling-status__title { display: block; font-weight: 600; }
+.sapling-status--pending { border-left-color: var(--sapling-primary); }
+.sapling-status--success { border-left-color: var(--sapling-primary); }
+.sapling-status--success .sapling-status__icon { color: var(--sapling-primary); }
+.sapling-status--error { border-left-color: var(--err); }
+.sapling-status--error .sapling-status__icon { color: var(--err); }
+
+/* ── Context: desktop secondary rail, phone sheet ─────────────────────── */
+.sapling-context-rail {
+  width: var(--sapling-rail-width);
+  flex: 0 0 var(--sapling-rail-width);
+  min-width: 0;
+  padding-left: var(--sapling-space-6);
+  border-left: 1px solid var(--sapling-line);
+}
+.sapling-context-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sapling-space-2);
+  min-height: var(--sapling-control-min);
+  padding: 8px 18px;
+  border: 1px solid var(--sapling-line);
+  border-radius: 999px;
+  background: var(--sapling-paper);
+  color: var(--sapling-ink);
+  font: 500 15px/1.3 var(--sapling-font-body);
+  cursor: pointer;
+}
+.sapling-context-sheet .sheet { background: var(--sapling-paper); }
+.sapling-context-sheet .sheet__title { font: 500 22px/1.3 var(--sapling-font-heading); }
+.sapling-context-sheet .sheet__close { width: var(--sapling-control-min); height: var(--sapling-control-min); }
+.sapling-context-sheet .sheet__body { overscroll-behavior: contain; padding-bottom: max(var(--sapling-space-5), env(safe-area-inset-bottom)); }
+
+/* ── Composer surface ─────────────────────────────────────────────────── */
+.sapling-composer {
+  display: grid;
+  gap: var(--sapling-space-2);
+  padding: var(--sapling-space-3);
+  padding-bottom: max(var(--sapling-space-3), env(safe-area-inset-bottom));
+  border: 1px solid var(--sapling-line);
+  border-radius: var(--sapling-radius-lg);
+  background: var(--sapling-white);
+  color: var(--sapling-ink);
+  font-family: var(--sapling-font-body);
+}
+.sapling-composer__field {
+  width: 100%;
+  min-height: 64px;
+  max-height: 40dvh;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: var(--sapling-space-2);
+  border: 0;
+  border-radius: var(--sapling-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: 400 16px/1.6 var(--sapling-font-body);
+}
+.sapling-composer__field::placeholder { color: var(--sapling-muted); opacity: 1; }
+.sapling-composer__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sapling-space-3); }
+.sapling-composer__lead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sapling-space-3); min-width: 0; }
+.sapling-composer__hint { margin: 0; color: var(--sapling-muted); font-size: 13px; }
+.sapling-composer__status:empty { display: none; }
+.sapling-composer__status { margin: 0; color: var(--sapling-muted); font-size: 13px; }
+
+@media (max-width: 767px) {
+  .sapling-goal { padding: 14px 16px; gap: 8px; }
+  .sapling-phases { gap: 10px 16px; }
+  .sapling-phases li { font-size: 13px; gap: 6px; }
+  .sapling-phases__mark { width: 24px; height: 24px; }
+  .sapling-composer__hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sapling-action, .sapling-selectable { transition: none; }
+}

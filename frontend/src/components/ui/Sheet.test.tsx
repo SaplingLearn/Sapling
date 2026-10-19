@@ -40,6 +40,13 @@ describe("Sheet", () => {
     expect(document.body.querySelector(".sheet")).not.toBeNull();
   });
 
+  it("can rise from the bottom (phone context sheet) and scope its backdrop", () => {
+    open({ side: "bottom", className: "sapling-surface" });
+    const panel = screen.getByRole("dialog", { name: "Ask about this" });
+    expect(panel).toHaveClass("sheet", "sheet--bottom");
+    expect(document.body.querySelector(".sheet-backdrop")).toHaveClass("sheet-backdrop--bottom", "sapling-surface");
+  });
+
   it("renders nothing at all when closed", () => {
     render(
       <Sheet open={false} onClose={() => {}} title="Ask about this">

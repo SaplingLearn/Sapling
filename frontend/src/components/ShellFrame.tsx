@@ -11,6 +11,8 @@ import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
 import { NavFeatureGate } from "./NavFeatureGate";
 import "./fa26/fa26.css";
+// Redesign foundation (Learn/Library/Tutor); scoped, so it must load after fa26.css.
+import "./sapling/sapling.css";
 
 export function ShellFrame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/dashboard";
