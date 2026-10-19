@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 
 from agents._providers import model_for
@@ -34,6 +34,22 @@ from services.prompt_safety import INJECTION_GUARD_PROMPT
 # not a question type. Every emitted item has one concrete answer format.
 QuizDifficulty = Literal["easy", "medium", "hard"]
 QuizQuestionType = Literal["multiple_choice", "short_answer", "numeric", "symbolic"]
+
+# Output caps, enforced by OUR validation after the call, never by the schema
+# Gemini compiles. Constrained decoding multiplies array bounds: each
+# `maxItems` nested inside a bounded `questions` list is repeated per outer
+# item. With #726's `accepted_answers` (8) beside `options` (4) inside
+# `questions` (1..10), the `final_result` declaration plus the three read
+# tools (function-calling mode ANY unions them) crossed gemini-2.5-flash-lite's
+# "too many states for serving" limit, and every live quiz 400'd before
+# generating anything. Measured live 2026-10-19: all bounds -> 400, either
+# nesting alone -> served, none -> served. So the schema carries no length
+# bounds at all, and the validators below clip over-long lists deterministically
+# (keep the first N, in model order) instead of failing the whole Quiz, which
+# would burn the output retries and 502. Pinned by tests/test_quiz_schema_states.py.
+MAX_QUESTIONS = 10  # == services.quiz_config.QUIZ_MAX_QUESTIONS
+MAX_OPTIONS = 4  # == routes.quiz._MCQ_OPTIONS (the route drops any other count)
+MAX_ACCEPTED_ANSWERS = 8
 
 
 class QuizQuestion(BaseModel):
@@ -55,10 +71,10 @@ class QuizQuestion(BaseModel):
     # lives in the ROUTE (routes/quiz.py::_agent_question_to_wire), never in a
     # model validator here: a validator failure rejects the whole Quiz, which
     # burns the agent's output retries and 502s the request over one bad item.
-    # The route drops just that item. Only the bounds Gemini's schema can
-    # express (maxItems) stay on the fields.
-    options: list[str] = Field(default_factory=list, max_length=4)
-    accepted_answers: list[str] = Field(default_factory=list, max_length=8)
+    # The route drops just that item. The list bounds are clipped by the
+    # validator below, not declared on the fields (see MAX_OPTIONS above).
+    options: list[str] = Field(default_factory=list)
+    accepted_answers: list[str] = Field(default_factory=list)
     # The option text the agent considers correct. Must appear verbatim
     # in `options`; the route validates this and drops questions that
     # violate the contract rather than silently mis-marking them.
@@ -69,14 +85,32 @@ class QuizQuestion(BaseModel):
     # on a correct answer.
     concept: str
 
+    @field_validator("options", mode="after")
+    @classmethod
+    def _clip_options(cls, options: list[str]) -> list[str]:
+        return options[:MAX_OPTIONS]
+
+    @field_validator("accepted_answers", mode="after")
+    @classmethod
+    def _clip_accepted_answers(cls, accepted: list[str]) -> list[str]:
+        return accepted[:MAX_ACCEPTED_ANSWERS]
+
 
 class Quiz(BaseModel):
     """The agent's structured output."""
 
-    # Capped at 10 (down from 20): fewer array-repetition states in the
-    # constrained-decoding schema, needed to clear "too many states for
-    # serving" on gemini-2.5-flash-lite. See QuizQuestion note above.
-    questions: list[QuizQuestion] = Field(min_length=1, max_length=10)
+    # 1..MAX_QUESTIONS, enforced here rather than as minItems/maxItems in the
+    # schema (see MAX_QUESTIONS above).
+    questions: list[QuizQuestion]
+
+    @field_validator("questions", mode="after")
+    @classmethod
+    def _require_and_clip_questions(cls, questions: list[QuizQuestion]) -> list[QuizQuestion]:
+        # Empty stays a validation error, so the bounded output retry still
+        # fires exactly as it did for the old min_length=1.
+        if not questions:
+            raise ValueError("List should have at least 1 item after validation, not 0")
+        return questions[:MAX_QUESTIONS]
 
 
 _SYSTEM_PROMPT = (
