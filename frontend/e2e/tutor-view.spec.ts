@@ -115,7 +115,7 @@ test("tutor view: the welcome waits, Start check-in runs the same loop, and Stop
   await checkInAndApprove(page, Number(P.PROBE_SESSION_CAP));
   const sessionId = (await root.getAttribute("data-session-id"))!;
   expect(sessionId).toBeTruthy();
-  await expect(page).toHaveURL(/\/learn\?view=tutor$/); // the view survives; nothing else is in the URL
+  await expect(page).toHaveURL(/\/learn\?course=[^&]+&view=tutor$/); // course and view survive; transient instructions are consumed
 
   // 3a. Stop before the reply: the request is held in the browser, so the
   // server never saw it. One Retry re-sends it; one user row is stored.

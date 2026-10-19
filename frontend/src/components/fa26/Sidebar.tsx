@@ -39,11 +39,11 @@ function EntryIcon({ icon }: { icon: SidebarIcon }) {
   return <GitBranch size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" />;
 }
 
-/** Reads `?view=` in its own Suspense boundary: useSearchParams in the shell
+/** Reads the URL in its own Suspense boundary: useSearchParams in the shell
  *  would otherwise opt every shell page out of static rendering. */
-function ViewReader({ onView }: { onView: (view: string | null) => void }) {
-  const view = useSearchParams().get("view");
-  useEffect(() => { onView(view); }, [view, onView]);
+function ViewReader({ onSearch }: { onSearch: (search: string) => void }) {
+  const search = useSearchParams().toString();
+  useEffect(() => { onSearch(search); }, [search, onSearch]);
   return null;
 }
 
@@ -97,7 +97,8 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
   const pathname = usePathname() || "/dashboard";
   const { userName, isAdmin } = useUser();
   const { flags, ready: flagsReady } = useFlagMap();
-  const [view, setView] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const view = new URLSearchParams(search).get("view");
   const tutorOffered = flags[TUTOR_VIEW_FLAG] === "on";
   const activeKey = sidebarActiveKey(pathname, view, tutorOffered);
   const tid = (id: string) => (testids ? id : undefined);
@@ -195,10 +196,20 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, []);
 
+  const destination = (href: string) => {
+    if (pathname !== "/learn" || (href !== "/learn" && href !== "/learn?view=tutor")) return href;
+    // A sidebar view change keeps the active course/session and deep-link
+    // context. Only the presentation changes, just as with the in-screen tabs.
+    const params = new URLSearchParams(search);
+    if (href.includes("?")) params.set("view", "tutor");
+    else params.delete("view");
+    return `/learn${params.size ? `?${params}` : ""}`;
+  };
+
   const row = (entry: { key: string; href: string; label: string }, icon: React.ReactNode, testid: string | undefined) => {
     const current = entry.key === activeKey;
     return <li key={entry.key}>
-      <Link href={entry.href} className={styles.item} data-nav-key={entry.key} data-testid={testid}
+      <Link href={destination(entry.href)} className={styles.item} data-nav-key={entry.key} data-testid={testid}
         aria-current={current ? "page" : undefined} aria-label={collapsed ? entry.label : undefined} data-tip={entry.label}>
         <span className={styles.icon}>{icon}</span>
         <span className={`${styles.label} ${styles.fade}`}>{entry.label}</span>
@@ -213,7 +224,7 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
     onFocus={(e) => showTip(e.target)} onBlur={() => setTip(null)}
     onKeyDown={(e) => { if (e.key === "Escape") setTip(null); }}>
     <script dangerouslySetInnerHTML={{ __html: PRE_PAINT_COLLAPSE }} />
-    <Suspense fallback={null}><ViewReader onView={setView} /></Suspense>
+    <Suspense fallback={null}><ViewReader onSearch={setSearch} /></Suspense>
     <div className={styles.header}>
       {/* No approved standalone Sapling mark ships in public/design/sapling,
           so the collapsed rail shows no logo rather than a drawn one. */}

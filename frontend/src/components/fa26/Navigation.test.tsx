@@ -172,6 +172,20 @@ describe("Pen sidebar", () => {
     expect(screen.getByTestId("nav-link-learn")).toHaveAttribute("aria-current", "page");
   });
 
+  it("keeps the active course, session and deep-link context when switching Learn/Tutor", () => {
+    state.pathname = "/learn";
+    state.search = "course=course-two&resume=session-two&mode=socratic&view=tutor";
+    flagState.flags = { tutor_view: "on" };
+    const { rerender } = render(<Sidebar />);
+    expect(screen.getByTestId("nav-link-learn")).toHaveAttribute("href", "/learn?course=course-two&resume=session-two&mode=socratic");
+    expect(screen.getByTestId("nav-link-tutor-view")).toHaveAttribute("href", "/learn?course=course-two&resume=session-two&mode=socratic&view=tutor");
+    state.search = "course=course-three";
+    rerender(<Sidebar />);
+    expect(screen.getByTestId("nav-link-learn")).toHaveAttribute("href", "/learn?course=course-three");
+    expect(screen.getByTestId("nav-link-tutor-view")).toHaveAttribute("href", "/learn?course=course-three&view=tutor");
+    expect(screen.getByTestId("nav-link-library")).toHaveAttribute("href", "/library");
+  });
+
   it("drops destinations hidden by their hide_ flag, in the six and in More (#620)", () => {
     state.pathname = "/dashboard";
     flagState.flags = { tutor_view: "on", hide_tutor: "on", hide_tree: "on", hide_quiz: "on", hide_grades: "off" };

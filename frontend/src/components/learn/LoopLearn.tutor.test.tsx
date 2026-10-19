@@ -206,6 +206,7 @@ describe("loop Retry of an interrupted conversational turn", () => {
     await resumedTeach();
     sendChat("why?");
     await screen.findByTestId("tutor-interrupted");
+    await waitFor(() => expect((screen.getByTestId("tutor-retry") as HTMLButtonElement).disabled).toBe(false));
     let release: (v: unknown) => void = () => {};
     api.resumeSession.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     fireEvent.click(screen.getByTestId("tutor-retry"));
@@ -449,14 +450,14 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     await resumedTeach();
     const lists = api.listLoopSessionsFor.mock.calls.length;
     fireEvent.click(screen.getByTestId("loop-view-tutor"));
-    expect(router.replace).toHaveBeenLastCalledWith("/learn?view=tutor", { scroll: false });
+    expect(router.replace).toHaveBeenLastCalledWith("/learn?course=c1&view=tutor", { scroll: false });
     expect(await screen.findByTestId("tutor-bar")).toBeTruthy();
     expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
     expect(screen.getByText("welcome back")).toBeTruthy();
     fireEvent.click(screen.getByTestId("tutor-menu"));
     fireEvent.click(screen.getByTestId("tutor-menu-studio"));
     expect(await screen.findByTestId("loop-heading")).toBeTruthy();
-    expect(router.replace).toHaveBeenLastCalledWith("/learn", { scroll: false });
+    expect(router.replace).toHaveBeenLastCalledWith("/learn?course=c1", { scroll: false });
     expect(api.listLoopSessionsFor.mock.calls.length).toBe(lists);
     expect(api.startLoopSession).not.toHaveBeenCalled();
     expect(api.streamLoopChat).not.toHaveBeenCalled();
@@ -479,7 +480,9 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     expect(await screen.findByTestId("loop-heading")).toBeTruthy();
     expect(api.listLoopSessionsFor.mock.calls.length).toBe(lists);
     expect(api.startLoopSession).not.toHaveBeenCalled();
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.replace.mock.calls.map(([href]) => href)).toEqual([
+      "/learn?course=c1", "/learn?course=c1&view=tutor", "/learn?course=c1",
+    ]);
   });
 
   it("Goal & plan: read-only while teaching, with the plan's reasons and a confirmed new-session path", async () => {

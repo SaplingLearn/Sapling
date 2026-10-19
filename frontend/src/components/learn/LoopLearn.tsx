@@ -28,6 +28,7 @@ import { useUser } from "@/context/UserContext";
 import { useFlag, useFlagMap } from "@/context/FlagsContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
+import { clearOnboardingIntent, isOnboardingIntentScopeValid, readOnboardingIntent, readOnboardingIntentForUser, recordOnboardingSession, type OnboardingLearningIntent } from "@/lib/onboardingHandoff";
 import { apiToGraphNode, type GraphEdge, type GraphNode } from "@/lib/data";
 import type { GraphEdge as ApiEdge, GraphNode as ApiNode } from "@/lib/types";
 import {
@@ -166,7 +167,12 @@ const RAIL_BREAKPOINT = 1024;
  *  shown only while this flag is on (services/feature_flags.py REGISTRY). */
 const TUTOR_VIEW_FLAG = "tutor_view";
 type LoopView = "learn" | "tutor";
-const viewHref = (base: string, view: LoopView) => (view === "tutor" ? `${base}?view=tutor` : base);
+type NewSessionRequest = { topic?: string; mode?: string; onboardingIntent?: OnboardingLearningIntent };
+const viewHref = (base: string, view: LoopView, courseId: string) => {
+  const params = new URLSearchParams({ course: courseId });
+  if (view === "tutor") params.set("view", "tutor");
+  return `${base}?${params}`;
+};
 const RAIL_GRAPH_HEIGHT = 240;
 const TUTOR_GRAPH_HEIGHT = 300;
 
@@ -196,7 +202,6 @@ const readDeepLink = (p: { get(name: string): string | null }): DeepLink => ({
   mode: (p.get("mode") ?? "").trim(),
   suggest: (p.get("suggest") ?? "").trim(),
 });
-const hasDeepLink = (d: DeepLink) => !!(d.resume || d.topic || d.course || d.mode || d.suggest);
 
 /** The phase GET /status reports for a document, in the UI's vocabulary. */
 const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.phase : st.loop_phase);
@@ -253,6 +258,12 @@ export function LoopLearn() {
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const goalButton = useRef<HTMLButtonElement>(null);
+  const [onboardingIntent, setOnboardingIntent] = useState<OnboardingLearningIntent | null>(null);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const onboardingAction = useRef(false);
+  const onboardingSession = useRef<{ sessionId: string; intent: OnboardingLearningIntent } | null>(null);
+  const startingRequests = useRef(new Set<string>());
 
   // Probe
   const [probeItem, setProbeItem] = useState<LoopProbeItem | null>(null);
@@ -296,7 +307,7 @@ export function LoopLearn() {
   const [closeBusy, setCloseBusy] = useState(false);
   const [closeNote, setCloseNote] = useState<string | null>(null);
   // New-session confirmation: leaving an open session is never one click.
-  const [confirmNew, setConfirmNew] = useState<{ topic?: string; mode?: string } | null>(null);
+  const [confirmNew, setConfirmNew] = useState<NewSessionRequest | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   // Phone/tablet: the learning-route context lives in a labelled sheet.
@@ -345,18 +356,20 @@ export function LoopLearn() {
     messagesRef.current = messages;
   }, [messages]);
 
-  // The deep link is consumed at mount: drop it from the URL so a reload, or a
-  // later session/course switch, never re-applies it (it was sticky).
-  const urlCleaned = useRef(false);
+  // Resume/topic/mode are one-time instructions. Course and presentation are
+  // durable route context: keep them after intent consumption and view/course
+  // switches so a reload resumes this course rather than the first enrollment.
+  const canonicalUrl = useRef<string | null>(null);
   useEffect(() => {
-    if (urlCleaned.current || !hasDeepLink(deepLink)) return;
-    urlCleaned.current = true;
-    // the view is not a deep link: it stays in the URL
-    router.replace(viewHref(pathname || "/learn", viewParam), { scroll: false });
-  }, [deepLink, router, pathname, viewParam]);
+    if (!courseId) return;
+    const href = viewHref(pathname || "/learn", viewParam, courseId);
+    if (canonicalUrl.current === href) return;
+    canonicalUrl.current = href;
+    router.replace(href, { scroll: false });
+  }, [courseId, router, pathname, viewParam]);
   // The sidebar's Learn and Tutor links change only `?view=` on this mounted
-  // route, so follow the URL when it changes (switchView's own replace lands
-  // here too, as a no-op).
+  // route. Follow that presentation choice, then canonicalise it with this
+  // course; neither navigation nor a view change starts another session.
   const urlView: LoopView = searchParams.get("view") === "tutor" ? "tutor" : "learn";
   const lastUrlView = useRef(urlView);
   useEffect(() => {
@@ -370,7 +383,6 @@ export function LoopLearn() {
     setViewParam(next);
     setContextTab(null);
     setHistoryOpen(false);
-    router.replace(viewHref(pathname || "/learn", next), { scroll: false });
   };
 
   const course = useMemo(() => courses?.find((c) => c.course_id === courseId) ?? null, [courses, courseId]);
@@ -497,6 +509,7 @@ export function LoopLearn() {
 
   // ── Session lifecycle ──────────────────────────────────────────────────
   const clearSessionView = useCallback(() => {
+    onboardingSession.current = null;
     ++turnEpoch.current;
     invalidateHint();
     streamAbort.current?.abort();
@@ -583,6 +596,19 @@ export function LoopLearn() {
     try {
       const r = await nextLoopProbe(sid, userId);
       if (g !== gen.current) return;
+      // The opener is lazy: only this successful probe confirms that its
+      // chosen goal has reached a materialised session, including retries.
+      const handoff = onboardingSession.current;
+      if (handoff?.sessionId === sid) {
+        clearOnboardingIntent(handoff.intent);
+        onboardingSession.current = null;
+        setOnboardingIntent(null);
+        setOnboardingError(null);
+        setOpenSessions((current) => current?.some((row) => row.session_id === sid) ? current : [{
+          session_id: sid, topic: course?.course_name || "Course check-in",
+          started_at: new Date(handoff.intent.createdAt).toISOString(), phase: r.done ? r.phase : "probe",
+        }, ...(current ?? [])]);
+      }
       applyLearningScope(r);
       setProbeReference(null);
       if (r.done) {
@@ -606,7 +632,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setProbeBusy(false);
     }
-  }, [userId, loadPlan, reportError, applyLearningScope]);
+  }, [userId, course, loadPlan, reportError, applyLearningScope]);
 
   const loadLearningScope = useCallback(async (sid: string, g: number) => {
     if (g !== gen.current) return null;
@@ -708,21 +734,48 @@ export function LoopLearn() {
   /** Start a session and its probe. Never closes anything itself: leaving an
    *  open session goes through the confirmation (`requestNewSession`). */
   const newSession = useCallback(async (
-    { topic, mode }: { topic?: string; mode?: string } = {},
+    { topic, mode, onboardingIntent: requestedIntent }: NewSessionRequest = {},
   ) => {
     if (!courseId || !userId || sessionTransitionBusy) return;
+    const requestKey = `${userId}:${courseId}`;
+    if (startingRequests.current.has(requestKey)) return;
+    startingRequests.current.add(requestKey);
+    if (requestedIntent) setOnboardingIntent(requestedIntent);
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const g = ++gen.current;
-    clearSessionView();
-    setSessionId(null);
-    sessionRef.current = null;
     setStarting(true);
     try {
-      const r = await startLoopSession(userId, courseId, topic || course?.course_name || "", mode);
-      if (g !== gen.current) return;
+      if (requestedIntent) {
+        // Begin check-in already confirmed the scope. Verify it against fresh
+        // server reads before starting, so no whole-course probe runs first.
+        const [enrollment, freshGraph] = await Promise.all([
+          getCourses(userId),
+          requestedIntent.goal ? getGraph(userId) : Promise.resolve({ nodes: [] }),
+        ]);
+        if (!mounted.current || g !== gen.current) return;
+        if (!isOnboardingIntentScopeValid(requestedIntent, userId, courseId,
+          (enrollment.courses ?? []).map((row) => row.course_id), freshGraph.nodes ?? [])) {
+          setOnboardingError("Your course or selected concepts changed. Return to setup and confirm the scope again. Nothing was started.");
+          return;
+        }
+      }
+      clearSessionView();
+      setSessionId(null);
+      sessionRef.current = null;
+      setStarting(true);
+      const r = requestedIntent
+        ? await startLoopSession(userId, courseId, topic || course?.course_name || "", mode, requestedIntent.goal)
+        : await startLoopSession(userId, courseId, topic || course?.course_name || "", mode);
+      if (!mounted.current || g !== gen.current) return;
       setSessionId(r.session_id);
       sessionRef.current = r.session_id;
+      if (requestedIntent) {
+        const accepted = recordOnboardingSession(requestedIntent, r.session_id) ?? { ...requestedIntent, startedSessionId: r.session_id };
+        onboardingSession.current = { sessionId: r.session_id, intent: accepted };
+        setOnboardingIntent(accepted);
+        setOnboardingError(null);
+      }
       applyLearningScope(r);
       setScopeReady(true);
       if (r.initial_message) setMessages([asMsg("assistant", r.initial_message)]);
@@ -747,14 +800,23 @@ export function LoopLearn() {
     } catch (err) {
       if (g !== gen.current) return;
       setLoadError("start"); // never an empty probe: the start card offers a retry
+      if (requestedIntent) setOnboardingError("Couldn't begin your check-in. Your confirmed scope is kept; retry when you're ready.");
       reportError(err, "Couldn't start a session.");
     } finally {
+      startingRequests.current.delete(requestKey);
       if (g === gen.current) setStarting(false);
     }
   }, [courseId, userId, course, sessionTransitionBusy, clearSessionView, nextProbe, reportError, applyLearningScope]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
+    const pendingScope = readOnboardingIntent(userId, courseId);
+    if (pendingScope && courses && !courses.some((row) => row.course_id === courseId)) {
+      setOnboardingIntent(pendingScope);
+      setOnboardingError("This course is no longer enrolled. Return to setup and confirm your course again. Nothing was started.");
+      setOpenSessions([]);
+      return;
+    }
     const g = ++gen.current;
     const wanted = resumePending.current ? deepLink.resume : null;
     let listed: Awaited<ReturnType<typeof listLoopSessionsFor>>;
@@ -770,6 +832,62 @@ export function LoopLearn() {
     const list = listed.sessions;
     setSessionsError(false);
     setOpenSessions(list);
+    const pending = readOnboardingIntent(userId, courseId);
+    setOnboardingIntent(wanted ? null : pending);
+    setOnboardingError(null);
+    if (pending && !wanted) {
+      if (pending.startedSessionId) {
+        const saved = list.find((row) => row.session_id === pending.startedSessionId);
+        if (saved) {
+          // A real row confirms that an earlier probe already materialised
+          // this exact accepted opener, even if its response was interrupted.
+          clearOnboardingIntent(pending);
+          setOnboardingIntent(null);
+          await resume(saved);
+        } else {
+          // A pending opener has no transcript/DB row yet. Reuse its accepted
+          // ID: another start could lose the selected goal or duplicate it.
+          const recovering = ++gen.current;
+          clearSessionView();
+          setSessionId(pending.startedSessionId);
+          sessionRef.current = pending.startedSessionId;
+          onboardingSession.current = { sessionId: pending.startedSessionId, intent: pending };
+          setStarting(true);
+          try {
+            const latest = await loadLearningScope(pending.startedSessionId, recovering);
+            if (!mounted.current || recovering !== gen.current) return;
+            if (!latest) {
+              setLoadError("probe");
+              return;
+            }
+            const expected = pending.goal;
+            const actual = latest.goal;
+            const sameGoal = expected === null ? actual === null : actual && actual.text === expected.text &&
+              actual.target_node_ids.length === expected.target_node_ids.length && expected.target_node_ids.every((id) => actual.target_node_ids.includes(id));
+            if (!sameGoal) {
+              setSessionId(null);
+              sessionRef.current = null;
+              setOnboardingError("This pending check-in is no longer available with your confirmed scope. Review your onboarding choices before beginning again.");
+              return;
+            }
+            if (statusPhase(latest) === "probe") await nextProbe(pending.startedSessionId, recovering);
+            else {
+              clearOnboardingIntent(pending);
+              onboardingSession.current = null;
+              setOnboardingIntent(null);
+              if (statusPhase(latest) === "plan") await loadPlan(pending.startedSessionId, recovering);
+            }
+          } finally {
+            if (recovering === gen.current) setStarting(false);
+          }
+        }
+        return;
+      }
+      // Existing sessions are never replaced or re-scoped by onboarding.
+      // With none open, the explicit Begin click may start its chosen scope.
+      if (list.length === 0) await newSession({ onboardingIntent: pending });
+      return;
+    }
     const found = wanted ? listed.resume : null;
     if (found) {
       if (found.course_id !== courseId && courses?.some((c) => c.course_id === found.course_id)) {
@@ -799,7 +917,7 @@ export function LoopLearn() {
     } else {
       await newSession({ topic: deepLink.topic, mode: deepLink.mode });
     }
-  }, [courseId, userId, courses, deepLink, openReadOnly, resume, newSession, view]);
+  }, [courseId, userId, courses, deepLink, openReadOnly, resume, newSession, view, clearSessionView, loadLearningScope, nextProbe, loadPlan]);
 
   const loadCourses = useCallback(async () => {
     if (!userId) return;
@@ -810,7 +928,11 @@ export function LoopLearn() {
       setCourses(list);
       // ?course= picks the course when the student is enrolled in it
       const linked = list.find((c) => c.course_id === deepLink.course)?.course_id;
-      setCourseId((prev) => prev ?? linked ?? list[0]?.course_id ?? null);
+      // A removed onboarding course must not silently fall back and diagnose
+      // the first unrelated course instead.
+      const pending = readOnboardingIntentForUser(userId);
+      const pendingCourse = pending && (!deepLink.course || deepLink.course === pending.courseId) ? pending.courseId : null;
+      setCourseId((prev) => prev ?? linked ?? pendingCourse ?? list[0]?.course_id ?? null);
     } catch {
       if (mounted.current) setSessionsError(true);
     }
@@ -1403,14 +1525,16 @@ export function LoopLearn() {
 
   // ── New session: confirmed whenever an open session would be wrapped up ──
   const sessionIsOpen = !!sessionId && !readOnly && isOpenPhase(state.phase);
-  const requestNewSession = (opts: { topic?: string; mode?: string } = {}) => {
+  const requestNewSession = (opts: NewSessionRequest = {}) => {
     if (!courseId || sessionTransitionBusy) return;
+    const pending = readOnboardingIntent(userId, courseId);
+    const request = pending ? { ...opts, onboardingIntent: pending } : opts;
     if (sessionIsOpen) {
       setConfirmError(null);
-      setConfirmNew(opts);
+      setConfirmNew(request);
       return;
     }
-    void newSession(opts); // nothing open to leave (closed, read-only or none)
+    void newSession(request); // nothing open to leave (closed, read-only or none)
   };
   const cancelNewSession = () => {
     if (confirmBusy) return; // a close in flight cannot be taken back
@@ -1434,6 +1558,45 @@ export function LoopLearn() {
     }
     setConfirmNew(null);
     await newSession(request);
+  };
+
+  /** Read status before offering an existing session's close confirmation.
+   *  This does not pose, grade, edit a goal or advance its plan. */
+  const prepareOnboardingSession = async () => {
+    if (!onboardingIntent || onboardingAction.current || sessionTransitionBusy) return;
+    if (!openSessions?.length) {
+      // A timed-out start may have succeeded. Discover first instead of
+      // blindly replaying the start and creating a second session.
+      await loadSessions();
+      return;
+    }
+    onboardingAction.current = true;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    const g = gen.current;
+    try {
+      const latest = await getLoopSessionStatus(openSessions[0].session_id, userId);
+      if (g !== gen.current) return;
+      if (latest.pending_grade) {
+        setOnboardingError("Your current session has a saved answer to finish checking. Continue that session before starting another check-in.");
+        return;
+      }
+      if (statusPhase(latest) === "close") {
+        await newSession({ onboardingIntent });
+        return;
+      }
+      setSessionId(openSessions[0].session_id);
+      sessionRef.current = openSessions[0].session_id;
+      applyStatus(openSessions[0].session_id, latest);
+      setScopeReady(true);
+      setConfirmError(null);
+      setConfirmNew({ onboardingIntent });
+    } catch (error) {
+      if (g === gen.current) setOnboardingError(humanizeError(error, "Couldn't check the current session. Your scope is kept; try again."));
+    } finally {
+      onboardingAction.current = false;
+      if (g === gen.current) setOnboardingBusy(false);
+    }
   };
 
   // ── Derived view data ──────────────────────────────────────────────────
@@ -1493,16 +1656,18 @@ export function LoopLearn() {
   }, [plan, goal, diagnosis, conceptNames, teaching, state.focusNodeId]);
 
   // ── Render ─────────────────────────────────────────────────────────────
-  const noCourses = courses !== null && courses.length === 0;
+  const pendingOnboarding = onboardingIntent?.userId === userId && onboardingIntent.courseId === courseId &&
+    onboardingIntent.startedSessionId !== sessionId ? onboardingIntent : null;
+  const noCourses = courses !== null && courses.length === 0 && !pendingOnboarding;
   const loadingSessions =
     !sessionsError && !noCourses && !readOnly && loadError !== "start" &&
     (openSessions === null || (!sessionId && starting));
-  const showScope = !!sessionId && !readOnly;
+  const showScope = !!sessionId && !readOnly && !pendingOnboarding;
   const canEditGoal = showScope && (state.phase === "probe" || state.phase === "plan");
-  const showLearningChrome = !sessionsError && !noCourses && !readOnly;
+  const showLearningChrome = !sessionsError && !noCourses && !readOnly && !pendingOnboarding;
   // A failed session list must never invite a start that could duplicate an
   // open session it could not see: the strip waits for the Retry.
-  const showSessions = !sessionsError && !noCourses;
+  const showSessions = !sessionsError && !noCourses && !pendingOnboarding;
   const courseLabel = course ? course.course_code || course.course_name : null;
   const studio = studioCopy({
     blocked: sessionsError || noCourses || loadingSessions || (loadError === "start" && !sessionId),
@@ -1731,8 +1896,12 @@ export function LoopLearn() {
     </div>
   );
 
-  const notices = (paused || noCheckItems || topicOffer || practiceUnavailable.length > 0 || (closeNote && state.phase !== "close")) && (
+  const onboardingRecovery = !!onboardingIntent?.startedSessionId && loadError === "probe";
+  const notices = (paused || noCheckItems || topicOffer || practiceUnavailable.length > 0 || onboardingRecovery || (closeNote && state.phase !== "close")) && (
     <div className={styles.notices}>
+      {onboardingRecovery && <StatusMessage tone="info">
+        Your confirmed onboarding scope is kept. Retry this check-in, or <Link href="/onboarding" className={styles.textLink}>review your onboarding choices</Link>.
+      </StatusMessage>}
       {paused && (
         <BudgetPausedBanner
           testId="loop-budget-paused"
@@ -1815,6 +1984,46 @@ export function LoopLearn() {
         </StatusMessage>
         <SaplingAction data-testid="loop-sessions-retry" onClick={retrySessions}>Retry</SaplingAction>
       </div>
+    );
+  } else if (pendingOnboarding) {
+    const blocked = starting || onboardingBusy || sessionTransitionBusy;
+    body = (
+      <section className={styles.panel} data-testid="loop-onboarding-scope" aria-label="Your onboarding learning scope">
+        <p className="sapling-eyebrow">Your check-in</p>
+        <h2 className={styles.panelTitle}>{openSessions?.length ? "You have a session to continue." : "Preparing your starting point."}</h2>
+        <p className={styles.panelLead}>
+          {pendingOnboarding.goal?.text || (pendingOnboarding.goal ? "Your confirmed concepts" : "Explore the whole course")}
+        </p>
+        {pendingOnboarding.goal && (
+          <ul>{pendingOnboarding.goal.target_node_ids.map((id) => <li key={id}>{conceptNames.get(id) ?? "Confirmed course concept"}</li>)}</ul>
+        )}
+        {openSessions && openSessions.length > 0 && (
+          <p className={styles.panelLead}>
+            Continue your current session with its existing goal, or deliberately wrap it up and begin a new check-in with this scope.
+            Your onboarding goal has not replaced the current session&apos;s goal.
+          </p>
+        )}
+        {starting && <StatusMessage tone="pending">Validating your course and beginning your check-in…</StatusMessage>}
+        {onboardingError && <StatusMessage tone="error">{onboardingError}</StatusMessage>}
+        <div className={styles.actionRow}>
+          {openSessions && openSessions.length > 0 && (
+            <SaplingAction data-testid="loop-onboarding-resume" disabled={blocked} onClick={() => {
+              if (onboardingAction.current) return;
+              setOnboardingIntent(null);
+              setOnboardingError(null);
+              void resume(openSessions[0]);
+            }}>
+              Continue existing session
+            </SaplingAction>
+          )}
+          <SaplingAction tone={openSessions?.length ? "secondary" : "primary"} data-testid="loop-onboarding-start" disabled={blocked}
+            onClick={() => void prepareOnboardingSession()}>
+            {openSessions?.length ? "Start new with this scope" : "Retry check-in with this scope"}
+          </SaplingAction>
+          <Link href="/onboarding" className={styles.textLink}>Review onboarding choices</Link>
+        </div>
+        <p className={styles.fieldHint}>This scope applies only after a new session starts successfully. Your answers supply the check-in evidence.</p>
+      </section>
     );
   } else if (noCourses) {
     body = (
