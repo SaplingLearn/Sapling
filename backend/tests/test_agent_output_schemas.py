@@ -90,6 +90,7 @@ _SKIP_PREFIX = "function_handlers"
 EXPECTED_STRUCTURED_AGENTS = {
     "check_items_agent",  # learning loop PKG-04 (15-field draft + A37 option objects; see the exceptions)
     "check_items_topup_agent",  # A37 top-up: the same CheckItemsOutput, one concept's mc_reason items
+    "topic_checklist_agent",
     "classifier_agent",
     "concept_describe_agent",
     "concept_extraction_agent",

@@ -31,6 +31,7 @@ from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
+from routes.topic_checklist import router as topic_checklist_router
 from services import ai_budget, quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
@@ -304,6 +305,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
 
 app.include_router(graph.router,       prefix="/api/graph")
+app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
 # Learning loop: 404 when LEARNING_LOOP_ENABLED=false (kill switch).
 app.include_router(learn_loop.router, prefix="/api/learn/loop")

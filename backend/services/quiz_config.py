@@ -71,11 +71,9 @@ CONCRETE_DIFFICULTIES = ("easy", "medium", "hard")
 # `resolved_difficulty`.
 REQUESTED_DIFFICULTIES = CONCRETE_DIFFICULTIES + ("adaptive",)
 
-# MCQ-only today — the SAME token as agents/quiz.py::QuizQuestionType and
-# the per-question wire `type` field, so a client keying on this config can
-# compare against real payloads. Grows when the #537 revamp adds real
-# short-answer grading.
-QUIZ_QUESTION_TYPES = ("multiple_choice",)
+# Selectable question formats. "mixed" chooses subject-appropriate concrete
+# types; it never appears as an individual question's type.
+QUIZ_QUESTION_TYPES = ("multiple_choice", "short_answer", "numeric", "symbolic", "mixed")
 
 # ── Mastery model ───────────────────────────────────────────────────────────
 #

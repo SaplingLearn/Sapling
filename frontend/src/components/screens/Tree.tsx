@@ -20,6 +20,7 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
+import { TopicChecklistPanel } from "../TopicChecklistPanel";
 import type { AttemptSummary } from "@/lib/quiz/types";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
@@ -508,6 +509,7 @@ export function Tree() {
         {scopedCourses.map((c) => (
           <Pill
             key={c.course_id}
+            testId={`graph-course-filter-${c.course_id}`}
             active={courseFilter === c.course_id}
             onClick={() => setCourseFilter(c.course_id)}
             color={c.color || undefined}
@@ -559,6 +561,10 @@ export function Tree() {
           )
         )}
       </div>
+
+      {courseFilter !== "all" && userId && (
+        <TopicChecklistPanel key={`${userId}:${courseFilter}:${activeSemester}`} userId={userId} courseId={courseFilter} semester={activeSemester || undefined} semesters={courses.find((course) => course.course_id === courseFilter)?.terms} />
+      )}
 
       {/* The graph row absorbs whatever `<main>` has left after the TopBar and
           the filter row. `flex: 1` + `minHeight: 0` rather than a viewport

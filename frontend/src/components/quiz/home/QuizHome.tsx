@@ -271,7 +271,8 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   /** Remember the choices a dialog was started with (§5 B1.6). `setConfig`
    *  persists on its own; `start` does not. */
   const remember = (cfg: SessionConfig) =>
-    savePrefs({ count: cfg.count, difficulty: cfg.difficulty, feedback: cfg.feedback });
+    savePrefs({ count: cfg.count, difficulty: cfg.difficulty, feedback: cfg.feedback,
+      ...(cfg.questionFormat ? { questionFormat: cfg.questionFormat } : {}) });
 
   // A queued session is QUEUE_COUNT questions per concept by default (R-4).
   // That is what the card starts with AND what its Adjust dialog opens on —

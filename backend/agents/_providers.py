@@ -48,6 +48,7 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    "topic_checklist",
     # Learning loop series (spec §2 slots): check-item generation (PKG-04).
     "check_items",
     # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
@@ -64,6 +65,7 @@ AgentTask = Literal[
 # Defaults are conservative. Bumping a model up costs more; the env var
 # escape hatch lets us A/B without redeploying.
 _DEFAULTS: dict[AgentTask, str] = {
+    "topic_checklist": "gemini-2.5-flash",
     "classifier": "gemini-2.5-flash-lite",
     "summary": "gemini-2.5-flash-lite",
     "concepts": "gemini-2.5-flash",

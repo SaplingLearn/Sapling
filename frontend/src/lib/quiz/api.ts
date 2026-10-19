@@ -56,6 +56,7 @@ export const fetchQuizConfig = (): Promise<QuizConfig> =>
  * recorded answers. The response's `source` block says what it did.
  */
 export const generateQuiz = (p: {
+  questionFormat?: string;
   userId: string;
   conceptNodeId: string;
   numQuestions: number;
@@ -70,6 +71,7 @@ export const generateQuiz = (p: {
       num_questions: p.numQuestions,
       difficulty: p.difficulty,
       include_answer_key: false,
+      ...(p.questionFormat ? { question_format: p.questionFormat } : {}),
       // Omitted rather than sent as null: every other generate is an ordinary
       // one, and the route's response only carries `source` when asked.
       ...(p.sourceAttemptId ? { source_attempt_id: p.sourceAttemptId } : {}),
@@ -89,13 +91,13 @@ export const generateQuiz = (p: {
  */
 export const answerQuestion = (
   attemptId: string,
-  p: { questionIndex: number; selectedIndex: number; questionId: number },
+  p: { questionIndex: number; selectedIndex: number | null; questionId: number; answerText?: string },
 ): Promise<AnswerResult> =>
   fetchJSON<AnswerResult>(`/api/quiz/attempts/${encodeURIComponent(attemptId)}/answer`, {
     method: "POST",
     body: JSON.stringify({
       question_index: p.questionIndex,
-      selected_index: p.selectedIndex,
+      ...(p.answerText !== undefined ? { answer_text: p.answerText } : { selected_index: p.selectedIndex }),
       question_id: p.questionId,
     }),
   });

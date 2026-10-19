@@ -56,6 +56,7 @@ const eslintConfig = [
       "src/app/pending/page.tsx",
       "src/components/screens/Onboarding.tsx",
       "src/components/DocumentUploadModal.tsx",
+      "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",
       // Quiz redesign (#537). The three screens carry every answer/submit/exit
       // control the Playwright journeys drive; the three `ui/` primitives are
