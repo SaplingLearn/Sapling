@@ -352,3 +352,69 @@ real; no local test, generated rubric, cassette pass or release checklist can
 substitute for them. Release-owner approval is an operational authorization,
 separate from expert or study approval. Record unresolved engineering risks and
 the owner's decision before promotion; do not represent an unrun stage as passed.
+
+## Deployment settings and operational signal drill
+
+`backend/railway.json` declares `/api/health`, a 120-second startup health timeout,
+30-second deployment overlap, 120-second SIGTERM drain, and `ON_FAILURE` with
+10 retries. These are reviewed deployment **intent**, not a claim that an existing
+Railway service has changed. `/api/health` is a process/model-mode/commit check;
+it does not test database readiness, provider availability or continuous uptime.
+
+The existing backend service builds from root directory `/backend` with a
+Dockerfile. Railway's config file selection is independent of that root directory:
+select the explicit repository path `/backend/railway.json` when supported, then
+verify the resulting deployment manifest and configuration-file origin for each
+setting. Do not assume adding this file activated it. Leave the Dockerfile and
+source branch selection intact. The approved code must be present in the actual
+image; a healthy older deployment is not a candidate verification.
+
+The current [Railway build documentation](https://docs.railway.com/builds/build-configuration)
+requires explicit monorepo config paths. Its [config reference](https://docs.railway.com/config-as-code/reference)
+marks legacy Config as Code deprecated, with an announced 2026-12-01 cutoff for
+existing users and no new-service opt-in. If file selection is unavailable, apply
+the same reviewed values through supported service settings or reviewed IaC;
+record the effective manifest rather than claiming this legacy file worked.
+No infrastructure changes are made by a test that merely parses the JSON.
+
+A finite drill can use an isolated candidate worker with a dedicated synthetic
+account/database and the real operations collector. It does not require a live
+learner outage, production database reset or a paid model call:
+
+1. Pin the immutable candidate image/source, isolated database identity and
+   existing collector destination/rule metadata. Reject the actual learner
+   environments as failure-injection targets. Keep credentials and destination
+   webhook URLs private.
+2. Prove normal health/auth and a unique synthetic request ID in the worker's
+   native stdout collector. Record deployment/instance IDs and observed times.
+   This proves that path only, not application alert delivery.
+3. Exercise controlled accounting-hook failure and queue-delivery failure through
+   the real emitters against a synthetic failing persistence seam. Match the
+   fixed `sapling.signal`/`sapling.stage` event at the collector. Cover
+   `accounting_hook_failed`, `events_queue_full`, `events_flush_dropped`,
+   `usage_row_dropped` and `platform_spend_alert`; never use student text or
+   exception messages as test markers. Platform spend is an alert, not an
+   app-wide cap. The per-row DEBUG traceback stays excluded; the aggregate
+   WARNING supplies delivery-loss coverage.
+4. Verify the configured rule delivers the event to its selected destination and
+   record receipt/acknowledgement metadata. Missing rule or recipient routing is
+   an unresolved configuration task; do not substitute a local exporter pass or
+   a native log search. A deliberate collector outage must leave the original
+   caller/stderr behavior intact and must not invent a successful delivery.
+5. With the same synthetic database, interrupt a worker at an actual saved-grade
+   checkpoint/evidence boundary, then start a cold candidate worker. Retry only
+   through the ordinary explicit submission recovery path. Verify one grade,
+   immutable operation receipt, journal/state/mirror agreement, original
+   owner/goal, and no regrade. Separately verify interrupted tutor feedback stays
+   pending until delivered; restart must not fabricate independent time credit.
+6. Verify the configured deployment drain and compatible rollback artifact on the
+   same isolated database without down migrations or history rewrites. Record
+   pre/post source, health, durable IDs and clean teardown. A forced kill may
+   still interrupt work; persisted checkpoint recovery, not a timeout promise,
+   is the acceptance condition.
+
+`test_logfire_scrubber.py`, `test_ai_trace_privacy.py`, `test_ops_logging.py` and
+`test_ops_signal_delivery.py` cover the local redaction, finite signal contracts
+and real-emitter-to-in-memory-exporter boundary. They neither configure an
+external destination nor prove a rolling host drill was performed. Existing
+provider/budget and durable recovery tests remain separate gates.

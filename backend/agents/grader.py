@@ -93,6 +93,7 @@ from agents import GRADER_LIMITS
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
+from services.ai_trace_privacy import content_free_tracer_provider
 from learning import answer_guard
 from learning.answer_guard import Refusal
 from learning.leak import detect_leak  # the one sanctioned PKG-06 import here (A38)
@@ -400,7 +401,11 @@ grader_agent = Agent[SaplingDeps, GraderOutput](
     # decrypted item, the student's answer and this call's rubric labels, and
     # logfire exempts pydantic-ai's message attributes and `final_result` from
     # main.py's scrubber. An agent's own Instrumentation replaces the global one.
-    capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    capabilities=[Instrumentation(settings=InstrumentationSettings(
+        include_content=False,
+        include_binary_content=False,
+        tracer_provider=content_free_tracer_provider(),
+    ))],
 )
 
 

@@ -34,6 +34,8 @@ from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
 from services import ai_budget, quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
+from services.ops_logging import install_accounting_logfire_bridge
+from services.ai_trace_privacy import content_free_tracer_provider
 from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
 from services.storage_service import (
@@ -60,17 +62,12 @@ load_dotenv(Path(__file__).with_name(".env"))
 RECOST_PROJECT_ID = "eaf22d10-840d-494f-8513-2dcef769ace1"
 recost_api_key = os.getenv("RECOST_API_KEY")
 
-# Logfire: free local traces during dev; sends to logfire.pydantic.dev only
-# if LOGFIRE_TOKEN is set. Safe to leave on in all environments.
+# Logfire sends externally only if LOGFIRE_TOKEN is set. Operator acceptance
+# still requires reviewed capture settings, destination and delivery checks.
 #
-# Scrubbing: Pydantic AI's instrumentation writes the full prompt text and
-# model output to span attributes (gen_ai.prompt, all_messages_events,
-# input/output.value, ...). For Sapling those carry user-uploaded document
-# text — names, emails, student work — which we never want exfiltrated to
-# logfire.pydantic.dev. ``scrub_value`` redacts those paths before egress,
-# keeping a sha256 fingerprint of the body for debugging. ``EXTRA_PATTERNS``
-# ensures the callback fires for prompt/completion/messages attribute names
-# in addition to Logfire's built-in pattern set (password, secret, ...).
+# Disable agent content at the source: the SDK exempts some standard GenAI
+# attributes from its scrubber. The fallback callback replaces other routed
+# content with metadata only, including short answers and nested object keys.
 logfire.configure(
     send_to_logfire="if-token-present",
     service_name="sapling-backend",
@@ -79,7 +76,12 @@ logfire.configure(
         extra_patterns=list(EXTRA_PATTERNS),
     ),
 )
-logfire.instrument_pydantic_ai()
+logfire.instrument_pydantic_ai(
+    include_content=False,
+    include_binary_content=False,
+    tracer_provider=content_free_tracer_provider(),
+)
+install_accounting_logfire_bridge()
 
 # ── App lifespan: self-bootstrap external resources ─────────────────────────
 #
