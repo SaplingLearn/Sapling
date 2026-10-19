@@ -947,7 +947,11 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
     stack. The single Gemini grader: PKG-05b wraps it without changing the prompt.
     Every grading and support-check field must explicitly answer each requested
-    label once with yes/no; incomplete or ambiguous output records no outcome.
+    label once with yes/no. A returned primary with invalid labelled fields may
+    use the same ONE second-opinion allowance as low confidence, as a complete
+    replacement; invalid secondary output records no outcome. An invalid
+    primary contributes no grade or quotes, but its existing screen-gated
+    addresses_grader refusal veto remains in force.
     An answer that addresses the grader is refused (A33) — before any model call
     when the screen catches it, after the run when either run reports
     `addresses_grader` — as GradeResult(unavailable=True, refused=<reason>) with
@@ -1012,18 +1016,26 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     confirming = False
     try:
         runs = [await _run_once(message, deps)]
-        if _invalid_verdict_fields(runs[0], labels):
-            raise UnexpectedModelBehavior("grader returned invalid verdicts")
-        first = parse_labelled(runs[0].item_results, labels)
+        invalid_primary = _invalid_verdict_fields(runs[0], labels)
+        first = {} if invalid_primary else parse_labelled(runs[0].item_results, labels)
         refusing = bool(screen.exempted and runs[0].addresses_grader)  # refused below
-        confirming = not refusing and _needs_confirmation(
+        confirming = not invalid_primary and not refusing and _needs_confirmation(
             runs[0],
             first,
             suspicious=suspicious,
             conflicted=_conflicted(runs[0], first, item),
         )
-        if not refusing and (confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE):
+        if not refusing and (
+            invalid_primary or confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE
+        ):
             # spec §3.4: ONE second opinion, on the grader_second slot (A22)
+            # A malformed returned primary is replaced, never confirmed or
+            # used for support. Exceptions still take the outage path below.
+            if invalid_primary:
+                logger.warning(
+                    "grader primary returned invalid verdicts in %s; requesting one replacement",
+                    invalid_primary,
+                )
             runs.append(await _run_once(message, deps, second_opinion=True))
             if _invalid_verdict_fields(runs[-1], labels):
                 raise UnexpectedModelBehavior("grader returned invalid verdicts")
@@ -1052,12 +1064,14 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         why = (
             "the confirmation run was below the confidence floor"
             if confirming
+            else "the replacement run was below the confidence floor"
+            if invalid_primary
             else "confidence below floor twice"
         )
         logger.warning("grader unavailable for item %s: %s", item.id, why)
         return GradeResult(unavailable=True)
     results = parse_labelled(out.item_results, labels)
-    if len(runs) > 1 and _conflicted(out, results, item):
+    if backend == "gemini_second" and _conflicted(out, results, item):
         # A33 (round a33): the second opinion's all-yes contradicts its own
         # report, so it is no verdict. Replacing a first run too unsure to use,
         # nothing else is left; asked to confirm one, it confirms nothing (live,

@@ -1204,7 +1204,10 @@ def test_answers_the_screen_passes_reach_the_grader_and_are_graded(grader, event
     confirmed by the second opinion first (both runs here say all-yes)."""
     g, calls = grader
     res = asyncio.run(g.grade(_item(), format="free", student_answer=answer, deps=_deps()))
-    assert calls["n"] == 1 + bool(guard.suspicion(answer, rubric_ids=IDS)) and events == []
+    # Empty text makes the fake's all-YES support malformed in both slots;
+    # the one replacement is exhausted without inferring a student outcome.
+    expected_calls = 2 if not answer.strip() else 1 + bool(guard.suspicion(answer, rubric_ids=IDS))
+    assert calls["n"] == expected_calls and events == []
     assert res.refused is None and res.unavailable is (not bool(answer.strip()))
     # an empty answer holds no quote, so nothing in it can be credited (round a33)
     assert res.all_yes is bool(re.search(r"\w", answer))
@@ -3630,7 +3633,7 @@ def test_the_span_checks_output_is_the_assertion_and_the_verdicts_alone():
 def test_a_credited_item_with_no_quote_is_unavailable(monkeypatch, events):
     first = {**_all_yes(0.95), "support": ["r1: It stops the calls."]}
     res, calls = _grade_with(monkeypatch, [first], answer="It stops the calls.")
-    assert calls["n"] == 1 and calls["spans"] == 0 and res.unavailable is True
+    assert calls["n"] == 2 and calls["spans"] == 0 and res.unavailable is True
     assert res.item_results == {} and res.all_yes is False
 
 
