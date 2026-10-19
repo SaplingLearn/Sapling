@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from agents._providers import model_for
@@ -51,8 +51,12 @@ class QuizQuestion(BaseModel):
     question: str
     type: QuizQuestionType
     difficulty: QuizDifficulty
-    # MCQ has four choices; written formats have none. Conditional validation
-    # stays out of the JSON schema to keep provider schema complexity bounded.
+    # MCQ has four choices; written formats have none. That conditional rule
+    # lives in the ROUTE (routes/quiz.py::_agent_question_to_wire), never in a
+    # model validator here: a validator failure rejects the whole Quiz, which
+    # burns the agent's output retries and 502s the request over one bad item.
+    # The route drops just that item. Only the bounds Gemini's schema can
+    # express (maxItems) stay on the fields.
     options: list[str] = Field(default_factory=list, max_length=4)
     accepted_answers: list[str] = Field(default_factory=list, max_length=8)
     # The option text the agent considers correct. Must appear verbatim
@@ -64,18 +68,6 @@ class QuizQuestion(BaseModel):
     # concept_names per the prompt. Used by the route to award mastery
     # on a correct answer.
     concept: str
-
-    @model_validator(mode="after")
-    def validate_format(self):
-        if self.type == "multiple_choice" and len(self.options) != 4:
-            raise ValueError("Multiple-choice questions need four options.")
-        if self.type != "multiple_choice" and self.options:
-            raise ValueError("Written questions must not contain answer choices.")
-        if not self.correct_answer.strip() or len(self.correct_answer) > 2000:
-            raise ValueError("A bounded canonical answer is required.")
-        if any(not answer.strip() or len(answer) > 2000 for answer in self.accepted_answers):
-            raise ValueError("Accepted answers must be non-empty and bounded.")
-        return self
 
 
 class Quiz(BaseModel):

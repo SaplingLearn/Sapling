@@ -1,8 +1,10 @@
 """Bounded rational-polynomial equivalence, without eval or symbolic runtime.
 
 Supports + - * / ^, parentheses, single-letter variables and implicit
-multiplication. Expressions are equivalent wherever both are defined.
-Functions, units, equations and non-integer powers are outside this grammar.
+multiplication (``2xy`` is ``2*x*y``). Expressions are equivalent wherever both
+are defined. Functions, units, equations, non-integer powers and scientific
+notation are outside this grammar: with single-letter variables ``2e+1`` is
+``2*e + 1``, never twenty.
 """
 from __future__ import annotations
 
@@ -11,6 +13,11 @@ import unicodedata
 from fractions import Fraction
 
 Poly = dict[tuple[tuple[str, int], ...], Fraction]
+
+# Letter runs containing one of these are function notation, not products.
+_FUNCTION_NAMES = (
+    "sin", "cos", "tan", "sec", "csc", "cot", "log", "ln", "exp", "sqrt", "abs",
+)
 
 
 def _add(a: Poly, b: Poly) -> Poly:
@@ -44,11 +51,23 @@ class _Parser:
         text = unicodedata.normalize("NFKC", text).replace("−", "-").replace("×", "*").replace("÷", "/")
         if not text.strip() or len(text) > 256:
             raise ValueError("Invalid length")
-        # Requiring single-letter identifiers avoids silently reading sin(x)
-        # as a product. Students can write x*y or x y explicitly.
-        pattern = r"\d{1,20}(?:\.\d{0,20})?(?:[eE][+-]?\d{1,2})?|\.\d{1,20}|[a-zA-Z]+|[()+*/^\-]"
-        self.tokens = re.findall(pattern, text)
-        if re.sub(r"\s+", "", text) != "".join(self.tokens) or len(self.tokens) > 96:
+        # No scientific notation: it is ambiguous with a variable named e.
+        pattern = r"\d{1,20}(?:\.\d{0,20})?|\.\d{1,20}|[a-zA-Z]+|[()+*/^\-]"
+        raw = re.findall(pattern, text)
+        if re.sub(r"\s+", "", text) != "".join(raw):
+            raise ValueError("Unsupported notation")
+        self.tokens = []
+        for token in raw:
+            if token[0].isalpha():
+                # A letter run is an implicit product of single-letter
+                # variables -- unless it names a function, which must be
+                # refused rather than silently read as s*i*n*x.
+                if any(name in token.lower() for name in _FUNCTION_NAMES):
+                    raise ValueError("Functions are not supported")
+                self.tokens.extend(token)
+            else:
+                self.tokens.append(token)
+        if len(self.tokens) > 96:
             raise ValueError("Unsupported notation")
         self.pos = 0
 

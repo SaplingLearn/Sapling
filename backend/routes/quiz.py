@@ -459,6 +459,11 @@ def _resolved_difficulty(wire_questions: list[dict]) -> str:
 # stored questions_json and every grading path trust, so it validates
 # rather than assuming.
 _MIN_OPTIONS = 2
+# What the agent must emit for a multiple-choice item (the system prompt's "4
+# options"). Checked per item in _agent_question_to_wire, not in the agent's
+# output schema, so one short item is dropped instead of failing the quiz.
+_MCQ_OPTIONS = 4
+_MAX_ANSWER_CHARS = 2000
 
 
 def _validate_wire_question(wire: dict) -> bool:
@@ -473,7 +478,7 @@ def _validate_wire_question(wire: dict) -> bool:
         answer = wire.get("correct_answer")
         return (
             isinstance(answer, str) and bool(answer.strip())
-            and len(answer) <= 2000 and not wire.get("options")
+            and len(answer) <= _MAX_ANSWER_CHARS and not wire.get("options")
             and (wire["type"] != "numeric" or numeric_value(answer) is not None)
             and (wire["type"] != "symbolic" or equivalent_algebra(answer, answer))
         )
@@ -516,14 +521,28 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     Returning None lets the caller filter questions out cleanly.
     """
     if q.type in WRITTEN_TYPES:
+        if q.options:
+            # A written item with answer choices is format drift: drop it here,
+            # per item (agents/quiz.py keeps this out of the output schema).
+            logger.warning("quiz: dropping question id=%d — written item has options", qid)
+            return None
+        # A blank or unbounded alias is dropped on its own; it says nothing
+        # about whether the rest of the item is sound.
+        accepted = [a for a in q.accepted_answers if a.strip() and len(a) <= _MAX_ANSWER_CHARS]
         wire = {
             "id": qid, "type": q.type, "question": q.question, "options": [],
-            "correct_answer": q.correct_answer, "accepted_answers": q.accepted_answers,
+            "correct_answer": q.correct_answer, "accepted_answers": accepted,
             "explanation": q.explanation, "concept_tested": q.concept,
             "difficulty": q.difficulty,
             "question_hash": question_hash(q.question, [q.type]),
         }
         return wire if _validate_wire_question(wire) else None
+    if len(q.options) != _MCQ_OPTIONS:
+        logger.warning(
+            "quiz: dropping question id=%d — %d option(s), need %d",
+            qid, len(q.options), _MCQ_OPTIONS,
+        )
+        return None
     options: list[dict] = []
     matched = False
     canonical = q.correct_answer.strip()
@@ -1045,6 +1064,28 @@ class GeneratedQuiz(NamedTuple):
     exam_days_away: int | None = None
 
 
+_MCQ_TOPUP_RULE = (
+    "multiple_choice items need exactly 4 options and correct_answer must "
+    "appear VERBATIM in options."
+)
+_WRITTEN_TOPUP_RULE = (
+    "for short_answer, numeric and symbolic items options must be empty and "
+    "correct_answer is the canonical answer (numeric: a plain number or "
+    "fraction; symbolic: an expression in the supported grammar)."
+)
+
+
+def _topup_format_rule(question_format: str) -> str:
+    """The format contract the top-up retry restates — the one that applies
+    to the requested format, so a written quiz is never told to put its
+    answer in options it must not have."""
+    if question_format == "multiple_choice":
+        return _MCQ_TOPUP_RULE
+    if question_format in WRITTEN_TYPES:
+        return f"{question_format} only; {_WRITTEN_TOPUP_RULE}"
+    return f"{_MCQ_TOPUP_RULE} And {_WRITTEN_TOPUP_RULE}"
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -1430,8 +1471,7 @@ async def _quiz_via_agent(
             topup_msg = (
                 f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
                 f"format errors. Generate {missing} MORE questions on the same "
-                f"concept. Remember: correct_answer must appear VERBATIM in "
-                f"options."
+                f"concept. Remember: {_topup_format_rule(question_format)}"
             )
             if already:
                 topup_msg += (
