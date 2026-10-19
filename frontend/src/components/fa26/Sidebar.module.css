@@ -1,5 +1,6 @@
 /* The shell's desktop sidebar: the approved Pen nav (frames Xnuwg, u1gDw).
- * Geometry is measured off the 1440px exports: 216px sage panel, wordmark at
+ * Geometry is measured off the 1440px exports (wordmark narrowed to 112px at
+ * Andres's request, 2026-10-19): 216px sage panel, wordmark at
  * 24/24, rows 46px tall on a 55px pitch inset 16px, icon slot at 14px, label
  * at 66px from the panel edge, divider 184px above the bottom edge.
  * Scoped by the module: nothing here reaches another surface. */
@@ -25,7 +26,7 @@
 .brand {
   display: block;
   flex: none;
-  width: 150px;
+  width: 112px;
   margin: 25px 0 0 25px;
   border-radius: var(--sapling-radius-sm);
 }

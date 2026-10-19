@@ -173,7 +173,7 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
   return <aside className={styles.sidebar} aria-label="Sidebar" data-testid={tid("app-sidebar")} data-animated={(animated && !reducedMotion) || undefined}>
     <Suspense fallback={null}><ViewReader onView={setView} /></Suspense>
     <Link href="/dashboard" className={styles.brand} aria-label="Sapling home">
-      <SaplingWordmark width={150} decorative />
+      <SaplingWordmark width={112} decorative />
     </Link>
     <nav aria-label="Primary" className={styles.track} ref={track}>
       <div className={styles.content}>
