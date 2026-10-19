@@ -19,10 +19,13 @@ export interface ContextSheetProps {
   /** Phone default; "right" suits a tablet/desktop drawer. */
   side?: "bottom" | "right";
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  /** Extra class on the sheet backdrop, appended to the sapling scope classes
+   *  (e.g. a screen's full-height variant). Optional; omitting it changes nothing. */
+  className?: string;
   testid?: string;
 }
 
-export function ContextSheet({ open, onClose, title, children, side = "bottom", initialFocusRef, testid }: ContextSheetProps) {
+export function ContextSheet({ open, onClose, title, children, side = "bottom", initialFocusRef, className, testid }: ContextSheetProps) {
   return (
     <Sheet
       open={open}
@@ -30,7 +33,7 @@ export function ContextSheet({ open, onClose, title, children, side = "bottom", 
       title={title}
       side={side}
       width={side === "right" ? 420 : undefined}
-      className="sapling-surface sapling-context-sheet"
+      className={className ? `sapling-surface sapling-context-sheet ${className}` : "sapling-surface sapling-context-sheet"}
       initialFocusRef={initialFocusRef}
       testid={testid}
     >
@@ -53,6 +56,8 @@ export interface ContextPanelProps {
   hideTrigger?: boolean;
   /** Below this width the panel becomes a sheet. Defaults to useIsMobile's 768. */
   breakpoint?: number;
+  /** Extra class for the phone sheet (passed to ContextSheet's `className`). */
+  sheetClassName?: string;
   testid?: string;
 }
 
@@ -64,6 +69,7 @@ export function ContextPanel({
   onOpenChange,
   hideTrigger = false,
   breakpoint,
+  sheetClassName,
   testid,
 }: ContextPanelProps) {
   const isPhone = useIsMobile(breakpoint);
@@ -100,7 +106,7 @@ export function ContextPanel({
           {triggerLabel ?? label}
         </button>
       )}
-      <ContextSheet open={open} onClose={() => setOpen(false)} title={label} testid={testid}>
+      <ContextSheet open={open} onClose={() => setOpen(false)} title={label} className={sheetClassName} testid={testid}>
         {children}
       </ContextSheet>
     </>
