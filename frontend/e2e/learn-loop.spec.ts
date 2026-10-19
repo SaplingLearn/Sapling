@@ -486,6 +486,7 @@ for (const width of [1440, 390]) {
         await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
         await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
         expect(mutations).toEqual([]);
+        await expect(page.getByTestId("loop-new-session-confirm")).toHaveCount(0); // no dialog while loading either
         const delivered = page.waitForResponse((response) => new URL(response.url()).pathname === pendingPath);
         release();
         expect((await delivered).status()).toBe(200);
@@ -494,6 +495,8 @@ for (const width of [1440, 390]) {
         const closed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/close");
         const started = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/start-session");
         await button.click();
+        // redesign: leaving an open session goes through the confirmation dialog
+        await page.getByTestId("loop-new-session-confirm-start").click();
         const closeResponse = await closed;
         expect(closeResponse.status()).toBe(200);
         expect(closeResponse.request().postDataJSON()).toMatchObject({ session_id: oldSession, user_id: USER_LOOP });
@@ -507,7 +510,9 @@ for (const width of [1440, 390]) {
         await expect(phase).toHaveAttribute("data-session-id", freshSession);
         await expect(page.getByTestId("loop-probe-item")).toBeVisible();
         await expect(button).toBeEnabled();
-        await expect(page.getByTestId("loop-goal-summary")).toHaveText("Scope: Explore the whole course");
+        // redesign: GoalSummary reads "Your scope" / "Explore the whole course"
+        await expect(page.getByTestId("loop-goal-summary")).toContainText("Explore the whole course");
+        await expect(page.getByTestId("loop-goal-summary")).not.toContainText("Your goal");
         expect(mutations).toEqual(["/api/learn/loop/close", "/api/learn/loop/start-session"]);
         expect(failures).toEqual([]);
         const sessions = await queryRaw(
