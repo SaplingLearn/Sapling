@@ -370,6 +370,46 @@ def log_event(
         logger.exception("log_event failed; event dropped")
 
 
+def build_llm_usage_row(
+    *,
+    feature: str,
+    task: str | None,
+    model: str,
+    usage: Any,
+    provider: str = "gemini",
+    user_id: str | None = None,
+    request_id: str | None = None,
+    cached_tokens: int | None = None,
+    thinking_tokens: int | None = None,
+    session_id: str | None = None,
+) -> dict:
+    """Prepare the canonical usage/pricing row without writing or enqueueing.
+
+    ``request_id`` is explicit here: callers choose their context fallback.
+    This helper preserves the permissive analytics normalization contract;
+    protected financial receipts must additionally validate completeness.
+    """
+    tokens = llm_pricing.normalize_usage(usage)
+    return {
+        "user_id": user_id,
+        "request_id": request_id,
+        "feature": feature,
+        "task": task,
+        "model": model,
+        "provider": provider,
+        "prompt_tokens": tokens["prompt_tokens"],
+        "completion_tokens": tokens["completion_tokens"],
+        "total_tokens": tokens["total_tokens"],
+        "cached_tokens": cached_tokens,
+        "thinking_tokens": thinking_tokens,
+        "session_id": (session_id or "").strip() or None,
+        "cost_usd": llm_pricing.cost_usd(
+            model, tokens["prompt_tokens"], tokens["completion_tokens"],
+            cached_tokens=cached_tokens,
+        ),
+    }
+
+
 def log_llm_usage(
     *,
     feature: str,
@@ -397,27 +437,13 @@ def log_llm_usage(
     if not _logging_enabled():
         return
     try:
-        tokens = llm_pricing.normalize_usage(usage)
-        row = {
-            "user_id": user_id,
-            "request_id": request_id if request_id is not None else current_request_id(),
-            "feature": feature,
-            "task": task,
-            "model": model,
-            "provider": provider,
-            "prompt_tokens": tokens["prompt_tokens"],
-            "completion_tokens": tokens["completion_tokens"],
-            "total_tokens": tokens["total_tokens"],
-            # Both keys on EVERY row: PostgREST rejects a bulk insert whose
-            # objects' keys differ (PGRST102), and the worker batches rows.
-            "cached_tokens": cached_tokens,
-            "thinking_tokens": thinking_tokens,
-            "session_id": (session_id or "").strip() or None,
-            "cost_usd": llm_pricing.cost_usd(
-                model, tokens["prompt_tokens"], tokens["completion_tokens"],
-                cached_tokens=cached_tokens,
-            ),
-        }
+        row = build_llm_usage_row(
+            feature=feature, task=task, model=model, usage=usage, provider=provider,
+            user_id=user_id,
+            request_id=request_id if request_id is not None else current_request_id(),
+            cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
+            session_id=session_id,
+        )
         _enqueue("llm_usage", row)
     except Exception:  # pragma: no cover - defensive
         logger.exception("log_llm_usage failed; row dropped")
