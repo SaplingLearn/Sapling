@@ -310,6 +310,7 @@ quiz journey is what drives them.
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
 | `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-legend` | the shared four-state map key (`graph/SaplingMapLegend`) under every `appearance="sapling"` map (Home, Learn's rail, the tutor's Map panel) |
 | `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
@@ -391,6 +392,7 @@ never collide in the DOM.
 | `dashboard-courses-manage` | "Courses & semesters" inside the expanded course progress (legacy: the cog in the key) — opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
 | `dashboard-resume-{sessionId}` | a "Recent sessions" row (legacy: "Where you left off" card) — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 | `dashboard-surface` / `dashboard-workspace` | the workspace's `SaplingSurface` token scope / its page root |
+| `dashboard-greeting` / `dashboard-quote` | the Home `h1` (main's greeting; accessible name = the whole greeting) / the quote that fades in under it |
 | `dashboard-scope-line` / `dashboard-meta` | "All courses · All semesters" under the Today heading / the date + real streak line |
 | `dashboard-next` | the goal + next-step region; `data-state` = the discovered learner state (`pending`, `error`, `no-course`, `no-concepts`, `loop-open`, `loop-none`, `legacy-open`, `legacy-none`) |
 | `dashboard-goal` / `dashboard-goal-text` / `dashboard-goal-scope` | the saved goal block (only what the open session confirmed) |
