@@ -188,6 +188,11 @@ LEARNER_BRIEF_MAX_MISCONCEPTIONS = 5
 # ‡ plain dicts: PKG-07/05 build pydantic_ai UsageLimits(**X) in agents/__init__.py
 LOOP_LIMITS = {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000}
 GRADER_LIMITS = {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000}
+# A response cap is enforced by the provider before generation; UsageLimits
+# checks billed tokens after the response and cannot stop a runaway completion.
+# Engineering bounds, not calibrated measures of learner ability.
+GRADER_OUTPUT_MAX_TOKENS = 4_096
+GRADER_REQUEST_TIMEOUT_S = 30
 GRADER_LOW_CONFIDENCE = 0.6
 # Spec §3.4 / §13 A6: below GRADER_SECOND_OPINION_CONFIDENCE, ONE second grader
 # call runs on the GRADER_SECOND_OPINION_SLOT model slot (spec §3.5, A22; PKG-05).

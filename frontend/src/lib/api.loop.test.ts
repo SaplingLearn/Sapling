@@ -311,3 +311,21 @@ describe('explicit learning goals and versioned planning', () => {
     await expect(approveLoopPlan('s1', 'u', ['n1'], 2)).rejects.toMatchObject({ status: 409 });
   });
 });
+
+describe('explicit delayed retention checks', () => {
+  it('opens only the selected course and sends no clock or eligibility override', async () => {
+    const { startRetentionCheck } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ items: [] }));
+    expect(await startRetentionCheck('u', 'c1')).toEqual({ items: [] });
+    expect(urlOf()).toContain('/api/learn/loop/posttest/start');
+    expect(bodyOf()).toEqual({ user_id: 'u', course_id: 'c1' });
+  });
+  it('submits only the posed hash/node and the learner answer, without a chat fallback', async () => {
+    const { answerRetentionCheck } = await import('./api');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ detail: 'not a post-test item' }, 409));
+    await expect(answerRetentionCheck({ user_id: 'u', node_id: 'n1', question_hash: 'qh', idk: true })).rejects.toMatchObject({ status: 409 });
+    expect(urlOf()).toContain('/api/learn/loop/posttest/answer');
+    expect(bodyOf()).toEqual({ user_id: 'u', node_id: 'n1', question_hash: 'qh', idk: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

@@ -6,6 +6,19 @@
   min-width: 0;
 }
 
+.retention {
+  margin: 14px 16px 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  min-width: 0;
+  max-height: 420px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 767px) {
   /* Keep course selection, map and End session reachable on narrow screens. */
   .screen > div > header {

@@ -1205,7 +1205,7 @@ def test_answers_the_screen_passes_reach_the_grader_and_are_graded(grader, event
     g, calls = grader
     res = asyncio.run(g.grade(_item(), format="free", student_answer=answer, deps=_deps()))
     assert calls["n"] == 1 + bool(guard.suspicion(answer, rubric_ids=IDS)) and events == []
-    assert res.refused is None and res.unavailable is False
+    assert res.refused is None and res.unavailable is (not bool(answer.strip()))
     # an empty answer holds no quote, so nothing in it can be credited (round a33)
     assert res.all_yes is bool(re.search(r"\w", answer))
 
@@ -1887,14 +1887,19 @@ def test_the_seam_hands_grade_the_option_texts():
     assert grader_item_from(free).options == ()
 
 
-def test_an_honest_reason_paraphrasing_its_own_option_is_graded(grader, events):
+def test_an_honest_reason_paraphrasing_its_own_option_is_graded(monkeypatch, events):
     """Through the production path: grade_answer → seam → grade()."""
     from agents.tools.check import CheckAnswer
 
-    g, calls = grader
+    import agents.grader as g
+
+    # This item has one criterion; the response must answer exactly that label.
+    model, calls = _counting_grader({**_all_yes(), "item_results": ["r1:yes"]})
+    monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
     deps = _deps()
     answer = CheckAnswer(question_hash="qh-1", selected_option="A", reason=SUPPORT_BOT_REASON)
-    out = _grade_answer(_item(**SUPPORT_BOT), answer, deps)
+    with g.grader_agent.override(model=model):
+        out = _grade_answer(_item(**SUPPORT_BOT), answer, deps)
     assert out.refused is None and out.correct is True and calls["n"] >= 1
     assert "learn.answer_refused" not in [e for e, _ in events]
 
@@ -3622,11 +3627,11 @@ def test_the_span_checks_output_is_the_assertion_and_the_verdicts_alone():
     assert set(SpanVerdicts.model_fields) == {"asserted", "item_results"}
 
 
-def test_a_credited_item_with_no_quote_is_not_credited(monkeypatch, events):
+def test_a_credited_item_with_no_quote_is_unavailable(monkeypatch, events):
     first = {**_all_yes(0.95), "support": ["r1: It stops the calls."]}
     res, calls = _grade_with(monkeypatch, [first], answer="It stops the calls.")
-    assert calls["n"] == 1 and calls["spans"] == 1 and res.unavailable is False
-    assert res.item_results == {"r1": True, "r2": False} and res.all_yes is False
+    assert calls["n"] == 1 and calls["spans"] == 0 and res.unavailable is True
+    assert res.item_results == {} and res.all_yes is False
 
 
 def test_a_quote_the_answer_does_not_hold_credits_nothing_and_checks_nothing(monkeypatch, events):
@@ -3889,7 +3894,10 @@ def test_a_cap_reached_before_the_span_check_is_unavailable(monkeypatch, events)
 def test_a_confirmed_item_may_stand_on_either_runs_quote(monkeypatch, events):
     """When the second opinion confirms a first verdict, both runs credited the
     item; a verifiable quote from either run is the one the span check sees."""
-    first = {**_all_yes(0.95), "support": ["r1: It stops the calls"]}
+    first = {
+        **_all_yes(0.95),
+        "support": ["r1: It stops the calls", "r2: not in the answer"],
+    }
     second = {**_all_yes(0.9), "support": ["r2: It stops the calls", "r1: not in the answer"]}
     res, calls = _grade_with(
         monkeypatch, [first, second], answer=f"It stops the calls. {GRADING_TALK}"
@@ -3903,8 +3911,8 @@ def test_a_replacing_second_opinion_stands_on_its_own_quotes(monkeypatch, events
     unsure = {**_all_yes(0.2), "support": ["r1: It stops the calls", "r2: It stops the calls"]}
     second = {**_all_yes(0.9), "support": ["r1: It stops the calls"]}
     res, calls = _grade_with(monkeypatch, [unsure, second], answer="It stops the calls.")
-    assert calls["n"] == 2 and res.backend == "gemini_second"
-    assert res.item_results == {"r1": True, "r2": False}
+    assert calls["n"] == 2 and res.unavailable is True
+    assert res.item_results == {}
 
 
 def test_a_quote_of_the_rubric_items_own_text_earns_nothing(monkeypatch, events):
@@ -4620,8 +4628,8 @@ def test_a_context_check_that_fails_is_unavailable(monkeypatch, events):
     assert res.unavailable is True and res.refused is None and res.item_results == {}
 
 
-def test_a_context_check_that_names_no_span_withholds_it(monkeypatch, events):
-    """Fail closed: only an explicit "no" keeps the credit."""
+def test_a_context_check_that_names_no_span_is_unavailable(monkeypatch, events):
+    """A missing model verdict cannot become a student failure."""
     import agents.grader as g
 
     def handler(messages, info):
@@ -4634,7 +4642,7 @@ def test_a_context_check_that_names_no_span_withholds_it(monkeypatch, events):
     monkeypatch.setattr(g, "record_agent_usage", lambda r, **kw: r)
     with g.grader_agent.override(model=FunctionModel(handler)):
         res = asyncio.run(g.grade(_item(), format="free", student_answer=HONEST_FULL, deps=_deps()))
-    assert res.unavailable is False and res.item_results == {"r1": False, "r2": False}
+    assert res.unavailable is True and res.item_results == {}
 
 
 def test_no_context_check_runs_when_nothing_is_credited(monkeypatch, events):

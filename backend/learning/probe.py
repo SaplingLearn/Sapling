@@ -56,14 +56,84 @@ def expected_success(p_known: float, item_difficulty: int, channel: str) -> floa
     return p * (1.0 - s) + (1.0 - p) * g
 
 
+def _valid_difficulty(value: object) -> bool:
+    # bool and float compare equal to integer levels; neither is a stored level.
+    return type(value) is int and value in PROBE_DIFFICULTY_SHIFT
+
+
+def _graded_outcome(observation: Mapping) -> bool | None:
+    """Missing/ambiguous grading is not an incorrect student answer."""
+    refused = observation.get("refused", False)
+    if (
+        observation.get("unavailable", False) is not False
+        or observation.get("graded", True) is not True
+        or (refused is not False and refused is not None and refused != "")
+    ):
+        return None
+    correct, idk = observation.get("correct"), observation.get("idk", False)
+    if type(correct) is not bool or type(idk) is not bool:
+        return None
+    # Explicit unknown overrides a stray correct=True in an old record.
+    return False if idk else correct
+
+
+def independent_observations(history: Sequence[ProbeObservation]) -> list[ProbeObservation]:
+    """Distinct first exposures with valid unaided outcomes, across all strands.
+
+    Saved history is plain JSON, not a validated evidence model. An explicit
+    independent flag cannot overrule contradictory help/recheck/outage metadata.
+    A later repeat is not fresh evidence, even if the first exposure was assisted
+    or belonged to a previous goal. Raw rows still count toward fatigue limits.
+    """
+    seen: set[str] = set()
+    independent = []
+    for observation in history:
+        if not isinstance(observation, Mapping):
+            continue
+        question_hash = observation.get("question_hash")
+        if not isinstance(question_hash, str) or not question_hash.strip() or question_hash in seen:
+            continue
+        seen.add(question_hash)
+        node_id, channel = observation.get("node_id"), observation.get("channel")
+        if (
+            observation.get("independent") is not True
+            or not isinstance(node_id, str)
+            or not node_id.strip()
+            or not isinstance(channel, str)
+            or channel not in CHANNELS
+            or not _valid_difficulty(observation.get("difficulty"))
+            or _graded_outcome(observation) is None
+        ):
+            continue
+        if "max_rung" in observation and (
+            type(observation["max_rung"]) is not int or observation["max_rung"] != 0
+        ):
+            continue
+        if any(
+            observation.get(flag, False) is not False
+            for flag in (
+                "same_session_recheck",
+                "synthetic_idk",
+                "previously_seen",
+            )
+        ):
+            continue
+        independent.append(observation)
+    return independent
+
+
+def _by_node(history: Sequence[ProbeObservation]) -> dict[str, list[ProbeObservation]]:
+    grouped: dict[str, list[ProbeObservation]] = defaultdict(list)
+    for observation in history:
+        if isinstance(observation, Mapping) and isinstance(observation.get("node_id"), str):
+            grouped[observation["node_id"]].append(observation)
+    return grouped
+
+
 def _evidence(history: Sequence[ProbeObservation]) -> tuple[list[int], list[int]]:
     correct, incorrect = [], []
-    for h in history:
-        if h.get("independent") is not True or h["difficulty"] not in PROBE_DIFFICULTY_SHIFT:
-            continue
-        # An explicit unknown is not independent success, even if a malformed
-        # old record also has correct=True.
-        (correct if h["correct"] and not h.get("idk", False) else incorrect).append(h["difficulty"])
+    for observation in independent_observations(history):
+        (correct if _graded_outcome(observation) else incorrect).append(observation["difficulty"])
     return correct, incorrect
 
 
@@ -148,11 +218,19 @@ def next_probe_item(
     Old callers without history retain the starting-item heuristic and caps.
     """
     history = history or []
-    asked = set(asked_hashes) | {h["question_hash"] for h in history}
-    by_node: dict[str, list[ProbeObservation]] = defaultdict(list)
-    for h in history:
-        by_node[h["node_id"]].append(h)
-    per_node = Counter(it.node_id for it in items if it.question_hash in asked)
+    asked = set(asked_hashes) | {
+        h["question_hash"]
+        for h in history
+        if isinstance(h, Mapping) and isinstance(h.get("question_hash"), str)
+    }
+    by_node = _by_node(history)
+    independent_by_node = _by_node(independent_observations(history))
+    # Duplicate bank bindings for one prompt are not extra presentations.
+    asked_by_node: dict[str, set[str]] = defaultdict(set)
+    for it in items:
+        if it.question_hash in asked:
+            asked_by_node[it.node_id].add(it.question_hash)
+    per_node = Counter({node: len(hashes) for node, hashes in asked_by_node.items()})
     for node_id, count in (asked_per_node or {}).items():
         per_node[node_id] = max(per_node[node_id], count)
     for node_id, observations in by_node.items():
@@ -168,9 +246,9 @@ def next_probe_item(
             it.question_hash not in asked
             and it.node_id in states
             and per_node[it.node_id] < PROBE_ITEMS_PER_SKILL_MAX
-            and not _bracketed(by_node[it.node_id])
+            and not _bracketed(independent_by_node[it.node_id])
             and channel_for_format.get(it.format) in CHANNELS
-            and it.difficulty in PROBE_DIFFICULTY_SHIFT
+            and _valid_difficulty(it.difficulty)
         ):
             candidates[it.node_id].append(it)
     if not candidates:
@@ -178,11 +256,13 @@ def next_probe_item(
 
     # Choose the strand before comparing different kinds of adaptive keys.
     node_id = min(candidates, key=lambda n: (per_node[n], n))
-    correct, incorrect = _evidence(by_node[node_id])
+    correct, incorrect = _evidence(independent_by_node[node_id])
     # Selection may avoid contaminated shapes using assisted misses too;
     # _evidence above still excludes them from all diagnostic claims.
     released = {
-        h["difficulty"] for h in by_node[node_id] if not h["correct"] or h.get("idk", False)
+        h["difficulty"]
+        for h in by_node[node_id]
+        if _valid_difficulty(h.get("difficulty")) and _graded_outcome(h) is False
     }
     available = {it.difficulty for it in candidates[node_id]}
     mid = (PROBE_TARGET_LO + PROBE_TARGET_HI) / 2
@@ -206,9 +286,18 @@ def novice_floor(history: Sequence[ProbeObservation]) -> bool:
     Legacy/assisted answers count toward exhaustion but never toward a boundary.
     """
     misses_easiest = sum(
-        1 for h in history if h["difficulty"] == PROBE_EASIEST_DIFFICULTY and not h["correct"]
+        1
+        for h in history
+        if isinstance(h, Mapping)
+        and _valid_difficulty(h.get("difficulty"))
+        and h["difficulty"] == PROBE_EASIEST_DIFFICULTY
+        and _graded_outcome(h) is False
     )
-    idks = sum(1 for h in history if h.get("idk", False))
+    idks = sum(
+        1
+        for h in history
+        if isinstance(h, Mapping) and h.get("idk") is True and _graded_outcome(h) is not None
+    )
     return misses_easiest >= NOVICE_FLOOR_MISSES or idks >= NOVICE_FLOOR_IDK
 
 
@@ -226,19 +315,17 @@ def diagnostic_summary(
     explicit item-bank coverage and MIN unaided observations. Without coverage,
     a missing side remains partial rather than an invented bound.
     """
-    by_node: dict[str, list[ProbeObservation]] = defaultdict(list)
-    for h in history:
-        by_node[h["node_id"]].append(h)
+    by_node = _by_node(history)
+    independent_by_node = _by_node(independent_observations(history))
     rows = []
     for node_id in sorted(set(skills)):
         observations = by_node[node_id]
-        correct, incorrect = _evidence(observations)
+        independent_history = independent_by_node[node_id]
+        correct, incorrect = _evidence(independent_history)
         floor = max(correct) if correct else None
         ceiling = min(incorrect) if incorrect else None
         coverage = sorted(
-            d
-            for d in set((available_difficulties or {}).get(node_id, []))
-            if d in PROBE_DIFFICULTY_SHIFT
+            {d for d in (available_difficulties or {}).get(node_id, []) if _valid_difficulty(d)}
         )
         independent = len(correct) + len(incorrect)
         contradictory = sorted(
@@ -250,7 +337,7 @@ def diagnostic_summary(
             status = "untested"
         elif contradictory:
             status = "inconsistent"
-        elif _bracketed(observations):
+        elif _bracketed(independent_history):
             status = "bracketed"
         elif (
             independent >= PROBE_ITEMS_PER_SKILL_MIN
@@ -321,7 +408,7 @@ def probe_done(
     """
     if not history:
         return False
-    required = set(skills) if skills is not None else {h["node_id"] for h in history}
+    required = set(skills) if skills is not None else set(_by_node(history))
     summary = diagnostic_summary(
         history, skills=required, available_difficulties=available_difficulties
     )

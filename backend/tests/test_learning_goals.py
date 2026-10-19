@@ -157,6 +157,7 @@ def test_plan_follows_prerequisites_and_observed_failure_over_old_posterior(prob
         {
             "node_id": "A",
             "question_hash": "fail",
+            "channel": "free_response",
             "difficulty": 1,
             "correct": False,
             "idk": False,

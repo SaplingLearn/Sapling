@@ -1022,6 +1022,14 @@ export interface LoopLearningScope {
   goal_version?: number;
   goal?: LoopGoal | null;
   diagnosis?: LoopDiagnosis | null;
+  goal_progress?: LoopGoalProgress | null;
+}
+export interface LoopGoalProgress {
+  status: 'continue_available' | 'needs_more_practice' | 'session_plan_finished';
+  target_node_ids: string[];
+  remaining_target_node_ids: string[];
+  unresolved_prerequisite_ids: string[];
+  attempted_node_ids: string[];
 }
 export interface LoopGoalResult extends LoopLearningScope { phase: LoopPhase }
 
@@ -1100,7 +1108,7 @@ export interface LoopTurnResult extends ChatResult {
 }
 /** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
 export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
-export interface LoopCheckNext {
+export interface LoopCheckNext extends LoopLearningScope {
   phase: LoopPhase;
   check: LoopCheckItem | null;
   plan_done?: boolean;
@@ -1274,6 +1282,18 @@ export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
 /** Ends the session with its close (idempotent; A60). 409 while a close or a grade is in flight. */
 export const closeLoopSession = (sessionId: string, userId: string) =>
   loopPost<LoopCloseResponse>('/close', { session_id: sessionId, user_id: userId });
+
+export interface RetentionItem extends LoopCheckItem { node_id: string }
+export type RetentionAnswerResult =
+  | { graded: false; refused: true }
+  | { correct: boolean; confidence: number };
+/** Explicitly opening commits a delayed pose; never call during page load. */
+export const startRetentionCheck = (userId: string, courseId: string) =>
+  loopPost<{ items: RetentionItem[] }>('/posttest/start', { user_id: userId, course_id: courseId });
+export const answerRetentionCheck = (body: {
+  user_id: string; node_id: string; question_hash: string;
+  answer?: string; selected_option?: string; reason?: string; idk: boolean;
+}) => loopPost<RetentionAnswerResult>('/posttest/answer', body);
 
 // Flashcard import
 export interface ImportCard { front: string; back: string }

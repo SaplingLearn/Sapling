@@ -101,6 +101,8 @@ from learning.params import (
     GRADER_ANSWER_MAX_CHARS,
     GRADER_HINT_MAX_CHARS,
     GRADER_LOW_CONFIDENCE,
+    GRADER_OUTPUT_MAX_TOKENS,
+    GRADER_REQUEST_TIMEOUT_S,
     GRADER_RUBRIC_LABEL_CHARS,
     GRADER_SECOND_OPINION_CONFIDENCE,
     GRADER_SECOND_OPINION_SLOT,
@@ -386,6 +388,11 @@ grader_agent = Agent[SaplingDeps, GraderOutput](
     model=model_for("grader"),
     deps_type=SaplingDeps,
     output_type=GraderOutput,
+    # Applies to every primary/second/span/context run. Per-run thinking
+    # settings merge with these bounds; post-response usage caps stay enabled.
+    model_settings=GoogleModelSettings(
+        max_tokens=GRADER_OUTPUT_MAX_TOKENS, timeout=GRADER_REQUEST_TIMEOUT_S
+    ),
     retries=2,  # #153 output-validation budget; tool-less so retries= is that budget
     system_prompt=_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "grader"},
@@ -832,16 +839,55 @@ def _supported_spans(
     return spans
 
 
-def _misnamed(output: SpanVerdicts | Withdrawals, labels: dict[str, str]) -> list[str]:
-    """The fields of a span or context check that do not answer exactly the
-    labels it was asked about (a label copied wrong reads as a missing entry)."""
+def _invalid_verdict_fields(
+    output: GraderOutput | SpanVerdicts | Withdrawals, labels: dict[str, str]
+) -> list[str]:
+    """Invalid labelled verdicts or support quotes.
+
+    Each requested criterion needs exactly one yes/no, and each yes needs one
+    labelled quote. Missing, duplicated, invented or unreadable entries are
+    model failures, not evidence that a student failed a criterion. The
+    permissive parsers stay useful for inspection; grading needs complete output.
+    """
     wanted = {label.upper() for label in labels.values()}
-    fields = ("asserted", "item_results") if isinstance(output, SpanVerdicts) else ("withdrawn",)
-    return [
-        name
-        for name in fields
-        if {str(e).partition(":")[0].strip().upper() for e in getattr(output, name)} != wanted
-    ]
+    if isinstance(output, GraderOutput):
+        fields = ("item_results", "support")
+    elif isinstance(output, SpanVerdicts):
+        fields = ("asserted", "item_results")
+    else:
+        fields = ("withdrawn",)
+    bad = []
+    for name in fields:
+        expected = wanted
+        if name == "support":
+            # A reported yes must carry the one quote the protocol requires.
+            # Missing support is a broken model response, not student failure.
+            expected = {
+                label.strip().upper()
+                for entry in output.item_results
+                for label, sep, verdict in [str(entry).partition(":")]
+                if sep and verdict.strip().lower() == "yes" and label.strip().upper() in wanted
+            }
+        entries = getattr(output, name)
+        seen = set()
+        valid = len(entries) == len(expected)
+        for entry in entries:
+            label, sep, verdict = str(entry).partition(":")
+            label = label.strip().upper()
+            valid = valid and (
+                bool(sep)
+                and label in expected
+                and label not in seen
+                and (
+                    bool(verdict.strip())
+                    if name == "support"
+                    else verdict.strip().lower() in {"yes", "no"}
+                )
+            )
+            seen.add(label)
+        if not valid or seen != expected:
+            bad.append(name)
+    return bad
 
 
 async def _run_check(
@@ -854,12 +900,12 @@ async def _run_check(
     that misses or misspells one of its labels ("654559" for "65459": in a
     recording that cost an honest answer its credit, since a missing entry fails
     closed) is asked once more with the labels named; what the second answer
-    misses still fails closed. (pydantic-ai refuses an agent-level output
+    misses makes grading unavailable. (pydantic-ai refuses an agent-level output
     validator beside a per-run output type, so the check is here.)"""
     out = await _run_once(message, deps, second_opinion=True, output_type=output_type)
-    bad = _misnamed(out, labels)
+    bad = _invalid_verdict_fields(out, labels)
     if bad:
-        logger.warning("grader check answered the wrong labels in %s; asking again", bad)
+        logger.warning("grader check returned invalid verdicts in %s; asking again", bad)
         named = ", ".join(sorted(labels.values()))
         out = await _run_once(
             f"{message}\nAnswer with exactly one entry per label in each field, labels "
@@ -868,6 +914,10 @@ async def _run_check(
             second_opinion=True,
             output_type=output_type,
         )
+    if _invalid_verdict_fields(out, labels):
+        # A failed validation has no student outcome (invariant 28). Logging
+        # never includes labels, model text, or the student's answer.
+        raise UnexpectedModelBehavior("grader check returned invalid verdicts")
     return out
 
 
@@ -881,6 +931,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
     stack. The single Gemini grader: PKG-05b wraps it without changing the prompt.
+    Every grading and support-check field must explicitly answer each requested
+    label once with yes/no; incomplete or ambiguous output records no outcome.
     An answer that addresses the grader is refused (A33) — before any model call
     when the screen catches it, after the run when either run reports
     `addresses_grader` — as GradeResult(unavailable=True, refused=<reason>) with
@@ -945,6 +997,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
     confirming = False
     try:
         runs = [await _run_once(message, deps)]
+        if _invalid_verdict_fields(runs[0], labels):
+            raise UnexpectedModelBehavior("grader returned invalid verdicts")
         first = parse_labelled(runs[0].item_results, labels)
         refusing = bool(screen.exempted and runs[0].addresses_grader)  # refused below
         confirming = not refusing and _needs_confirmation(
@@ -956,6 +1010,8 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         if not refusing and (confirming or runs[0].confidence < GRADER_SECOND_OPINION_CONFIDENCE):
             # spec §3.4: ONE second opinion, on the grader_second slot (A22)
             runs.append(await _run_once(message, deps, second_opinion=True))
+            if _invalid_verdict_fields(runs[-1], labels):
+                raise UnexpectedModelBehavior("grader returned invalid verdicts")
             backend = "gemini_second"
     except _GRADER_FAILURES as exc:
         logger.warning("grader unavailable for item %s: %s", item.id, exc)

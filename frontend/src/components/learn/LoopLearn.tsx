@@ -54,6 +54,7 @@ import {
   type LoopCheckItem,
   type LoopCloseResponse,
   type LoopGoal,
+  type LoopGoalProgress,
   type LoopDiagnosis,
   type LoopLearningScope,
   type LoopOpenSession,
@@ -187,6 +188,7 @@ export function LoopLearn() {
   // Goals are session-owned. New sessions start whole-course; typed topic text
   // never silently selects targets, and nothing is inherited across courses.
   const [goal, setGoal] = useState<LoopGoal | null>(null);
+  const [goalProgress, setGoalProgress] = useState<LoopGoalProgress | null>(null);
   const [diagnosis, setDiagnosis] = useState<LoopDiagnosis | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
   const [scopeError, setScopeError] = useState(false);
@@ -209,6 +211,7 @@ export function LoopLearn() {
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
+  const [planJustApproved, setPlanJustApproved] = useState(false);
 
   // Teach / check / feedback
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -217,6 +220,7 @@ export function LoopLearn() {
   const [attemptBusy, setAttemptBusy] = useState(false);
   const [hint, setHint] = useState<HintView>(null);
   const [hintBusy, setHintBusy] = useState(false);
+  const [hintRetry, setHintRetry] = useState(false);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const [checkBusy, setCheckBusy] = useState(false);
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
@@ -240,8 +244,16 @@ export function LoopLearn() {
   const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
+  const hintEpoch = useRef(0);
+  const earnedHint = useRef<{ sessionId: string; questionHash: string; rung: number } | null>(null);
   const mounted = useRef(true);
   const graphRequest = useRef(0);
+  const invalidateHint = useCallback(() => {
+    ++hintEpoch.current;
+    earnedHint.current = null;
+    setHintRetry(false);
+    setHintBusy(false);
+  }, []);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -267,6 +279,7 @@ export function LoopLearn() {
     if (!payload) return;
     if (payload.goal !== undefined) setGoal(payload.goal);
     if (payload.diagnosis !== undefined) setDiagnosis(payload.diagnosis);
+    if (payload.goal_progress !== undefined) setGoalProgress(payload.goal_progress);
   }, []);
   const paused = state.budgetPause;
   const item = state.item;
@@ -313,6 +326,7 @@ export function LoopLearn() {
     // A terminal close invalidates pre-close status/plan/hint requests too,
     // not only the active stream. Their snapshots must never reopen it.
     const g = ++gen.current;
+    invalidateHint();
     streamAbort.current?.abort();
     setCloseBusy(false);
     dispatch({ type: "check", item: null });
@@ -324,7 +338,7 @@ export function LoopLearn() {
     } catch {
       if (g === gen.current) setCloseNote(CLOSED_ELSEWHERE_COPY);
     }
-  }, [userId, dropFromPicker]);
+  }, [userId, dropFromPicker, invalidateHint]);
 
   // ── Error routing: a budget 429 is the banner, a closed session is the
   // close, anything else a toast ─────────────────────────────────────────
@@ -345,6 +359,7 @@ export function LoopLearn() {
 
   /** Apply GET /status: the phase, and the open item's pose or none. */
   const applyStatus = useCallback((sid: string, st: LoopSessionStatus) => {
+    invalidateHint();
     applyLearningScope(st);
     if (st.loop_phase === "close") {
       void enterClosed(sid);
@@ -352,7 +367,7 @@ export function LoopLearn() {
     }
     dispatch({ type: "check", item: st.check ?? null });
     dispatch({ type: "phase", phase: statusPhase(st) });
-  }, [enterClosed, applyLearningScope]);
+  }, [enterClosed, applyLearningScope, invalidateHint]);
 
   /** After a submission that did not settle (a 409, a stream error, Stop): the
    *  server may already have graded it, so re-read where the session stands.
@@ -369,11 +384,13 @@ export function LoopLearn() {
 
   // ── Session lifecycle ──────────────────────────────────────────────────
   const clearSessionView = useCallback(() => {
+    invalidateHint();
     streamAbort.current?.abort();
     streamAbort.current = null;
     dispatch({ type: "reset" });
     setReadOnly(null);
     setGoal(null);
+    setGoalProgress(null);
     setDiagnosis(null);
     setScopeReady(false);
     setScopeError(false);
@@ -391,6 +408,7 @@ export function LoopLearn() {
     setProbeFinished(false);
     setNoCheckItems(false);
     setPlan(null);
+    setPlanJustApproved(false);
     setPlanGoalVersion(undefined);
     setPlanBusy(false);
     setMessages([]);
@@ -406,7 +424,7 @@ export function LoopLearn() {
     setCloseBusy(false);
     setCloseNote(null);
     countedAttempt.current = null;
-  }, []);
+  }, [invalidateHint]);
 
   const loadPlan = useCallback(async (sid: string, g: number) => {
     setLoadError(null);
@@ -740,6 +758,7 @@ export function LoopLearn() {
       const response = await setLoopGoal(sid, userId, requested);
       if (g !== gen.current) return;
       applyLearningScope(response);
+      setGoalProgress(response.goal_progress ?? null);
       setScopeReady(true);
       setGoalEditor(false);
       setProbeItem(null);
@@ -784,7 +803,11 @@ export function LoopLearn() {
       const r = planGoalVersion === undefined
         ? await approveLoopPlan(sessionId, userId, ids)
         : await approveLoopPlan(sessionId, userId, ids, planGoalVersion);
-      if (g === gen.current) dispatch({ type: "phase", phase: r.phase });
+      if (g === gen.current) {
+        dispatch({ type: "phase", phase: r.phase });
+        setPlanJustApproved(true);
+        setGoalProgress((current) => current?.status === "continue_available" ? null : current);
+      }
     } catch (err) {
       if (g !== gen.current) return;
       reportError(err, "Couldn't save the plan.");
@@ -805,6 +828,7 @@ export function LoopLearn() {
    *  is now in `check` (PKG-07 `_phase_for`), whatever the turn's own phase. */
   const applyActivated = useCallback((check: LoopCheckItem | null | undefined) => {
     if (!check?.prompt) return;
+    invalidateHint();
     dispatch({ type: "check", item: check });
     dispatch({ type: "phase", phase: "check" });
     const pose = check.prompt;
@@ -812,12 +836,15 @@ export function LoopLearn() {
     setAttempt(EMPTY_DRAFT);
     setHint(null);
     setCheckNote(null);
-  }, []);
+  }, [invalidateHint]);
 
   const runTurn = useCallback(async (
     run: (h: StreamChatHandlers) => Promise<LoopTurnResult>,
     { submission = false }: { submission?: boolean } = {},
   ): Promise<LoopTurnResult | null> => {
+    // A hint may still be in flight when the learner submits or continues.
+    // Its previous phase/question must never overwrite the newer turn.
+    invalidateHint();
     streamAbort.current?.abort();
     const controller = new AbortController();
     streamAbort.current = controller;
@@ -902,10 +929,11 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [applyActivated, reportError, reconcile]);
+  }, [applyActivated, reportError, reconcile, invalidateHint]);
 
   const send = (text: string) => {
     if (!sessionId || paused) return;
+    setPlanJustApproved(false);
     setMessages((prev) => [...prev, asMsg("user", text)]);
     void runTurn((h) => streamLoopChat(sessionId, userId, text, h));
   };
@@ -946,6 +974,8 @@ export function LoopLearn() {
   const askHint = async () => {
     if (!sessionId || !item || hintBusy) return;
     const g = gen.current;
+    const request = ++hintEpoch.current;
+    const ownsHint = () => mounted.current && g === gen.current && request === hintEpoch.current;
     const qh = item.question_hash;
     setHintBusy(true);
     setHint(null);
@@ -955,19 +985,30 @@ export function LoopLearn() {
       const draft = (item.format === "mc_reason"
         ? [attempt.option, attempt.reason].filter(Boolean).join(" — ")
         : attempt.answer).trim();
-      if (draft && countedAttempt.current !== `${qh}:${draft}`) {
-        const recorded = await postLoopAttempt(sessionId, userId, qh, draft);
-        if (g !== gen.current) return;
-        if (recorded.counted) countedAttempt.current = `${qh}:${draft}`;
-      }
-      const r = await requestLoopHint(sessionId, userId, qh);
-      if (g !== gen.current) return;
-      if (r.denied) {
-        setHint({ denied: r.denied });
-        return;
+      const grant = earnedHint.current;
+      if (!grant || grant.sessionId !== sessionId || grant.questionHash !== qh) {
+        if (draft && countedAttempt.current !== `${qh}:${draft}`) {
+          const recorded = await postLoopAttempt(sessionId, userId, qh, draft);
+          if (!ownsHint()) return;
+          if (recorded.counted) countedAttempt.current = `${qh}:${draft}`;
+        }
+        const r = await requestLoopHint(sessionId, userId, qh);
+        if (!ownsHint()) return;
+        if (r.denied) {
+          setHint({ denied: r.denied });
+          return;
+        }
+        if (typeof r.rung === "number") {
+          // The gate already granted/recorded this rung. A failed text request
+          // retries only /action, never grants another rung or repeats effort.
+          earnedHint.current = { sessionId, questionHash: qh, rung: r.rung };
+          setHintRetry(true);
+        }
       }
       const t = await requestLoopHintTurn(sessionId, userId);
-      if (g !== gen.current) return;
+      if (!ownsHint()) return;
+      earnedHint.current = null;
+      setHintRetry(false);
       // In the card while the item is current; the log hides this row until then
       // (the server saved it as an assistant row, so a reload shows it there).
       setHint({ reply: t.reply });
@@ -977,9 +1018,9 @@ export function LoopLearn() {
         dispatch({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped });
       }
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't get a hint.");
+      if (ownsHint()) reportError(err, "Couldn't get a hint.");
     } finally {
-      if (g === gen.current) setHintBusy(false);
+      if (ownsHint()) setHintBusy(false);
     }
   };
 
@@ -991,6 +1032,20 @@ export function LoopLearn() {
     try {
       const r = await nextLoopCheck(sessionId, userId);
       if (g !== gen.current) return;
+      applyLearningScope(r);
+      if (r.check && r.goal_progress === undefined) setGoalProgress(null);
+      setPlanJustApproved(false);
+      if (r.phase === "plan") {
+        // A completed goal frontier may unlock a fresh prerequisite/target.
+        // Drop the old plan before reading the new one; approval stays explicit.
+        invalidateHint();
+        dispatch({ type: "check", item: null });
+        setPlan(null);
+        setPlanGoalVersion(undefined);
+        dispatch({ type: "phase", phase: "plan" });
+        await loadPlan(sessionId, g);
+        return;
+      }
       dispatch({ type: "phase", phase: r.phase });
       if (r.check) applyActivated(r.check);
       else setCheckNote(r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
@@ -1381,7 +1436,7 @@ export function LoopLearn() {
       />
     );
   } else if (state.phase === "close") {
-    body = <ClosePanel close={close} note={closeNote} names={conceptNames} />;
+    body = <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} />;
   } else {
     const firstConcept = plan?.[0];
     const chatHeader = (
@@ -1395,6 +1450,7 @@ export function LoopLearn() {
             busy={attemptBusy || streaming}
             hint={hint}
             hintBusy={hintBusy}
+            hintRetry={hintRetry}
             onSubmit={() => void submitAttempt(false)}
             onIdk={() => void submitAttempt(true)}
             onHint={() => void askHint()}
@@ -1420,7 +1476,7 @@ export function LoopLearn() {
             >
               Check me
             </button>
-            {messages.length <= 1 && firstConcept && state.phase === "teach" && !paused && (
+            {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
               <button
                 data-testid="loop-teach-start"
                 className="btn btn--sm btn--ghost"
@@ -1473,6 +1529,15 @@ export function LoopLearn() {
                   : "Scope: Explore the whole course"}
           </div>
         )}
+        {goalProgress && goal && <div data-testid="loop-goal-progress" role="status" className={styles.scopeSummary}>
+          {goalProgress.status === "continue_available"
+            ? "The next step toward your goal is ready to review. Approve the new plan before continuing."
+            : goalProgress.status === "needs_more_practice"
+              ? "Your goal still needs prerequisite practice. No fresh next step is available in this session; review your material or start another session."
+              : "You finished the practice planned for this session. This does not establish mastery; check what you retain after time away."}
+          {goalProgress.unresolved_prerequisite_ids.length > 0 && <span> Prerequisites needing practice: {goalProgress.unresolved_prerequisite_ids.map((id) => conceptNames.get(id) ?? "A prerequisite").join(", ")}.</span>}
+          {goalProgress.remaining_target_node_ids.length > 0 && <span> Goal concepts remaining: {goalProgress.remaining_target_node_ids.map((id) => conceptNames.get(id) ?? "A selected concept").join(", ")}.</span>}
+        </div>}
         {notices}
         <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
           <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -1830,7 +1895,7 @@ function PlanPanel({
 }
 
 function CheckCard({
-  item, draft, setDraft, busy, hint, hintBusy, onSubmit, onIdk, onHint,
+  item, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint,
 }: {
   item: LoopCheckItem;
   draft: Draft;
@@ -1838,6 +1903,7 @@ function CheckCard({
   busy: boolean;
   hint: HintView;
   hintBusy: boolean;
+  hintRetry: boolean;
   onSubmit: () => void;
   onIdk: () => void;
   onHint: () => void;
@@ -1901,7 +1967,7 @@ function CheckCard({
         </button>
         <div style={{ flex: 1 }} />
         <button data-testid="loop-hint-button" className="btn btn--sm" disabled={hintBusy || busy} onClick={onHint}>
-          {hintBusy ? "Hint…" : "Hint"}
+          {hintBusy ? "Hint…" : hintRetry ? "Retry earned hint" : "Hint"}
         </button>
       </div>
       {hint && "denied" in hint && (
@@ -1933,12 +1999,13 @@ function CheckCard({
 }
 
 function ClosePanel({
-  close, note, names,
+  close, note, names, courseId,
 }: {
   close: LoopCloseResponse | null;
   /** Set when the stored close could not be read (the session was closed elsewhere). */
   note: string | null;
   names: Map<string, string>;
+  courseId: string | null;
 }) {
   if (!close) {
     if (!note) return <div style={{ padding: 40, color: "var(--text-dim)" }}>Wrapping up…</div>;
@@ -2008,6 +2075,9 @@ function ClosePanel({
           <Link data-testid="loop-close-study-link" href="/study?mode=cards" style={{ color: "var(--accent)" }}>
             Review what&apos;s due
           </Link>
+          {courseId && <Link data-testid="loop-close-retention-link" href={`/study?mode=cards&retention-course=${encodeURIComponent(courseId)}`} style={{ color: "var(--accent)" }}>
+            Check retention after time away
+          </Link>}
         </div>
       </div>
     </div>

@@ -1269,3 +1269,119 @@ it("a rejected goal change restores teaching instead of pretending to restart th
   expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
   expect(screen.getByTestId("loop-goal-summary").textContent).toBe("Scope: Explore the whole course");
 });
+
+describe("hint ownership within a learning session", () => {
+  it("retries text for an already-earned rung without repeating the gate or effort ledger", async () => {
+    api.postLoopAttempt.mockResolvedValue({ counted: true });
+    api.requestLoopHint.mockResolvedValue({ rung: 2 });
+    api.requestLoopHintTurn.mockRejectedValueOnce(new ApiError("unavailable", 503))
+      .mockResolvedValueOnce(turn({ phase: "hint", reply: "The hint you already earned." }));
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "My independent working." } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    const retry = await screen.findByRole("button", { name: "Retry earned hint" });
+    fireEvent.click(retry);
+    expect(await screen.findByTestId("loop-hint-reply")).toBeTruthy();
+    expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(2);
+    expect(api.requestLoopHint).toHaveBeenCalledTimes(1);
+    expect(api.postLoopAttempt).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("loop-hint-reply").textContent).toBe("The hint you already earned.");
+    expect(screen.getByTestId("loop-hint-button").textContent).toBe("Hint");
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+  });
+
+  it.each(["effort", "gate"] as const)("does not continue a pending %s request after the answer was graded", async (stage) => {
+    let finish!: (value: { counted: boolean; rung: number }) => void;
+    const pending = new Promise<{ counted: boolean; rung: number }>((resolve) => { finish = resolve; });
+    api.postLoopAttempt.mockResolvedValue({ counted: true });
+    api.requestLoopHint.mockResolvedValue({ rung: 1 });
+    const deferred = stage === "effort" ? api.postLoopAttempt : api.requestLoopHint;
+    deferred.mockReturnValue(pending);
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, phase: "feedback", reply: "Your answer was checked." }));
+    await withCheckItem();
+    if (stage === "effort") fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "I tried tracing the base case." } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(deferred).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await screen.findByTestId("loop-continue");
+    await act(async () => { finish({ counted: true, rung: 1 }); });
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("feedback");
+    expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
+    expect(api.requestLoopHintTurn).not.toHaveBeenCalled();
+    if (stage === "effort") expect(api.requestLoopHint).not.toHaveBeenCalled();
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledWith("s2", "u1", "qh7", { idk: true }, expect.any(Object));
+  });
+
+  it("ignores old hint text and cleanup while the next question's own hint is pending", async () => {
+    let finishOld!: (value: ReturnType<typeof turn>) => void;
+    let finishNew!: (value: ReturnType<typeof turn>) => void;
+    api.requestLoopHint.mockResolvedValue({ rung: 1 });
+    api.requestLoopHintTurn
+      .mockReturnValueOnce(new Promise<ReturnType<typeof turn>>((resolve) => { finishOld = resolve; }))
+      .mockReturnValueOnce(new Promise<ReturnType<typeof turn>>((resolve) => { finishNew = resolve; }));
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, phase: "feedback", reply: "Your answer was checked." }));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await screen.findByTestId("loop-continue");
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: { ...pose, question_hash: "next-question", prompt: "What changes in this next case?" } });
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    await waitFor(() => expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("next-question"));
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await waitFor(() => expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(2));
+    await act(async () => { finishOld(turn({ phase: "hint", reply: "Obsolete hint for the previous question." })); });
+    expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("Obsolete hint for the previous question.")).toBeNull();
+    expect(screen.queryByTestId("loop-hint-reply")).toBeNull();
+    expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("next-question");
+    await act(async () => { finishNew(turn({ phase: "hint", reply: "Current question's helpful hint." })); });
+    expect(screen.getByTestId("loop-hint-reply").textContent).toBe("Current question's helpful hint.");
+    expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("check");
+  });
+});
+
+describe("explicit goal frontier continuation", () => {
+  const goal = { text: "Understand operators", target_node_ids: ["target"] };
+  const progress = { status: "continue_available", target_node_ids: ["target"], remaining_target_node_ids: ["target"], unresolved_prerequisite_ids: [], attempted_node_ids: ["foundation"] };
+  it("loads a fresh plan in the same session and requires approval before the next lesson", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ goal }));
+    api.nextLoopCheck.mockResolvedValue({ phase: "plan", check: null, plan_done: false, goal_progress: progress });
+    api.getLoopPlan.mockResolvedValue({ goal, goal_progress: progress, goal_version: 2, concepts: [{ node_id: "target", concept_name: "Operators", kind: "new", reason: "goal", p_known: 0.3 }] });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["target"] });
+    api.streamLoopChat.mockResolvedValue(turn({ phase: "teach" }));
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    expect(await screen.findByTestId("loop-plan-concept-target")).toBeTruthy();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2");
+    expect(screen.getByTestId("loop-goal-progress").textContent).toContain("Approve the new plan");
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-plan-approve"));
+    fireEvent.click(await screen.findByTestId("loop-teach-start"));
+    expect(api.approveLoopPlan).toHaveBeenCalledWith("s2", "u1", ["target"], 2);
+    await waitFor(() => expect(api.streamLoopChat).toHaveBeenCalledWith("s2", "u1", "Teach me about Operators.", expect.any(Object)));
+  });
+
+  it("never leaves the previous approved plan visible if the next plan cannot load", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValueOnce({ goal, goal_version: 1, concepts: [{ node_id: "foundation", concept_name: "Foundation", kind: "new", p_known: 0.3 }] }).mockRejectedValueOnce(new ApiError("unavailable", 503));
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["foundation"] });
+    api.nextLoopCheck.mockResolvedValue({ phase: "plan", check: null, goal_progress: progress });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-plan-approve"));
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect(await screen.findByTestId("loop-plan-retry")).toBeTruthy();
+    expect(screen.queryByTestId("loop-plan-concept-foundation")).toBeNull();
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+  });
+
+  it.each(["needs_more_practice", "session_plan_finished"] as const)("restores %s honestly without claiming the learner mastered the goal", async (completion) => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ goal, goal_progress: { ...progress, status: completion, unresolved_prerequisite_ids: completion === "needs_more_practice" ? ["foundation"] : [] } }));
+    await resumedTeach();
+    const text = screen.getByTestId("loop-goal-progress").textContent;
+    expect(text).toContain(completion === "needs_more_practice" ? "still needs prerequisite practice" : "does not establish mastery");
+    expect(text).not.toContain("goal complete");
+  });
+});

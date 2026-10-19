@@ -73,6 +73,7 @@ import {
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
 import { DueQueue } from "../learn/DueQueue";
+import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
 
 type Mode = "guide" | "cards";
@@ -608,6 +609,7 @@ function FlashcardsMode({
   semesterReady: boolean;
 }) {
   const toast = useToast();
+  const retentionCourse = useSearchParams().get("retention-course") ?? "";
   const { userId, userReady } = useUser();
   const [cards, setCards] = React.useState<RawCard[]>([]);
   const [courseId, setCourseId] = React.useState<string>("all");
@@ -739,6 +741,7 @@ function FlashcardsMode({
     <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {loopActive === true && <DueQueue userId={userId} courseId={courseId !== "all" ? courseId : undefined} />}
+        {loopActive === true && <RetentionCheck key={userId} userId={userId} courses={courses} initialCourseId={retentionCourse} />}
         {loopActive === "error" && (
           <div role="status" style={{ margin: "14px 32px 0", fontSize: 13 }}>
             <p>Couldn&apos;t load due reviews. Your flashcards are still available.</p>

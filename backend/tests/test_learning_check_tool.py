@@ -349,7 +349,9 @@ def test_grade_second_opinion_runs_on_grader_second_slot(monkeypatch):
     async def _run(message, **kw):
         seen.append((message, kw))
         conf = GRADER_SECOND_OPINION_CONFIDENCE / 2 if len(seen) == 1 else 0.9
-        return SimpleNamespace(output=g.GraderOutput(**_good(conf), support=[]))
+        payload = _good(conf)
+        payload["item_results"] = [f"{label}:no" for label in _RUBRIC_LINE.findall(message)]
+        return SimpleNamespace(output=g.GraderOutput(**payload, support=[]))
 
     tasks = []
     monkeypatch.setattr(g.grader_agent, "run", _run)
@@ -404,9 +406,9 @@ def test_grade_degrades_when_the_second_opinion_fails(monkeypatch, caplog):
     async def _run(message, **kw):
         calls.append(kw)
         if len(calls) == 1:
-            return SimpleNamespace(
-                output=g.GraderOutput(**_good(GRADER_SECOND_OPINION_CONFIDENCE / 2), support=[])
-            )
+            payload = _good(GRADER_SECOND_OPINION_CONFIDENCE / 2)
+            payload["item_results"] = [f"{label}:no" for label in _RUBRIC_LINE.findall(message)]
+            return SimpleNamespace(output=g.GraderOutput(**payload, support=[]))
         raise UnexpectedModelBehavior("garbage")
 
     monkeypatch.setattr(g.grader_agent, "run", _run)

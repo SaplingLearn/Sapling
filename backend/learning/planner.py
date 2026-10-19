@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from learning.params import BKT_PROFICIENT, PLAN_MAX_CONCEPTS, PLAN_MAX_COUPLED, PLAN_ORDER
+from learning.probe import independent_observations
 
 PlanKind = Literal["review", "new", "sibling"]
 
@@ -38,6 +39,31 @@ class PlanConcept:
 class Plan:
     concepts: tuple[PlanConcept, ...]
     order: tuple[str, ...] = tuple(PLAN_ORDER)
+
+
+def planning_states(states: dict[str, float], observations: Sequence[dict]) -> dict[str, float]:
+    """Local planning needs, without changing a stored mastery posterior.
+
+    An independent miss cannot be erased by an old high posterior, help, a
+    repeated item or an easier floor confirmation. A later fresh unaided
+    success at the missed level or above can resolve that particular need.
+    Observation order is causal (diagnosis first, then graded teaching checks).
+    """
+    failed: dict[str, set[int]] = defaultdict(set)
+    for observation in independent_observations(observations):
+        node = observation["node_id"]
+        if node not in states:
+            continue
+        difficulty = observation["difficulty"]
+        if observation["correct"] and not observation.get("idk", False):
+            failed[node].difference_update(d for d in tuple(failed[node]) if d <= difficulty)
+        else:
+            failed[node].add(difficulty)
+    result = dict(states)
+    for node, levels in failed.items():
+        if levels:
+            result[node] = min(result[node], BKT_PROFICIENT - 0.01)
+    return result
 
 
 def goal_scope(

@@ -33,7 +33,7 @@
 import type { Browser, Page } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
-import { queryRaw } from "./support/db";
+import { queryRaw, seedGoalContinuationItems } from "./support/db";
 import { decryptText } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
@@ -644,4 +644,177 @@ test("a phone learner confirms a goal, sees prerequisite planning and retains it
   await expect(phase).toHaveAttribute("data-phase", "teach");
   await expect(page.getByTestId("loop-set-goal")).toHaveCount(0); // locked once teaching begins
   await context.close();
+});
+
+test("an earned hint arriving late cannot reopen a graded check in the same session", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  const P = await learningParams(["PROBE_SESSION_CAP", "GATE_INDEPENDENT_MIN_S_NOVICE"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let actionStarted = false;
+  await page.route("**/api/learn/loop/action", async (route) => {
+    actionStarted = true;
+    await held;
+    try {
+      await route.fulfill({ json: { reply: "OBSOLETE_HINT_FOR_GRADED_CHECK", phase: "hint", graph_update: {}, mastery_changes: [] } });
+    } catch { /* the context may have closed after an earlier assertion */ }
+  });
+  try {
+    await page.goto("/learn");
+    await walkProbeAndPlan(page, P);
+    await firstTeachTurn(page);
+    await page.getByTestId("loop-check-me").click();
+    await expect(page.getByTestId("loop-check-prompt")).toBeVisible();
+    await page.getByTestId("loop-attempt-input").fill(WORKING_ATTEMPT);
+    const hint = page.getByTestId("loop-hint-button");
+    // The real attempt/dwell gate must grant the hint. Only its later text
+    // response is held, modeling an in-flight action rather than bypassing help.
+    await expect.poll(async () => {
+      if (!actionStarted && await hint.isEnabled()) await hint.click();
+      return actionStarted;
+    }, { timeout: Number(P.GATE_INDEPENDENT_MIN_S_NOVICE) * 1000 + GATE_POLL_MARGIN_MS, intervals: [100, 500] }).toBe(true);
+    await page.getByTestId("loop-attempt-idk").click();
+    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+    const delivered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/action");
+    release();
+    await (await delivered).finished();
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "feedback");
+    await expect(page.getByTestId("loop-continue")).toBeVisible();
+    await expect(page.getByTestId("loop-check-prompt")).toHaveCount(0);
+    await expect(page.getByText("OBSOLETE_HINT_FOR_GRADED_CHECK", { exact: true })).toHaveCount(0);
+  } finally {
+    release();
+    await context.close();
+  }
+});
+
+test("phone retention entry creates no pose until requested and respects real delayed eligibility", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  await page.setViewportSize({ width: 320, height: 844 });
+  let opens = 0;
+  page.on("request", (request) => { if (new URL(request.url()).pathname === "/api/learn/loop/posttest/start") opens += 1; });
+  await page.goto("/study?mode=cards");
+  await expect(page.getByTestId("retention-open")).toBeEnabled();
+  expect(opens).toBe(0);
+  const response = page.waitForResponse((result) => new URL(result.url()).pathname === "/api/learn/loop/posttest/start");
+  await page.getByTestId("retention-open").click();
+  const opened = await response;
+  expect(opened.status()).toBe(200);
+  // This freshly re-seeded learner has no aged evidence. Do not backdate it,
+  // override the clock or manufacture a delayed-retention success.
+  expect((await opened.json()).items).toEqual([]);
+  await expect(page.getByTestId("retention-empty")).toContainText("eligible unseen");
+  expect(opens).toBe(1);
+  const geometry = await page.evaluate(() => ({ viewport: innerWidth, content: document.documentElement.scrollWidth }));
+  expect(geometry.content).toBeLessThanOrEqual(geometry.viewport);
+  await context.close();
+});
+
+test("independent prerequisite recovery unlocks a fresh goal plan requiring approval in the same session", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  await seedGoalContinuationItems("diagnostic");
+  const P = await learningParams(["PROBE_SESSION_CAP", "LOOP_CHECKS_PER_CONCEPT"]);
+  expect(Number(P.LOOP_CHECKS_PER_CONCEPT)).toBe(2); // this fixture exercises recheck then independent alternate format
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  let approvals = 0;
+  page.on("request", (request) => { if (new URL(request.url()).pathname === "/api/learn/loop/plan/approve") approvals += 1; });
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/learn");
+    await expect(page.getByTestId("loop-set-goal")).toBeEnabled();
+    await page.getByTestId("loop-set-goal").click();
+    const editor = page.getByRole("form", { name: "Learning goal" });
+    const objective = "Understand bitwise operations after checking binary foundations";
+    await editor.getByTestId("loop-goal-text").fill(objective);
+    await editor.getByRole("checkbox", { name: "Bitwise Operators", exact: true }).check();
+    const goalResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/goal");
+    await editor.getByTestId("loop-goal-save").click();
+    const goal = await (await goalResponse).json();
+    const phase = page.getByTestId("loop-phase");
+    let missedFoundation = false;
+    let answered = 0;
+    while (await phase.getAttribute("data-phase") === "probe" && answered < Number(P.PROBE_SESSION_CAP)) {
+      const probe = page.getByTestId("loop-probe-item");
+      await expect(page.getByTestId("loop-probe-submit")).toBeVisible();
+      const hash = await probe.getAttribute("data-question-hash");
+      const difficulty = Number(await probe.getAttribute("data-difficulty"));
+      const foundation = (await probe.textContent())?.includes("Binary Numbers") === true;
+      const miss = foundation && difficulty === 3 && !missedFoundation;
+      await page.getByTestId("loop-probe-input").fill(miss ? WORKING_ATTEMPT : GRADER_CORRECT_TOKEN);
+      await page.getByTestId("loop-probe-submit").click();
+      answered += 1;
+      if (miss) missedFoundation = true;
+      await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
+        await page.getByTestId("loop-probe-reference").isVisible() ||
+        (await probe.getAttribute("data-question-hash")) !== hash).toBe(true);
+      if (await page.getByTestId("loop-probe-reference").isVisible()) {
+        expect(miss).toBe(true);
+        await page.getByTestId("loop-probe-next").click();
+        await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
+          (await probe.getAttribute("data-question-hash")) !== hash).toBe(true);
+      }
+    }
+    expect(missedFoundation).toBe(true);
+    await expect(phase).toHaveAttribute("data-phase", "plan");
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-binary")).toContainText("Prerequisite for your goal");
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-bitwise")).toHaveCount(0);
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-twos")).toHaveCount(0);
+    // Add fresh authored questions, never evidence. Only actual grader/writer
+    // responses below may establish the independent recovery needed to unlock.
+    await seedGoalContinuationItems("practice");
+    const sessionId = await phase.getAttribute("data-session-id");
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+    await firstTeachTurn(page);
+    const hashes: string[] = [];
+    for (const expectedFormat of ["free", "teachback"]) {
+      await page.getByTestId("loop-check-me").click();
+      const check = page.getByTestId("loop-check-prompt");
+      await expect(check).toBeVisible();
+      await expect(check).toHaveAttribute("data-format", expectedFormat);
+      const hash = await check.getAttribute("data-question-hash");
+      expect(hash).toBeTruthy();
+      const rows = await queryRaw("SELECT difficulty FROM check_items WHERE question_hash = $1", [hash]);
+      expect(Number(rows[0].difficulty)).toBe(3);
+      hashes.push(hash!);
+      await page.getByTestId("loop-attempt-input").fill(GRADER_CORRECT_TOKEN);
+      await page.getByTestId("loop-attempt-submit").click();
+      await expect(phase).toHaveAttribute("data-phase", "feedback");
+      await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+    }
+    const [stored] = await queryRaw("SELECT loop_state FROM sessions WHERE id = $1 AND user_id = $2", [sessionId, USER_LOOP]) as {
+      loop_state: { steps: Record<string, { goal_observation: Record<string, unknown> }> };
+    }[];
+    const first = stored.loop_state.steps[hashes[0]].goal_observation;
+    const second = stored.loop_state.steps[hashes[1]].goal_observation;
+    expect(first).toMatchObject({ same_session_recheck: true, independent: false, difficulty: 3 });
+    expect(second).toMatchObject({ same_session_recheck: false, independent: true, max_rung: 0, previously_seen: false, difficulty: 3 });
+    const continued = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/check/next");
+    await page.getByTestId("loop-check-me").click();
+    expect(await (await continued).json()).toMatchObject({ phase: "plan", plan_done: false, goal_progress: { status: "continue_available" } });
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-bitwise")).toContainText("Your selected goal");
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-binary")).toHaveCount(0);
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-twos")).toHaveCount(0);
+    expect(approvals).toBe(1); // a fresh frontier never silently approves itself
+    await page.reload();
+    await expect(phase).toHaveAttribute("data-session-id", sessionId!);
+    await expect(page.getByTestId("loop-goal-summary")).toContainText(objective);
+    await expect(page.getByTestId("loop-plan-concept-rich-node-loop-bitwise")).toBeVisible();
+    const approved = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/learn/loop/plan/approve");
+    await page.getByTestId("loop-plan-approve").click();
+    expect((await approved).postDataJSON()).toMatchObject({ goal_version: goal.goal_version, concept_ids: ["rich-node-loop-bitwise"] });
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+    await expect(page.getByTestId("loop-teach-start")).toContainText("Bitwise Operators");
+    await firstTeachTurn(page);
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+    const [active] = await queryRaw("SELECT loop_state->>'concept' AS concept FROM sessions WHERE id = $1 AND user_id = $2", [sessionId, USER_LOOP]);
+    expect(active.concept).toBe("rich-node-loop-bitwise");
+    expect(approvals).toBe(2);
+  } finally { await context.close(); }
 });
