@@ -460,23 +460,32 @@ def test_run_session_close_returns_none_on_agent_failure(monkeypatch, caplog):
     assert not any("SECRET TRANSCRIPT" in r.getMessage() for r in caplog.records)
 
 
-def test_run_session_close_bills_a_failed_run(monkeypatch):
+@pytest.mark.parametrize("session_id", [None, "close-session-42"], ids=["legacy-omitted", "known-session"])
+def test_run_session_close_bills_a_failed_run(monkeypatch, session_id):
     """A41(1)-style: a run that raised after the provider answered still lands in llm_usage."""
     import agents.session_close as sc
 
     billed = []
+    seen = {}
 
     class _BilledThenBoom:
-        async def run(self, *a, usage=None, **k):
+        async def run(self, *a, usage=None, deps=None, **k):
+            seen["deps"] = deps
             usage.requests += 1
             usage.input_tokens += 10
             raise RuntimeError("validation exhausted")
 
     _budget(monkeypatch, "normal")
     monkeypatch.setattr(sc, "session_close_agent", _BilledThenBoom())
-    monkeypatch.setattr(sc, "record_agent_usage", lambda result, **kw: billed.append(kw) or result)
-    assert asyncio.run(sc.run_session_close(_draft(), user_id="u", request_id="r")) is None
-    assert billed == [{"feature": "session_close", "task": "session_close", "user_id": "u"}]
+    monkeypatch.setattr(sc, "record_agent_usage", lambda result, **kw: billed.append((result, kw)) or result)
+    context = {"session_id": session_id} if session_id is not None else {}
+    assert asyncio.run(sc.run_session_close(_draft(), user_id="u", request_id="r", **context)) is None
+    assert seen["deps"].session_id == session_id
+    assert len(billed) == 1
+    result, metadata = billed[0]
+    assert isinstance(result, sc.UnfinishedRun)
+    assert result.usage().requests == 1 and result.usage().input_tokens == 10
+    assert metadata == {"feature": "session_close", "task": "session_close", "user_id": "u", "session_id": session_id}
 
 
 def test_run_session_close_budget_read_failure_degrades(monkeypatch):
@@ -516,7 +525,8 @@ def test_run_session_close_skips_the_agent_at_the_hard_budget_level(monkeypatch)
     assert runs == []
 
 
-def test_run_session_close_runs_under_close_limits_and_records_usage(monkeypatch):
+@pytest.mark.parametrize("session_id", [None, "close-session-42"], ids=["legacy-omitted", "known-session"])
+def test_run_session_close_runs_under_close_limits_and_records_usage(monkeypatch, session_id):
     import agents.session_close as sc
     from agents import CLOSE_LIMITS
 
@@ -534,12 +544,14 @@ def test_run_session_close_runs_under_close_limits_and_records_usage(monkeypatch
     _budget(monkeypatch, "normal")
     monkeypatch.setattr(sc, "session_close_agent", _Agent())
     monkeypatch.setattr(sc, "record_agent_usage", lambda result, **kw: billed.append(kw) or result)
-    assert asyncio.run(sc.run_session_close(_draft(), user_id="u", request_id="r")) == out
+    context = {"session_id": session_id} if session_id is not None else {}
+    assert asyncio.run(sc.run_session_close(_draft(), user_id="u", request_id="r", **context)) == out
     assert seen["limits"] is CLOSE_LIMITS
     assert seen["deps"].feature == "session_close" and seen["deps"].user_id == "u"
     assert seen["deps"].learning_loop is True
+    assert seen["deps"].session_id == session_id
     assert "<<student_text " in seen["message"]
-    assert billed == [{"feature": "session_close", "task": "session_close", "user_id": "u"}]
+    assert billed == [{"feature": "session_close", "task": "session_close", "user_id": "u", "session_id": session_id}]
 
 
 def test_close_budget_band_is_novice_when_the_session_checked_a_novice_concept(monkeypatch):
@@ -1234,10 +1246,12 @@ def _wire_close(
     return tables, events, store
 
 
-def _fake_run(out=None, runs=None):
-    async def run(draft, *, user_id, request_id):
+def _fake_run(out=None, runs=None, sessions=None):
+    async def run(draft, *, user_id, request_id, session_id=None):
         if runs is not None:
             runs.append((draft, user_id))
+        if sessions is not None:
+            sessions.append(session_id)
         return out
 
     return run
@@ -1293,7 +1307,8 @@ def test_close_route_stores_encrypted_close_and_emits_event(monkeypatch):
         names=[{"id": "n1", "concept_name": "Base Case"}],
     )
     runs: list = []
-    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), runs))
+    sessions: list = []
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), runs, sessions))
 
     r = client.post("/api/learn/loop/close", json={"session_id": "s1", "user_id": UID})
     assert r.status_code == 200, r.text
@@ -1301,6 +1316,7 @@ def test_close_route_stores_encrypted_close_and_emits_event(monkeypatch):
     assert body["model_written"] is True and body["close_phase"] == "teach"
     assert body["close"]["if_then"] == "If a, then b."
     assert runs[0][0].concept_names == {"n1": "Base Case"}
+    assert sessions == ["s1"]
     assert tables.writes("update", "sessions")[-1][2:] == (
         {"close_json": "CIPHER", "close_phase": "teach"},
         {"id": "eq.s1", "close_json": "is.null"},
@@ -1908,7 +1924,7 @@ def test_end_session_flag_on_pending_session_keeps_the_legacy_early_return(monke
     assert called == [] and "s-p" not in learn.PENDING_SESSIONS
 
 
-def test_end_session_flag_on_close_failure_does_not_fail_legacy_end(monkeypatch, caplog):
+def test_end_session_defers_legacy_end_when_close_persistence_fails(monkeypatch, caplog):
     import routes.learn as learn
     import routes.learn_loop as loop
 
@@ -1924,11 +1940,10 @@ def test_end_session_flag_on_close_failure_does_not_fail_legacy_end(monkeypatch,
     monkeypatch.setattr("routes.learn_loop.close_session", boom)
     with caplog.at_level("WARNING"):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
-    assert r.status_code == 200
+    assert r.status_code == 503
     assert any("close" in rec.getMessage() for rec in caplog.records)
     assert not any("SECRET" in rec.getMessage() for rec in caplog.records)
-    updates = [c.args[0] for c in tables["sessions"].update.call_args_list]
-    assert {"summary_json": "LEGACY"} in updates
+    tables["sessions"].update.assert_not_called()
 
 
 def test_session_closed_in_taxonomy():
@@ -2291,7 +2306,7 @@ def test_a_racing_second_store_never_overwrites_or_emits(monkeypatch):
     )
     monkeypatch.setattr(loop, "decrypt_json_column", lambda v: v)
 
-    async def first_close_lands_meanwhile(draft, *, user_id, request_id):
+    async def first_close_lands_meanwhile(draft, *, user_id, request_id, session_id=None):
         tables.rows["sessions"][0]["close_json"] = {"summary": "FIRST.", "model_written": True}
         tables.rows["sessions"][0]["close_phase"] = "teach"
         return _close_out()
@@ -2414,7 +2429,7 @@ def test_a_timed_out_close_run_stores_the_fallback(monkeypatch):
     _, events, _ = _wire_close(monkeypatch, evidence=[EVIDENCE_N1], loop_state={"phase": "teach"})
     monkeypatch.setattr(loop, "CLOSE_RUN_TIMEOUT_S", 0.01)
 
-    async def slow(draft, *, user_id, request_id):
+    async def slow(draft, *, user_id, request_id, session_id=None):
         await asyncio.sleep(1)
         return _close_out()
 
@@ -2452,9 +2467,8 @@ def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
     assert events[0][1]["payload"]["model_written"] is False and store["doc"]["phase"] == "close"
 
 
-def test_end_session_while_a_check_is_graded_ends_without_a_close(monkeypatch, caplog):
-    """Review M3 (picked): a live grading claim at end-session — the legacy end runs,
-    no close is stored (the student can still /close later; Known gap)."""
+def test_end_session_while_a_check_is_graded_defers_all_end_writes(monkeypatch, caplog):
+    """A live grading claim must complete before either close or legacy end."""
     import routes.learn as learn
 
     tables, events, _ = _wire_close(
@@ -2478,9 +2492,9 @@ def test_end_session_while_a_check_is_graded_ends_without_a_close(monkeypatch, c
     monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
     with caplog.at_level("WARNING"):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
-    assert r.status_code == 200 and events == []
-    assert not [w for w in tables.writes("update", "sessions") if "close_json" in w[2]]
-    assert any("without a close" in rec.getMessage() for rec in caplog.records)
+    assert r.status_code == 409 and events == []
+    assert not tables.writes("update", "sessions")
+    assert not any("without a close" in rec.getMessage() for rec in caplog.records)
 
 
 def test_a_failed_brief_build_is_not_retried_every_turn(monkeypatch):

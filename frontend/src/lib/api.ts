@@ -1032,6 +1032,9 @@ export interface LoopLearningScope {
   goal?: LoopGoal | null;
   diagnosis?: LoopDiagnosis | null;
   goal_progress?: LoopGoalProgress | null;
+  /** Goal-frontier concepts without a fresh, non-reserved practice item.
+   *  These remain unresolved; teaching/source review does not assess them. */
+  practice_unavailable_node_ids?: string[];
 }
 export interface LoopGoalProgress {
   status: 'continue_available' | 'needs_more_practice' | 'session_plan_finished';
@@ -1059,8 +1062,11 @@ export interface LoopProbeItem extends LoopCheckItem {
   node_id: string;
   prompt: string;
 }
+/** Opaque saved grading result; never includes the answer, key or checkpoint. */
+export interface LoopPendingGrade { kind: 'check' | 'probe'; question_hash: string }
 export type LoopProbeNext = LoopLearningScope & (
   | ({ done: false } & LoopProbeItem)
+  | { done: false; pending_grade: LoopPendingGrade }
   | { done: true; phase: LoopPhase; no_check_items?: boolean });
 export type LoopProbeAnswerResult = LoopLearningScope & (
   | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
@@ -1119,7 +1125,8 @@ export interface LoopTurnResult extends ChatResult {
 export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
 export interface LoopCheckNext extends LoopLearningScope {
   phase: LoopPhase;
-  check: LoopCheckItem | null;
+  check?: LoopCheckItem | null;
+  pending_grade?: LoopPendingGrade | null;
   plan_done?: boolean;
 }
 /** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
@@ -1211,6 +1218,7 @@ export interface LoopSessionStatus extends LoopLearningScope {
   phase: string;
   active_question_hash?: string | null;
   check?: LoopCheckItem | null;
+  pending_grade?: LoopPendingGrade | null;
 }
 export const getLoopSessionStatus = (sessionId: string, userId: string) =>
   fetchJSON<LoopSessionStatus>(

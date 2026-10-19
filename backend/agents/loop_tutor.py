@@ -9,7 +9,8 @@ template (learning.ladder.check_pose, A17).
 
 The output is the STRUCTURED turn (PKG-07 unblock S1): a
 `learning.turn_shape.LoopTurnOut` (key idea, body, question) through
-`PromptedOutput`, judged on the FINAL output by `_validate_loop_turn` against
+`PromptedOutput`, with native JSON Schema constraints on tool-less Google
+requests, judged on the FINAL output by `_validate_loop_turn` against
 `deps.loop_turn` (a `TurnLimits`) with `LOOP_OUTPUT_RETRIES` retries. The route
 renders it with `turn_shape.render_turn`; the streamed path is
 `services.chat_stream.stream_structured_turn`.
@@ -25,10 +26,11 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Literal
 
 from pydantic_ai import Agent, ModelRetry, PromptedOutput, RunContext
-from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.capabilities import Hooks, PrepareTools
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -36,6 +38,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import ToolDefinition
 
 from agents._providers import model_for
@@ -51,6 +56,7 @@ from learning.params import (
 )
 from learning.turn_shape import (
     LoopTurnOut,
+    TURN_FIELDS,
     TurnLimits,
     render_turn,
     turn_limits,
@@ -127,7 +133,8 @@ def tier_run_kwargs(tier: str, *, tool_choice: str | None = None) -> dict:
             max_tokens=budget + LOOP_MAX_VISIBLE_TOKENS,
         )
     if tool_choice is not None:
-        # A18: declarations stay (stable cached prefix); calling is switched off.
+        # A18: calling is switched off. The loop's request hook removes disabled
+        # Google declarations so native JSON Schema constraints can be sent.
         settings["tool_choice"] = tool_choice
     return {"model": model_for(slot), "model_settings": settings}
 
@@ -636,6 +643,56 @@ async def _tools_until_first_round(
     return [] if _tool_round_done(ctx.messages) else tool_defs
 
 
+def _native_output_when_toolless(
+    _ctx: RunContext[SaplingDeps], request: ModelRequestContext
+) -> ModelRequestContext:
+    """Constrain Google's final text on the wire without disabling callable tools.
+
+    Pydantic AI 1.107 omits JSON mode for PromptedOutput whenever function
+    declarations remain, even when ``tool_choice='none'``. Gemini 2.5 cannot
+    combine those declarations with native output. Strip only declarations
+    that are already explicitly disabled; retain the prompted tool-enabled
+    request. After a read-tool round, PrepareTools removes the declarations
+    and this same hook constrains the answer and any output retries natively.
+
+    Both modes use the existing structured-text parser, partial rendering and
+    final shape/leak validators. No repair, new request or provider switch is
+    introduced. FunctionModel stays on its existing deterministic seam. An
+    unsupported Google model fails through the SDK's native-output check.
+    """
+    params = request.model_request_parameters
+    model = request.model
+    while isinstance(model, WrapperModel):
+        model = model.wrapped  # e.g. the SDK's optional instrumentation wrapper
+    if (
+        not isinstance(model, GoogleModel)
+        or params.output_mode != "prompted"
+        or params.output_object is None
+        or params.native_tools
+    ):
+        return request
+    disabled = (request.model_settings or {}).get("tool_choice") == "none"
+    if params.function_tools and not disabled:
+        return request
+    # LoopTurnOut stays partial-friendly for streaming. The provider's FINAL
+    # schema nevertheless requires the three fields already required by
+    # validate_turn; neither its shared schema nor another run is mutated.
+    output_object = replace(
+        params.output_object,
+        json_schema={
+            **params.output_object.json_schema,
+            "required": list(TURN_FIELDS),
+            "additionalProperties": False,
+        },
+    )
+    return replace(
+        request,
+        model_request_parameters=replace(
+            params, output_mode="native", output_object=output_object, function_tools=[]
+        ),
+    )
+
+
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 loop_tutor_agent = Agent[SaplingDeps, LoopTurnOut](
@@ -650,6 +707,9 @@ loop_tutor_agent = Agent[SaplingDeps, LoopTurnOut](
     instructions=_LOOP_SYSTEM_PROMPT,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "loop_tutor"},
     tools=_build_tools(learning_loop=True),
-    capabilities=[PrepareTools(_tools_until_first_round)],
+    capabilities=[
+        PrepareTools(_tools_until_first_round),
+        Hooks(before_model_request=_native_output_when_toolless),
+    ],
 )
 loop_tutor_agent.output_validator(_validate_loop_turn)

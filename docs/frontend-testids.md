@@ -629,6 +629,11 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
+| `loop-practice-unavailable` | #673 practice preflight: no fresh practice for the listed goal-frontier concepts in this session (`practice_unavailable_node_ids`); source review is offered and never counts as assessment; plan approval is not shown |
+| `loop-practice-sources` | "Review source material" inside `loop-practice-unavailable` (`/library`) |
+| `loop-practice-refresh` | "Check for fresh practice" — re-reads the plan (plan phase) or `/check/next` (teaching, no item, no pending feedback); hidden once the session already moved past those concepts |
+| `loop-pending-grade` | a saved grade whose checking did not finish (#673 `pending_grade`, check or probe): no new pose, re-answer, goal edit, close or new session until it is recovered |
+| `loop-recover-grade` | "Finish checking saved answer" — replays the saved grade (`/check/answer/stream` or `/probe/answer`, `idk: false`, no answer text) |
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
 | `loop-rail` | the learning-route context (`ContextPanel`): "Your learning route" (`loop-route`), the course knowledge map (`KnowledgeGraph`, original colours) and source links. A rail from 1024px; below that the same content is a labelled sheet opened by `loop-route-trigger` (the tree link stays in the heading) |
 | `loop-route-trigger` | "Route & sources" — opens the `loop-rail` sheet below 1024px (`aria-haspopup="dialog"`) |
@@ -669,7 +674,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |
 | `loop-hint-denied` | denial line; `data-reason` = `no_genuine_attempt` / `dwell` / `ceiling` / `h6_gate` / `no_active_item` |
 | `loop-hint-reply` | the hint turn's text when allowed |
-| `loop-continue` | "Continue" ("Continue learning" in the tutor view) after feedback — sends the next chat turn |
+| `loop-continue` | "Continue" ("Continue learning" in the tutor view) after feedback — sends the next chat turn. While a committed grade's feedback is still pending (#673) it reads "Retry feedback" in both views and `loop-check-me` stays disabled |
 | `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
 | `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |

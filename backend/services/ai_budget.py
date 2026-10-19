@@ -31,7 +31,7 @@ from services.request_context import current_request_id, current_request_key
 
 logger = logging.getLogger("sapling.ai_budget")
 
-Kind = Literal["tutor", "grader", "decision", "close"]
+Kind = Literal["tutor", "grader", "decision", "close", "generation"]
 Scope = Literal[
     "daily_usd",
     "monthly_usd",
@@ -310,14 +310,17 @@ def _summarise(rows: list[dict], now: datetime) -> _Usage:
     return _Usage(month_usd, day_usd, day_tokens, day_grades, len(minute), tuple(sorted(minute)))
 
 
-def _usage(user_id: str) -> _Usage | None:
+def _usage(user_id: str, *, fresh: bool = False) -> _Usage | None:
     """One llm_usage read per (request, user); None on a read error (fail open). A failed read
     is cached like a summary: grade() checks up to three times, and each retry of a hanging
-    PostgREST would block again for up to the client's timeout (one WARNING per read)."""
+    PostgREST would block again for up to the client's timeout (one WARNING per read).
+    ``fresh=True`` bypasses this cache for a generation gate after a wait; its
+    caller treats a missing summary as unavailable instead of failing open.
+    """
     # the SERVER-minted key, never the client's X-Request-ID (owner decision 06b g)
     rkey = current_request_key()
     key = (rkey, user_id) if rkey else None
-    if key is not None:
+    if key is not None and not fresh:
         with _lock:
             hit = _request_cache.get(key)
         if hit is not None and _clock() - hit[0] < _REQUEST_CACHE_TTL_S:
@@ -493,8 +496,8 @@ def _spend_decision(
             pause_novice=kind == "tutor" and set(hard) != {"rate_limit"},
             session_capped="session_requests" in hard,
         )
-    if kind == "close":
-        return _NORMAL  # one call, nothing to downgrade: the close has no soft level
+    if kind in ("close", "generation"):
+        return _NORMAL  # non-tutor runs have no model-tier downgrade
     soft: list[Scope] = []
     fraction = _exact(config.STUDENT_SOFT_FRACTION)
     if usage is not None and usage.day_usd >= fraction * cap:
@@ -543,17 +546,38 @@ def check(
     (invariant 23). ``band`` is required for ``tutor`` and ignored for the grader cap; the
     session counters are the ints PKG-07 keeps in sessions.loop_state. ``tutor`` also reads
     today's tutor-call count (``count_tutor_call``; hard at STUDENT_DAILY_TUTOR_CALLS) — one
-    more read, outside llm_usage; the grader, decision and close kinds never read it."""
+    more read, outside llm_usage; the grader, decision, close and generation kinds
+    never read it. Generation has no learning band and enforces the configured
+    ordinary daily/monthly USD and daily-token hard limits without a soft tier;
+    it performs a fresh usage read and raises AIBudgetUnavailable on read failure.
+    """
     if kind not in get_args(Kind):
         raise ValueError(f"ai_budget.check: unknown kind {kind!r}")
     if kind == "tutor" and band is None:
         raise ValueError("ai_budget.check: band is required for kind='tutor' (spec §3.5)")
     if band is not None and band not in get_args(Band):
         raise ValueError(f"ai_budget.check: unknown band {band!r}")
+    if kind == "generation" and band is not None:
+        raise ValueError("ai_budget.check: generation has no learning band")
     _maybe_check_platform()
     if not user_id:
         return _NORMAL  # system actors carry no student budget
-    usage, now = _usage(user_id), _utcnow()
+    # Non-tutor generation may have waited behind another cache miss. Never
+    # admit it using an earlier request-cached summary, including a failed read.
+    if kind == "generation":
+        try:
+            usage = _usage(user_id, fresh=True)
+            if usage is not None and not (usage.day_usd.is_finite() and usage.month_usd.is_finite()):
+                raise ValueError("Non-finite generation spend summary")
+        except Exception:
+            # An unreadable/malformed ledger is not proof of remaining budget.
+            logger.warning("ai_budget: generation usage summary unavailable", exc_info=True)
+            raise AIBudgetUnavailable("Generation budget usage is temporarily unavailable.") from None
+        if usage is None:
+            raise AIBudgetUnavailable("Generation budget usage is temporarily unavailable.")
+    else:
+        usage = _usage(user_id)
+    now = _utcnow()
     if kind in ("grader", "decision"):
         return _grade_decision(user_id, usage, now)
     return _spend_decision(
@@ -570,6 +594,14 @@ def check(
 
 
 # ── rate limit and the 429 (spec §3.5, §9, A20) ──────────────────────────────
+class AIBudgetUnavailable(Exception):
+    """A generation spend check could not read usage; no model may run.
+
+    Legacy tutor/grader/decision/close behavior remains unchanged. Generation
+    callers translate this availability failure to a retryable 503, not a cap.
+    """
+
+
 class AIBudgetExceeded(Exception):
     """Over budget; main.py maps it to the §3.5 429 body. Raised by PKG-07 (tutor hard) and
     enforce_rate_limit."""

@@ -12,6 +12,10 @@ The optional pre-activity readiness stage adds an independent fourth fixture
 concept, Binary Place Value. Its source is the rich Binary course chunk; its
 topology and function-model questions are synthetic browser test inputs, never
 real learner evidence or a claim that four concepts were pedagogically verified.
+
+The pre-activity unavailable stage retains only each Binary/Bitwise concept's
+canonical free/difficulty-2 post-test item. It changes question assets only,
+never learner priors, exposures or observations, to exercise honest preflight.
 """
 
 from __future__ import annotations
@@ -70,7 +74,7 @@ def fixture_item(template: dict, *, slug: str, stage: str, format: str, variant:
     return row
 
 
-def _require_readiness_pristine(sessions: list) -> None:
+def _require_pre_activity(sessions: list) -> None:
     """Check every existing owned course node before changing this fixture."""
     owned = table("graph_nodes").select(
         "id", filters={"user_id": f"eq.{USER_LOOP}", "course_id": f"eq.{COURSE_CS}"}
@@ -83,7 +87,7 @@ def _require_readiness_pristine(sessions: list) -> None:
             "id", filters={"node_id": f"in.({','.join(ids)})"}, limit=1
         )
     ):
-        raise RuntimeError("Readiness fixtures must precede every learner session and observation")
+        raise RuntimeError("Goal fixtures must precede every learner session and observation")
 
 
 def _seed_readiness_concept(templates: dict) -> None:
@@ -126,14 +130,26 @@ def _seed_readiness_concept(templates: dict) -> None:
 
 def seed_goal_continuation_items(stage: str) -> None:
     _require_local()
-    if stage not in {"diagnostic", "practice", "readiness"}:
-        raise ValueError("stage must be diagnostic, practice or readiness")
+    if stage not in {"diagnostic", "practice", "readiness", "unavailable"}:
+        raise ValueError("stage must be diagnostic, practice, readiness or unavailable")
     sessions = table("sessions").select(
         "id,ended_at,loop_state", filters={"user_id": f"eq.{USER_LOOP}"}
     )
+    if stage == "unavailable":
+        _require_pre_activity(sessions)
+        # Validate both canonical assets before removing anything. Preserve the
+        # originals: no new hashes, prior changes, exposure or evidence resets.
+        reserves = {slug: _template(f"rich-check-{slug}-free-d2") for slug in SLUGS}
+        for row in reserves.values():
+            table("check_items").delete({
+                "course_id": f"eq.{COURSE_CS}",
+                "concept_key": f"eq.{row['concept_key']}",
+                "id": f"neq.{row['id']}",
+            })
+        return
     if stage in {"diagnostic", "readiness"}:
         if stage == "readiness":
-            _require_readiness_pristine(sessions)
+            _require_pre_activity(sessions)
         if sessions or table("node_mastery_events").select(
             # 0023_graph_integrity: events belong to a node, not user_id.
             "id",
@@ -204,5 +220,5 @@ def seed_goal_continuation_items(stage: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("diagnostic", "practice", "readiness"))
+    parser.add_argument("stage", choices=("diagnostic", "practice", "readiness", "unavailable"))
     seed_goal_continuation_items(parser.parse_args().stage)

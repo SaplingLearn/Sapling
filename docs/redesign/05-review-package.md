@@ -340,6 +340,102 @@ The kill-switch lane adds `streaming.spec.ts:189` and `:234`, where
   or screen-reader checks. Fixture coverage shows the UI wiring and server
   contracts behave. It does not prove learning outcomes.
 
+## Refresh: #673 @ ad1b1bd5 (2026-10-19)
+
+Jose pushed 23 commits to #673 after a8abd006. `feat/redesign-base` re-merged
+#673 at ad1b1bd5 (04a29a73), and this branch merged that base (537ea4b0). #727
+(49c108bf) and main (84e19c3a) had not moved.
+
+**Base (04a29a73).** There were 3 conflicts, none of them with #727:
+`seed_local_rich.py`, `test_learning_seed_loop_user.py` and
+`test_seed_local_rich.py`. Both sides had merged the same main into #673 and
+resolved the #715 seed overlap separately. All three take Jose's resolution. The
+result is ad1b1bd5 plus exactly the #727 delta. There are 3 new migrations
+(`20261019125459_checklist_budget`, `20261019131339_learning_evidence_transaction`,
+`20261019141950_learning_evidence_forward_repair`). Each sorts after every
+existing basename, and none is renamed or edited. No lockfile changed.
+
+**Integration (537ea4b0).** 2 files conflicted: `LoopLearn.tsx` (14 hunks) and
+`LoopLearn.test.tsx` (2 hunks). The redesign's markup, testids and a11y are
+kept. Every #673 behaviour is ported onto that markup:
+
+- **Interrupted turns.** In `runTurn`, the redesign's interrupted-turn marking and
+  status-first `loop-recovery-note` now combine with #673's
+  `feedbackStarted`/`recoveringFeedback` reconcile and turn epoch. The note still
+  appears only for a submission.
+- **Busy guard.** `sessionTransitionBusy` (hydration, scope, probe, plan, goal,
+  close and pending grade) now gates every redesign path to a new session:
+  - the studio and tutor-bar `loop-new-session`;
+  - `requestNewSession` and its confirmation;
+  - `loop-topic-start`, `loop-goal-new-session` and `loop-readonly-new-session`;
+  - the tutor welcome.
+- **Pending grade.** `loop-pending-grade` and `loop-recover-grade` are rebuilt in
+  the redesign style and shared by both views. While a grade is pending,
+  `loop-set-goal`, `loop-close-button` and the tutor menu's End session are
+  disabled. On the probe screen the teaching-only close control is absent, as
+  #673's e2e expects.
+- **Pending feedback.** `loop-continue` reads "Retry feedback" in both views.
+  `loop-check-me` is disabled and shows the pending copy. Chat, conversation
+  seeds and the tutor's Retry wait while the session hydrates
+  (`starting`/`scopeLoading`) or a grade is pending.
+- **Practice preflight.** `loop-practice-unavailable` is rebuilt on
+  `StatusMessage` and the sapling actions; its copy and testids are unchanged.
+  The `goal_progress` copy follows #673.
+- **Probe recovery.** `ProbePanel` shows a recovered probe's corrective answer when
+  no pose survives.
+
+**Adapted tests (selector or mock only; no behaviour assertion was weakened).**
+
+- `LoopLearn.test.tsx`: Jose's `viewport.mobile` mock is merged into the
+  redesign's `viewport.compact`, because the two mocks clashed.
+- `LoopLearn.test.tsx`, "holds New session until the resumed probe/plan has
+  settled" (×2): the click now goes through `loop-new-session-confirm-start`. The
+  test also asserts that no dialog opens while loading.
+- `e2e/learn-loop.spec.ts`, "rapid New session waits for the resumed probe/plan"
+  (×4):
+  - The click now goes through the same confirmation, and the no-dialog check is
+    added.
+  - `loop-goal-summary` is checked with `toContainText("Explore the whole course")`
+    and not "Your goal". The redesign's `GoalSummary` renders "Your scope" and the
+    scope as separate text, where #673 rendered one string, "Scope: Explore the
+    whole course".
+- **New tests:** three tutor-view tests in `LoopLearn.tutor.test.tsx` cover
+  pending-grade recovery, Retry feedback and the practice notice.
+- **Docs:** `frontend-testids.md` documents the new ids.
+
+**Gates on this branch:**
+
+| Gate | Result |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm run lint` | exit 0 (0 errors, 19 warnings) |
+| `npm test` | **136 files, 1612 passed, 2 skipped** (`LoopLearn.test.tsx` 132 tests, `LoopLearn.tutor.test.tsx` 38) |
+| `npm run build:test` | exit 0 |
+| Backend, the `ci.yml` command (shared lock venv, no `SAPLING_MODEL_MODE`) | **10336 passed, 243 skipped**, exit 0 |
+| `ruff check .` | All checks passed |
+| E2E default lane, `npx playwright test --project=chromium` on 537ea4b0 (one flock'd cycle, `e2e.yml` env) | **110 passed, 12 failed, 30 skipped (29.8m)** |
+| Oracles | exit 0, `0 finding(s), 0 suppressed` |
+| E2E rerun, `e2e/learn-loop.spec.ts`, after the spec adaptation | **23 passed, 1 skipped** (the kill-switch test); oracles 0 findings |
+
+**The 12 E2E failures:**
+
+- **8 are the known #727 failures listed above:** auth-session:32, dashboard:21,
+  graph:214, room-public:20, semester-scope:24, study-semester:31 and
+  viewport-fit:88/:120.
+- **4 were caused by the merge:** learn-loop.spec.ts:431 at probe and plan,
+  1440px and 390px. Jose's new spec clicked New session and expected `/close`
+  straight away; the redesign confirms first. After the selector adaptation all
+  4 pass (rerun above).
+
+Every new #673 browser journey passes under the redesign: learn-grade-recovery
+(4 cases), pending-feedback retry/end, practice-unavailable, and stream
+completion. tutor-view.spec and redesign-journey.spec pass too.
+
+**For Andres or Jose.** `loop-practice-sources` links to plain `/library`, which
+#673's e2e asserts. The redesign's other Library links keep the course
+(`libraryHref`, `?course=`). Switching this link is a one-line change, but it
+changes Jose's assertion, so it was left as he wrote it.
+
 ## Decisions pending for Andres
 
 1. **Phone bottom tab bar** (AS0Yn). This is a shell-wide change and is not

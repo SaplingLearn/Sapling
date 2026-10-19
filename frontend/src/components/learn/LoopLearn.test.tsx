@@ -62,6 +62,12 @@ const turn = (over: object = {}) => ({ reply: "ok", graph_update: {}, mastery_ch
 /** GET /sessions's list (+ the ?resume= lookup), as listLoopSessionsFor resolves it. */
 const listed = (sessions: object[], resume: object | null = null) => ({ sessions, resume });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   viewport.compact = false;
   search.params = new URLSearchParams();
@@ -130,6 +136,154 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     expect(await screen.findByTestId("loop-plan-concept-n1")).toBeTruthy();
     expect(api.getLoopPlan).toHaveBeenCalledWith("s2", "u1");
     expect(api.nextLoopProbe).not.toHaveBeenCalled();
+  });
+
+  it.each(["probe", "plan"] as const)("holds New session until the resumed %s and its scope have settled", async (phase) => {
+    const transcript = deferred<{ session: { id: string }; messages: object[] }>();
+    const scope = deferred<ReturnType<typeof status>>();
+    const content = deferred<object>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", phase, "2026-09-21T10:00:00Z")]));
+    api.resumeSession.mockReturnValue(transcript.promise);
+    api.getLoopSessionStatus.mockReturnValue(scope.promise);
+    api.nextLoopProbe.mockImplementation((sid: string) => sid === "s2" ? content.promise : Promise.resolve(probeItem));
+    api.getLoopPlan.mockReturnValue(content.promise);
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: phase });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2"));
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    const cannotLeaveWhileLoading = () => {
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      // redesign: leaving an open session is confirmed first — no dialog either
+      expect(screen.queryByTestId("loop-new-session-confirm")).toBeNull();
+      expect(api.closeLoopSession).not.toHaveBeenCalled();
+      expect(api.startLoopSession).not.toHaveBeenCalled();
+    };
+    cannotLeaveWhileLoading(); // SID and phase are visible before the transcript.
+    await act(async () => { transcript.resolve({ session: { id: "s2" }, messages: [] }); });
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1"));
+    cannotLeaveWhileLoading(); // Scope is authoritative, not the picker phase.
+    await act(async () => { scope.resolve(status({ session_id: "s2", loop_phase: phase, phase, goal: null })); });
+    await waitFor(() => expect(phase === "probe" ? api.nextLoopProbe : api.getLoopPlan).toHaveBeenCalledWith("s2", "u1"));
+    cannotLeaveWhileLoading(); // Do not close while the old probe/plan can write.
+    await act(async () => { content.resolve(phase === "probe" ? probeItem : { concepts: [], order: [] }); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    // redesign: the open session is wrapped up only through the confirmation
+    fireEvent.click(await screen.findByTestId("loop-new-session-confirm-start"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
+    expect(api.nextLoopProbe).toHaveBeenLastCalledWith("s9", "u1");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps New session disabled until a freshly started session's initial probe settles", async () => {
+    const firstProbe = deferred<typeof probeItem>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Hello there" });
+    api.nextLoopProbe.mockReturnValue(firstProbe.promise);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    await act(async () => { firstProbe.resolve(probeItem); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("does not let an obsolete resume re-enable New session while the selected session is loading", async () => {
+    const oldProbe = deferred<typeof probeItem>();
+    const chosenProbe = deferred<typeof probeItem>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z"), open("s1", "probe", "2026-09-20T10:00:00Z")]));
+    api.nextLoopProbe.mockImplementation((sid: string) => sid === "s2" ? oldProbe.promise : chosenProbe.promise);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s2", "u1"));
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s1", "u1"));
+    await act(async () => { oldProbe.resolve(probeItem); });
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-probe-item")).toBeNull();
+    await act(async () => { chosenProbe.resolve({ ...probeItem, question_hash: "chosen" }); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.getByTestId("loop-probe-item").getAttribute("data-question-hash")).toBe("chosen");
+  });
+
+  it("releases New session after an authoritative terminal close invalidates resume loading", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "close", phase: "close" }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "probe" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close"));
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
+    expect(api.closeLoopSession).toHaveBeenCalledTimes(1); // No second close for the terminal session.
+  });
+
+  it.each(["probe", "plan"] as const)("keeps failed %s loads visible and blocks New session during an explicit retry", async (phase) => {
+    const retry = deferred<object>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", phase, "2026-09-21T10:00:00Z")]));
+    const load = phase === "probe" ? api.nextLoopProbe : api.getLoopPlan;
+    load.mockRejectedValueOnce(new ApiError("temporarily unavailable", 503)).mockReturnValueOnce(retry.promise);
+    render(<LoopLearn />);
+    const retryButton = await screen.findByTestId(`loop-${phase}-retry`);
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledTimes(1); // No automatic load/model retry.
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    await act(async () => { retry.resolve(phase === "probe" ? probeItem : { concepts: [], order: [] }); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.queryByTestId(`loop-${phase}-retry`)).toBeNull();
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks New session during an explicit authoritative scope retry", async () => {
+    const retry = deferred<ReturnType<typeof status>>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockRejectedValueOnce(new ApiError("temporarily unavailable", 503)).mockReturnValueOnce(retry.promise);
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    const retryButton = await screen.findByRole("button", { name: "Retry learning scope" });
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(retryButton);
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    await act(async () => { retry.resolve(status({ loop_phase: "probe", phase: "probe" })); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.queryByRole("button", { name: "Retry learning scope" })).toBeNull();
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases probe loading when a closed-elsewhere response invalidates its generation", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockRejectedValueOnce(new ApiError("closed", 409, { body: { detail: "this session is closed" } }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "probe" });
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close"));
+    await waitFor(() => expect((screen.getByTestId("loop-new-session") as HTMLButtonElement).disabled).toBe(false));
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+    expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("a session resumed in check restores its pose READ-ONLY through GET /status", async () => {
@@ -906,6 +1060,265 @@ describe("LoopLearn — PKG-13 fix round", () => {
   });
 });
 
+describe("LoopLearn — saved grade recovery", () => {
+  const pending = (kind: "probe" | "check", question_hash = "saved-question") => ({ kind, question_hash });
+
+  function listPending(kind: "probe" | "check") {
+    const phase = kind === "probe" ? "probe" : "check";
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", phase, "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({
+      loop_phase: kind === "probe" ? "probe" : "teach", phase,
+      pending_grade: pending(kind),
+    }));
+  }
+
+  it("offers explicit mobile probe recovery without posing, answering or editing the saved result", async () => {
+    viewport.compact = true;
+    listPending("probe");
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: true, p_known: .6, probe_done: false, novice_floor: false });
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, question_hash: "fresh-question" });
+    render(<LoopLearn />);
+    const button = await screen.findByRole("button", { name: "Finish checking saved answer" });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByTestId("loop-probe-input")).toBeNull();
+    expect((screen.getByTestId("loop-set-goal") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("loop-new-session") as HTMLButtonElement).disabled).toBe(true);
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(api.answerLoopProbe).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByTestId("loop-probe-item").getAttribute("data-question-hash")).toBe("fresh-question"));
+    expect(api.answerLoopProbe).toHaveBeenCalledExactlyOnceWith("s2", "u1", "saved-question", { idk: false });
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+  });
+
+  it("handles a pending probe returned by next and keeps corrective feedback visible without a surviving pose", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue({ done: false, pending_grade: pending("probe") });
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: .2, probe_done: true, novice_floor: false, reference_answer: "Saved corrective explanation." });
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: .2 }], order: [] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish checking saved answer" }));
+    await screen.findByText("Saved corrective explanation.");
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-probe-input")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-probe-next"));
+    await screen.findByTestId("loop-plan-concept-n1");
+    expect(api.answerLoopProbe).toHaveBeenCalledTimes(1);
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a saved check through the existing answer stream and normal feedback, without a replacement answer", async () => {
+    listPending("check");
+    api.streamLoopCheckAnswer.mockImplementation(async (
+      _s: string, _u: string, _q: string, _a: object,
+      handlers: { onPhase?: (phase: string) => void },
+    ) => {
+      handlers.onPhase?.("feedback");
+      return turn({ reply: "Feedback on your saved answer.", phase: "feedback", graded: true });
+    });
+    render(<LoopLearn />);
+    const button = await screen.findByRole("button", { name: "Finish checking saved answer" });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByTestId("loop-close-button") as HTMLButtonElement).disabled).toBe(true);
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    expect(api.nextLoopCheck).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await screen.findByText("Feedback on your saved answer.");
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledExactlyOnceWith("s2", "u1", "saved-question", { idk: false }, expect.any(Object));
+    expect(api.answerLoopProbe).not.toHaveBeenCalled();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-attempt-input")).toBeNull();
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("loop-continue").textContent).toBe("Continue");
+  });
+
+  it("recognizes a saved check returned by Check me without fabricating a question", async () => {
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", pending_grade: pending("check") });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    await screen.findByRole("button", { name: "Finish checking saved answer" });
+    expect(screen.queryByTestId("loop-attempt-input")).toBeNull();
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a failed probe submission into saved recovery rather than silently posing another item", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "probe", phase: "probe" }))
+      .mockResolvedValue(status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe", "qh") }));
+    api.answerLoopProbe.mockRejectedValue(new ApiError("saved but not finished", 503));
+    render(<LoopLearn />);
+    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "My own saved response." } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    await screen.findByRole("button", { name: "Finish checking saved answer" });
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+    expect(api.answerLoopProbe).toHaveBeenCalledExactlyOnceWith("s2", "u1", "qh", { answer: "My own saved response.", idk: false });
+    expect(screen.queryByTestId("loop-probe-input")).toBeNull();
+  });
+
+  it("keeps the saved recovery action on failure and rejects an older pending snapshot after a successful retry", async () => {
+    listPending("probe");
+    const oldSnapshot = deferred<ReturnType<typeof status>>();
+    api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe") }))
+      .mockReturnValue(oldSnapshot.promise);
+    api.answerLoopProbe.mockRejectedValueOnce(new ApiError("temporarily unavailable", 503))
+      .mockResolvedValue({ graded: true, correct: true, p_known: .6, probe_done: false, novice_floor: false });
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, question_hash: "after-recovery" });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish checking saved answer" }));
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledTimes(2));
+    const retry = await screen.findByRole("button", { name: "Finish checking saved answer" });
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(retry);
+    await screen.findByTestId("loop-probe-item");
+    await act(async () => { oldSnapshot.resolve(status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe") })); });
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(screen.getByTestId("loop-probe-item").getAttribute("data-question-hash")).toBe("after-recovery");
+    expect(api.answerLoopProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not apply a saved probe recovery after the user switches sessions", async () => {
+    const recovered = deferred<object>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([
+      open("s2", "probe", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z"),
+    ]));
+    api.getLoopSessionStatus.mockImplementation(async (sid: string) => sid === "s2"
+      ? status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe") })
+      : status({ session_id: "s1" }));
+    api.answerLoopProbe.mockReturnValue(recovered.promise);
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish checking saved answer" }));
+    await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
+    await screen.findByTestId("loop-check-me");
+    await act(async () => { recovered.resolve({ graded: true, correct: false, p_known: .2, probe_done: true, novice_floor: false, reference_answer: "Old session feedback." }); });
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(screen.queryByText("Old session feedback.")).toBeNull();
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+  });
+});
+
+describe("LoopLearn — pending feedback recovery", () => {
+  const pendingDetail = "feedback pending; retry feedback before another check";
+
+  function failedFeedback() {
+    api.streamLoopCheckAnswer.mockImplementation(async (
+      _s: string, _u: string, _q: string, _a: object,
+      h: { onPhase?: (phase: string) => void; onToken?: (text: string) => void },
+    ) => {
+      h.onPhase?.("feedback");
+      h.onToken?.("Partial feedback.");
+      throw new Error("The tutor was interrupted.");
+    });
+  }
+
+  async function submit() {
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "the base case" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    return screen.findByRole("button", { name: "Retry feedback" });
+  }
+
+  it("retries failed feedback through chat once, never regrades, then allows the next check", async () => {
+    failedFeedback();
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "feedback" }));
+    api.streamLoopChat.mockImplementation(async (
+      _s: string, _u: string, _m: string, h: { onPhase?: (phase: string) => void },
+    ) => {
+      h.onPhase?.("feedback");
+      return turn({ reply: "Recovered feedback.", phase: "feedback" });
+    });
+    await withCheckItem();
+    const retry = await submit();
+    expect(screen.queryByTestId("loop-attempt-submit")).toBeNull();
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    expect(api.nextLoopCheck).toHaveBeenCalledTimes(1); // only the original pose
+    fireEvent.click(retry);
+    await screen.findByText("Recovered feedback.");
+    expect(api.streamLoopChat).toHaveBeenCalledExactlyOnceWith("s2", "u1", "Let's continue.", expect.any(Object));
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("loop-continue").textContent).toBe("Continue");
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false);
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: { ...pose, question_hash: "fresh-check" } });
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    await waitFor(() => expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("fresh-check"));
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it("an older failed-stream status snapshot cannot reopen feedback after a successful retry", async () => {
+    failedFeedback();
+    const oldStatus = deferred<ReturnType<typeof status>>();
+    api.getLoopSessionStatus.mockReturnValue(oldStatus.promise);
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Fresh feedback completed.", phase: "feedback" }));
+    await withCheckItem();
+    const retry = await submit();
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledTimes(2));
+    fireEvent.click(retry);
+    await screen.findByText("Fresh feedback completed.");
+    await act(async () => { oldStatus.resolve(status({ phase: "feedback" })); });
+    expect(screen.getByTestId("loop-continue").textContent).toBe("Continue");
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "Retry feedback" })).toBeNull();
+  });
+
+  it("resumes pending feedback honestly and clears that retry state on a session switch", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([
+      open("s2", "feedback", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z"),
+    ]));
+    render(<LoopLearn />);
+    await screen.findByRole("button", { name: "Retry feedback" });
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach"));
+    expect(screen.queryByRole("button", { name: "Retry feedback" })).toBeNull();
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("waits for authoritative resume status before retrying feedback", async () => {
+    const initialStatus = deferred<ReturnType<typeof status>>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "feedback", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockReturnValue(initialStatus.promise);
+    render(<LoopLearn />);
+    const retry = await screen.findByRole("button", { name: "Retry feedback" });
+    expect((retry as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(retry);
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    await act(async () => { initialStatus.resolve(status({ phase: "feedback" })); });
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("offers feedback recovery when another tab committed the grade before Check me", async () => {
+    api.nextLoopCheck.mockRejectedValue(new ApiError("pending feedback", 409, { body: { detail: pendingDetail } }));
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    await screen.findByRole("button", { name: "Retry feedback" });
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("feedback");
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(true);
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("still permits an explicit early end while feedback is pending", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "feedback", "2026-09-21T10:00:00Z")]));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "feedback" });
+    render(<LoopLearn />);
+    await screen.findByRole("button", { name: "Retry feedback" });
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-summary");
+    expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Retry feedback" })).toBeNull();
+  });
+});
+
 it("a closed-session 409 on a submission shows the stored close once (one /close call)", async () => {
   api.streamLoopCheckAnswer.mockRejectedValue(Object.assign(new Error(JSON.stringify({ detail: "this session is closed" })), { status: 409 }));
   api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
@@ -1597,5 +2010,114 @@ describe("redesign: studio structure and accessible controls", () => {
     await act(async () => { finish(listed([open("s2", "teach", "2026-09-21T10:00:00Z")])); });
     await screen.findByText("welcome back");
     expect(api.startLoopSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("explicit goal fresh-practice preflight", () => {
+  const goal = { text: "Understand assignment", target_node_ids: ["target"] };
+  const progress = { status: "needs_more_practice", target_node_ids: ["target"], remaining_target_node_ids: ["target"], unresolved_prerequisite_ids: ["foundation"], attempted_node_ids: [] };
+  const available = { goal, goal_version: 1, practice_unavailable_node_ids: [], concepts: [{ node_id: "foundation", concept_name: "Scalar Data Types", kind: "new", reason: "prerequisite", p_known: 0.2 }] };
+  const unavailable = { goal, goal_version: 1, goal_progress: progress, practice_unavailable_node_ids: ["foundation"], concepts: [], order: [], phase: "teach", empty: true };
+
+  function scopedPlan() {
+    api.getGraph.mockResolvedValue({ nodes: [
+      { id: "foundation", concept_name: "Scalar Data Types", course_id: "c1", mastery_score: 0.2 },
+      { id: "target", concept_name: "Variables and Assignment", course_id: "c1", mastery_score: 0.3 },
+    ], edges: [], stats: {} });
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "plan", phase: "plan", goal, goal_version: 1 }));
+  }
+
+  it.each([false, true])("offers honest source review before any approval or model call (phone=%s)", async (mobile) => {
+    viewport.compact = mobile;
+    scopedPlan();
+    api.getLoopPlan.mockResolvedValue(unavailable);
+    render(<LoopLearn />);
+    const notice = await screen.findByTestId("loop-practice-unavailable");
+    expect(notice.textContent).toContain("does not assess or complete your goal");
+    expect(notice.textContent).toContain("Starting another session will not replenish");
+    await waitFor(() => expect(notice.textContent).toContain("Scalar Data Types"));
+    expect(screen.getByTestId("loop-practice-sources").getAttribute("href")).toBe("/library");
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(screen.queryByTestId("loop-teach-start")).toBeNull();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+    expect(screen.getByTestId("loop-goal-progress").textContent).not.toContain("start another session");
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Let's review the course sources.", phase: "teach" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Review my source material." } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(await screen.findByText("Let's review the course sources.")).toBeTruthy();
+    expect(api.streamLoopChat).toHaveBeenCalledExactlyOnceWith("s2", "u1", "Review my source material.", expect.any(Object));
+  });
+
+  it("requires fresh explicit approval when new practice becomes available in the untouched source-review path", async () => {
+    scopedPlan();
+    api.getLoopPlan.mockResolvedValueOnce(unavailable).mockResolvedValueOnce(available);
+    api.nextLoopCheck.mockResolvedValue({ phase: "plan", check: null, goal, goal_version: 1, practice_unavailable_node_ids: [], goal_progress: { ...progress, status: "continue_available" } });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["foundation"] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-practice-refresh"));
+    await screen.findByTestId("loop-plan-concept-foundation");
+    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("loop-plan-approve"));
+    await waitFor(() => expect(api.approveLoopPlan).toHaveBeenCalledExactlyOnceWith("s2", "u1", ["foundation"], 1));
+  });
+
+  it("reloads a depleted plan after approval409 and never retains the stale approval button", async () => {
+    scopedPlan();
+    api.getLoopPlan.mockResolvedValueOnce(available).mockResolvedValueOnce(unavailable);
+    api.approveLoopPlan.mockRejectedValueOnce(new ApiError("depleted", 409, { body: { detail: "Fresh practice is unavailable; review the current plan" } }));
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-plan-approve"));
+    await screen.findByTestId("loop-practice-unavailable");
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(screen.queryByTestId("loop-plan-concept-foundation")).toBeNull();
+    expect(api.approveLoopPlan).toHaveBeenCalledTimes(1);
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+  });
+
+  it("removes stale approval immediately while an availability refresh is pending or fails", async () => {
+    scopedPlan();
+    const refreshed = deferred<typeof unavailable>();
+    api.getLoopPlan.mockResolvedValueOnce({ ...available, practice_unavailable_node_ids: ["target"] }).mockReturnValueOnce(refreshed.promise);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-plan-approve");
+    fireEvent.click(screen.getByTestId("loop-practice-refresh"));
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    await act(async () => { refreshed.resolve(unavailable); });
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+  });
+
+  it("preserves exhausted attempt limits on resume and does not promise same-session recovery", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ goal, practice_unavailable_node_ids: ["foundation"], goal_progress: { ...progress, attempted_node_ids: ["foundation"] } }));
+    await resumedTeach();
+    expect(screen.getByTestId("loop-practice-unavailable").textContent).toContain("Once new questions are available, start a new session");
+    expect(screen.queryByTestId("loop-practice-refresh")).toBeNull();
+    expect(api.nextLoopCheck).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("drops an obsolete availability result when another session is selected", async () => {
+    const oldPlan = deferred<typeof unavailable>();
+    scopedPlan();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z"), open("s3", "teach", "2026-09-20T10:00:00Z")]));
+    api.getLoopSessionStatus.mockImplementation(async (sid: string) => sid === "s2"
+      ? status({ loop_phase: "plan", phase: "plan", goal })
+      : status({ session_id: "s3", loop_phase: "teach", phase: "teach", goal: null }));
+    api.getLoopPlan.mockReturnValue(oldPlan.promise);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.getLoopPlan).toHaveBeenCalledWith("s2", "u1"));
+    fireEvent.click(screen.getByTestId("loop-session-s3"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s3"));
+    await act(async () => { oldPlan.resolve(unavailable); });
+    expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
+    expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
+    expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
   });
 });

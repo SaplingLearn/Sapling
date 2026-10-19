@@ -207,11 +207,20 @@ def test_json_check_answer_below_threshold_has_no_key(gate_on, session_row, seam
     assert r.status_code == 200 and "ask_rating" not in r.json()
 
 
-def test_an_idk_submission_is_a_check(session_row, run_check_answer):
+def test_an_idk_submission_is_a_check(session_row, seams, run_check_answer):
     """idk is graded evidence (A1) — the counter counts every flushed grade."""
+    from agents.tools.check import GradeOutcome
+
+    seams.grade.return_value = GradeOutcome(correct=False, evidence={"channel": "free_response", "idk": True})
     _doc(session_row)["checks_since_rating"] = 2
-    run_check_answer(idk=True)
+    done = run_check_answer(idk=True)
+    assert done["graded"] is True and done["verdict"] == "idk"
     assert _doc(session_row)["checks_since_rating"] == 3
+    assert _doc(session_row)["steps"]["qh-1"]["last_correct"] is False
+    (receipt,) = seams.receipts.values()
+    assert receipt["observations"][0]["idk"] is True
+    seams.grade.assert_awaited_once()
+    seams.flush.assert_called_once()
 
 
 @pytest.mark.parametrize("outcome", [UNAVAILABLE, REFUSED], ids=["unavailable", "refused"])

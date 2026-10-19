@@ -14,10 +14,12 @@ unknown and retries — the graph_service journal idiom.
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -123,6 +125,41 @@ def test_every_row_carries_the_key_even_without_a_session(sink):
     assert len({frozenset(r) for r in rows}) == 1
 
 
+@pytest.mark.parametrize("failed", [False, True], ids=["successful-run", "incomplete-billed-run"])
+@pytest.mark.parametrize("session_id", [None, "close-session-42"], ids=["legacy-omitted", "known-session"])
+def test_close_usage_reaches_the_real_writer_with_optional_session(sink, monkeypatch, failed, session_id):
+    """Mock only the provider/budget; use real capture, pricing and event rows."""
+    import agents.session_close as sc
+    from tests.test_learning_close_brief import _draft
+
+    seen = []
+
+    class CloseAgent:
+        async def run(self, _message, *, deps, usage, usage_limits):
+            seen.append(deps)
+            if failed:
+                usage.requests += 1
+                usage.input_tokens += 10
+                usage.output_tokens += 5
+                raise RuntimeError("Synthetic completed response failed validation")
+            return _FakeResult()
+
+    monkeypatch.setattr(sc, "session_close_agent", CloseAgent())
+    monkeypatch.setattr(sc.ai_budget, "check", lambda *a, **k: SimpleNamespace(level="normal"))
+    # UnfinishedRun has no final response. Give its task fallback the same
+    # synthetic billed-provider identity regardless of the suite's model mode.
+    monkeypatch.setattr("agents.usage.model_for", lambda _task: SimpleNamespace(model_name="gemini-2.5-flash"))
+    context = {"session_id": session_id} if session_id is not None else {}
+    result = asyncio.run(sc.run_session_close(_draft(), user_id="u", request_id="r", **context))
+    assert result == (None if failed else "x")
+    events_service.flush_now()
+    [row] = _usage_rows(sink)
+    assert row["session_id"] == session_id
+    assert row["feature"] == row["task"] == "session_close"
+    assert row["total_tokens"] == 15 and row["cost_usd"] > 0
+    assert len(seen) == 1 and seen[0].session_id == session_id
+
+
 def test_a_blank_session_is_stored_as_null(sink):
     record_agent_usage(
         _FakeResult(), feature="loop_tutor", task="loop_tutor", user_id="u", session_id="  "
@@ -193,10 +230,10 @@ def test_an_unrelated_insert_error_keeps_the_column(monkeypatch):
 #: (module, innermost enclosing function) → the expression(s) its
 #: record_agent_usage calls pass as session_id=. A session is known at exactly
 #: these sites. Not listed, on purpose: agents/check_items.py (course assets, no
-#: session), agents/session_close.py (its request is already mapped by the
-#: learn.session_closed event, A82, and its run seam carries no session id), and
+#: session), and
 #: the non-tutor features (documents, notes, quiz, study guide, …).
 SESSION_SITES = {
+    ("agents/session_close.py", "run_session_close"): {"session_id"},
     ("agents/grader.py", "_run_once"): {"deps.session_id"},
     ("services/learning_decisions.py", "_run_decision"): {"deps.session_id"},
     ("routes/learn_loop.py", "record_usage"): {"self.session_id"},

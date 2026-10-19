@@ -621,3 +621,57 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     expect(api.streamLoopCheckAnswer).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── #673 (ad1b1bd5) behaviours on the shared controller, in the tutor view ──
+
+describe("the tutor view surfaces #673's recovery and readiness states", () => {
+  beforeEach(() => {
+    flags.map = { tutor_view: "on" };
+    search.params = new URLSearchParams("view=tutor");
+  });
+
+  it("a saved check grade is recovered explicitly: no composer, no wrap-up or new session until it finishes", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "check", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "check", pending_grade: { kind: "check", question_hash: "saved-q" } }));
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ reply: "Saved feedback.", graded: true, phase: "feedback" }));
+    render(<LoopLearn />);
+    const recover = await screen.findByTestId("loop-recover-grade");
+    await waitFor(() => expect((recover as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId("loop-phase").getAttribute("data-view")).toBe("tutor");
+    expect(screen.queryByTestId("tutor-input")).toBeNull();
+    expect((screen.getByTestId("loop-new-session") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("tutor-menu"));
+    expect((screen.getByTestId("tutor-menu-end") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("tutor-menu"));
+    fireEvent.click(recover);
+    expect(await screen.findByText("Saved feedback.")).toBeTruthy();
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledExactlyOnceWith("s2", "u1", "saved-q", { idk: false }, expect.any(Object));
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+  });
+
+  it("pending feedback: Continue reads Retry feedback and no new check is offered until it is served", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "feedback", check: null }));
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Here is your feedback.", phase: "teach" }));
+    await resumedTeach([open("s2", "feedback", "2026-09-21T10:00:00Z")]);
+    const continueButton = await screen.findByTestId("loop-continue");
+    expect(continueButton.textContent).toBe("Retry feedback");
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(continueButton);
+    expect(await screen.findByText("Here is your feedback.")).toBeTruthy();
+    await waitFor(() => expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false));
+    expect(api.nextLoopCheck).not.toHaveBeenCalled();
+  });
+
+  it("practice preflight: the no-fresh-practice notice and its source-review path show in the tutor too", async () => {
+    const goal = { text: "Understand assignment", target_node_ids: ["target"] };
+    api.getGraph.mockResolvedValue({ nodes: [{ id: "target", concept_name: "Variables and Assignment", course_id: "c1", mastery_score: 0.3 }], edges: [], stats: {} });
+    api.getLoopSessionStatus.mockResolvedValue(status({ goal, practice_unavailable_node_ids: ["target"] }));
+    await resumedTeach();
+    const notice = await screen.findByTestId("loop-practice-unavailable");
+    expect(notice.textContent).toContain("does not assess or complete your goal");
+    await waitFor(() => expect(notice.textContent).toContain("Variables and Assignment"));
+    expect(screen.getByTestId("loop-practice-sources").getAttribute("href")).toBe("/library");
+    expect(screen.getByTestId("loop-practice-refresh")).toBeTruthy();
+  });
+});
