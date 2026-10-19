@@ -89,7 +89,7 @@ from agents.loop_tutor import (
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, table
-from learning import answer_guard, arms, gates, ladder, planner, policy, review, zpd_events
+from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
@@ -444,7 +444,7 @@ def _load_loop_state(session_id: str) -> dict:
     return load_loop_state(session_id).state.to_json()
 
 
-def _update_loop_state(session_id: str, mutate: Callable[[dict], None], *, require_open: bool = False) -> dict:
+def _update_loop_state(session_id: str, mutate: Callable[[dict], None], *, require_open: bool = False, require_existing: bool = False) -> dict:
     """The ONE loop-state write (A38 06(q)): `update_loop_state` with `mutate`
     applied to the FRESH document (on a conflict it runs again on the newer
     one), re-validated by PKG-06's typed parser — a malformed PKG-06 field
@@ -468,6 +468,8 @@ def _update_loop_state(session_id: str, mutate: Callable[[dict], None], *, requi
         logger.warning("loop state for %s: compare-and-set exhausted", session_id)
         raise _StateConflict() from exc
     if saved is None:
+        if require_existing:
+            raise HTTPException(status_code=409, detail="Session unavailable; reload before retrying")
         logger.warning("loop state for %s not saved: no sessions row", session_id)
         return last.get("doc", {})
     return saved.state.to_json()
@@ -1117,7 +1119,8 @@ _POSES = "posttest_poses"  # spec §13 A87: the post-test commits when it is ope
 # read leave an 'unscanned' marker: every item posed at or before it grades as
 # assisted. A failed write falls back to the session's loop_state.
 
-#: A85 (review fix round): session id → when its last turn failed or paused
+#: Conservative cache if a failure's durable update is unavailable. Materialised
+#: sessions also store turn_activity before any work; the cache grants no credit.
 _FAILED_TURN_ANCHORS: dict[str, float] = {}
 ANCHORS_MAX = LOOP_FAILED_ANCHORS_MAX
 
@@ -1637,6 +1640,11 @@ class _LoopTurn:
         anchor = self.state.get("served_at")
         if isinstance(anchor, bool) or not isinstance(anchor, (int, float)):
             anchor = None
+        activity_at, unresolved = turn_activity.timing(self.state)
+        if unresolved:
+            return False  # A crashed/unknown turn is not independent work time.
+        if activity_at is not None:
+            anchor = activity_at if anchor is None else max(float(anchor), activity_at)
         failed = _FAILED_TURN_ANCHORS.get(self.session_id)
         if failed is not None:
             anchor = failed if anchor is None else max(float(anchor), failed)
@@ -2065,7 +2073,8 @@ class _LoopTurn:
         with self.__dict__.setdefault("_scan_lock", threading.Lock()):
             self._scan_served(reply, whole=True)  # A105: the final text, whole
             self._record_served()
-        _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out))
+        activity_write = {"require_open": True, "require_existing": True} if getattr(self, "activity_id", None) else {}
+        _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out), **activity_write)
         self._emit_reveal()
         if out.get("step") is not None:
             self._emit_step(out["step"])
@@ -2116,17 +2125,49 @@ class _LoopTurn:
             "check": check,
         }
 
+    def begin_activity(self) -> None:
+        """Persist pending timing before planning/model work, including a crash.
+
+        The legacy lazy opener has no session row and earns no teach-attempt
+        credit. It keeps its existing no-row contract. All materialised turn
+        paths require an acknowledged open-session CAS before dispatch.
+        """
+        if self.kind == "opener":
+            return
+        self.activity_id = str(uuid.uuid4())
+        now = _now_s()
+
+        def begin(doc: dict) -> None:
+            _refuse_while_closing(doc, now)
+            turn_activity.begin(doc, self.activity_id, now)
+
+        _update_loop_state(
+            self.session_id, begin, require_open=True, require_existing=True
+        )
+
     def touch_served_at(self) -> None:
-        """A85 (review fix round): a failed or paused turn moves the teach
-        independent-time anchor too, so an immediate retry is timed from the
-        failure and never passes the gate on the strength of the lost turn. In
-        memory (bounded, `_FAILED_TURN_ANCHORS`): a failed turn writes nothing
-        to the session (ADR 0024) — the backend is one process (B9 lists the
-        multi-process precondition)."""
+        """Move failure timing without changing history, verdicts or evidence.
+
+        If a worker dies before this final update, its durable pending marker
+        still denies independent-time credit after restart. A superseded
+        request cannot overwrite a newer operation's activity.
+        """
+        now = _now_s()
         _FAILED_TURN_ANCHORS.pop(self.session_id, None)
-        _FAILED_TURN_ANCHORS[self.session_id] = _now_s()
+        _FAILED_TURN_ANCHORS[self.session_id] = now
         while len(_FAILED_TURN_ANCHORS) > ANCHORS_MAX:
             _FAILED_TURN_ANCHORS.pop(next(iter(_FAILED_TURN_ANCHORS)))
+        operation_id = getattr(self, "activity_id", None)
+        if operation_id is not None:
+            try:
+                _update_loop_state(
+                    self.session_id,
+                    lambda doc: turn_activity.interrupt(doc, operation_id, now),
+                    require_open=True,
+                    require_existing=True,
+                )
+            except Exception:
+                logger.warning("Tutor interruption timing could not be stored", exc_info=True)
 
     def _scan_set(self):
         """A93: the posed-and-ungraded items (`posed_items`), read ONCE per turn
@@ -2288,6 +2329,12 @@ class _LoopTurn:
         changes `state` in place, records what the caller emits after the save
         in `out`, and has no side effects."""
         out.clear()
+        if getattr(self, "activity_id", None) is not None:
+            _refuse_while_closing(state, self._now)
+            try:
+                turn_activity.complete(state, self.activity_id, self._now)
+            except turn_activity.StaleTurnActivity as exc:
+                raise _StateConflict() from exc
         steps = _steps(state)
         if self.phase == "feedback" and self.active in steps:
             entry = steps[self.active]
@@ -2690,14 +2737,15 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
     it. A tool run that ends without a structured turn (#646; UnexpectedModelBehavior
     — the run is still billed) is finished by the tool-less continuation.
     Persist ordering mirrors routes.learn._chat_turn_json."""
+    await asyncio.to_thread(turn.begin_activity)
     decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
     try:
         turn.plan(decision)
     except BaseException:
-        turn.touch_served_at()  # A85: a failed plan moves the anchor
+        await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         raise
     if turn.paused:
-        turn.touch_served_at()  # A85: a paused turn moves the anchor
+        await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         raise _BudgetPaused(decision)
     if turn.tier == "none":
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(turn.text, {}, [])}
@@ -2718,7 +2766,7 @@ async def _run_turn_json(turn: _LoopTurn) -> dict:
             reply = await _continue_turn(turn, list(messages))
         return {"graph_update": {}, "mastery_changes": [], **turn.complete(reply, {}, [])}
     except BaseException:
-        turn.touch_served_at()  # A85: so does a failed one
+        await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         raise
 
 
@@ -2765,19 +2813,20 @@ async def _stream_turn(turn: _LoopTurn):
     `transform` is the turn's leak strip, applied to the cumulative text before
     any token is sent; `complete` gets the raw render and records the leak.
     Its Rung-1 fallback is the tool-less JSON turn (#646)."""
-    decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
     try:
+        await asyncio.to_thread(turn.begin_activity)
+        decision = ai_budget.check(turn.user_id, "tutor", turn.band, **turn.budget_counters())
         turn.plan(decision)
     except Exception:
         # ADR 0024 honest degrade: nothing was shown or written — one terminal error
         logger.exception("Loop turn could not be planned")
-        turn.touch_served_at()  # A85
+        await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         yield sapling_event_to_sse(_stream_error(turn, _STREAM_UNAVAILABLE))
         return
     for ev in turn.pre_events():
         yield sapling_event_to_sse(ev)
     if turn.paused:
-        turn.touch_served_at()  # A85
+        await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         yield sapling_event_to_sse(_budget_event(decision))
         return
     if decision.level == "hard":
@@ -2857,7 +2906,7 @@ async def _stream_turn(turn: _LoopTurn):
     finally:
         # A85: an errored, disconnected or cancelled stream moves the anchor
         if not finished:
-            turn.touch_served_at()
+            await asyncio.shield(asyncio.to_thread(turn.touch_served_at))
         # A93 (M4) / A88 (M1): a retracted attempt, or what an unfinished stream
         # relayed, that no scan has covered is scanned and recorded. A105 (review
         # m3): in a worker thread — the turn's lock may be held by a scan still in

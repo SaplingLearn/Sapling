@@ -506,8 +506,9 @@ TEACH_ATTEMPT_CEILING_RAISE = 1
 # rounds at H2 did not change that; develop/novice keep the one-rung raise
 TEACH_ATTEMPT_CEILING_RAISE_PROFIC = 2
 # † PKG-14 (spec §13 A85): a failed or paused turn's teach independent-time
-# anchor is held in memory (a failed turn writes nothing, ADR 0024); at most this
-# many sessions' anchors are held (oldest evicted first)
+# anchor is durable in materialised sessions.turn_activity. A conservative
+# process cache covers a failed final timing write; it never grants credit.
+# At most this many cached anchors are held (oldest evicted first).
 LOOP_FAILED_ANCHORS_MAX = 10_000
 # † PKG-14 review fix round (owner decision 1, spec §13 A93): the served-text scan
 # set is every item POSED to the student and not yet graded, newest first, at most

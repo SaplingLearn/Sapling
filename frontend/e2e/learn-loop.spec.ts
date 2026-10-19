@@ -539,14 +539,15 @@ for (const width of [1440, 390]) {
   }
 }
 
+for (const recovery of [{ width: 390, pending: false }, { width: 1440, pending: true }, { width: 390, pending: true }]) {
 for (const action of ["retry", "end"] as const) {
-  test(`pending feedback can ${action} on a phone while preserving its saved grade`, async ({ browser }) => {
+  test(`pending feedback can ${action} at ${recovery.width}px with ${recovery.pending ? "durable interrupted-worker" : "legacy"} state`, async ({ browser }) => {
     test.skip(killSwitchLane, "loop path: default lane only");
     test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
     // Explicitly synthetic, already-graded-but-undelivered starting state.
     // Installed BEFORE browser activity: no learner outcome/evidence is forged
     // after a turn, and every retry, rejection and close below is a real route.
-    const sessionId = `e2e-pending-feedback-${action}`;
+    const sessionId = `e2e-pending-feedback-${action}-${recovery.width}-${recovery.pending}`;
     const itemId = "rich-check-binary-free-d1";
     const [{ question_hash: hash }] = await queryRaw("SELECT question_hash FROM check_items WHERE id = $1", [itemId]) as { question_hash: string }[];
     expect(hash).toBeTruthy();
@@ -562,6 +563,7 @@ for (const action of ["retry", "end"] as const) {
     };
     const fixture = { phase: "teach", plan: { approved: ["rich-node-loop-binary"], cursor: 0 },
       concept: "rich-node-loop-binary", teach_turns: 0, concept_checks: 0,
+      ...(recovery.pending ? { turn_activity: { id: "worker-that-no-longer-exists", state: "pending", at: now - 60 } } : {}),
       current: hash, steps: { [hash]: entry } };
     await queryRaw(
       `INSERT INTO sessions (id, user_id, mode, topic, offering_id, started_at, loop_state)
@@ -583,7 +585,7 @@ for (const action of ["retry", "end"] as const) {
       if (path === "/api/learn/loop/chat/stream") chatPosts += 1;
     });
     try {
-      await page.setViewportSize({ width: 390, height: 844 });
+      await page.setViewportSize({ width: recovery.width, height: 844 });
       await page.goto(`/learn?course=rich-course-cs101&resume=${sessionId}`);
       const phase = page.getByTestId("loop-phase");
       await expect(phase).toHaveAttribute("data-session-id", sessionId);
@@ -611,10 +613,13 @@ for (const action of ["retry", "end"] as const) {
         await expect(page.getByTestId("loop-check-me")).toBeEnabled();
         const after = (await queryRaw("SELECT loop_state FROM sessions WHERE id = $1", [sessionId]))[0].loop_state as {
           current: string | null; concept_checks: number; steps: Record<string, typeof entry>;
+          turn_activity: { id: string; state: string; at: number };
         };
         expect(after.current).toBeNull();
         expect(after.concept_checks).toBe(1);
         expect(after.steps[hash]).toMatchObject({ ...entry, feedback_given: true });
+        expect(after.turn_activity.state).toBe("complete");
+        expect(after.turn_activity.id).not.toBe("worker-that-no-longer-exists");
         const next = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/check/next");
         await page.getByTestId("loop-check-me").click();
         expect((await next).status()).toBe(200);
@@ -634,8 +639,10 @@ for (const action of ["retry", "end"] as const) {
       }
       expect(answerPosts).toEqual([]);
       expect(await evidenceCount()).toBe(baselineEvidence);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
     } finally { await context.close(); }
   });
+}
 }
 
 test("budget cap: tutor chat pauses on /learn; review still serves and grades on /study", async ({ browser }) => {

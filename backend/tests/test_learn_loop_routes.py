@@ -281,7 +281,7 @@ def seams():
         doc = LoopState.from_json(json.loads(json.dumps(store["doc"])))
         return LoadedLoopState(doc, store["rev"])
 
-    def _save(session_id, state, *, expected_rev):
+    def _save(session_id, state, *, expected_rev, require_open=False):
         if store["conflicts"]:
             store["conflicts"] -= 1
             if store["racer"] is not None:
@@ -667,7 +667,7 @@ def test_an_exhausted_conflict_ends_a_stream_in_a_terminal_error(gate_on, seams)
         "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
     )
     evs = _sse_events(r.text)
-    assert [e["type"] for e in evs] == ["phase", "check", "error"]
+    assert [e["type"] for e in evs] == ["error"]  # activity admission failed before serving
     seams.save_msg.assert_not_called()
 
 
@@ -942,7 +942,7 @@ def test_check_phase_chat_serves_the_pose_without_a_model(gate_on, seams):
     )
 
 
-def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
+def test_hard_budget_pauses_a_teach_stream_and_persists_only_activity(gate_on, seams):
     seams.store["doc"] = {"phase": "teach"}
     seams.ai_budget.check.return_value = HARD
     never = MagicMock(side_effect=AssertionError("no model at the hard level"))
@@ -955,7 +955,9 @@ def test_hard_budget_pauses_a_teach_stream_and_persists_nothing(gate_on, seams):
     assert [e["type"] for e in evs] == ["phase", "budget"]
     assert evs[1]["data"] == HARD_BUDGET
     seams.save_msg.assert_not_called()
-    seams.save.assert_not_called()
+    assert set(seams.store["doc"]) == {"v", "steps", "current", "checks_since_rating", "phase", "turn_activity"}
+    assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    seams.flush.assert_not_called()
 
 
 def test_hard_budget_json_chat_is_429_with_reset_at(gate_on, seams):
@@ -966,7 +968,9 @@ def test_hard_budget_json_chat_is_429_with_reset_at(gate_on, seams):
     )
     assert r.status_code == 429  # AIBudgetExceeded → PKG-06b's registered handler
     assert r.json()["detail"] == "ai budget reached" and r.json()["reset_at"] == RESET_ISO
-    seams.save.assert_not_called()
+    assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    seams.flush.assert_not_called()
+    seams.save_msg.assert_not_called()
 
 
 def test_novice_check_pose_pauses_at_the_hard_level(gate_on, seams):
@@ -1134,7 +1138,7 @@ def test_a_policy_tier_whose_slot_failed_its_evals_routes_to_a_routable_one(gate
 def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on, seams):
     """ADR 0024 honest degrade on the loop's own SSE path: a failure while the
     turn is planned (a context read) ends the stream with ONE terminal
-    `error` event — never a broken stream — and persists nothing."""
+    `error` event — never a broken stream — and persists only timing metadata."""
     seams.store["doc"] = {"phase": "teach"}
     seams.blocks.side_effect = RuntimeError("rag read failed")
     never = MagicMock(side_effect=AssertionError("no model run after a failed plan"))
@@ -1147,13 +1151,23 @@ def test_a_stream_that_fails_before_the_ladder_ends_in_a_terminal_error(gate_on,
     assert [e["type"] for e in evs] == ["error"]
     assert evs[0]["data"]["retryable"] is True and evs[0]["data"]["request_id"]
     seams.save_msg.assert_not_called()
-    seams.save.assert_not_called()
+    assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+    seams.flush.assert_not_called()
 
 
 def test_a_deterministic_stream_whose_persistence_fails_ends_in_a_terminal_error(gate_on, seams):
     """Behaviour 19: a failed persistence inside complete is a terminal error —
     on the deterministic path too, where there is no stream_agent_turn guard."""
-    seams.save.side_effect = RuntimeError("sessions update failed")
+    original_save = seams.save.side_effect
+    writes = []
+
+    def fail_after_admission(*args, **kwargs):
+        writes.append(1)
+        if len(writes) > 1:
+            raise RuntimeError("sessions update failed")
+        return original_save(*args, **kwargs)
+
+    seams.save.side_effect = fail_after_admission
     r = client.post(
         "/api/learn/loop/chat/stream", json={"session_id": "s1", "user_id": "u1", "message": "?"}
     )
@@ -2452,7 +2466,8 @@ def test_hard_level_leaking_payload_is_served_only_as_h6(gate_on, seams, h6_ok, 
         )
         assert r.json()["budget"]["level"] == "hard"
     else:
-        seams.save.assert_not_called()
+        assert seams.store["doc"]["turn_activity"]["state"] == "interrupted"
+        assert seams.store["doc"]["steps"]["qh-1"]["rung"] == 2
 
 
 def _opener_patches():
@@ -3315,11 +3330,11 @@ def test_a_conflicting_grade_save_re_applies_the_attempt_to_the_fresh_state(gate
 
     real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
 
-    def arm_then_update(session_id, mutate):
+    def arm_then_update(session_id, mutate, **kwargs):
         if armed["on"]:
             seams.store["conflicts"], seams.store["racer"] = 1, racer
             armed["on"] = False
-        return real_update(session_id, mutate)
+        return real_update(session_id, mutate, **kwargs)
 
     def grade(*a, **kw):
         armed["on"] = True  # the next write (the grade's record) loses one race
@@ -3687,8 +3702,8 @@ def test_the_misconception_row_is_written_only_after_the_claims_save(gate_on, se
     seams.grade.return_value = _wrong_with(_misconception_diagnosis())
     real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
 
-    def spy_update(session_id, mutate):
-        out = real_update(session_id, mutate)
+    def spy_update(session_id, mutate, **kwargs):
+        out = real_update(session_id, mutate, **kwargs)
         order.append("save")
         return out
 
@@ -3714,11 +3729,11 @@ def test_a_lost_claim_writes_no_misconception_row(gate_on, seams):
     armed = {"on": False}
     real_update = __import__("routes.learn_loop", fromlist=["x"])._update_loop_state
 
-    def update(session_id, mutate):
+    def update(session_id, mutate, **kwargs):
         if armed["on"]:
             seams.store["conflicts"], seams.store["racer"] = 1, steal
             armed["on"] = False
-        return real_update(session_id, mutate)
+        return real_update(session_id, mutate, **kwargs)
 
     def grade(*a, **kw):
         armed["on"] = True

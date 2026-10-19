@@ -247,6 +247,7 @@ def _route_turn(model):
         render=render_turn,
         render_partial=render_partial,
         record_relayed=MagicMock(),
+        begin_activity=MagicMock(),
         touch_served_at=MagicMock(),
         complete=MagicMock(side_effect=lambda reply, graph, mastery: {"reply": reply}),
     )
