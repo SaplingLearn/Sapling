@@ -237,6 +237,7 @@
 .sapling-goal__eyebrow { color: var(--sapling-plum); }
 .sapling-goal__text { margin: 4px 0 0; font: 500 clamp(17px, 1rem + 0.3vw, 20px)/1.4 var(--sapling-font-heading); overflow-wrap: anywhere; }
 .sapling-goal__scope { margin: 0; color: var(--sapling-plum); font-size: 14px; overflow-wrap: anywhere; }
+.sapling-goal__action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sapling-space-2) var(--sapling-space-3); min-width: 0; }
 
 /* ── Phase strip (read-only display of the server phase) ─────────────── */
 .sapling-phases {

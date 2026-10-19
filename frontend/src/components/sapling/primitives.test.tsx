@@ -133,6 +133,13 @@ describe("GoalSummary", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit goal" }));
     expect(onEdit).toHaveBeenCalled();
   });
+
+  it("renders a caller-owned action in place of the built-in Edit", () => {
+    const onEdit = vi.fn();
+    render(<GoalSummary goal="g" canEdit onEdit={onEdit} action={<button type="button">Set goal</button>} />);
+    expect(screen.queryByRole("button", { name: "Edit goal" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Set goal" })).toBeTruthy();
+  });
 });
 
 describe("PhaseStrip", () => {

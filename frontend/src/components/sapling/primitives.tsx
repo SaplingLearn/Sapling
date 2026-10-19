@@ -186,12 +186,16 @@ export interface GoalSummaryProps {
   onEdit?: () => void;
   editLabel?: string;
   heading?: string;
+  /** Optional caller-rendered control (e.g. one carrying its own test id,
+   *  ref and busy state, or a confirmed new-session path while teaching).
+   *  When given it replaces the built-in Edit; the caller owns its gating. */
+  action?: React.ReactNode;
   testid?: string;
 }
 
 /** Read-only by default: the Edit control exists only when BOTH canEdit and
  *  onEdit are given, so a teaching session cannot mutate its goal from here. */
-export function GoalSummary({ goal, scope, canEdit = false, onEdit, editLabel = "Edit goal", heading = "Your goal", testid }: GoalSummaryProps) {
+export function GoalSummary({ goal, scope, canEdit = false, onEdit, editLabel = "Edit goal", heading = "Your goal", action, testid }: GoalSummaryProps) {
   const headingId = React.useId();
   return (
     <section className="sapling-goal" aria-labelledby={headingId} data-testid={testid}>
@@ -200,9 +204,11 @@ export function GoalSummary({ goal, scope, canEdit = false, onEdit, editLabel = 
         <p className="sapling-goal__text">{goal}</p>
       </div>
       {scope != null && <p className="sapling-goal__scope">Scope: {scope}</p>}
-      {canEdit && onEdit && (
-        <SaplingAction tone="quiet" onClick={onEdit}>{editLabel}</SaplingAction>
-      )}
+      {action != null
+        ? <div className="sapling-goal__action">{action}</div>
+        : canEdit && onEdit && (
+          <SaplingAction tone="quiet" onClick={onEdit}>{editLabel}</SaplingAction>
+        )}
     </section>
   );
 }
