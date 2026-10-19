@@ -252,12 +252,57 @@ def _write_state_call_lines(path: pathlib.Path) -> list[int]:
     ]
 
 
+def _canonical_page_all(tree: ast.Module, parents: dict[ast.AST, ast.AST]) -> bool:
+    """Trust only the unaliased, unshadowed db.connection read helper.
+
+    Reject every other binding or escaped reference conservatively, across all
+    scopes. This exemption is not a general ability to pass graph handles to a
+    function named page_all, nor an additional allowed method on those handles.
+    """
+    imports = [
+        alias
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "db.connection" and node.level == 0
+        for alias in node.names
+        if alias.name == "page_all" and alias.asname is None
+    ]
+    if len(imports) != 1:
+        return False
+    trusted_import = imports[0]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "page_all":
+            parent = parents.get(node)
+            if not (
+                isinstance(node.ctx, ast.Load)
+                and isinstance(parent, ast.Call) and parent.func is node
+            ):
+                return False
+        elif isinstance(node, ast.alias):
+            bound = node.asname or node.name.split(".")[0]
+            if node.name == "*" or (bound == "page_all" and node is not trusted_import):
+                return False
+        elif isinstance(node, ast.arg) and node.arg == "page_all":
+            return False
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == "page_all":
+                return False
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name == "page_all":
+                return False
+        elif isinstance(node, ast.MatchMapping) and node.rest == "page_all":
+            return False
+    return True
+
+
 def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | None]]:
     """(line, table, method, enclosing def) for every `table("<graph table>")`
     call in `source`, bare or as `<module>.table(...)`, any quote style.
     `method` is the attribute called on the result (`select`, `upsert`, …),
     or None when the result is bound to a name, passed on, or returned:
-    anything that is not a direct read counts. The regex half of inv_01 sees
+    anything that is not a direct read counts. The sole wrapper exception is a
+    direct first argument to the canonical imported page_all: its only handle
+    operation is select_with_count. The regex half of inv_01 sees
     only a direct `.insert(`/`.update(`/`.upsert(` chain in double quotes, so
     `t = table("graph_nodes"); t.insert(...)` and `.delete(` passed it."""
     tree = ast.parse(source)
@@ -265,6 +310,7 @@ def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | Non
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
             parents[child] = node
+    canonical_page_all = _canonical_page_all(tree, parents)
     uses = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
@@ -282,6 +328,13 @@ def _graph_table_uses(source: str) -> list[tuple[int, str, str | None, str | Non
             and parents[parent].func is parent
         ):
             method = parent.attr
+        elif (
+            canonical_page_all
+            and isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name) and parent.func.id == "page_all"
+            and parent.args and parent.args[0] is node
+        ):
+            method = "select_with_count"
         enclosing = None
         up = parents.get(node)
         while up is not None:
@@ -305,6 +358,65 @@ def _graph_table_offenders(rel: str, source: str) -> list[str]:
         use = f".{method}(" if method else "a handle that is not a direct read"
         offenders.append(f"{rel}:{line} uses table({tbl!r}) for {use}; only reads allowed")
     return offenders
+
+
+@pytest.mark.parametrize("table_name", GRAPH_TABLES)
+def test_inv_01_canonical_page_all_is_a_direct_paged_read(table_name):
+    source = (
+        "from db.connection import page_all, table\n"
+        "def read_owned(user_id):\n"
+        f"    return list(page_all(table({table_name!r}), 'id', "
+        "filters={'user_id': f'eq.{user_id}'}, order='id'))\n"
+    )
+    assert _graph_table_uses(source) == [(3, table_name, "select_with_count", "read_owned")]
+    assert _graph_table_offenders("services/reader.py", source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "page_all(table('graph_nodes'), order='id')",
+        "from untrusted import page_all\npage_all(table('graph_nodes'), order='id')",
+        "from .db.connection import page_all\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all as pager\npager(table('graph_nodes'), order='id')",
+        "from db.connection import page_all as page_all\npage_all(table('graph_nodes'), order='id')",
+        "import db.connection as db\ndb.page_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\npage_all = unsafe\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\npage_all += unsafe\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\n(page_all := unsafe)(table('graph_nodes'))",
+        "from db.connection import page_all\ndef page_all(h, **kw): h.delete()\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\ndef read(page_all): return page_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nread = lambda page_all: page_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nfrom untrusted import page_all\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nimport untrusted as page_all\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nfrom untrusted import *\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\ntry: pass\nexcept Exception as page_all:\n    page_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nmatch value:\n    case page_all: page_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\npage_all.__code__ = unsafe.__code__\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nmutate(page_all)\npage_all(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\npager = page_all\npager(table('graph_nodes'), order='id')",
+        "from db.connection import page_all\nh = table('graph_nodes')\npage_all(h, order='id')\nh.delete()",
+        "from db.connection import page_all\ndef read(): return table('graph_nodes')",
+        "from db.connection import page_all\npage_all(other, table('graph_nodes'), order='id')",
+        "from db.connection import page_all\npage_all(handle=table('graph_nodes'), order='id')",
+        "from db.connection import page_all\npage_all(*(table('graph_nodes'),), order='id')",
+        "from db.connection import page_all\npage_all(escape(table('graph_nodes')), order='id')",
+        "from db.connection import page_all\ntable('graph_nodes').page_all(order='id')",
+        "from db.connection import page_all\npage_all(table('graph_nodes').delete(), order='id')",
+        "from db.connection import page_all\npage_all(table('graph_nodes'), order='id')\ntable('graph_nodes').update({'x': 1})",
+    ],
+    ids=[
+        "not-imported", "untrusted-import", "relative-import", "alias", "self-alias",
+        "qualified-function", "assignment", "augmented-assignment", "walrus", "definition",
+        "parameter-shadow", "lambda-shadow", "reimport", "module-reimport", "star-import",
+        "exception-shadow", "match-shadow", "mutated-function", "escaped-function",
+        "aliased-function", "escaped-handle", "returned-handle", "second-argument",
+        "keyword-handle", "starred-handle", "nested-wrapper", "fake-table-method",
+        "write-in-argument", "write-after-read",
+    ],
+)
+def test_inv_01_page_all_exemption_cannot_hide_other_handle_uses(source):
+    assert _graph_table_offenders("services/not_a_writer.py", source)
 
 
 def _private_writer_offenders(rel: str, source: str) -> list[str]:
