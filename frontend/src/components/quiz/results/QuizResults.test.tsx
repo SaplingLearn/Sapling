@@ -303,6 +303,41 @@ describe("QuizResults", () => {
     });
   });
 
+  it.each(["short_answer", "numeric", "symbolic"] as const)("shows the actual missed %s response and expected answer while preserving its tutor identity", (type) => {
+    const written = item(102);
+    written.question = { ...written.question, type, options: [] };
+    const result = {
+      ...RESULT,
+      results: RESULT.results.map((row) => row.question_id === "102"
+        ? { ...row, selected: "the submitted response", correct_answer: "the expected response" }
+        : row),
+    };
+    renderResults({ items: [item(101), written, item(103)], result });
+    const missed = screen.getByTestId("quiz-missed-102");
+    expect(missed).toHaveTextContent("Your answer: the submitted response · Expected: the expected response");
+    expect(missed).not.toHaveTextContent("You chose Your answer");
+    fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
+    const panel = screen.getByTestId("quiz-ask-panel");
+    expect(JSON.parse(panel.getAttribute("data-quiz-ask") || "null"))
+      .toEqual({ attemptId: "attempt-1", questionIndex: 1 });
+    expect(JSON.parse(panel.textContent ?? "{}"))
+      .toMatchObject({ chosenText: "the submitted response", correctText: "the expected response" });
+  });
+
+  it("honestly labels an unanswered written item while still showing the expected answer", () => {
+    const written = item(102);
+    written.question = { ...written.question, type: "short_answer", options: [] };
+    renderResults({ items: [item(101), written, item(103)], result: {
+      ...RESULT,
+      results: RESULT.results.map((row) => row.question_id === "102"
+        ? { ...row, selected: "", correct_answer: "base case" } : row),
+    } });
+    expect(screen.getByTestId("quiz-missed-102")).toHaveTextContent("No answer · Expected: base case");
+    fireEvent.click(screen.getByTestId("quiz-missed-ask-102"));
+    expect(JSON.parse(screen.getByTestId("quiz-ask-panel").textContent ?? "{}"))
+      .toMatchObject({ chosenLabel: "", chosenText: "", correctText: "base case" });
+  });
+
   it("replaces the review section with the perfect-run line", () => {
     renderResults(PERFECT);
     expect(screen.getByTestId("quiz-results-perfect")).toHaveTextContent(

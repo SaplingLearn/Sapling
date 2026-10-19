@@ -10,6 +10,7 @@ import pytest
 
 from learning import params
 from learning.bkt import update
+from tests.test_quiz_answers_c import _ResponsesTable
 from tests.test_quiz_scoring_e import _loop_table, _noop_ctx_agent, client
 from test_learning_loop_invariants import LEGACY_MASTERY_SYMBOLS
 
@@ -336,6 +337,148 @@ def test_the_help_floor_is_one_batched_read_after_the_farm_guard():
     assert seen == [["h1", "h2"]]
     assert out[0] == {"question_hash": "h1"} and out[1] == {"question_hash": None}
     assert out[2] == {"question_hash": "h2", "max_rung": 2, "assisted": True}
+
+
+@pytest.mark.parametrize(
+    "kind,key,right,wrong",
+    [
+        ("short_answer", "base case", "The base case.", "loop body"),
+        ("numeric", "0.5", "1/2", "99"),
+        ("symbolic", "2*x+2", "2(x+1)", "x"),
+    ],
+)
+@pytest.mark.parametrize("correct", [True, False])
+@pytest.mark.parametrize(
+    "floor", [0, params.RUNG_ASSISTED_MIN, params.RUNG_NO_CREDIT_MIN]
+)
+def test_recorded_written_grades_keep_conservative_evidence_and_guards(
+    kind, key, right, wrong, correct, floor
+):
+    """Real answer/submit handlers, no agent: typed input changes neither the
+    evidence channel nor help/replay policy. First recorded answers still win,
+    including an incorrect answer later retried with the correct key."""
+    from learning.evidence import Evidence, is_strong_channel
+    from services.encryption import decrypt_json_column
+    from services.quiz_identity import question_hash
+
+    qh = question_hash(f"Written {kind} example?", [])
+    question = {
+        "id": 1,
+        "question": f"Written {kind} example?",
+        "type": kind,
+        "options": [],
+        "correct_answer": key,
+        "explanation": "Compare with the stored answer.",
+        "question_hash": qh,
+    }
+    responses = _ResponsesTable()
+    claims = _Claims()
+    attempts = {
+        attempt_id: {
+            "id": attempt_id,
+            "user_id": "user_andres",
+            "concept_node_id": "node1",
+            "questions_json": [question],
+        }
+        for attempt_id in ("written-first", "written-repeat")
+    }
+    attempt_table = MagicMock()
+
+    def select_attempt(columns="*", filters=None, **_):
+        return [dict(attempts[filters["id"].removeprefix("eq.")])]
+
+    def update_attempt(data, filters=None, **_):
+        row = attempts[filters["id"].removeprefix("eq.")]
+        if any(row.get(k) is not None for k, v in filters.items() if v == "is.null"):
+            return []
+        row.update(data)
+        return [dict(row)]
+
+    attempt_table.select.side_effect = select_attempt
+    attempt_table.update.side_effect = update_attempt
+    base = _loop_table([question])
+
+    def tables(name):
+        if name == "quiz_attempts":
+            return attempt_table
+        if name == "quiz_responses":
+            return responses
+        if name == "quiz_evidence_claims":
+            return claims.handle()
+        return base(name)
+
+    apply_mock = MagicMock(return_value=[])
+    selected, revision = (right, wrong) if correct else (wrong, right)
+    with (
+        patch("routes.quiz.table", side_effect=tables),
+        patch("routes.quiz.apply_graph_update", new=apply_mock),
+        patch("routes.quiz.max_help_many", return_value={qh: floor}),
+        patch("routes.quiz.get_quiz_context", return_value={}),
+        patch("routes.quiz.quiz_context_agent.run", new=_noop_ctx_agent()),
+        patch("routes.quiz.save_quiz_context"),
+        patch("routes.quiz.events_service.log_event"),
+    ):
+        first = client.post(
+            "/api/quiz/attempts/written-first/answer",
+            json={"question_index": 0, "answer_text": selected, "confidence": 0.99},
+        )
+        revised = client.post(
+            "/api/quiz/attempts/written-first/answer",
+            json={"question_index": 0, "answer_text": revision},
+        )
+        completed = client.post(
+            "/api/quiz/submit",
+            json={
+                "quiz_id": "written-first",
+                "answers": [{"question_id": 1, "selected_label": key}],
+            },
+        )
+        # Another legitimate attempt can record/score the same item, but cannot
+        # turn a repeated written answer into another mastery observation.
+        repeat_answer = client.post(
+            "/api/quiz/attempts/written-repeat/answer",
+            json={"question_index": 0, "answer_text": right},
+        )
+        repeat = client.post(
+            "/api/quiz/submit", json={"quiz_id": "written-repeat", "answers": []}
+        )
+
+    for response in (first, revised, completed, repeat_answer, repeat):
+        assert response.status_code == 200, response.text
+    assert first.json()["is_correct"] is correct
+    assert revised.json()["is_correct"] is correct
+    assert revised.json()["recorded"] is False
+    assert completed.json()["results"][0]["selected"] == selected
+    assert completed.json()["score"] == int(correct)
+    assert repeat.json()["score"] == 1
+    assert len(responses.rows) == 2
+    assert responses.rows[0]["selected_index"] is None
+    assert decrypt_json_column(responses.rows[0]["answer_text"]) == {"text": selected}
+    assert decrypt_json_column(attempts["written-first"]["answers_json"]) == [
+        {"question_id": 1, "answer_text": selected}
+    ]
+
+    apply_mock.assert_called_once()
+    assert apply_mock.call_args.args[0] == "user_andres"
+    assert apply_mock.call_args.kwargs == {"course_id": "course1"}
+    (raw,) = apply_mock.call_args.args[1]["evidence"]
+    evidence = Evidence(**raw)
+    assert evidence.node_id == "node1" and evidence.question_hash == qh
+    assert evidence.correct is correct and evidence.channel == "mc"
+    assert is_strong_channel(evidence.channel) is False
+    assert evidence.max_rung == floor
+    assert evidence.assisted is bool(floor)
+    expected_weight = 1.0
+    if correct and floor >= params.RUNG_NO_CREDIT_MIN:
+        expected_weight = 0.0
+    elif correct and floor >= params.RUNG_ASSISTED_MIN:
+        expected_weight = params.WEIGHT_ASSISTED
+    assert evidence.weight == expected_weight
+    assert evidence.confidence is None  # student confidence is not grader confidence
+    assert evidence.planning_provenance is None
+    assert evidence.check_item_id is None and evidence.session_id is None
+    assert set(claims.rows) == {qh}
+    assert repeat.json()["p_delta"] == 0
 
 
 def test_students_cannot_ask_for_the_answer_key(monkeypatch):

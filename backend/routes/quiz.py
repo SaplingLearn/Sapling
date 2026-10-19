@@ -2489,13 +2489,19 @@ def _gamification_block(
 def _quiz_evidence(concept_node_id: str, questions: list, results: list[dict]) -> list[dict]:
     """PKG-11: one `learning.evidence.Evidence` dict per graded question.
 
-    `channel` is always "mc": the quiz wire carries a selected label and no
-    reason text, so it can never be the stronger "mc_reasoned" channel
-    (spec §3.1, §13 A10). `question_hash` reads the stored identity (E5) or
-    recomputes it; None when the stored item has none. The other Evidence
-    fields keep their model defaults — a quiz is unassisted, rung 0, and the
-    weight is derived by the model. The student's self-reported confidence is
-    NOT Evidence.confidence (that field is grader confidence, spec §5).
+    Every quiz format conservatively uses the existing "mc" likelihood
+    bucket (spec §3.1, §13 A10). Multiple choice records a selected label;
+    short_answer, numeric and symbolic record typed text and deterministically
+    compare it with stored keys. Typed input alone supplies neither the reason
+    required by "mc_reasoned" nor rubric/reference-grounded "free_response"
+    evidence, so it does not earn a strong channel.
+
+    `question_hash` reads the stored identity (E5) or recomputes it; None when
+    the stored item has none. The caller applies the same rolling replay guard
+    and help-ledger floor to every format. Otherwise Evidence keeps its model
+    defaults, including rung 0 and derived weight; quiz grades do not invent
+    learning-check planning provenance. The student's self-reported confidence
+    is NOT Evidence.confidence (that field is grader confidence, spec §5).
     """
     return [
         {
