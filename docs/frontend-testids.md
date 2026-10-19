@@ -326,7 +326,13 @@ never collide in the DOM.
 | --- | --- |
 | `app-shell` | authed shell root — the scrolling `<main id="main-content">` in `ShellFrame.tsx`, present in both (top-nav and sidebar) layout variants; the Playwright harness smoke spec (#385) anchors on it as the "authed shell mounted" signal |
 | `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
-| `nav-link-<route>` | a SideNav destination row (`SideNav.tsx` `NavLink`), `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`); a feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0 |
+| `nav-link-<route>` | a shell destination row, `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`, `nav-link-admin`). Rendered by the desktop sidebar (`fa26/Sidebar.tsx`: the six Pen rows, the More group, Settings), by the phone rail below 768px (`fa26/Navigation.tsx` `PhoneRail`), and by the legacy `SideNav.tsx` `NavLink`; only the nav on screen carries testids, so a locator never matches two. Knowledge keeps `nav-link-tree` (its href is `/tree`). A feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0. Rows in a collapsed More group are in the DOM but `visibility: hidden` + `inert`: open `nav-more` before asserting one is visible |
+| `nav-link-tutor-view` | the sidebar's Tutor row (`/learn?view=tutor`); exists only while the `tutor_view` flag is on and `hide_tutor` is off |
+| `nav-more` | the sidebar's More disclosure button (`aria-expanded`, `aria-controls` → `nav-more-region`); collapsed by default, open state remembered in localStorage `sapling_nav_more_open`, forced open when the current route lives in it |
+| `nav-more-region` | the More group's collapsible region (`data-open` when expanded, `inert` when collapsed) |
+| `nav-pill` | the sidebar's single active-row pill (`data-shown` once placed; its `transform` is the active row's offset) |
+| `nav-account` | the sidebar's account row (initial, name, "Personal workspace") |
+| `app-sidebar` | the desktop sidebar root (`fa26/Sidebar.tsx`); `data-animated` once its transitions are armed (never under reduced motion) |
 | `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
 
 ### `social`

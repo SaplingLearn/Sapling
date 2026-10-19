@@ -51,6 +51,9 @@ test("admin sets a user rule on hide_quiz and the student gets it (#620)", async
 
 test("hiding a feature drops it from the nav and redirects its route (#620)", async ({ browser, page }) => {
   await page.goto(`${FRONTEND_URL}/dashboard`);
+  // Quiz lives in the desktop sidebar's "More" group, collapsed by default
+  // (the open state is remembered, so it stays open across the reload below).
+  await page.getByTestId("nav-more").click();
   await expect(page.getByTestId("nav-link-quiz")).toBeVisible();
 
   // Hide Quiz for everyone, through the API the /admin tab uses.

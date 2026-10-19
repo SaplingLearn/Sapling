@@ -6,7 +6,9 @@ import { usePathname } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useFlagMap } from "@/context/FlagsContext";
 import { navFlagForPath } from "@/lib/navFeatures";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { DesignIcon, DesignSprout } from "./DesignIcon";
+import { Sidebar } from "./Sidebar";
 
 const PRIMARY = [
   { href: "/dashboard", label: "Dashboard", icon: "home" },
@@ -20,7 +22,25 @@ const SECONDARY = [
   { href: "/notetaker", label: "Notes", icon: "notes" },
 ];
 
+/**
+ * The shell's navigation: the Pen sidebar on desktop, #727's compact rail on
+ * a phone (below useIsMobile's 768px, the same edge as the CSS switch).
+ *
+ * Both are rendered and CSS shows exactly one at every width, so the server
+ * render is already right on a phone and nothing jumps at hydration. Only the
+ * shown one carries data-testids, so an E2E locator never matches two
+ * elements (before hydration the desktop one has them, the server's guess).
+ */
 export function Navigation() {
+  const phone = useIsMobile();
+  return <>
+    <Sidebar testids={!phone} />
+    <PhoneRail testids={phone} />
+  </>;
+}
+
+/** #727's compact rail, kept unchanged as the phone navigation. */
+export function PhoneRail({ testids = true }: { testids?: boolean }) {
   const pathname = usePathname() || "/dashboard";
   const { userName, isAdmin } = useUser();
   // #620 hide_<feature> flags, keyed by destination through lib/navFeatures
@@ -54,7 +74,7 @@ export function Navigation() {
     <nav aria-label="Primary">
       {[PRIMARY, SECONDARY].map((group, index) => <div className="fa26-nav-group" key={index}>
         {group.filter(item => visible(item.href)).map(item => <Link key={item.href} href={item.href} aria-label={item.label} title={item.label}
-          data-testid={`nav-link-${item.href.slice(1)}`} aria-current={active(item.href) ? "page" : undefined} className="fa26-nav-item">
+          data-testid={testids ? `nav-link-${item.href.slice(1)}` : undefined} aria-current={active(item.href) ? "page" : undefined} className="fa26-nav-item">
           <DesignIcon name={item.icon} /><span className="fa26-nav-label">{item.label}</span>
         </Link>)}
       </div>)}
@@ -70,7 +90,7 @@ export function Navigation() {
           { href: "/course-planner", label: "Course planner" }, { href: "/achievements", label: "Achievements" },
           { href: "/social", label: "Community" }, ...(isAdmin ? [{ href: "/admin", label: "Admin" }] : [])]
           .filter(item => visible(item.href))
-          .map(item => <Link key={item.href} href={item.href} data-testid={`nav-link-${item.href.slice(1)}`} onClick={() => setMoreOpen(false)}>{item.label}</Link>)}
+          .map(item => <Link key={item.href} href={item.href} data-testid={testids ? `nav-link-${item.href.slice(1)}` : undefined} onClick={() => setMoreOpen(false)}>{item.label}</Link>)}
       </div>}
     </div>
   </aside>;
