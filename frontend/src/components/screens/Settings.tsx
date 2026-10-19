@@ -740,7 +740,7 @@ const ANALYTICS_NOTES: Record<AnalyticsState, string> = {
     "No choice is saved to your account yet, so this browser sends no page views. Switch it on to share usage data.",
   on: "On — saved to your account, so it applies wherever you sign in. Nothing about it is stored in your browser.",
   on_browser_blocked:
-    "On — saved to your account. Your browser's Do Not Track or Global Privacy Control signal is on, so this browser sends no page views; switch this off to opt out of everything, wherever you sign in.",
+    "On — saved to your account. Your browser's Do Not Track or Global Privacy Control signal is on, so this browser sends no page views and we share no actions from its requests, but some background processing on your documents can still be shared; switch this off to opt out of everything, wherever you sign in.",
   on_not_running:
     "On — saved to your account. Page views couldn't start in this browser (a blocker may have stopped them).",
   off: "Off — saved to your account, so none of this is shared, wherever you sign in.",
@@ -787,11 +787,12 @@ function AnalyticsPreference({
           </div>
           <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
             Share how you use Sapling with PostHog, our analytics provider, so we can see what to
-            improve: the app pages you view, actions you take (like starting a quiz, messaging the
+            improve: the app pages you view (with basic browser and device details, but not your IP
+            address), actions you take (like starting a quiz, messaging the
             tutor or uploading a document), the AI model, token counts and cost behind each AI
             response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
             never your name or email, and never what you type or the text of your notes, documents,
-            messages or AI replies. Turning it off stops all of this from then on.{" "}
+            messages or AI replies. Turning it off stops all of this within about a minute.{" "}
             <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">

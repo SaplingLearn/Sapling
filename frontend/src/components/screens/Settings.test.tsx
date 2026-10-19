@@ -291,6 +291,7 @@ describe("Settings → Data: product analytics opt-out", () => {
     expect(toggle).toHaveAttribute("aria-checked", "true");
     expect(note()).toHaveTextContent(/Do Not Track or Global Privacy Control/);
     expect(note()).toHaveTextContent(/this browser sends no page views/);
+    expect(note()).toHaveTextContent(/background processing on your documents can still be shared/);
     fireEvent.click(toggle);
     expect(updateSettings).toHaveBeenLastCalledWith("u1", { analytics_opt_out: true });
   });
