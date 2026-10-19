@@ -28,12 +28,12 @@ const BOTANICAL: Partial<Record<SidebarIcon, BotanicalIconName>> = {
 };
 
 /** Row icon width, px (--nav-icon in Sidebar.module.css). */
-const ICON = 16;
+const ICON = 18;
 
 function EntryIcon({ icon }: { icon: SidebarIcon }) {
   const name = BOTANICAL[icon];
-  // Width-fitted at 16px (down from the Pen's 22, at Andres's request) with
-  // the authored aspect: Tutor's tree stands ~20px, Today's house ~12px.
+  // Width-fitted at 18px (down from the Pen's 22, at Andres's request) with
+  // the authored aspect: Tutor's tree stands ~22.6px, Today's house ~13.6px.
   const { width, height } = name ? BOTANICAL_ASSETS[name] : { width: 1, height: 1 };
   if (name) return <BotanicalIcon name={name} size={ICON} style={{ height: (ICON * height) / width }} />;
   return <GitBranch size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" />;
@@ -224,8 +224,8 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} aria-controls={sidebarId}
         data-tip={collapsed ? "Expand sidebar" : undefined} onClick={toggleCollapsed}>
         {collapsed
-          ? <PanelLeftOpen size={16} strokeWidth={1.75} aria-hidden="true" focusable="false" />
-          : <PanelLeftClose size={16} strokeWidth={1.75} aria-hidden="true" focusable="false" />}
+          ? <PanelLeftOpen size={18} strokeWidth={1.75} aria-hidden="true" focusable="false" />
+          : <PanelLeftClose size={18} strokeWidth={1.75} aria-hidden="true" focusable="false" />}
       </button>
     </div>
     <nav aria-label="Primary" className={styles.track} ref={track}>
@@ -242,7 +242,7 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
             <span className={styles.icon}><Ellipsis size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" /></span>
             <span className={`${styles.label} ${styles.fade}`}>More</span>
             <span className={`${styles.chevronSlot} ${styles.fade}`}>
-              <ChevronDown className={styles.chevron} size={14} strokeWidth={1.75} aria-hidden="true" focusable="false" />
+              <ChevronDown className={styles.chevron} size={16} strokeWidth={1.75} aria-hidden="true" focusable="false" />
             </span>
           </button>
           <div id={moreId} className={styles.moreRegion} data-open={moreOpen || undefined} data-testid={tid("nav-more-region")}

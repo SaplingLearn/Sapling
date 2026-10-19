@@ -446,22 +446,24 @@ smaller wordmark (112 px), much tighter rows, smaller type and icons, and a
 collapsible rail, so the sidebar now deliberately departs from the export's
 spacing while keeping its panel, colours, order, icons and active treatment.
 
-- **Spacing and size (current).** Header 52 px: the 112 px wordmark at 25/18,
-  the collapse toggle (32 px) 18 px from the right edge. "YOUR WORKSPACE" at
-  10 px (letter-spacing 0.11 em), 14 px under the header and 6 px over the
-  first row. Rows 32 px tall on a 36 px pitch (4 px gap), inset 16 px. Icons
-  16 px, 12 px into the row; labels 13 px SUSE, 10 px after the icon (x 54),
-  semibold when active. More and its list keep the 4 px rhythm. The divider
-  sits 12 px under the rows and 6 px over Settings; the account row is 40 px,
-  12 px off the bottom, with its initial in the same 16 px slot (13 px name,
-  11 px subline). Checked in Chromium: rows at y 86, 122, 158, 194, 230, 266,
-  every one 32 px, and the pill's box equals the active row's box on all six
-  rows, expanded and collapsed.
+- **Spacing and size (current; Andres moved it halfway back from the
+  smallest pass).** Header 56 px: the 112 px wordmark at 25/20, the collapse
+  toggle (32 px) 18 px from the right edge. "YOUR WORKSPACE" at 11 px
+  (letter-spacing 0.11 em), 16 px under the header and 8 px over the first
+  row. Rows 36 px tall on a 40 px pitch (4 px gap), inset 16 px. Icons 18 px,
+  12 px into the row; labels 14 px SUSE, 10 px after the icon (x 56), semibold
+  when active. More and its list keep the 4 px rhythm. The divider sits 14 px
+  under the rows and 8 px over Settings; the account row is 44 px, 14 px off
+  the bottom, with its initial in the same 18 px slot (14 px name, 12 px
+  subline). Checked in Chromium: rows at y 96, 136, 176, 216, 256, 296, every
+  one 36 px, and the pill's box equals the active row's box on all six rows,
+  expanded and collapsed.
 - **Collapse.** A toggle in the header (Lucide `PanelLeftClose`/`PanelLeftOpen`,
   `nav-collapse`, `aria-label` "Collapse sidebar"/"Expand sidebar",
   `aria-expanded`, `aria-controls` the sidebar) folds it to a **68 px icon
-  rail**. The inset grows to 14 px, so every 40 px row keeps its 16 px icon
-  12 px in and centred (x 34). The account row and toggle centre there too.
+  rail**. The inset drops to 13 px, so every 42 px row keeps its 18 px icon
+  12 px in and centred (x 34); 18 px icons are not cramped there, so the rail
+  stayed 68 px. The account row and toggle centre there too.
   - Labels, the eyebrow, the wordmark and the account name fade out (120 ms)
     *before* the width shrinks, and fade in *after* it grows. `<main>` is the
     flex sibling, so it reflows with the width. Measured: collapsing, the label
@@ -562,7 +564,7 @@ spacing while keeping its panel, colours, order, icons and active treatment.
   switch, and the collapse: toggle state and `aria-expanded`/`aria-controls`,
   persistence and blocked storage, accessible names on every collapsed row,
   the rail tooltip on hover/focus/Escape, pill alignment on all six rows at
-  the 36 px pitch expanded and collapsed, an instant collapse under reduced
+  the 40 px pitch expanded and collapsed, an instant collapse under reduced
   motion, and the width animation arming after mount.
   `ShellFrame.test.tsx` pins the utility Settings link to the shared Lucide
   gear. `lib/navFeatures.test.ts` pins that every destination

@@ -92,15 +92,15 @@ describe("FA26 phone rail", () => {
 /* ── The Pen sidebar (desktop) ─────────────────────────────────────────── */
 
 const PRIMARY_ORDER = ["dashboard", "learn", "tree", "library", "tutor-view", "calendar"];
-/** jsdom has no layout: give every sidebar row the sidebar's box (rows 32px
- *  tall on a 36px pitch, the first 34px into the content box: 14px + a 14px
- *  eyebrow + 6px). */
+/** jsdom has no layout: give every sidebar row the sidebar's box (rows 36px
+ *  tall on a 40px pitch, the first 40px into the content box: 16px + a 16px
+ *  eyebrow + 8px). */
 function stubRowGeometry() {
   return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     const key = this.dataset.navKey;
     const index = key ? PRIMARY_ORDER.indexOf(key) : -1;
-    const top = key ? 52 + 34 + (index < 0 ? 7 : index) * 36 : 52;
-    return { top, bottom: top + 32, left: 16, right: 200, width: 184, height: 32, x: 16, y: top, toJSON: () => ({}) } as DOMRect;
+    const top = key ? 56 + 40 + (index < 0 ? 7 : index) * 40 : 56;
+    return { top, bottom: top + 36, left: 16, right: 200, width: 184, height: 36, x: 16, y: top, toJSON: () => ({}) } as DOMRect;
   });
 }
 /** Swap the matchMedia stub: `phone` = below 768px, `reduced` = reduced motion. */
@@ -285,12 +285,12 @@ describe("Pen sidebar", () => {
     expect(document.querySelectorAll('[data-testid="nav-pill"]')).toHaveLength(1);
     expect(pill()).toHaveAttribute("data-shown");
     expect(pill()).toHaveAttribute("data-jump"); // first placement: no slide
-    expect(getComputedStyle(pill()).transform).toBe("translateY(34px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(40px)");
     const sidebar = screen.getByTestId("app-sidebar");
     await waitFor(() => expect(sidebar).toHaveAttribute("data-animated"));
     state.pathname = "/library";
     rerender(<Sidebar />);
-    expect(getComputedStyle(pill()).transform).toBe("translateY(142px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(160px)");
     expect(pill()).not.toHaveAttribute("data-jump"); // a real move: it tweens
     expect(sidebar).toHaveAttribute("data-animated");
     expect(screen.getByTestId("nav-link-library")).toHaveAttribute("aria-current", "page");
@@ -307,7 +307,7 @@ describe("Pen sidebar", () => {
     state.search = "view=tutor";
     rerender(<Sidebar />);
     expect(screen.getByTestId("app-sidebar")).not.toHaveAttribute("data-animated");
-    expect(getComputedStyle(pill()).transform).toBe("translateY(178px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(200px)");
     expect(screen.getByTestId("nav-link-tutor-view")).toHaveAttribute("aria-current", "page");
     expect(current()).toHaveLength(1);
   });
@@ -400,12 +400,12 @@ describe("collapsible sidebar", () => {
     expect(screen.queryByTestId("nav-tip")).toBeNull();
   });
 
-  it("keeps the pill on the active row at the 36px pitch, expanded and collapsed", () => {
+  it("keeps the pill on the active row at the 40px pitch, expanded and collapsed", () => {
     stubRowGeometry();
     flagState.flags = { tutor_view: "on" };
     const routes: [string, string, number][] = [
-      ["/dashboard", "", 34], ["/learn", "", 70], ["/tree", "", 106],
-      ["/library", "", 142], ["/learn", "view=tutor", 178], ["/calendar", "", 214],
+      ["/dashboard", "", 40], ["/learn", "", 80], ["/tree", "", 120],
+      ["/library", "", 160], ["/learn", "view=tutor", 200], ["/calendar", "", 240],
     ];
     state.pathname = "/dashboard";
     const { rerender } = render(<Sidebar />);
@@ -429,7 +429,7 @@ describe("collapsible sidebar", () => {
     fireEvent.click(toggle());
     expect(sidebar()).toHaveAttribute("data-collapsed");
     expect(sidebar()).not.toHaveAttribute("data-animated");
-    expect(getComputedStyle(pill()).transform).toBe("translateY(142px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(160px)");
     expect(screen.getByTestId("nav-link-library")).toHaveAttribute("aria-current", "page");
   });
 
