@@ -518,11 +518,12 @@ def test_generate_persists_exam_days_away_when_an_exam_is_upcoming(
     and still returns 200. So the write has to be provoked and then read back
     from Postgres.
     """
-    from datetime import date, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from db.connection import table
 
-    due = date.today() + timedelta(days=5)
+    # Match exam_proximity._today(): local evening can already be tomorrow UTC.
+    due = datetime.now(timezone.utc).date() + timedelta(days=5)
     table("assignments").insert({
         "id": "sub-exam-upcoming",
         "enrollment_id": "rich-enr-active-cs101-f25",

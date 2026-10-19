@@ -9,7 +9,7 @@ ToS and privacy policy don't clearly cover that, and this feature does not need
 it. `points_earned`/`points_possible` are encrypted anyway; nothing here reads
 or decrypts them.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 from services.exam_proximity import days_until_next_exam, is_exam
@@ -17,6 +17,20 @@ from services.exam_proximity import days_until_next_exam, is_exam
 
 def _due(days_from_today: int) -> str:
     return (date(2026, 8, 22) + timedelta(days=days_from_today)).isoformat()
+
+
+def test_exam_calendar_uses_utc_when_local_evening_is_the_previous_day():
+    from services import exam_proximity
+
+    utc_now = datetime(2026, 10, 19, 1, 0, tzinfo=timezone.utc)
+    local_now = utc_now.astimezone(timezone(timedelta(hours=-4)))
+    with (
+        patch.object(exam_proximity, "datetime") as clock,
+        patch.object(exam_proximity, "date") as local_date,
+    ):
+        clock.now.side_effect = lambda tz=None: utc_now if tz is timezone.utc else local_now
+        local_date.today.return_value = local_now.date()
+        assert exam_proximity._today() == date(2026, 10, 19)
 
 
 class TestIsExam:
