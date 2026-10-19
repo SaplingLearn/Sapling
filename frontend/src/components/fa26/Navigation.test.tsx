@@ -139,7 +139,7 @@ describe("Pen sidebar", () => {
     expect(screen.getByRole("link", { name: "Sapling home" })).toHaveAttribute("href", "/dashboard");
   });
 
-  it("draws the approved Pen exports for five rows and Lucide's branch for Knowledge", () => {
+  it("draws all six approved Pen exports, including the native 22px Knowledge glyph", () => {
     flagState.flags = { tutor_view: "on" };
     render(<Sidebar />);
     const icon = (id: string) => screen.getByTestId(id).querySelector(".sapling-icon");
@@ -148,7 +148,10 @@ describe("Pen sidebar", () => {
     expect(icon("nav-link-library")).toHaveAttribute("data-icon", "library");
     expect(icon("nav-link-tutor-view")).toHaveAttribute("data-icon", "tutor");
     expect(icon("nav-link-calendar")).toHaveAttribute("data-icon", "calendar");
-    expect(screen.getByTestId("nav-link-tree").querySelector("svg.lucide-git-branch")).toBeTruthy();
+    const knowledge = icon("nav-link-tree");
+    expect(knowledge).toHaveAttribute("data-icon", "knowledge");
+    expect(knowledge).toHaveStyle({ width: "22px", height: "22px" });
+    expect((knowledge as HTMLElement).style.getPropertyValue("--sapling-icon-src")).toBe('url("/design/sapling/nav-knowledge.svg")');
   });
 
   it("marks Learn or Tutor current by ?view=, exactly one row at a time", () => {

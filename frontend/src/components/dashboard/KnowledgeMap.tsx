@@ -102,13 +102,24 @@ export function KnowledgeMap(props: KnowledgeMapProps) {
     <section className={styles.mapCard} aria-labelledby="dashboard-map-title" data-testid="dashboard-map">
       <div className={styles.mapHeader}>
         <h2 id="dashboard-map-title" className={styles.mapTitle}>Your knowledge</h2>
-        <p className={styles.counts} data-testid="dashboard-map-counts" aria-live="polite">
+        <button
+          type="button"
+          className={styles.mapCounts}
+          aria-label={coursesOpen ? "Hide course progress" : "Course progress"}
+          aria-expanded={coursesOpen}
+          aria-controls={coursesId}
+          disabled={!coursesReady}
+          onClick={() => setCoursesOpen((o) => !o)}
+          data-testid="dashboard-courses-key-toggle"
+        >
+        <span className={styles.counts} data-testid="dashboard-map-counts" aria-live="polite">
           {loaded
             ? `${concepts.length} ${concepts.length === 1 ? "concept" : "concepts"} · ${hubs.length} ${hubs.length === 1 ? "course" : "courses"}`
             : graphStatus === "error"
               ? "Map unavailable"
               : "Loading…"}
-        </p>
+        </span>
+        </button>
       </div>
 
       <div className={styles.toolbar}>
@@ -129,20 +140,8 @@ export function KnowledgeMap(props: KnowledgeMapProps) {
             ))}
           </select>
         </label>
-        <span className={styles.semester} data-testid="dashboard-semester-scope">{semesterLabel}</span>
+        <span className="sapling-visually-hidden" data-testid="dashboard-semester-scope">{semesterLabel}</span>
         <span className={styles.toolbarSpacer} />
-        {coursesReady && (
-          <button
-            type="button"
-            className={styles.toolButton}
-            aria-expanded={coursesOpen}
-            aria-controls={coursesId}
-            onClick={() => setCoursesOpen((o) => !o)}
-            data-testid="dashboard-courses-key-toggle"
-          >
-            {coursesOpen ? "Hide course progress" : "Course progress"}
-          </button>
-        )}
         <button type="button" ref={topicsRef} className={styles.toolButton} onClick={onViewTopics} data-testid="dashboard-view-topics">
           View topics
         </button>
@@ -207,6 +206,7 @@ export function KnowledgeMap(props: KnowledgeMapProps) {
             highlightId={highlightId}
             onNodeClick={preview ? undefined : onSelect}
             interactive={!preview}
+            viewControls="zoom"
           />
         )}
         {(graphStatus === "loading" || graphStatus === "idle") && (

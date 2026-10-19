@@ -82,9 +82,20 @@ test("no-WebGL browser with persisted 3d mode lands on the dashboard and gets th
   await expect(page.getByTestId("error-fallback")).toHaveCount(0);
   await expect(page.getByTestId("graph-crash-fallback")).toHaveCount(0);
 
+  // The bounded Pen overview is always 2D; the optional mode control lives
+  // in deliberate full-map exploration, where its saved 3D wish is applied.
+  await expect(container.locator('svg[data-renderer="pen"]')).toBeVisible();
+  await expect(page.getByTestId("graph-mode-toggle")).toHaveCount(0);
+  await page.getByTestId("dashboard-open-map").click();
+  const full = page.getByTestId("dashboard-full-map");
+  await expect(full).toBeVisible();
+  await expect(page.getByTestId("graph-container")).toHaveCount(1);
+  await expect(full.getByTestId("graph-node").first()).toBeVisible();
+  await expect(full.locator('svg[data-renderer="pen"]')).toBeVisible();
+
   // The 3D toggle is aria-disabled (still focusable for keyboard/SR users)
-  // and says why.
-  const toggle = page.getByTestId("graph-mode-toggle");
+  // and says why, even with the poisoned saved preference.
+  const toggle = full.getByTestId("graph-mode-toggle");
   await expect(toggle).toHaveAttribute("aria-disabled", "true");
   await expect(toggle).toHaveAttribute("title", "3D requires WebGL");
 
@@ -99,6 +110,7 @@ test("no-WebGL browser with persisted 3d mode lands on the dashboard and gets th
   // early negative checks and leave the spec green.
   await expect(container.getByTestId("graph-node").first()).toBeVisible();
   await expect(page.getByTestId("error-fallback")).toHaveCount(0);
+  await expect(page.getByTestId("graph-crash-fallback")).toHaveCount(0);
 });
 
 test("WebGL-capable browser keeps the 3D toggle enabled", async ({ page }) => {
@@ -108,8 +120,17 @@ test("WebGL-capable browser keeps the 3D toggle enabled", async ({ page }) => {
   // real-browser assertion of the positive path.
   await page.goto("/dashboard");
 
-  const toggle = page.getByTestId("graph-mode-toggle");
+  await expect(page.getByTestId("graph-container").locator('svg[data-renderer="pen"]')).toBeVisible();
+  await expect(page.getByTestId("graph-mode-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("error-fallback")).toHaveCount(0);
+  await expect(page.getByTestId("graph-crash-fallback")).toHaveCount(0);
+  await page.getByTestId("dashboard-open-map").click();
+  const full = page.getByTestId("dashboard-full-map");
+  await expect(full).toBeVisible();
+  const toggle = full.getByTestId("graph-mode-toggle");
   await expect(toggle).toBeVisible();
   await expect(toggle).not.toHaveAttribute("aria-disabled", "true");
   await expect(toggle).toHaveAttribute("title", "Switch to 3D graph");
+  await expect(page.getByTestId("error-fallback")).toHaveCount(0);
+  await expect(page.getByTestId("graph-crash-fallback")).toHaveCount(0);
 });

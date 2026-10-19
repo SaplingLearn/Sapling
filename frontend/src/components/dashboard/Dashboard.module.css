@@ -78,7 +78,7 @@
    two" rule fa26.css applies to the legacy dashboard (768–959px). */
 @container (min-width: 700px) {
   .workspace {
-    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    grid-template-columns: minmax(0, 780fr) minmax(280px, 330fr);
     grid-template-areas:
       "map context"
       "notes coming";
@@ -187,41 +187,56 @@
 
 /* ── Map card ────────────────────────────────────────────────────────── */
 .mapCard {
-  border: 1px solid color-mix(in srgb, var(--sapling-primary) 35%, var(--sapling-line));
-  border-radius: var(--sapling-radius-lg);
-  background: color-mix(in srgb, var(--sapling-sage) 22%, var(--sapling-paper));
+  /* Exact Pen map typography; local roles keep the rest of the product scale unchanged. */
+  --map-text-title: 21px;
+  --map-text-meta: 12px;
+  --map-text-control: 13px;
+  --map-border: #B9C39D;
+  container-type: inline-size;
+  position: relative;
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--map-border);
+  border-radius: 8px;
+  background: #F3F0E8;
   overflow: hidden;
 }
 .mapHeader {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 4px var(--sapling-space-4);
-  padding: 14px 20px;
+  min-height: 48px;
+  padding: 0 20px;
   background: var(--sapling-sage);
 }
-.mapTitle { margin: 0; font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading); color: var(--sapling-ink); }
+.mapTitle { margin: 0; font: 600 var(--map-text-title)/1.3 var(--sapling-font-heading); color: var(--sapling-ink); }
 .counts { margin: 0; color: var(--sapling-muted); font-size: var(--sapling-text-meta); line-height: var(--sapling-leading-meta); }
+.mapCounts { padding: 0; min-height: 44px; border: 0; background: transparent; color: var(--sapling-muted); cursor: pointer; text-align: left; }
+.mapCounts .counts { font-size: var(--map-text-meta); }
+.mapCounts:hover:not(:disabled) { text-decoration: underline; }
+.mapCounts:focus-visible { outline: 2px solid var(--sapling-primary); outline-offset: 3px; }
+.mapCounts:disabled { cursor: default; }
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px var(--sapling-space-4);
-  padding: 6px 20px;
-  border-bottom: 1px solid var(--sapling-line);
+  gap: 0 20px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 20px;
 }
 .toolbarSpacer { flex: 1 1 auto; }
 .field { display: inline-flex; align-items: center; gap: 8px; font-size: var(--sapling-text-meta); color: var(--sapling-muted); }
 .select {
   min-height: 44px;
   max-width: min(100%, 16rem);
-  padding: 6px 10px;
-  border: 1px solid var(--sapling-line);
-  border-radius: var(--sapling-radius-md);
-  background: var(--sapling-paper);
+  padding: 0 16px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--sapling-ink);
-  font: 500 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
+  font: 600 var(--map-text-control)/1.4 var(--sapling-font-body);
 }
 .toolButton {
   display: inline-flex;
@@ -232,14 +247,19 @@
   border: 0;
   background: none;
   color: var(--sapling-primary);
-  font: 600 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
+  font: 600 var(--map-text-control)/1.4 var(--sapling-font-body);
   cursor: pointer;
 }
 .toolButton:hover { text-decoration: underline; }
 .semester { font-size: var(--sapling-text-meta); color: var(--sapling-muted); }
 
-.canvas { position: relative; height: clamp(420px, 58vh, 620px); min-height: 0; }
-.canvasPreview { position: relative; height: 260px; }
+.canvas { position: relative; aspect-ratio: 893 / 601; margin: 0 52px 18px 28px; min-height: 0; }
+.canvasPreview { position: relative; aspect-ratio: 893 / 601; margin: 0 12px 16px; min-height: 0; }
+/* Renderer dimensions come from ResizeObserver. Keep its last measured size
+   out of intrinsic layout so desktop → phone resizing cannot pin the map tall. */
+.canvas > [data-testid="graph-container"],
+.canvasPreview > [data-testid="graph-container"] { position: absolute; inset: 0; }
+.canvas [data-graph-controls] { right: -32px; }
 .canvasOverlay {
   position: absolute;
   inset: 0;
@@ -253,9 +273,13 @@
 
 /* The legend itself is graph/SaplingMapLegend (shared with Learn); the
    card only places it. */
-.legend {
-  padding: 10px 20px 14px;
-  border-top: 1px solid var(--sapling-line);
+.mapCard .legend {
+  display: grid;
+  grid-template-columns: 154fr 152fr 164fr 270fr;
+  column-gap: 0;
+  padding: 0 20px 15px;
+  font-size: var(--map-text-meta);
+  line-height: 18px;
 }
 .legendNote { color: var(--sapling-muted); }
 
@@ -265,7 +289,33 @@
 .courseCode { font-weight: 600; overflow-wrap: anywhere; }
 .bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--sapling-line); }
 
-.previewActions { display: flex; flex-wrap: wrap; gap: 4px var(--sapling-space-4); padding: 6px 16px; }
+.previewActions { position: absolute; top: 48px; right: 12px; }
+.mapCard .previewActions > * { width: 144px; min-width: 144px; height: 44px; min-height: 44px; margin: 0; padding: 0 8px; gap: 6px; border-radius: 5px; font-size: var(--map-text-control); font-weight: 700; }
+@media (max-width: 767px) {
+  .mapCard { --map-border: #A3B06D; border-radius: 7px; }
+  .mapTitle { --map-text-title: 20px; }
+  .mapHeader { min-height: 42px; padding: 0 12px; }
+  .mapCounts { position: absolute; top: 48px; left: 12px; min-height: 24px; max-width: min(176px, calc(100% - 168px)); }
+  .toolbar { height: 62px; min-height: 62px; padding: 22px 166px 0 12px; gap: 0 8px; flex-wrap: nowrap; }
+  .toolbar .field { min-width: 0; flex: 1 1 auto; }
+  .toolbar .select { max-width: 100%; width: 88px; padding-right: 0; font-size: var(--map-text-meta); }
+  .toolbar .toolButton { padding: 0; font-size: var(--map-text-meta); white-space: nowrap; }
+  .toolbarSpacer { display: none; }
+  .mapCard .legend { display: grid; grid-template-columns: 164fr 158fr; gap: 8px 0; padding: 0 12px 9px; }
+  .mapCard .legend > li { min-width: 0; }
+}
+/* A phone still has the existing navigation rail. Adapt to the map's
+   available width, keeping every course name and action readable. */
+@container (max-width: 333px) {
+  .mapCard .previewActions > * { width: 124px; min-width: 124px; }
+  .toolbar { padding-right: 140px; gap: 4px; }
+}
+@container (max-width: 287px) {
+  .mapCounts { min-height: 44px; }
+  .toolbar { height: 100px; min-height: 100px; padding: 56px 12px 0; gap: 12px; }
+  .toolbar .select { width: 100%; max-width: 144px; }
+  .toolbar .toolButton { flex-shrink: 0; }
+}
 
 /* ── Lists (notes / coming up / sessions / topics) ───────────────────── */
 .sectionHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }

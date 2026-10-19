@@ -11,6 +11,7 @@ import React from "react";
 export const BOTANICAL_ASSETS = {
   today: { file: "nav-today.svg", width: 22, height: 16.587, penNode: "l2RIf" },
   learn: { file: "nav-learn.svg", width: 22, height: 20.742, penNode: "Q3Qtc5" },
+  knowledge: { file: "nav-knowledge.svg", width: 22, height: 22, penNode: "UWjIe" },
   library: { file: "nav-library.svg", width: 22, height: 20.798, penNode: "cPSOV" },
   tutor: { file: "nav-tutor.svg", width: 22, height: 27.677, penNode: "eLW36" },
   calendar: { file: "nav-calendar.svg", width: 22, height: 25.043, penNode: "tD2Nx" },

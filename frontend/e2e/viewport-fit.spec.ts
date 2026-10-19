@@ -10,7 +10,8 @@
  *
  * `<main data-testid="app-shell">` owns `overflow-y: auto` in both layouts,
  * so it — not `<body>` — is the scrollport every assertion here measures
- * against.
+ * against. The current Pen shell reserves bottom padding inside that
+ * scrollport. Screens fill its content box; the deliberate inset is not a gap.
  *
  * /tree is the case with a user-visible consequence beyond a stray
  * scrollbar. Its graph row's child is the element a `ResizeObserver` watches,
@@ -57,10 +58,12 @@ async function measure(page: Page, testId: string) {
     if (!shell || !el) return null;
     const s = shell.getBoundingClientRect();
     const e = el.getBoundingClientRect();
+    const chrome = getComputedStyle(shell);
+    const contentBottom = s.top + shell.clientTop + shell.clientHeight - parseFloat(chrome.paddingBottom || "0");
     return {
-      // Signed: positive overshoots the scrollport's bottom edge, negative
+      // Signed: positive overshoots the content box's bottom edge, negative
       // leaves a gap above it. A screen that fills exactly reads 0.
-      overshoot: Math.round(e.bottom - s.bottom),
+      overshoot: Math.round(e.bottom - contentBottom),
       scrollOverflow: shell.scrollHeight - shell.clientHeight,
       elHeight: Math.round(e.height),
       shellHeight: Math.round(s.height),
@@ -85,7 +88,7 @@ async function settledFit(page: Page, timeoutMs = 5_000) {
   return last;
 }
 
-test("the knowledge-graph canvas fills the shell scrollport exactly, in both layouts (#341)", async ({ page }) => {
+test("the knowledge-graph canvas fills the shell content box with either saved layout preference (#341)", async ({ page }) => {
   await page.goto("/tree");
   await expect(page.getByTestId("graph-container")).toBeVisible();
 
@@ -109,6 +112,7 @@ test("the knowledge-graph canvas fills the shell scrollport exactly, in both lay
       `layout "${layout}": canvas ${settled.elHeight}px vs scrollport ${settled.shellHeight}px — ` +
         `${settled.overshoot > 0 ? "overshoots" : "leaves a gap of"} ${Math.abs(settled.overshoot)}px`,
     ).toBeGreaterThanOrEqual(-SLACK);
+    expect(settled.overshoot, `layout "${layout}": the canvas must not exceed the shell content box`).toBeLessThanOrEqual(SLACK);
     expect(settled.elHeight, `layout "${layout}": the canvas should have a real height`).toBeGreaterThan(0);
     expect(
       settled.scrollOverflow,
@@ -117,7 +121,7 @@ test("the knowledge-graph canvas fills the shell scrollport exactly, in both lay
   }
 });
 
-test("the gradebook adds no height beyond what its content needs, in both layouts (#341)", async ({ page }) => {
+test("the gradebook adds no height beyond its content box with either saved layout preference (#341)", async ({ page }) => {
   await page.goto("/gradebook");
   // Wait for the LOADED grid, not just the chrome. The transcript trigger
   // renders as soon as there is a user, while `loading` still swaps a
@@ -141,6 +145,8 @@ test("the gradebook adds no height beyond what its content needs, in both layout
       if (!shell || !main) return null;
       const s = shell.getBoundingClientRect();
       const m = main.getBoundingClientRect();
+      const shellStyle = getComputedStyle(shell);
+      const contentBottom = s.top + shell.clientTop + shell.clientHeight - parseFloat(shellStyle.paddingBottom || "0");
 
       // The content's natural height has to be measured from the CHILDREN.
       // `main.scrollHeight` is useless here: it is floored at the element's
@@ -161,8 +167,9 @@ test("the gradebook adds no height beyond what its content needs, in both layout
       }
       return {
         mainHeight: Math.round(m.height),
-        // Space from the screen's <main> down to the scrollport's bottom.
-        available: Math.round(s.height - (m.top - s.top)),
+        // Available content space excludes the current shell's authored
+        // bottom padding, read from CSS rather than hardcoding its pixels.
+        available: Math.round(contentBottom - m.top),
         content: Math.round(bottom - m.top + parseFloat(cs.paddingBottom || "0")),
       };
     });

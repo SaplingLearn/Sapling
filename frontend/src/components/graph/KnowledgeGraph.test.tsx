@@ -129,6 +129,20 @@ describe("KnowledgeGraph — mode selection", () => {
     expect(queryByTestId("mock-2d")).toBeNull();
   });
 
+  it("keeps the bounded Pen overview in 2D without changing a saved 3D preference", () => {
+    window.localStorage.setItem(GRAPH_MODE_STORAGE_KEY, "3d");
+    const { queryByTestId, rerender } = render(
+      <KnowledgeGraph appearance="sapling" viewControls="zoom" nodes={[]} edges={[]} />,
+    );
+    expect(queryByTestId("mock-2d")).not.toBeNull();
+    expect(queryByTestId("mock-3d")).toBeNull();
+    expect(queryByTestId("graph-mode-toggle")).toBeNull();
+    expect(window.localStorage.getItem(GRAPH_MODE_STORAGE_KEY)).toBe("3d");
+    rerender(<KnowledgeGraph appearance="sapling" nodes={[]} edges={[]} />);
+    expect(queryByTestId("mock-3d")).not.toBeNull();
+    expect(queryByTestId("graph-mode-toggle")).not.toBeNull();
+  });
+
   it("toggle switches 2D → 3D when WebGL2 is available", () => {
     const { getByTestId, queryByTestId } = render(
       <KnowledgeGraph nodes={[]} edges={[]} />,

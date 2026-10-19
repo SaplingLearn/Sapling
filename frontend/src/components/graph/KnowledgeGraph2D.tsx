@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { PenKnowledgeGraph2D } from "./PenKnowledgeGraph2D";
 import {
   forceSimulation,
   forceLink,
@@ -43,10 +44,10 @@ export interface GraphComparisonEntry {
   partner_name?: string;
 }
 
-type Props = {
-  /** `fa26`: the #727 tier-coloured look (/tree). `sapling`: the same
-   *  geometry in the approved source palette (Dashboard, prompt 07), with a
-   *  visible selection ring and no hover tooltip. Unset: the course-hue look. */
+export type KnowledgeGraph2DProps = {
+  /** `fa26`: the #727 tier-coloured look (/tree). `sapling`: the authored
+   *  Pen paths, stable layout and source palette, with a visible selection
+   *  ring and no hover-only tooltip. Unset: the classic course-hue look. */
   appearance?: "fa26" | "sapling";
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -71,7 +72,11 @@ type Props = {
    *  and the page keeps ordinary touch scrolling over it (no swipe trap).
    *  The phone preview uses this; exploration opens deliberately elsewhere. */
   interactive?: boolean;
+  /** Bounded previews show source +/-; full exploration also exposes reset/fit. */
+  viewControls?: "all" | "zoom" | "none";
 };
+
+type Props = KnowledgeGraph2DProps;
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
 // truncation) lives in `lib/graph/nodeStyle` (#537). It was byte-duplicated
@@ -905,4 +910,8 @@ function KnowledgeGraph2DImpl({
   );
 }
 
-export const KnowledgeGraph2D = React.memo(KnowledgeGraph2DImpl);
+function KnowledgeGraph2DRenderer(props: KnowledgeGraph2DProps) {
+  return props.appearance === "sapling" ? <PenKnowledgeGraph2D {...props} /> : <KnowledgeGraph2DImpl {...props} />;
+}
+
+export const KnowledgeGraph2D = React.memo(KnowledgeGraph2DRenderer);

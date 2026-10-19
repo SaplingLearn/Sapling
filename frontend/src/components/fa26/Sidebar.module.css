@@ -3,15 +3,15 @@
  *
  * Expanded: 216px sage panel. Header 56px (112px wordmark at 25/20, the
  * collapse toggle 32px square 18px from the right edge). Rows are 36px tall
- * on a 40px pitch (4px gap), inset 16px; 18px icons sit 12px into the row
- * (x 28), 14px labels 10px after them (x 56); the active label is semibold.
+ * on a 40px pitch (4px gap), inset 16px; 22px icons sit 12px into the row
+ * (x 28), 14px labels 10px after them (x 60); the active label is semibold.
  * The 11px eyebrow sits 16px under the header and 8px over the first row;
  * More, its list and the footer keep the 4px rhythm; the footer divider sits
  * 14px under the rows and 8px over Settings; the account row is 44px, 14px
- * off the bottom, its initial in the same 18px slot as the icons.
+ * off the bottom, its initial in the same 22px slot as the icons.
  *
  * Collapsed: a 68px icon rail. The inset drops to 13px, so every 42px row
- * keeps its icon 12px in and centred (13 + 12 + 9 = x 34). Labels, the eyebrow, the
+ * keeps its icon 10px in and centred (13 + 10 + 11 = x 34). Labels, the eyebrow, the
  * wordmark and the account name fade out (then hide) BEFORE the width
  * shrinks, and fade in AFTER it grows; rows keep their y, so the pill only
  * changes its inset. <main> is the flex sibling, so it reflows with the width.
@@ -24,7 +24,7 @@
   --nav-dur-fast: 170ms;
   --nav-fade: 120ms;
   --nav-row: 36px;
-  --nav-icon: 18px;
+  --nav-icon: 22px;
   --nav-gap: 4px;
   --nav-inset: 16px;
   /* Expanding: grow first, then fade in. Collapsing swaps these. */
@@ -104,6 +104,7 @@
   padding: 0 var(--nav-inset);
 }
 .sidebar[data-collapsed] .content { padding: 0 13px; }
+.sidebar[data-collapsed] .item { padding-inline: 10px; }
 
 .eyebrow {
   margin: 16px 12px 8px;
@@ -226,7 +227,7 @@
   padding-left: 12px;
   white-space: nowrap;
 }
-.sidebar[data-collapsed] .account { margin-inline: 13px; }
+.sidebar[data-collapsed] .account { margin-inline: 13px; padding-left: 10px; }
 .avatar {
   flex: none;
   width: var(--nav-icon);

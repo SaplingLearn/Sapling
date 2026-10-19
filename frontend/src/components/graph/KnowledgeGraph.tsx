@@ -138,6 +138,9 @@ type Props = {
    *  2D/3D toggle, normal page scrolling over it. The persisted 2D/3D
    *  preference is neither read for it nor rewritten. Default true. */
   interactive?: boolean;
+  /** Bounded Pen overview keeps only its authored +/− controls. Full-map
+   * exploration retains reset/fit and the saved 2D/3D preference. */
+  viewControls?: "all" | "zoom" | "none";
 };
 
 const SR_ONLY: React.CSSProperties = {
@@ -226,7 +229,8 @@ export function KnowledgeGraph(props: Props) {
   // THE one encoding of the #538 rule: a persisted/synced "3d" wish is
   // ignored — not rewritten — while WebGL2 is unavailable.
   const interactive = props.interactive !== false;
-  const effective: Mode = webglOk && interactive ? mode : "2d";
+  const overview = props.appearance === "sapling" && props.viewControls === "zoom";
+  const effective: Mode = webglOk && interactive && !overview ? mode : "2d";
   const next: Mode = effective === "2d" ? "3d" : "2d";
   const { width = 800, height = 480 } = props;
   const descId = React.useId();
@@ -269,7 +273,7 @@ export function KnowledgeGraph(props: Props) {
           <KnowledgeGraph3D {...props} />
         )}
       </ErrorBoundary>
-      {interactive && <button
+      {interactive && !overview && <button
         type="button"
         data-testid="graph-mode-toggle"
         className="btn btn--ghost btn--sm"
@@ -303,7 +307,7 @@ export function KnowledgeGraph(props: Props) {
       >
         {effective.toUpperCase()}
       </button>}
-      {interactive && !webglOk && (
+      {interactive && !overview && !webglOk && (
         <span id={descId} style={SR_ONLY}>
           3D requires WebGL, which this browser doesn&apos;t have available.
         </span>

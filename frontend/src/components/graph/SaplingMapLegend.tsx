@@ -23,7 +23,7 @@ export function SaplingMapLegend({ compact = false, className }: { compact?: boo
           {TIER_LABEL[t]}
         </li>
       ))}
-      <li className={styles.note}>Brown circles are courses; bigger circles have a higher mastery estimate.</li>
+      <li className={styles.note}>Brown circles are courses. Color shows the recorded knowledge state.</li>
     </ul>
   );
 }

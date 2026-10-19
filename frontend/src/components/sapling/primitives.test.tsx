@@ -42,7 +42,7 @@ describe("BotanicalIcon", () => {
 
   it("maps every name to an approved Pen export", () => {
     expect(Object.fromEntries(Object.entries(BOTANICAL_ASSETS).map(([k, v]) => [k, v.penNode]))).toEqual({
-      today: "l2RIf", learn: "Q3Qtc5", library: "cPSOV", tutor: "eLW36",
+      today: "l2RIf", learn: "Q3Qtc5", knowledge: "UWjIe", library: "cPSOV", tutor: "eLW36",
       calendar: "tD2Nx", paper: "AHtpg", clov: "J19WJ2",
     });
   });

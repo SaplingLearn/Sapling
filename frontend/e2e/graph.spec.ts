@@ -10,9 +10,8 @@
  *     course-linked node (the shape `graph_service.get_graph` promises);
  *   - mastery classification — each node's DB `mastery_score` maps through
  *     the canonical thresholds (backend/config.py::get_mastery_tier) to the
- *     class the UI renders: the 2D graph encodes the tier as the node
- *     circle's opacity, and the /tree tier filter partitions nodes by the
- *     same field.
+ *     class the UI renders: the FA26 /tree graph encodes tier with its
+ *     opaque node fill, and the tier filter partitions nodes by that field.
  *
  * DATA assertions only. Force-layout geometry is nondeterministic by nature
  * (#383's test mode seeds the PRNG, but positions stay out of scope) —
@@ -62,22 +61,14 @@ function tierFor(score: number): Tier {
   return "unexplored";
 }
 
-/**
- * Mirror of KnowledgeGraph2D's `masteryOpacity` — how the 2D graph ENCODES
- * the mastery class on the `graph-node-circle` mark. Kept in lockstep with
- * frontend/src/components/graph/KnowledgeGraph2D.tsx (a redesign that retunes
- * these constants updates this table in the same PR).
- *
- * Since #537 the graph's copy of both this table and `tierFor` above lives in
- * `frontend/src/lib/graph/nodeStyle.ts` (`TIER_OPACITY` / `tierFor`), which
- * KnowledgeGraph2D and the quiz screens both import — that is the file to diff
- * against when either constant moves.
- */
-const TIER_OPACITY: Record<Tier, number> = {
-  mastered: 1,
-  learning: 0.78,
-  struggling: 0.55,
-  unexplored: 0.28,
+/** FA26 /tree palette from KnowledgeGraph2D's fillFor. This route has used
+ * fully opaque state colours since #727. The classic renderer's opacity ramp
+ * remains pinned separately by KnowledgeGraph2D.testmode.test.tsx. */
+const FA26_TIER_FILL: Record<Tier, string> = {
+  mastered: "#a1b06d",
+  learning: "#f8ce91",
+  struggling: "#ef8f97",
+  unexplored: "#decec1",
 };
 
 /** /tree tier-filter pill labels — the mastery enum surfaced 1:1 (Tree.tsx TIER_META). */
@@ -246,15 +237,14 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
   // MISSING edge still fails here even independent of hub-count coverage).
   expect(await svgEdges.count()).toBeGreaterThanOrEqual(g.expectedEdgeCount);
 
-  // Mastery classification at the render layer: the 2D graph encodes the
-  // tier as the graph-node-circle's opacity (TIER_OPACITY). Read every node
-  // group's id, label and circle opacity in one pass — pure DOM data, no
-  // geometry — and key the map by node id (a label-keyed map could silently
+  // Mastery classification at the render layer: FA26 encodes the tier with
+  // an opaque state fill. Read every group's id, circle fill and opacity in
+  // one pass and key by node id (a label-keyed map could silently
   // collapse two same-named nodes into one entry and mask a wrong class).
   const rendered = await svgNodes.evaluateAll((els) =>
     els.map((grp) => ({
       id: grp.getAttribute("data-node-id"),
-      label: grp.querySelector(":scope > text")?.textContent ?? "",
+      fill: grp.querySelector('[data-testid="graph-node-circle"]')?.getAttribute("fill") ?? null,
       opacity:
         grp
           .querySelector('[data-testid="graph-node-circle"]')
@@ -267,14 +257,19 @@ test("renders every DB concept node exactly once, classified by its DB mastery s
     const tier = tierFor(n.mastery_score);
     const got = byId.get(n.id);
     expect(got, `node ${n.id} ("${n.concept_name}") is not in the rendered SVG`).toBeDefined();
-    expect(
-      got!.label,
-      `node ${n.id} SVG label should be its (truncated) concept name`,
-    ).toBe(conceptLabel(n.concept_name));
+    // FA26 reveals concept names on hover/highlight rather than crowding
+    // the resting graph. Its force-layout marks keep moving, so use the
+    // real keyboard alternative to select/highlight each identity without
+    // waiting for a moving circle to satisfy pointer actionability.
+    const node = byNodeId(svgNodes, n.id);
+    await byNodeId(items, n.id).getByTestId("graph-node-activate").focus();
+    await page.keyboard.press("Enter");
+    await expect(node.locator(":scope > text"), `node ${n.id} selected-topic highlight label`).toHaveText(conceptLabel(n.concept_name));
+    expect(got!.fill, `node ${n.id} must render its DB-derived ${tier} fill`).toBe(FA26_TIER_FILL[tier]);
     expect(
       Number(got!.opacity),
       `node ${n.id} ("${n.concept_name}", mastery_score ${n.mastery_score}) must render as "${tier}"`,
-    ).toBeCloseTo(TIER_OPACITY[tier], 5);
+    ).toBe(1);
   }
 });
 

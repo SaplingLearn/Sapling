@@ -3,7 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ChevronDown, Ellipsis, GitBranch, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import { ChevronDown, Ellipsis, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { useFlagMap } from "@/context/FlagsContext";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
@@ -20,23 +20,21 @@ export const MORE_STORAGE_KEY = "sapling_nav_more_open";
 /** Remembers whether the sidebar is collapsed to its icon rail. */
 export const COLLAPSED_STORAGE_KEY = "sapling_nav_collapsed";
 
-/** The approved Pen nav exports. Knowledge has no approved vector (a recorded
- *  gap): the Pen frame draws Lucide's pre-1.0 git-branch, and the closest
- *  icon the app ships is lucide-react 1.x's redrawn GitBranch. */
-const BOTANICAL: Partial<Record<SidebarIcon, BotanicalIconName>> = {
-  today: "today", learn: "learn", library: "library", tutor: "tutor", calendar: "calendar",
+/** Current Pen silhouettes, including its original outlined GitBranch glyph. */
+const BOTANICAL: Record<SidebarIcon, BotanicalIconName> = {
+  today: "today", learn: "learn", knowledge: "knowledge", library: "library", tutor: "tutor", calendar: "calendar",
 };
 
 /** Row icon width, px (--nav-icon in Sidebar.module.css). */
-const ICON = 18;
+const ICON = 22;
 
 function EntryIcon({ icon }: { icon: SidebarIcon }) {
   const name = BOTANICAL[icon];
-  // Width-fitted at 18px (down from the Pen's 22, at Andres's request) with
-  // the authored aspect: Tutor's tree stands ~22.6px, Today's house ~13.6px.
+  // Current Pen width and authored aspect ratio, without substituting a
+  // differently drawn icon from the installed Lucide version.
   const { width, height } = name ? BOTANICAL_ASSETS[name] : { width: 1, height: 1 };
   if (name) return <BotanicalIcon name={name} size={ICON} style={{ height: (ICON * height) / width }} />;
-  return <GitBranch size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" />;
+  return null;
 }
 
 /** Reads the URL in its own Suspense boundary: useSearchParams in the shell
