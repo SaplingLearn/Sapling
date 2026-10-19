@@ -307,6 +307,10 @@ _STATE_CONFLICT = "loop state changed, retry"
 #: graded, or being graded under another request's claim.
 _ALREADY_GRADED = "already graded"
 _FEEDBACK_PENDING = "feedback pending; retry feedback before another check"
+_WITHDRAWN_FEEDBACK = (
+    "This check has been withdrawn. {result} The question and solution are no longer "
+    "available. You can continue with another check or end this session."
+)
 _DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
 #: The session opener served at the hard budget level (A27): no model call, so
 #: a capped student can still start a session and reach the probe (§3.5).
@@ -1618,12 +1622,20 @@ class _LoopTurn:
             self.item = get_check_item(entry["check_item_id"])
         # A23 withdrawal: the active item is gone — drop it; the entry stays.
         self.withdrawn = active if (active and self.item is None) else None
-        self.active = None if self.withdrawn else active
+        # A committed grade still needs a delivered result, even if its source
+        # item was withdrawn before feedback/recovery. Keep only its recorded
+        # metadata; never reconstruct a prompt, reference or model context.
+        self.withdrawn_feedback = bool(
+            self.withdrawn and isinstance(entry, dict)
+            and entry.get("graded_at") is not None and entry.get("feedback_given") is not True
+        )
+        self.active = active if self.withdrawn_feedback else (None if self.withdrawn else active)
         view = dict(self.state, current=self.active)
         self.phase = _turn_phase(self.kind, _phase_for(view))
         self.step = _step_state(self.state, self.active)
         self.entry = dict(entry) if (self.active and isinstance(entry, dict)) else {}
-        self.node_id = _node_for_item(self.user_id, self.item) if self.item is not None else None
+        self.node_id = (_node_for_item(self.user_id, self.item) if self.item is not None
+                        else self.entry.get("node_id") if self.withdrawn_feedback else None)
         # A27: teach turns take the current plan concept's band
         self.concept_node = self.node_id or self.state.get("concept")
         learner = _learner_state(self.user_id, self.concept_node)
@@ -1632,7 +1644,7 @@ class _LoopTurn:
         self.verdict = verdict or (
             self.entry.get("last_verdict") if self.phase == "feedback" else None
         )
-        self.answer_released = self.phase == "feedback" and self.verdict != "correct"
+        self.answer_released = self.item is not None and self.phase == "feedback" and self.verdict != "correct"
         self.rung = self.step.rung if self.phase == "hint" else Rung.H0
         prereq = _prereq_proficient(self.user_id, self.concept_node) if self.concept_node else True
         self.ceiling, self.ceiling_reason = _ceiling_for(
@@ -1752,6 +1764,10 @@ class _LoopTurn:
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
         self.text = self._deterministic_text(hard=decision.level == "hard")
+        if self.withdrawn_feedback:
+            # This is an explicit recorded-result/withdrawal notice, not a
+            # substitute model lesson. No assessment content remains servable.
+            return
         # PKG-10 (A15): a recorded misconception makes this a confronting turn
         self.confront_line = self._confront_line()
         if self.phase != "check":  # the pose never reaches the model (A17)
@@ -1879,6 +1895,13 @@ class _LoopTurn:
         return self.phase  # "teach" | "hint"
 
     def _deterministic_text(self, *, hard: bool) -> str | None:
+        if self.withdrawn_feedback:
+            result = {
+                "correct": "Your answer was recorded as correct.",
+                "not_yet": "Your answer was recorded as not yet correct.",
+                "idk": "Your 'I don't know' response was recorded.",
+            }.get(self.verdict, "Your earlier result remains recorded.")
+            return _WITHDRAWN_FEEDBACK.format(result=result)
         if self.kind == "unavailable":
             return _GRADE_UNAVAILABLE_REPLY
         if self.kind == "refused":
@@ -2363,10 +2386,18 @@ class _LoopTurn:
             except turn_activity.StaleTurnActivity as exc:
                 raise _StateConflict() from exc
         steps = _steps(state)
+        if self.withdrawn_feedback and (
+            state.get("current") != self.active
+            or (steps.get(self.active) or {}).get("feedback_given") is True
+        ):
+            raise _StateConflict()
         if self.phase == "feedback" and self.active in steps:
             entry = steps[self.active]
-            out["step"] = dict(entry)  # the zpd.step record, emitted after the save
-            if gates.offer_allowed(self.band, self.verdict != "correct"):
+            if self.withdrawn_feedback:
+                entry["feedback_withdrawn"] = True
+            else:
+                out["step"] = dict(entry)  # item-dependent zpd.step, after the save
+            if not self.withdrawn_feedback and gates.offer_allowed(self.band, self.verdict != "correct"):
                 entry["offered"] = True
                 out["offer_rung"] = min(int(self.ceiling), int(entry.get("rung") or 0) + 1)
             entry["feedback_given"] = True
@@ -3025,7 +3056,10 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         message="",
         independent_s=0.0,
     )
-    phase = "check" if pending_grade and pending_grade["kind"] == "check" else _phase_for(dict(state, current=active if item is not None else None))
+    pending_withdrawn_feedback = item is None and _phase_for(state) == "feedback"
+    phase = ("check" if pending_grade and pending_grade["kind"] == "check"
+             else "feedback" if pending_withdrawn_feedback
+             else _phase_for(dict(state, current=active if item is not None else None)))
     return {
         "active": True,
         "session_id": session_id,
@@ -3570,6 +3604,9 @@ def _committed_grade_observation(checkpoint, receipt, node_id):
         for key in ("check_item_id", "channel", "correct", "idk", "max_rung"):
             if final[key] != original[key]:
                 raise ValueError("Saved grade observation disagrees")
+        for key in ("difficulty", "synthetic_idk"):
+            if final[key] != original["planning_provenance"][key]:
+                raise ValueError("Saved grade immutable provenance disagrees")
         if original.get("same_session_recheck") and not final["same_session_recheck"]:
             raise ValueError("Saved grade recheck provenance weakened")
         if original["planning_provenance"]["previously_seen"] and not final["previously_seen"]:

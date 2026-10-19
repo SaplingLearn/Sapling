@@ -47,6 +47,14 @@ the same question meanwhile. Session diagnosis and goal observations therefore
 use the receipt's final canonical observation, not the checkpoint's optimistic
 `previously_seen`/`independent` flags. Receipt posteriors identify the committed
 operation's result, not a later read of another session's state.
+Item difficulty and synthetic-IDK provenance must still match the frozen
+checkpoint exactly; writer-finalized exposure may only reduce independence.
+
+If a graded question is withdrawn before feedback arrives, reload retains its
+pending feedback. The route delivers a deterministic notice containing only the
+recorded result and withdrawal, without reconstructing the prompt, reference or
+model context. It marks that feedback delivered once, clears the pose and offers
+no item-dependent hint or fabricated difficulty telemetry.
 
 An uncommitted old observation cannot be applied after newer direct or
 propagated Evidence touched its target. A known superseded result retires the
