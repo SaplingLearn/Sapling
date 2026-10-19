@@ -81,6 +81,8 @@ const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
 const CONTINUE_MESSAGE = "Let's continue.";
+const FEEDBACK_PENDING_DETAIL = "feedback pending; retry feedback before another check";
+const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before another check.";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -225,6 +227,7 @@ export function LoopLearn() {
   const [hintRetry, setHintRetry] = useState(false);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const [checkBusy, setCheckBusy] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState(false);
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
 
@@ -250,6 +253,7 @@ export function LoopLearn() {
   const resumePending = useRef(true); // the deep link's ?resume= is honoured once
   const sessionRef = useRef<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
+  const turnEpoch = useRef(0); // a late recovery snapshot cannot undo a newer turn
   const countedAttempt = useRef<string | null>(null); // `${qh}:${text}` the server counted
   const hintEpoch = useRef(0);
   const earnedHint = useRef<{ sessionId: string; questionHash: string; rung: number } | null>(null);
@@ -342,6 +346,7 @@ export function LoopLearn() {
     setPlanBusy(false);
     setGoalBusy(false);
     setCloseBusy(false);
+    setFeedbackPending(false);
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "close" });
     dropFromPicker(sid);
@@ -380,23 +385,26 @@ export function LoopLearn() {
     }
     dispatch({ type: "check", item: st.check ?? null });
     dispatch({ type: "phase", phase: statusPhase(st) });
+    setFeedbackPending(statusPhase(st) === "feedback");
   }, [enterClosed, applyLearningScope, invalidateHint]);
 
   /** After a submission that did not settle (a 409, a stream error, Stop): the
    *  server may already have graded it, so re-read where the session stands.
    *  Read-only. If even that fails, the item is cleared (fail closed): "Check
    *  me" re-poses it while it is still open (/check/next is idempotent then). */
-  const reconcile = useCallback(async (sid: string, g: number) => {
+  const reconcile = useCallback(async (sid: string, g: number, epoch = turnEpoch.current) => {
+    const current = () => g === gen.current && epoch === turnEpoch.current && sid === sessionRef.current;
     try {
       const st = await getLoopSessionStatus(sid, userId);
-      if (g === gen.current) applyStatus(sid, st);
+      if (current()) applyStatus(sid, st);
     } catch {
-      if (g === gen.current) dispatch({ type: "check", item: null });
+      if (current()) dispatch({ type: "check", item: null });
     }
   }, [userId, applyStatus]);
 
   // ── Session lifecycle ──────────────────────────────────────────────────
   const clearSessionView = useCallback(() => {
+    ++turnEpoch.current;
     invalidateHint();
     streamAbort.current?.abort();
     streamAbort.current = null;
@@ -434,6 +442,7 @@ export function LoopLearn() {
     setHintBusy(false);
     setCheckNote(null);
     setCheckBusy(false);
+    setFeedbackPending(false);
     setAskRating(null);
     setClose(null);
     setCloseBusy(false);
@@ -515,6 +524,7 @@ export function LoopLearn() {
     setSessionId(s.session_id);
     sessionRef.current = s.session_id;
     dispatch({ type: "phase", phase: s.phase });
+    setFeedbackPending(s.phase === "feedback");
     try {
       try {
         const r = await resumeSession(s.session_id);
@@ -878,6 +888,9 @@ export function LoopLearn() {
     streamAbort.current = controller;
     const g = gen.current;
     const sid = sessionRef.current;
+    const epoch = ++turnEpoch.current;
+    const recoveringFeedback = feedbackPending;
+    let feedbackStarted = false;
     let streamed = "";
     let hardSeen = false;
     // Abort is cooperative: a queued event may arrive after Stop or a session
@@ -898,7 +911,17 @@ export function LoopLearn() {
         streamed = "";
         setStreamingText("");
       },
-      onPhase: (p) => { if (acceptsEvents()) dispatch({ type: "phase", phase: p }); },
+      onPhase: (p) => {
+        if (!acceptsEvents()) return;
+        dispatch({ type: "phase", phase: p });
+        setFeedbackPending(p === "feedback");
+        if (p === "feedback") {
+          feedbackStarted = true; // the server committed the grade before this stream
+          dispatch({ type: "check", item: null });
+          setAttempt(EMPTY_DRAFT);
+          setHint(null);
+        }
+      },
       onCheck: (c) => { if (acceptsEvents()) dispatch({ type: "check", item: c }); },
       onLearnerState: (s) => { if (acceptsEvents()) dispatch({ type: "learner_state", state: s }); },
       onBudget: (b) => {
@@ -911,7 +934,7 @@ export function LoopLearn() {
       const res = await run(handlers);
       if (!ownsTurn()) return null;
       if (controller.signal.aborted) {
-        if (submission && sid) void reconcile(sid, g);
+        if ((submission || feedbackStarted || recoveringFeedback) && sid) void reconcile(sid, g, epoch);
         return null;
       }
       // done.reply is always the final, leak-stripped text (A46) — never the tokens
@@ -926,6 +949,8 @@ export function LoopLearn() {
       }
       if (submission && res.ask_rating && sid) setAskRating(sid);
       if (res.phase) dispatch({ type: "phase", phase: res.phase });
+      setFeedbackPending(false); // only a successful done means feedback was served
+      setCheckNote(null);
       for (const learnerState of res.learner_state ?? []) {
         dispatch({ type: "learner_state", state: learnerState });
       }
@@ -944,7 +969,7 @@ export function LoopLearn() {
       // session so the answer box never sticks on a graded item.
       const { status, detail } = extractErrorDetail(err);
       const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
-      if (submission && sid && !closed) void reconcile(sid, g);
+      if ((submission || feedbackStarted || recoveringFeedback) && sid && !closed) void reconcile(sid, g, epoch);
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
       if (hardSeen) return null;
@@ -957,10 +982,10 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [applyActivated, reportError, reconcile, invalidateHint]);
+  }, [applyActivated, reportError, reconcile, invalidateHint, feedbackPending]);
 
   const send = (text: string) => {
-    if (!sessionId || paused) return;
+    if (!sessionId || paused || starting || scopeLoading) return;
     setPlanJustApproved(false);
     setMessages((prev) => [...prev, asMsg("user", text)]);
     void runTurn((h) => streamLoopChat(sessionId, userId, text, h));
@@ -1053,13 +1078,14 @@ export function LoopLearn() {
   };
 
   const checkMe = async () => {
-    if (!sessionId || checkBusy) return;
+    if (!sessionId || checkBusy || feedbackPending || starting || scopeLoading) return;
     const g = gen.current;
+    const epoch = ++turnEpoch.current;
     setCheckBusy(true);
     setCheckNote(null);
     try {
       const r = await nextLoopCheck(sessionId, userId);
-      if (g !== gen.current) return;
+      if (g !== gen.current || epoch !== turnEpoch.current) return;
       applyLearningScope(r);
       if (r.check && r.goal_progress === undefined) setGoalProgress(null);
       setPlanJustApproved(false);
@@ -1078,7 +1104,16 @@ export function LoopLearn() {
       if (r.check) applyActivated(r.check);
       else setCheckNote(r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
     } catch (err) {
-      if (g === gen.current) reportError(err, "Couldn't get a check question.");
+      if (g !== gen.current || epoch !== turnEpoch.current) return;
+      const { status, detail } = extractErrorDetail(err);
+      if (status === 409 && detail === FEEDBACK_PENDING_DETAIL) {
+        dispatch({ type: "check", item: null });
+        dispatch({ type: "phase", phase: "feedback" });
+        setFeedbackPending(true);
+        setCheckNote(FEEDBACK_PENDING_COPY);
+        return;
+      }
+      reportError(err, "Couldn't get a check question.");
     } finally {
       if (g === gen.current) setCheckBusy(false);
     }
@@ -1099,6 +1134,7 @@ export function LoopLearn() {
       streamAbort.current?.abort();
       setCloseBusy(false);
       setClose(r);
+      setFeedbackPending(false);
       dispatch({ type: "check", item: null });
       dispatch({ type: "phase", phase: "close" });
       void refreshGraph();
@@ -1491,20 +1527,21 @@ export function LoopLearn() {
                 data-testid="loop-continue"
                 className="btn btn--sm btn--primary"
                 onClick={() => send(CONTINUE_MESSAGE)}
-                disabled={!!paused || streaming}
+                disabled={!!paused || streaming || starting || scopeLoading}
               >
-                Continue
+                {feedbackPending ? "Retry feedback" : "Continue"}
               </button>
             )}
             <button
               data-testid="loop-check-me"
               className="btn btn--sm"
               onClick={() => void checkMe()}
-              disabled={checkBusy || streaming}
-              title="Get a question on this concept"
+              disabled={checkBusy || streaming || feedbackPending || starting || scopeLoading}
+              title={feedbackPending ? FEEDBACK_PENDING_COPY : "Get a question on this concept"}
             >
               Check me
             </button>
+            {feedbackPending && !streaming && !checkNote && <span role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{FEEDBACK_PENDING_COPY}</span>}
             {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
               <button
                 data-testid="loop-teach-start"
@@ -1529,7 +1566,7 @@ export function LoopLearn() {
           header={chatHeader}
           streamingText={streamingText}
           onStop={stop}
-          disabled={!!paused}
+          disabled={!!paused || starting || scopeLoading}
           placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
         />
       </div>

@@ -301,6 +301,7 @@ _STATE_CONFLICT = "loop state changed, retry"
 #: C2 (review round 3): the 409 detail for a submission on an item that is
 #: graded, or being graded under another request's claim.
 _ALREADY_GRADED = "already graded"
+_FEEDBACK_PENDING = "feedback pending; retry feedback before another check"
 _DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
 #: The session opener served at the hard budget level (A27): no model call, so
 #: a capped student can still start a session and reach the probe (§3.5).
@@ -490,8 +491,25 @@ def _phase_for(state: dict) -> str:
     if not isinstance(entry, dict):
         return "teach"
     if entry.get("graded_at") is not None:
-        return "teach" if entry.get("feedback_given") else "feedback"
+        return "teach" if entry.get("feedback_given") is True else "feedback"
     return "check"
+
+
+def _require_no_pending_feedback(state: dict) -> None:
+    """A committed grade stays current until its feedback is actually served.
+
+    Ordinary chat retries that feedback from its saved verdict; activating a
+    new check must not abandon it or count it as delivered. Ending the session
+    remains a separate, explicit early end.
+    """
+    active = state.get("current")
+    entry = (state.get("steps") or {}).get(active) if active else None
+    if (
+        isinstance(entry, dict)
+        and entry.get("graded_at") is not None
+        and entry.get("feedback_given") is not True
+    ):
+        raise HTTPException(status_code=409, detail=_FEEDBACK_PENDING)
 
 
 def _loop_phase(doc: dict) -> str:
@@ -4072,6 +4090,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_teaching(state)
+    _require_no_pending_feedback(state)
     active = state.get("current")
     entry = (state.get("steps") or {}).get(active) if active else None
     now = _now_s()
@@ -4082,6 +4101,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
 
     def activate(st: dict, out: dict) -> None:
         out.clear()
+        _require_teaching(st)
+        _require_no_pending_feedback(st)  # recheck on the fresh CAS document too
         cur = st.get("current")
         cur_entry = (st.get("steps") or {}).get(cur) if cur else None
         if _grading_open(cur_entry, now):
