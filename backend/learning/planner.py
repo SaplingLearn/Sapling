@@ -9,11 +9,19 @@ dependent); the route applies EDGE_PREREQ_SOURCE_IS_PREREQ.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from learning.params import BKT_PROFICIENT, PLAN_MAX_CONCEPTS, PLAN_MAX_COUPLED, PLAN_ORDER
+from learning.params import (
+    BKT_PROFICIENT,
+    CHANNELS,
+    LADDER_MAX_RUNG,
+    PLAN_MAX_CONCEPTS,
+    PLAN_MAX_COUPLED,
+    PLAN_ORDER,
+    PROBE_DIFFICULTY_SHIFT,
+)
 from learning.probe import independent_observations
 
 PlanKind = Literal["review", "new", "sibling"]
@@ -41,24 +49,71 @@ class Plan:
     order: tuple[str, ...] = tuple(PLAN_ORDER)
 
 
+def _valid_planning_miss(observation: Mapping) -> bool:
+    """A real failed check is a practice need, even after help or a release.
+
+    This does not certify an independent diagnostic ceiling. Saved metadata is
+    untrusted JSON: outages, synthetic refusal-to-IDK and malformed verdicts
+    must not create a learner failure. Previously exposed/replayed items also
+    cannot create a new need after fresh recovery.
+    """
+    correct, idk = observation.get("correct"), observation.get("idk", False)
+    channel, difficulty = observation.get("channel"), observation.get("difficulty")
+    rung = observation.get("max_rung", 0)
+    refused = observation.get("refused", False)
+    return (
+        type(correct) is bool
+        and type(idk) is bool
+        and (idk or not correct)
+        and isinstance(channel, str)
+        and channel in CHANNELS
+        and type(difficulty) is int
+        and difficulty in PROBE_DIFFICULTY_SHIFT
+        and type(observation.get("independent")) is bool
+        and type(rung) is int
+        and 0 <= rung <= LADDER_MAX_RUNG
+        and type(observation.get("same_session_recheck", False)) is bool
+        and type(observation.get("assisted", False)) is bool
+        and observation.get("unavailable", False) is False
+        and observation.get("graded", True) is True
+        and (refused is False or refused is None or refused == "")
+        and observation.get("synthetic_idk", False) is False
+        and observation.get("previously_seen", False) is False
+    )
+
+
 def planning_states(states: dict[str, float], observations: Sequence[dict]) -> dict[str, float]:
     """Local planning needs, without changing a stored mastery posterior.
 
-    An independent miss cannot be erased by an old high posterior, help, a
-    repeated item or an easier floor confirmation. A later fresh unaided
-    success at the missed level or above can resolve that particular need.
+    A valid graded miss, including one after help or a release, cannot be
+    erased by an old high posterior, help, a repeated item or an easier floor
+    confirmation. Only a later fresh unaided success at the missed level or
+    above resolves that need. Assisted misses remain excluded from diagnosis.
     Observation order is causal (diagnosis first, then graded teaching checks).
     """
     failed: dict[str, set[int]] = defaultdict(set)
-    for observation in independent_observations(observations):
-        node = observation["node_id"]
-        if node not in states:
+    independent = {id(observation) for observation in independent_observations(observations)}
+    seen: set[str] = set()
+    for observation in observations:
+        if not isinstance(observation, Mapping):
             continue
-        difficulty = observation["difficulty"]
-        if observation["correct"] and not observation.get("idk", False):
+        question_hash = observation.get("question_hash")
+        if not isinstance(question_hash, str) or not question_hash.strip() or question_hash in seen:
+            continue
+        seen.add(question_hash)
+        node = observation.get("node_id")
+        if not isinstance(node, str) or node not in states:
+            continue
+        if (
+            id(observation) in independent
+            and observation["correct"]
+            and not observation.get("idk", False)
+            and observation.get("assisted", False) is False
+        ):
+            difficulty = observation["difficulty"]
             failed[node].difference_update(d for d in tuple(failed[node]) if d <= difficulty)
-        else:
-            failed[node].add(difficulty)
+        elif _valid_planning_miss(observation):
+            failed[node].add(observation["difficulty"])
     result = dict(states)
     for node, levels in failed.items():
         if levels:

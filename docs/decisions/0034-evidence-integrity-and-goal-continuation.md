@@ -20,8 +20,8 @@ already-earned help rung.
 
 ## Decision
 
-- Derive diagnostic boundaries and planning evidence from distinct, validated
-  independent observations. Validate outcome types, difficulty, channel and help
+- Derive diagnostic boundaries and positive planning recovery from distinct,
+  validated independent observations. Validate outcome types, difficulty, channel and help
   provenance; reject assisted, previously seen, release-recheck, refusal,
   unavailable and malformed records. Deduplicate question hashes by first
   exposure across history, including earlier exposures that were not independent.
@@ -29,9 +29,10 @@ already-earned help rung.
   provenance is not proof of independence.
 - Require complete grader verdict and support fields for the requested rubric
   labels. Missing, duplicated, invented or unreadable entries are model failures,
-  not evidence that the learner failed. After the existing bounded validation
-  retry, return unavailable and record no learner outcome. Keep the existing
-  answer, support-span, refusal and help-floor safeguards.
+  not evidence that the learner failed. Invalid primary/secondary protocols
+  return unavailable and record no learner outcome; span/context validation
+  retains its existing bounded retry. Keep the existing answer, support-span,
+  refusal and help-floor safeguards.
 - Add a provider generation cap of 4,096 output tokens and a 30-second grader
   request timeout, alongside existing run, budget and usage limits. These are
   engineering bounds; they do not establish grading accuracy or eliminate every
@@ -53,6 +54,12 @@ already-earned help rung.
   A later distinct independent correct answer at the same or higher difficulty
   can clear an earlier miss for local planning priority; easier, assisted or
   recheck answers cannot. This does not manufacture posterior or graph evidence.
+- Treat a valid failed practice check as an unresolved planning need even when
+  help or a release recheck reduced its evidence weight. An old high posterior
+  must not unlock its dependents after fresh failure. These assisted failures
+  cannot certify a diagnostic boundary. Only a later distinct independent
+  same-or-higher success clears the local need; replayed failures cannot reblock
+  a recovered concept, and unavailable or synthetic outcomes cannot block it.
 - Give asynchronous hint requests ownership of their session, item and request
   generation. Ignore obsolete responses after navigation, submission or close.
   When a rung was already granted but its text failed, retry the text action
