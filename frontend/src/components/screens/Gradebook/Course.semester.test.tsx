@@ -174,6 +174,17 @@ describe("GradebookCourseScreen term-scoped mutations (#468)", () => {
     await waitFor(() => expect(syncGradescopeCourse).toHaveBeenCalledWith("u1", "c1", "Fall 2025"));
   });
 
+  it("without ?semester=, looks up the Gradescope link only for the term the gradebook resolved", async () => {
+    // An unscoped lookup made before the course loaded would list another
+    // term's link; answering late, it would mark this term's gradebook as
+    // linked and the direct sync would 400. Only the loaded term may ask.
+    mockedGscopeStatus.mockResolvedValue({ has_credentials: true, auth_mode: "cookies", last_synced_at: null });
+    vi.mocked(listGradescopeLinks).mockResolvedValue({ links: [] });
+    render(<GradebookCourseScreen courseId="c1" />);
+    await waitFor(() => expect(listGradescopeLinks).toHaveBeenCalledWith("u1", "Fall 2025"));
+    expect(listGradescopeLinks).not.toHaveBeenCalledWith("u1", undefined);
+  });
+
   it("passes the URL's semester to bulkUpdateCategories", async () => {
     window.history.replaceState({}, "", "/gradebook/c1?semester=Fall+2025");
     const user = userEvent.setup();

@@ -277,8 +277,13 @@ export function GradebookCourseScreen({ courseId }: Props) {
     loadInitial();
   }, [loadInitial]);
 
+  // Without ?semester= the term is whatever the course load resolved. Asking
+  // before then would list every term's link, and that unscoped answer could
+  // land after the scoped one and mark this term as linked.
+  const courseLoaded = data !== null;
   const refreshGscope = React.useCallback(async () => {
     if (!userId) return;
+    if (!currentSemesterParam() && !courseLoaded) return;
     try {
       const status = await getGradescopeStatus(userId);
       if (!status.has_credentials) {
@@ -294,7 +299,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
     } catch {
       setGscope({ ready: false, lastSyncedAt: null });
     }
-  }, [userId, courseId, data?.semester]);
+  }, [userId, courseId, courseLoaded, data?.semester]);
 
   React.useEffect(() => {
     refreshGscope();
