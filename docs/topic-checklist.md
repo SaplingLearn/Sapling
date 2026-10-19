@@ -66,7 +66,7 @@ the plain panel can be replaced by the design team without changing the API.
 
 ## Deployment and verification
 
-Apply `20261012232101_topic_checklists.sql` through the existing migration runner
+Apply `20261019005643_topic_checklists.sql` through the existing migration runner
 **before** deploying the backend to Railway. The normal staging migration and
 production promotion workflows remain the authority; do not apply DDL manually
 in the Supabase dashboard. The migration is additive, enables RLS and limits
