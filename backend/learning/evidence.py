@@ -8,6 +8,7 @@ number. No LLM, no db: this module is data + arithmetic.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -150,6 +151,17 @@ class Evidence(BaseModel):
     # A route-owned grading claim, never supplied by a model or a client.
     # One flush batch uses one identity for transactional replay/reconciliation.
     operation_id: str | None = None
+    # Trusted route time for replayable grades; absent keeps commit-order semantics.
+    observed_at: datetime | None = None
+
+    @field_validator("observed_at")
+    @classmethod
+    def _observed_time(cls, value):
+        if value is not None:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("Evidence observation time must include a timezone")
+            return value.astimezone(timezone.utc)
+        return value
 
     @field_validator("operation_id")
     @classmethod
