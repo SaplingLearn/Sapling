@@ -245,7 +245,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
     "the document's offering must resolve to an abstract course",
   ).toBeTruthy();
 
-  const courseFilter = page.getByLabel("Course:", { exact: true });
+  const courseFilter = page.getByLabel("Course", { exact: true });
   await expect(courseFilter).toBeVisible();
   await courseFilter.selectOption(courseId!);
   await expect(card).toBeVisible();

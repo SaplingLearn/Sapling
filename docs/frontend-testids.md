@@ -172,8 +172,14 @@ route:
 | `upload-modal-file-row-{idx}` | a queued file row |
 | `upload-modal-file-remove-{idx}` | remove that row |
 | `upload-modal-file-reanalyze-{idx}` | "Re-analyze" (processed rows) |
-| `upload-modal-file-retry-{idx}` | "Retry" (error/aborted rows) |
+| `upload-modal-file-retry-{idx}` | "Retry" (error/timed-out/cancelled rows) |
+| `upload-modal-file-cancel-{idx}` | "Cancel" one running upload (replaces remove while it runs) |
+| `upload-modal-file-progress-{idx}` | live progress block; `data-phase` = `sending` (transport) or `processing` (server pipeline) |
+| `upload-modal-file-error-{idx}` | the row's failure/cancel reason |
 | `upload-modal-file-copy-request-id-{idx}` | "copy" the support reference |
+| `upload-modal-rejected` | files not queued, each with its reason (type, size, 5-file cap) |
+| `upload-modal-no-course` | "Add a course first" note (no enrolled or added course) |
+| `upload-modal-summary` | footer queue/partial-result line |
 | `upload-modal-cancel` | footer "Cancel" |
 | `upload-modal-submit` | footer "Start upload" |
 | `upload-modal-done` | footer "Done" (replaces submit once every row finished) |
@@ -496,21 +502,45 @@ screen; don't add a fifth prefix here without a reason as strong as these.
 
 ### `library`
 
-Added with the upload → SSE → library journey (#387).
+Added with the upload → SSE → library journey (#387); reworked by the cream-and-sage redesign (prompt 03). The old sidebar `library-course-filter-{all,uncategorized,courseId}` buttons became one labelled `<select>`.
 
 | testid | element |
 | --- | --- |
-| `library-upload` | TopBar "Upload" button that opens the upload modal (disabled with zero courses) |
-| `library-search` | TopBar "Search documents…" input |
-| `library-course-scan` | TopBar "Scan <course>" button (only while a course filter is active) |
-| `library-doc-{docId}` | one document card (grid view) / row (list view), suffixed with the document's id |
-| `library-course-filter-all` | sidebar "All" course filter |
-| `library-course-filter-uncategorized` | sidebar "Uncategorized" course filter |
-| `library-course-filter-{courseId}` | sidebar per-course filter row |
-| `library-detail-close` | detail panel × close |
-| `library-detail-scan` | detail panel "Scan" / "Re-scan" concept-scan button |
-| `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
-| `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
+| `library` | screen root |
+| `library-heading` | page heading |
+| `library-upload` | "Upload material" (disabled while loading, offline, or with zero courses; `library-upload-hint` says why) |
+| `library-upload-hint` | why Upload is unavailable |
+| `library-add-course` | "Add a course" beside Upload (zero courses) — opens the course manager |
+| `library-offline` | offline notice |
+| `library-search` | search input (file name + summary) |
+| `library-course-filter` | Course `<select>`: all / uncategorized / one per distinct course |
+| `library-category-filter` | Category `<select>` |
+| `library-filetype-filter` | File type `<select>` (from the file-name extension; not the category) |
+| `library-view-list` / `library-view-grid` | layout toggle (`aria-pressed`) |
+| `library-loading` | initial skeleton |
+| `library-load-error` (+ `-retry`) | initial fetch failure with Retry |
+| `library-refresh-error` (+ `-retry`) | refresh failure; prior materials stay |
+| `library-courses-error` (+ `-retry`) | the course list failed to load |
+| `library-results-count` | "N materials" / "Showing N of M materials" |
+| `library-refresh` | Refresh |
+| `library-manage-courses` | opens the course manager |
+| `library-course-scan` | "Scan <course>" (only while a specific course is selected) |
+| `library-course-scan-status` (+ `-retry`) | course scan progress/result/error |
+| `library-empty` | genuinely empty library (`library-empty-upload` / `library-empty-add-course`) |
+| `library-no-matches` | filters match nothing |
+| `library-clear-filters` | "Clear filters" |
+| `library-list` / `library-grid` | the result container per layout |
+| `library-doc-{docId}` | one material row (list) / card (grid); `aria-pressed` + `data-selected` when selected |
+| `library-detail` | selected-material rail (desktop `aside`) or phone sheet (`role=dialog`) |
+| `library-detail-empty` | rail placeholder when nothing is selected |
+| `library-detail-panel` | the selected material's detail content |
+| `library-detail-close` | close the detail (rail × on desktop; the sheet's Close on phones) |
+| `library-detail-scan` | "Scan to knowledge graph" / "Scan again" |
+| `library-detail-scan-status` (+ `-retry`) | scan progress / real counts / error |
+| `library-detail-ask-clov` | link to `/learn?course=<course_id>` |
+| `library-detail-delete` | "Delete material" (click-twice confirm) |
+| `library-detail-delete-error` (+ `-retry`) | failed delete; the material stays |
+| `library-concepts-toggle-all` | "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
 
 ### `review`
