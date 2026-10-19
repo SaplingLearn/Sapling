@@ -32,7 +32,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from agents.deps import SaplingDeps
 from agents.quiz import (
     MAX_ACCEPTED_ANSWERS,
-    MAX_OPTIONS,
     MAX_QUESTIONS,
     Quiz,
     QuizQuestion,
@@ -113,12 +112,10 @@ def test_final_result_tool_sent_to_the_model_has_no_length_constraints():
 # ── The caps, enforced after the call ───────────────────────────────────────
 
 
-def test_caps_match_the_product_and_route_contracts():
-    from routes.quiz import _MCQ_OPTIONS
+def test_caps_match_the_product_contract():
     from services.quiz_config import QUIZ_MAX_QUESTIONS
 
     assert MAX_QUESTIONS == QUIZ_MAX_QUESTIONS == 10
-    assert MAX_OPTIONS == _MCQ_OPTIONS == 4
     assert MAX_ACCEPTED_ANSWERS == 8
 
 
@@ -145,9 +142,12 @@ def test_over_cap_questions_are_clipped_in_order():
     ]
 
 
-def test_over_cap_options_are_clipped_in_order():
+def test_surplus_options_are_kept_for_the_route_to_drop():
+    """Options are never clipped: a fifth option is MCQ format drift, and
+    clipping it would serve a question whose stem or distractors refer to a
+    choice the student cannot see. The route's exactly-4 check drops it."""
     q = QuizQuestion.model_validate(_mcq(options=["a", "b", "c", "d", "e", "f"]))
-    assert q.options == ["a", "b", "c", "d"]
+    assert q.options == ["a", "b", "c", "d", "e", "f"]
 
 
 def test_over_cap_accepted_answers_are_clipped_in_order():
@@ -158,32 +158,44 @@ def test_over_cap_accepted_answers_are_clipped_in_order():
     assert q.accepted_answers == aliases[:MAX_ACCEPTED_ANSWERS]
 
 
-def test_empty_quiz_is_still_a_validation_error():
+def test_empty_quiz_is_still_a_too_short_validation_error():
     """minItems=1 left the schema, not the contract: an empty quiz still
-    fails validation, so the agent's bounded output retry still fires."""
-    with pytest.raises(ValidationError):
+    fails validation with the same `too_short` error min_length=1 raised,
+    so the agent's bounded output retry still fires with the same feedback."""
+    with pytest.raises(ValidationError) as excinfo:
         Quiz.model_validate({"questions": []})
+    [error] = excinfo.value.errors()
+    assert error["type"] == "too_short"
+    assert error["loc"] == ("questions",)
 
 
-def test_clipped_mcq_keeps_the_route_per_item_contract():
-    """Clipping can only shorten a list; the route's per-item checks still
-    decide each item. A sixth-option correct answer clipped away is dropped
-    on its own, never fatal to the quiz."""
+def test_clipping_is_logged(caplog):
+    """Drift past a cap must stay visible: a clip that used to be a retry
+    (or a decoding-time stop) now leaves a warning, never silence."""
+    with caplog.at_level("WARNING", logger="agents.quiz"):
+        Quiz.model_validate({"questions": [_mcq(i) for i in range(MAX_QUESTIONS + 2)]})
+        Quiz.model_validate({"questions": [_mcq(0)]})
+    clipped = [r.getMessage() for r in caplog.records if "clipped" in r.getMessage()]
+    assert clipped == [f"quiz: clipped questions from {MAX_QUESTIONS + 2} to {MAX_QUESTIONS}"]
+
+
+def test_five_option_mcq_is_dropped_per_item_by_the_route():
+    """The route, not a clip, decides a drifted MCQ: it is dropped on its
+    own, never served truncated and never fatal to the rest of the quiz."""
     from routes.quiz import _agent_question_to_wire
 
     quiz = Quiz.model_validate({"questions": [
-        _mcq(1, options=["a", "b", "c", "d", "e"]),
-        _mcq(2, options=["a", "b", "c", "d", "e"], correct_answer="e"),
+        _mcq(1),
+        _mcq(2, options=["a", "b", "c", "d", "Both a and c"]),
     ]})
-    kept = _agent_question_to_wire(quiz.questions[0], 1)
-    assert kept is not None and [o["text"] for o in kept["options"]] == ["a", "b", "c", "d"]
+    assert _agent_question_to_wire(quiz.questions[0], 1) is not None
     assert _agent_question_to_wire(quiz.questions[1], 2) is None
 
 
 def test_over_cap_output_is_clipped_without_spending_a_retry():
-    """Before: an 11-question or 5-option output failed Quiz validation and
-    burned the agent's output retries (502 after two more). Now it is
-    clipped on the first response."""
+    """An 11-question output is clipped on the first response instead of
+    failing Quiz validation and burning the output retries (502 after two
+    more). Surplus options ride through untouched for the route to judge."""
     calls = {"n": 0}
 
     def handler(messages, info: AgentInfo) -> ModelResponse:
@@ -200,22 +212,20 @@ def test_over_cap_output_is_clipped_without_spending_a_retry():
 
     assert calls["n"] == 1
     assert len(result.output.questions) == MAX_QUESTIONS
-    assert all(q.options == ["a", "b", "c", "d"] for q in result.output.questions)
+    assert all(q.options == ["a", "b", "c", "d", "e"] for q in result.output.questions)
 
 
 def test_malformed_surplus_past_the_caps_is_discarded_not_fatal():
     """Clipping runs BEFORE item validation, as decoding-time maxItems
-    did: a malformed eleventh question, fifth option or ninth alias is
+    did: a malformed eleventh question or ninth alias is
     never generated under a bounded schema, so it must not reject the valid
     prefix (and spend an output retry) now either."""
     body = {"questions": [
-        _mcq(i, options=["a", "b", "c", "d", {"not": "a string"}],
-             accepted_answers=[f"alias {k}" for k in range(MAX_ACCEPTED_ANSWERS)] + [None])
+        _mcq(i, accepted_answers=[f"alias {k}" for k in range(MAX_ACCEPTED_ANSWERS)] + [None])
         for i in range(MAX_QUESTIONS)
     ] + [{"question": "malformed surplus, missing every other field"}]}
     quiz = Quiz.model_validate(body)
     assert len(quiz.questions) == MAX_QUESTIONS
-    assert all(q.options == ["a", "b", "c", "d"] for q in quiz.questions)
     assert all(len(q.accepted_answers) == MAX_ACCEPTED_ANSWERS for q in quiz.questions)
 
 

@@ -43,10 +43,16 @@ def test_real_model_serves_the_quiz_schema_and_returns_a_quiz(monkeypatch):
     from _retrieval_fixture import FixtureRetrieval
 
     import agents.tools.quiz_history as quiz_history
-    from agents._providers import model_name_for
+    from agents._providers import model_mode, model_name_for
     from agents.deps import SaplingDeps
     from agents.quiz import MAX_QUESTIONS, quiz_agent
     from routes.quiz import _agent_question_to_wire
+
+    # Preconditions BEFORE the billable call: under the function-mode seam the
+    # agent replays fixed E2E constants and would "pass" without Gemini ever
+    # seeing the schema, and a re-pointed slot would bill the wrong model.
+    assert model_mode() == "real", "unset SAPLING_MODEL_MODE: this test must reach Gemini"
+    assert model_name_for("quiz") == "gemini-2.5-flash-lite"
 
     async def _no_history(user_id: str, concept_node_id: str) -> quiz_history.QuizHistory:
         return quiz_history.QuizHistory()
@@ -77,7 +83,6 @@ def test_real_model_serves_the_quiz_schema_and_returns_a_quiz(monkeypatch):
     # ModelHTTPError 400 INVALID_ARGUMENT — before any generation.
     result = quiz_agent.run_sync(message, deps=deps)
 
-    assert model_name_for("quiz") == "gemini-2.5-flash-lite"
     questions = result.output.questions
     assert 1 <= len(questions) <= MAX_QUESTIONS
     wire = [_agent_question_to_wire(q, i + 1) for i, q in enumerate(questions)]

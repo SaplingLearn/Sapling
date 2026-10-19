@@ -13,10 +13,12 @@ QuizQuestion items, no further nesting.
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
+from pydantic_core import PydanticCustomError
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
@@ -26,6 +28,9 @@ from agents.tools.graph_read import (
 )
 from agents.tools.quiz_history import read_recent_quiz_attempts_tool
 from services.prompt_safety import INJECTION_GUARD_PROMPT
+from services.quiz_config import QUIZ_MAX_QUESTIONS
+
+logger = logging.getLogger(__name__)
 
 
 # Difficulty + question type are Literals so Gemini's enum constraint
@@ -44,18 +49,24 @@ QuizQuestionType = Literal["multiple_choice", "short_answer", "numeric", "symbol
 # "too many states for serving" limit, and every live quiz 400'd before
 # generating anything. Measured live 2026-10-19: all bounds -> 400, either
 # nesting alone -> served, none -> served. So the schema carries no length
-# bounds at all, and the validators below clip over-long lists deterministically
-# (keep the first N, in model order) instead of failing the whole Quiz, which
-# would burn the output retries and 502. Pinned by tests/test_quiz_schema_states.py.
-MAX_QUESTIONS = 10  # == services.quiz_config.QUIZ_MAX_QUESTIONS
-MAX_OPTIONS = 4  # == routes.quiz._MCQ_OPTIONS (the route drops any other count)
+# bounds at all. `questions` and `accepted_answers` are clipped below
+# (keep the first N, in model order, logged) instead of failing the whole
+# Quiz, which would burn the output retries and 502. `options` is never
+# clipped: a fifth option is MCQ format drift, and the route's exactly-4
+# check drops that item rather than serving it truncated.
+# Pinned by tests/test_quiz_schema_states.py.
+MAX_QUESTIONS = QUIZ_MAX_QUESTIONS
 MAX_ACCEPTED_ANSWERS = 8
 
 
-def _clip(value, limit: int):
-    """Keep the first `limit` entries of a raw list input, in model order.
-    Anything that is not a list is left for normal validation to reject."""
-    return value[:limit] if isinstance(value, list) else value
+def _clip(value, limit: int, field: str):
+    """Keep the first `limit` entries of a raw list input, in model order,
+    logging the clip so drift past a cap stays visible. Anything that is not
+    a list is left for normal validation to reject."""
+    if isinstance(value, list) and len(value) > limit:
+        logger.warning("quiz: clipped %s from %d to %d", field, len(value), limit)
+        return value[:limit]
+    return value
 
 
 class QuizQuestion(BaseModel):
@@ -77,8 +88,8 @@ class QuizQuestion(BaseModel):
     # lives in the ROUTE (routes/quiz.py::_agent_question_to_wire), never in a
     # model validator here: a validator failure rejects the whole Quiz, which
     # burns the agent's output retries and 502s the request over one bad item.
-    # The route drops just that item. The list bounds are clipped by the
-    # validator below, not declared on the fields (see MAX_OPTIONS above).
+    # The route drops just that item, which is also why `options` carries no
+    # bound or clip here (see MAX_QUESTIONS above).
     options: list[str] = Field(default_factory=list)
     accepted_answers: list[str] = Field(default_factory=list)
     # The option text the agent considers correct. Must appear verbatim
@@ -94,15 +105,10 @@ class QuizQuestion(BaseModel):
     # The clips run BEFORE item validation, as decoding-time maxItems did: a
     # malformed surplus entry past the cap is discarded, never a reason to
     # reject the valid prefix and spend an output retry.
-    @field_validator("options", mode="before")
-    @classmethod
-    def _clip_options(cls, options):
-        return _clip(options, MAX_OPTIONS)
-
     @field_validator("accepted_answers", mode="before")
     @classmethod
     def _clip_accepted_answers(cls, accepted):
-        return _clip(accepted, MAX_ACCEPTED_ANSWERS)
+        return _clip(accepted, MAX_ACCEPTED_ANSWERS, "accepted_answers")
 
 
 class Quiz(BaseModel):
@@ -115,15 +121,19 @@ class Quiz(BaseModel):
     @field_validator("questions", mode="before")
     @classmethod
     def _clip_questions(cls, questions):
-        return _clip(questions, MAX_QUESTIONS)
+        return _clip(questions, MAX_QUESTIONS, "questions")
 
     @field_validator("questions", mode="after")
     @classmethod
     def _require_questions(cls, questions: list[QuizQuestion]) -> list[QuizQuestion]:
-        # Empty stays a validation error, so the bounded output retry still
-        # fires exactly as it did for the old min_length=1.
+        # Empty stays the same `too_short` error the old min_length=1 raised,
+        # so the bounded output retry still fires with the same feedback.
         if not questions:
-            raise ValueError("List should have at least 1 item after validation, not 0")
+            raise PydanticCustomError(
+                "too_short",
+                "List should have at least 1 item after validation, not 0",
+                {"field_type": "List", "min_length": 1, "actual_length": 0},
+            )
         return questions
 
 
