@@ -23,7 +23,7 @@
   align-items: center;
   gap: var(--sapling-space-3);
   min-width: 0;
-  font: 500 15px/1.3 var(--sapling-font-body);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
 }
 
 .crumbCourse {
@@ -59,7 +59,7 @@
   border-radius: 999px;
   background: transparent;
   color: var(--sapling-ink);
-  font: 500 15px/1.2 var(--sapling-font-body);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   cursor: pointer;
 }
 
@@ -82,7 +82,7 @@
 
 .dots {
   letter-spacing: 1px;
-  font-size: 12px;
+  font-size: var(--sapling-text-eyebrow);
 }
 
 .menu {
@@ -120,7 +120,7 @@
   border-radius: var(--sapling-radius-md);
   background: transparent;
   color: var(--sapling-ink);
-  font: 500 15px/1.3 var(--sapling-font-body);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   text-align: left;
   text-decoration: none;
   cursor: pointer;
@@ -150,7 +150,7 @@
   border-radius: 999px;
   background: var(--sapling-paper);
   color: var(--sapling-ink);
-  font: 500 15px/1.2 var(--sapling-font-body);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   cursor: pointer;
 }
 
@@ -178,20 +178,20 @@
 
 .contextLead {
   margin: 0;
-  font: 500 22px/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
 }
 
 .goalText {
   margin: 0;
-  font: 500 24px/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
   overflow-wrap: anywhere;
 }
 
 .muted {
   margin: 0;
   color: var(--sapling-muted);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
 }
 
 .route {
@@ -223,13 +223,14 @@
 
 .routeName {
   margin: 0;
-  font: 500 17px/1.35 var(--sapling-font-body);
+  font: 500 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
 }
 
 .routeDetail {
   margin: 2px 0 0;
   color: var(--sapling-muted);
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
 }
 
 .materials {
@@ -250,7 +251,7 @@
 .materialName {
   margin: 0;
   color: var(--sapling-ink);
-  font: 600 16px/1.35 var(--sapling-font-body);
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
   overflow-wrap: anywhere;
 }
 
@@ -263,7 +264,7 @@
   border-radius: 999px;
   background: var(--sapling-primary);
   color: var(--sapling-white);
-  font: 600 15px/1.2 var(--sapling-font-body);
+  font: 600 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   text-decoration: none;
 }
 
@@ -283,7 +284,7 @@
 
 .focusName {
   margin: 0;
-  font: 500 24px/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
 }
 
 /* ── History ──────────────────────────────────────────────────────────── */
@@ -302,7 +303,7 @@
   border-radius: 999px;
   background: var(--sapling-chat-surface);
   color: var(--sapling-ink);
-  font: 400 16px/1.4 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
 }
 
 .historySection {
@@ -313,7 +314,7 @@
 .historyHeading {
   margin: 0;
   color: var(--sapling-muted);
-  font: 600 12px/1.4 var(--sapling-font-body);
+  font: 600 var(--sapling-text-eyebrow)/var(--sapling-leading-eyebrow) var(--sapling-font-body);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -353,13 +354,14 @@
 }
 
 .historyTopic {
-  font: 600 16px/1.35 var(--sapling-font-body);
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
   overflow-wrap: anywhere;
 }
 
 .historyMeta {
   color: var(--sapling-muted);
-  font-size: 13px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
 }
 
 /* ── Welcome ──────────────────────────────────────────────────────────── */
@@ -381,7 +383,7 @@
 
 .welcomeTitle {
   margin: 0;
-  font: 500 clamp(30px, 4vw, 40px)/1.15 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-page)/var(--sapling-leading-page) var(--sapling-font-heading);
   color: var(--sapling-ink);
   text-wrap: balance;
 }
@@ -389,7 +391,8 @@
 .welcomeLead {
   margin: 0;
   color: var(--sapling-muted);
-  font-size: 17px;
+  font-size: var(--sapling-text-body);
+  line-height: var(--sapling-leading-body)
 }
 
 .starters {
@@ -411,7 +414,7 @@
   border-radius: 999px;
   background: var(--sapling-paper);
   color: var(--sapling-ink);
-  font: 500 15px/1.25 var(--sapling-font-body);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   cursor: pointer;
 }
 
@@ -446,7 +449,7 @@
   gap: var(--sapling-space-3);
   margin: 0;
   color: var(--sapling-ink);
-  font: 500 24px/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
 }
 
 .planCardTitle :global(.sapling-icon) {
@@ -465,8 +468,9 @@
 .footnote {
   margin: 0;
   color: var(--sapling-muted);
-  font-size: 13px;
+  font-size: var(--sapling-text-meta);
   text-align: center;
+  line-height: var(--sapling-leading-meta)
 }
 
 /* The FA26 shell moves its utilities to the very top on a phone. */
@@ -495,9 +499,10 @@
   .chip {
     min-width: 0;
     padding: 8px 6px;
-    font-size: 14px;
+    font-size: var(--sapling-text-control);
     white-space: nowrap;
-  }
+  line-height: var(--sapling-leading-control)
+}
 
   .starters {
     display: grid;

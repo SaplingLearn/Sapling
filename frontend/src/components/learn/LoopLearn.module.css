@@ -62,7 +62,7 @@
   padding: 0 14px;
   border-radius: var(--sapling-radius-md);
   color: var(--sapling-primary);
-  font: 600 15px/1.3 var(--sapling-font-body);
+  font: 600 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   text-decoration: none;
 }
 
@@ -89,8 +89,8 @@
 .muted {
   margin: 0;
   color: var(--sapling-muted);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
   overflow-wrap: anywhere;
 }
 
@@ -108,7 +108,7 @@
 .sessionsLabel {
   flex-shrink: 0;
   color: var(--sapling-muted);
-  font: 600 12px/1.4 var(--sapling-font-body);
+  font: 600 var(--sapling-text-eyebrow)/var(--sapling-leading-eyebrow) var(--sapling-font-body);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -141,7 +141,7 @@
   border-radius: 999px;
   background: var(--sapling-paper);
   color: var(--sapling-ink);
-  font: 500 14px/1.3 var(--sapling-font-body);
+  font: 500 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
   cursor: pointer;
 }
 
@@ -166,8 +166,9 @@
 .sessionDate {
   flex-shrink: 0;
   color: var(--sapling-muted);
-  font-size: 13px;
+  font-size: var(--sapling-text-meta);
   font-weight: 400;
+  line-height: var(--sapling-leading-meta)
 }
 
 .newSession {
@@ -187,7 +188,8 @@
 
 .goalNote {
   color: var(--sapling-plum);
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
 }
 
 .phaseRow {
@@ -217,7 +219,7 @@
   border-radius: 999px;
   background: var(--sapling-sage);
   color: var(--sapling-ink);
-  font: 500 13px/1.35 var(--sapling-font-body);
+  font: 500 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
   overflow-wrap: anywhere;
 }
 
@@ -226,7 +228,8 @@
 }
 
 .routeTrigger {
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
 }
 
 .notices {
@@ -243,7 +246,8 @@
 
 .notices [data-testid="loop-budget-paused"] {
   border-left: 3px solid var(--sapling-primary);
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
 }
 
 /* #673 practice preflight notice: copy lines and a wrapping action row. */
@@ -283,8 +287,9 @@
   border-left: 3px solid var(--sapling-primary);
   border-radius: var(--sapling-radius-sm);
   background: var(--sapling-white);
-  font-size: 15px;
+  font-size: var(--sapling-text-body);
   overflow-wrap: anywhere;
+  line-height: var(--sapling-leading-body)
 }
 
 /* ── Workspace: main column + learning-route rail ─────────────────────── */
@@ -341,7 +346,7 @@
 
 .panelTitle {
   margin: 0;
-  font: 500 clamp(21px, 1.1rem + 0.6vw, 26px)/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
   color: var(--sapling-ink);
   overflow-wrap: anywhere;
 }
@@ -349,7 +354,7 @@
 .panelLead {
   margin: var(--sapling-space-2) 0 0;
   color: var(--sapling-muted);
-  font: 400 15px/1.55 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
   overflow-wrap: anywhere;
 }
 
@@ -365,7 +370,7 @@
   margin: 0;
   min-width: 0;
   color: var(--sapling-ink);
-  font: 400 clamp(16px, 0.95rem + 0.3vw, 19px)/1.55 var(--sapling-font-heading);
+  font: 400 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -388,7 +393,7 @@
 .promptText {
   margin: 0;
   color: var(--sapling-ink);
-  font: 500 clamp(19px, 1rem + 0.7vw, 26px)/1.4 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -417,7 +422,8 @@
 
 .answerForm :global(.sapling-choice) {
   align-items: center;
-  font-size: 16px;
+  font-size: var(--sapling-text-body);
+  line-height: var(--sapling-leading-body)
 }
 
 .field {
@@ -430,15 +436,15 @@
 .fieldLabel {
   padding: 0;
   color: var(--sapling-ink);
-  font: 600 14px/1.4 var(--sapling-font-body);
+  font: 600 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
 }
 
 .fieldHint {
   margin: 0;
   color: var(--sapling-muted);
-  font-size: 13px;
+  font-size: var(--sapling-text-meta);
   font-weight: 400;
-  line-height: 1.5;
+  line-height: var(--sapling-leading-meta);
 }
 
 .input {
@@ -450,7 +456,7 @@
   border-radius: var(--sapling-radius-md);
   background: var(--sapling-white);
   color: var(--sapling-ink);
-  font: 400 16px/1.5 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
   resize: vertical;
 }
 
@@ -492,7 +498,7 @@
 .hintText,
 .referenceText {
   color: var(--sapling-ink);
-  font: 400 16px/1.55 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -503,8 +509,9 @@
   border-radius: var(--sapling-radius-md);
   background: var(--sapling-chat-surface);
   color: var(--sapling-muted);
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
   text-align: center;
+  line-height: var(--sapling-leading-meta)
 }
 
 /* ── Plan ─────────────────────────────────────────────────────────────── */
@@ -539,7 +546,7 @@
   min-width: 22px;
   padding-top: 4px;
   color: var(--sapling-primary);
-  font: 600 14px/1.4 var(--sapling-font-body);
+  font: 600 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
   font-variant-numeric: tabular-nums;
 }
 
@@ -552,14 +559,15 @@
 
 .planName {
   margin: 0;
-  font: 500 clamp(18px, 1rem + 0.3vw, 21px)/1.35 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
   overflow-wrap: anywhere;
 }
 
 .planReason {
   margin: 0;
   color: var(--sapling-muted);
-  font-size: 15px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta)
 }
 
 .planTags {
@@ -576,7 +584,7 @@
   border-radius: 999px;
   background: var(--sapling-sage);
   color: var(--sapling-ink);
-  font: 500 12px/1.6 var(--sapling-font-body);
+  font: 500 var(--sapling-text-eyebrow)/var(--sapling-leading-eyebrow) var(--sapling-font-body);
 }
 
 .tag[data-kind="review"] {
@@ -608,14 +616,14 @@
 
 .diagnosisTitle {
   margin: 0 0 6px;
-  font: 600 15px/1.4 var(--sapling-font-body);
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
 }
 
 .diagnosisText {
   margin: 0 0 4px;
   color: var(--sapling-ink);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
 }
 
 .diagnosisDetails {
@@ -626,8 +634,9 @@
   min-height: 32px;
   color: var(--sapling-primary);
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
   cursor: pointer;
+  line-height: var(--sapling-leading-meta)
 }
 
 .diagnosisList {
@@ -636,8 +645,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
 }
 
 /* ── Teach / check / feedback ─────────────────────────────────────────── */
@@ -712,15 +721,16 @@
 .transcriptWho {
   margin: 0 0 2px;
   color: var(--sapling-muted);
-  font-size: 12px;
+  font-size: var(--sapling-text-eyebrow);
+  line-height: var(--sapling-leading-eyebrow)
 }
 
 .transcriptText {
   padding: 8px 12px;
   border-radius: var(--sapling-radius-md);
   background: var(--sapling-paper);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: var(--sapling-text-body);
+  line-height: var(--sapling-leading-body);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -738,7 +748,7 @@
 
 .closeSummary {
   margin: 0;
-  font: 400 16px/1.6 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -757,7 +767,8 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
-  font-size: 15px;
+  font-size: var(--sapling-text-body);
+  line-height: var(--sapling-leading-body)
 }
 
 .closeArrow {
@@ -791,7 +802,7 @@
 
 .reflectText {
   margin: 0;
-  font: 400 17px/1.5 var(--sapling-font-heading);
+  font: 400 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading);
   overflow-wrap: anywhere;
 }
 
@@ -801,7 +812,8 @@
   align-items: center;
   gap: var(--sapling-space-2) var(--sapling-space-4);
   color: var(--sapling-muted);
-  font-size: 15px;
+  font-size: var(--sapling-text-body);
+  line-height: var(--sapling-leading-body)
 }
 
 /* ── Learning route (rail on desktop, labelled sheet below 1024px) ───── */
@@ -826,7 +838,7 @@
 
 .railTitle {
   margin: 0;
-  font: 500 clamp(19px, 1rem + 0.4vw, 23px)/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
   color: var(--sapling-ink);
 }
 
@@ -861,15 +873,15 @@
 
 .routeName {
   margin: 0;
-  font: 600 15px/1.4 var(--sapling-font-body);
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
   overflow-wrap: anywhere;
 }
 
 .routeDetail {
   margin: 2px 0 0;
   color: var(--sapling-muted);
-  font-size: 13px;
-  line-height: 1.45;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
   overflow-wrap: anywhere;
 }
 
@@ -893,7 +905,7 @@
   gap: var(--sapling-space-3);
   min-height: var(--sapling-control-min);
   color: var(--sapling-primary);
-  font: 600 15px/1.35 var(--sapling-font-body);
+  font: 600 var(--sapling-text-item)/var(--sapling-leading-item) var(--sapling-font-body);
   text-decoration: none;
 }
 
@@ -939,9 +951,10 @@
   padding: 8px var(--sapling-space-4);
   border-bottom: 1px solid var(--sapling-line);
   border-radius: var(--sapling-radius-sm);
-  font-size: 15px;
+  font-size: var(--sapling-text-body);
   cursor: pointer;
   overflow-wrap: anywhere;
+  line-height: var(--sapling-leading-body)
 }
 
 .goalOption[data-selected="true"] {
@@ -968,8 +981,9 @@
 
 .goalCount {
   margin: var(--sapling-space-2) 0 0;
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
   font-weight: 600;
+  line-height: var(--sapling-leading-meta)
 }
 
 .inlineError,
@@ -978,7 +992,8 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--sapling-space-2);
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
+  line-height: var(--sapling-leading-meta);
 }
 
 .inlineError p,
@@ -1028,14 +1043,14 @@
 
 .confirmTitle {
   margin: 0;
-  font: 500 22px/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
   overflow-wrap: anywhere;
 }
 
 .confirmBody {
   margin: 0;
   color: var(--sapling-ink);
-  font: 400 15px/1.55 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
 }
 
 .confirmActions {
@@ -1063,9 +1078,10 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 14px;
+  font-size: var(--sapling-text-meta);
   padding: 6px 0;
   overflow-wrap: anywhere;
+  line-height: var(--sapling-leading-meta)
 }
 
 .scopeOption input {
@@ -1140,7 +1156,7 @@
 .tutorGoalLine {
   margin: 0;
   color: var(--sapling-ink);
-  font: 500 13px/1.4 var(--sapling-font-body);
+  font: 500 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
   overflow-wrap: anywhere;
 }
 
@@ -1151,7 +1167,7 @@
 
 .tutorTitle {
   margin: 0;
-  font: 500 clamp(26px, 3vw, 32px)/1.2 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-page)/var(--sapling-leading-page) var(--sapling-font-heading);
   color: var(--sapling-ink);
   overflow-wrap: anywhere;
 }
@@ -1199,7 +1215,7 @@
 
 .tutorContextTitle {
   margin: 0;
-  font: 500 26px/1.25 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
 }
 
 .tutorContextClose {
@@ -1243,7 +1259,7 @@
   border: 0;
   background: transparent;
   color: var(--sapling-primary);
-  font: 600 14px/1.2 var(--sapling-font-body);
+  font: 600 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
   text-decoration: none;
   cursor: pointer;
 }
@@ -1310,7 +1326,7 @@
   }
 
   .tutor :global(.sapling-phases li) {
-    font-size: 12px;
+    font-size: var(--sapling-text-eyebrow);
     gap: 4px;
   }
 

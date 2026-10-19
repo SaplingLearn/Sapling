@@ -26,6 +26,26 @@ describe("sapling.css tokens", () => {
     expect(root).toContain("--sapling-control-min: 44px;");
   });
 
+  it("declares ONE type scale, and the redesigned surfaces size text only through it", () => {
+    const root = block(":root");
+    for (const role of ["page", "section", "card", "item", "body", "meta", "eyebrow", "control"]) {
+      expect(root).toMatch(new RegExp(`--sapling-text-${role}: `));
+      expect(root).toMatch(new RegExp(`--sapling-leading-${role}: `));
+    }
+    // No literal px font sizes left in the redesigned surfaces' modules
+    // (icon glyphs and code are not text roles and say so in place).
+    const modules = [
+      "../dashboard/Dashboard.module.css",
+      "../screens/Library.module.css",
+      "../DocumentUploadModal.module.css",
+      "../learn/TutorView.module.css",
+    ];
+    for (const m of modules) {
+      const text = readFileSync(path.join(__dirname, m), "utf8");
+      expect(text, m).not.toMatch(/font-size:\s*[\d.]+px|font:\s*\d{3}\s+[\d.]+px/);
+    }
+  });
+
   it("uses the packaged faces for headings, body and code", () => {
     const root = block(":root");
     expect(root).toMatch(/--sapling-font-heading: var\(--font-aleo\)/);

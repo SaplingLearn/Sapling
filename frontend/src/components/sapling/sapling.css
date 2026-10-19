@@ -45,6 +45,28 @@
   --sapling-radius-md: 6px;
   --sapling-radius-lg: 16px;
   --sapling-control-min: 44px;
+
+  /* ── ONE type scale for Home, Learn, Tutor and Library ──────────────
+     Every redesigned surface sizes text with these roles (values at
+     1440px; the clamps scale down on phones). Aleo for page/section/card
+     titles, SUSE for the rest. The shell sidebar keeps its own tuned sizes. */
+  --sapling-text-page: clamp(30px, 1.5rem + 1.2vw, 40px);      /* page title (h1) */
+  --sapling-leading-page: 1.15;
+  --sapling-text-section: clamp(20px, 1.1rem + 0.45vw, 24px);  /* section / panel heading */
+  --sapling-leading-section: 1.3;
+  --sapling-text-card: clamp(18px, 1rem + 0.3vw, 20px);        /* card / item title (Aleo) */
+  --sapling-leading-card: 1.35;
+  --sapling-text-item: 16px;                                    /* list-row title (SUSE 600) */
+  --sapling-leading-item: 1.4;
+  --sapling-text-body: 16px;                                    /* body */
+  --sapling-leading-body: 1.55;
+  --sapling-text-meta: 14px;                                    /* meta / caption / form label */
+  --sapling-leading-meta: 1.45;
+  --sapling-text-eyebrow: 12px;                                 /* eyebrow, tag, small caps label */
+  --sapling-leading-eyebrow: 1.4;
+  --sapling-tracking-eyebrow: 0.1em;
+  --sapling-text-control: 15px;                                 /* buttons, chips, tabs */
+  --sapling-leading-control: 1.3;
   --sapling-reading-width: 760px;
   --sapling-rail-width: clamp(280px, 26vw, 344px);
 }
@@ -108,8 +130,8 @@
 /* ── Headings ─────────────────────────────────────────────────────────── */
 .sapling-eyebrow {
   margin: 0;
-  font: 600 12px/1.4 var(--sapling-font-body);
-  letter-spacing: 0.1em;
+  font: 600 var(--sapling-text-eyebrow)/var(--sapling-leading-eyebrow) var(--sapling-font-body);
+  letter-spacing: var(--sapling-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--sapling-primary);
   overflow-wrap: anywhere;
@@ -125,24 +147,24 @@
 .sapling-page-heading__text { flex: 1 1 320px; min-width: 0; }
 .sapling-page-heading__title {
   margin: var(--sapling-space-2) 0 0;
-  font: 500 clamp(28px, 1.6rem + 1.2vw, 40px)/1.15 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-page)/var(--sapling-leading-page) var(--sapling-font-heading);
   color: var(--sapling-ink);
   overflow-wrap: anywhere;
 }
 .sapling-page-heading__description {
   margin: var(--sapling-space-2) 0 0;
   max-width: 60ch;
-  font: 400 16px/1.5 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
   color: var(--sapling-muted);
 }
 .sapling-page-heading__actions { display: flex; flex-wrap: wrap; gap: var(--sapling-space-3); }
 .sapling-section-heading {
   margin: 0;
-  font: 500 clamp(20px, 1.1rem + 0.5vw, 25px)/1.3 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
   color: var(--sapling-ink);
   overflow-wrap: anywhere;
 }
-.sapling-section-heading--h3 { font-size: 18px; }
+.sapling-section-heading--h3 { font-size: var(--sapling-text-card); line-height: var(--sapling-leading-card); }
 
 /* ── Actions ──────────────────────────────────────────────────────────── */
 .btn.sapling-action {
@@ -155,7 +177,7 @@
   padding: 10px 18px;
   border: 1px solid var(--sapling-primary);
   border-radius: var(--sapling-radius-md);
-  font: 600 15px/1.3 var(--sapling-font-body);
+  font: 600 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   text-align: center;
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
@@ -187,7 +209,7 @@
   border-radius: var(--sapling-radius-sm);
   background: transparent;
   color: var(--sapling-ink);
-  font: 400 15px/1.45 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
   text-align: left;
   cursor: pointer;
 }
@@ -199,7 +221,7 @@
 .sapling-choices legend {
   margin-bottom: var(--sapling-space-4);
   padding: 0;
-  font: 500 clamp(19px, 1rem + 0.6vw, 25px)/1.35 var(--sapling-font-heading);
+  font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading);
   color: var(--sapling-ink);
   overflow-wrap: anywhere;
 }
@@ -235,8 +257,8 @@
 }
 .sapling-goal__main { flex: 1 1 280px; min-width: 0; }
 .sapling-goal__eyebrow { color: var(--sapling-plum); }
-.sapling-goal__text { margin: 4px 0 0; font: 500 clamp(17px, 1rem + 0.3vw, 20px)/1.4 var(--sapling-font-heading); overflow-wrap: anywhere; }
-.sapling-goal__scope { margin: 0; color: var(--sapling-plum); font-size: 14px; overflow-wrap: anywhere; }
+.sapling-goal__text { margin: 4px 0 0; font: 500 var(--sapling-text-card)/var(--sapling-leading-card) var(--sapling-font-heading); overflow-wrap: anywhere; }
+.sapling-goal__scope { margin: 0; color: var(--sapling-plum); font-size: var(--sapling-text-meta); line-height: var(--sapling-leading-meta); overflow-wrap: anywhere; }
 .sapling-goal__action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sapling-space-2) var(--sapling-space-3); min-width: 0; }
 
 /* ── Phase strip (read-only display of the server phase) ─────────────── */
@@ -248,7 +270,7 @@
   padding: 0;
   list-style: none;
   color: var(--sapling-muted);
-  font: 500 14px/1.4 var(--sapling-font-body);
+  font: 500 var(--sapling-text-meta)/var(--sapling-leading-meta) var(--sapling-font-body);
 }
 .sapling-phases li { display: flex; align-items: center; gap: 10px; min-height: 28px; }
 .sapling-phases__mark {
@@ -259,7 +281,7 @@
   flex-shrink: 0;
   border: 1px solid var(--sapling-line);
   border-radius: 50%;
-  font-size: 13px;
+  font-size: var(--sapling-text-eyebrow);
 }
 .sapling-phases [data-state="done"] .sapling-phases__mark { color: var(--sapling-white); background: var(--sapling-primary); border-color: var(--sapling-primary); }
 .sapling-phases [aria-current="step"] { color: var(--sapling-ink); font-weight: 700; }
@@ -276,7 +298,7 @@
   border-radius: var(--sapling-radius-sm);
   background: var(--sapling-white);
   color: var(--sapling-ink);
-  font: 400 15px/1.5 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
 }
 .sapling-status__icon { flex-shrink: 0; margin-top: 2px; color: var(--sapling-muted); }
 .sapling-status__body { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
@@ -305,11 +327,11 @@
   border-radius: 999px;
   background: var(--sapling-paper);
   color: var(--sapling-ink);
-  font: 500 15px/1.3 var(--sapling-font-body);
+  font: 500 var(--sapling-text-control)/var(--sapling-leading-control) var(--sapling-font-body);
   cursor: pointer;
 }
 .sapling-context-sheet .sheet { background: var(--sapling-paper); }
-.sapling-context-sheet .sheet__title { font: 500 22px/1.3 var(--sapling-font-heading); }
+.sapling-context-sheet .sheet__title { font: 500 var(--sapling-text-section)/var(--sapling-leading-section) var(--sapling-font-heading); }
 .sapling-context-sheet .sheet__close { width: var(--sapling-control-min); height: var(--sapling-control-min); }
 .sapling-context-sheet .sheet__body { overscroll-behavior: contain; padding-bottom: max(var(--sapling-space-5), env(safe-area-inset-bottom)); }
 
@@ -336,19 +358,19 @@
   border-radius: var(--sapling-radius-sm);
   background: transparent;
   color: inherit;
-  font: 400 16px/1.6 var(--sapling-font-body);
+  font: 400 var(--sapling-text-body)/var(--sapling-leading-body) var(--sapling-font-body);
 }
 .sapling-composer__field::placeholder { color: var(--sapling-muted); opacity: 1; }
 .sapling-composer__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sapling-space-3); }
 .sapling-composer__lead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sapling-space-3); min-width: 0; }
-.sapling-composer__hint { margin: 0; color: var(--sapling-muted); font-size: 13px; }
+.sapling-composer__hint { margin: 0; color: var(--sapling-muted); font-size: var(--sapling-text-meta); line-height: var(--sapling-leading-meta); }
 .sapling-composer__status:empty { display: none; }
-.sapling-composer__status { margin: 0; color: var(--sapling-muted); font-size: 13px; }
+.sapling-composer__status { margin: 0; color: var(--sapling-muted); font-size: var(--sapling-text-meta); line-height: var(--sapling-leading-meta); }
 
 @media (max-width: 767px) {
   .sapling-goal { padding: 14px 16px; gap: 8px; }
   .sapling-phases { gap: 10px 16px; }
-  .sapling-phases li { font-size: 13px; gap: 6px; }
+  .sapling-phases li { gap: 6px; }
   .sapling-phases__mark { width: 24px; height: 24px; }
   .sapling-composer__hint { display: none; }
 }
