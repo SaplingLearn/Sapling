@@ -514,7 +514,7 @@ Added with the upload → SSE → library journey (#387); reworked by the cream-
 | `library-add-course` | "Add a course" beside Upload (zero courses) — opens the course manager |
 | `library-offline` | offline notice |
 | `library-search` | search input (file name + summary) |
-| `library-course-filter` | Course `<select>`: all / uncategorized / one per distinct course |
+| `library-course-filter` | Course `<select>`: all / uncategorized / one per distinct course. `/library?course=<course_id>` pre-selects an enrolled course once the courses load (prompt 05) |
 | `library-category-filter` | Category `<select>` |
 | `library-filetype-filter` | File type `<select>` (from the file-name extension; not the category) |
 | `library-view-list` / `library-view-grid` | layout toggle (`aria-pressed`) |
@@ -635,7 +635,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-plan-adjust` | "Adjust goal or scope" under the plan — opens the goal editor (plan phase only) |
 | `loop-messages` | the teach/check/feedback chat container (wraps `ChatPanel`); the check card (and, in the studio, the Continue / Check me / Start with / seed row) sit above it, outside `ChatPanel`. In the tutor view that row sits between the transcript and the composer — still outside the scroll box |
 | `loop-seed-confused` / `loop-seed-example` | "I'm confused" / "Another example" — ordinary chat turns through `/chat/stream` (prompt 04); never a grade |
-| `loop-materials-link` | the composer's "Course materials" link to `/library` in the studio (the tutor uses `tutor-materials-open`); never an attachment |
+| `loop-materials-link` | the composer's "Course materials" link to `/library?course=<course_id>` (plain `/library` with no course) in the studio (the tutor uses `tutor-materials-open`); never an attachment |
 | `loop-recovery-note` | status-first recovery: a graded submission's feedback stream broke ("may already be graded, so it wasn't sent again"), a 409 already graded, or a Retry that found the turn already saved |
 | `loop-teach-start` | "Start with <first plan concept>" — sends that as the first chat turn (shown until the student has chatted) |
 | `loop-check-me` | "Check me" ("Check my understanding" / after feedback "Try another check" in the tutor view): posts `/check/next` when no item is current (A27) |
@@ -683,7 +683,7 @@ in this view; these are the view's own.
 | `tutor-goal-new-session` / `tutor-goal-edit` | a new goal while teaching (confirmed new session) / "Adjust goal or scope" in probe and plan |
 | `tutor-materials` | Materials: this course's Library documents (names and categories only) |
 | `tutor-materials-open` | the composer's "Materials" control — opens the Materials context |
-| `tutor-materials-error` / `tutor-materials-empty` / `tutor-materials-library` | load failure ("Retry materials"), no materials, and "Open course Library" (`/library`) |
+| `tutor-materials-error` / `tutor-materials-empty` / `tutor-materials-library` | load failure ("Retry materials"), no materials, and "Open course Library" (`/library?course=<course_id>`; Library pre-selects that course) |
 | `tutor-map` / `tutor-map-full` | Map: the real `KnowledgeGraph` (original colours) and the link to `/tree` |
 | `tutor-goal-line` | "Goal · <goal text>" above the conversation heading while teaching |
 | `tutor-welcome` | the start view — only after session discovery succeeded and found nothing open |
