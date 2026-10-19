@@ -1004,10 +1004,10 @@ async def _loop_continuation_text(turn, messages: list) -> str | None:
                     user_id=turn.user_id,
                     session_id=turn.session_id,
                 )
-            except Exception:
+            except Exception as exc:
                 # The canonical helper never raises. Keep instrumentation from
                 # replacing a provider error or cancellation if that changes.
-                logger.debug("Loop continuation usage hook failed", exc_info=True)
+                logger.warning("Usage accounting hook failed (stage=loop_continuation_usage, error_type=%s)", type(exc).__name__)
     return turn.render(result.output)
 
 

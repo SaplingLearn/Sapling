@@ -354,8 +354,8 @@ async def stream_agent_turn(
     if on_usage is not None and run_result is not None:
         try:
             on_usage(run_result)
-        except Exception:
-            logger.debug("on_usage hook failed; usage row dropped", exc_info=True)
+        except Exception as exc:
+            logger.warning("Usage accounting hook failed (stage=legacy_stream_usage, error_type=%s)", type(exc).__name__)
 
     if not reply.strip():
         # Degenerate output (#153, ADR-0023 follow-up): gemini-2.5-pro
@@ -681,8 +681,8 @@ async def stream_structured_turn(
                     )
                     if on_incomplete_usage is not None:
                         on_incomplete_usage(usage)
-            except Exception:
-                logger.debug("structured usage hook failed; usage row dropped", exc_info=True)
+            except Exception as exc:
+                logger.warning("Usage accounting hook failed (stage=structured_stream_usage, error_type=%s)", type(exc).__name__)
             finally:
                 queue.put_nowait(_END)
 

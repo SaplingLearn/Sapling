@@ -87,16 +87,44 @@ def test_falls_back_to_task_model_when_result_has_no_model(sink):
     assert row["model"] == model_for("quiz").model_name
 
 
-def test_never_raises_on_broken_result(sink):
+def test_never_raises_on_broken_result(sink, caplog):
     class _Broken:
         def usage(self):
-            raise RuntimeError("usage exploded")
+            raise RuntimeError("PRIVATE_USAGE_CAPTURE_CONTENT")
 
     # Must swallow: instrumentation cannot break the agent run.
-    out = record_agent_usage(_Broken(), feature="notes", task="note_chat")
+    original = _Broken()
+    out = record_agent_usage(original, feature="notes", task="note_chat")
     events_service.flush_now()
-    assert out is not None
-    assert sink == []  # nothing logged, but no exception either
+    assert out is original
+    assert sink == []  # no fabricated usage row when extraction is unavailable
+    records = [r for r in caplog.records if "stage=agent_usage_capture" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelname == "WARNING"
+    assert "error_type=RuntimeError" in records[0].getMessage()
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "PRIVATE_USAGE_CAPTURE_CONTENT" not in caplog.text
+
+
+@pytest.mark.parametrize("hook,stage", [
+    ("_warn_zero_token_run", "agent_zero_token_check"),
+    ("_log_recovered_retries", "agent_retry_observability"),
+])
+def test_diagnostic_hook_failure_warns_privately_without_losing_usage(sink, monkeypatch, caplog, hook, stage):
+    from agents import usage
+
+    def broken(*args):
+        raise ValueError("PRIVATE_USAGE_DIAGNOSTIC_CONTENT")
+
+    monkeypatch.setattr(usage, hook, broken)
+    original = _FakeResult()
+    assert record_agent_usage(original, feature="notes", task="note_chat") is original
+    events_service.flush_now()
+    assert len(sink) == 1 and len(sink[0][1]) == 1
+    records = [r for r in caplog.records if f"stage={stage}" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelname == "WARNING"
+    assert "error_type=ValueError" in records[0].getMessage()
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "PRIVATE_USAGE_DIAGNOSTIC_CONTENT" not in caplog.text
 
 
 # ── #689: tokens must survive the REAL Gemini → pydantic-ai extraction ──────

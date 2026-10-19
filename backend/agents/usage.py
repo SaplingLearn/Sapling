@@ -12,7 +12,7 @@ Two properties matter:
   feature=..., task=...)``) or add it as a trailing statement.
 * **Never raises.** Instrumentation must not break an agent run, so every
   failure — a result shape we don't recognize, a usage extraction slip — is
-  swallowed and logged at debug level.
+  swallowed and logged as a metadata-only warning, without exception prose.
 
 The ``model`` is read from the result's final ``ModelResponse`` (the model the
 provider actually served); if that's unavailable it falls back to the task's
@@ -193,14 +193,14 @@ def record_agent_usage(
             user_id=user_id, cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
             session_id=session_id, request_id=request_id,
         )
-    except Exception:
-        logger.debug("record_agent_usage: could not capture usage", exc_info=True)
+    except Exception as exc:
+        logger.warning("Usage accounting hook failed (stage=agent_usage_capture, error_type=%s)", type(exc).__name__)
     try:
         _warn_zero_token_run(result, task, feature)
-    except Exception:
-        logger.debug("record_agent_usage: zero-token check slipped", exc_info=True)
+    except Exception as exc:
+        logger.warning("Usage accounting hook failed (stage=agent_zero_token_check, error_type=%s)", type(exc).__name__)
     try:
         _log_recovered_retries(result, task, feature)
-    except Exception:
-        logger.debug("record_agent_usage: retry observability slipped", exc_info=True)
+    except Exception as exc:
+        logger.warning("Usage accounting hook failed (stage=agent_retry_observability, error_type=%s)", type(exc).__name__)
     return result

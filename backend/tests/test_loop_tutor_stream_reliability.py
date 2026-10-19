@@ -78,7 +78,7 @@ def test_real_agent_shape_retries_are_bounded_and_settle_usage_once(bad_rounds, 
 
 @pytest.mark.parametrize("when", ["before_tokens", "after_tokens", "after_retry"])
 @pytest.mark.parametrize("hook_fails", [False, True])
-def test_consumer_cancel_accounts_known_usage_without_completing_or_retrying(when, hook_fails):
+def test_consumer_cancel_accounts_known_usage_without_completing_or_retrying(when, hook_fails, caplog):
     async def run():
         waiting = asyncio.Event()
         calls = []
@@ -105,7 +105,7 @@ def test_consumer_cancel_accounts_known_usage_without_completing_or_retrying(whe
         def record_incomplete(known_usage):
             incomplete.append(known_usage)
             if hook_fails:
-                raise RuntimeError("instrumentation is unavailable")
+                raise RuntimeError("PRIVATE_CANCELLED_USAGE_CONTENT")
 
         async def consume():
             async for event in stream_structured_turn(
@@ -141,6 +141,12 @@ def test_consumer_cancel_accounts_known_usage_without_completing_or_retrying(whe
         )
 
     asyncio.run(run())
+    records = [r for r in caplog.records if "stage=structured_stream_usage" in r.getMessage()]
+    assert len(records) == int(hook_fails)
+    for record in records:
+        assert record.levelname == "WARNING" and "error_type=RuntimeError" in record.getMessage()
+        assert record.exc_info is None and record.stack_info is None
+    assert "PRIVATE_CANCELLED_USAGE_CONTENT" not in caplog.text
 
 
 def test_usage_hooks_cannot_replace_the_original_terminal_error():
@@ -199,13 +205,13 @@ def test_successful_producer_usage_is_settled_even_if_consumer_closes_at_first_t
     assert persisted == []  # accounting never makes a disconnected turn successful
 
 
-def test_successful_usage_hook_failure_does_not_change_the_valid_reply():
+def test_successful_usage_hook_failure_does_not_change_the_valid_reply(caplog):
     model, calls = _streamed_model([_TURN])
     usage = []
 
     def broken(result):
         usage.append(result)
-        raise RuntimeError("instrumentation is unavailable")
+        raise RuntimeError("PRIVATE_SUCCESS_USAGE_CONTENT")
 
     events = asyncio.run(
         collect_structured(
@@ -218,6 +224,11 @@ def test_successful_usage_hook_failure_does_not_change_the_valid_reply():
     )
     assert len(usage) == calls["n"] == 1
     assert events[-1].type == "done" and events[-1].data["reply"] == render_turn(_TURN)
+    records = [r for r in caplog.records if "stage=structured_stream_usage" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelname == "WARNING"
+    assert "error_type=RuntimeError" in records[0].getMessage()
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "PRIVATE_SUCCESS_USAGE_CONTENT" not in caplog.text
 
 
 def _route_turn(model):
@@ -424,7 +435,7 @@ def test_continuation_checks_known_work_without_mutating_saved_cap_units(confron
 
 
 @pytest.mark.parametrize("failure", ["shape", "timeout", "cancel"])
-def test_continuation_usage_hook_failure_preserves_original_failure(failure, monkeypatch):
+def test_continuation_usage_hook_failure_preserves_original_failure(failure, monkeypatch, caplog):
     from routes import learn_loop
 
     calls, bills = [], []
@@ -447,7 +458,7 @@ def test_continuation_usage_hook_failure_preserves_original_failure(failure, mon
 
     def broken(result, **kwargs):
         bills.append(learn_loop._requests_of(result))
-        raise RuntimeError("instrumentation must not replace the original failure")
+        raise RuntimeError("PRIVATE_CONTINUATION_USAGE_CONTENT")
 
     monkeypatch.setattr(learn_loop, "record_agent_usage", broken)
     expected = {
@@ -461,3 +472,8 @@ def test_continuation_usage_hook_failure_preserves_original_failure(failure, mon
     assert bills == [known] and turn.run_requests == 3 + known
     assert len(calls) == (3 if failure == "shape" else 2)
     turn.complete.assert_not_called()
+    records = [r for r in caplog.records if "stage=loop_continuation_usage" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelname == "WARNING"
+    assert "error_type=RuntimeError" in records[0].getMessage()
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "PRIVATE_CONTINUATION_USAGE_CONTENT" not in caplog.text

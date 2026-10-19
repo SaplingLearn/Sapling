@@ -608,7 +608,7 @@ def test_on_usage_called_once_with_run_result_before_done():
     asyncio.run(run())
 
 
-def test_on_usage_failure_never_breaks_the_stream():
+def test_on_usage_failure_never_breaks_the_stream(caplog):
     """Instrumentation must not turn a fully-streamed reply into an error:
     a raising on_usage is swallowed and the turn still persists + dones."""
     async def run():
@@ -619,7 +619,7 @@ def test_on_usage_failure_never_breaks_the_stream():
         persisted = []
 
         def bad_usage(res):
-            raise RuntimeError("usage capture blew up")
+            raise RuntimeError("PRIVATE_LEGACY_USAGE_CONTENT")
 
         events = await collect(
             agent, make_deps(), lambda r, g, m: persisted.append(r) or {},
@@ -629,6 +629,11 @@ def test_on_usage_failure_never_breaks_the_stream():
         assert events[-1].type == "done"
 
     asyncio.run(run())
+    records = [r for r in caplog.records if "stage=legacy_stream_usage" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelname == "WARNING"
+    assert "error_type=RuntimeError" in records[0].getMessage()
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "PRIVATE_LEGACY_USAGE_CONTENT" not in caplog.text
 
 
 def test_on_usage_not_called_on_error_rungs_or_nonstream_fallback():
