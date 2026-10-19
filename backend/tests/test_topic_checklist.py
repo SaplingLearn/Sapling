@@ -1,5 +1,8 @@
 """Exercise the real checklist service against persistent in-memory table state."""
+import asyncio
 import copy
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import json
 from datetime import datetime, timezone
 
@@ -9,8 +12,9 @@ from pydantic import ValidationError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
+import config
 from agents.topic_checklist import TopicOutline, topic_checklist_agent
-from services import academics
+from services import academics, ai_budget
 from services import topic_checklist_service as svc
 from services.encryption import decrypt_json, encrypt_if_present
 
@@ -113,6 +117,9 @@ def state(monkeypatch):
 
     monkeypatch.setattr(svc, "table", service_table)
     monkeypatch.setattr(academics, "table", lambda name: MemoryTable(db, name))
+    monkeypatch.setattr(ai_budget, "table", lambda name: MemoryTable(db, name))
+    monkeypatch.setattr(ai_budget, "_utcnow", lambda: NOW)
+    monkeypatch.setattr(config, "PLATFORM_DAILY_BUDGET_USD", None)
     db["_reads"] = reads
     monkeypatch.setattr(svc, "current_term", lambda: {"id": "fall"})
     monkeypatch.setattr(svc, "term_id_for_label", lambda label: {"Fall 2026": "fall", "Spring 2026": "spring"}.get(label))
@@ -528,3 +535,193 @@ def test_no_tracked_nodes_means_no_edge_read(state):
     db["graph_nodes"] = []
     svc.build_snapshot("u", svc.resolve_scope("u", "course", None), NOW.date())
     assert not [r for r in db["_reads"] if r[0] == "graph_edges"]
+
+
+@pytest.mark.parametrize("scope", ["daily_usd", "monthly_usd", "daily_tokens"])
+def test_refresh_checks_configured_spend_before_any_generation(state, scope):
+    db, calls = state
+    svc.refresh_checklist("u", "course")
+    svc.set_reviewed("u", "course", svc.topic_key("Functions"), True)
+    stored = copy.deepcopy(db["topic_checklists"])
+    db["courses"][0]["description"] += " New material."
+    db["llm_usage"] = [{
+        "id": "spent", "user_id": "u", "task": "topic_checklist",
+        "cost_usd": config.STUDENT_MONTHLY_BUDGET_USD if scope == "monthly_usd" else
+                    config.STUDENT_DAILY_BUDGET_USD if scope == "daily_usd" else 0,
+        "total_tokens": config.STUDENT_DAILY_TOKENS if scope == "daily_tokens" else 0,
+        "created_at": "2026-10-01T12:00:00Z" if scope == "monthly_usd" else NOW.isoformat(),
+    }]
+    with pytest.raises(ai_budget.AIBudgetExceeded) as error:
+        svc.refresh_checklist("u", "course")
+    assert error.value.decision.scope == scope
+    assert len(calls) == 1 and db["topic_checklists"] == stored
+    assert svc.get_checklist("u", "course")["topics"]
+    assert db["topic_checklist_progress"]
+    assert svc._generation_locks == {}
+
+
+def test_fresh_cache_and_empty_sources_need_no_budget_read(state, monkeypatch):
+    db, calls = state
+    svc.refresh_checklist("u", "course")
+
+    def unavailable(*args):
+        pytest.fail("A cache hit/no-evidence response must not read spending.")
+
+    monkeypatch.setattr(ai_budget, "check", unavailable)
+    assert svc.refresh_checklist("u", "course")["topics"]
+    db["courses"][0]["description"] = None
+    db["documents"] = db["graph_nodes"] = db["assignments"] = []
+    assert svc.refresh_checklist("u", "course")["topics"] == []
+    assert len(calls) == 1
+
+
+def test_budget_read_outage_is_retryable_and_never_calls_model(state, monkeypatch):
+    db, calls = state
+
+    def unavailable(*args):
+        raise RuntimeError("usage store unavailable")
+
+    monkeypatch.setattr(ai_budget, "_load_rows", unavailable)
+    with pytest.raises(HTTPException) as error:
+        svc.refresh_checklist("u", "course")
+    assert error.value.status_code == 503
+    assert "usage" in error.value.detail.lower()
+    assert calls == [] and not db.get("topic_checklists")
+    assert svc._generation_locks == {}
+
+
+def test_actual_refresh_endpoint_preserves_budget_429(state, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import topic_checklist as routes
+
+    db, calls = state
+    db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "topic_checklist",
+                        "created_at": NOW.isoformat(), "cost_usd": config.STUDENT_DAILY_BUDGET_USD}]
+    monkeypatch.setattr(routes, "require_self", lambda user_id, request: user_id)
+    app = FastAPI()
+    app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+    app.include_router(routes.router, prefix="/api/topic-checklist")
+    response = TestClient(app).post("/api/topic-checklist/u/courses/course/refresh")
+    assert response.status_code == 429 and response.json()["scope"] == "daily_usd"
+    assert response.json()["detail"] == ai_budget.BUDGET_REACHED_DETAIL
+    assert int(response.headers["Retry-After"]) > 0
+    assert calls == []
+
+
+@pytest.mark.parametrize("other_course", [False, True])
+def test_concurrent_misses_coalesce_or_recheck_spend_after_wait(state, monkeypatch, other_course):
+    db, calls = state
+    if other_course:
+        db["courses"].append({"id": "course2", "course_code": "CS2", "course_name": "Second", "description": "Functions."})
+        db["course_offerings"].append({"id": "off2", "course_id": "course2", "term_id": "fall"})
+        db["enrollments"].append({"id": "enr2", "user_id": "u", "offering_id": "off2"})
+    started, second_snapshot, release = threading.Event(), threading.Event(), threading.Event()
+    original_snapshot = svc._current_checklist
+
+    def snapshot(user, course, semester):
+        result = original_snapshot(user, course, semester)
+        if threading.current_thread().name.endswith("_1"):
+            second_snapshot.set()
+        return result
+
+    async def generate(payload, user_id):
+        calls.append(payload)
+        started.set()
+        assert release.wait(3), "First request never released"
+        # A committed usage row from the first generation reaches the cap.
+        db["llm_usage"] = [{"id": "spent", "user_id": "u", "task": "topic_checklist",
+                            "created_at": NOW.isoformat(), "cost_usd": config.STUDENT_DAILY_BUDGET_USD}]
+        return outline()
+
+    monkeypatch.setattr(svc, "_current_checklist", snapshot)
+    monkeypatch.setattr(svc, "_generate", generate)
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="checklist") as workers:
+        first = workers.submit(svc.refresh_checklist, "u", "course")
+        assert started.wait(3)
+        second = workers.submit(svc.refresh_checklist, "u", "course2" if other_course else "course")
+        try:
+            assert second_snapshot.wait(3)
+        finally:
+            release.set()
+        assert first.result(timeout=3)["topics"]
+        if other_course:
+            with pytest.raises(ai_budget.AIBudgetExceeded) as error:
+                second.result(timeout=3)
+            assert error.value.decision.scope == "daily_usd"
+        else:
+            assert second.result(timeout=3)["topics"]
+    assert len(calls) == 1
+    assert len(db["topic_checklists"]) == 1
+    assert svc._generation_locks == {}
+
+
+def test_failed_generation_keeps_actual_usage_for_canonical_accounting(monkeypatch):
+    recorded = []
+
+    async def failing_run(message, **kwargs):
+        kwargs["usage"].input_tokens = 25
+        kwargs["usage"].output_tokens = 9
+        raise TimeoutError("provider timeout")
+
+    def record(result, **kwargs):
+        recorded.append((result.usage(), kwargs))
+        return result
+
+    monkeypatch.setattr(topic_checklist_agent, "run", failing_run)
+    monkeypatch.setattr(svc, "record_agent_usage", record)
+    with pytest.raises(TimeoutError):
+        asyncio.run(svc._generate({"sources": []}, "u"))
+    assert len(recorded) == 1
+    usage, metadata = recorded[0]
+    assert usage.input_tokens == 25 and usage.output_tokens == 9
+    assert metadata == {"feature": "topic_checklist", "task": "topic_checklist", "user_id": "u"}
+
+
+
+def test_generation_wait_timeout_preserves_holder_and_drops_waiter_reference(state, monkeypatch):
+    db, calls = state
+    started, release = threading.Event(), threading.Event()
+
+    async def generate(payload, user_id):
+        calls.append(payload)
+        started.set()
+        assert release.wait(3)
+        return outline()
+
+    monkeypatch.setattr(svc, "_generate", generate)
+    monkeypatch.setattr(svc, "GENERATION_WAIT_SECONDS", 0.02)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        holder = workers.submit(svc.refresh_checklist, "u", "course")
+        assert started.wait(3)
+        try:
+            with pytest.raises(HTTPException) as error:
+                svc.refresh_checklist("u", "course")
+            assert error.value.status_code == 503
+            assert int(error.value.headers["Retry-After"]) > 0
+            lock, references = svc._generation_locks["u"]
+            assert lock.locked() and references == 1
+        finally:
+            release.set()
+        assert holder.result(timeout=3)["topics"]
+    assert len(calls) == 1 and svc._generation_locks == {}
+    monkeypatch.setattr(ai_budget, "check", lambda *args: pytest.fail("Completed cache hit is free"))
+    assert svc.refresh_checklist("u", "course")["topics"]
+    assert len(db["topic_checklists"]) == 1
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_failed_usage_hook_cannot_replace_original_model_failure(monkeypatch, cancelled):
+    original = asyncio.CancelledError() if cancelled else RuntimeError("original failure")
+
+    async def failing_run(message, **kwargs):
+        raise original
+
+    def broken_record(*args, **kwargs):
+        raise RuntimeError("accounting failure")
+
+    monkeypatch.setattr(topic_checklist_agent, "run", failing_run)
+    monkeypatch.setattr(svc, "record_agent_usage", broken_record)
+    with pytest.raises(type(original)) as error:
+        asyncio.run(svc._generate({"sources": []}, "u"))
+    assert error.value is original

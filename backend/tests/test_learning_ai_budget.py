@@ -815,3 +815,61 @@ def test_accelerated_function_burst_allowance_preserves_the_monetary_cap(usage, 
     decision = ai_budget.check(UID, "tutor", "develop")
     assert (decision.level, decision.scope, decision.pause_novice) == ("hard", "daily_usd", True)
     assert ai_budget.check(UID, "grader").level == "normal"
+
+
+@pytest.mark.parametrize("scope", ["daily_usd", "monthly_usd", "daily_tokens"])
+def test_generation_uses_non_tutor_spend_and_token_hard_limits(usage, scope):
+    row = _row(
+        cost=config.STUDENT_MONTHLY_BUDGET_USD if scope == "monthly_usd" else
+             config.STUDENT_DAILY_BUDGET_USD if scope == "daily_usd" else 0,
+        tokens=config.STUDENT_DAILY_TOKENS if scope == "daily_tokens" else 0,
+        ago_s=3 * 86400 if scope == "monthly_usd" else 3600,
+        task="topic_checklist",
+    )
+    usage([row])
+    decision = ai_budget.check(UID, "generation")
+    assert decision.level == "hard" and decision.scope == scope
+
+
+def test_generation_does_not_borrow_or_consume_tutor_or_grade_allowances(usage, monkeypatch):
+    usage([_row(task="grader", ago_s=5) for _ in range(config.STUDENT_DAILY_GRADES)])
+    monkeypatch.setattr(ai_budget, "_tutor_calls_today", lambda *args: pytest.fail("not a tutor call"))
+    assert ai_budget.check(UID, "generation").level == "normal"
+    with pytest.raises(ValueError, match="no learning band"):
+        ai_budget.check(UID, "generation", "novice")
+    usage([_row(cost=config.STUDENT_DAILY_BUDGET_USD * config.STUDENT_SOFT_FRACTION)])
+    assert ai_budget.check(UID, "generation").level == "normal"
+
+
+def test_generation_usage_outage_fails_closed_without_changing_legacy(usage):
+    usage([], raises=RuntimeError("usage unavailable"))
+    with pytest.raises(ai_budget.AIBudgetUnavailable):
+        ai_budget.check(UID, "generation")
+    assert ai_budget.check(UID, "close").level == "normal"
+    assert ai_budget.check(UID, "grader").level == "normal"
+
+
+@pytest.mark.parametrize("cached_outage", [False, True])
+def test_generation_rechecks_usage_even_inside_an_existing_request(usage, cached_outage):
+    from services import request_context
+
+    fake = usage([], raises=RuntimeError("temporary") if cached_outage else None)
+    token = request_context._REQUEST_KEY_CTX.set("generation-previous-read")
+    try:
+        assert ai_budget.check(UID, "close").level == "normal"
+        fake.raises = None
+        fake.rows.append(_row(cost=config.STUDENT_DAILY_BUDGET_USD))
+        assert ai_budget.check(UID, "generation").level == "hard"
+    finally:
+        request_context._REQUEST_KEY_CTX.reset(token)
+    assert fake.reads == (1 if cached_outage else 2)
+
+
+@pytest.mark.parametrize("bad", ["invalid", "NaN"])
+def test_generation_rejects_unreadable_usage_without_a_false_normal_decision(usage, bad):
+    row = _row()
+    # A malformed billed amount must not be interpreted as unused allowance.
+    row["cost_usd"] = bad
+    usage([row])
+    with pytest.raises(ai_budget.AIBudgetUnavailable):
+        ai_budget.check(UID, "generation")
