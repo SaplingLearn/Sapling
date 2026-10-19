@@ -23,6 +23,12 @@ export const CONTEXT_TITLES: Record<TutorContextTab, string> = {
   materials: "Course materials",
   map: "Knowledge map",
 };
+/** Library filtered to one course (Library reads `?course=` once its courses
+ *  load and ignores an id the student is not enrolled in). */
+export function libraryHref(courseId: string | null | undefined): string {
+  return courseId ? `/library?course=${encodeURIComponent(courseId)}` : "/library";
+}
+
 const CONTEXT_CHIPS: { id: TutorContextTab; label: string }[] = [
   { id: "goal", label: "Goal & plan" },
   { id: "materials", label: "Materials" },
@@ -363,7 +369,7 @@ export function MaterialsContext({ userId, courseId, courseLabel }: { userId: st
         </ul>
       )}
       <p className={styles.muted}>Read and manage course materials in Library.</p>
-      <Link href="/library" className={styles.primaryLink} data-testid="tutor-materials-library">
+      <Link href={libraryHref(courseId)} className={styles.primaryLink} data-testid="tutor-materials-library">
         Open course Library
       </Link>
     </div>

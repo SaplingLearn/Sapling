@@ -84,6 +84,7 @@ import {
   TutorHistory,
   TutorMenu,
   TutorWelcome,
+  libraryHref,
   type TutorContextTab,
 } from "./TutorView";
 import {
@@ -1388,7 +1389,7 @@ export function LoopLearn() {
       Materials
     </button>
   ) : (
-    <Link href="/library" className={styles.materialsLead} data-testid="loop-materials-link">
+    <Link href={libraryHref(courseId)} className={styles.materialsLead} data-testid="loop-materials-link">
       <BotanicalIcon name="paper" size={18} />
       Course materials
     </Link>
@@ -1700,6 +1701,7 @@ export function LoopLearn() {
     body = <GoalEditor key={`${sessionId}:${courseId}`} goal={goal}
       nodes={railGraph.nodes.filter((node) => !node.is_subject_root)} busy={goalBusy} error={goalError}
       loadingNodes={graphLoading} nodesError={graphError} onRetryNodes={() => void refreshGraph()}
+      libraryLink={libraryHref(courseId)}
       onSave={(next) => void saveGoal(next)} onCancel={() => { setGoalEditor(false); goalButton.current?.focus(); }} />;
   } else if (state.phase === "probe") {
     body = (
@@ -1871,7 +1873,7 @@ export function LoopLearn() {
         <h2 id="loop-sources-heading" className={styles.railTitle}>Keep your sources close.</h2>
         <ul className={styles.sourceLinks}>
           <li>
-            <Link href="/library" className={styles.sourceLink}>
+            <Link href={libraryHref(courseId)} className={styles.sourceLink}>
               <BotanicalIcon name="paper" size={20} />
               <span>Course materials in Library</span>
             </Link>

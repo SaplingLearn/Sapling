@@ -344,7 +344,8 @@ describe("conversation seeds while teaching", () => {
 
   it("the composer links to the course's real materials, not an attachment", async () => {
     await resumedTeach();
-    expect(screen.getByTestId("loop-materials-link").getAttribute("href")).toBe("/library");
+    // Scoped to the open course: Library pre-selects it from ?course=.
+    expect(screen.getByTestId("loop-materials-link").getAttribute("href")).toBe("/library?course=c1");
     expect(document.querySelector('input[type="file"]')).toBeNull();
   });
 });
@@ -490,7 +491,7 @@ describe("the Clov tutor view (?view=tutor, tutor_view flag)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry materials" }));
     expect(await screen.findByText("Recursion notes.pdf")).toBeTruthy();
     expect(screen.queryByText("Other course.pdf")).toBeNull();
-    expect(screen.getByTestId("tutor-materials-library").getAttribute("href")).toBe("/library");
+    expect(screen.getByTestId("tutor-materials-library").getAttribute("href")).toBe("/library?course=c1");
   });
 
   it("Materials with nothing uploaded offers Library, not an upload in chat", async () => {

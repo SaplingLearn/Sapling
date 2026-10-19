@@ -7,8 +7,10 @@ import type { GraphNode } from "@/lib/data";
 import { SaplingAction, StatusMessage } from "@/components/sapling";
 import styles from "./LoopLearn.module.css";
 
-export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loadingNodes = false, nodesError = false, onRetryNodes }: {
+export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loadingNodes = false, nodesError = false, onRetryNodes, libraryLink = "/library" }: {
   goal: LoopGoal | null;
+  /** Where "Add material in Library" goes (the caller scopes it to the course). */
+  libraryLink?: string;
   nodes: GraphNode[];
   busy: boolean;
   error: string | null;
@@ -96,7 +98,7 @@ export function GoalEditor({ goal, nodes, busy, error, onSave, onCancel, loading
                 <p>No target concepts are available for this course yet. You can explore the whole course or add material in Library.</p>
                 <div className={styles.actionRow}>
                   <SaplingAction tone="secondary" onClick={() => setWholeCourse(true)}>Explore the whole course instead</SaplingAction>
-                  <Link href="/library" className={styles.textLink}>Add material in Library</Link>
+                  <Link href={libraryLink} className={styles.textLink}>Add material in Library</Link>
                 </div>
               </div>
             )}

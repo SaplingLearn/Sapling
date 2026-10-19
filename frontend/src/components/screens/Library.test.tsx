@@ -235,6 +235,29 @@ describe("Library data states", () => {
 });
 
 describe("Library filters", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("pre-selects ?course= once the courses load (Clov's Materials link), and the filter stays editable", async () => {
+    window.history.replaceState(null, "", "/library?course=c-2");
+    const user = userEvent.setup();
+    renderLibrary();
+    const select = screen.getByLabelText("Course", { selector: "select" });
+    await waitFor(() => expect(select).toHaveValue("c-2"));
+    expect(rowIds()).toEqual(["d3"]);
+    // The course scan follows the pre-selected course, as for a manual pick.
+    expect(screen.getByTestId("library-course-scan")).toHaveTextContent("MATH200");
+
+    await user.selectOptions(select, "all");
+    expect(rowIds()).toEqual(["d1", "d2", "d3", "d4"]);
+  });
+
+  it("ignores a ?course= the student is not enrolled in", async () => {
+    window.history.replaceState(null, "", "/library?course=not-mine");
+    renderLibrary();
+    await waitFor(() => expect(rowIds()).toHaveLength(4));
+    expect(screen.getByLabelText("Course", { selector: "select" })).toHaveValue("all");
+  });
+
   it("dedupes repeated enrollments into one course option", async () => {
     renderLibrary();
     await waitFor(() => expect(rowIds()).toHaveLength(4));

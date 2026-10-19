@@ -238,6 +238,19 @@ export function Library() {
 
   const dedupedCourses = React.useMemo(() => dedupeCourses(courses), [courses]);
 
+  // `?course=<id>` (Clov's Materials, Learn's Library links) pre-selects that
+  // course's filter ONCE, after the courses load: only an enrolled course is
+  // applied (an unknown id would render a blank select), and never over a
+  // filter the student already picked.
+  const courseParamApplied = React.useRef(false);
+  React.useEffect(() => {
+    if (courseParamApplied.current || dedupedCourses.length === 0) return;
+    courseParamApplied.current = true;
+    const wanted = new URLSearchParams(window.location.search).get("course")?.trim();
+    if (!wanted || !dedupedCourses.some((c) => c.course_id === wanted)) return;
+    setFilters((f) => (f.course === "all" ? { ...f, course: wanted } : f));
+  }, [dedupedCourses]);
+
   const courseLookup = React.useMemo(() => {
     const map: Record<string, string> = {};
     for (const c of dedupedCourses) map[c.course_id] = c.course_code || c.course_name;
