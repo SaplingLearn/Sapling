@@ -43,6 +43,7 @@ export interface GraphComparisonEntry {
 }
 
 type Props = {
+  appearance?: "fa26";
   nodes: GraphNode[];
   edges: GraphEdge[];
   width?: number;
@@ -93,6 +94,7 @@ function KnowledgeGraph2DImpl({
   width = 600,
   height = 480,
   variant = "organism",
+  appearance,
   highlightId,
   onNodeClick,
   pauseWhenOffscreen = true,
@@ -128,6 +130,8 @@ function KnowledgeGraph2DImpl({
   // calls setState.
   const nodeElsRef = React.useRef(new Map<string, SVGGElement>());
   const edgeElsRef = React.useRef(new Map<number, SVGLineElement>());
+  const gradientElsRef = React.useRef(new Map<number, SVGLinearGradientElement>());
+  const gradientPrefix = React.useId().replace(/:/g, "");
   const tooltipRef = React.useRef<HTMLDivElement>(null);
   const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0 });
 
@@ -157,6 +161,13 @@ function KnowledgeGraph2DImpl({
       el.setAttribute("y1", String(s.y));
       el.setAttribute("x2", String(t.x));
       el.setAttribute("y2", String(t.y));
+      const gradient = gradientElsRef.current.get(i);
+      if (gradient) {
+        gradient.setAttribute("x1", String(s.x));
+        gradient.setAttribute("y1", String(s.y));
+        gradient.setAttribute("x2", String(t.x));
+        gradient.setAttribute("y2", String(t.y));
+      }
     });
   }, []);
 
@@ -185,7 +196,6 @@ function KnowledgeGraph2DImpl({
         vx: 0,
         vy: 0,
         index: undefined,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         _hub: hubSeed,
       } as SimNode;
     });
@@ -251,14 +261,18 @@ function KnowledgeGraph2DImpl({
   }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const nodeRadius = (n: GraphNode) => radiusFor(n.mastery_score, n.is_subject_root);
+  const nodeRadius = (n: GraphNode) => appearance === "fa26" ? (n.is_subject_root ? 42 : 14 + n.mastery_score * 12) : radiusFor(n.mastery_score, n.is_subject_root);
   const courseColor = (n?: GraphNode) => {
     if (!n) return "var(--c-sage)";
     const base = n.color || "var(--c-sage)";
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
-  const fillFor = (n: GraphNode) => courseColor(n);
+  const fillFor = (n: GraphNode) => appearance !== "fa26" ? courseColor(n)
+    : n.is_subject_root ? "#7c614e"
+    : n.mastery_tier === "mastered" ? "#a1b06d"
+    : n.mastery_tier === "struggling" ? "#ef8f97"
+    : n.mastery_tier === "learning" ? "#f8ce91" : "#decec1";
 
   // ── Pause simulation when offscreen ─────────────────────────────────────
   React.useEffect(() => {
@@ -480,10 +494,15 @@ function KnowledgeGraph2DImpl({
               const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(String(l.source));
               const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(String(l.target));
               if (!s || !t || s.x == null || t.x == null) return null;
-              const op = variant === "constellation" ? 0.35 : 0.2;
+              const op = appearance === "fa26" ? 0.65 : variant === "constellation" ? 0.35 : 0.2;
               return (
+                <g key={i}>
+                  {appearance === "fa26" && <defs><linearGradient id={`${gradientPrefix}-edge-${i}`} gradientUnits="userSpaceOnUse"
+                    x1={s.x} y1={s.y} x2={t.x} y2={t.y}
+                    ref={element => { if (element) gradientElsRef.current.set(i, element); else gradientElsRef.current.delete(i); }}>
+                    <stop offset="0%" stopColor={fillFor(s)} /><stop offset="100%" stopColor={fillFor(t)} />
+                  </linearGradient></defs>}
                 <line
-                  key={i}
                   ref={(el) => {
                     if (el) edgeElsRef.current.set(i, el);
                     else edgeElsRef.current.delete(i);
@@ -493,11 +512,12 @@ function KnowledgeGraph2DImpl({
                   y1={s.y}
                   x2={t.x}
                   y2={t.y}
-                  stroke="var(--text-muted)"
+                  stroke={appearance === "fa26" ? `url(#${gradientPrefix}-edge-${i})` : "var(--text-muted)"}
                   strokeOpacity={op}
-                  strokeWidth={edgeWidthFor(l.strength)}
+                  strokeWidth={appearance === "fa26" ? 5 : edgeWidthFor(l.strength)}
                   strokeLinecap="round"
                 />
+                </g>
               );
             })}
           </g>
@@ -508,7 +528,7 @@ function KnowledgeGraph2DImpl({
               if (n.x == null || n.y == null) return null;
               const r = nodeRadius(n);
               const color = fillFor(n);
-              const op = n.is_subject_root ? 1 : opacityFor(n.mastery_tier);
+              const op = appearance === "fa26" || n.is_subject_root ? 1 : opacityFor(n.mastery_tier);
               const isHl = highlightId === n.id;
               const isHovered = hovered?.id === n.id;
               const isPinned = n.fx != null && n.fy != null;
@@ -537,7 +557,7 @@ function KnowledgeGraph2DImpl({
                     onNodeClick?.(n);
                   }}
                 >
-                  {variant === "organism" && (
+                  {variant === "organism" && appearance !== "fa26" && (
                     <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
                   )}
                   {isHl && (
@@ -593,18 +613,18 @@ function KnowledgeGraph2DImpl({
                   {n.is_subject_root && (
                     <text
                       x={0}
-                      y={r + 16}
+                      y={appearance === "fa26" ? 4 : r + 16}
                       textAnchor="middle"
                       fontFamily="var(--font-display)"
                       fontSize={13}
                       fontWeight={600}
-                      fill={color}
+                      fill={appearance === "fa26" ? "#f3eee8" : color}
                       pointerEvents="none"
                     >
-                      {n.name}
+                      {appearance === "fa26" ? truncateLabel(n.name, 12) : n.name}
                     </text>
                   )}
-                  {!n.is_subject_root && (
+                  {!n.is_subject_root && (appearance !== "fa26" || isHovered || isHl) && (
                     <text
                       x={0}
                       y={r + 13}

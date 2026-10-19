@@ -26,7 +26,6 @@ import {
   type CatalogCosmetic,
 } from "@/lib/api";
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
-import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
 
 type Tab = "profile" | "cosmetics" | "preferences" | "notifications" | "data";
 
@@ -65,10 +64,12 @@ type UsernameState = { status: "idle" | "checking" | "available" | "taken" | "in
 
 export function Settings() {
   const toast = useToast();
-  const { userId, userName, avatarUrl, userReady, signOut, refreshProfile, setAvatarUrl } = useUser();
+  const { userId, userName, avatarUrl, userReady, signOut, setAvatarUrl } = useUser();
   const [tab, setTab] = React.useState<Tab>("profile");
+  React.useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("section") === "notifications") setTab("notifications");
+  }, []);
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
-  const [layoutPref, setLayoutPref] = useLayoutPref();
   const [saving, setSaving] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<UserProfile | null>(null);
@@ -384,35 +385,6 @@ export function Settings() {
           {tab === "preferences" && settings && (
             <div style={{ maxWidth: 640, margin: "0 auto" }}>
               <div className="h-serif" style={{ fontSize: 22, marginBottom: 20 }}>Preferences</div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "16px 0",
-                  borderBottom: "1px solid var(--border)",
-                  gap: 20,
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>Layout</div>
-                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
-                    Choose between a top navigation bar or a full-height sidebar.
-                    Falls back to top nav on small screens.
-                  </div>
-                </div>
-                <div style={{ minWidth: 180 }}>
-                  <CustomSelect
-                    size="sm"
-                    value={layoutPref}
-                    onChange={(v) => setLayoutPref(v as LayoutPref)}
-                    options={[
-                      { value: "sidebar", label: "Sidebar (default)" },
-                      { value: "topnav",  label: "Top nav" },
-                    ]}
-                  />
-                </div>
-              </div>
               {(
                 [
                   ["Theme", "theme", ["light"]],

@@ -125,6 +125,7 @@ function useGraphMode(): [Mode, (m: Mode) => void] {
 }
 
 type Props = {
+  appearance?: "fa26";
   nodes: GraphNode[];
   edges: GraphEdge[];
   width?: number;

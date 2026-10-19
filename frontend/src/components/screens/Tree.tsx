@@ -21,6 +21,7 @@ import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
 import { TopicChecklistPanel } from "../TopicChecklistPanel";
+import { NodeConnections } from "../graph/NodeConnections";
 import type { AttemptSummary } from "@/lib/quiz/types";
 
 type Tier = "all" | "mastered" | "learning" | "struggling" | "unexplored";
@@ -120,6 +121,7 @@ export function Tree() {
           source: e.source as string,
           target: e.target as string,
           strength: e.strength,
+          relationship_type: e.relationship_type,
         })),
       );
       setSessions(sessionsRes.sessions || []);
@@ -334,6 +336,10 @@ export function Tree() {
       <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
         {selected.name}
       </h2>
+      <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 16px", overflowWrap: "anywhere" }}>
+        {selected.description?.trim() || "No description is available yet."}
+      </p>
+      <NodeConnections node={selected} nodes={nodes} edges={edges} onSelect={setSelected} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
         <div className="card" style={{ padding: 12 }}>
           <div className="label-micro">Mastery</div>
@@ -578,6 +584,7 @@ export function Tree() {
             <GraphPanelSkeleton />
           ) : (
             <KnowledgeGraph
+          appearance="fa26"
               nodes={filteredNodes}
               edges={filteredEdges}
               width={size.w}
@@ -663,6 +670,7 @@ function FullscreenGraph({
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
       <KnowledgeGraph
+          appearance="fa26"
         nodes={nodes}
         edges={edges}
         width={size.w}

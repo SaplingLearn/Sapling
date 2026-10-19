@@ -130,6 +130,23 @@ function renderTree() {
   );
 }
 
+it("shows saved descriptions and preserves relationship metadata through the API mapping", async () => {
+  mockedGraph.mockResolvedValueOnce({
+    nodes: [
+      apiNode({ id: RECURSION, concept_name: "Recursion", description: "Solving a problem using smaller instances of itself." }),
+      apiNode({ id: POINTERS, concept_name: "Pointers" }),
+    ],
+    edges: [{ id: "edge-1", source: POINTERS, target: RECURSION, strength: 0.7, relationship_type: "prerequisite" }],
+  } as unknown as Awaited<ReturnType<typeof getGraph>>);
+  const user = userEvent.setup();
+  renderTree();
+  await selectNode(user, RECURSION);
+  expect(screen.getByText("Solving a problem using smaller instances of itself.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Pointers.*Prerequisite.*Pointers → Recursion/ }));
+  expect(screen.getByRole("heading", { name: "Pointers" })).toBeInTheDocument();
+  expect(screen.getByText("No description is available yet.")).toBeInTheDocument();
+});
+
 /** Opens a node's detail panel through the graph, the way a student does. */
 async function selectNode(user: ReturnType<typeof userEvent.setup>, id: string) {
   await user.click(await screen.findByTestId(`stub-node-${id}`));

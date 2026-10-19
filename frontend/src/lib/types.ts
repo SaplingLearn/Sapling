@@ -20,6 +20,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   strength: number;
+  relationship_type?: string;
 }
 
 export interface KnowledgeGraph {

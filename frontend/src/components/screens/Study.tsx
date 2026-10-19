@@ -2,6 +2,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
+import { StudyNavigation } from "../fa26/Navigation";
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
@@ -20,15 +21,6 @@ const MarkdownChat = dynamic(
 // Study's initial bundle. Fallbacks keep the resting visuals identical while
 // the chunk loads: an identically-styled static pill, and the same flex
 // wrapper minus the crossfade.
-const StudyToggleHighlight = dynamic(
-  () => import("./StudyMotion").then((m) => m.StudyToggleHighlight),
-  {
-    ssr: false,
-    loading: () => (
-      <span style={{ position: "absolute", inset: 0, background: "var(--accent-soft)", zIndex: -1 }} />
-    ),
-  },
-);
 // The mode transition wraps the pane CONTENT, so it must not depend on the
 // motion chunk (#490 review): a lazy wrapper either gates the panes behind
 // the chunk fetch (next/dynamic's fallback can't carry children) or remounts
@@ -132,41 +124,7 @@ export function Study() {
     [courses, activeSemester],
   );
 
-  const actions = (
-    <>
-      <AIDisclaimerChip />
-      <div
-        style={{
-          position: "relative",
-          display: "flex",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          overflow: "hidden",
-          isolation: "isolate",
-        }}
-      >
-        {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => setMode(v)}
-            style={{
-              position: "relative",
-              padding: "6px 14px",
-              fontSize: 12,
-              fontWeight: 600,
-              background: "transparent",
-              color: mode === v ? "var(--accent)" : "var(--text-dim)",
-              transition: "color 220ms cubic-bezier(.2,.85,.35,1)",
-              zIndex: 1,
-            }}
-          >
-            {mode === v && <StudyToggleHighlight />}
-            {label}
-          </button>
-        ))}
-      </div>
-    </>
-  );
+  const actions = <AIDisclaimerChip />;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
@@ -175,6 +133,7 @@ export function Study() {
         subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
+      <div className="fa26-study-header"><span>Study from your course material</span><StudyNavigation active={mode} onSelect={setMode} /></div>
       <StudyModePanel mode={mode}>
         {mode === "guide" ? (
           <GuideMode

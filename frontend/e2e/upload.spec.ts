@@ -245,17 +245,10 @@ test("upload → SSE → document appears in library and Postgres", async ({
     "the document's offering must resolve to an abstract course",
   ).toBeTruthy();
 
-  const courseFilter = page.getByTestId(`library-course-filter-${courseId}`);
+  const courseFilter = page.getByLabel("Course:", { exact: true });
   await expect(courseFilter).toBeVisible();
-  await courseFilter.click();
-
-  // The uploaded doc matches its course's filter — not dropped, not stuck
-  // under "Uncategorized".
+  await courseFilter.selectOption(courseId!);
   await expect(card).toBeVisible();
-
-  const uncategorizedFilter = page.getByTestId(
-    "library-course-filter-uncategorized",
-  );
-  await uncategorizedFilter.click();
+  await courseFilter.selectOption("uncategorized");
   await expect(card).not.toBeVisible();
 });

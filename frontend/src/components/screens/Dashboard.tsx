@@ -27,6 +27,7 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { dueSet } from "@/lib/quiz/proposals";
+import { DesignIcon } from "../fa26/DesignIcon";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
@@ -206,6 +207,7 @@ export function Dashboard() {
   // proper panel on the left. Sidebar layout uses the new 2-column
   // design with the CoursesKey overlay inside the graph panel.
   const useLegacyPanels = layoutPref === "topnav";
+  const useFa26 = search.get("layout") !== "legacy";
 
   const [nodes, setNodes] = React.useState<GraphNode[]>([]);
   const [edges, setEdges] = React.useState<GraphEdge[]>([]);
@@ -403,7 +405,7 @@ export function Dashboard() {
         <TopBar title="Couldn't load dashboard" />
         <div style={{ padding: 32, fontSize: 13 }}>
           <div style={{ color: "var(--err)", marginBottom: 10 }}>{loadError}</div>
-          <button className="btn btn--primary" onClick={load}>Retry</button>
+          <button data-testid="dashboard-action-1" className="btn btn--primary" onClick={load}>Retry</button>
         </div>
       </div>
     );
@@ -414,7 +416,7 @@ export function Dashboard() {
     // height the grid row decides (courses + upcoming stacked on the
     // left determines the row height via align-items: stretch).
     <div
-      className="card"
+      className="card dashboard-graph"
       style={{
         padding: 0, overflow: "hidden", position: "relative",
         minHeight: 420,
@@ -422,10 +424,10 @@ export function Dashboard() {
         flex: 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
+      <div className="dashboard-graph__header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--border)" }}>
         <div>
-          <div className="label-micro">Your knowledge graph</div>
-          <div className="h-serif" style={{ fontSize: 20, marginTop: 2 }}>
+          <div className="label-micro dashboard-graph__title">Your Knowledge Graph</div>
+          <div className="dashboard-graph__meta" style={{ fontSize: 20, marginTop: 2 }}>
             {stats.total || nodes.filter((n) => !n.is_subject_root).length} concepts across {scopedCourses.length} courses
           </div>
         </div>
@@ -436,7 +438,7 @@ export function Dashboard() {
               {c.course_code || c.course_name}
             </div>
           ))}
-          <button
+          <button data-testid="dashboard-action-2"
             className="btn btn--ghost btn--sm"
             onClick={() => setFullscreen(true)}
             aria-label="Fullscreen graph"
@@ -447,6 +449,7 @@ export function Dashboard() {
       </div>
       <div ref={gRefCb} style={{ position: "relative", flex: 1, minHeight: 260 }}>
         <KnowledgeGraph
+          appearance="fa26"
           nodes={nodes}
           edges={edges}
           width={size.w}
@@ -456,7 +459,7 @@ export function Dashboard() {
         />
         {/* Courses key — sidebar layout only. Top-nav layout uses the
             full My Courses panel in the left column instead. */}
-        {!useLegacyPanels && (
+        {!useFa26 && !useLegacyPanels && (
           <CoursesKey
             courseProgress={courseProgress}
             hasCourses={courses.length > 0}
@@ -464,7 +467,7 @@ export function Dashboard() {
             onManage={() => setCoursesOpen(true)}
           />
         )}
-        <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
+        <div className="dashboard-graph__legend" style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
           {([
             ["Mastered", "var(--state-mastery)"],
             ["Learning", "var(--state-progress)"],
@@ -530,14 +533,14 @@ export function Dashboard() {
           >
             <Icon name="bolt" size={13} /> {reviewDueLabel}
           </button>
-          <button
+          <button data-testid="dashboard-action-3"
             className="btn btn--sm"
             onClick={() => router.push("/library")}
             style={{ padding: "7px 14px", fontSize: 12 }}
           >
             <Icon name="search" size={13} /> Search
           </button>
-          <button
+          <button data-testid="dashboard-action-4"
             className="btn btn--sm btn--primary"
             onClick={() => router.push("/learn")}
             style={{ padding: "7px 14px", fontSize: 12 }}
@@ -582,7 +585,7 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <div className="label-micro">Today</div>
-          <button
+          <button data-testid="dashboard-action-5"
             className="btn btn--ghost btn--sm"
             onClick={() => router.push("/learn")}
           >
@@ -635,7 +638,7 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">Upcoming</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
+          <button data-testid="dashboard-action-6" className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
         </div>
         {assignments.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
@@ -742,14 +745,14 @@ export function Dashboard() {
           flexWrap: "wrap",
         }}
       >
-        <button
+        <button data-testid="dashboard-action-7"
           className="btn btn--sm"
           onClick={() => router.push("/library")}
           style={{ padding: "7px 14px", fontSize: 12 }}
         >
           <Icon name="search" size={13} /> Library
         </button>
-        <button
+        <button data-testid="dashboard-action-8"
           className="btn btn--sm btn--primary"
           onClick={() => router.push("/learn")}
           style={{ padding: "7px 14px", fontSize: 12 }}
@@ -767,7 +770,7 @@ export function Dashboard() {
         <strong>Try this next:</strong> {suggestNode.name}
         {suggestNode.subject && <span style={{ color: "var(--text-dim)" }}> · {suggestNode.subject}</span>}
       </div>
-      <button
+      <button data-testid="dashboard-action-9"
         className="btn btn--sm btn--primary"
         onClick={() => router.push(
           buildQuizHref(
@@ -778,7 +781,7 @@ export function Dashboard() {
       >
         Start quiz
       </button>
-      <button className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
+      <button data-testid="dashboard-action-10" className="btn btn--sm btn--ghost" onClick={dismissSuggest}>Dismiss</button>
     </div>
   ) : null;
 
@@ -809,7 +812,7 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">My courses</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
+          <button data-testid="dashboard-action-11" className="btn btn--ghost btn--sm" onClick={() => setCoursesOpen(true)}>
             <Icon name="cog" size={12} /> Courses & Semesters
           </button>
         </div>
@@ -828,7 +831,7 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">Upcoming</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
+          <button data-testid="dashboard-action-12" className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
         </div>
         {assignments.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
@@ -868,14 +871,14 @@ export function Dashboard() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       {!isMobile && (
         <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
-          <button
+          <button data-testid="dashboard-action-13"
             className="btn btn--sm"
             onClick={() => router.push("/library")}
             style={{ padding: "7px 14px", fontSize: 12 }}
           >
             <Icon name="search" size={13} /> Library
           </button>
-          <button
+          <button data-testid="dashboard-action-14"
             className="btn btn--sm btn--primary"
             onClick={() => router.push("/learn")}
             style={{ padding: "7px 14px", fontSize: 12 }}
@@ -931,13 +934,13 @@ export function Dashboard() {
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div className="label-micro">Learn next</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/tree")}>Tree →</button>
+          <button data-testid="dashboard-action-15" className="btn btn--ghost btn--sm" onClick={() => router.push("/tree")}>Tree →</button>
         </div>
         {recommendations.length === 0 && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing suggested yet — start a session.</div>
         )}
         {recommendations.slice(0, 3).map((r, i) => (
-          <button
+          <button data-testid="dashboard-action-16"
             key={`${r.concept_name}-${i}`}
             onClick={() => router.push(`/learn?topic=${encodeURIComponent(r.concept_name)}&mode=socratic`)}
             style={{
@@ -963,7 +966,7 @@ export function Dashboard() {
           >
             <Icon name="bolt" size={12} /> {reviewDueLabel}
           </button>
-          <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>
+          <button data-testid="dashboard-action-17" className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>
             <Icon name="users" size={12} /> Study room
           </button>
         </div>
@@ -972,11 +975,40 @@ export function Dashboard() {
   );
 
   return (
-    <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+    <div className={useFa26 ? "fa26-dashboard" : undefined} style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+      {useFa26 ? <>
+        <TopBar title={`Welcome back, ${userName?.trim().split(" ")[0] || "there"}`} />
+        {suggestBlock}
+        <div className="fa26-dashboard-layout">
+          <div className="fa26-dashboard-graph">{graphBlock}</div>
+          <aside className="fa26-dashboard-aside" aria-label="Learning progress">
+            <div className="fa26-stats">
+              <div className="fa26-stat"><strong>{stats.mastered}</strong><span>Concepts mastered</span></div>
+              <div className="fa26-stat"><strong>{stats.streak}</strong><span>Day study streak</span></div>
+            </div>
+            <section className="fa26-recent">
+              <h2>Where you left off</h2>
+              {sessions.length === 0 && <p>No sessions yet. Start a session with Clov to begin.</p>}
+              {sessions.slice(0, 3).map(s => <button key={s.id} className="fa26-recent-item"
+                data-testid={`dashboard-resume-${s.id}`} onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}>
+                <DesignIcon name="clov" />
+                <div><strong>{s.topic}</strong><small>{courseNameFor(s.course_id)} · Clov Study Session</small><small>{relTime(s.started_at)}</small></div>
+                <Icon name="chev" size={18} />
+              </button>)}
+            </section>
+            <details className="fa26-dashboard-tools">
+              <summary>Courses and study tools</summary>
+              <button data-testid="dashboard-action-18" className="btn btn--sm" onClick={() => setCoursesOpen(true)}>Manage courses</button>
+              <button className="btn btn--sm" data-testid="dashboard-review-due" onClick={() => router.push(reviewDueHref)}>{reviewDueLabel}</button>
+              <button data-testid="dashboard-action-19" className="btn btn--sm" onClick={() => router.push("/calendar")}>Open calendar</button>
+            </details>
+          </aside>
+        </div>
+      </> : <>
       {isMobile && useLegacyPanels && (
         <div style={{ display: "flex", gap: 6, padding: "14px 20px 0" }}>
           {(["courses", "stats"] as const).map(t => (
-            <button
+            <button data-testid="dashboard-action-20"
               key={t}
               onClick={() => setMobileTab(t)}
               style={{
@@ -1041,6 +1073,7 @@ export function Dashboard() {
       )}
 
 
+      </>}
       {fullscreen && (
         <div
           style={{
@@ -1053,7 +1086,7 @@ export function Dashboard() {
               <div className="label-micro">Knowledge graph — fullscreen</div>
               <div className="h-serif" style={{ fontSize: 18 }}>Press Esc to exit</div>
             </div>
-            <button className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)}>
+            <button data-testid="dashboard-action-21" className="btn btn--ghost btn--sm" onClick={() => setFullscreen(false)}>
               <Icon name="x" size={14} />
             </button>
           </div>
@@ -1097,6 +1130,7 @@ function FullscreenGraph({
   return (
     <div ref={ref} style={{ flex: 1, position: "relative" }}>
       <KnowledgeGraph
+          appearance="fa26"
         nodes={nodes}
         edges={edges}
         width={size.w}
