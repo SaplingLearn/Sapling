@@ -70,4 +70,6 @@ entry needs a new route or store. No phone bottom tab bar was added.
 
 - After a reload mid-teach the Goal & plan list shows the goal concepts only:
   `GET /plan` requires the plan phase, so no read-only plan read exists.
-- Library does not read `?course=`; Materials links to `/library`.
+- ~~Library does not read `?course=`; Materials links to `/library`.~~ Resolved in
+  prompt 05: Library pre-selects `?course=` and Materials links to
+  `/library?course=<course_id>` (see `05-review-package.md`).
