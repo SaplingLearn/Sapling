@@ -191,6 +191,7 @@ export function LoopLearn() {
   const [goalProgress, setGoalProgress] = useState<LoopGoalProgress | null>(null);
   const [diagnosis, setDiagnosis] = useState<LoopDiagnosis | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
+  const [scopeLoading, setScopeLoading] = useState(false);
   const [scopeError, setScopeError] = useState(false);
   const [goalEditor, setGoalEditor] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
@@ -210,6 +211,7 @@ export function LoopLearn() {
   // Plan
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
   const [planGoalVersion, setPlanGoalVersion] = useState<number | undefined>(undefined);
   const [planJustApproved, setPlanJustApproved] = useState(false);
 
@@ -235,6 +237,11 @@ export function LoopLearn() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState(false);
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
+
+  // A visible session id is not readiness: resume still reads its scope and
+  // may pose a probe or materialise its plan. Let those operations settle before
+  // wrapping up that session, rather than racing them against /close.
+  const sessionTransitionBusy = starting || scopeLoading || probeBusy || planLoading || planBusy || goalBusy || closeBusy;
 
   // A session "generation": bumped whenever the screen switches session, so a
   // response for the previous one is dropped instead of landing on the new one.
@@ -328,6 +335,12 @@ export function LoopLearn() {
     const g = ++gen.current;
     invalidateHint();
     streamAbort.current?.abort();
+    setStarting(false);
+    setScopeLoading(false);
+    setProbeBusy(false);
+    setPlanLoading(false);
+    setPlanBusy(false);
+    setGoalBusy(false);
     setCloseBusy(false);
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "close" });
@@ -393,6 +406,7 @@ export function LoopLearn() {
     setGoalProgress(null);
     setDiagnosis(null);
     setScopeReady(false);
+    setScopeLoading(false);
     setScopeError(false);
     setGoalEditor(false);
     setGoalBusy(false);
@@ -411,6 +425,7 @@ export function LoopLearn() {
     setPlanJustApproved(false);
     setPlanGoalVersion(undefined);
     setPlanBusy(false);
+    setPlanLoading(false);
     setMessages([]);
     setStreamingText(null);
     setAttempt(EMPTY_DRAFT);
@@ -427,6 +442,8 @@ export function LoopLearn() {
   }, [invalidateHint]);
 
   const loadPlan = useCallback(async (sid: string, g: number) => {
+    if (g !== gen.current) return;
+    setPlanLoading(true);
     setLoadError(null);
     try {
       const r = await getLoopPlan(sid, userId);
@@ -441,10 +458,13 @@ export function LoopLearn() {
       if (g !== gen.current) return;
       setLoadError("plan");
       reportError(err, "Couldn't load today's plan.");
+    } finally {
+      if (g === gen.current) setPlanLoading(false);
     }
   }, [userId, reportError, applyLearningScope]);
 
   const nextProbe = useCallback(async (sid: string, g: number) => {
+    if (g !== gen.current) return;
     setProbeBusy(true);
     setLoadError(null);
     try {
@@ -471,6 +491,8 @@ export function LoopLearn() {
   }, [userId, loadPlan, reportError, applyLearningScope]);
 
   const loadLearningScope = useCallback(async (sid: string, g: number) => {
+    if (g !== gen.current) return null;
+    setScopeLoading(true);
     try {
       const response = await getLoopSessionStatus(sid, userId);
       if (g !== gen.current) return null;
@@ -481,30 +503,37 @@ export function LoopLearn() {
     } catch {
       if (g === gen.current) setScopeError(true);
       return null;
+    } finally {
+      if (g === gen.current) setScopeLoading(false);
     }
   }, [userId, applyStatus]);
 
   const resume = useCallback(async (s: LoopOpenSession) => {
     const g = ++gen.current;
     clearSessionView();
+    setStarting(true);
     setSessionId(s.session_id);
     sessionRef.current = s.session_id;
     dispatch({ type: "phase", phase: s.phase });
     try {
-      const r = await resumeSession(s.session_id);
+      try {
+        const r = await resumeSession(s.session_id);
+        if (g !== gen.current) return;
+        setMessages(toChat(r.messages));
+      } catch (err) {
+        if (g === gen.current) toast.error(humanizeError(err, "Couldn't load this session's messages."));
+      }
       if (g !== gen.current) return;
-      setMessages(toChat(r.messages));
-    } catch (err) {
-      if (g === gen.current) toast.error(humanizeError(err, "Couldn't load this session's messages."));
+      const latest = await loadLearningScope(s.session_id, g);
+      if (g !== gen.current) return;
+      // Another tab may have edited the goal since /sessions was read. Continue
+      // from authoritative status, never a stale list's phase or an extra pose write.
+      const phase = latest ? statusPhase(latest) : s.phase;
+      if (phase === "probe") await nextProbe(s.session_id, g);
+      else if (phase === "plan") await loadPlan(s.session_id, g);
+    } finally {
+      if (g === gen.current) setStarting(false);
     }
-    if (g !== gen.current) return;
-    const latest = await loadLearningScope(s.session_id, g);
-    if (g !== gen.current) return;
-    // Another tab may have edited the goal since /sessions was read. Continue
-    // from authoritative status, never a stale list's phase or an extra pose write.
-    const phase = latest ? statusPhase(latest) : s.phase;
-    if (phase === "probe") await nextProbe(s.session_id, g);
-    else if (phase === "plan") await loadPlan(s.session_id, g);
   }, [clearSessionView, nextProbe, loadPlan, loadLearningScope, toast]);
 
   const openReadOnly = useCallback(async (id: string) => {
@@ -528,7 +557,7 @@ export function LoopLearn() {
   const newSession = useCallback(async (
     { closeCurrent = false, topic, mode }: { closeCurrent?: boolean; topic?: string; mode?: string } = {},
   ) => {
-    if (!courseId || !userId) return;
+    if (!courseId || !userId || sessionTransitionBusy) return;
     // An explicit start wins over a boot that has not listed the sessions yet.
     bootKey.current = `${userId}:${courseId}`;
     const leaving = sessionRef.current;
@@ -571,7 +600,6 @@ export function LoopLearn() {
         // A27: a capped student still gets the template opener and the probe
         dispatch({ type: "budget", level: "hard", resetAt: r.budget.reset_at, sessionCapped: r.budget.session_capped });
       }
-      setStarting(false);
       await nextProbe(r.session_id, g);
       if (g !== gen.current) return;
       // the first /probe/next materialised the session row: list it
@@ -593,7 +621,7 @@ export function LoopLearn() {
     } finally {
       if (g === gen.current) setStarting(false);
     }
-  }, [courseId, userId, course, state.phase, clearSessionView, nextProbe, reportError, dropFromPicker, applyLearningScope]);
+  }, [courseId, userId, course, state.phase, sessionTransitionBusy, clearSessionView, nextProbe, reportError, dropFromPicker, applyLearningScope]);
 
   const loadSessions = useCallback(async () => {
     if (!courseId || !userId) return;
@@ -1237,7 +1265,7 @@ export function LoopLearn() {
         className="btn btn--sm"
         style={{ flexShrink: 0 }}
         onClick={() => void newSession({ closeCurrent: true })}
-        disabled={!courseId || starting}
+        disabled={!courseId || sessionTransitionBusy}
         title="Wrap up this session and start a new one"
       >
         + New session
@@ -1285,7 +1313,7 @@ export function LoopLearn() {
           <button
             data-testid="loop-topic-start"
             className="btn btn--sm"
-            disabled={starting}
+            disabled={sessionTransitionBusy}
             onClick={() => void newSession({ closeCurrent: true, topic: topicOffer, mode: deepLink.mode })}
           >
             Start a session on {topicOffer}
@@ -1346,6 +1374,7 @@ export function LoopLearn() {
             <button
               data-testid="loop-readonly-new-session"
               className="btn btn--primary btn--sm"
+              disabled={sessionTransitionBusy}
               onClick={() => void newSession()}
             >
               Start a new session

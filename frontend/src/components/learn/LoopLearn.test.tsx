@@ -59,6 +59,12 @@ const turn = (over: object = {}) => ({ reply: "ok", graph_update: {}, mastery_ch
 /** GET /sessions's list (+ the ?resume= lookup), as listLoopSessionsFor resolves it. */
 const listed = (sessions: object[], resume: object | null = null) => ({ sessions, resume });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   search.params = new URLSearchParams();
   Object.values(api).forEach((f) => f.mockReset());
@@ -126,6 +132,150 @@ describe("LoopLearn — resume (spec §11.3)", () => {
     expect(await screen.findByTestId("loop-plan-concept-n1")).toBeTruthy();
     expect(api.getLoopPlan).toHaveBeenCalledWith("s2", "u1");
     expect(api.nextLoopProbe).not.toHaveBeenCalled();
+  });
+
+  it.each(["probe", "plan"] as const)("holds New session until the resumed %s and its scope have settled", async (phase) => {
+    const transcript = deferred<{ session: { id: string }; messages: object[] }>();
+    const scope = deferred<ReturnType<typeof status>>();
+    const content = deferred<object>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", phase, "2026-09-21T10:00:00Z")]));
+    api.resumeSession.mockReturnValue(transcript.promise);
+    api.getLoopSessionStatus.mockReturnValue(scope.promise);
+    api.nextLoopProbe.mockImplementation((sid: string) => sid === "s2" ? content.promise : Promise.resolve(probeItem));
+    api.getLoopPlan.mockReturnValue(content.promise);
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: phase });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s2"));
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    const cannotLeaveWhileLoading = () => {
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(api.closeLoopSession).not.toHaveBeenCalled();
+      expect(api.startLoopSession).not.toHaveBeenCalled();
+    };
+    cannotLeaveWhileLoading(); // SID and phase are visible before the transcript.
+    await act(async () => { transcript.resolve({ session: { id: "s2" }, messages: [] }); });
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledWith("s2", "u1"));
+    cannotLeaveWhileLoading(); // Scope is authoritative, not the picker phase.
+    await act(async () => { scope.resolve(status({ session_id: "s2", loop_phase: phase, phase, goal: null })); });
+    await waitFor(() => expect(phase === "probe" ? api.nextLoopProbe : api.getLoopPlan).toHaveBeenCalledWith("s2", "u1"));
+    cannotLeaveWhileLoading(); // Do not close while the old probe/plan can write.
+    await act(async () => { content.resolve(phase === "probe" ? probeItem : { concepts: [], order: [] }); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(api.closeLoopSession.mock.invocationCallOrder[0]).toBeLessThan(api.startLoopSession.mock.invocationCallOrder[0]);
+    expect(api.nextLoopProbe).toHaveBeenLastCalledWith("s9", "u1");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps New session disabled until a freshly started session's initial probe settles", async () => {
+    const firstProbe = deferred<typeof probeItem>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Hello there" });
+    api.nextLoopProbe.mockReturnValue(firstProbe.promise);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s9", "u1"));
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    await act(async () => { firstProbe.resolve(probeItem); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("does not let an obsolete resume re-enable New session while the selected session is loading", async () => {
+    const oldProbe = deferred<typeof probeItem>();
+    const chosenProbe = deferred<typeof probeItem>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z"), open("s1", "probe", "2026-09-20T10:00:00Z")]));
+    api.nextLoopProbe.mockImplementation((sid: string) => sid === "s2" ? oldProbe.promise : chosenProbe.promise);
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s2", "u1"));
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledWith("s1", "u1"));
+    await act(async () => { oldProbe.resolve(probeItem); });
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-probe-item")).toBeNull();
+    await act(async () => { chosenProbe.resolve({ ...probeItem, question_hash: "chosen" }); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.getByTestId("loop-probe-item").getAttribute("data-question-hash")).toBe("chosen");
+  });
+
+  it("releases New session after an authoritative terminal close invalidates resume loading", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ loop_phase: "close", phase: "close" }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "probe" });
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close"));
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
+    expect(api.closeLoopSession).toHaveBeenCalledTimes(1); // No second close for the terminal session.
+  });
+
+  it.each(["probe", "plan"] as const)("keeps failed %s loads visible and blocks New session during an explicit retry", async (phase) => {
+    const retry = deferred<object>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", phase, "2026-09-21T10:00:00Z")]));
+    const load = phase === "probe" ? api.nextLoopProbe : api.getLoopPlan;
+    load.mockRejectedValueOnce(new ApiError("temporarily unavailable", 503)).mockReturnValueOnce(retry.promise);
+    render(<LoopLearn />);
+    const retryButton = await screen.findByTestId(`loop-${phase}-retry`);
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledTimes(1); // No automatic load/model retry.
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    await act(async () => { retry.resolve(phase === "probe" ? probeItem : { concepts: [], order: [] }); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.queryByTestId(`loop-${phase}-retry`)).toBeNull();
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks New session during an explicit authoritative scope retry", async () => {
+    const retry = deferred<ReturnType<typeof status>>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockRejectedValueOnce(new ApiError("temporarily unavailable", 503)).mockReturnValueOnce(retry.promise);
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    const retryButton = await screen.findByRole("button", { name: "Retry learning scope" });
+    const button = screen.getByTestId("loop-new-session") as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(retryButton);
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(api.closeLoopSession).not.toHaveBeenCalled();
+    await act(async () => { retry.resolve(status({ loop_phase: "probe", phase: "probe" })); });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(screen.queryByRole("button", { name: "Retry learning scope" })).toBeNull();
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases probe loading when a closed-elsewhere response invalidates its generation", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockRejectedValueOnce(new ApiError("closed", 409, { body: { detail: "this session is closed" } }));
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "probe" });
+    render(<LoopLearn />);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("close"));
+    await waitFor(() => expect((screen.getByTestId("loop-new-session") as HTMLButtonElement).disabled).toBe(false));
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+    expect(api.closeLoopSession).toHaveBeenCalledExactlyOnceWith("s2", "u1");
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("a session resumed in check restores its pose READ-ONLY through GET /status", async () => {

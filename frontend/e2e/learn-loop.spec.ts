@@ -100,7 +100,7 @@ async function expectTurn(page: Page, text: string) {
  * misses harder items, so the diagnostic observes a real boundary/limit and
  * still has meaningful frontier work to plan. All-correct can validly skip an
  * empty coursewide plan once every concept is proficient. */
-async function walkProbeAndPlan(page: Page, P: Params): Promise<number> {
+async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<number> {
   const phase = page.getByTestId("loop-phase");
   await expect(phase).toHaveAttribute("data-phase", "probe");
   const probeItem = page.getByTestId("loop-probe-item");
@@ -137,15 +137,44 @@ async function walkProbeAndPlan(page: Page, P: Params): Promise<number> {
 
   await expect(phase).toHaveAttribute("data-phase", "plan");
   await expect(page.locator("[data-testid^='loop-plan-concept-']").first()).toBeVisible();
-  await page.getByTestId("loop-plan-approve").click();
-  await expect(phase).toHaveAttribute("data-phase", "teach");
+  if (approve) {
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+  }
   return answered;
+}
+
+/** HTTP 200 may contain a model error or a truncated SSE stream. Require the
+ * actual terminal payload as well as the separately asserted rendered reply. */
+async function expectCompletedLoopTurn(response: Response, replyParts: string[]) {
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("text/event-stream");
+  expect(await response.finished()).toBeNull();
+  const events = (await response.text()).split(/\r?\n\r?\n/).flatMap((block) => {
+    const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart()).join("\n");
+    return data ? [JSON.parse(data) as { type: string; data?: Record<string, unknown> }] : [];
+  });
+  expect(events.length).toBeGreaterThan(0);
+  expect(events.filter((event) => event.type === "error")).toEqual([]);
+  const done = events.filter((event) => event.type === "done");
+  expect(done).toHaveLength(1);
+  expect(events.at(-1)?.type).toBe("done");
+  expect(typeof done[0].data?.reply).toBe("string");
+  const reply = done[0].data!.reply as string;
+  expect(reply.trim().length).toBeGreaterThan(0);
+  for (const part of replyParts) expect(reply).toContain(part);
+  return done[0].data!;
 }
 
 /** The first teach turn after the plan: the student starts it (/plan/approve runs no turn). */
 async function firstTeachTurn(page: Page) {
+  const completed = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/api/learn/loop/chat/stream" && response.request().method() === "POST");
   await page.getByTestId("loop-teach-start").click();
+  await expectCompletedLoopTurn(await completed, [LOOP_TUTOR_REPLY]);
   await expectTurn(page, LOOP_TUTOR_REPLY);
+  await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
 }
 
 test("loop user completes probe → plan → check (explicit submission) with a gated hint → close, and the loop writes land", async ({ browser }) => {
@@ -230,6 +259,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
 
   // Correct attempt → the explicit-submission route (spec §13 A16), never a chat turn.
   const submitted = page.waitForRequest((r) => r.url().includes("/api/learn/loop/check/answer/stream"));
+  const gradedStream = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/api/learn/loop/check/answer/stream" && response.request().method() === "POST");
   await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
   // The learner chip appears only after grading. Read this active session's
   // concept directly, after the earned hint and immediately before submission.
@@ -252,9 +283,15 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   await page.getByTestId("loop-attempt-submit").click();
   const body = JSON.parse((await submitted).postData() ?? "{}");
   expect(body).toMatchObject({ question_hash: checkHash, idk: false, answer: `working: ${GRADER_CORRECT_TOKEN}` });
+  const graded = await expectCompletedLoopTurn(await gradedStream, [LOOP_FEEDBACK_BODY, LOOP_FEEDBACK_QUESTION]);
+  expect(graded.graded).toBe(true);
+  expect(graded.unavailable).not.toBe(true);
+  expect(graded.refused).not.toBe(true);
+  expect(graded.phase).toBe("feedback");
   await expect(phase).toHaveAttribute("data-phase", "feedback");
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_BODY);
   await expect(page.getByTestId("loop-messages")).toContainText(LOOP_FEEDBACK_QUESTION);
+  await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
   // The diagnostic deliberately includes independent misses, so the initial
   // prior is no longer this check's baseline. Even assisted correct evidence
   // must improve the checked concept from its actual pre-submission belief.
@@ -391,6 +428,108 @@ test("a reload mid-session resumes the same loop session and calls no probe rout
 
   await context.close();
 });
+
+for (const width of [1440, 390]) {
+  for (const resumedPhase of ["probe", "plan"] as const) {
+    test(`rapid New session waits for the resumed ${resumedPhase} at ${width}px`, async ({ browser }) => {
+      test.skip(killSwitchLane, "loop path: default lane only");
+      test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+      const P = await learningParams(["PROBE_SESSION_CAP"]);
+      const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+      let release = () => {};
+      try {
+        await page.setViewportSize({ width, height: 950 });
+        await page.goto("/learn");
+        await expect(page.getByTestId("loop-probe-item")).toBeVisible();
+        if (resumedPhase === "plan") await walkProbeAndPlan(page, P, false);
+        const phase = page.getByTestId("loop-phase");
+        const oldSession = await phase.getAttribute("data-session-id");
+        expect(oldSession).toBeTruthy();
+        await expect(page.getByTestId("loop-new-session")).toBeEnabled();
+
+        const pendingPath = `/api/learn/loop/${resumedPhase === "probe" ? "probe/next" : "plan"}`;
+        let entered = () => {};
+        let intercepted = false;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const requested = new Promise<void>((resolve) => { entered = resolve; });
+        await page.route(`**${pendingPath}${resumedPhase === "plan" ? "?*" : ""}`, async (route) => {
+          const request = route.request();
+          const sid = request.method() === "POST"
+            ? request.postDataJSON().session_id
+            : new URL(request.url()).searchParams.get("session_id");
+          if (!intercepted && sid === oldSession) {
+            intercepted = true;
+            entered();
+            await held;
+          }
+          // The real handler supplies the result; only network delivery is gated.
+          await route.continue();
+        });
+        const mutations: string[] = [];
+        const failures: { path: string; status: number }[] = [];
+        page.on("request", (request) => {
+          const path = new URL(request.url()).pathname;
+          if (request.method() === "POST" && ["/api/learn/loop/close", "/api/learn/loop/start-session"].includes(path)) mutations.push(path);
+        });
+        page.on("response", (response) => {
+          const path = new URL(response.url()).pathname;
+          if (path.startsWith("/api/learn/loop/") && response.status() >= 400) failures.push({ path, status: response.status() });
+        });
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await requested;
+        await expect(phase).toHaveAttribute("data-session-id", oldSession!);
+        await expect(phase).toHaveAttribute("data-phase", resumedPhase);
+        const button = page.getByTestId("loop-new-session");
+        await expect(button).toBeDisabled();
+        await button.scrollIntoViewIfNeeded();
+        const box = await button.boundingBox();
+        expect(box).not.toBeNull();
+        // A real pointer click while loading must not initiate close/start.
+        // Locator.click would wait until enabled and miss the rapid-click race.
+        await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+        await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        expect(mutations).toEqual([]);
+        const delivered = page.waitForResponse((response) => new URL(response.url()).pathname === pendingPath);
+        release();
+        expect((await delivered).status()).toBe(200);
+        await expect(button).toBeEnabled();
+
+        const closed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/close");
+        const started = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/learn/loop/start-session");
+        await button.click();
+        const closeResponse = await closed;
+        expect(closeResponse.status()).toBe(200);
+        expect(closeResponse.request().postDataJSON()).toMatchObject({ session_id: oldSession, user_id: USER_LOOP });
+        const startResponse = await started;
+        expect(startResponse.status()).toBe(200);
+        const { session_id: freshSession } = await startResponse.json();
+        expect(typeof freshSession).toBe("string");
+        expect(freshSession).not.toBe(oldSession);
+        await expect(phase).toHaveAttribute("data-session-id", freshSession);
+        await expect(page.getByTestId("loop-probe-item")).toBeVisible();
+        await expect(button).toBeEnabled();
+        await expect(page.getByTestId("loop-goal-summary")).toHaveText("Scope: Explore the whole course");
+        expect(mutations).toEqual(["/api/learn/loop/close", "/api/learn/loop/start-session"]);
+        expect(failures).toEqual([]);
+        const sessions = await queryRaw(
+          "SELECT id, ended_at, close_json FROM sessions WHERE user_id = $1 AND id = ANY($2)",
+          [USER_LOOP, [oldSession, freshSession]],
+        );
+        expect(sessions).toHaveLength(2);
+        expect(sessions.find((session) => session.id === oldSession)).toMatchObject({ ended_at: expect.anything(), close_json: expect.anything() });
+        expect(sessions.find((session) => session.id === freshSession)).toMatchObject({ ended_at: null, close_json: null });
+        const stillOpen = await queryRaw(
+          "SELECT id FROM sessions WHERE user_id = $1 AND ended_at IS NULL AND close_json IS NULL AND loop_state <> '{}'::jsonb AND mode <> 'review'",
+          [USER_LOOP],
+        );
+        expect(stillOpen.map((session) => session.id)).toEqual([freshSession]);
+      } finally {
+        release();
+        await context.close();
+      }
+    });
+  }
+}
 
 test("budget cap: tutor chat pauses on /learn; review still serves and grades on /study", async ({ browser }) => {
   test.skip(killSwitchLane, "loop path: default lane only");
