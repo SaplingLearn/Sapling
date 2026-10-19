@@ -675,3 +675,43 @@ def test_e2e_decision_answers_are_the_shared_fixture():
         "needs_retrieval", "needs_rewrite", "complexity",
         "is_graded_work_request", "injection_attempt",
     }
+
+
+# ── Topic checklist (#716) ────────────────────────────────────────────────
+#
+# routes/topic_checklist.py's POST .../refresh runs topic_checklist_agent on
+# the request path (run_agent_sync inside the sync route), so it is
+# registered. frontend/e2e/topic-checklist.spec.ts asserts the "Recursion"
+# topic this handler emits; the handler cites source ids taken from the
+# request, so the agent's real reference validator (and the service's
+# validate_evidence) run on its output rather than being bypassed.
+
+
+def test_topic_checklist_handler_cites_request_evidence(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+    import json
+
+    from agents.topic_checklist import topic_checklist_agent
+    from services.topic_checklist_service import validate_evidence
+
+    payload = {
+        "course": {"code": "CS101", "name": "Intro to CS"},
+        "sources": [
+            {"id": "concept:n1", "label": "Tracked course concept", "text": "Recursion"},
+            {"id": "concept:n2", "label": "Tracked course concept", "text": "Variables and Types"},
+            {"id": "document:d1", "label": "notes.pdf", "text": "Unrelated text"},
+        ],
+        "assessments": [],
+        "existing_topic_names": [],
+    }
+    with topic_checklist_agent.override(model=model_for("topic_checklist")):
+        result = topic_checklist_agent.run_sync(json.dumps(payload), deps=payload)
+
+    topics = result.output.topics
+    assert [t.name for t in topics] == ["Recursion", "Variables and Types"]
+    assert [t.source_ids for t in topics] == [["concept:n1"], ["concept:n2"]]
+    validate_evidence(result.output, payload)
+    assert "topic_checklist" in providers._FUNCTION_HANDLERS

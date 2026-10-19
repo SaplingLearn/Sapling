@@ -237,11 +237,15 @@ def get_checklist(user_id: str, course_id: str, semester: str | None = None) -> 
     return present(scope, build_snapshot(user_id, scope, now.date()), _cache(scope), now)
 
 
-async def _generate(payload: dict) -> TopicOutline:
+async def _generate(payload: dict, user_id: str) -> TopicOutline:
     result = await asyncio.wait_for(topic_checklist_agent.run(
         json.dumps(payload), deps=payload, usage_limits=WORKER_LIMITS,
     ), timeout=60)
-    return record_agent_usage(result, feature="topic_checklist", task="topic_checklist").output
+    # Attribute the usage row to the student explicitly: the per-user cost
+    # rollups and the $ai_generation mirror both key on it.
+    return record_agent_usage(
+        result, feature="topic_checklist", task="topic_checklist", user_id=user_id,
+    ).output
 
 
 def refresh_checklist(user_id: str, course_id: str, semester: str | None = None) -> dict:
@@ -258,7 +262,7 @@ def refresh_checklist(user_id: str, course_id: str, semester: str | None = None)
         prior = TopicOutline.model_validate(decrypt_json(cache["content"])) if cache else None
         outline = run_agent_sync(_generate({**snapshot["payload"],
             "existing_topic_names": [t.name for t in prior.topics] if prior else [],
-        }))
+        }, user_id))
         validate_evidence(outline, snapshot["payload"])
     except Exception:
         logger.exception("Topic checklist generation failed")

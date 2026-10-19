@@ -109,7 +109,8 @@ def state(monkeypatch):
     monkeypatch.setattr(svc, "datetime", FrozenDatetime)
     calls = []
 
-    async def generate(payload):
+    async def generate(payload, user_id):
+        assert user_id == "u"
         calls.append(payload)
         return outline()
 
@@ -227,7 +228,7 @@ def test_generation_failure_preserves_existing_data_and_checks(state, monkeypatc
     stored = copy.deepcopy(db["topic_checklists"])
     db["courses"][0]["description"] += " Loops."
 
-    async def broken(payload):
+    async def broken(payload, user_id):
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(svc, "_generate", broken)
@@ -251,7 +252,7 @@ def test_no_evidence_produces_empty_state_without_guessing(state):
 def test_wrong_evidence_is_rejected_before_persistence(state, monkeypatch):
     db, _ = state
 
-    async def invalid(payload):
+    async def invalid(payload, user_id):
         value = outline()
         value.topics[0].source_ids = ["document:another-student"]
         return value

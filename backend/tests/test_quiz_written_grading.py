@@ -1,7 +1,7 @@
 import pytest
 
 from models import AnswerQuestionBody
-from services.quiz_grading import grade_written, numeric_value
+from services.quiz_grading import grade_written
 from services.quiz_algebra import equivalent_algebra
 
 
