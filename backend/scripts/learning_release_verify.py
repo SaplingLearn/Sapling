@@ -44,6 +44,7 @@ REQUIRED_COLUMNS = {
         "p_known": "double precision",
         "n_strong_unassisted": "integer",
         "evidence_version": "bigint",
+        "evidence_touch_at": "timestamp with time zone",
     },
     "graph_nodes": {"evidence_version": "bigint"},
     "learning_evidence_operations": {
@@ -96,6 +97,9 @@ REQUIRED_COLUMNS = {
         "answered_at": "timestamp with time zone",
     },
 }
+# This fence must not manufacture historical activity during migration.
+# Other column constraints/defaults remain outside this metadata-only contract.
+REQUIRED_COLUMN_ATTRIBUTES = {("learner_state", "evidence_touch_at"): ("YES", None)}
 LOG_PATTERNS = {
     "event_or_usage_drop": re.compile(
         r"events queue full|events flush dropped|log_llm_usage failed; row dropped|events row insert failed",
@@ -307,6 +311,15 @@ def audit_database(
         )
         actual = {(table, column): kind for table, column, kind in cur.fetchall()}
         cur.execute(
+            "SELECT table_name, column_name, is_nullable, column_default "
+            "FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ANY(%s)",
+            (sorted({table for table, _column in REQUIRED_COLUMN_ATTRIBUTES}),),
+        )
+        attributes = {
+            (table, column): (nullable, default)
+            for table, column, nullable, default in cur.fetchall()
+        }
+        cur.execute(
             "SELECT p.proname, pg_get_function_identity_arguments(p.oid) "
             "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
             "WHERE n.nspname='public' AND p.proname = ANY(%s)",
@@ -324,6 +337,11 @@ def audit_database(
         for name, signatures in rpcs.items()
         for args in signatures
         if (name, args) not in actual_rpcs
+    ]
+    wrong_attributes = [
+        f"{table}.{column}:nullable={expected[0]},default={expected[1]}"
+        for (table, column), expected in REQUIRED_COLUMN_ATTRIBUTES.items()
+        if attributes.get((table, column)) != expected
     ]
     changed = []
     if reference is not None:
@@ -343,13 +361,16 @@ def audit_database(
         )
     return {
         "status": "passed"
-        if not (pending or orphans or missing_columns or missing_rpcs or changed)
+        if not (
+            pending or orphans or missing_columns or wrong_attributes or missing_rpcs or changed
+        )
         else "failed",
         "read_only": True,
         "recorded_count": len(recorded),
         "pending": pending,
         "orphans": orphans,
         "missing_or_wrong_type_columns": missing_columns,
+        "missing_or_wrong_column_attributes": wrong_attributes,
         "missing_rpc_signatures": missing_rpcs,
         "changed_applied_reference_files": changed,
         "prior_reference_supplied": reference is not None,

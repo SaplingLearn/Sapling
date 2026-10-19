@@ -125,6 +125,7 @@ def test_journal_constraint_failure_rolls_back_scalar_mirror_and_propagation(db_
         ([parent, child],),
     ).fetchall()
     real = tx.rpc
+    rejected = []
 
     def rpc(name, args):
         if name == "learning_evidence_commit":
@@ -132,11 +133,19 @@ def test_journal_constraint_failure_rolls_back_scalar_mirror_and_propagation(db_
             # Existing DB CHECK, not a production fault flag. Failure occurs
             # after the SQL has attempted scalar writes; all must roll back.
             args["p_plan"]["events"][0]["grader_backend"] = "invalid-integration-backend"
-        return real(name, args)
+        try:
+            return real(name, args)
+        except httpx.HTTPStatusError as exc:
+            if name == "learning_evidence_commit":
+                rejected.append(exc.response.json().get("code"))
+            raise
 
     monkeypatch.setattr(tx, "rpc", rpc)
     with pytest.raises(PlanningPersistenceUnavailable):
         apply(evidence(child))
+    # A generic earlier SQL error must not masquerade as proof that the actual
+    # journal CHECK rolled back scalar/mirror writes attempted before it.
+    assert rejected and set(rejected) == {"23514"}
     assert state(db_conn, parent) is None and state(db_conn, child) is None
     assert journal(db_conn, parent) == journal(db_conn, child) == []
     after = db_conn.execute(
@@ -189,6 +198,74 @@ def test_cross_worker_tagged_and_legacy_batches_cannot_lose_an_update(db_conn, m
     )
 
 
+def test_cross_session_same_hash_race_reconciles_final_receipt_provenance(db_conn, monkeypatch):
+    from learning import evidence_transaction as tx
+
+    nodes = [_node("Atomic cross-session exposure first"), _node("Atomic cross-session exposure second")]
+    shared = hashlib.sha256(b"Synthetic concurrent same-question fixture").hexdigest()
+    values = [evidence(node, session_id=f"session-{index}", question_hash=shared)
+              for index, node in enumerate(nodes)]
+    barrier = threading.Barrier(2)
+    seen = set()
+    mutex = threading.Lock()
+    real = tx.rpc
+    snapshots = []
+
+    def rpc(name, args):
+        result = real(name, args)
+        if name == "learning_evidence_snapshot":
+            with mutex:
+                snapshots.append(deepcopy(result))
+                first = threading.get_ident() not in seen
+                seen.add(threading.get_ident())
+            if first:
+                assert result["checks"][0]["global_count"] == 0
+                barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(tx, "rpc", rpc)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert all(pool.map(apply, values))
+    # Separate graph nodes do not share a scalar version. The owner-global
+    # hash-count CAS is what forces the losing unseen snapshot to be rebuilt.
+    assert len(snapshots) >= 3
+    events = [row for node in nodes for row in journal(db_conn, node)]
+    assert len(events) == 2 and all(row["weight"] == 1 for row in events)
+    observations = [row["planning_observation"] for row in events]
+    assert sorted(row["independent"] for row in observations) == [False, True]
+    assert sorted(row["previously_seen"] for row in observations) == [False, True]
+    assert all(row["same_session_recheck"] is False for row in observations)
+    receipts = {value["operation_id"]: tx.read_receipt(USER_ACTIVE, value["operation_id"])
+                for value in values}
+    for value in values:
+        [event] = journal(db_conn, value["node_id"])
+        assert receipts[value["operation_id"]]["observations"] == [event["planning_observation"]]
+    apply(evidence(nodes[0], tagged=False, session_id="later-session", question_hash=shared))
+    for operation, saved in receipts.items():
+        assert tx.read_receipt(USER_ACTIVE, operation) == saved
+
+
+def test_global_exposure_includes_owned_legacy_null_but_excludes_other_users(db_conn):
+    from learning.evidence_transaction import read_receipt
+
+    shared = hashlib.sha256(b"Synthetic owned legacy first exposure fixture").hexdigest()
+    mine, other = _node("Atomic own first exposure"), _node("Atomic foreign first exposure", owner=USER_SECOND)
+    apply(evidence(other, tagged=False, question_hash=shared, session_id="foreign"), owner=USER_SECOND)
+    fresh = evidence(mine, question_hash=shared, session_id="mine")
+    apply(fresh)
+    [observation] = read_receipt(USER_ACTIVE, fresh["operation_id"])["observations"]
+    assert observation["previously_seen"] is False and observation["independent"] is True
+
+    legacy_hash = hashlib.sha256(b"Synthetic owned unknown provenance fixture").hexdigest()
+    apply(evidence(mine, tagged=False, question_hash=legacy_hash, session_id="legacy"))
+    assert journal(db_conn, mine)[-1]["planning_observation"] is None
+    later = evidence(mine, question_hash=legacy_hash, session_id="new-tagged")
+    apply(later)
+    [observation] = read_receipt(USER_ACTIVE, later["operation_id"])["observations"]
+    assert observation["previously_seen"] is True and observation["independent"] is False
+    assert observation["same_session_recheck"] is False
+
+
 def test_legacy_topology_change_between_snapshot_and_commit_forces_replanning(db_conn, monkeypatch):
     from learning import evidence_transaction as tx
     from services.graph_service import apply_graph_update
@@ -239,6 +316,59 @@ def test_explicit_older_uncommitted_grade_is_rejected_but_completed_receipt_reco
     apply(newer)
     before = state(db_conn, node)
     assert apply(first) == result and state(db_conn, node) == before
+
+
+def test_propagation_touch_supersedes_old_checkpoint_without_moving_decay_anchor(db_conn):
+    from db.connection import table
+    from learning.evidence_transaction import EvidenceObservationSuperseded
+
+    parent = _node("Atomic propagation chronology parent")
+    child = _node("Atomic propagation chronology child")
+    table("graph_edges").insert({
+        "user_id": USER_ACTIVE, "source_node_id": parent, "target_node_id": child,
+        "relationship_type": "prerequisite",
+    })
+    now = datetime.now(timezone.utc)
+    first = evidence(parent, observed_at=now - timedelta(seconds=2))
+    initial_changes = apply(first)
+    anchor = state(db_conn, parent)["last_evidence_at"]
+    stale = evidence(parent, observed_at=now - timedelta(seconds=1), correct=False)
+    apply(evidence(child, observed_at=now))  # genuine correct evidence propagates to parent
+    propagated = state(db_conn, parent)
+    assert propagated["last_evidence_at"] == anchor
+    assert propagated["evidence_touch_at"] == now
+    assert propagated["p_known"] != pytest.approx(initial_changes[0]["after"])
+    before = deepcopy(propagated)
+    events_before = journal(db_conn, parent)
+    with pytest.raises(EvidenceObservationSuperseded):
+        apply(stale)
+    assert state(db_conn, parent) == before and journal(db_conn, parent) == events_before
+    assert db_conn.execute(
+        "SELECT count(*) n FROM learning_evidence_operations WHERE operation_id=%s",
+        (stale["operation_id"],),
+    ).fetchone()["n"] == 0
+    # An already committed operation is replayable before the chronology fence.
+    assert apply(first) == initial_changes and state(db_conn, parent) == before
+
+
+def test_derived_metrics_do_not_stamp_an_evidence_touch_or_supersede_a_grade(db_conn):
+    from learning.learner_state import write_metrics
+
+    node = _node("Atomic metrics chronology")
+    earlier = datetime.now(timezone.utc) - timedelta(seconds=2)
+    apply(evidence(node, observed_at=earlier))
+    saved = state(db_conn, node)
+    write_metrics(USER_ACTIVE, node, htc_k=.2, unassisted_next=.3, assist_gap=.1, in_zone=True)
+    metrics = state(db_conn, node)
+    assert metrics["updated_at"] > saved["evidence_touch_at"]
+    assert metrics["evidence_touch_at"] == saved["evidence_touch_at"] == earlier
+    # This observation predates the metrics write, but no newer learning
+    # observation occurred. It remains eligible and preserves derived metrics.
+    observed = earlier + timedelta(seconds=1)
+    assert apply(evidence(node, observed_at=observed))
+    final = state(db_conn, node)
+    assert final["evidence_touch_at"] == observed
+    assert final["htc_k"] == pytest.approx(.2) and final["in_zone"] is True
 
 
 def test_rpc_ownership_and_permissions_prevent_partial_foreign_batch(db_conn):

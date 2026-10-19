@@ -1046,6 +1046,149 @@ describe("LoopLearn — PKG-13 fix round", () => {
   });
 });
 
+describe("LoopLearn — saved grade recovery", () => {
+  const pending = (kind: "probe" | "check", question_hash = "saved-question") => ({ kind, question_hash });
+
+  function listPending(kind: "probe" | "check") {
+    const phase = kind === "probe" ? "probe" : "check";
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", phase, "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({
+      loop_phase: kind === "probe" ? "probe" : "teach", phase,
+      pending_grade: pending(kind),
+    }));
+  }
+
+  it("offers explicit mobile probe recovery without posing, answering or editing the saved result", async () => {
+    viewport.mobile = true;
+    listPending("probe");
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: true, p_known: .6, probe_done: false, novice_floor: false });
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, question_hash: "fresh-question" });
+    render(<LoopLearn />);
+    const button = await screen.findByRole("button", { name: "Finish checking saved answer" });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByTestId("loop-probe-input")).toBeNull();
+    expect((screen.getByTestId("loop-set-goal") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("loop-new-session") as HTMLButtonElement).disabled).toBe(true);
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(api.answerLoopProbe).not.toHaveBeenCalled();
+    expect(api.startLoopSession).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByTestId("loop-probe-item").getAttribute("data-question-hash")).toBe("fresh-question"));
+    expect(api.answerLoopProbe).toHaveBeenCalledExactlyOnceWith("s2", "u1", "saved-question", { idk: false });
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+  });
+
+  it("handles a pending probe returned by next and keeps corrective feedback visible without a surviving pose", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue({ done: false, pending_grade: pending("probe") });
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: .2, probe_done: true, novice_floor: false, reference_answer: "Saved corrective explanation." });
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: .2 }], order: [] });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish checking saved answer" }));
+    await screen.findByText("Saved corrective explanation.");
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-probe-input")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-probe-next"));
+    await screen.findByTestId("loop-plan-concept-n1");
+    expect(api.answerLoopProbe).toHaveBeenCalledTimes(1);
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a saved check through the existing answer stream and normal feedback, without a replacement answer", async () => {
+    listPending("check");
+    api.streamLoopCheckAnswer.mockImplementation(async (
+      _s: string, _u: string, _q: string, _a: object,
+      handlers: { onPhase?: (phase: string) => void },
+    ) => {
+      handlers.onPhase?.("feedback");
+      return turn({ reply: "Feedback on your saved answer.", phase: "feedback", graded: true });
+    });
+    render(<LoopLearn />);
+    const button = await screen.findByRole("button", { name: "Finish checking saved answer" });
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByTestId("loop-close-button") as HTMLButtonElement).disabled).toBe(true);
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+    expect(api.nextLoopCheck).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await screen.findByText("Feedback on your saved answer.");
+    expect(api.streamLoopCheckAnswer).toHaveBeenCalledExactlyOnceWith("s2", "u1", "saved-question", { idk: false }, expect.any(Object));
+    expect(api.answerLoopProbe).not.toHaveBeenCalled();
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-attempt-input")).toBeNull();
+    expect((screen.getByTestId("loop-check-me") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("loop-continue").textContent).toBe("Continue");
+  });
+
+  it("recognizes a saved check returned by Check me without fabricating a question", async () => {
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", pending_grade: pending("check") });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    await screen.findByRole("button", { name: "Finish checking saved answer" });
+    expect(screen.queryByTestId("loop-attempt-input")).toBeNull();
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a failed probe submission into saved recovery rather than silently posing another item", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "probe", phase: "probe" }))
+      .mockResolvedValue(status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe", "qh") }));
+    api.answerLoopProbe.mockRejectedValue(new ApiError("saved but not finished", 503));
+    render(<LoopLearn />);
+    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "My own saved response." } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    await screen.findByRole("button", { name: "Finish checking saved answer" });
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+    expect(api.answerLoopProbe).toHaveBeenCalledExactlyOnceWith("s2", "u1", "qh", { answer: "My own saved response.", idk: false });
+    expect(screen.queryByTestId("loop-probe-input")).toBeNull();
+  });
+
+  it("keeps the saved recovery action on failure and rejects an older pending snapshot after a successful retry", async () => {
+    listPending("probe");
+    const oldSnapshot = deferred<ReturnType<typeof status>>();
+    api.getLoopSessionStatus.mockResolvedValueOnce(status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe") }))
+      .mockReturnValue(oldSnapshot.promise);
+    api.answerLoopProbe.mockRejectedValueOnce(new ApiError("temporarily unavailable", 503))
+      .mockResolvedValue({ graded: true, correct: true, p_known: .6, probe_done: false, novice_floor: false });
+    api.nextLoopProbe.mockResolvedValue({ ...probeItem, question_hash: "after-recovery" });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish checking saved answer" }));
+    await waitFor(() => expect(api.getLoopSessionStatus).toHaveBeenCalledTimes(2));
+    const retry = await screen.findByRole("button", { name: "Finish checking saved answer" });
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(retry);
+    await screen.findByTestId("loop-probe-item");
+    await act(async () => { oldSnapshot.resolve(status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe") })); });
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(screen.getByTestId("loop-probe-item").getAttribute("data-question-hash")).toBe("after-recovery");
+    expect(api.answerLoopProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not apply a saved probe recovery after the user switches sessions", async () => {
+    const recovered = deferred<object>();
+    api.listLoopSessionsFor.mockResolvedValue(listed([
+      open("s2", "probe", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z"),
+    ]));
+    api.getLoopSessionStatus.mockImplementation(async (sid: string) => sid === "s2"
+      ? status({ loop_phase: "probe", phase: "probe", pending_grade: pending("probe") })
+      : status({ session_id: "s1" }));
+    api.answerLoopProbe.mockReturnValue(recovered.promise);
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish checking saved answer" }));
+    await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
+    await screen.findByTestId("loop-check-me");
+    await act(async () => { recovered.resolve({ graded: true, correct: false, p_known: .2, probe_done: true, novice_floor: false, reference_answer: "Old session feedback." }); });
+    expect(screen.queryByTestId("loop-pending-grade")).toBeNull();
+    expect(screen.queryByText("Old session feedback.")).toBeNull();
+    expect(api.getLoopPlan).not.toHaveBeenCalled();
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+  });
+});
+
 describe("LoopLearn — pending feedback recovery", () => {
   const pendingDetail = "feedback pending; retry feedback before another check";
 

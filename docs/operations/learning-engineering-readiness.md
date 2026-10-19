@@ -14,7 +14,8 @@ ADRs [0030](../decisions/0030-learning-loop-cutover.md),
 [0033](../decisions/0033-goal-scoped-observed-diagnosis.md),
 [0034](../decisions/0034-evidence-integrity-and-goal-continuation.md) and
 [0035](../decisions/0035-durable-planning-observations.md) and
-[0036](../decisions/0036-durable-tutor-turn-recovery.md) define the applicable
+[0036](../decisions/0036-durable-tutor-turn-recovery.md), plus
+[0037](../decisions/0037-atomic-learning-evidence.md), define the applicable
 learning, kill-switch, provenance and durability contracts.
 
 ## What the automation currently verifies
@@ -110,13 +111,27 @@ do not create a fresh reference from the candidate and call it history proof.
 
 The current critical inventory includes budget account/reservation identities,
 states, UTC clocks and immutable receipt fields; learner/graph evidence versions;
-and the `learning_evidence_operations` receipt/plan columns. The dynamic RPC
+the nullable, no-default `learner_state.evidence_touch_at` fence; and the
+`learning_evidence_operations` receipt/plan columns. The dynamic RPC
 inventory includes checklist admit/start/read/reconcile and evidence
 snapshot/commit/receipt signatures. Column presence and a matching signature do
 not establish the budget constraints, role grants, locking, replay behavior or
 atomicity. Run the real-DB tests for those properties. JSON `turn_activity` and
 grade checkpoints live inside encrypted session state: this metadata-only audit
 does not inspect or certify their content or a resumed learner workflow.
+The evidence-touch attribute check establishes only its current nullable/no-default
+declaration. It cannot prove that historical NULLs were never backfilled. Preserve
+legacy NULLs and test propagation timing independently of general `updated_at`:
+metrics-only writes must not become new evidence or supersede an older grade.
+The evidence receipt JSON contract also requires `operation_id`, `user_id`,
+`course_id`, `input_fingerprint`, `changes`, `posteriors` and final `observations`.
+Those observations come from the committed plan's tagged journal records, in
+order; they are not the route's pre-commit guesses about independence. Untagged
+legacy provenance stays unknown and may yield an empty observation list. Exercise
+the actual RPC/adapter to verify these return values, owner/course binding and
+first-exposure reconciliation; unchanged function signatures do not prove this
+JSON contract. The read-only metadata verifier deliberately does not invoke the
+business RPC or claim that it checked the receipt payload.
 
 The ledger stores filenames, not SQL checksums. Metadata checks cannot establish
 function bodies, constraints, RLS, trigger behavior, data backfill correctness or
@@ -147,10 +162,80 @@ database. Never point that command at the active pilot, staging or production.
 Keep the default and kill-switch reports separate, including skips, retries,
 oracle findings, exact source, all setup phases and teardown status.
 
+### Fresh replay when a candidate migration changed
+
+A local audit database that already recorded a filename will skip that migration
+when `db.migrate` runs again, even if an unpublished candidate changed its SQL.
+Starting the old volumes and observing a green migration command does not prove
+the candidate body was exercised. Never modify an applied staging/production
+migration to solve this; those environments require a new forward migration.
+
+For the **disposable PR audit project only**, the owner must freeze/hash source
+before reset and replay. The isolated operator configuration currently uses
+project `sapling-learning-673-audit`, API `127.0.0.1:55421`, database
+`127.0.0.1:55422` and shadow port `55420`; the live pilot uses separate `556xx`
+ports and must remain untouched. Before a destructive command, require the exact
+resolved audit stack path, reject symlinked project/config paths, parse and match
+the TOML project ID/ports, and privately verify the running local endpoints and
+loopback-only Docker bindings. Do not print Supabase status keys or DB URLs.
+
+Installed CLI `supabase db reset --help` supports this explicit local operation,
+after the isolated stack has started and while the **same whole-cycle lock** is
+held:
+
+```sh
+supabase db reset --local --no-seed --network-id sapling-learning-673-audit-private --workdir "$AUDIT_STACK" --yes
+```
+
+`AUDIT_STACK` must be the already-validated disposable audit directory, not the
+repository, pilot or linked project. Never add `--linked`, `--db-url`,
+`--project-ref` or a remote profile to this command. The stronger alternative is
+an explicitly targeted `supabase stop --project-id sapling-learning-673-audit
+--no-backup --workdir "$AUDIT_STACK"`, followed by the ordinary isolated start;
+never use `--all`. Both alternatives destroy only disposable test data and are
+owner-executed, not actions performed by the read-only release verifier.
+
+Require a successful reset, confirm the app's migration ledger is absent or empty
+through the established operations seam, and then run the app's `db.migrate`,
+schema reload and synthetic seed against the verified `554xx` endpoints. Assert
+the expected migration files, critical columns and RPC behavior before running
+the DB/browser tests. Record before/after migration hashes, all phase exits and
+teardown. An outside-repository harness that waits for a source-ready marker
+**after** migration must not treat that marker as proof of which SQL ran.
+
+Fresh replay is one gate. A separate non-reset upgrade rehearsal on a disposable
+copy of representative earlier data proves compatibility and preservation;
+resetting an empty fixture cannot provide that evidence.
+
+### Requirement-by-requirement engineering evidence
+
+For each row, retain exact source/tree, command, start/end times, exit status,
+actual assertion counts and raw proof paths. The presence of the named tests is
+a test plan, not a passed gate; rerun after the last relevant source/migration
+change. A green parent process without setup and teardown evidence is incomplete.
+
+| Engineering requirement | Minimum acceptance evidence |
+| --- | --- |
+| Reproducible candidate schema | Fresh disposable reset/replay; critical metadata/RPC inventory; real permissions and body behavior. Independently rehearse an existing-data upgrade. |
+| Concurrent checklist admission | `backend/tests/integration/test_checklist_budget_db.py`: competing enrollments share one account capacity; lock-wait expiry uses the post-lock clock; unknown exposure persists; policy cannot be silently loosened; no model runs are needed. |
+| Strict checklist settlement | Same real-DB suite: one immutable receipt on replay, conflicting receipt rejection, injected cache fault rolls back bill/state/cache together, late cache fencing, and billing survives owner/enrollment deletion. Reconcile against a separately authorized bounded provider smoke. |
+| Atomic learning records | `backend/tests/integration/test_learning_evidence_transaction_db.py`: canonical BKT/FSRS math preserved; journal/state/mirror/receipt rollback and replay; competing writers/edge changes; propagation evidence-touch ordering; metrics do not fabricate activity; large snapshots and role isolation. |
+| Saved-grade restart recovery | `backend/tests/test_learning_grade_recovery.py` and real-DB `test_learning_grade_recovery_db.py`: fail before/after evidence acknowledgment, cold reload, identical operation recovery without another grade, owner/goal/close guards, withdrawal handling and one session continuation. |
+| Tutor delivery and interruption | Native wire tests in `test_loop_tutor_native_output.py`, feedback/recovery tests and `test_learning_turn_recovery_db.py`; actual bounded provider lesson and feedback must each finish with one nonempty `done`, no terminal SSE `error`, and metadata-only usage proof. HTTP 200 or navigation alone is insufficient. |
+| Desktop/mobile complete journey | `frontend/e2e/learn-loop.spec.ts` plus component/client tests: current goal, prerequisite approval, genuine attempt/help, feedback, resume and explicit saved-grade recovery, early close and return to Study. Run default and kill-switch lanes with retries visible, oracles and teardown; inspect representative narrow captures. |
+| Operational release and rollback | Read-only health/model-mode/flag/metadata/log verifier; owner-run old-worker drain, live kill/re-enable, compatible rollback on the same DB, and log/accounting failure delivery to an actual operations sink. A local pass does not authorize deployment. |
+
+Engineering completion is assessed against these concrete behavior and integrity
+requirements, with any unsupported environment drill recorded as an explicit
+release-owner gate. Expert rubric review, diagnostic calibration and learner
+retention/transfer studies below are a separate educational-validation workstream;
+they must not be relabelled as completed engineering tests, or used to conceal an
+unfinished engineering requirement.
+
 ### Checklist and evidence rollout ordering
 
 1. Rehearse `20261019125459_checklist_budget.sql` and
-   `20261019131339_learning_evidence_transaction.sql` on an isolated non-reset
+   `20261019131339_learning_evidence_transaction.sql` and `20261019141950_learning_evidence_forward_repair.sql` on an isolated non-reset
    database, then verify the reviewed migration contents, role grants,
    constraints, critical columns and RPC contracts. Apply these migrations before
    the corresponding backend code. A filename or signature match alone is not

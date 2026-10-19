@@ -28,6 +28,11 @@ race across the two paths.
   learner row locks. This blocks legacy topology inserts, edits and deletes,
   including phantom edges, while comparing the exact prerequisite snapshot.
   Check database-maintained row versions and hash exposure counts before writes.
+  Hash exposure is also owner-global across sessions/courses: a concurrent
+  earlier event, including NULL-provenance history, prevents a second session
+  from labelling the same question as an independent first exposure. This
+  provenance reconciliation does not change the separate same-session BKT
+  recheck weighting policy.
   Version triggers also detect concurrent metadata and derived-metric updates;
   evidence upserts never overwrite derived metric columns.
 - One database transaction appends the evidence journal, writes learner state,
@@ -38,6 +43,8 @@ race across the two paths.
 - Bind an explicit trusted operation UUID to ordered semantic input, owner,
   course and retention settings. Event IDs are deterministic within that batch.
   Retrying a committed operation returns its original changes and posteriors;
+  receipts also contain the ordered final typed planning observations from
+  committed events, rather than caller-snapshotted independence flags.
   it never recalculates from a newer state. Reusing an identity with different
   input or a different prepared plan is a conflict. Distinct legitimate rechecks
   retain distinct operation identities and their conservative evidence weight.
@@ -49,7 +56,11 @@ race across the two paths.
   statement timeout; it is a correctness choice with a contention cost, not an
   unlimited scalability claim.
 - A checkpoint can freeze trusted `observed_at`. An uncommitted older operation
-  is rejected when a touched state already contains later evidence. It must not
+  is rejected when a touched state already contains later evidence. An
+  evidence-only `evidence_touch_at` records direct and propagated updates even
+  when propagation preserves `last_evidence_at` as a decay anchor; metrics
+  writes do not move this fence. Legacy NULL touch times remain unknown, with
+  no historical backfill or inference from general `updated_at`. It must not
   reappear as a new failure after newer recovery. An already committed receipt
   still replays before that ordering check. Compatibility callers without a
   timestamp use commit-order semantics; callers without an operation UUID get
@@ -76,3 +87,7 @@ not permission to invent learner evidence or reset history.
 Hermetic transport tests do not establish PostgreSQL lock/rollback behavior;
 the isolated real-database integration gate is required. Engineering integrity
 does not validate item rubrics, diagnostic calibration or learning efficacy.
+
+## Forward-only migration repair
+
+The original `20261019131339_learning_evidence_transaction.sql` remains byte-for-byte immutable. Apply `20261019141950_learning_evidence_forward_repair.sql` before deploying the final writer/checkpoint consumers. It adds nullable evidence-only chronology and replaces the RPC definitions for strict whole-operation receipts and global exposure reconciliation; it does not recreate triggers/tables, delete events or backfill legacy provenance.

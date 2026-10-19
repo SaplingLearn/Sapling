@@ -819,6 +819,7 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
     for node_id in owned:
         states.setdefault(node_id, LearnerState(user_id=user_id, node_id=node_id))
     seen_checks: set[tuple[str, str]] = set()
+    exposed_hashes: set[str] = set()
     seq = 0  # next evidence_seq: counts journaled rows only
 
     for ev in evidences:
@@ -834,6 +835,17 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             if (key in seen_checks or prepared.prior_check(ev)) and not ev.same_session_recheck:
                 ev = Evidence.model_validate({**ev.model_dump(), "same_session_recheck": True})
             seen_checks.add(key)
+        if ev.question_hash:
+            already_exposed = ev.question_hash in exposed_hashes or prepared.prior_exposure(ev)
+            if (already_exposed and ev.planning_provenance is not None
+                    and not ev.planning_provenance.previously_seen):
+                ev = Evidence.model_validate({
+                    **ev.model_dump(),
+                    "planning_provenance": {
+                        **ev.planning_provenance.model_dump(), "previously_seen": True,
+                    },
+                })
+            exposed_hashes.add(ev.question_hash)
         w = evidence_weight(ev)
 
         st = states[ev.node_id]

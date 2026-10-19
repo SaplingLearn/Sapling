@@ -540,7 +540,12 @@ class _AtomicEvidenceRPC:
             states = {r["node_id"]: {"evidence_version": 0, **deepcopy(r)} for r in states
                       if r["node_id"] in ids and r.get("user_id", user) == user}
             states.update({key: deepcopy(value) for key, value in self.committed_states.items() if key in ids})
-            checks = [{**check, "count": sum(e.get("session_id") == check["session_id"] and e.get("question_hash") == check["question_hash"] for e in self.committed_events)} for check in params["p_checks"]]
+            checks = [
+                {**check,
+                 "count": sum(e.get("session_id") == check["session_id"] and e.get("question_hash") == check["question_hash"] for e in self.committed_events),
+                 "global_count": sum(e.get("question_hash") == check["question_hash"] for e in self.committed_events)}
+                for check in params["p_checks"]
+            ]
             return {"status": "snapshot", "nodes": [owned[key] for key in sorted(ids)],
                     "states": list(states.values()), "edges": edges, "checks": checks}
         assert name == "learning_evidence_commit", name
@@ -568,7 +573,9 @@ class _AtomicEvidenceRPC:
         self.committed_events.extend(deepcopy(plan["events"]))
         receipt = {"operation_id": operation, "user_id": user, "course_id": params["p_course_id"],
                    "input_fingerprint": params["p_input_fingerprint"], "changes": deepcopy(plan["changes"]),
-                   "posteriors": {r["id"]: r["mastery_score"] for r in plan["mirrors"]}}
+                   "posteriors": {r["id"]: r["mastery_score"] for r in plan["mirrors"]},
+                   "observations": [deepcopy(e["planning_observation"]) for e in plan["events"]
+                                    if e.get("planning_observation") is not None]}
         self.receipts[operation] = receipt
         self.committed_plans[operation] = deepcopy(plan)
         return {"status": "committed", "receipt": deepcopy(receipt)}

@@ -38,11 +38,23 @@ def grade(**kwargs):
     }
 
 
+def tagged_grade(**kwargs):
+    return grade(planning_provenance={
+        "check_item_id": "item1", "difficulty": 1,
+        "synthetic_idk": False, "previously_seen": False,
+    }, **kwargs)
+
+
 def run_with(factory, payload):
     with patch(
         "test_learning_evidence_apply._evidence_factory", return_value=(factory, factory.mocks)
     ):
         return _apply(payload, edges=[])[0]
+
+
+def receipt_with(factory, operation):
+    with patch("learning.evidence_transaction.rpc", side_effect=factory.rpc):
+        return read_receipt("u1", operation)
 
 
 def setup():
@@ -108,6 +120,116 @@ def test_recheck_with_distinct_operation_is_not_mistaken_for_receipt_replay():
     assert second["p_before"] == pytest.approx(first["p_after"])
     assert len(transport.receipts) == 2
     assert first.get("planning_observation") is None and second.get("planning_observation") is None
+
+
+def test_cross_session_legacy_exposure_cannot_certify_a_fresh_independent_observation():
+    factory, transport = setup()
+    run_with(factory, {"evidence": [grade(operation_id=str(uuid4()), session_id="older-session")]})
+    operation = str(uuid4())
+    payload = {"evidence": [tagged_grade(operation_id=operation, session_id="new-session")]}
+    original = deepcopy(payload)
+    run_with(factory, payload)
+    event = transport.committed_events[-1]
+    observation = event["planning_observation"]
+    assert observation["previously_seen"] is True and observation["independent"] is False
+    # This reconciles provenance only; cross-session exposure is not silently
+    # converted into the distinct same-session weighted recheck policy.
+    assert event["weight"] == 1.0 and observation["same_session_recheck"] is False
+    assert payload == original
+    receipt = receipt_with(factory, operation)
+    assert receipt["observations"] == [observation]
+    assert receipt["input_fingerprint"] == fingerprint(
+        "u1", "c1", [Evidence.model_validate(original["evidence"][0])], None
+    )
+
+
+@pytest.mark.parametrize("same_session", [False, True])
+def test_final_receipt_records_within_batch_hash_exposure_in_original_order(same_session):
+    factory, transport = setup()
+    operation = str(uuid4())
+    run_with(factory, {"evidence": [
+        tagged_grade(operation_id=operation, session_id="s1"),
+        tagged_grade(operation_id=operation, session_id="s1" if same_session else "s2"),
+    ]})
+    observations = receipt_with(factory, operation)["observations"]
+    assert [o["previously_seen"] for o in observations] == [False, True]
+    assert [o["independent"] for o in observations] == [True, False]
+    assert observations[1]["same_session_recheck"] is same_session
+    assert (transport.committed_events[1]["weight"] < 1.0) is same_session
+
+
+def test_stale_unseen_snapshot_rebuilds_after_a_different_session_exposes_same_hash():
+    factory, transport = setup()
+    commits = []
+    interleaved = False
+
+    def rpc(name, args):
+        nonlocal interleaved
+        if name == "learning_evidence_commit" and not interleaved:
+            interleaved = True
+            commits.append(deepcopy(args))
+            assert args["p_plan"]["checks"][0]["global_count"] == 0
+            # A real writer invocation on another node/session commits the
+            # hash after the first snapshot. No shared node version changes:
+            # only the new owner-global exposure CAS can detect this race.
+            run_with(factory, {"evidence": [grade(
+                node_id="n2", session_id="other-session", operation_id=str(uuid4()),
+            )]})
+            return {"status": "stale"}  # SQL's owner-global count comparison
+        if name == "learning_evidence_commit" and args["p_plan"]["events"][0]["node_id"] == "n1":
+            commits.append(deepcopy(args))
+        return transport(name, args)
+
+    factory.rpc = rpc
+    operation = str(uuid4())
+    run_with(factory, {"evidence": [tagged_grade(operation_id=operation)]})
+    assert len(commits) == 2
+    assert commits[0]["p_plan"]["events"][0]["planning_observation"]["independent"] is True
+    assert commits[1]["p_plan"]["checks"][0]["global_count"] == 1
+    final = receipt_with(factory, operation)["observations"][0]
+    assert final["previously_seen"] is True and final["independent"] is False
+    assert len(transport.committed_events) == 2
+
+
+def test_receipt_final_observations_do_not_change_after_later_exposures_or_replay():
+    factory, _ = setup()
+    operation = str(uuid4())
+    payload = {"evidence": [tagged_grade(operation_id=operation)]}
+    first_changes = run_with(factory, payload)
+    receipt = deepcopy(receipt_with(factory, operation))
+    run_with(factory, {"evidence": [tagged_grade(
+        session_id="later-session", operation_id=str(uuid4()),
+    )]})
+    assert run_with(factory, payload) == first_changes
+    assert receipt_with(factory, operation) == receipt
+    assert receipt["observations"][0]["independent"] is True
+
+
+@pytest.mark.parametrize("bad", [None, {}, [None], [{"node_id": "n1"}]])
+def test_receipt_missing_or_invalid_final_provenance_fails_closed(bad):
+    factory, transport = setup()
+    operation = str(uuid4())
+    run_with(factory, {"evidence": [tagged_grade(operation_id=operation)]})
+    transport.receipts[operation]["observations"] = bad
+    with patch("learning.evidence_transaction.rpc", side_effect=transport):
+        with pytest.raises(PlanningPersistenceUnavailable):
+            read_receipt("u1", operation)
+
+
+@pytest.mark.parametrize("count", [None, False, -1, "0"])
+def test_missing_or_malformed_global_exposure_never_defaults_to_unseen(count):
+    factory, transport = setup()
+
+    def rpc(name, args):
+        result = transport(name, args)
+        if name == "learning_evidence_snapshot":
+            result["checks"][0]["global_count"] = count
+        return result
+
+    factory.rpc = rpc
+    with pytest.raises(PlanningPersistenceUnavailable):
+        run_with(factory, {"evidence": [tagged_grade(operation_id=str(uuid4()))]})
+    assert not transport.committed_events and not transport.committed_states
 
 
 @pytest.mark.parametrize("code", ["40P01", "40001", "55P03", "57014"])

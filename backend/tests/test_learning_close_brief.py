@@ -1908,7 +1908,7 @@ def test_end_session_flag_on_pending_session_keeps_the_legacy_early_return(monke
     assert called == [] and "s-p" not in learn.PENDING_SESSIONS
 
 
-def test_end_session_flag_on_close_failure_does_not_fail_legacy_end(monkeypatch, caplog):
+def test_end_session_defers_legacy_end_when_close_persistence_fails(monkeypatch, caplog):
     import routes.learn as learn
     import routes.learn_loop as loop
 
@@ -1924,11 +1924,10 @@ def test_end_session_flag_on_close_failure_does_not_fail_legacy_end(monkeypatch,
     monkeypatch.setattr("routes.learn_loop.close_session", boom)
     with caplog.at_level("WARNING"):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
-    assert r.status_code == 200
+    assert r.status_code == 503
     assert any("close" in rec.getMessage() for rec in caplog.records)
     assert not any("SECRET" in rec.getMessage() for rec in caplog.records)
-    updates = [c.args[0] for c in tables["sessions"].update.call_args_list]
-    assert {"summary_json": "LEGACY"} in updates
+    tables["sessions"].update.assert_not_called()
 
 
 def test_session_closed_in_taxonomy():
@@ -2452,9 +2451,8 @@ def test_end_session_rate_limited_stores_the_deterministic_close(monkeypatch):
     assert events[0][1]["payload"]["model_written"] is False and store["doc"]["phase"] == "close"
 
 
-def test_end_session_while_a_check_is_graded_ends_without_a_close(monkeypatch, caplog):
-    """Review M3 (picked): a live grading claim at end-session — the legacy end runs,
-    no close is stored (the student can still /close later; Known gap)."""
+def test_end_session_while_a_check_is_graded_defers_all_end_writes(monkeypatch, caplog):
+    """A live grading claim must complete before either close or legacy end."""
     import routes.learn as learn
 
     tables, events, _ = _wire_close(
@@ -2478,9 +2476,9 @@ def test_end_session_while_a_check_is_graded_ends_without_a_close(monkeypatch, c
     monkeypatch.setattr(learn, "encrypt_json", lambda v: "LEGACY")
     with caplog.at_level("WARNING"):
         r = client.post("/api/learn/end-session", json={"session_id": "s1", "user_id": UID})
-    assert r.status_code == 200 and events == []
-    assert not [w for w in tables.writes("update", "sessions") if "close_json" in w[2]]
-    assert any("without a close" in rec.getMessage() for rec in caplog.records)
+    assert r.status_code == 409 and events == []
+    assert not tables.writes("update", "sessions")
+    assert not any("without a close" in rec.getMessage() for rec in caplog.records)
 
 
 def test_a_failed_brief_build_is_not_retried_every_turn(monkeypatch):

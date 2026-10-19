@@ -2055,10 +2055,37 @@ MISCONCEPTIONS_IMPORTERS_ALLOWED = {
     "agents/tools/check.py",
     "routes/learn_loop.py",
     "learning/learner_brief.py",
+    # Encrypted checkpoint validation reuses only the pure Attempt/key schema;
+    # the narrower AST guard below forbids any store/read/write hook here.
+    "learning/grade_checkpoint.py",
     # PKG-10 fix round 3 (R3-1, spec §13 A76): the review grades through
     # recheck_after_release — the one re-check decision — and imports nothing else
     "learning/review.py",
 }
+
+
+def _checkpoint_misconception_import_offenders(source: str) -> list[int]:
+    bad = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "learning.misconceptions" and node.level == 0:
+                if any(n.name not in {"Attempt", "is_key"} or n.asname for n in node.names):
+                    bad.append(node.lineno)
+            elif (module.startswith("learning.misconceptions")
+                  or (node.level and module == "misconceptions")
+                  or (module == "learning" and any(n.name == "misconceptions" for n in node.names))):
+                bad.append(node.lineno)
+        elif isinstance(node, ast.Import) and any(
+            n.name.startswith("learning.misconceptions") for n in node.names
+        ):
+            bad.append(node.lineno)
+        elif isinstance(node, ast.Call) and any(
+            isinstance(arg, ast.Constant) and arg.value == "learning.misconceptions"
+            for arg in node.args
+        ):
+            bad.append(node.lineno)
+    return bad
 
 
 def test_inv_17_rollup_not_a_tutor_tool():
@@ -2086,6 +2113,24 @@ def test_inv_17_rollup_not_a_tutor_tool():
     assert importers <= MISCONCEPTIONS_IMPORTERS_ALLOWED, (
         f"unexpected importers: {importers - MISCONCEPTIONS_IMPORTERS_ALLOWED}"
     )
+    assert not _checkpoint_misconception_import_offenders(
+        (LEARNING / "grade_checkpoint.py").read_text()
+    ), "grade checkpoint may import only canonical pure Attempt/is_key validation"
+
+
+@pytest.mark.parametrize("source,blocked", [
+    ("from learning.misconceptions import Attempt, is_key", False),
+    ("from learning.misconceptions import record", True),
+    ("from learning.misconceptions import record as is_key", True),
+    ("from learning.misconceptions import Attempt as A", True),
+    ("import learning.misconceptions as m", True),
+    ("from learning import misconceptions", True),
+    ("from .misconceptions import record", True),
+    ('m = __import__("learning.misconceptions")', True),
+    ('m = importlib.import_module("learning.misconceptions")', True),
+])
+def test_grade_checkpoint_misconception_validation_import_guard(source, blocked):
+    assert bool(_checkpoint_misconception_import_offenders(source)) is blocked
 
 
 def test_inv_17_scan_self_test():

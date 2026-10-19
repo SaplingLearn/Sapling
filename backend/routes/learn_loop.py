@@ -86,15 +86,20 @@ from agents.loop_tutor import (
     student_envelope,
     tier_run_kwargs,
 )
-from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, grade_answer, grader_answer_text
+from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
+from learning import grade_checkpoint
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
 from learning.evidence import (
-    PREREQ_RELATIONSHIP_TYPE, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
+    PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
+)
+from learning.evidence_transaction import (
+    EvidenceObservationSuperseded,
+    read_receipt as read_evidence_receipt,
 )
 from learning.planning_history import read_planning_history
 from learning.fsrs import budget_select, order_due
@@ -497,6 +502,19 @@ def _phase_for(state: dict) -> str:
     return "check"
 
 
+def _pending_grade(state: dict) -> dict | None:
+    """Public recovery identity only; encrypted answer/outcome never leaves storage."""
+    if _loop_phase(state) == "probe":
+        current = (state.get("probe") or {}).get("current")
+        if isinstance(current, dict) and grade_checkpoint.KEY in current:
+            return {"kind": "probe", "question_hash": current["question_hash"]}
+    active = state.get("current")
+    entry = (state.get("steps") or {}).get(active) if active else None
+    if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
+        return {"kind": "check", "question_hash": active}
+    return None
+
+
 def _require_no_pending_feedback(state: dict) -> None:
     """A committed grade stays current until its feedback is actually served.
 
@@ -555,7 +573,10 @@ def _teaching_open(session_id: str, user_id: str) -> None:
     """Ownership, then the phase: a teaching route runs only once the plan is
     approved (spec §9: probe → plan → teach). Reads only; writes nothing."""
     _session_scope(session_id, user_id)
-    _require_teaching(_load_loop_state(session_id))
+    state = _load_loop_state(session_id)
+    _require_teaching(state)
+    if _pending_grade(state):
+        raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
 
 
 def _turn_phase(kind: str, state_phase: str) -> str:
@@ -1320,7 +1341,8 @@ def _refloor(evidence: list, user_id: str, item, posed_at: datetime | None, used
     return max(floor, int(used))
 
 
-def _tag_planning_evidence(pending: list, item, *, synthetic_idk: bool, previously_seen: bool) -> None:
+def _tag_planning_evidence(pending: list, item, *, synthetic_idk: bool, previously_seen: bool,
+                           operation_id: str | None = None, observed_at: float | None = None) -> None:
     """Actual probe/check grades, goal or not; never answers or inferred history."""
     provenance = PlanningProvenance(
         check_item_id=item.id, difficulty=item.difficulty,
@@ -1329,6 +1351,9 @@ def _tag_planning_evidence(pending: list, item, *, synthetic_idk: bool, previous
     for row in pending:
         if row.get("question_hash") == item.question_hash and row.get("check_item_id") == item.id:
             row["planning_provenance"] = provenance
+            if operation_id is not None:
+                row["operation_id"] = operation_id
+                row["observed_at"] = datetime.fromtimestamp(observed_at, tz=timezone.utc).isoformat()
 
 
 def _ledger(write, *args, **kwargs) -> None:
@@ -2329,6 +2354,8 @@ class _LoopTurn:
         changes `state` in place, records what the caller emits after the save
         in `out`, and has no side effects."""
         out.clear()
+        if _pending_grade(state):
+            raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
         if getattr(self, "activity_id", None) is not None:
             _refuse_while_closing(state, self._now)
             try:
@@ -2981,9 +3008,10 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
             state = {}  # no session yet: a fresh loop (never the gate's 404)
     active = state.get("current")
     entry = (state.get("steps") or {}).get(active) if active else None
+    pending_grade = _pending_grade(state)
     item = (
         get_check_item(entry["check_item_id"])
-        if isinstance(entry, dict) and entry.get("check_item_id")
+        if isinstance(entry, dict) and entry.get("check_item_id") and not pending_grade
         else None
     )
     node_id = (_node_for_item(user_id, item) if item is not None else None) or state.get("concept")
@@ -2997,13 +3025,14 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         message="",
         independent_s=0.0,
     )
-    phase = _phase_for(dict(state, current=active if item is not None else None))
+    phase = "check" if pending_grade and pending_grade["kind"] == "check" else _phase_for(dict(state, current=active if item is not None else None))
     return {
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
         **_learning_scope_payload(state),
         "phase": phase,
+        "pending_grade": pending_grade,
         # PKG-13 reopen: the open item's pose, so a resuming client restores the
         # check READ-ONLY (POST /check/next may activate — write — another item).
         # Only while the item takes answers; never the reference (A17/A22).
@@ -3197,8 +3226,10 @@ def _grading_open(entry: dict | None, now: float) -> bool:
     """The item still takes answers: never graded, and not left under a claim
     older than LOOP_GRADING_CLAIM_STALE_S (a crash mid-grade or a conflict
     after the flush — /check/next moves past it; it is never graded again)."""
-    if not isinstance(entry, dict) or entry.get("graded_at") is not None:
+    if not isinstance(entry, dict) or entry.get("graded_at") is not None or entry.get("grading_superseded"):
         return False
+    if grade_checkpoint.KEY in entry:
+        return True  # a saved result must be recovered, never abandoned as stale
     claimed_at = entry.get("grading_claim_at")
     return not (
         entry.get("grading_claim") and now - float(claimed_at or 0) > LOOP_GRADING_CLAIM_STALE_S
@@ -3237,6 +3268,7 @@ def _under_claim(qh: str, claim: str, change: Callable[[dict], None], *, release
         if release:
             entry.pop("grading_claim", None)
             entry.pop("grading_claim_at", None)
+            entry.pop(grade_checkpoint.KEY, None)
 
     return mutate
 
@@ -3261,8 +3293,11 @@ async def _grade_submission(
     _require_open(state)
     qh = body.question_hash
     entry = _steps(state).get(qh)
+    if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
+        checkpoint = _open_grade_checkpoint(entry, body, course_id, kind="check")
+        return _finish_check_checkpoint(checkpoint, scope, request, loop_on=loop_on)
     if isinstance(entry, dict) and (
-        entry.get("graded_at") is not None or entry.get("grading_claim")
+        entry.get("graded_at") is not None or entry.get("grading_claim") or entry.get("grading_superseded")
     ):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     if not isinstance(entry, dict) or state.get("current") != qh:
@@ -3313,7 +3348,7 @@ async def _grade_submission(
     )
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
-    flushed = False
+    checkpointed = False
     answer = CheckAnswer(
         question_hash=qh,
         answer_text=body.answer,
@@ -3376,53 +3411,185 @@ async def _grade_submission(
             deps.pending_evidence, body.user_id, item, _ts(entry.get("first_shown_at")), rung
         )
         previously_seen = qh in seen_hashes(body.user_id)
-        _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused), previously_seen=previously_seen)
-        flushed = True
-        flush_pending(deps, course_id or None)  # ONE call: the loop's only evidence write
-        _ledger(mark_graded, body.user_id, qh)
+        _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=bool(refused),
+                               previously_seen=previously_seen, operation_id=claim, observed_at=now)
+        correct = bool(outcome.correct)
+        verdict = "idk" if idk else ("correct" if correct else "not_yet")
+        evidence = outcome.evidence or {}
+        graded = {
+            "graded_at": now,
+            "last_correct": correct,
+            "last_verdict": verdict,
+            "max_rung": rung,
+            "assisted": bool(evidence.get("assisted")),
+            "node_id": node_id,
+            "channel": evidence.get("channel"),
+            "confidence": outcome.confidence,
+            "grader_backend": outcome.grader_backend,
+            "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
+            "p_before": p_before,
+            "feedback_given": False,
+        }
+
+        if state.get("goal"):
+            effective_rung = max(rung, int(evidence.get("max_rung") or 0))
+            rechecked = bool(recheck or evidence.get("same_session_recheck"))
+            graded["goal_observation"] = {
+                "node_id": node_id, "question_hash": qh, "difficulty": item.difficulty,
+                "channel": CHANNEL_FOR_FORMAT[item.format], "correct": correct, "idk": bool(idk),
+                "max_rung": effective_rung, "same_session_recheck": rechecked,
+                "previously_seen": previously_seen, "synthetic_idk": bool(refused),
+                "independent": effective_rung == 0 and not rechecked and not refused
+                and not previously_seen and not evidence.get("assisted", False),
+            }
+
+        checkpoint = grade_checkpoint.GradeCheckpoint(
+            kind="check", operation_id=claim, user_id=body.user_id,
+            session_id=body.session_id, course_id=course_id or None, question_hash=qh,
+            goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
+            continuation={"graded": graded, "correct": correct, "genuine": genuine,
+                          "diagnosis": getattr(outcome, "diagnosis", None), "rendered": rendered,
+                          "answer": answer.model_dump(mode="json"), "verdict": verdict, "refused": refused},
+        )
+        # Treat a lost checkpoint acknowledgment as potentially saved. Never release
+        # its claim or call the grader again while that uncertainty exists.
+        checkpointed = True
+        _save_grade_checkpoint(checkpoint)
+        return _finish_check_checkpoint(checkpoint, scope, request, loop_on=loop_on, deps=deps)
     except BaseException as exc:
-        if isinstance(exc, PlanningPersistenceUnavailable):
-            flushed = False  # strict append failed BEFORE this item's scalar writes
-        if not flushed:  # nothing was written: the student may submit again
+        if not checkpointed:
             try:
                 _update_loop_state(
                     body.session_id, _under_claim(qh, claim, lambda e: None, release=True)
                 )
             except Exception:
-                logger.warning("grading claim for %s not released", qh, exc_info=True)
+                logger.warning("grading claim could not be released")
         if isinstance(exc, PlanningPersistenceUnavailable):
-            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry") from exc
+            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
         raise
-    correct = bool(outcome.correct)
-    verdict = "idk" if idk else ("correct" if correct else "not_yet")
-    evidence = outcome.evidence or {}
-    graded = {
-        "graded_at": now,
-        "last_correct": correct,
-        "last_verdict": verdict,
-        "max_rung": rung,
-        "assisted": bool(evidence.get("assisted")),
-        "node_id": node_id,
-        "channel": evidence.get("channel"),
-        "confidence": outcome.confidence,
-        "grader_backend": outcome.grader_backend,
-        "fsrs_rating": policy.evidence_for_rung(correct, Rung(rung)).fsrs_rating,
-        "p_before": p_before,
-        "feedback_given": False,
-    }
 
-    if state.get("goal"):
-        effective_rung = max(rung, int(evidence.get("max_rung") or 0))
-        rechecked = bool(recheck or evidence.get("same_session_recheck"))
-        graded["goal_observation"] = {
-            "node_id": node_id, "question_hash": qh, "difficulty": item.difficulty,
-            "channel": CHANNEL_FOR_FORMAT[item.format], "correct": correct, "idk": bool(idk),
-            "max_rung": effective_rung, "same_session_recheck": rechecked,
-            "previously_seen": previously_seen, "synthetic_idk": bool(refused),
-            "independent": effective_rung == 0 and not rechecked and not refused
-            and not previously_seen and not evidence.get("assisted", False),
-        }
 
+def _open_grade_checkpoint(entry, body, course_id, *, kind):
+    try:
+        return grade_checkpoint.open_checkpoint(
+            entry.get(grade_checkpoint.KEY), kind=kind, operation_id=entry.get("grading_claim"),
+            user_id=body.user_id, session_id=body.session_id, course_id=course_id or None,
+            question_hash=body.question_hash,
+        )
+    except PlanningPersistenceUnavailable:
+        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry later") from None
+
+
+def _save_grade_checkpoint(checkpoint):
+    encrypted = grade_checkpoint.seal(checkpoint)  # constant across CAS retries
+
+    def save(doc):
+        _refuse_while_closing(doc, _now_s())
+        _check_goal_version(doc, checkpoint.goal_version)
+        entry = (_steps(doc).get(checkpoint.question_hash) if checkpoint.kind == "check"
+                 else _probe_doc(doc).get("current"))
+        if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
+                or (checkpoint.kind == "probe" and entry.get("question_hash") != checkpoint.question_hash)):
+            raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+        entry[grade_checkpoint.KEY] = encrypted
+        entry["grading_claim_at"] = _now_s()
+
+    _update_loop_state(checkpoint.session_id, save, require_open=True, require_existing=True)
+
+
+def _flush_grade_checkpoint(checkpoint, request, *, loop_on, deps=None):
+    def guard(doc):
+        _refuse_while_closing(doc, _now_s())
+        _check_goal_version(doc, checkpoint.goal_version)
+        if checkpoint.kind == "probe":
+            _require_phase(doc, "probe")
+            entry = _probe_doc(doc).get("current")
+        else:
+            _require_teaching(doc)
+            entry = _steps(doc).get(checkpoint.question_hash)
+            if doc.get("current") != checkpoint.question_hash:
+                raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+        if (not isinstance(entry, dict) or entry.get("grading_claim") != checkpoint.operation_id
+                or grade_checkpoint.KEY not in entry):
+            raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+
+    # The durable claim excludes goal changes and close. A conditional write
+    # also checks ended_at/close_json before any replay can write evidence.
+    _update_loop_state(checkpoint.session_id, guard, require_open=True, require_existing=True)
+    deps = deps or SaplingDeps(
+        user_id=checkpoint.user_id, course_id=checkpoint.course_id, supabase=None,
+        request_id=_request_id(request), session_id=checkpoint.session_id,
+        feature="loop_check" if checkpoint.kind == "check" else "loop_probe", learning_loop=loop_on,
+    )
+    deps.pending_evidence = copy.deepcopy(checkpoint.evidence)
+    try:
+        flush_pending(deps, checkpoint.course_id)
+    except EvidenceObservationSuperseded:
+        # The original answer has no committed receipt, and a newer observation
+        # is already authoritative. Never apply the old answer out of order or
+        # invent a diagnosis; retire its pose and ask for fresh evidence.
+        def supersede(doc):
+            if checkpoint.kind == "check":
+                def retire(entry):
+                    entry["grading_superseded"] = True
+                    entry["discarded_grade_operation_id"] = checkpoint.operation_id
+                _under_claim(checkpoint.question_hash, checkpoint.operation_id, retire, release=True)(doc)
+                if doc.get("current") == checkpoint.question_hash:
+                    doc["current"] = None
+            else:
+                _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, _not_asked)(doc)
+
+        _update_loop_state(checkpoint.session_id, supersede, require_open=True, require_existing=True)
+        return False
+    except PlanningPersistenceUnavailable:
+        raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
+    try:
+        receipt = read_evidence_receipt(checkpoint.user_id, checkpoint.operation_id)
+        if receipt is None or receipt.get("course_id") != checkpoint.course_id:
+            raise PlanningPersistenceUnavailable("Saved grade receipt unavailable")
+    except PlanningPersistenceUnavailable:
+        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
+    _ledger(mark_graded, checkpoint.user_id, checkpoint.question_hash)
+    return receipt
+
+
+def _committed_grade_observation(checkpoint, receipt, node_id):
+    """Use the final serialized writer's exposure provenance, never a stale guess.
+
+    Another session may have answered this question after the grader began.
+    The original grade stays frozen, but only the committed receipt can attest
+    that this particular exposure was fresh and independently useful.
+    """
+    try:
+        matches = [PlanningObservation.model_validate(row) for row in receipt["observations"]
+                   if row.get("node_id") == node_id and row.get("question_hash") == checkpoint.question_hash]
+        original = next(row for row in checkpoint.evidence if row["node_id"] == node_id)
+        if len(matches) != 1:
+            raise ValueError("Saved grade observation unavailable")
+        final = matches[0].model_dump(mode="json")
+        for key in ("check_item_id", "channel", "correct", "idk", "max_rung"):
+            if final[key] != original[key]:
+                raise ValueError("Saved grade observation disagrees")
+        if original.get("same_session_recheck") and not final["same_session_recheck"]:
+            raise ValueError("Saved grade recheck provenance weakened")
+        if original["planning_provenance"]["previously_seen"] and not final["previously_seen"]:
+            raise ValueError("Saved grade exposure provenance weakened")
+        return final
+    except Exception:
+        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
+
+
+def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None):
+    receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
+    if receipt is False:
+        raise HTTPException(status_code=409, detail="Newer learning activity was recorded. Select another check to continue.")
+    qh, claim = checkpoint.question_hash, checkpoint.operation_id
+    c = checkpoint.continuation
+    graded, correct, genuine = copy.deepcopy(c["graded"]), c["correct"], c["genuine"]
+    committed = _committed_grade_observation(checkpoint, receipt, graded["node_id"])
+    if graded.get("goal_observation") is not None:
+        graded["goal_observation"].update(committed)
+    now = graded["graded_at"]
     def record_grade(e: dict) -> None:
         if genuine:
             _record_attempt(e, now, failed=not correct)
@@ -3433,14 +3600,18 @@ async def _grade_submission(
         e.update(graded)
 
     under = _under_claim(qh, claim, record_grade, release=True)
-    diagnosis = getattr(outcome, "diagnosis", None)
+    diagnosis = c["diagnosis"]
 
     held = {"last": False}
 
     def record_grade_and_diagnosis(doc: dict) -> None:
+        _refuse_while_closing(doc, _now_s())
+        _check_goal_version(doc, checkpoint.goal_version)
         entry = _steps(doc).get(qh)
         held["last"] = isinstance(entry, dict) and entry.get("grading_claim") == claim
         under(doc)
+        if held["last"]:
+            _steps(doc)[qh]["graded_operation_id"] = claim
         if held["last"]:  # PKG-10: the attempt log + marker change, on the FRESH document
             carry(doc, diagnosis)
             # PKG-14 (spec §3.4): one more flushed check toward the zpd.rating prompt,
@@ -3449,16 +3620,25 @@ async def _grade_submission(
             held["checks"] = doc["checks_since_rating"]
 
     # saved NOW: a failed feedback turn is recovered by _phase_for. An exhausted
-    # conflict here is a 409 with the claim still held: the item is never
-    # flushed again (it closes via /check/next once the claim is stale).
-    state = _update_loop_state(body.session_id, record_grade_and_diagnosis)
+    # conflict retains the encrypted checkpoint; retry replays the same atomic
+    # operation and then materializes this session continuation exactly once.
+    state = _update_loop_state(checkpoint.session_id, record_grade_and_diagnosis, require_open=True, require_existing=True)
+    if not held["last"]:
+        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     if held["last"]:
         # PKG-10 (spec §13 A75): the row grade_answer marked, written only now —
         # after the ONE flush and the save that recorded the grade under OUR
         # claim (a claim lost to another request writes nothing; never raises)
-        _write_misconception(body.user_id, outcome, _item_like(item), answer)
+        if (diagnosis or {}).get("record"):
+            try:
+                item = get_check_item((_steps(state).get(qh) or {}).get("check_item_id"))
+                if item is not None:
+                    _write_misconception(checkpoint.user_id, GradeOutcome(diagnosis=diagnosis),
+                                         _item_like(item), CheckAnswer.model_validate(c["answer"]))
+            except Exception:
+                logger.warning("optional misconception rollup unavailable after saved grade")
     ask = held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS
-    return _Submission("feedback", state, rendered, scope, verdict, refused=refused, ask_rating=ask)
+    return _Submission("feedback", state, c["rendered"], scope, c["verdict"], refused=c["refused"], ask_rating=ask)
 
 
 def _requests_of(run_result) -> int:
@@ -4187,6 +4367,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     active = state.get("current")
     entry = (state.get("steps") or {}).get(active) if active else None
     now = _now_s()
+    if isinstance(entry, dict) and grade_checkpoint.KEY in entry:
+        return {"phase": "check", "pending_grade": _pending_grade(state)}
     if _grading_open(entry, now):
         item = get_check_item(entry["check_item_id"]) if entry.get("check_item_id") else None
         if item is not None:
@@ -4198,6 +4380,9 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
         _require_no_pending_feedback(st)  # recheck on the fresh CAS document too
         cur = st.get("current")
         cur_entry = (st.get("steps") or {}).get(cur) if cur else None
+        if isinstance(cur_entry, dict) and grade_checkpoint.KEY in cur_entry:
+            out["pending_grade"] = _pending_grade(st)
+            return
         if _grading_open(cur_entry, now):
             if cur_entry.get("check_item_id") and get_check_item(cur_entry["check_item_id"]):
                 out["qh"] = cur  # another request activated one meanwhile
@@ -4224,6 +4409,8 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
                 raise AIBudgetExceeded(decision)  # nothing activated, nothing saved
     out: dict = {}
     saved = _update_loop_state(body.session_id, lambda st: activate(st, out))
+    if out.get("pending_grade"):
+        return {"phase": "check", "pending_grade": out["pending_grade"]}
     qh = out.get("qh")
     if qh is None:  # the cursor may have moved
         saved = _continue_goal(body.session_id, body.user_id, course_id, saved)
@@ -4267,7 +4454,7 @@ def _grading_in_flight(doc: dict, now: float) -> bool:
     probe = doc.get("probe") if isinstance(doc.get("probe"), dict) else {}
     if isinstance(probe.get("current"), dict):
         entries.append(probe["current"])
-    return any(_live(e, "grading_claim", now) for e in entries)
+    return any(grade_checkpoint.KEY in e or _live(e, "grading_claim", now) for e in entries)
 
 
 def _refuse_while_closing(doc: dict, now: float) -> None:
@@ -4587,7 +4774,8 @@ def end_session(body: EndSessionBody, request: Request) -> None:
     CLOSE_RUN_TIMEOUT_S; a check still being graded → no close, WARNING);
     the legacy body then runs unchanged (ended_at, XP, the `summary_json`
     `flashcards._get_session_summary` reads, achievements). A pending session
-    keeps the legacy early return. A close failure never fails the legacy end.
+    keeps the legacy early return. A pending grade or an unacknowledged close
+    prevents the legacy handler from setting ended_at and stranding recovery.
     The legacy handler is sync (a worker thread), so the async close runs
     through the sanctioned `run_agent_sync` seam. Always returns None."""
     if body.session_id in PENDING_SESSIONS:
@@ -4605,13 +4793,11 @@ def end_session(body: EndSessionBody, request: Request) -> None:
                     rate_limit="fallback",  # A20 inline: rate-limited → the deterministic close
                 )
             )
-    except Exception as exc:
-        # e.g. a check still being graded (409): the session ends without a close;
-        # the student can still POST /close later (close_json stays null)
-        logger.warning(
-            "loop session ended without a close (%s); the legacy end continues",
-            type(exc).__name__,
-        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning("loop session close was not acknowledged; end deferred")
+        raise HTTPException(status_code=503, detail="Session close unavailable; retry ending the session") from None
     return None
 
 
@@ -4921,6 +5107,8 @@ def _update_if_changed(session_id: str, doc: dict, mutate: Callable[[dict], None
 
 
 def _claim_live(current: dict, now: float) -> bool:
+    if grade_checkpoint.KEY in current:
+        return True
     claimed_at = current.get("grading_claim_at")
     return bool(current.get("grading_claim")) and (
         now - float(claimed_at or 0) <= LOOP_GRADING_CLAIM_STALE_S
@@ -4947,6 +5135,8 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     _, course_id = _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_phase(state, "probe")
+    if _pending_grade(state):
+        return {"done": False, "pending_grade": _pending_grade(state), **_learning_scope_payload(state)}
     request_id = _request_id(request)
     version = goal_version(state)
     fixed = (
@@ -5006,6 +5196,9 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         pr["scope"] = sorted(scope) if scope is not None else list(skills)
         pr.setdefault("presented", [])
         cur = pr.get("current")
+        if isinstance(cur, dict) and grade_checkpoint.KEY in cur:
+            out["pending_grade"] = _pending_grade(doc)
+            return
         # Keep fresh teaching practice separately from the delayed posttest.
         # The reserved question stays stable across answers and goal changes.
         practice = pr.setdefault("practice_reserves", {})
@@ -5081,6 +5274,8 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         out["new"] = True
 
     saved = _update_if_changed(body.session_id, state, select)
+    if out.get("pending_grade"):
+        return {"done": False, "pending_grade": out["pending_grade"], **_learning_scope_payload(saved)}
     if out.get("done"):
         _emit_probe_done(saved, body.user_id, request_id)
         return {"done": True, "phase": "plan", **_learning_scope_payload(saved)}
@@ -5130,6 +5325,7 @@ def _under_probe_claim(
 def _release(_pr: dict, cur: dict) -> None:
     cur.pop("grading_claim", None)
     cur.pop("grading_claim_at", None)
+    cur.pop(grade_checkpoint.KEY, None)
 
 
 def _not_asked(pr: dict, cur: dict) -> None:
@@ -5161,6 +5357,9 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     posed = _probe_doc(state).get("current")
     if not isinstance(posed, dict) or posed.get("question_hash") != qh:
         raise HTTPException(status_code=409, detail=_PROBE_NOT_POSED)
+    if grade_checkpoint.KEY in posed:
+        checkpoint = _open_grade_checkpoint(posed, body, course_id, kind="probe")
+        return _finish_probe_checkpoint(checkpoint, request, loop_on=loop_on)
     if posed.get("grading_claim"):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     skills = list(_probe_doc(state).get("skills") or [])
@@ -5214,7 +5413,7 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         now=datetime.fromtimestamp(now, tz=timezone.utc),
         item=item.item,
     )
-    written = False
+    checkpointed = False
     synthetic_idk = False
     # A93: a probe item graded with help anywhere (another session's hints, a
     # reveal) carries no unassisted credit — the same help floor as every grade
@@ -5263,83 +5462,98 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
             _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
             return {"graded": False, "unavailable": True}
 
-        # m1: re-take the claim (fresh stamp) right before the write — a grade
-        # slower than LOOP_GRADING_CLAIM_STALE_S may have lost the item to
-        # /probe/next meanwhile; a lost claim writes nothing.
-        def renew(_pr: dict, cur: dict) -> None:
-            cur["grading_claim_at"] = _now_s()
-
-        renewed = _update_loop_state(body.session_id, _under_probe_claim(qh, claim, renew))
-        if (_probe_doc(renewed).get("current") or {}).get("grading_claim") != claim:
-            return {"graded": False, "recorded": False}
-        floor = _refloor(deps.pending_evidence, body.user_id, item.item, None, floor)  # A93
+        floor = _refloor(deps.pending_evidence, body.user_id, item.item, None, floor)
+        previously_seen = bool(posed.get("previously_seen", False)) or qh in seen_hashes(body.user_id)
         _tag_planning_evidence(deps.pending_evidence, item.item, synthetic_idk=synthetic_idk,
-                               previously_seen=bool(posed.get("previously_seen", False)) or qh in seen_hashes(body.user_id))
-        written = True
-        flush_pending(deps, course_id or None)  # ONE call: the probe's only evidence write
-        _ledger(mark_graded, body.user_id, qh)
+                               previously_seen=previously_seen, operation_id=claim, observed_at=now)
+        correct = bool(outcome.correct)
+        evidence = outcome.evidence or {}
+        observation = {
+            "node_id": node_id, "question_hash": qh, "difficulty": int(posed["difficulty"]),
+            "channel": posed["channel"], "correct": correct,
+            "idk": bool(evidence.get("idk", idk)),
+            "independent": floor == 0 and not recheck and not synthetic_idk and not previously_seen,
+            "max_rung": int(floor), "same_session_recheck": bool(recheck),
+            "synthetic_idk": synthetic_idk,
+        }
+        checkpoint = grade_checkpoint.GradeCheckpoint(
+            kind="probe", operation_id=claim, user_id=body.user_id,
+            session_id=body.session_id, course_id=course_id or None, question_hash=qh,
+            goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
+            continuation={"observation": observation, "correct": correct,
+                          "check_item_id": item.id},
+        )
+        checkpointed = True
+        _save_grade_checkpoint(checkpoint)
+        return _finish_probe_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
     except BaseException as exc:
-        if isinstance(exc, PlanningPersistenceUnavailable):
-            written = False
-        if not written:  # nothing was written: the student may answer again
+        if not checkpointed:
             try:
                 _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _release))
             except Exception:
-                logger.warning("probe grading claim for %s not released", qh, exc_info=True)
+                logger.warning("probe grading claim could not be released")
         if isinstance(exc, PlanningPersistenceUnavailable):
-            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry") from exc
+            raise HTTPException(status_code=503, detail="Learning evidence unavailable; retry the same answer") from None
         raise
 
-    correct = bool(outcome.correct)
-    evidence = outcome.evidence or {}
-    _, p_after = _band_for(body.user_id, node_id)  # re-read after the write (decayed)
-    observation = {
-        "node_id": node_id,
-        "question_hash": qh,
-        "difficulty": int(posed["difficulty"]),
-        "channel": posed["channel"],  # the item's channel (A1: no "idk" channel)
-        "correct": correct,
-        "idk": bool(evidence.get("idk", idk)),
-        "p_after": p_after,
-        "independent": floor == 0 and not recheck and not synthetic_idk and not posed.get("previously_seen", False),
-        "max_rung": int(floor),
-        "same_session_recheck": bool(recheck),
-        "synthetic_idk": synthetic_idk,
-    }
+
+def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
+    receipt = _flush_grade_checkpoint(checkpoint, request, loop_on=loop_on, deps=deps)
+    if receipt is False:
+        return {"graded": False, "unavailable": True, "superseded": True}
+    try:
+        node_id = checkpoint.continuation["observation"]["node_id"]
+        p_after = (receipt or {}).get("posteriors", {}).get(node_id)
+        if type(p_after) not in (int, float) or not 0 <= p_after <= 1:
+            raise PlanningPersistenceUnavailable("Saved grade posterior unavailable")
+    except PlanningPersistenceUnavailable:
+        raise HTTPException(status_code=503, detail="Saved grade recovery unavailable; retry the same answer") from None
+    committed = _committed_grade_observation(checkpoint, receipt, node_id)
+    observation = {**checkpoint.continuation["observation"], **committed, "p_after": p_after,
+                   "grade_operation_id": checkpoint.operation_id}
+    reference = None
+    if not checkpoint.continuation["correct"]:
+        # Read corrective source text while the checkpoint is still recoverable.
+        try:
+            item = get_check_item(checkpoint.continuation["check_item_id"])
+            reference = item.reference_answer if item is not None else None
+        except Exception:
+            raise HTTPException(status_code=503, detail="Corrective feedback unavailable; retry the same answer") from None
     out: dict = {}
 
     def record(pr: dict, _cur: dict) -> None:
         pr["history"].append(observation)
         pr["current"] = None
+        out["recorded"] = True
         out["done"] = probe_policy.probe_done(pr["history"], skills=pr.get("skills") or [])
         out["novice_floor"] = probe_policy.novice_floor(pr["history"])
         if out["done"]:
-            reason = probe_policy.diagnostic_summary(
-                pr["history"], skills=pr.get("skills") or []
-            )["stop_reason"]
+            reason = probe_policy.diagnostic_summary(pr["history"], skills=pr.get("skills") or [])["stop_reason"]
             if reason == "observed_boundaries" and set(pr.get("scope", [])) - set(pr.get("skills", [])):
                 reason = "coverage_limit"
             pr["stop_reason"] = reason
 
     def record_posed(doc: dict) -> None:
         out.clear()
-        _under_probe_claim(qh, claim, record)(doc)
+        _require_phase(doc, "probe")
+        _refuse_while_closing(doc, _now_s())
+        _check_goal_version(doc, checkpoint.goal_version)
+        _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, record)(doc)
         if out.get("done"):
             doc["phase"] = "plan"
 
-    saved = _update_loop_state(body.session_id, record_posed)
+    saved = _update_loop_state(checkpoint.session_id, record_posed, require_open=True, require_existing=True)
+    if not out.get("recorded"):
+        raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
     if out.get("done"):
-        _emit_probe_done(saved, body.user_id, deps.request_id)
+        _emit_probe_done(saved, checkpoint.user_id, _request_id(request))
     response = {
-        "graded": True,
-        "correct": correct,
-        "p_known": p_after,
-        "probe_done": bool(out.get("done")),
-        "novice_floor": bool(out.get("novice_floor")),
+        "graded": True, "correct": checkpoint.continuation["correct"], "p_known": p_after,
+        "probe_done": bool(out.get("done")), "novice_floor": bool(out.get("novice_floor")),
         **_learning_scope_payload(saved),
     }
-    if not correct:  # spec §3.3: a wrong answer or an idk gets the answer at once
-        response["reference_answer"] = item.reference_answer
+    if reference is not None:
+        response["reference_answer"] = reference
     return response
 
 

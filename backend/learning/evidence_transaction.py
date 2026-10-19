@@ -18,7 +18,7 @@ from typing import Callable
 import uuid
 
 from db.connection import rpc
-from learning.evidence import Evidence, PlanningPersistenceUnavailable
+from learning.evidence import Evidence, PlanningObservation, PlanningPersistenceUnavailable
 from learning.learner_state import LearnerState, _from_row
 from learning.params import EVIDENCE_TRANSACTION_RETRIES
 
@@ -67,6 +67,7 @@ def _receipt(value: dict, user_id: str, op_id: str, expected_fingerprint=None) -
         or not isinstance(receipt.get("input_fingerprint"), str)
         or not isinstance(receipt.get("changes"), list)
         or not isinstance(receipt.get("posteriors"), dict)
+        or not isinstance(receipt.get("observations"), list)
     ):
         raise PlanningPersistenceUnavailable("Invalid evidence transaction receipt")
     if expected_fingerprint is not None and receipt["input_fingerprint"] != expected_fingerprint:
@@ -91,6 +92,15 @@ def _receipt(value: dict, user_id: str, op_id: str, expected_fingerprint=None) -
             or not 0 <= value <= 1
         ):
             raise PlanningPersistenceUnavailable("Invalid evidence receipt posterior")
+    try:
+        for raw in receipt["observations"]:
+            observation = PlanningObservation.model_validate(raw)
+            if observation.node_id not in receipt["posteriors"]:
+                raise ValueError("Observation outside committed posterior set")
+    except Exception:
+        # Validation errors may contain the supplied envelope. Keep this
+        # interface metadata-only and never silently fall back to caller flags.
+        raise PlanningPersistenceUnavailable("Invalid final evidence observation") from None
     return receipt
 
 
@@ -144,6 +154,14 @@ class EvidencePlan:
             and row["count"] > 0
             for row in self.snapshot["checks"]
         )
+
+    def prior_exposure(self, ev: Evidence) -> bool:
+        """Any prior owned event consumes first exposure, including NULL legacy provenance."""
+        counts = [row["global_count"] for row in self.snapshot["checks"]
+                  if row["question_hash"] == ev.question_hash]
+        if not counts or any(type(count) is not int or count < 0 for count in counts):
+            raise PlanningPersistenceUnavailable("Global evidence exposure snapshot unavailable")
+        return any(count > 0 for count in counts)
 
     def payload(self, changes: list[dict]) -> dict:
         versions = {row["node_id"]: row["evidence_version"] for row in self.snapshot["states"]}
@@ -204,9 +222,9 @@ def commit_evidence_transaction(
         node_ids = sorted({ev.node_id for ev in evidences})
         checks = sorted(
             {
-                (ev.session_id, ev.question_hash)
+                (ev.session_id or "", ev.question_hash)
                 for ev in evidences
-                if ev.session_id and ev.question_hash
+                if ev.question_hash
             }
         )
         for _attempt in range(EVIDENCE_TRANSACTION_RETRIES):

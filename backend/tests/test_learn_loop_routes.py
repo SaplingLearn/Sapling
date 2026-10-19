@@ -349,7 +349,26 @@ def seams():
             },
         )
         p("_now_s", return_value=NOW)
-        ns.grade = p("grade_answer", new_callable=AsyncMock, return_value=CORRECT)
+        ns.grade = AsyncMock(return_value=CORRECT)
+
+        async def grade_with_evidence(item, answer, **kw):
+            outcome = await ns.grade(item, answer, **kw)
+            if not outcome.unavailable and not outcome.refused and not kw["deps"].pending_evidence:
+                from learning.evidence import Evidence
+                ev = Evidence(
+                    **{**(outcome.evidence or {}), "node_id": kw["node_id"],
+                       "correct": bool(outcome.correct), "idk": answer.idk,
+                       "session_id": kw["deps"].session_id, "check_item_id": item.id,
+                       "question_hash": item.question_hash, "max_rung": kw["max_rung"],
+                       "same_session_recheck": kw["same_session_recheck"],
+                       "grader_backend": outcome.grader_backend, "confidence": outcome.confidence},
+                )
+                row = ev.model_dump(mode="json")
+                kw["deps"].pending_evidence.append(row)
+                outcome = SimpleNamespace(**{**vars(outcome), "evidence": row})
+            return outcome
+
+        p("grade_answer", new=grade_with_evidence)
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
         # PKG-14 (spec §13 A88): the open posed items a served turn is scanned
@@ -366,6 +385,21 @@ def seams():
         ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
         ns.concept_key = p("_concept_key_for_node", return_value="recursion")
         ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
+        ns.receipts = {}
+
+        def committed_receipt(user_id, operation):
+            if operation not in ns.receipts:
+                from learning import grade_checkpoint
+                from learning.evidence import Evidence, planning_observation
+                entry = store["doc"]["steps"]["qh-1"]
+                saved = grade_checkpoint.open_checkpoint(entry[grade_checkpoint.KEY], kind="check",
+                    operation_id=operation, user_id=user_id, session_id="s1", course_id="c1", question_hash="qh-1")
+                ns.receipts[operation] = {"operation_id": operation, "user_id": user_id, "course_id": "c1",
+                    "posteriors": dict(p_known),
+                    "observations": [planning_observation(Evidence.model_validate(ev)) for ev in saved.evidence]}
+            return ns.receipts[operation]
+
+        ns.receipt = p("read_evidence_receipt", side_effect=committed_receipt)
         ns.ai_budget.check.return_value = NORMAL
         yield ns
 
@@ -3158,6 +3192,8 @@ def _misconception_diagnosis() -> dict:
         "difficulty": 2,
         "idk": False,
         "isomorph_of": "qh-0",
+        "released": True,
+        "after_release": False,
     }
     return {
         "attempt": attempt,
@@ -3715,9 +3751,9 @@ def test_the_misconception_row_is_written_only_after_the_claims_save(gate_on, se
         patch("routes.learn_loop.record", side_effect=lambda *a: order.append("record") or {}),
     ):
         client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
-    # the claim's save, then the grade's save that releases it — only then the row
+    # Claim, encrypted checkpoint, open-session guard and final save precede the rollup.
     assert order.count("record") == 1
-    assert order[: order.index("record")].count("save") == 2
+    assert order[: order.index("record")].count("save") == 4
 
 
 def test_a_lost_claim_writes_no_misconception_row(gate_on, seams):

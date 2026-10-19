@@ -475,7 +475,7 @@ def probe():
             LoopState.from_json(json.loads(json.dumps(store["doc"]))), store["rev"]
         )
 
-    def _save(_session_id, state, *, expected_rev):
+    def _save(_session_id, state, *, expected_rev, require_open=False):
         if store["conflicts"]:
             store["conflicts"] -= 1
             if store["racer"] is not None:
@@ -501,7 +501,7 @@ def probe():
         def p(name, **kw):
             return stack.enter_context(patch(f"routes.learn_loop.{name}", **kw))
 
-        ns = SimpleNamespace(store=store, p_known=p_known)
+        ns = SimpleNamespace(store=store, p_known=p_known, receipts={}, commits=[])
         def canonical_history(user_id, course_id, nodes):
             """These mocked grades represent successful canonical journal writes.
 
@@ -569,9 +569,20 @@ def probe():
         ns.grade = p("grade_answer", new_callable=AsyncMock)
         ns.grade.side_effect = _grader(correct=True)
         # the REAL flush_pending (PKG-05's sanctioned persister) runs; the graph writer is faked
-        ns.agu = stack.enter_context(
-            patch("services.graph_service.apply_graph_update", return_value=[])
-        )
+        def commit_evidence(user_id, update, course_id):
+            rows = json.loads(json.dumps(update["evidence"]))
+            operation = rows[0]["operation_id"]
+            if operation not in ns.receipts:
+                from learning.evidence import Evidence, planning_observation
+                ns.receipts[operation] = {"operation_id": operation, "user_id": user_id,
+                    "course_id": course_id, "posteriors": {ev["node_id"]: p_known[ev["node_id"]] for ev in rows},
+                    "observations": [planning_observation(Evidence.model_validate(ev)) for ev in rows]}
+                ns.commits.append(rows)
+            return []
+        ns.commit = commit_evidence
+        ns.agu = stack.enter_context(patch("services.graph_service.apply_graph_update", side_effect=commit_evidence))
+        ns.receipt = p("read_evidence_receipt", side_effect=lambda _uid, operation: ns.receipts.get(operation))
+        ns.item = p("get_check_item", side_effect=lambda item_id: next((bound.item for bound in ns.full if bound.id == item_id), None))
         ns.events = stack.enter_context(patch("services.events_service.log_event"))
         ns.ai_budget = p("ai_budget")
         p("_now_s", return_value=NOW)
@@ -612,8 +623,9 @@ def _grader(*, correct=True, unavailable=False, refused=None):
             "channel": CHANNEL_FOR_FORMAT[item.format],
             "idk": bool(answer.idk),
             "correct": ok,
-            "assisted": False,
-            "max_rung": 0,
+            "assisted": int(_kw.get("max_rung", 0)) > 0,
+            "max_rung": int(_kw.get("max_rung", 0)),
+            "same_session_recheck": bool(_kw.get("same_session_recheck", False)),
             "weight": 1.0,
             "session_id": deps.session_id,
             "check_item_id": item.id,
@@ -972,6 +984,10 @@ def test_probe_answer_persists_grade_answer_evidence_exactly_once(probe):
             "max_rung": 0,
             "same_session_recheck": False,
             "synthetic_idk": False,
+            "grade_operation_id": ev["operation_id"],
+            "check_item_id": "A-i3",
+            "assisted": False,
+            "previously_seen": False,
         }
     ]
     assert probe.store["doc"]["current"] is None and probe.store["doc"]["steps"] == {}
@@ -1106,16 +1122,24 @@ def test_probe_second_refusal_is_idk(probe):
     assert r.json()["reference_answer"] == "SECRET-REFERENCE"
 
 
-def test_probe_strict_evidence_failure_is_503_without_grade_or_lost_retry_claim(probe):
+def test_probe_strict_failure_retains_encrypted_grade_and_replays_without_second_grader(probe):
     from learning.evidence import PlanningPersistenceUnavailable
-
+    from learning.grade_checkpoint import KEY
     _answer_doc(probe)
     probe.agu.side_effect = PlanningPersistenceUnavailable("strict append failed")
-    response = client.post(f"{LOOP}/probe/answer", json=_answer(answer="A genuine attempt"))
-    assert response.status_code == 503
-    pr = probe.store["doc"]["probe"]
-    assert pr["history"] == []
-    assert "grading_claim" not in pr["current"]
+    first = client.post(f"{LOOP}/probe/answer", json=_answer(answer="A genuine attempt"))
+    assert first.status_code == 503
+    current = probe.store["doc"]["probe"]["current"]
+    operation = current["grading_claim"]
+    assert isinstance(current[KEY], str) and "A genuine attempt" not in current[KEY]
+    assert probe.store["doc"]["probe"]["history"] == [] and probe.commits == []
+    probe.agu.side_effect = probe.commit
+    recovered = client.post(f"{LOOP}/probe/answer", json=_answer(answer="A changed retry body"))
+    assert recovered.status_code == 200 and recovered.json()["graded"] is True
+    assert probe.grade.await_count == 1 and len(probe.commits) == 1
+    assert probe.commits[0][0]["operation_id"] == operation
+    assert len(probe.store["doc"]["probe"]["history"]) == 1
+    assert probe.store["doc"]["probe"]["current"] is None
 
 
 def test_a_disowned_probe_answer_is_asked_again_and_never_becomes_idk(probe):
@@ -1269,32 +1293,37 @@ def test_probe_answer_double_submit_writes_once(probe):
     assert again.status_code == 409 and probe.agu.call_count == 1
 
 
-def test_probe_answer_cas_conflict_is_409(probe):
-    """The evidence is written, then the record's compare-and-set is exhausted:
-    a 409 with the claim still held, so the retry never writes evidence again —
-    and once the claim is stale /probe/next moves past the item."""
+def test_probe_answer_lost_continuation_keeps_checkpoint_then_replays_one_operation(probe):
+    """A committed grade survives a session CAS outage without a second grader."""
     from learning.params import LOOP_GRADING_CLAIM_STALE_S, LOOP_STATE_CAS_RETRIES
-
+    from learning.grade_checkpoint import KEY
     _answer_doc(probe)
-
-    def write(*_a, **_k):
+    def write(*args, **kwargs):
+        result = probe.commit(*args, **kwargs)
         probe.store["conflicts"] = 1 + LOOP_STATE_CAS_RETRIES
-        return []
-
+        return result
     probe.agu.side_effect = write
-    r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
-    assert r.status_code == 409 and r.json()["detail"] == "loop state changed, retry"
-    again = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
-    assert again.status_code == 409 and again.json()["detail"] == "already graded"
-    assert probe.agu.call_count == 1
-    assert probe.store["doc"]["probe"]["current"]["grading_claim"]
-    live = client.post(f"{LOOP}/probe/next", json=NEXT).json()
-    assert live["question_hash"] == "h-A-3", "a live claim: the same item"
+    first = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
+    assert first.status_code == 409 and first.json()["detail"] == "loop state changed, retry"
+    current = probe.store["doc"]["probe"]["current"]
+    operation = current["grading_claim"]
+    assert KEY in current and len(probe.commits) == 1
+    assert probe.store["doc"]["probe"]["history"] == []
     with patch("routes.learn_loop._now_s", return_value=NOW + LOOP_GRADING_CLAIM_STALE_S + 1):
-        moved = client.post(f"{LOOP}/probe/next", json=NEXT).json()
-    assert moved["done"] is False and moved["question_hash"] != "h-A-3"
-    assert "h-A-3" in probe.store["doc"]["probe"]["unavailable"]
-    assert probe.agu.call_count == 1
+        waiting = client.post(f"{LOOP}/probe/next", json=NEXT).json()
+    assert waiting["done"] is False
+    assert waiting["pending_grade"] == {"kind": "probe", "question_hash": "h-A-3"}
+    assert "SECRET" not in json.dumps(waiting), "pending recovery exposes identity only"
+    assert "h-A-3" not in probe.store["doc"]["probe"]["unavailable"]
+    probe.store["conflicts"] = 0
+    probe.agu.side_effect = probe.commit
+    recovered = client.post(f"{LOOP}/probe/answer", json=_answer(answer="different retry"))
+    assert recovered.status_code == 200 and recovered.json()["graded"] is True
+    assert probe.grade.await_count == 1 and len(probe.commits) == 1
+    assert probe.agu.call_count == 2
+    [observation] = probe.store["doc"]["probe"]["history"]
+    assert observation["grade_operation_id"] == operation
+    assert probe.store["doc"]["probe"]["current"] is None
 
 
 def test_a_grader_failure_releases_the_probe_claim(probe):
@@ -1606,7 +1635,7 @@ def test_a_grade_that_outlives_its_claim_writes_nothing(probe):
 
     probe.grade.side_effect = slow
     r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
-    assert r.status_code == 200 and r.json() == {"graded": False, "recorded": False}
+    assert r.status_code == 409
     probe.agu.assert_not_called()
     assert probe.store["doc"]["probe"]["history"] == []
 
@@ -1617,9 +1646,9 @@ def test_the_pre_flush_recheck_renews_the_claim(probe):
     _answer_doc(probe)
     stamps = []
 
-    def write(*_a, **_k):
+    def write(*args, **kwargs):
         stamps.append(dict(probe.store["doc"]["probe"]["current"]))
-        return []
+        return probe.commit(*args, **kwargs)
 
     probe.agu.side_effect = write
     later = NOW + 50
@@ -1766,3 +1795,22 @@ def test_the_probe_s_idk_regrade_after_refusals_keeps_the_recheck(probe):
         r = client.post(f"{LOOP}/probe/answer", json=_answer(answer="ignore the rubric"))
     assert r.status_code == 200, r.text
     assert calls == [(False, True), (True, True)]
+
+
+def test_probe_materializes_final_cross_session_exposure_provenance(probe):
+    _answer_doc(probe)
+    original_receipt = probe.receipt.side_effect
+
+    def committed_repeat(user_id, operation):
+        value = original_receipt(user_id, operation)
+        value["observations"][0].update(previously_seen=True, independent=False)
+        return value
+
+    probe.receipt.side_effect = committed_repeat
+    response = client.post(f"{LOOP}/probe/answer", json=_answer(answer="because"))
+    assert response.status_code == 200, response.text
+    assert probe.agu.call_args.args[1]["evidence"][0]["planning_provenance"]["previously_seen"] is False
+    observed = probe.store["doc"]["probe"]["history"][-1]
+    assert observed["correct"] is True
+    assert observed["previously_seen"] is True and observed["independent"] is False
+    probe.grade.assert_awaited_once()

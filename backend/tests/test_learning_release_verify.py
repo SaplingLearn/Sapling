@@ -146,6 +146,11 @@ class Cursor:
             self.rows = [(self.db.ledger,)]
         elif "SELECT filename" in sql:
             self.rows = [(name,) for name in self.db.recorded]
+        elif "is_nullable, column_default" in sql:
+            assert parameters == (
+                sorted({table for table, _column in verify.REQUIRED_COLUMN_ATTRIBUTES}),
+            )
+            self.rows = self.db.attributes
         elif "information_schema.columns" in sql:
             assert parameters == (list(verify.REQUIRED_COLUMNS),)
             self.rows = self.db.columns
@@ -170,6 +175,10 @@ class Database:
             (table, column, kind)
             for table, columns in verify.REQUIRED_COLUMNS.items()
             for column, kind in columns.items()
+        ]
+        self.attributes = [
+            (table, column, *expected)
+            for (table, column), expected in verify.REQUIRED_COLUMN_ATTRIBUTES.items()
         ]
         self.rpcs = [("sample", "p_user_id text, p_day date")]
         self.statements = []
@@ -249,6 +258,7 @@ def test_applied_migration_reference_detects_changed_history_but_is_not_live_sch
         ("learning_evidence_operations", "input_fingerprint", "jsonb"),
         ("learner_state", "evidence_version", "integer"),
         ("graph_nodes", "evidence_version", "integer"),
+        ("learner_state", "evidence_touch_at", "timestamp without time zone"),
     ],
 )
 def test_durable_budget_and_evidence_metadata_types_are_required(table, column, wrong_type):
@@ -260,6 +270,17 @@ def test_durable_budget_and_evidence_metadata_types_are_required(table, column, 
     result = audit(db)
     assert result["status"] == "failed"
     assert result["missing_or_wrong_type_columns"]
+
+
+@pytest.mark.parametrize(
+    "nullable,default", [("NO", None), ("YES", "now()"), ("YES", "clock_timestamp()")]
+)
+def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable, default):
+    db = Database()
+    db.attributes = [("learner_state", "evidence_touch_at", nullable, default)]
+    result = audit(db)
+    assert result["status"] == "failed"
+    assert result["missing_or_wrong_column_attributes"]
 
 
 def test_real_repository_learning_rpc_signatures_are_readable_and_new_rpc_is_discovered(tmp_path):

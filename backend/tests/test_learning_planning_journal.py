@@ -127,7 +127,7 @@ def test_receipt_accepts_finite_json_numbers_without_coercing_boolean_posteriors
     operation = str(uuid4())
     expected = {"operation_id": operation, "user_id": "u1", "course_id": "c1",
                 "input_fingerprint": "semantic", "changes": [{"concept": "A", "before": 0, "after": 1.0}],
-                "posteriors": {"n1": 1.0}}
+                "posteriors": {"n1": 1.0}, "observations": []}
     assert _receipt({"receipt": expected}, "u1", operation, "semantic") == expected
     for key in ("before", "after"):
         invalid = deepcopy(expected)
