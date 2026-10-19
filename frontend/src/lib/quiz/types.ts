@@ -38,9 +38,21 @@ export interface WireOption {
   text: string;
 }
 
+export type QuestionType = "multiple_choice" | "short_answer" | "numeric" | "symbolic";
+
+/** Answered by typing, graded on the server. Mirrors backend
+ *  `services/quiz_grading.py::WRITTEN_TYPES`; anything else (including a type
+ *  this client does not know) is answered by choosing an option, exactly as
+ *  the backend treats it. The ONE place this decision is made client-side. */
+export const WRITTEN_TYPES: ReadonlySet<string> = new Set(["short_answer", "numeric", "symbolic"]);
+
+export function isWrittenType(type: string | null | undefined): boolean {
+  return typeof type === "string" && WRITTEN_TYPES.has(type);
+}
+
 export interface WireQuestion {
   material_context?: "course_material" | "catalog" | "general";
-  type?: "multiple_choice" | "short_answer" | "numeric" | "symbolic";
+  type?: QuestionType;
   id: number;
   question: string;
   options: WireOption[];

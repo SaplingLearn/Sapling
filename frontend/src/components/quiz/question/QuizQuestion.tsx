@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
+import { isWrittenType } from "@/lib/quiz/types";
 import { AskPanel, type AskSeed } from "./AskPanel";
 import { LeaveDialog } from "./LeaveDialog";
 import "./question.css";
@@ -118,7 +119,7 @@ export function QuizQuestion({
   const total = items.length;
   const options = item?.question.options ?? [];
   const selectedIndex = item?.selectedIndex ?? null;
-  const written = Boolean(item?.question.type && item.question.type !== "multiple_choice");
+  const written = isWrittenType(item?.question.type);
   const hasAnswer = written ? Boolean(item?.answerText?.trim()) : selectedIndex !== null;
   const answeredCount = items.filter(i => i.verdict !== null).length;
   const isLast = cursor >= total - 1;

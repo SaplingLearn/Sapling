@@ -72,9 +72,11 @@ describe("Topic checklist integration", () => {
     // A checkmark never changes evidence, so PATCH omits needs_refresh/warnings
     // rather than re-reading every source; the panel keeps what it had.
     vi.mocked(getTopicChecklist).mockResolvedValue({ ...fixture(), warnings: ["Some source text was limited."] });
-    const { needs_refresh: _n, warnings: _w, ...topicState } = fixture();
-    topicState.topics[0].checked = true;
-    vi.mocked(setTopicReviewed).mockResolvedValue(topicState);
+    const topicState: Partial<TopicChecklist> = fixture();
+    delete topicState.needs_refresh;
+    delete topicState.warnings;
+    topicState.topics![0].checked = true;
+    vi.mocked(setTopicReviewed).mockResolvedValue(topicState as TopicChecklist);
     render(<TopicChecklistPanel userId="u" courseId="cs" />);
     open();
     const checkbox = await screen.findByRole("checkbox", { name: "Studied Recursion" });

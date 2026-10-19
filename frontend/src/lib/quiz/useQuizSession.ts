@@ -35,6 +35,7 @@ import type { EntryRequest } from "./source";
 import { useGamificationDelta } from "./useGamificationDelta";
 import { useQuizConfig } from "./useQuizConfig";
 import type { QuizConfig, QuizSession, SubmitResult } from "./types";
+import { isWrittenType } from "./types";
 
 export interface QuizActions {
   configure(open: boolean): void;
@@ -370,7 +371,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         answerQuestion(attemptId, {
           questionIndex: item.index,
           selectedIndex: item.selectedIndex,
-          ...(item.question.type && item.question.type !== "multiple_choice" ? { answerText: item.answerText ?? "" } : {}),
+          ...(isWrittenType(item.question.type) ? { answerText: item.answerText ?? "" } : {}),
           questionId: item.question.id,
         }),
       );

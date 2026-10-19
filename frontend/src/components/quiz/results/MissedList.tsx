@@ -19,6 +19,7 @@
 import React from "react";
 import { Button } from "@/components/ui";
 import type { QuizSession } from "@/lib/quiz/types";
+import { isWrittenType } from "@/lib/quiz/types";
 
 export interface MissedItem {
   /** `SubmitResult.results[].question_id` — a string on the wire, and the
@@ -55,16 +56,16 @@ export function buildMissedItems(session: QuizSession): MissedItem[] {
       const question = session.items.find(
         item => String(item.question.id) === String(r.question_id),
       )?.question;
+      const written = isWrittenType(question?.type);
       const textFor = (label: string) =>
-        question?.type === "short_answer" || (question?.type === "numeric" || question?.type === "symbolic")
-          ? label : question?.options.find(o => o.label === label)?.text ?? "";
+        written ? label : question?.options.find(o => o.label === label)?.text ?? "";
 
       return {
         questionId: String(r.question_id),
         stem: question?.question ?? "",
-        chosenLabel: question?.type === "short_answer" || (question?.type === "numeric" || question?.type === "symbolic") ? "Your answer" : r.selected,
+        chosenLabel: written ? "Your answer" : r.selected,
         chosenText: textFor(r.selected),
-        correctLabel: question?.type === "short_answer" || (question?.type === "numeric" || question?.type === "symbolic") ? "Expected" : r.correct_answer,
+        correctLabel: written ? "Expected" : r.correct_answer,
         correctText: textFor(r.correct_answer),
         explanation: r.explanation,
       };

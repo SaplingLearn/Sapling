@@ -28,6 +28,7 @@ import type {
   WireQuestion,
 } from "./types";
 import type { QuizError } from "./errors";
+import { isWrittenType } from "./types";
 
 /** What a "start this quiz" affordance has to say: the target and its framing. */
 export interface StartRequest {
@@ -167,8 +168,7 @@ export function queueOf(scope: QuizScope): string[] {
 }
 
 export function firstUnansweredIndex(items: QuizItem[]): number {
-  return items.findIndex(i => !i.verdict && (i.question.type && i.question.type !== "multiple_choice"
-    ? true : i.selectedIndex === null));
+  return items.findIndex(i => !i.verdict && (isWrittenType(i.question.type) || i.selectedIndex === null));
 }
 
 export function isLastItem(session: QuizSession, index = session.cursor): boolean {
@@ -179,7 +179,7 @@ export function isLastItem(session: QuizSession, index = session.cursor): boolea
 export function canSubmitAnswer(session: QuizSession): boolean {
   if (session.phase !== "active") return false;
   const item = session.items[session.cursor];
-  return item !== undefined && (item.question.type && item.question.type !== "multiple_choice"
+  return item !== undefined && (isWrittenType(item.question.type)
     ? Boolean(item.answerText?.trim()) : item.selectedIndex !== null);
 }
 
@@ -336,7 +336,7 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
     case "WRITE": {
       if (session.phase !== "active") return session;
       const item = session.items[session.cursor];
-      if (!item || item.verdict || !item.question.type || item.question.type === "multiple_choice") return session;
+      if (!item || item.verdict || !isWrittenType(item.question.type)) return session;
       return withItem(session, session.cursor, { answerText: event.text.slice(0, 2000) });
     }
 
@@ -558,7 +558,7 @@ function resumeFrom(
       selectedIndex: selected ?? previous?.selectedIndex ?? null,
       answerText: responsesByIndex.get(index)?.answer_text ?? previous?.answerText,
       verdict: selected === undefined ? null : previous?.verdict ?? (
-        (question.type === "short_answer" || (question.type === "numeric" || question.type === "symbolic")) && responsesByIndex.has(index)
+        isWrittenType(question.type) && responsesByIndex.has(index)
           ? { isCorrect: responsesByIndex.get(index)!.is_correct, correctIndex: -1, explanation: "" }
           : null),
       flagged: previous?.flagged ?? false,
