@@ -1,8 +1,8 @@
 # Pen onboarding and desktop navigation
 
-The old five-screen onboarding and FA26 icon rail did not implement the approved redesign. This change implements the six screens under **NEW REDESIGN / 05 / Onboarding**, and replaces the desktop rail with the approved 216px labeled sage sidebar. Learn and Tutor continue to use the same learning controller and session.
+The old five-screen onboarding did not implement the approved redesign. This change implements the six screens under **NEW REDESIGN / 05 / Onboarding** and keeps the shared desktop sidebar. Learn and Tutor continue to use the same learning controller and session.
 
-This is stacked on PR [#728](https://github.com/SaplingLearn/Sapling/pull/728), targeting `feat/redesign-integration`. Its inherited learning-loop and redesign dependencies are not onboarding changes. Merge the dependency before retargeting this change to main; do not merge the stack out of order.
+The onboarding work originally reviewed in [#731](https://github.com/SaplingLearn/Sapling/pull/731) is now integrated directly into [#728](https://github.com/SaplingLearn/Sapling/pull/728), on `feat/redesign-integration`. Review and merge the combined redesign through #728, which targets `main`; onboarding no longer needs a separate stacked PR. The existing #673/#727 dependencies documented in #728 still apply.
 
 ## Design source
 
@@ -19,9 +19,11 @@ The source is the active `Sapling-Complete-Wireframes.pen` file, [shared in Pen]
 
 Additional production captures show the [320px phone review](onboarding-review/06-review-phone-320.png), the [shared desktop sidebar after onboarding](onboarding-review/07-check-in-sidebar-desktop.png), and [recovery into the selected non-default course](onboarding-review/08-recovered-math-check-in-desktop.png). They come from the isolated browser journeys, not a production deployment.
 
-The six onboarding frames are standalone cream canvases: they do **not** contain a sidebar. The post-onboarding application retains the latest #728 sidebar from `u1gDw`: full sage background, authored wordmark, Today / Learn / Knowledge / Library / Tutor / Calendar, and Settings/profile at the bottom. Existing additional tools remain in its More disclosure, with their feature flags intact. Learn and Tutor links preserve the current course while changing the view.
+The six onboarding frames are standalone cream canvases: they do **not** contain a sidebar. The post-onboarding application retains #728's latest sidebar iteration: sage background, smaller authored wordmark and icons, Home / Learn / Knowledge / Library / Tutor / Calendar, a collapse control, and Settings/profile at the bottom. Existing additional tools remain in its More disclosure, with their feature flags intact. Learn and Tutor links preserve the current course while changing the view. The standalone onboarding geometry remains the approved Pen geometry.
 
 At 1440 × 960 the onboarding progress track begins at `(440, 110)`, is 560px wide, and the Aleo 40px/600 heading begins at y=202. The main action is 560 × 52px at `(440, 832)`. The form uses the native cream/sage/olive palette, Aleo and SUSE fonts, and existing approved SVG assets. Larger content and editing/error states scroll rather than hiding controls. The phone layout remains usable; this PR's fidelity target is desktop.
+
+After integration, #728 applies its shared `--sapling-text-*` roles to onboarding as well as Home, Learn, Tutor and Library. The desktop page title remains 40px at 1440px; other text follows the shared roles. The source exports remain unchanged for comparison, while browser captures reflect the combined branch.
 
 ## Behavior and honest state
 
@@ -43,4 +45,6 @@ The existing frontend lint, TypeScript, unit and production-build checks are req
 
 `frontend/e2e/onboarding.spec.ts` uses the repository's isolated seeded database and deterministic model seam. It walks all six desktop screens through a real upload and goal-bearing learning session; exercises refresh, Back and duplicate-start protection; and checks catalog/profile failures at 320px. The browser test also compares the desktop geometry and authored typography to the Pen source. The additional cross-surface regression set covers feature flags, Library uploads, studio/tutor continuity and course context.
 
-Actual run results and GitHub checks are recorded in the PR. No production database or existing pilot is used, no CI gate is weakened, and no deployment or merge is part of this change. Deterministic browser tests verify the application wiring; they do not establish real-model teaching quality or learning outcomes.
+The combined branch passes the standard production build, full frontend suite (1,764 passed; 2 existing skips), and 15 browser journeys across onboarding, dashboard, feature flags, upload and Learn/Tutor continuity. Dashboard Escape tests wait for the overlay's initial focus before sending the key; their close and focus-return assertions remain intact. Sidebar checks cover the current 112px wordmark, compact rows and collapse/expand behavior.
+
+Actual run results and GitHub checks are recorded in #728. Integration checks use a separate local test stack; the existing onboarding preview and pilot remain available. No production database is used, no CI gate is weakened, and merging #728 to main is a separate action. Deterministic browser tests verify the application wiring; they do not establish real-model teaching quality or learning outcomes.

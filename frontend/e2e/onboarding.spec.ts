@@ -270,7 +270,10 @@ test("desktop onboarding: six Pen screens → real upload → confirmed goal →
     const sidebarBox = await sidebar.boundingBox();
     const wordmarkBox = await sidebar.getByRole("link", { name: "Sapling home" }).boundingBox();
     const selectedBox = await selectedLearn.boundingBox();
-    for (const [actual, expected] of [[sidebarBox?.x, 0], [sidebarBox?.width, 216], [sidebarBox?.height, 960], [wordmarkBox?.x, 26], [wordmarkBox?.y, 26], [wordmarkBox?.width, 150], [wordmarkBox?.height, 44.55], [selectedBox?.x, 16], [selectedBox?.y, 190], [selectedBox?.width, 184], [selectedBox?.height, 46]]) {
+    // Preserve #728's latest sidebar iteration: compact 112px wordmark,
+    // 36px rows, Home label and remembered collapse. The six standalone
+    // onboarding screens retain their layout geometry asserted above.
+    for (const [actual, expected] of [[sidebarBox?.x, 0], [sidebarBox?.width, 216], [sidebarBox?.height, 960], [wordmarkBox?.x, 25], [wordmarkBox?.y, 20], [wordmarkBox?.width, 112], [wordmarkBox?.height, 33.264], [selectedBox?.x, 16], [selectedBox?.y, 136], [selectedBox?.width, 184], [selectedBox?.height, 36]]) {
       expect(actual).toBeDefined();
       expect(Math.abs(actual! - expected!)).toBeLessThanOrEqual(1.5);
     }
@@ -278,6 +281,17 @@ test("desktop onboarding: six Pen screens → real upload → confirmed goal →
     const selectedPill = page.getByTestId("nav-pill");
     await expect(selectedPill).toHaveAttribute("data-shown");
     await expect(selectedPill).toHaveCSS("background-color", "rgb(247, 244, 233)");
+    await expect(sidebar.getByRole("link", { name: "Home", exact: true })).toHaveAttribute("href", "/dashboard");
+    const collapse = page.getByTestId("nav-collapse");
+    await collapse.click();
+    await expect(sidebar).toHaveAttribute("data-collapsed");
+    await expect(sidebar).toHaveCSS("width", "68px");
+    await expect(selectedLearn).toHaveAttribute("aria-label", "Learn");
+    await expect(collapse).toHaveAttribute("aria-label", "Expand sidebar");
+    await collapse.click();
+    await expect(sidebar).not.toHaveAttribute("data-collapsed");
+    await expect(sidebar).toHaveCSS("width", "216px");
+    await expect(sidebar.getByRole("link", { name: "Sapling home" })).toBeVisible();
     await evidence(page, "07-check-in-sidebar-desktop");
     await page.reload();
     await expect(phase).toHaveAttribute("data-session-id", session.id, { timeout: 30_000 });

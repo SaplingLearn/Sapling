@@ -166,6 +166,7 @@ test.describe("dashboard workspace", () => {
     await expect(dialog).toBeVisible();
     await expect(page.getByTestId("graph-container")).toHaveCount(1);
     await expect(dialog.getByTestId("graph-zoom-in")).toBeVisible();
+    await expect(dialog.getByTestId("dashboard-full-map-close")).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(opener).toBeFocused();
@@ -205,6 +206,7 @@ test.describe("dashboard workspace", () => {
         await expect(sheet).toBeVisible();
         await expect(sheet.getByTestId("dashboard-sheet-concept-practice")).toBeVisible();
         await expect(sheet.getByTestId("dashboard-sheet-concept-back")).toBeVisible();
+        await expect(sheet.getByTestId("dashboard-concept-sheet-close")).toBeFocused();
         await page.keyboard.press("Escape");
         await expect(sheet).toHaveCount(0);
         await expect(topics).toBeFocused();
