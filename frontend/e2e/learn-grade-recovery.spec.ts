@@ -198,7 +198,8 @@ for (const kind of ["check", "probe"] as const) {
         await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-session-id", fixture.session_id);
         await expect(page.getByTestId("loop-pending-grade")).toBeVisible();
         await expect(page.getByTestId("loop-recover-grade")).toBeEnabled();
-        await expect(page.getByTestId("loop-close-button")).toBeDisabled();
+        if (kind === "check") await expect(page.getByTestId("loop-close-button")).toBeDisabled();
+        else await expect(page.getByTestId("loop-close-button")).toHaveCount(0);
         await expectNoOverflow(page);
         await page.reload();
         await expect(page.getByTestId("loop-pending-grade")).toBeVisible();
