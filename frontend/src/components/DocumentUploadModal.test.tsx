@@ -17,7 +17,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { act, render, screen, waitFor, within, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Hoisted mock module: vitest evaluates the vi.mock factory before imports,
@@ -330,5 +330,142 @@ describe("DocumentUploadModal inline course add (#186)", () => {
     await user.click(screen.getByRole("button", { name: "Course" }));
     expect(screen.getByRole("option", { name: /CS101/ })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /MATH200/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("DocumentUploadModal lifecycle (redesign prompt 03)", () => {
+  /** A stream the test drives: emit events, then resolve, reject or abort. */
+  function controllableStream() {
+    const ctl: {
+      emit: (e: UploadEvent) => void;
+      finish: (doc: unknown) => void;
+      signal?: AbortSignal;
+    } = { emit: () => {}, finish: () => {} };
+    mockedUpload.mockImplementation((_fd, onEvent, signal) => new Promise((resolve, reject) => {
+      ctl.emit = onEvent;
+      ctl.finish = resolve;
+      ctl.signal = signal;
+      signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    return ctl;
+  }
+
+  it("shows sending, then server processing stages, and only says Saved after the result", async () => {
+    const ctl = controllableStream();
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
+    const row = screen.getByTestId("upload-modal-file-row-0");
+    await waitFor(() => expect(row).toHaveTextContent("Sending…"));
+    expect(screen.getByTestId("upload-modal-file-progress-0")).toHaveAttribute("data-phase", "sending");
+
+    // Transport done: the server acknowledged the file but is still working.
+    act(() => ctl.emit({ type: "status", step: "start", message: "Document received. Processing..." }));
+    await waitFor(() => expect(row).toHaveTextContent("Processing…"));
+    expect(row).not.toHaveTextContent("Saved");
+    act(() => ctl.emit({ type: "progress", step: "classify", message: "Classifying document..." }));
+    const bar = within(row).getByRole("progressbar");
+    await waitFor(() => expect(bar).toHaveAttribute("aria-valuenow", "3"));
+    expect(bar).toHaveAttribute("aria-valuetext", expect.stringMatching(/step 3 of 5: Classifying/));
+
+    act(() => ctl.finish({ id: "doc-1", category: "lecture_notes", summary: "S", concept_notes: [] }));
+    await waitFor(() => expect(row).toHaveTextContent("Saved"));
+    expect(screen.queryByTestId("upload-modal-file-progress-0")).toBeNull();
+    expect(screen.getByTestId("upload-modal-done")).toBeInTheDocument();
+  });
+
+  it("cancels one running upload, says what may still happen, and allows Retry", async () => {
+    const ctl = controllableStream();
+    const user = userEvent.setup();
+    renderModal();
+    await addFile(user);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+    act(() => ctl.emit({ type: "status", step: "start", message: "Document received." }));
+
+    await user.click(await screen.findByTestId("upload-modal-file-cancel-0"));
+    expect(ctl.signal?.aborted).toBe(true);
+    const err = await screen.findByTestId("upload-modal-file-error-0");
+    expect(err).toHaveTextContent(/cancelled/i);
+    expect(err).toHaveTextContent(/may still finish/i);
+    expect(screen.getByTestId("upload-modal-file-row-0")).toHaveAttribute("data-status", "cancelled");
+    expect(screen.getByTestId("upload-modal-file-retry-0")).toBeInTheDocument();
+  });
+
+  it("removes a queued file before start, and lists rejected files with their reason", async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    renderModal();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const big = new File(["x"], "huge.pdf", { type: "application/pdf" });
+    Object.defineProperty(big, "size", { value: 101 * 1024 * 1024 });
+    await user.upload(input, [
+      new File(["x"], "ok.pdf", { type: "application/pdf" }),
+      new File(["x"], "photo.png", { type: "image/png" }),
+      big,
+    ]);
+    const rejected = screen.getByTestId("upload-modal-rejected");
+    expect(rejected).toHaveTextContent("photo.png: only PDF / DOCX / PPTX are accepted.");
+    expect(rejected).toHaveTextContent("huge.pdf: exceeds the 100 MB limit.");
+    expect(screen.getByTestId("upload-modal-file-row-0")).toHaveTextContent("ok.pdf");
+    expect(screen.queryByTestId("upload-modal-file-row-1")).toBeNull();
+
+    await user.click(screen.getByTestId("upload-modal-file-remove-0"));
+    expect(screen.queryByTestId("upload-modal-file-row-0")).toBeNull();
+    expect(mockedUpload).not.toHaveBeenCalled();
+  });
+
+  it("caps the queue at five files and names the extras", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, Array.from({ length: 6 }, (_, i) => new File(["x"], `f${i}.pdf`, { type: "application/pdf" })));
+    expect(screen.getByTestId("upload-modal-file-row-4")).toBeInTheDocument();
+    expect(screen.queryByTestId("upload-modal-file-row-5")).toBeNull();
+    expect(screen.getByTestId("upload-modal-rejected")).toHaveTextContent("f5.pdf: not added: at most 5 files per upload.");
+  });
+
+  it("keeps successful files on partial failure and refreshes the library even when closed", async () => {
+    mockedUpload
+      .mockImplementationOnce(async () => ({ id: "doc-ok", category: "syllabus", summary: "ok" }))
+      .mockImplementationOnce(async (_fd, onEvent) => {
+        onEvent({ type: "error", step: "failed", message: "Could not read this document." });
+        throw new Error("Upload stream ended without a result event.");
+      });
+    const onComplete = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <DocumentUploadModal open userId="u1" courses={[COURSE]} onClose={onClose} onComplete={onComplete} />
+      </ToastProvider>,
+    );
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, [
+      new File(["x"], "good.pdf", { type: "application/pdf" }),
+      new File(["x"], "bad.pdf", { type: "application/pdf" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: /start upload/i }));
+
+    await waitFor(() => expect(screen.getByTestId("upload-modal-file-row-0")).toHaveAttribute("data-status", "processed"));
+    await waitFor(() => expect(screen.getByTestId("upload-modal-file-row-1")).toHaveAttribute("data-status", "error"));
+    // The server's own reason, not the client's generic stream error.
+    expect(screen.getByTestId("upload-modal-file-error-1")).toHaveTextContent("Could not read this document.");
+    expect(screen.getByTestId("upload-modal-summary")).toHaveTextContent("1 saved, 1 not saved");
+
+    await user.click(screen.getByTestId("upload-modal-close"));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    const items = onComplete.mock.calls[0][0] as { status: string }[];
+    expect(items.map((i) => i.status)).toEqual(["processed", "error"]);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("explains that a course is needed when the learner has none", () => {
+    render(
+      <ToastProvider>
+        <DocumentUploadModal open userId="u1" courses={[]} onClose={() => {}} onComplete={() => {}} />
+      </ToastProvider>,
+    );
+    expect(screen.getByTestId("upload-modal-no-course")).toHaveTextContent(/add a course first/i);
   });
 });
