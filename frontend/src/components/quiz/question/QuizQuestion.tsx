@@ -382,25 +382,31 @@ export function QuizQuestion({
           </p>
         )}
 
-        <p className="quiz-question__hint" id="quiz-keyboard-hint">
-          {written ? (item?.question.type === "symbolic"
-            ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
-            : item?.question.type === "numeric"
-            ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
-            : "Write a brief answer. Capitalization and extra spacing do not affect your score.") : <>
-          Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
-          moves to the next question. Escape leaves the quiz.
-          </>}
-        </p>
+        {!written && (
+          <p className="quiz-question__hint" id="quiz-keyboard-hint">
+            Keyboard: press A to F, or 1 to 6, to choose an answer. Enter submits your answer and
+            moves to the next question. Escape leaves the quiz.
+          </p>
+        )}
 
         {written ? (
           <div className="quiz-question__written">
             <label htmlFor="quiz-written-answer" className="label-micro">Your answer</label>
+            {/* Visible, unlike the keyboard hint: these are the rules the
+                grader applies, so a sighted student needs them as much as a
+                screen-reader user does. */}
+            <p className="quiz-question__format-hint" id="quiz-format-hint" data-testid="quiz-format-hint">
+              {item?.question.type === "symbolic"
+                ? "Enter an expression using single-letter variables, + − * / ^ and parentheses. For example, 2(x + 1) and 2x + 2 are equivalent wherever both are defined. Functions and equations are not supported."
+                : item?.question.type === "numeric"
+                  ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
+                  : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
+            </p>
             <textarea
               id="quiz-written-answer"
               data-testid="quiz-written-answer"
               className="quiz-question__written-input"
-              aria-describedby="quiz-keyboard-hint"
+              aria-describedby="quiz-format-hint"
               rows={item?.question.type === "short_answer" ? 4 : 2}
               maxLength={2000}
               value={item?.answerText ?? ""}
