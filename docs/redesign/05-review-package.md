@@ -576,6 +576,66 @@ spacing while keeping its panel, colours, order, icons and active treatment.
   `redesign-evidence.spec.ts`, `learn-loop.spec.ts`, `dashboard.spec.ts` and
   `gallery-shots.spec.ts` in the merged gate run.
 
+## Onboarding (#731)
+
+Jose's PR #731 (`codex/onboarding-pen-fidelity` @ 6ff018fc, three commits,
+Trov handoff #11) is merged here at 9e348bb7, so #728 is the single redesign
+branch. `git merge-base --is-ancestor 6ff018fc HEAD` holds. #731 carries no
+`feat/learning-loop` (#673) commits newer than ad1b1bd5.
+
+**What came in.**
+
+- The six-stage Pen onboarding: `screens/Onboarding.tsx`, `.module.css`,
+  `.state.ts` and `.test.tsx`.
+- `lib/onboardingHandoff.ts`, the typed one-time intent carried into `/learn`,
+  and its test.
+- In LoopLearn: the onboarding scope panel (`loop-onboarding-scope` / `-start` /
+  `-resume`) and the canonical `/learn?course=…[&view=tutor]` URL.
+- The Sidebar's context-keeping Learn/Tutor links.
+- E2E updates to `onboarding.spec`, `feature-flags.spec` and `tutor-view.spec`.
+- `docs/redesign/06-onboarding.md`, the testids, and the review and source PNGs
+  under `docs/redesign/onboarding-*`.
+
+**Conflicts and resolutions.**
+
+- `fa26/Sidebar.tsx` was the only textual conflict. The current Pen sidebar is
+  kept exactly: 216/68 px collapse, the Home label, 18 px icons, tooltips, the
+  pre-paint collapse script and the 112 px wordmark. #731's change is ported
+  onto it: `ViewReader` reports the whole search string, and each row's href
+  goes through `destination()`. On `/learn`, switching between Learn and Tutor
+  keeps `course`, `resume` and `mode`, and changes only `view`.
+- `learn/LoopLearn.tsx` merged automatically. The redesign's shared map legend
+  (`RailGraph` + `SaplingMapLegend`) sits alongside #731's onboarding intent,
+  scope panel and canonical `?course=` URL. This also covers G1 below, since
+  the course is now in the URL.
+- **Typography** (commit 84aa82ae). Every `font-size` in `Onboarding.module.css`
+  now uses a `--sapling-text-*` role:
+  - h1 → page
+  - upload heading → section
+  - review goal → card
+  - row titles → item
+  - body text and inputs → body
+  - captions and labels → meta
+  - buttons and chips → control
+  - small-caps labels → eyebrow
+
+  Jose's line-heights and layout are kept, except that the h1s take the page
+  leading. The phone font overrides that the role clamps now handle are
+  removed. Net size changes: 13 px captions become 14 px, the 17 px intro and
+  review text become 16 px, and base text goes from 15 px to 16 px.
+
+**No tests were run on this merge** (Andres's call). That means no `npm test`,
+no backend tests and no E2E, and no tests were adapted. Only these ran:
+
+- `npm run typecheck`: clean.
+- `npm run lint`: 0 errors, 19 warnings.
+- `npm run build:test`: success.
+
+Before landing, run these E2E specs: `onboarding.spec`, `feature-flags.spec`,
+`tutor-view.spec` and `learn-loop.spec`. Also run the unit suites that both
+sides touched: `Onboarding.test.tsx`, `onboardingHandoff.test.ts`,
+`LoopLearn.test.tsx`, `LoopLearn.tutor.test.tsx` and `Navigation.test.tsx`.
+
 ## Decisions pending for Andres
 
 1. **Phone bottom tab bar** (AS0Yn / cCYac). Still not implemented: it follows
