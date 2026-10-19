@@ -6,6 +6,7 @@ import { SaplingAction, StatusMessage } from "@/components/sapling";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/data";
 import { SOURCE_GRAPH_PALETTE, TIER_LABEL } from "@/lib/graph/nodeStyle";
+import { SaplingMapLegend } from "@/components/graph/SaplingMapLegend";
 import { TIERS, tierOf } from "./StateGlyph";
 import type { ResourceStatus } from "./useResource";
 import styles from "./Dashboard.module.css";
@@ -239,19 +240,7 @@ export function KnowledgeMap(props: KnowledgeMapProps) {
         </div>
       )}
 
-      <ul className={styles.legend} aria-label="Map key">
-        {TIERS.map((t) => (
-          <li key={t}>
-            {/* A disc, exactly as the canvas draws the node (the map encodes
-                state by fill only; the text names it). */}
-            <svg className={styles.glyph} viewBox="0 0 12 12" aria-hidden="true" focusable="false">
-              <circle cx="6" cy="6" r="5.5" fill={SOURCE_GRAPH_PALETTE[t]} />
-            </svg>
-            {TIER_LABEL[t]}
-          </li>
-        ))}
-        <li className={styles.legendNote}>Brown circles are courses; bigger circles have a higher mastery estimate.</li>
-      </ul>
+      <SaplingMapLegend className={styles.legend} />
     </section>
   );
 }

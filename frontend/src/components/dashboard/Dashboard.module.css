@@ -248,18 +248,12 @@
 .canvasOverlay > * { pointer-events: auto; max-width: 440px; }
 .mapStatus { padding: 12px 20px 0; }
 
+/* The legend itself is graph/SaplingMapLegend (shared with Learn); the
+   card only places it. */
 .legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px var(--sapling-space-5);
-  margin: 0;
   padding: 10px 20px 14px;
-  list-style: none;
-  font-size: 14px;
-  color: var(--sapling-ink);
   border-top: 1px solid var(--sapling-line);
 }
-.legend li { display: inline-flex; align-items: center; gap: 8px; }
 .legendNote { color: var(--sapling-muted); }
 
 .courses { padding: 12px 20px 16px; border-bottom: 1px solid var(--sapling-line); display: grid; gap: 12px; }

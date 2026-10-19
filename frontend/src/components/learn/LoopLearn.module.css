@@ -876,6 +876,7 @@
 .railGraph {
   width: 100%;
 }
+.railGraphWrap { display: grid; gap: var(--sapling-space-2); }
 
 .sourceLinks {
   display: flex;

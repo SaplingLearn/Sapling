@@ -22,6 +22,7 @@ import { ChatPanel, type ChatMsg, type InterruptedReason } from "../chat/ChatPan
 import { interruptedTurnLanded, removeInterruptedTurn } from "../chat/interruptedTurn";
 import { CustomSelect } from "../CustomSelect";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { SaplingMapLegend } from "../graph/SaplingMapLegend";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { useFlag, useFlagMap } from "@/context/FlagsContext";
@@ -2357,8 +2358,10 @@ function studioCopy({ blocked, readOnly, editingGoal, phase, courseName, noCours
 
 // ── Pieces ─────────────────────────────────────────────────────────────────
 
-/** The knowledge-map rail: `KnowledgeGraph` fed as Learn.tsx's
- *  SidebarKnowledgeGraph feeds it (measured width, fixed height, original colours). */
+/** The knowledge-map rail (studio rail + the tutor's Map panel): the SAME
+ *  `appearance="sapling"` rendering and shared legend as Home's map — nodes
+ *  filled by server tier in the original Figma palette, brown course hubs —
+ *  so the two can't drift. Measured width, fixed height, fitted on settle. */
 function RailGraph({ nodes, edges, highlightId, height = RAIL_GRAPH_HEIGHT }: {
   nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string; height?: number;
 }) {
@@ -2372,10 +2375,13 @@ function RailGraph({ nodes, edges, highlightId, height = RAIL_GRAPH_HEIGHT }: {
     return () => ro.disconnect();
   }, []);
   return (
-    <div ref={ref} className={styles.railGraph}>
-      {width > 0 && (
-        <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={height} highlightId={highlightId} />
-      )}
+    <div className={styles.railGraphWrap}>
+      <div ref={ref} className={styles.railGraph}>
+        {width > 0 && (
+          <KnowledgeGraph appearance="sapling" nodes={nodes} edges={edges} width={width} height={height} highlightId={highlightId} />
+        )}
+      </div>
+      <SaplingMapLegend compact />
     </div>
   );
 }

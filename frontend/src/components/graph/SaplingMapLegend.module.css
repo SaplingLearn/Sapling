@@ -1,0 +1,16 @@
+/* Shared legend for the sapling-appearance maps; type from the sapling scale. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px var(--sapling-space-5, 24px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--sapling-text-meta, 14px);
+  line-height: var(--sapling-leading-meta, 1.45);
+  color: var(--sapling-ink, #253D2F);
+}
+.legend li { display: inline-flex; align-items: center; gap: 8px; }
+.swatch { width: 12px; height: 12px; flex-shrink: 0; }
+.note { color: var(--sapling-muted, #626B5A); }
+.compact { gap: 4px 14px; }
