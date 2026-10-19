@@ -52,6 +52,12 @@ MAX_OPTIONS = 4  # == routes.quiz._MCQ_OPTIONS (the route drops any other count)
 MAX_ACCEPTED_ANSWERS = 8
 
 
+def _clip(value, limit: int):
+    """Keep the first `limit` entries of a raw list input, in model order.
+    Anything that is not a list is left for normal validation to reject."""
+    return value[:limit] if isinstance(value, list) else value
+
+
 class QuizQuestion(BaseModel):
     """A single quiz question. Kept small so the parent
     Quiz schema doesn't trip Gemini's structured-output complexity limit."""
@@ -85,15 +91,18 @@ class QuizQuestion(BaseModel):
     # on a correct answer.
     concept: str
 
-    @field_validator("options", mode="after")
+    # The clips run BEFORE item validation, as decoding-time maxItems did: a
+    # malformed surplus entry past the cap is discarded, never a reason to
+    # reject the valid prefix and spend an output retry.
+    @field_validator("options", mode="before")
     @classmethod
-    def _clip_options(cls, options: list[str]) -> list[str]:
-        return options[:MAX_OPTIONS]
+    def _clip_options(cls, options):
+        return _clip(options, MAX_OPTIONS)
 
-    @field_validator("accepted_answers", mode="after")
+    @field_validator("accepted_answers", mode="before")
     @classmethod
-    def _clip_accepted_answers(cls, accepted: list[str]) -> list[str]:
-        return accepted[:MAX_ACCEPTED_ANSWERS]
+    def _clip_accepted_answers(cls, accepted):
+        return _clip(accepted, MAX_ACCEPTED_ANSWERS)
 
 
 class Quiz(BaseModel):
@@ -103,14 +112,19 @@ class Quiz(BaseModel):
     # schema (see MAX_QUESTIONS above).
     questions: list[QuizQuestion]
 
+    @field_validator("questions", mode="before")
+    @classmethod
+    def _clip_questions(cls, questions):
+        return _clip(questions, MAX_QUESTIONS)
+
     @field_validator("questions", mode="after")
     @classmethod
-    def _require_and_clip_questions(cls, questions: list[QuizQuestion]) -> list[QuizQuestion]:
+    def _require_questions(cls, questions: list[QuizQuestion]) -> list[QuizQuestion]:
         # Empty stays a validation error, so the bounded output retry still
         # fires exactly as it did for the old min_length=1.
         if not questions:
             raise ValueError("List should have at least 1 item after validation, not 0")
-        return questions[:MAX_QUESTIONS]
+        return questions
 
 
 _SYSTEM_PROMPT = (

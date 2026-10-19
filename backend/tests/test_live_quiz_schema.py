@@ -28,7 +28,7 @@ import pytest
 
 pytestmark = pytest.mark.live_llm
 
-_OPTED_IN = os.getenv("RUN_LIVE_QUIZ") == "1" and bool(os.getenv("GEMINI_API_KEY"))
+_OPTED_IN = os.getenv("RUN_LIVE_QUIZ") == "1"
 
 
 @pytest.mark.skipif(
@@ -36,6 +36,9 @@ _OPTED_IN = os.getenv("RUN_LIVE_QUIZ") == "1" and bool(os.getenv("GEMINI_API_KEY
     reason="opt-in live test: set RUN_LIVE_QUIZ=1 (and GEMINI_API_KEY)",
 )
 def test_real_model_serves_the_quiz_schema_and_returns_a_quiz(monkeypatch):
+    # Opted in but unconfigured is a failure, never a silent skip: the run
+    # was asked to check the live schema and must not report success unchecked.
+    assert os.getenv("GEMINI_API_KEY"), "RUN_LIVE_QUIZ=1 needs GEMINI_API_KEY"
     sys.path.insert(0, str(Path(__file__).parent / "evals"))
     from _retrieval_fixture import FixtureRetrieval
 
@@ -43,11 +46,10 @@ def test_real_model_serves_the_quiz_schema_and_returns_a_quiz(monkeypatch):
     from agents._providers import model_name_for
     from agents.deps import SaplingDeps
     from agents.quiz import MAX_QUESTIONS, quiz_agent
-    from agents.tools.quiz_history import QuizHistory
     from routes.quiz import _agent_question_to_wire
 
-    async def _no_history(user_id: str, concept_node_id: str) -> QuizHistory:
-        return QuizHistory()
+    async def _no_history(user_id: str, concept_node_id: str) -> quiz_history.QuizHistory:
+        return quiz_history.QuizHistory()
 
     # First attempt on the concept: no digest, no prior attempts, no DB read.
     monkeypatch.setattr(quiz_history, "read_recent_quiz_attempts", _no_history)

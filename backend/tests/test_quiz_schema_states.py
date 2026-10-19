@@ -201,3 +201,24 @@ def test_over_cap_output_is_clipped_without_spending_a_retry():
     assert calls["n"] == 1
     assert len(result.output.questions) == MAX_QUESTIONS
     assert all(q.options == ["a", "b", "c", "d"] for q in result.output.questions)
+
+
+def test_malformed_surplus_past_the_caps_is_discarded_not_fatal():
+    """Clipping runs BEFORE item validation, as decoding-time maxItems
+    did: a malformed eleventh question, fifth option or ninth alias is
+    never generated under a bounded schema, so it must not reject the valid
+    prefix (and spend an output retry) now either."""
+    body = {"questions": [
+        _mcq(i, options=["a", "b", "c", "d", {"not": "a string"}],
+             accepted_answers=[f"alias {k}" for k in range(MAX_ACCEPTED_ANSWERS)] + [None])
+        for i in range(MAX_QUESTIONS)
+    ] + [{"question": "malformed surplus, missing every other field"}]}
+    quiz = Quiz.model_validate(body)
+    assert len(quiz.questions) == MAX_QUESTIONS
+    assert all(q.options == ["a", "b", "c", "d"] for q in quiz.questions)
+    assert all(len(q.accepted_answers) == MAX_ACCEPTED_ANSWERS for q in quiz.questions)
+
+
+def test_malformed_item_inside_the_caps_is_still_a_validation_error():
+    with pytest.raises(ValidationError):
+        Quiz.model_validate({"questions": [_mcq(0), {"question": "missing fields"}]})
