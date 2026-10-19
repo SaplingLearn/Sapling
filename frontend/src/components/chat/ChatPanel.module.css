@@ -243,6 +243,14 @@
   border-color: var(--sapling-primary, var(--accent));
 }
 
+/* The field draws no outline of its own (the box is the field), so the box
+ * carries the same 2px ring as every other redesign control; a border-colour
+ * change alone was too faint to find by keyboard (prompt 05 keyboard pass). */
+.composer:has(.field:focus-visible) {
+  outline: 2px solid var(--sapling-primary, var(--accent));
+  outline-offset: 2px;
+}
+
 .field {
   width: 100%;
   min-height: 52px;
