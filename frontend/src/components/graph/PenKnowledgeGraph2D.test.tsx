@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { GraphNode } from "@/lib/data";
 import { PEN_NATIVE_GRAPH_REFERENCE } from "@/lib/graph/penNativeGraphSource";
+import { buildPenGraphLayout } from "@/lib/graph/penGraphGeometry";
 import { PenKnowledgeGraph2D } from "./PenKnowledgeGraph2D";
 import { PenGraphReference } from "./PenGraphReference";
 
@@ -119,6 +120,41 @@ describe("authored Pen graph", () => {
     expect(select).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Reset view" }));
     expect(mark).toHaveAttribute("transform", original);
+  });
+
+  it("keeps a dragged real ID visible when course filtering changes its authored base position", () => {
+    const allNodes = [...nodes, node("course-c", "CS 103", true), node("concept-c", "CS 103")];
+    const allEdges = [...edges, { source: "course-c", target: "concept-c", strength: 0.7 }];
+    const filteredNodes = allNodes.filter(value => value.course_id === "CS 101");
+    const filteredIds = new Set(filteredNodes.map(value => value.id));
+    const filteredEdges = allEdges.filter(value => filteredIds.has(value.source) && filteredIds.has(value.target));
+    const packed = buildPenGraphLayout({ nodes: allNodes, edges: allEdges });
+    const filtered = buildPenGraphLayout({ nodes: filteredNodes, edges: filteredEdges });
+    const packedNode = packed.nodes.find(value => value.id === "concept-a")!;
+    const filteredNode = filtered.nodes.find(value => value.id === "concept-a")!;
+    const retainedDx = packed.width - packedNode.r - packedNode.x;
+    // This course subset moves the real ID's source-family position rightward.
+    // Its previous legal drag offset would now carry it outside the fitted map.
+    expect(filteredNode.x + retainedDx).toBeGreaterThan(filtered.width - filteredNode.r);
+    const select = vi.fn();
+    const view = render(<PenKnowledgeGraph2D nodes={allNodes} edges={allEdges} width={893} height={601} onNodeClick={select} />);
+    const mark = screen.getAllByTestId("graph-node").find(value => value.getAttribute("data-node-id") === "concept-a")!;
+    const svg = screen.getByRole("img", { name: "Knowledge graph" });
+    fireEvent.pointerDown(mark, { pointerId: 3, button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(svg, { pointerId: 3, clientX: 100000, clientY: 100 });
+    fireEvent.pointerUp(svg, { pointerId: 3, clientX: 100000, clientY: 100 });
+    const dragged = mark.getAttribute("transform");
+    view.rerender(<PenKnowledgeGraph2D nodes={filteredNodes} edges={filteredEdges} width={893} height={601} onNodeClick={select} />);
+    const coords = mark.getAttribute("transform")!.match(/translate\(([^,]+), ([^)]+)\)/)!.slice(1).map(Number);
+    expect(coords[0]).toBeLessThanOrEqual(filtered.width - filteredNode.r);
+    expect(coords[0]).toBeGreaterThanOrEqual(filteredNode.r);
+    expect(coords[1]).toBeLessThanOrEqual(filtered.height - filteredNode.r);
+    expect(coords[1]).toBeGreaterThanOrEqual(filteredNode.r);
+    expect(screen.getAllByTestId("graph-node")).toHaveLength(filteredNodes.length);
+    expect(screen.getAllByTestId("graph-edge")).toHaveLength(filteredEdges.length);
+    expect(select).not.toHaveBeenCalled();
+    view.rerender(<PenKnowledgeGraph2D nodes={allNodes} edges={allEdges} width={893} height={601} onNodeClick={select} />);
+    expect(mark).toHaveAttribute("transform", dragged); // The ID's drag offset survives scope changes.
   });
 
   it("preserves comparison evidence and uses instance-local gradient IDs", () => {

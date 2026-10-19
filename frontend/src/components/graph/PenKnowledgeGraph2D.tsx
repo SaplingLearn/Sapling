@@ -54,7 +54,13 @@ function PenKnowledgeGraph2DImpl({
   const shown = interactive ? { tx: fitted.tx + view.tx, ty: fitted.ty + view.ty, scale: fitted.scale * view.scale } : fitted;
   const positions = new Map(layout.nodes.map(node => {
     const offset = offsets[node.id];
-    return [node.id, offset ? { ...node, x: node.x + offset.x, y: node.y + offset.y } : node];
+    // A scope change can repack the same ID against a smaller source canvas.
+    // Retain its drag offset, but keep the current mark inside that canvas.
+    return [node.id, offset ? {
+      ...node,
+      x: Math.max(node.r, Math.min(layout.width - node.r, node.x + offset.x)),
+      y: Math.max(node.r, Math.min(layout.height - node.r, node.y + offset.y)),
+    } : node];
   }));
   const orderedNodes = layout.nodes.filter(node => node.id !== selectedId);
   const selectedNode = layout.nodes.find(node => node.id === selectedId);
