@@ -441,9 +441,62 @@ changes Jose's assertion, so it was left as he wrote it.
 Jose's "preserve the existing vertical sidebar exactly" meant the 216 px
 sidebar drawn in every Pen frame, not #727's green icon rail. The desktop shell
 now uses it (`frontend/src/components/fa26/Sidebar.tsx` + `Sidebar.module.css`).
-Measured against Xnuwg at 1440 px, every row, icon, label, the divider and the
-account row land within 1 px of the export (0.75 % of the 216 px strip differs
-at 6 % fuzz, almost all of it glyph antialiasing).
+The first cut matched Xnuwg at 1440 px within 1 px. Andres then asked for a
+smaller wordmark (112 px), much tighter rows, smaller type and icons, and a
+collapsible rail, so the sidebar now deliberately departs from the export's
+spacing while keeping its panel, colours, order, icons and active treatment.
+
+- **Spacing and size (current).** Header 52 px: the 112 px wordmark at 25/18,
+  the collapse toggle (32 px) 18 px from the right edge. "YOUR WORKSPACE" at
+  10 px (letter-spacing 0.11 em), 14 px under the header and 6 px over the
+  first row. Rows 32 px tall on a 36 px pitch (4 px gap), inset 16 px. Icons
+  16 px, 12 px into the row; labels 13 px SUSE, 10 px after the icon (x 54),
+  semibold when active. More and its list keep the 4 px rhythm. The divider
+  sits 12 px under the rows and 6 px over Settings; the account row is 40 px,
+  12 px off the bottom, with its initial in the same 16 px slot (13 px name,
+  11 px subline). Checked in Chromium: rows at y 86, 122, 158, 194, 230, 266,
+  every one 32 px, and the pill's box equals the active row's box on all six
+  rows, expanded and collapsed.
+- **Collapse.** A toggle in the header (Lucide `PanelLeftClose`/`PanelLeftOpen`,
+  `nav-collapse`, `aria-label` "Collapse sidebar"/"Expand sidebar",
+  `aria-expanded`, `aria-controls` the sidebar) folds it to a **68 px icon
+  rail**. The inset grows to 14 px, so every 40 px row keeps its 16 px icon
+  12 px in and centred (x 34). The account row and toggle centre there too.
+  - Labels, the eyebrow, the wordmark and the account name fade out (120 ms)
+    *before* the width shrinks, and fade in *after* it grows. `<main>` is the
+    flex sibling, so it reflows with the width. Measured: collapsing, the label
+    hits opacity 0 at ~120 ms while the width is still 216, then the width runs
+    216→68; expanding, the width runs 68→216 first, then the label fades in.
+  - No approved standalone Sapling mark ships in `public/design/sapling/`, so
+    the rail shows no logo rather than a drawn one.
+  - Collapsed, every row (and More, and the More rows) carries an `aria-label`,
+    and hover or keyboard focus shows a fixed-position label tooltip
+    (`nav-tip`, decorative, `aria-hidden`); Escape hides it. The account row
+    gets a `title` with the name. More still opens in place, its rows as icons.
+  - Remembered in localStorage `sapling_nav_collapsed` (try/catch, in-memory
+    fallback); default expanded. A tiny inline script applies a remembered
+    collapse before first paint, so a collapsed rail never opens and shoves
+    `<main>` at hydration (verified: collapsed and 68 px at DOMContentLoaded).
+  - No keyboard shortcut was added (optional; every candidate key collides
+    with a browser or text-entry binding).
+  - Default stays expanded at every desktop width: at 768 px expanded every
+    page still lays out (the dashboard stacks there). Beside the collapsed
+    rail the dashboard keeps two columns from 768 px.
+- **Scrollbars.** The sidebar track shows no scrollbar (`scrollbar-width: none`
+  + `::-webkit-scrollbar { display: none }`) but still scrolls by wheel, touch
+  and keyboard. `<main>` and every panel scrolling inside it get a thin themed
+  scrollbar: ink at 22 % alpha on a transparent track, 8 px WebKit bars. The
+  rule is zero-specificity (`:where`) and scoped to `.fa26-main`, so a
+  component that hides its own scrollbar still wins and the landing page keeps
+  its own. No horizontal scroll container overflowed on /dashboard, /library,
+  /calendar, /tree or /learn at 1440, 1024 or 768, expanded or collapsed.
+- **Utility gear.** #727's hand-drawn gear polygon in the top-right cluster
+  (`DesignIcon` `settings`) rendered as a lumpy blob. It now draws the same
+  Lucide `Settings` gear as the sidebar row. Filled, Lucide's rounded teeth
+  read as a flower at 22 px, so it stays a line icon with a 2.25 stroke to
+  carry the solid bell's weight. The other DesignIcon glyphs in the shell
+  (bell, report, and the phone rail's study, tree, notes) render cleanly and
+  were left alone.
 
 - **Destinations** (from `lib/navFeatures.ts` `SIDEBAR_PRIMARY`, which names
   `NAV_SECTIONS` entries, so the hide flags still come from the one list):
@@ -468,7 +521,7 @@ at 6 % fuzz, almost all of it glyph antialiasing).
   focus to the button.
 - **Utilities.** The bell (notification settings), Settings and Report an issue
   stay in the top-right utility cluster where #727 put them. Settings is also in
-  the sidebar footer. The Pen's top bar (semester, search, info) is not built.
+  the sidebar footer, drawn with the same Lucide gear. The Pen's top bar (semester, search, info) is not built.
   The old account popover's links (Settings, Grades, Course planner,
   Achievements, Community, Admin) all moved to More or the footer.
 - **Phone is unchanged.** Below 768 px (`useIsMobile`, the same edge in CSS)
@@ -477,33 +530,42 @@ at 6 % fuzz, almost all of it glyph antialiasing).
   testids. The Pen phone nav (cCYac bottom bar, More sheet) is the next step,
   after review of the desktop sidebar.
 - **Layout.** `<main>` keeps `app-shell` and its scroll container and gains a
-  32 px left gutter from 768 px. Checked at 1440/1024/768 (sidebar) and 390/320
-  (rail) with no horizontal page overflow. One page fix: between 768 and 959 px
-  the dashboard's graph column fell to ~220 px beside the sidebar, so it stacks
-  there as it does on a phone.
+  32 px left gutter from 768 px. Checked at 1440/1024/768 (sidebar expanded and
+  collapsed) and 390/320 (phone rail) with no horizontal page overflow. One
+  page fix: between 768 and 959 px the dashboard's graph column fell to
+  ~220 px beside the expanded sidebar, so it stacks there as it does on a
+  phone (beside the collapsed rail it keeps two columns).
 - **Knowledge icon gap.** The handoff ships no approved Knowledge vector (both
   manifests list Today, Learn, Library, Tutor, Calendar, paper, Clov). The Pen
   draws Lucide's pre-1.0 `git-branch`. The app ships `lucide-react` 1.14, whose
   `GitBranch` is a redrawn variant (the branch joins the trunk mid-way), and
   that is what renders. Nothing was drawn by hand. Settings uses Lucide
-  `Settings`, the More button Lucide `Ellipsis`, and More rows keep their legacy
-  line icons.
+  `Settings`, the More button Lucide `Ellipsis`, the toggle Lucide
+  `PanelLeftClose`/`PanelLeftOpen`, and More rows keep their legacy line icons.
 - **Motion.** One cream pill tweens `translateY` to the new row on a route
   change. It is placed without a transition on mount and whenever it reappears.
   Rows fade background and colour on hover and focus, and scale to 0.98 when
   pressed. More expands with `grid-template-rows` 0fr→1fr and an opacity fade,
   and its chevron turns. Curves and durations are `--nav-ease` /
-  `--nav-dur` (240 ms) / `--nav-dur-fast` (170 ms). Under reduced motion the
-  transitions are never armed (JS) and zeroed (CSS). In real Chromium the pill
-  read `translateY(180px)` 60 ms into a 66→231 px move; under reduced motion it
-  was already at 231.
+  `--nav-dur` (240 ms) / `--nav-dur-fast` (170 ms) / `--nav-fade` (120 ms, the
+  collapse's label fade). The collapse tweens the sidebar width, the inset and
+  the pill's inset, sequenced against the label fade as above. Under reduced
+  motion the transitions are never armed (JS) and zeroed (CSS), so the collapse
+  is instant. In real Chromium the pill read `translateY(180px)` 60 ms into a
+  66→231 px move (first cut); under reduced motion it was already at 231.
 - **Tests.** `fa26/Navigation.test.tsx` covers the six rows and hrefs, the
   approved icons, Learn vs Tutor by `?view=`, `tutor_view` off, hide flags in
   the six and in More, More dropping when empty, Admin, flags loading, the
   disclosure (state, storage, blocked storage, keyboard, Escape and focus
   return), forced-open routes, the pill (one element, placement, a measured
-  transform change on a route change) and reduced motion, and the
-  desktop/phone switch. `lib/navFeatures.test.ts` pins that every destination
+  transform change on a route change) and reduced motion, the desktop/phone
+  switch, and the collapse: toggle state and `aria-expanded`/`aria-controls`,
+  persistence and blocked storage, accessible names on every collapsed row,
+  the rail tooltip on hover/focus/Escape, pill alignment on all six rows at
+  the 36 px pitch expanded and collapsed, an instant collapse under reduced
+  motion, and the width animation arming after mount.
+  `ShellFrame.test.tsx` pins the utility Settings link to the shared Lucide
+  gear. `lib/navFeatures.test.ts` pins that every destination
   appears exactly once (six or More) and tests the active-key mapping.
   `LoopLearn.tutor.test.tsx` covers the `?view=` follow.
 - **E2E.** `feature-flags.spec.ts` now opens More before asserting

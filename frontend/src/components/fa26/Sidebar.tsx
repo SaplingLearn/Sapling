@@ -3,7 +3,7 @@
 import React, { Suspense, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ChevronDown, Ellipsis, GitBranch, Settings } from "lucide-react";
+import { ChevronDown, Ellipsis, GitBranch, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import { useUser } from "@/context/UserContext";
 import { useFlagMap } from "@/context/FlagsContext";
 import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
@@ -17,6 +17,8 @@ import styles from "./Sidebar.module.css";
 
 /** Remembers whether the "More" group is open (per browser, best effort). */
 export const MORE_STORAGE_KEY = "sapling_nav_more_open";
+/** Remembers whether the sidebar is collapsed to its icon rail. */
+export const COLLAPSED_STORAGE_KEY = "sapling_nav_collapsed";
 
 /** The approved Pen nav exports. Knowledge has no approved vector (a recorded
  *  gap): the Pen frame draws Lucide's pre-1.0 git-branch, and the closest
@@ -25,12 +27,16 @@ const BOTANICAL: Partial<Record<SidebarIcon, BotanicalIconName>> = {
   today: "today", learn: "learn", library: "library", tutor: "tutor", calendar: "calendar",
 };
 
+/** Row icon width, px (--nav-icon in Sidebar.module.css). */
+const ICON = 16;
+
 function EntryIcon({ icon }: { icon: SidebarIcon }) {
   const name = BOTANICAL[icon];
-  // Width-fitted at 22px with the authored height, as in the Pen frames
-  // (Tutor's tree stands 27.7px tall, Today's house 16.6px).
-  if (name) return <BotanicalIcon name={name} size={22} style={{ height: BOTANICAL_ASSETS[name].height }} />;
-  return <GitBranch size={22} strokeWidth={1.75} aria-hidden="true" focusable="false" />;
+  // Width-fitted at 16px (down from the Pen's 22, at Andres's request) with
+  // the authored aspect: Tutor's tree stands ~20px, Today's house ~12px.
+  const { width, height } = name ? BOTANICAL_ASSETS[name] : { width: 1, height: 1 };
+  if (name) return <BotanicalIcon name={name} size={ICON} style={{ height: (ICON * height) / width }} />;
+  return <GitBranch size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" />;
 }
 
 /** Reads `?view=` in its own Suspense boundary: useSearchParams in the shell
@@ -41,25 +47,39 @@ function ViewReader({ onView }: { onView: (view: string | null) => void }) {
   return null;
 }
 
-/* The More group's remembered state: localStorage when it works, this
-   module's memory when it does not (private windows, blocked site data). */
-let moreMemory: boolean | null = null;
-const moreListeners = new Set<() => void>();
-function readMoreOpen(): boolean {
-  if (moreMemory !== null) return moreMemory;
-  try { return window.localStorage.getItem(MORE_STORAGE_KEY) === "1"; } catch { return false; }
+/* Remembered booleans (More open, sidebar collapsed): localStorage when it
+   works, this module's memory when it does not (private windows, blocked
+   site data). One tiny external store per key. */
+function rememberedFlag(key: string) {
+  let memory: boolean | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    read(): boolean {
+      if (memory !== null) return memory;
+      try { return window.localStorage.getItem(key) === "1"; } catch { return false; }
+    },
+    write(value: boolean) {
+      memory = value;
+      try { window.localStorage.setItem(key, value ? "1" : "0"); } catch { /* storage blocked */ }
+      listeners.forEach((listener) => listener());
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    reset() { memory = null; },
+  };
 }
-function writeMoreOpen(open: boolean) {
-  moreMemory = open;
-  try { window.localStorage.setItem(MORE_STORAGE_KEY, open ? "1" : "0"); } catch { /* storage blocked */ }
-  moreListeners.forEach((listener) => listener());
-}
-function subscribeMore(listener: () => void) {
-  moreListeners.add(listener);
-  return () => { moreListeners.delete(listener); };
-}
-/** Test-only: forget this page's More state. */
-export function __resetMoreStateForTests() { moreMemory = null; }
+const moreStore = rememberedFlag(MORE_STORAGE_KEY);
+const collapsedStore = rememberedFlag(COLLAPSED_STORAGE_KEY);
+const serverFalse = () => false;
+/** Test-only: forget this page's remembered nav state. */
+export function __resetMoreStateForTests() { moreStore.reset(); collapsedStore.reset(); }
+
+/* Applies a remembered collapse before the first paint of a server-rendered
+   page, so a collapsed sidebar never flashes open and shoves <main> over at
+   hydration (React then owns the attribute; see suppressHydrationWarning). */
+const PRE_PAINT_COLLAPSE = `(function(s){try{if(localStorage.getItem(${JSON.stringify(COLLAPSED_STORAGE_KEY)})==="1")s.parentElement.setAttribute("data-collapsed","")}catch(e){}})(document.currentScript)`;
 
 /**
  * The shell's desktop sidebar: the approved Pen nav (216px, sage panel,
@@ -95,15 +115,31 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
 
   // More: closed by default and remembered per browser. A route that lives in
   // More opens it (until the student closes it again on that route).
-  const storedOpen = useSyncExternalStore(subscribeMore, readMoreOpen, () => false);
+  const storedOpen = useSyncExternalStore(moreStore.subscribe, moreStore.read, serverFalse);
   const [dismissedOn, setDismissedOn] = useState<string | null>(null);
   const forcedOpen = activeInMore && dismissedOn !== pathname;
   const moreOpen = forcedOpen || storedOpen;
   const setMore = (open: boolean) => {
     setDismissedOn(open ? null : pathname);
-    writeMoreOpen(open);
+    moreStore.write(open);
   };
   const moreId = useId();
+  const sidebarId = useId();
+
+  // Collapse to an icon rail: default expanded, remembered per browser.
+  const collapsed = useSyncExternalStore(collapsedStore.subscribe, collapsedStore.read, serverFalse);
+  const toggleCollapsed = () => { setTip(null); collapsedStore.write(!collapsed); };
+  // Collapsed rows show their label in a tooltip on hover and focus. It is
+  // fixed-positioned so the rail's clipping never cuts it off; the rows carry
+  // aria-labels, so it is decoration for sighted users only.
+  const [tip, setTip] = useState<{ label: string; top: number; left: number } | null>(null);
+  const showTip = (target: EventTarget | null) => {
+    if (!collapsed) return;
+    const el = target instanceof Element ? target.closest<HTMLElement>("[data-tip]") : null;
+    if (!el) { setTip(null); return; }
+    const r = el.getBoundingClientRect();
+    setTip({ label: el.dataset.tip ?? "", top: r.top + r.height / 2, left: r.right + 10 });
+  };
   const moreButton = useRef<HTMLButtonElement>(null);
   const onMoreKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "Escape") return;
@@ -163,37 +199,57 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
     const current = entry.key === activeKey;
     return <li key={entry.key}>
       <Link href={entry.href} className={styles.item} data-nav-key={entry.key} data-testid={testid}
-        aria-current={current ? "page" : undefined}>
+        aria-current={current ? "page" : undefined} aria-label={collapsed ? entry.label : undefined} data-tip={entry.label}>
         <span className={styles.icon}>{icon}</span>
-        <span className={styles.label}>{entry.label}</span>
+        <span className={`${styles.label} ${styles.fade}`}>{entry.label}</span>
       </Link>
     </li>;
   };
 
-  return <aside className={styles.sidebar} aria-label="Sidebar" data-testid={tid("app-sidebar")} data-animated={(animated && !reducedMotion) || undefined}>
+  return <aside id={sidebarId} className={styles.sidebar} aria-label="Sidebar" data-testid={tid("app-sidebar")}
+    data-animated={(animated && !reducedMotion) || undefined} data-collapsed={collapsed || undefined}
+    suppressHydrationWarning
+    onPointerOver={(e) => showTip(e.target)} onPointerLeave={() => setTip(null)}
+    onFocus={(e) => showTip(e.target)} onBlur={() => setTip(null)}
+    onKeyDown={(e) => { if (e.key === "Escape") setTip(null); }}>
+    <script dangerouslySetInnerHTML={{ __html: PRE_PAINT_COLLAPSE }} />
     <Suspense fallback={null}><ViewReader onView={setView} /></Suspense>
-    <Link href="/dashboard" className={styles.brand} aria-label="Sapling home">
-      <SaplingWordmark width={112} decorative />
-    </Link>
+    <div className={styles.header}>
+      {/* No approved standalone Sapling mark ships in public/design/sapling,
+          so the collapsed rail shows no logo rather than a drawn one. */}
+      <Link href="/dashboard" className={`${styles.brand} ${styles.fade}`} aria-label="Sapling home">
+        <SaplingWordmark width={112} decorative />
+      </Link>
+      <button type="button" className={styles.toggle} data-testid={tid("nav-collapse")}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} aria-controls={sidebarId}
+        data-tip={collapsed ? "Expand sidebar" : undefined} onClick={toggleCollapsed}>
+        {collapsed
+          ? <PanelLeftOpen size={16} strokeWidth={1.75} aria-hidden="true" focusable="false" />
+          : <PanelLeftClose size={16} strokeWidth={1.75} aria-hidden="true" focusable="false" />}
+      </button>
+    </div>
     <nav aria-label="Primary" className={styles.track} ref={track}>
       <div className={styles.content}>
         <span ref={pill} aria-hidden="true" data-testid={tid("nav-pill")} className={styles.pill} />
-        <p className={styles.eyebrow}>Your workspace</p>
+        <p className={`${styles.eyebrow} ${styles.fade}`}>Your workspace</p>
         <ul className={styles.list}>
           {primary.map((e: SidebarEntry) => row(e, <EntryIcon icon={e.icon} />, tid(e.testid)))}
         </ul>
         {more.length > 0 && <div className={styles.more}>
           <button ref={moreButton} type="button" className={`${styles.item} ${styles.moreButton}`}
-            aria-expanded={moreOpen} aria-controls={moreId} data-testid={tid("nav-more")} onClick={() => setMore(!moreOpen)}>
-            <span className={styles.icon}><Ellipsis size={22} strokeWidth={1.75} aria-hidden="true" focusable="false" /></span>
-            <span className={styles.label}>More</span>
-            <ChevronDown className={styles.chevron} size={18} strokeWidth={1.75} aria-hidden="true" focusable="false" />
+            aria-expanded={moreOpen} aria-controls={moreId} data-testid={tid("nav-more")} onClick={() => setMore(!moreOpen)}
+            aria-label={collapsed ? "More" : undefined} data-tip="More">
+            <span className={styles.icon}><Ellipsis size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" /></span>
+            <span className={`${styles.label} ${styles.fade}`}>More</span>
+            <span className={`${styles.chevronSlot} ${styles.fade}`}>
+              <ChevronDown className={styles.chevron} size={14} strokeWidth={1.75} aria-hidden="true" focusable="false" />
+            </span>
           </button>
           <div id={moreId} className={styles.moreRegion} data-open={moreOpen || undefined} data-testid={tid("nav-more-region")}
             inert={!moreOpen} onKeyDown={onMoreKeyDown}>
             <div className={styles.moreInner}>
               <ul className={`${styles.list} ${styles.moreList}`} aria-label="More destinations">
-                {more.map((i) => row(i, <Icon name={i.icon} size={20} />, tid(`nav-link-${i.key}`)))}
+                {more.map((i) => row(i, <Icon name={i.icon} size={ICON} />, tid(`nav-link-${i.key}`)))}
               </ul>
             </div>
           </div>
@@ -201,17 +257,19 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
         <div className={styles.footer}>
           <ul className={styles.list}>
             {row({ key: "settings", href: "/settings", label: "Settings" },
-              <Settings size={18} strokeWidth={1.75} aria-hidden="true" focusable="false" />, tid("nav-link-settings"))}
+              <Settings size={ICON} strokeWidth={1.75} aria-hidden="true" focusable="false" />, tid("nav-link-settings"))}
           </ul>
         </div>
       </div>
     </nav>
-    <div className={styles.account} data-testid={tid("nav-account")}>
+    <div className={styles.account} data-testid={tid("nav-account")} title={collapsed ? userName || "Your account" : undefined}>
       <span className={styles.avatar} aria-hidden="true">{userName?.trim().charAt(0).toUpperCase() || "S"}</span>
-      <span className={styles.who}>
+      <span className={`${styles.who} ${styles.fade}`}>
         <strong>{userName || "Your account"}</strong>
         <small>Personal workspace</small>
       </span>
     </div>
+    {collapsed && tip && <span className={styles.tip} data-testid={tid("nav-tip")} aria-hidden="true"
+      style={{ top: tip.top, left: tip.left }}>{tip.label}</span>}
   </aside>;
 }

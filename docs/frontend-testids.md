@@ -332,7 +332,9 @@ never collide in the DOM.
 | `nav-more-region` | the More group's collapsible region (`data-open` when expanded, `inert` when collapsed) |
 | `nav-pill` | the sidebar's single active-row pill (`data-shown` once placed; its `transform` is the active row's offset) |
 | `nav-account` | the sidebar's account row (initial, name, "Personal workspace") |
-| `app-sidebar` | the desktop sidebar root (`fa26/Sidebar.tsx`); `data-animated` once its transitions are armed (never under reduced motion) |
+| `app-sidebar` | the desktop sidebar root (`fa26/Sidebar.tsx`); `data-animated` once its transitions are armed (never under reduced motion), `data-collapsed` while folded to the 68px icon rail |
+| `nav-collapse` | the sidebar header's collapse/expand toggle (`aria-expanded` = sidebar expanded, `aria-controls` → `app-sidebar`); state remembered in localStorage `sapling_nav_collapsed` |
+| `nav-tip` | the collapsed rail's label tooltip (hover/focus on a row; decorative, `aria-hidden`) |
 | `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
 
 ### `social`

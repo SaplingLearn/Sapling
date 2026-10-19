@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Navigation, PhoneRail, StudyNavigation } from "./Navigation";
-import { MORE_STORAGE_KEY, Sidebar, __resetMoreStateForTests } from "./Sidebar";
+import { COLLAPSED_STORAGE_KEY, MORE_STORAGE_KEY, Sidebar, __resetMoreStateForTests } from "./Sidebar";
 import { __resetMediaStoresForTests } from "@/lib/useIsMobile";
 import { __resetReducedMotionStoreForTests } from "@/lib/usePrefersReducedMotion";
 
@@ -92,14 +92,15 @@ describe("FA26 phone rail", () => {
 /* ── The Pen sidebar (desktop) ─────────────────────────────────────────── */
 
 const PRIMARY_ORDER = ["dashboard", "learn", "tree", "library", "tutor-view", "calendar"];
-/** jsdom has no layout: give every sidebar row a Pen-like box (rows 46px tall
- *  on a 55px pitch, the first at 66px into the content box). */
+/** jsdom has no layout: give every sidebar row the sidebar's box (rows 32px
+ *  tall on a 36px pitch, the first 34px into the content box: 14px + a 14px
+ *  eyebrow + 6px). */
 function stubRowGeometry() {
   return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     const key = this.dataset.navKey;
     const index = key ? PRIMARY_ORDER.indexOf(key) : -1;
-    const top = key ? 69 + 66 + (index < 0 ? 7 : index) * 55 : 69;
-    return { top, bottom: top + 46, left: 16, right: 200, width: 184, height: 46, x: 16, y: top, toJSON: () => ({}) } as DOMRect;
+    const top = key ? 52 + 34 + (index < 0 ? 7 : index) * 36 : 52;
+    return { top, bottom: top + 32, left: 16, right: 200, width: 184, height: 32, x: 16, y: top, toJSON: () => ({}) } as DOMRect;
   });
 }
 /** Swap the matchMedia stub: `phone` = below 768px, `reduced` = reduced motion. */
@@ -284,12 +285,12 @@ describe("Pen sidebar", () => {
     expect(document.querySelectorAll('[data-testid="nav-pill"]')).toHaveLength(1);
     expect(pill()).toHaveAttribute("data-shown");
     expect(pill()).toHaveAttribute("data-jump"); // first placement: no slide
-    expect(getComputedStyle(pill()).transform).toBe("translateY(66px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(34px)");
     const sidebar = screen.getByTestId("app-sidebar");
     await waitFor(() => expect(sidebar).toHaveAttribute("data-animated"));
     state.pathname = "/library";
     rerender(<Sidebar />);
-    expect(getComputedStyle(pill()).transform).toBe("translateY(231px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(142px)");
     expect(pill()).not.toHaveAttribute("data-jump"); // a real move: it tweens
     expect(sidebar).toHaveAttribute("data-animated");
     expect(screen.getByTestId("nav-link-library")).toHaveAttribute("aria-current", "page");
@@ -306,7 +307,7 @@ describe("Pen sidebar", () => {
     state.search = "view=tutor";
     rerender(<Sidebar />);
     expect(screen.getByTestId("app-sidebar")).not.toHaveAttribute("data-animated");
-    expect(getComputedStyle(pill()).transform).toBe("translateY(286px)");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(178px)");
     expect(screen.getByTestId("nav-link-tutor-view")).toHaveAttribute("aria-current", "page");
     expect(current()).toHaveLength(1);
   });
@@ -318,6 +319,125 @@ describe("Pen sidebar", () => {
     expect(pill()).toHaveAttribute("data-shown");
     fireEvent.click(screen.getByTestId("nav-more"));
     expect(pill()).not.toHaveAttribute("data-shown");
+  });
+});
+
+describe("collapsible sidebar", () => {
+  afterEach(() => { vi.restoreAllMocks(); setMedia({}); state.pathname = "/study"; });
+  const toggle = () => screen.getByTestId("nav-collapse");
+  const sidebar = () => screen.getByTestId("app-sidebar");
+
+  it("defaults to expanded, toggles, and labels its state", () => {
+    state.pathname = "/dashboard";
+    render(<Sidebar />);
+    expect(sidebar()).not.toHaveAttribute("data-collapsed");
+    expect(toggle()).toHaveAttribute("aria-expanded", "true");
+    expect(toggle()).toHaveAccessibleName("Collapse sidebar");
+    expect(toggle()).toHaveAttribute("aria-controls", sidebar().id);
+    fireEvent.click(toggle());
+    expect(sidebar()).toHaveAttribute("data-collapsed");
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    expect(toggle()).toHaveAccessibleName("Expand sidebar");
+    fireEvent.click(toggle());
+    expect(sidebar()).not.toHaveAttribute("data-collapsed");
+  });
+
+  it("remembers the collapse in localStorage across page loads", async () => {
+    state.pathname = "/dashboard";
+    render(<Sidebar />);
+    fireEvent.click(toggle());
+    expect(window.localStorage.getItem(COLLAPSED_STORAGE_KEY)).toBe("1");
+    cleanup();
+    __resetMoreStateForTests();
+    render(<Sidebar />);
+    await waitFor(() => expect(sidebar()).toHaveAttribute("data-collapsed"));
+    fireEvent.click(toggle());
+    expect(window.localStorage.getItem(COLLAPSED_STORAGE_KEY)).toBe("0");
+  });
+
+  it("still toggles with storage blocked", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    render(<Sidebar />);
+    fireEvent.click(toggle());
+    expect(sidebar()).toHaveAttribute("data-collapsed");
+  });
+
+  it("collapsed, every row keeps its accessible name; expanded rows need no aria-label", () => {
+    state.pathname = "/dashboard";
+    flagState.flags = { tutor_view: "on" };
+    render(<Sidebar />);
+    expect(screen.getByTestId("nav-link-library")).not.toHaveAttribute("aria-label");
+    fireEvent.click(toggle());
+    for (const [id, name] of [["nav-link-dashboard", "Today"], ["nav-link-learn", "Learn"], ["nav-link-tree", "Knowledge"],
+      ["nav-link-library", "Library"], ["nav-link-tutor-view", "Tutor"], ["nav-link-calendar", "Calendar"],
+      ["nav-link-settings", "Settings"], ["nav-more", "More"]]) {
+      expect(screen.getByTestId(id), id).toHaveAttribute("aria-label", name);
+      expect(screen.getByTestId(id), id).toHaveAccessibleName(name);
+    }
+    expect(screen.getByTestId("nav-account")).toHaveAttribute("title", "Sam Student");
+    expect(screen.getByTestId("nav-account")).toHaveTextContent(/^S/);
+    // More still opens in the rail, its rows named too
+    fireEvent.click(screen.getByTestId("nav-more"));
+    expect(screen.getByTestId("nav-link-quiz")).toHaveAccessibleName("Quiz");
+  });
+
+  it("shows a label tooltip on hover and focus in the rail only", () => {
+    state.pathname = "/dashboard";
+    render(<Sidebar />);
+    const library = screen.getByTestId("nav-link-library");
+    fireEvent.pointerOver(library);
+    expect(screen.queryByTestId("nav-tip")).toBeNull();
+    fireEvent.click(toggle());
+    fireEvent.pointerOver(library);
+    expect(screen.getByTestId("nav-tip")).toHaveTextContent("Library");
+    expect(screen.getByTestId("nav-tip")).toHaveAttribute("aria-hidden", "true");
+    fireEvent.pointerLeave(sidebar());
+    expect(screen.queryByTestId("nav-tip")).toBeNull();
+    fireEvent.focus(screen.getByTestId("nav-link-calendar"));
+    expect(screen.getByTestId("nav-tip")).toHaveTextContent("Calendar");
+    fireEvent.keyDown(screen.getByTestId("nav-link-calendar"), { key: "Escape" });
+    expect(screen.queryByTestId("nav-tip")).toBeNull();
+  });
+
+  it("keeps the pill on the active row at the 36px pitch, expanded and collapsed", () => {
+    stubRowGeometry();
+    flagState.flags = { tutor_view: "on" };
+    const routes: [string, string, number][] = [
+      ["/dashboard", "", 34], ["/learn", "", 70], ["/tree", "", 106],
+      ["/library", "", 142], ["/learn", "view=tutor", 178], ["/calendar", "", 214],
+    ];
+    state.pathname = "/dashboard";
+    const { rerender } = render(<Sidebar />);
+    for (const collapsed of [false, true]) {
+      if (collapsed) fireEvent.click(toggle());
+      for (const [path, search, y] of routes) {
+        state.pathname = path; state.search = search;
+        rerender(<Sidebar />);
+        expect(getComputedStyle(pill()).transform, `${path}?${search} collapsed=${collapsed}`).toBe(`translateY(${y}px)`);
+        expect(current()).toHaveLength(1);
+      }
+    }
+  });
+
+  it("under reduced motion the collapse is instant: transitions never armed, pill in place", async () => {
+    setMedia({ reduced: true });
+    stubRowGeometry();
+    state.pathname = "/library";
+    render(<Sidebar />);
+    await act(() => new Promise(r => setTimeout(r, 50)));
+    fireEvent.click(toggle());
+    expect(sidebar()).toHaveAttribute("data-collapsed");
+    expect(sidebar()).not.toHaveAttribute("data-animated");
+    expect(getComputedStyle(pill()).transform).toBe("translateY(142px)");
+    expect(screen.getByTestId("nav-link-library")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("arms the width animation after mount when motion is allowed", async () => {
+    setMedia({ reduced: false });
+    render(<Sidebar />);
+    expect(sidebar()).not.toHaveAttribute("data-animated");
+    await waitFor(() => expect(sidebar()).toHaveAttribute("data-animated"));
   });
 });
 

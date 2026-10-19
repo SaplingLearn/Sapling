@@ -273,10 +273,28 @@ body:has(.fa26-shell) .fa26-upload__dropzone .btn { background: var(--fa26-paper
   .fa26-navigation { display: none; }
   .fa26-main { padding-left: 32px; }
 }
-/* Narrow desktop: beside the 216px sidebar the dashboard's graph column fell
-   to ~220px, so stack it as the phone does until there is room for two. */
+/* Narrow desktop: beside the EXPANDED 216px sidebar the dashboard's graph
+   column fell to ~220px, so stack it as the phone does until there is room
+   for two. Beside the collapsed 68px rail two columns fit (graph ~370px). */
 @media (min-width: 768px) and (max-width: 959px) {
-  .fa26-dashboard { height: auto; min-height: 100%; }
-  .fa26-dashboard-layout { grid-template-columns: 1fr; }
-  .fa26-dashboard .dashboard-graph { min-height: 430px !important; }
+  .fa26-shell:not(:has(> aside[data-collapsed])) .fa26-dashboard { height: auto; min-height: 100%; }
+  .fa26-shell:not(:has(> aside[data-collapsed])) .fa26-dashboard-layout { grid-template-columns: 1fr; }
+  .fa26-shell:not(:has(> aside[data-collapsed])) .fa26-dashboard .dashboard-graph { min-height: 430px !important; }
 }
+
+/* Thin, themed scrollbars for the shell's scroll container and every panel
+   that scrolls inside it (Dashboard context column, Learn route panel,
+   Library lists, tutor transcript). Zero-specificity (:where) so a component
+   that hides its own scrollbar still wins; scoped to <main>, so the landing
+   page and other surfaces keep theirs. */
+.fa26-main { scrollbar-color: rgb(37 61 47 / 22%) transparent; }
+:where(.fa26-main, .fa26-main *) { scrollbar-width: thin; }
+:where(.fa26-main, .fa26-main *)::-webkit-scrollbar { width: 8px; height: 8px; }
+:where(.fa26-main, .fa26-main *)::-webkit-scrollbar-track { background: transparent; }
+:where(.fa26-main, .fa26-main *)::-webkit-scrollbar-thumb {
+  background: rgb(37 61 47 / 22%);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+:where(.fa26-main, .fa26-main *)::-webkit-scrollbar-thumb:hover { background-color: rgb(37 61 47 / 36%); }
