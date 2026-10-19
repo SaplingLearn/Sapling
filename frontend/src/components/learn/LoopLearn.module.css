@@ -1060,6 +1060,165 @@
   gap: 8px;
 }
 
+/* ── Clov tutor view (prompt 04) ─────────────────────────────────────────
+ * The same controller as the studio, laid out conversation-first: a top bar,
+ * the phase strip and context chips over one centred column, and the context
+ * (goal & plan, materials, map) beside it on a wide screen (HHU6e) or in a
+ * labelled sheet on a narrow one (WCplx, cSgSE). */
+.tutor .top {
+  gap: var(--sapling-space-4);
+}
+
+.tutorCourse {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.tutorColumn {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tutorTop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-4);
+  flex-shrink: 0;
+  min-width: 0;
+  padding-top: var(--sapling-space-3);
+}
+
+.tutorTop > * {
+  width: 100%;
+  max-width: 848px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.tutorNav {
+  display: grid;
+  gap: var(--sapling-space-4);
+}
+
+.tutorHeading {
+  display: grid;
+  gap: var(--sapling-space-2);
+}
+
+.tutorGoalLine {
+  margin: 0;
+  color: var(--sapling-ink);
+  font: 500 13px/1.4 var(--sapling-font-body);
+  overflow-wrap: anywhere;
+}
+
+.tutorGoalTag {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tutorTitle {
+  margin: 0;
+  font: 500 clamp(26px, 3vw, 32px)/1.2 var(--sapling-font-heading);
+  color: var(--sapling-ink);
+  overflow-wrap: anywhere;
+}
+
+.tutorMain {
+  padding-top: var(--sapling-space-3);
+}
+
+.tutorMain > * {
+  width: 100%;
+  max-width: 848px;
+  margin-inline: auto;
+}
+
+.tutor .conversation {
+  border-top: 0;
+}
+
+.tutor .teachActions {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.checkMeWide {
+  flex: 1 1 280px;
+}
+
+.tutorContext {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-4);
+  flex: 0 0 clamp(300px, 28vw, 400px);
+  min-width: 0;
+  padding: var(--sapling-space-5) 0 var(--sapling-space-5) var(--sapling-space-6);
+  border-left: 1px solid var(--sapling-line);
+  overflow-y: auto;
+}
+
+.tutorContextHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sapling-space-3);
+}
+
+.tutorContextTitle {
+  margin: 0;
+  font: 500 26px/1.25 var(--sapling-font-heading);
+}
+
+.tutorContextClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--sapling-control-min);
+  height: var(--sapling-control-min);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--sapling-ink);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tutorContextClose:hover {
+  background: var(--sapling-sage);
+}
+
+.tutorContextClose:focus-visible,
+.materialsLead:focus-visible {
+  outline: 2px solid var(--sapling-primary);
+  outline-offset: 2px;
+}
+
+.tutorSheetBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sapling-space-5);
+}
+
+/* The composer's lead: a link or control to the course's real materials. */
+.materialsLead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sapling-space-2);
+  min-height: var(--sapling-control-min);
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--sapling-primary);
+  font: 600 14px/1.2 var(--sapling-font-body);
+  text-decoration: none;
+  cursor: pointer;
+}
+
 /* ── Phone, or a short window: one scrolling page ─────────────────────── */
 @media (max-width: 767px), (max-height: 760px) {
   .studio {
@@ -1096,6 +1255,45 @@
 }
 
 @media (max-width: 767px) {
+  .tutorBarLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .tutor .teachActions > :global(.sapling-action) {
+    flex: 1 1 140px;
+    padding-inline: 12px;
+    white-space: nowrap;
+  }
+
+  .tutorColumn {
+    width: 100%;
+    flex: none;
+  }
+
+  /* One compact row of stages on a phone (rIzSa). */
+  .tutor :global(.sapling-phases) {
+    gap: 6px 12px;
+  }
+
+  .tutor :global(.sapling-phases li) {
+    font-size: 12px;
+    gap: 4px;
+  }
+
+  .tutor :global(.sapling-phases__mark) {
+    width: 20px;
+    height: 20px;
+  }
+
+  .tutor .teachActions > .checkMeWide {
+    flex-basis: 100%;
+  }
+
   /* The phone frame (zF4QB) keeps the heading to its title; the IDK button
    * and the probe itself carry the same guidance. */
   .heading :global(.sapling-page-heading__description) {

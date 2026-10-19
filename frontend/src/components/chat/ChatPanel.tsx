@@ -362,7 +362,9 @@ const Message = React.memo(function Message({
               <>
                 <p className={styles.interruptedText}>
                   {m.content ? "The partial reply stays here. " : ""}
-                  Your conversation is still here. Try the response again.
+                  {retryAllowed
+                    ? "Your conversation is still here. Try the response again."
+                    : "Your conversation is still here. Retry becomes available once chat can continue."}
                 </p>
                 <button
                   type="button"

@@ -18,11 +18,13 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { DisclaimerModal } from "../DisclaimerModal";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
-import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
+import { ChatPanel, type ChatMsg, type InterruptedReason } from "../chat/ChatPanel";
+import { interruptedTurnLanded, removeInterruptedTurn } from "../chat/interruptedTurn";
 import { CustomSelect } from "../CustomSelect";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
+import { useFlag, useFlagMap } from "@/context/FlagsContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
 import { apiToGraphNode, type GraphEdge, type GraphNode } from "@/lib/data";
@@ -72,9 +74,23 @@ import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary, GoalEditor, skillEvidenceLabel } from "./LearningScope";
 import { NewSessionConfirm } from "./NewSessionConfirm";
 import {
+  CONTEXT_TITLES,
+  CONVERSATION_SEEDS,
+  ContextChips,
+  GoalPlanContext,
+  MapContext,
+  MaterialsContext,
+  TutorBar,
+  TutorHistory,
+  TutorMenu,
+  TutorWelcome,
+  type TutorContextTab,
+} from "./TutorView";
+import {
   BotanicalIcon,
   ChoiceGroup,
   ContextPanel,
+  ContextSheet,
   GoalSummary,
   PageHeading,
   PhaseStrip,
@@ -91,6 +107,13 @@ const PROBE_UNAVAILABLE_COPY = "Couldn't grade that one — here's another.";
 const PROBE_REFUSED_COPY = "Answer in your own words — that read as instructions to the grader.";
 const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to keep learning.";
 const CONTINUE_MESSAGE = "Let's continue.";
+/** A submission whose feedback stream did not settle: the grade may already be
+ *  written, so the answer is never sent again on its own (status-first). */
+const FEEDBACK_INTERRUPTED_COPY =
+  "The feedback was interrupted. Your answer may already be graded, so it wasn't sent again — here's where your session stands.";
+const ALREADY_GRADED_COPY = "That answer was already graded. Here's where your session stands.";
+const RETRY_LANDED_COPY = "Clov's reply had already been saved, so nothing was sent again. It's shown above.";
+const isOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -132,7 +155,13 @@ const REASON_LABEL: Record<string, string> = {
 const TEACHING: readonly LoopPhase[] = ["teach", "check", "feedback"];
 /** Below this width the learning-route rail becomes a labelled sheet. */
 const RAIL_BREAKPOINT = 1024;
+/** The Clov tutor view of this same controller (prompt 04): `?view=tutor`,
+ *  shown only while this flag is on (services/feature_flags.py REGISTRY). */
+const TUTOR_VIEW_FLAG = "tutor_view";
+type LoopView = "learn" | "tutor";
+const viewHref = (base: string, view: LoopView) => (view === "tutor" ? `${base}?view=tutor` : base);
 const RAIL_GRAPH_HEIGHT = 240;
+const TUTOR_GRAPH_HEIGHT = 300;
 
 let msgSeq = 0;
 const msgId = (prefix: string) => `${prefix}-${Date.now()}-${++msgSeq}`;
@@ -177,6 +206,20 @@ export function LoopLearn() {
   const phone = useIsMobile();
   const [state, dispatch] = useReducer(reduceLoopEvent, undefined, initialLoopState);
   const [deepLink] = useState(() => readDeepLink(searchParams));
+  // One controller, two views (prompt 04): the Learning Studio and the Clov
+  // tutor render this same session/goal/plan/phase. The view is presentation
+  // only — switching it never touches the session. `?view=tutor` asks for the
+  // tutor; the tutor_view flag decides whether it is offered at all.
+  const tutorOffered = useFlag(TUTOR_VIEW_FLAG) === "on";
+  const { ready: flagsReady } = useFlagMap();
+  const [viewParam, setViewParam] = useState<LoopView>(() => (searchParams.get("view") === "tutor" ? "tutor" : "learn"));
+  const view: LoopView = tutorOffered && viewParam === "tutor" ? "tutor" : "learn";
+  // The tutor's discovery shows a welcome instead of auto-starting a check-in;
+  // wait for the flag answer before discovery when the tutor was asked for.
+  const bootReady = viewParam !== "tutor" || flagsReady;
+  const [welcome, setWelcome] = useState(false);
+  const [contextTab, setContextTab] = useState<TutorContextTab | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Course + sessions
   const [courses, setCourses] = useState<EnrolledCourse[] | null>(null);
@@ -230,6 +273,11 @@ export function LoopLearn() {
   const [checkBusy, setCheckBusy] = useState(false);
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
+  // Retry of an interrupted conversational turn (prompt 04): one at a time,
+  // and a status-first note when a graded submission's feedback broke off.
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [recoveryNote, setRecoveryNote] = useState<string | null>(null);
+  const messagesRef = useRef<ChatMsg[]>([]);
 
   // Close
   const [close, setClose] = useState<LoopCloseResponse | null>(null);
@@ -275,6 +323,9 @@ export function LoopLearn() {
   useEffect(() => {
     sessionRef.current = sessionId;
   }, [sessionId]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // The deep link is consumed at mount: drop it from the URL so a reload, or a
   // later session/course switch, never re-applies it (it was sticky).
@@ -282,8 +333,15 @@ export function LoopLearn() {
   useEffect(() => {
     if (urlCleaned.current || !hasDeepLink(deepLink)) return;
     urlCleaned.current = true;
-    router.replace(pathname || "/learn", { scroll: false });
-  }, [deepLink, router, pathname]);
+    // the view is not a deep link: it stays in the URL
+    router.replace(viewHref(pathname || "/learn", viewParam), { scroll: false });
+  }, [deepLink, router, pathname, viewParam]);
+  const switchView = (next: LoopView) => {
+    setViewParam(next);
+    setContextTab(null);
+    setHistoryOpen(false);
+    router.replace(viewHref(pathname || "/learn", next), { scroll: false });
+  };
 
   const course = useMemo(() => courses?.find((c) => c.course_id === courseId) ?? null, [courses, courseId]);
   const applyLearningScope = useCallback((payload: LoopLearningScope | null | undefined) => {
@@ -431,6 +489,8 @@ export function LoopLearn() {
     setCheckNote(null);
     setCheckBusy(false);
     setAskRating(null);
+    setRetryBusy(false);
+    setRecoveryNote(null);
     setClose(null);
     setCloseBusy(false);
     setCloseNote(null);
@@ -438,6 +498,7 @@ export function LoopLearn() {
     setConfirmNew(null);
     setConfirmBusy(false);
     setConfirmError(null);
+    setWelcome(false);
     countedAttempt.current = null;
   }, [invalidateHint]);
 
@@ -659,10 +720,14 @@ export function LoopLearn() {
       await openReadOnly(wanted); // a legacy (or closed) session: read-only
     } else if (list.length > 0) {
       await resume(list[0]);
+    } else if (view === "tutor" && !deepLink.topic && !deepLink.mode) {
+      // The tutor's start (s3Kxuz): discovery succeeded and nothing is open,
+      // so the student chooses — nothing starts until they do.
+      setWelcome(true);
     } else {
       await newSession({ topic: deepLink.topic, mode: deepLink.mode });
     }
-  }, [courseId, userId, courses, deepLink, openReadOnly, resume, newSession]);
+  }, [courseId, userId, courses, deepLink, openReadOnly, resume, newSession, view]);
 
   const loadCourses = useCallback(async () => {
     if (!userId) return;
@@ -685,12 +750,12 @@ export function LoopLearn() {
   }, [loadCourses]);
 
   useEffect(() => {
-    if (!userId || !courseId || !courses) return;
+    if (!userId || !courseId || !courses || !bootReady) return;
     const key = `${userId}:${courseId}`;
     if (bootKey.current === key) return; // StrictMode re-runs must not start twice
     bootKey.current = key;
     void loadSessions();
-  }, [userId, courseId, courses, loadSessions]);
+  }, [userId, courseId, courses, loadSessions, bootReady]);
 
   useEffect(() => {
     if (courses) void refreshGraph();
@@ -865,7 +930,11 @@ export function LoopLearn() {
 
   const runTurn = useCallback(async (
     run: (h: StreamChatHandlers) => Promise<LoopTurnResult>,
-    { submission = false }: { submission?: boolean } = {},
+    { submission = false, retryText }: {
+      submission?: boolean;
+      /** A conversational turn's own text: an interrupted turn offers Retry with it. */
+      retryText?: string;
+    } = {},
   ): Promise<LoopTurnResult | null> => {
     // A hint may still be in flight when the learner submits or continues.
     // Its previous phase/question must never overwrite the newer turn.
@@ -877,6 +946,21 @@ export function LoopLearn() {
     const sid = sessionRef.current;
     let streamed = "";
     let hardSeen = false;
+    setRecoveryNote(null);
+    /** Keep what arrived, marked interrupted. A conversational turn carries its
+     *  text and owning session so Retry can re-send it there and nowhere else;
+     *  a submission never does (its grade may already be written). */
+    const interrupt = (reason: InterruptedReason) => {
+      const conversational = !submission && retryText !== undefined && !!sid;
+      if (!conversational && !streamed) return;
+      const partial = streamed;
+      setMessages((prev) => [...prev, {
+        ...asMsg("assistant", partial),
+        interrupted: true,
+        interruptedReason: reason,
+        ...(conversational ? { retryText, turnOwner: sid ?? undefined } : {}),
+      }]);
+    };
     // Abort is cooperative: a queued event may arrive after Stop or a session
     // switch. Only the currently owned, live stream may change the learner UI.
     const ownsTurn = () => mounted.current && g === gen.current && streamAbort.current === controller;
@@ -908,7 +992,11 @@ export function LoopLearn() {
       const res = await run(handlers);
       if (!ownsTurn()) return null;
       if (controller.signal.aborted) {
-        if (submission && sid) void reconcile(sid, g);
+        interrupt("stopped");
+        if (submission && sid) {
+          setRecoveryNote(FEEDBACK_INTERRUPTED_COPY);
+          void reconcile(sid, g);
+        }
         return null;
       }
       // done.reply is always the final, leak-stripped text (A46) — never the tokens
@@ -935,18 +1023,33 @@ export function LoopLearn() {
       return res;
     } catch (err) {
       if (!ownsTurn()) return null;
-      if (streamed) setMessages((prev) => [...prev, { ...asMsg("assistant", streamed), interrupted: true }]);
-      // The grade lands BEFORE the feedback stream starts: a submission that did
-      // not settle (409 already graded, a mid-stream error, Stop) re-reads the
-      // session so the answer box never sticks on a graded item.
       const { status, detail } = extractErrorDetail(err);
       const closed = status === 409 && detail === SESSION_CLOSED_DETAIL; // reportError shows the close
-      if (submission && sid && !closed) void reconcile(sid, g);
+      const alreadyGraded = submission && status === 409 && detail === ALREADY_GRADED_DETAIL;
+      const offline = isOffline();
+      if (!closed && !alreadyGraded) {
+        interrupt(
+          controller.signal.aborted ? "stopped" : hardSeen || budgetPauseOf(err) ? "paused" : offline ? "offline" : "failed",
+        );
+      }
+      // The grade lands BEFORE the feedback stream starts: a submission that did
+      // not settle (409 already graded, a mid-stream error, Stop) re-reads the
+      // session so the answer box never sticks on a graded item — and the
+      // answer is never sent again on its own.
+      if (submission && sid && !closed) {
+        setRecoveryNote(alreadyGraded ? ALREADY_GRADED_COPY : FEEDBACK_INTERRUPTED_COPY);
+        void reconcile(sid, g);
+      }
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
       if (hardSeen) return null;
-      if (submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return null;
-      reportError(err, "The tutor couldn't answer. Try again.");
+      if (alreadyGraded) return null;
+      // A conversational turn explains itself inline (the interrupted turn and
+      // its Retry); only a pause or a closed session still routes elsewhere.
+      if (!submission && retryText !== undefined && !closed && !budgetPauseOf(err)) return null;
+      reportError(err, offline
+        ? "You're offline, so nothing reached the tutor. Retry once you're back online."
+        : "The tutor couldn't answer. Try again.");
       return null;
     } finally {
       if (streamAbort.current === controller) {
@@ -960,10 +1063,48 @@ export function LoopLearn() {
     if (!sessionId || paused) return;
     setPlanJustApproved(false);
     setMessages((prev) => [...prev, asMsg("user", text)]);
-    void runTurn((h) => streamLoopChat(sessionId, userId, text, h));
+    void runTurn((h) => streamLoopChat(sessionId, userId, text, h), { retryText: text });
   };
 
   const stop = () => streamAbort.current?.abort();
+
+  /** Retry ONE interrupted conversational turn (prompt 04). Only the latest
+   *  turn, in the session that owns it, while nothing else runs. The loop saves
+   *  a turn's user row and reply together on completion, so an interrupted turn
+   *  normally left nothing — but a Stop or a dropped connection can race the
+   *  server finishing it. The stored transcript is read first: if the turn
+   *  landed, the screen takes the stored rows and the server status, and
+   *  nothing is sent again. Otherwise the pair is replaced by one re-send
+   *  through the same stream client. A failed read sends nothing. */
+  const retryTurn = async (m: ChatMsg) => {
+    const sid = sessionRef.current;
+    const text = m.retryText;
+    if (!text || !sid || m.turnOwner !== sid || retryBusy || streamAbort.current || paused) return;
+    if (!TEACHING.includes(state.phase) || messagesRef.current.at(-1)?.id !== m.id) return;
+    const g = gen.current;
+    setRetryBusy(true);
+    setRecoveryNote(null);
+    let landed: ChatMsg[] | null = null;
+    try {
+      const stored = await resumeSession(sid);
+      if (g !== gen.current || sessionRef.current !== sid) return;
+      const rows = toChat(stored.messages);
+      if (interruptedTurnLanded(rows, messagesRef.current, m.id, text)) landed = rows;
+    } catch (err) {
+      if (g === gen.current) reportError(err, "Couldn't check this conversation, so nothing was sent again. Try Retry in a moment.");
+      return;
+    } finally {
+      if (g === gen.current) setRetryBusy(false);
+    }
+    if (landed) {
+      setMessages(landed);
+      setRecoveryNote(RETRY_LANDED_COPY);
+      await reconcile(sid, g); // the landed turn may have moved the phase or posed a check
+      return;
+    }
+    setMessages((prev) => [...removeInterruptedTurn(prev, m.id, text), asMsg("user", text)]);
+    void runTurn((h) => streamLoopChat(sid, userId, text, h), { retryText: text });
+  };
 
   const rate = (rating: LoopRating) => {
     const sid = askRating;
@@ -1224,7 +1365,52 @@ export function LoopLearn() {
     noCourses,
   });
   const openGoalEditor = () => { setGoalEditor(true); setGoalError(null); };
+  const lastMessageId = messages[messages.length - 1]?.id;
+  /** Retry is offered only for the latest interrupted turn of THIS session,
+   *  while no other turn or retry runs and chat is allowed (not paused). */
+  const canRetry = (m: ChatMsg) =>
+    !!m.retryText && !!sessionId && m.turnOwner === sessionId && m.id === lastMessageId &&
+    !streaming && !retryBusy && !paused && teaching;
+  const openContext = (tab: TutorContextTab) => {
+    setHistoryOpen(false);
+    setContextTab((current) => (current === tab && !compact ? null : tab));
+  };
+  // Materials: real course context from Library, never an attachment.
+  const materialsLead = view === "tutor" ? (
+    <button
+      type="button"
+      className={styles.materialsLead}
+      data-testid="tutor-materials-open"
+      aria-haspopup={compact ? "dialog" : undefined}
+      onClick={() => openContext("materials")}
+    >
+      <BotanicalIcon name="paper" size={18} />
+      Materials
+    </button>
+  ) : (
+    <Link href="/library" className={styles.materialsLead} data-testid="loop-materials-link">
+      <BotanicalIcon name="paper" size={18} />
+      Course materials
+    </Link>
+  );
 
+  const courseSelect = courses && courses.length > 1 && (
+    <CustomSelect<string>
+      testId="loop-course-select"
+      value={courseId ?? ""}
+      options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
+      onChange={(v) => {
+        ++gen.current;
+        clearSessionView();
+        setSessionId(null);
+        sessionRef.current = null;
+        setOpenSessions(null);
+        setCourseId(v);
+      }}
+      ariaLabel="Course"
+      size="sm"
+    />
+  );
   const heading = (
     <div className={styles.heading}>
       <PageHeading
@@ -1234,22 +1420,11 @@ export function LoopLearn() {
         description={studio.description}
         actions={
           <>
-            {courses && courses.length > 1 && (
-              <CustomSelect<string>
-                testId="loop-course-select"
-                value={courseId ?? ""}
-                options={courses.map((c) => ({ value: c.course_id, label: c.course_code || c.course_name }))}
-                onChange={(v) => {
-                  ++gen.current;
-                  clearSessionView();
-                  setSessionId(null);
-                  sessionRef.current = null;
-                  setOpenSessions(null);
-                  setCourseId(v);
-                }}
-                ariaLabel="Course"
-                size="sm"
-              />
+            {courseSelect}
+            {tutorOffered && (
+              <SaplingAction tone="quiet" data-testid="loop-view-tutor" onClick={() => switchView("tutor")}>
+                Open Clov tutor
+              </SaplingAction>
             )}
             <Link data-testid="loop-tree-link" href={treeHref} className={styles.headerLink}>
               Knowledge map
@@ -1511,6 +1686,16 @@ export function LoopLearn() {
         <StatusMessage tone="pending">{starting ? "Starting your session…" : "Loading your sessions…"}</StatusMessage>
       </div>
     );
+  } else if (welcome && !sessionId) {
+    body = (
+      <TutorWelcome
+        courseLabel={courseLabel}
+        starting={starting}
+        onStartCheckIn={() => requestNewSession()}
+        onAsk={(text) => requestNewSession({ topic: text })}
+        materials={materialsLead}
+      />
+    );
   } else if (goalEditor) {
     body = <GoalEditor key={`${sessionId}:${courseId}`} goal={goal}
       nodes={railGraph.nodes.filter((node) => !node.is_subject_root)} busy={goalBusy} error={goalError}
@@ -1553,9 +1738,60 @@ export function LoopLearn() {
     body = <ClosePanel close={close} note={closeNote} names={conceptNames} courseId={courseId} />;
   } else {
     const firstConcept = plan?.[0];
+    const tutorView = view === "tutor";
+    // Conversation seeds ask for teaching through the chat stream; none grades.
+    const canSeed = !paused && !streaming && !!sessionId;
+    const teachActions = (
+      <>
+        {state.phase === "feedback" && (
+          <SaplingAction
+            data-testid="loop-continue"
+            onClick={() => send(CONTINUE_MESSAGE)}
+            disabled={!!paused || streaming}
+          >
+            {tutorView ? "Continue learning" : "Continue"}
+          </SaplingAction>
+        )}
+        {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
+          <SaplingAction
+            data-testid="loop-teach-start"
+            onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
+            disabled={streaming}
+          >
+            Start with {firstConcept.concept_name}
+          </SaplingAction>
+        )}
+        <SaplingAction
+          tone={tutorView && state.phase !== "feedback" ? "primary" : "secondary"}
+          data-testid="loop-check-me"
+          className={tutorView ? styles.checkMeWide : undefined}
+          onClick={() => void checkMe()}
+          disabled={checkBusy || streaming}
+          title="Get a question on this concept"
+        >
+          {checkBusy
+            ? "Getting a question…"
+            : tutorView
+              ? state.phase === "feedback" ? "Try another check" : "Check my understanding"
+              : "Check me"}
+        </SaplingAction>
+        {state.phase !== "feedback" && (
+          <>
+            <SaplingAction tone="secondary" data-testid="loop-seed-confused" disabled={!canSeed} onClick={() => send(CONVERSATION_SEEDS.confused)}>
+              I&apos;m confused
+            </SaplingAction>
+            <SaplingAction tone="secondary" data-testid="loop-seed-example" disabled={!canSeed} onClick={() => send(CONVERSATION_SEEDS.example)}>
+              Another example
+            </SaplingAction>
+          </>
+        )}
+        {checkNote && <span role="status" className={styles.muted}>{checkNote}</span>}
+      </>
+    );
     body = (
-      <div className={styles.teach}>
+      <div className={styles.teach} data-view={view}>
         <div className={styles.teachTop}>
+          {recoveryNote && <StatusMessage tone="info" testid="loop-recovery-note">{recoveryNote}</StatusMessage>}
           {askRating && askRating === sessionId && <RatingPrompt onRate={rate} />}
           {item ? (
             <CheckCard
@@ -1570,38 +1806,9 @@ export function LoopLearn() {
               onIdk={() => void submitAttempt(true)}
               onHint={() => void askHint()}
             />
-          ) : (
-            <div className={styles.teachActions}>
-              {state.phase === "feedback" && (
-                <SaplingAction
-                  data-testid="loop-continue"
-                  onClick={() => send(CONTINUE_MESSAGE)}
-                  disabled={!!paused || streaming}
-                >
-                  Continue
-                </SaplingAction>
-              )}
-              {(messages.length <= 1 || planJustApproved) && firstConcept && state.phase === "teach" && !paused && (
-                <SaplingAction
-                  data-testid="loop-teach-start"
-                  onClick={() => send(`Teach me about ${firstConcept.concept_name}.`)}
-                  disabled={streaming}
-                >
-                  Start with {firstConcept.concept_name}
-                </SaplingAction>
-              )}
-              <SaplingAction
-                tone="secondary"
-                data-testid="loop-check-me"
-                onClick={() => void checkMe()}
-                disabled={checkBusy || streaming}
-                title="Get a question on this concept"
-              >
-                {checkBusy ? "Getting a question…" : "Check me"}
-              </SaplingAction>
-              {checkNote && <span role="status" className={styles.muted}>{checkNote}</span>}
-            </div>
-          )}
+          ) : !tutorView ? (
+            <div className={styles.teachActions}>{teachActions}</div>
+          ) : null}
         </div>
         <div data-testid="loop-messages" className={styles.conversation}>
           <ChatPanel
@@ -1609,8 +1816,16 @@ export function LoopLearn() {
             onSend={send}
             streamingText={streamingText}
             onStop={stop}
+            onRetry={(m) => void retryTurn(m)}
+            canRetry={canRetry}
             disabled={!!paused}
-            placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
+            disabledReason={paused ? "Tutor chat is paused. Check answers still count, and review stays open." : undefined}
+            placeholder={paused ? "Chat is paused" : tutorView ? "Ask Clov, or think out loud…" : "Ask the tutor…"}
+            inputLabel="Message Clov"
+            // In the tutor the actions sit above the composer (ULhG3) — outside
+            // the transcript's scroll box, so they never overlap a message.
+            beforeComposer={tutorView && !item ? <div className={styles.teachActions}>{teachActions}</div> : undefined}
+            composerLead={materialsLead}
           />
         </div>
       </div>
@@ -1671,6 +1886,198 @@ export function LoopLearn() {
       </section>
     </div>
   );
+
+  if (view === "tutor") {
+    const tab = contextTab;
+    const contextTitle = tab ? CONTEXT_TITLES[tab] : "";
+    const goalText = goal ? goal.text || "Selected concepts" : "Explore the whole course";
+    const focusTitle =
+      (state.focusNodeId ? conceptNames.get(state.focusNodeId) : undefined) ??
+      plan?.[0]?.concept_name ??
+      course?.course_name ??
+      "Your session";
+    const inSession = !!sessionId && !readOnly;
+    const contextContent = tab === "goal" ? (
+      <GoalPlanContext
+        goalText={goalText}
+        scope={goal ? goal.target_node_ids.map((id) => conceptNames.get(id) ?? "Selected concept").join(" · ") : null}
+        route={routeItems}
+        teaching={teaching}
+        diagnosis={<DiagnosisSummary diagnosis={diagnosis} names={conceptNames} />}
+        onEditGoal={canEditGoal && scopeReady && !goalBusy ? () => { setContextTab(null); openGoalEditor(); } : undefined}
+        onNewSession={inSession ? () => { setContextTab(null); requestNewSession(); } : undefined}
+        emptyCopy={routeEmpty}
+      />
+    ) : tab === "materials" ? (
+      <MaterialsContext userId={userId} courseId={courseId} courseLabel={courseLabel} />
+    ) : tab === "map" ? (
+      <MapContext
+        graph={railGraph.nodes.length > 0
+          ? <RailGraph nodes={railGraph.nodes} edges={railGraph.edges} highlightId={focusNodeId ?? undefined} height={TUTOR_GRAPH_HEIGHT} />
+          : <p className={styles.muted}>Concepts appear here as you learn.</p>}
+        courseLabel={courseLabel}
+        conceptCount={railGraph.nodes.filter((n) => !n.is_subject_root).length}
+        focusName={focusNodeId ? conceptNames.get(focusNodeId) ?? null : null}
+        treeHref={treeHref}
+      />
+    ) : null;
+    const closeContext = () => {
+      const was = contextTab;
+      setContextTab(null);
+      if (was && !compact) {
+        requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-testid="tutor-context-${was}"]`)?.focus());
+      }
+    };
+    return (
+      <FullHeightScreen className={styles.screen}>
+        <DisclaimerModal />
+        <div
+          data-testid="loop-phase"
+          data-phase={state.phase}
+          data-session-id={sessionId ?? ""}
+          data-view="tutor"
+          className={`${styles.studio} ${styles.tutor}`}
+        >
+          <div className={styles.top}>
+            <TutorBar
+              course={courseSelect || <span className={styles.tutorCourse}>{courseLabel ?? "Your course"}</span>}
+              historyOpen={historyOpen}
+              onHistory={() => { setContextTab(null); setHistoryOpen(true); }}
+              newSession={
+                <SaplingAction
+                  tone="secondary"
+                  data-testid="loop-new-session"
+                  onClick={() => requestNewSession()}
+                  disabled={!courseId || starting || !showSessions}
+                  aria-label="New session"
+                  title={sessionIsOpen ? "Wrap up this session and start a new one" : "Start a new session"}
+                >
+                  <span aria-hidden="true">+</span>
+                  <span className={styles.tutorBarLabel}> New session</span>
+                </SaplingAction>
+              }
+              menu={
+                <TutorMenu
+                  items={[
+                    { id: "goal", label: "View goal & plan", onSelect: () => openContext("goal"), disabled: !inSession },
+                    { id: "materials", label: "Open course materials", onSelect: () => openContext("materials") },
+                    { id: "map", label: "Open the knowledge map", onSelect: () => openContext("map") },
+                    ...(teaching && sessionId
+                      ? [{ id: "end", label: closeBusy ? "Closing…" : "End session & review", onSelect: () => void doClose(), disabled: closeBusy }]
+                      : []),
+                    { id: "studio", label: "Switch to the Learning studio", onSelect: () => switchView("learn") },
+                  ]}
+                />
+              }
+            />
+          </div>
+          <div className={styles.workspace}>
+            {/* HHU6e: the context panel sits beside everything under the bar,
+                so the column it narrows stays one centred column. */}
+            <div className={styles.tutorColumn}>
+              <div className={styles.tutorTop}>
+                {inSession && showLearningChrome && (
+                  <div className={styles.tutorNav}>
+                    <div className={styles.phaseRow}>
+                      <PhaseStrip phase={state.phase} testid="loop-phase-strip" />
+                      <div className={styles.phaseSide}>{learnerChip}</div>
+                    </div>
+                    <ContextChips active={tab} onSelect={openContext} panelId={compact ? undefined : "tutor-context-panel"} />
+                  </div>
+                )}
+                {!(welcome && !sessionId) && (
+                  <div className={styles.tutorHeading}>
+                    {inSession && teaching ? (
+                      <>
+                        <p className={styles.tutorGoalLine} data-testid="tutor-goal-line">
+                          <span className={styles.tutorGoalTag}>Goal</span> <span aria-hidden="true">·</span> {goalText}
+                        </p>
+                        <h1 className={styles.tutorTitle}>{focusTitle}</h1>
+                      </>
+                    ) : (
+                      <>
+                        <h1 className={styles.tutorTitle}>{studio.title}</h1>
+                        {studio.description && <p className={styles.panelLead}>{studio.description}</p>}
+                      </>
+                    )}
+                  </div>
+                )}
+                {progressNote}
+                {notices}
+              </div>
+              <div className={`${styles.main} ${styles.tutorMain}`}>{body}</div>
+            </div>
+            {!compact && tab && (
+              <aside
+                id="tutor-context-panel"
+                className={styles.tutorContext}
+                aria-labelledby="tutor-context-title"
+                data-testid="tutor-context-panel"
+              >
+                <div className={styles.tutorContextHead}>
+                  <h2 id="tutor-context-title" className={styles.tutorContextTitle}>{contextTitle}</h2>
+                  <button
+                    type="button"
+                    className={styles.tutorContextClose}
+                    data-testid="tutor-context-close"
+                    aria-label={`Close ${contextTitle}`}
+                    onClick={closeContext}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                </div>
+                {contextContent}
+              </aside>
+            )}
+          </div>
+        </div>
+        {compact && (
+          <ContextSheet open={!!tab} onClose={() => setContextTab(null)} title={contextTitle} testid="tutor-context-sheet">
+            <div className={styles.tutorSheetBody}>
+              {contextContent}
+              <SaplingAction data-testid="tutor-context-back" onClick={() => setContextTab(null)}>
+                Back to conversation
+              </SaplingAction>
+            </div>
+          </ContextSheet>
+        )}
+        <ContextSheet
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          title="Your conversations"
+          side={compact ? "bottom" : "right"}
+          testid="tutor-history-sheet"
+        >
+          <TutorHistory
+            userId={userId}
+            courseId={courseId}
+            open={sessionsError ? [] : openSessions ?? []}
+            currentId={sessionId}
+            onResume={(s) => {
+              setHistoryOpen(false);
+              if (s.session_id !== sessionId) void resume(s);
+            }}
+            onOpenPast={(id) => {
+              setHistoryOpen(false);
+              void openReadOnly(id);
+            }}
+            onNewSession={() => {
+              setHistoryOpen(false);
+              requestNewSession();
+            }}
+          />
+        </ContextSheet>
+        <NewSessionConfirm
+          open={confirmNew !== null}
+          topic={confirmNew?.topic ?? null}
+          busy={confirmBusy}
+          error={confirmError}
+          onCancel={cancelNewSession}
+          onConfirm={() => void confirmNewSession()}
+        />
+      </FullHeightScreen>
+    );
+  }
 
   return (
     <FullHeightScreen className={styles.screen}>
@@ -1752,7 +2159,9 @@ function studioCopy({ blocked, readOnly, editingGoal, phase, courseName, noCours
 
 /** The knowledge-map rail: `KnowledgeGraph` fed as Learn.tsx's
  *  SidebarKnowledgeGraph feeds it (measured width, fixed height, original colours). */
-function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string }) {
+function RailGraph({ nodes, edges, highlightId, height = RAIL_GRAPH_HEIGHT }: {
+  nodes: GraphNode[]; edges: GraphEdge[]; highlightId?: string; height?: number;
+}) {
   const [width, setWidth] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1765,7 +2174,7 @@ function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: G
   return (
     <div ref={ref} className={styles.railGraph}>
       {width > 0 && (
-        <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={RAIL_GRAPH_HEIGHT} highlightId={highlightId} />
+        <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={height} highlightId={highlightId} />
       )}
     </div>
   );
