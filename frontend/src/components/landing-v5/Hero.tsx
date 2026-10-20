@@ -31,6 +31,7 @@ import { useEffect, useRef } from 'react';
 import { PenSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { IS_TEST_MODE, now, random } from '@/lib/testMode';
+import { LeafI } from './LeafI';
 
 // Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
 // fillStyle where CSS var() doesn't resolve. #3e6f8a mirrors --info in
@@ -394,7 +395,7 @@ export function Hero({
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
           transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
         }} className="font-aleo text-[clamp(4rem,13.5vw,13rem)] font-semibold leading-[1.1] pb-[0.115em] tracking-tight px-4 text-[var(--brand-forest)]">
-          <span>{heroText1 || ' '}</span>
+          <span>{heroText1 === 'Sapling' ? <>Sapl<LeafI />ng</> : (heroText1 || ' ')}</span>
         </h1>
 
         <p style={{

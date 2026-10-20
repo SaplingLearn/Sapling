@@ -2592,7 +2592,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
    declarations ARE the effect — collapsing them onto one shared curve
    destroys it. Do not "simplify" these.
    ────────────────────────────────────────────────────────────────── */
-@keyframes s1Stem   { 0%,15% { stroke-dashoffset:27; } 34%,100% { stroke-dashoffset:0; } }
+@keyframes s1Stem   { 0%,15% { clip-path:inset(100% 0 0 0); } 34%,100% { clip-path:inset(0 0 0 0); } }
 @keyframes s1LeafLo {
   0%,27% { transform:scale(0.05) rotate(9deg);  opacity:0; animation-timing-function:cubic-bezier(0.16,0.9,0.3,1); }
   36%    { transform:scale(1.03) rotate(5deg);  opacity:1; animation-timing-function:cubic-bezier(0.5,0,0.85,0.3); }
@@ -2605,7 +2605,6 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
   48%    { transform:scale(1) rotate(5.4deg);   opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
   52%    { transform:scale(1) rotate(0.8deg);   opacity:1; animation-timing-function:cubic-bezier(0.4,0,0.6,1); }
   57%,100% { transform:scale(1) rotate(3.2deg); opacity:1; } }
-@keyframes s1Bud    { 0%,29% { transform:scale(0); } 35%,100% { transform:scale(1); } }
 @keyframes s1Word   { 0%,2%  { opacity:0; transform:translateY(8px); } 14%,100% { opacity:1; transform:translateY(0); } }
 @keyframes s1Rule   { 0%,60% { transform:scaleX(0); } 74%,100% { transform:scaleX(1); } }
 
