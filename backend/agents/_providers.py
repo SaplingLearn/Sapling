@@ -45,6 +45,7 @@ AgentTask = Literal[
     "concept_scan", "concept_describe",
     "ocr_vision",
     "summary_edit",
+    "document_notes",
 ]
 
 
@@ -96,6 +97,9 @@ _DEFAULTS: dict[AgentTask, str] = {
     # Summary-doc "ask" edits — targeted prose rewrites the student reads
     # immediately, same quality bar as study_guide → full Flash.
     "summary_edit": "gemini-2.5-flash",
+    # Comprehensive study notes — the long-form content students actually
+    # study from, same quality bar as study_guide → full Flash.
+    "document_notes": "gemini-2.5-flash",
 }
 
 

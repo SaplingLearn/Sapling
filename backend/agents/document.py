@@ -56,6 +56,7 @@ from agents import WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.classifier import classifier_agent, DocumentClassification
 from agents.summary import summary_agent, Summary
+from agents.document_notes import document_notes_agent, ComprehensiveNotes
 from agents.concept_extraction import concept_extraction_agent, ConceptList
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
 from agents.tools.graph import apply_concepts_to_graph
@@ -68,6 +69,7 @@ class DocumentProcessingResult(BaseModel):
 
     classification: DocumentClassification
     summary: Summary
+    notes: ComprehensiveNotes
     concepts: ConceptList
     syllabus: SyllabusAssignments | None = Field(
         default=None,
@@ -83,6 +85,7 @@ class DocumentProcessingResult(BaseModel):
 class _WorkerResults:
     classification: DocumentClassification
     summary: Summary
+    notes: ComprehensiveNotes
     concepts: ConceptList
     syllabus: SyllabusAssignments | None
 
@@ -106,6 +109,15 @@ async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
     result = record_agent_usage(
         await summary_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
         feature="document", task="summary", user_id=deps.user_id,
+    )
+    return result.output
+
+
+@durable_step
+async def _step_notes(text: str, deps: SaplingDeps) -> ComprehensiveNotes:
+    result = record_agent_usage(
+        await document_notes_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        feature="document", task="document_notes", user_id=deps.user_id,
     )
     return result.output
 
@@ -169,21 +181,22 @@ async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
     classification = await _step_classify(text, deps)
 
     summary_task = _step_summary(text, deps)
+    notes_task = _step_notes(text, deps)
     concepts_task = _step_concepts(text, deps)
     syllabus_task = _step_syllabus(text, deps) if classification.is_syllabus else None
 
     if syllabus_task is not None:
-        summary, concepts, syllabus = await asyncio.gather(
-            summary_task, concepts_task, syllabus_task,
+        summary, notes, concepts, syllabus = await asyncio.gather(
+            summary_task, notes_task, concepts_task, syllabus_task,
         )
         return _WorkerResults(
             classification=classification,
-            summary=summary, concepts=concepts, syllabus=syllabus,
+            summary=summary, notes=notes, concepts=concepts, syllabus=syllabus,
         )
-    summary, concepts = await asyncio.gather(summary_task, concepts_task)
+    summary, notes, concepts = await asyncio.gather(summary_task, notes_task, concepts_task)
     return _WorkerResults(
         classification=classification,
-        summary=summary, concepts=concepts, syllabus=None,
+        summary=summary, notes=notes, concepts=concepts, syllabus=None,
     )
 
 
@@ -208,6 +221,7 @@ async def process_document(text: str, deps: SaplingDeps) -> DocumentProcessingRe
     return DocumentProcessingResult(
         classification=workers.classification,
         summary=workers.summary,
+        notes=workers.notes,
         concepts=workers.concepts,
         syllabus=workers.syllabus,
         graph_updated=merged > 0,

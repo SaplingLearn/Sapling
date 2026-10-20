@@ -38,6 +38,7 @@ from services.extraction_service import extract_text_from_file
 from services.summary_docs_service import (
     attach_summary_previews,
     create_summary_doc,
+    prosemirror_doc_from_sections,
     delete_summary_docs_for_document,
     plaintext_for_primary_document,
     plaintext_from_prosemirror,
@@ -54,6 +55,7 @@ from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
+from agents.document_notes import document_notes_agent
 from agents.concept_extraction import concept_extraction_agent
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
@@ -516,7 +518,6 @@ def _persist_document(
         {"name": c.name, "description": c.description}
         for c in result.concepts.concepts
     ]
-    summary = result.summary.abstract or None
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -581,8 +582,11 @@ def _persist_document(
     # must not 500 an otherwise-successful upload. summary_doc_id/preview stay
     # None — recoverable later via a manual re-drive — rather than raising.
     try:
+        notes_content = prosemirror_doc_from_sections(
+            [s.model_dump() for s in result.notes.sections]
+        )
         summary_doc = create_summary_doc(
-            user_id=user_id, primary_document_id=full_row["id"], seed_text=summary or "",
+            user_id=user_id, primary_document_id=full_row["id"], content=notes_content,
         )
         full_row["summary_doc_id"] = summary_doc["id"]
         full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
@@ -1019,6 +1023,9 @@ async def upload_document(
             summary_task = summary_agent.run(
                 extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
             )
+            notes_task = document_notes_agent.run(
+                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            )
             concepts_task = concept_extraction_agent.run(
                 extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
             )
@@ -1026,19 +1033,24 @@ async def upload_document(
                 syllabus_task = syllabus_extraction_agent.run(
                     extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
                 )
-                summary_r, concepts_r, syllabus_r = await asyncio.gather(
-                    summary_task, concepts_task, syllabus_task,
+                summary_r, notes_r, concepts_r, syllabus_r = await asyncio.gather(
+                    summary_task, notes_task, concepts_task, syllabus_task,
                 )
                 record_agent_usage(syllabus_r, feature="document", task="syllabus")
                 summary = summary_r.output
+                notes = notes_r.output
                 concepts = concepts_r.output
                 syllabus = syllabus_r.output
             else:
-                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
+                summary_r, notes_r, concepts_r = await asyncio.gather(
+                    summary_task, notes_task, concepts_task,
+                )
                 summary = summary_r.output
+                notes = notes_r.output
                 concepts = concepts_r.output
                 syllabus = None
             record_agent_usage(summary_r, feature="document", task="summary")
+            record_agent_usage(notes_r, feature="document", task="document_notes")
             record_agent_usage(concepts_r, feature="document", task="concepts")
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="extracted",
@@ -1062,6 +1074,7 @@ async def upload_document(
             final_output = DocumentProcessingResult(
                 classification=classification,
                 summary=summary,
+                notes=notes,
                 concepts=concepts,
                 syllabus=syllabus,
                 graph_updated=graph_updated,

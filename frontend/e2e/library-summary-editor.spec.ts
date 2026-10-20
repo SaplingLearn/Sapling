@@ -68,7 +68,12 @@ test("highlight, ask, keep, and restore an earlier version of a summary doc", as
   // ── The scripted suggestion appears; keep it ───────────────────────────
   await expect(page.getByText(SCRIPTED_SUMMARY_EDIT)).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Keep it" }).click();
-  await expect(page.getByText(SCRIPTED_SUMMARY_EDIT)).toBeHidden();
+  // The rewrite replaces the whole selected paragraph, so the kept text
+  // becomes the real (permanently visible) paragraph content — the same
+  // string the suggestion card showed as its preview. Asserting THAT text
+  // disappears is unsatisfiable; assert the card's own controls are gone
+  // instead, which is what actually proves the pending suggestion resolved.
+  await expect(page.getByRole("button", { name: "Keep it" })).toBeHidden();
   await expect(editable).toContainText(SCRIPTED_SUMMARY_EDIT);
 
   // ── History records the kept edit and can restore the original ────────

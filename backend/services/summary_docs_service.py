@@ -42,8 +42,10 @@ def _now_iso() -> str:
 
 def prosemirror_doc_from_text(text: str) -> dict:
     """Seed a TipTap/ProseMirror doc from plain text, one paragraph per
-    blank-line-separated block. Used to turn the upload pipeline's
-    summary_agent output into the initial editable document."""
+    blank-line-separated block. Used by the backfill script, which only has
+    the legacy short `documents.summary` text to work from (#spec Stage 1
+    backfill) — the live upload pipeline seeds from comprehensive notes via
+    `prosemirror_doc_from_sections` instead."""
     paragraphs = [p.strip() for p in (text or "").split("\n\n")]
     paragraphs = [p for p in paragraphs if p]
     return {
@@ -55,15 +57,89 @@ def prosemirror_doc_from_text(text: str) -> dict:
     }
 
 
+_MIN_TOPICS_FOR_TOC = 2
+
+
+def _heading_node(text: str, level: int) -> dict:
+    return {
+        "type": "heading",
+        "attrs": {"level": level},
+        "content": [{"type": "text", "text": text}],
+    }
+
+
+def _divider_node() -> dict:
+    return {"type": "horizontalRule"}
+
+
+def _bullet_list_node(items: list[str]) -> dict:
+    return {
+        "type": "bulletList",
+        "content": [
+            {
+                "type": "listItem",
+                "content": [{"type": "paragraph", "content": [{"type": "text", "text": item}]}],
+            }
+            for item in items
+        ],
+    }
+
+
+def prosemirror_doc_from_sections(sections: list[dict]) -> dict:
+    """Seed a TipTap/ProseMirror doc from comprehensive-notes sections
+    (`agents.document_notes.ComprehensiveNotes.sections`, already
+    `model_dump()`-ed to plain dicts with `heading`/`body`/`heading_level`
+    keys — see that module for why the level lives on the flat section
+    rather than through real nesting).
+
+    Built entirely here, not by the model: a table of contents (when there
+    are enough top-level topics to be worth one), a divider before each new
+    top-level topic, and a heading node at the section's own level (2 or 3)
+    followed by one paragraph per blank-line-separated block of its body.
+    Matches StarterKit's default schema, which the editor
+    (SummaryEditor.tsx) already loads."""
+    topic_titles = [
+        (s.get("heading") or "").strip()
+        for s in sections
+        if s.get("heading_level") == 2 and (s.get("heading") or "").strip()
+    ]
+
+    content: list[dict] = []
+    if len(topic_titles) >= _MIN_TOPICS_FOR_TOC:
+        content.append(_heading_node("Table of Contents", 2))
+        content.append(_bullet_list_node(topic_titles))
+        content.append(_divider_node())
+
+    for i, section in enumerate(sections):
+        level = section.get("heading_level")
+        level = level if level in (2, 3) else 2
+        if level == 2 and i > 0:
+            content.append(_divider_node())
+        heading = (section.get("heading") or "").strip()
+        if heading:
+            content.append(_heading_node(heading, level))
+        paragraphs = [p.strip() for p in (section.get("body") or "").split("\n\n")]
+        for p in paragraphs:
+            if p:
+                content.append({
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": p}],
+                })
+    return {"type": "doc", "content": content}
+
+
 def plaintext_from_prosemirror(doc: dict, max_chars: int | None = None) -> str:
     """Walk a ProseMirror doc and concatenate its text nodes — paragraphs
-    joined by a blank line, text nodes within a paragraph concatenated with
-    no separator (mirroring how ProseMirror itself renders marks as
-    adjacent text runs). Used for search/preview text and as agent context,
-    never for re-rendering: formatting is intentionally lost."""
+    AND headings (comprehensive notes seed section headings via
+    `prosemirror_doc_from_sections`, and dropping them would silently strip
+    every topic title out of search/preview/agent-context text) joined by a
+    blank line, text nodes within a block concatenated with no separator
+    (mirroring how ProseMirror itself renders marks as adjacent text runs).
+    Used for search/preview text and as agent context, never for
+    re-rendering: formatting is intentionally lost."""
     paragraph_texts: list[str] = []
     for node in doc.get("content") or []:
-        if node.get("type") != "paragraph":
+        if node.get("type") not in ("paragraph", "heading"):
             continue
         text = "".join(
             child.get("text", "")
@@ -78,14 +154,23 @@ def plaintext_from_prosemirror(doc: dict, max_chars: int | None = None) -> str:
     return joined
 
 
-def create_summary_doc(*, user_id: str, primary_document_id: str, seed_text: str) -> dict:
+def create_summary_doc(
+    *, user_id: str, primary_document_id: str, seed_text: str = "", content: dict | None = None,
+) -> dict:
     """Create the one summary doc an upload produces (#spec section 2).
 
     Called once per upload from routes/documents.py::_persist_document
     (Task 14), which is itself sync — this stays sync rather than using
     asyncio.to_thread so it can be called directly from that call site.
+
+    `content` (a pre-built ProseMirror doc — the live upload pipeline passes
+    comprehensive notes via `prosemirror_doc_from_sections`) takes priority
+    over `seed_text` when given. `seed_text` alone remains for
+    `scripts/backfill_summary_docs.py`, which only has the legacy short
+    `documents.summary` text to seed from.
     """
-    content = prosemirror_doc_from_text(seed_text)
+    if content is None:
+        content = prosemirror_doc_from_text(seed_text)
     row = {
         "owner_user_id": user_id,
         "primary_document_id": primary_document_id,

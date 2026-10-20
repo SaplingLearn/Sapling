@@ -186,6 +186,45 @@ SHOWCASE_DOC_CONCEPTS = [
     ("Call Stack", "The frames holding each pending call's locals and return address.", 0.7),
 ]
 
+# The comprehensive notes that seed the showcase document's summary_docs row.
+SHOWCASE_DOC_NOTES_SECTIONS = [
+    {
+        "heading": "Recursion and the Base Case",
+        "heading_level": 2,
+        "body": (
+            "Recursion is a function defined in terms of a smaller call to "
+            "itself. Every recursive definition needs a base case — a "
+            "condition that returns directly, without recursing — or the "
+            "descent never ends. These notes walk through how to identify "
+            "a correct base case and why skipping one leads to a stack "
+            "overflow."
+        ),
+    },
+    {
+        "heading": "The Call Stack",
+        "heading_level": 2,
+        "body": (
+            "Each pending recursive call holds its own stack frame with "
+            "its own locals and return address, so recursion depth costs "
+            "memory. These notes trace what the stack looks like at the "
+            "deepest point of a recursive call and how it unwinds once "
+            "the base case returns."
+        ),
+    },
+    {
+        "heading": "Tree Traversal and Divide-and-Conquer",
+        "heading_level": 2,
+        "body": (
+            "Tree traversal and divide-and-conquer algorithms mirror "
+            "recursive structure directly: each call handles one node (or "
+            "one sub-problem) and recurses into the smaller pieces it "
+            "produces. These notes also cover when a tail call can be "
+            "rewritten as a loop to remove the recursion depth concern "
+            "entirely."
+        ),
+    },
+]
+
 # #630: this module has its OWN classifier handler, and it was missed when the
 # e2e one gained the field — so every showcase upload stored NULL, logged
 # "[RAG] classifier returned no shareability" at WARNING, and indexed private.
@@ -209,6 +248,10 @@ register_function_handler(
         "abstract": SHOWCASE_DOC_ABSTRACT,
         "key_points": SHOWCASE_DOC_KEY_POINTS,
     }),
+)
+register_function_handler(
+    "document_notes",
+    _structured_output({"sections": SHOWCASE_DOC_NOTES_SECTIONS}),
 )
 register_function_handler(
     "concepts",

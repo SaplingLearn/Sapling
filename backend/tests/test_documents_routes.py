@@ -472,6 +472,7 @@ def _make_orchestrator_result(
     """Build a DocumentProcessingResult with sensible defaults for tests."""
     from agents.classifier import DocumentClassification
     from agents.summary import Summary
+    from agents.document_notes import ComprehensiveNotes, NotesSection
     from agents.concept_extraction import Concept, ConceptList
     from agents.syllabus_extraction import (
         SyllabusAssignment, SyllabusAssignments, GradingCategory,
@@ -487,6 +488,9 @@ def _make_orchestrator_result(
         abstract=summary_abstract,
         key_points=["a", "b", "c"],
     )
+    notes = ComprehensiveNotes(sections=[
+        NotesSection(heading="Test section", heading_level=2, body=summary_abstract),
+    ])
     concepts = ConceptList(concepts=[
         Concept(name=n, description="d", importance=0.5)
         for n in (concept_names or ["Concept A"])
@@ -506,6 +510,7 @@ def _make_orchestrator_result(
     return DocumentProcessingResult(
         classification=classification,
         summary=summary,
+        notes=notes,
         concepts=concepts,
         syllabus=syllabus,
         graph_updated=graph_updated,
@@ -818,9 +823,17 @@ class TestUploadCreatesSummaryDoc:
         assert body["summary_preview"] == "Plain English summary."
         assert body["summary_source_count"] == 1
         assert "summary" not in body
-        mock_create.assert_called_once_with(
-            user_id="u1", primary_document_id="doc-1", seed_text="Plain English summary.",
-        )
+        # The seed content now comes from the comprehensive-notes sections
+        # (not the short summary abstract) — assert on shape/text rather
+        # than the old seed_text= call, which no longer applies.
+        from services.summary_docs_service import plaintext_from_prosemirror
+
+        mock_create.assert_called_once()
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs["user_id"] == "u1"
+        assert create_kwargs["primary_document_id"] == "doc-1"
+        assert "seed_text" not in create_kwargs
+        assert "Plain English summary." in plaintext_from_prosemirror(create_kwargs["content"])
 
     def test_create_summary_doc_failure_does_not_500_an_already_persisted_upload(self):
         """The documents row above is already committed by the time
@@ -925,6 +938,7 @@ class TestUploadDocumentStreaming:
         """Build a context-manager stack patching every agent the route calls."""
         from agents.classifier import DocumentClassification
         from agents.summary import Summary
+        from agents.document_notes import ComprehensiveNotes, NotesSection
         from agents.concept_extraction import Concept, ConceptList
         from agents.syllabus_extraction import SyllabusAssignments
 
@@ -936,6 +950,9 @@ class TestUploadDocumentStreaming:
             headline="h", abstract="abstract.",
             key_points=["a", "b", "c"],
         )
+        notes = ComprehensiveNotes(sections=[
+            NotesSection(heading="h", heading_level=2, body="notes."),
+        ])
         concepts = ConceptList(concepts=[
             Concept(name="Backprop", description="d", importance=0.9),
         ])
@@ -946,12 +963,14 @@ class TestUploadDocumentStreaming:
 
         cls_run = AsyncMock(return_value=SimpleNamespace(output=cls))
         sum_run = AsyncMock(return_value=SimpleNamespace(output=summary))
+        notes_run = AsyncMock(return_value=SimpleNamespace(output=notes))
         cpt_run = AsyncMock(return_value=SimpleNamespace(output=concepts))
         syl_run = AsyncMock(return_value=SimpleNamespace(output=syllabus))
 
         return (
             patch("routes.documents.classifier_agent.run", cls_run),
             patch("routes.documents.summary_agent.run", sum_run),
+            patch("routes.documents.document_notes_agent.run", notes_run),
             patch("routes.documents.concept_extraction_agent.run", cpt_run),
             patch("routes.documents.syllabus_extraction_agent.run", syl_run),
             patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
@@ -961,11 +980,11 @@ class TestUploadDocumentStreaming:
         """status:start → progress:classify → progress:classified →
         progress:extract → progress:extracted → progress:graph_update →
         progress:graph_updated → result:finalize → status:done with document_id."""
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
             patch("routes.documents.create_summary_doc", return_value={
@@ -1004,11 +1023,11 @@ class TestUploadDocumentStreaming:
         lets the sweeper re-drive the identical work later (#482)."""
         from routes import documents
 
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll") as spawn,
             patch("routes.documents.create_summary_doc", return_value={
@@ -1029,11 +1048,11 @@ class TestUploadDocumentStreaming:
 
     def test_includes_syllabus_event_when_is_syllabus(self):
         """progress:extract message mentions syllabus when classifier flags it."""
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
@@ -1072,7 +1091,7 @@ class TestUploadDocumentStreaming:
         the legacy fallback (which would crash on extracted_text=None).
         It should yield a clean error+done pair and stop.
         """
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.OCR_ASYNC_ENABLED", True),
@@ -1080,7 +1099,7 @@ class TestUploadDocumentStreaming:
                 "routes.documents.extract_text_from_file",
                 side_effect=RuntimeError("scanned PDF too noisy"),
             ),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -1118,12 +1137,12 @@ class TestUploadDocumentStreaming:
         answers by inventing one. Streaming counterpart of
         TestEmptyExtractionGuard.
         """
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.OCR_ASYNC_ENABLED", True),
             patch("routes.documents.extract_text_from_file", return_value=""),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -1202,11 +1221,11 @@ class TestUploadDocumentStreaming:
         processed. Contract: exactly ONE result event, then the same terminal
         error+done tail the pre-result failure branches use.
         """
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch(
                 "routes.documents._persist_document",
                 side_effect=RuntimeError("documents insert blew up"),

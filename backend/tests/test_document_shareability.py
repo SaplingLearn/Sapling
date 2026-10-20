@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agents.document_notes import NotesSection
+
 
 # ── The classifier's new field ───────────────────────────────────────────────
 
@@ -240,6 +242,7 @@ def test_the_documents_row_records_its_shareability():
     result.classification.category = "assignment"
     result.classification.shareability = "completed_work"
     result.summary.abstract = "abstract"
+    result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
     result.concepts.concepts = []
 
     with (
@@ -294,6 +297,7 @@ class TestPersistRetry:
         result.classification.category = "lecture_notes"
         result.classification.shareability = "course_material"
         result.summary.abstract = "abstract"
+        result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
         result.concepts.concepts = []
         return result
 
@@ -494,6 +498,7 @@ class TestRetryDropsOnlyTheNamedColumn:
     def _result():
         result = MagicMock()
         result.classification.category = "lecture_notes"
+        result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
         result.classification.shareability = "course_material"
         result.summary.abstract = "abstract"
         result.concepts.concepts = []

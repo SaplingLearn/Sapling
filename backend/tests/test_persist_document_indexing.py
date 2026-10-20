@@ -8,6 +8,7 @@ queue.
 """
 from unittest.mock import MagicMock, patch
 
+from agents.document_notes import NotesSection
 from services.encryption import decrypt_if_present
 
 
@@ -17,6 +18,7 @@ def _result(confidence=0.91):
     result.classification.shareability = "course_material"
     result.classification.confidence = confidence
     result.summary.abstract = "abstract"
+    result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
     result.concepts.concepts = []
     return result
 

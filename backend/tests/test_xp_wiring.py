@@ -164,6 +164,7 @@ class TestQuizCompletedAward:
 def _upload_document_result():
     from agents.classifier import DocumentClassification
     from agents.summary import Summary
+    from agents.document_notes import ComprehensiveNotes, NotesSection
     from agents.concept_extraction import Concept, ConceptList
     from agents.document import DocumentProcessingResult
 
@@ -174,6 +175,9 @@ def _upload_document_result():
         ),
         summary=Summary(headline="Test doc", abstract="A concise overview.",
                         key_points=["a", "b", "c"]),
+        notes=ComprehensiveNotes(sections=[
+            NotesSection(heading="Test doc", heading_level=2, body="A concise overview."),
+        ]),
         concepts=ConceptList(concepts=[
             Concept(name="Concept A", description="d", importance=0.5),
         ]),
