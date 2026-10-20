@@ -48,7 +48,7 @@ function Frame({ label, children }: { label: string; children: React.ReactNode }
           position: 'absolute',
           left: '5%',
           top: '6%',
-          fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace",
+          fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace",
           fontSize: 9.5,
           letterSpacing: '0.18em',
           color: GREEN_DEEP,

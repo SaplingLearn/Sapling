@@ -2,26 +2,27 @@
 
 /* Sapling — design tokens
  *
- * Typography per .impeccable.md:
- *  - display = Playfair Display (brand moments, h1s, hero)
- *  - serif   = Spectral (long-form prose, tutor voice in chat)
- *  - sans    = DM Sans (all UI chrome)
- *  - mono    = JetBrains Mono (numerals, code)
+ * Typography per .impeccable.md (the approved Pen type, from #728):
+ *  - display = Aleo (brand moments, h1s, hero)
+ *  - serif   = Aleo (long-form prose, tutor voice in chat)
+ *  - sans    = SUSE (all UI chrome)
+ *  - mono    = IBM Plex Mono (numerals, code)
  *
- * "Serif for soul, sans for function" — pair a display serif with a
- * refined body serif for long-form, and keep DM Sans for UI chrome
- * so the hierarchy is doing the work, not decoration.
+ * "Serif for soul, sans for function" — a slab serif for headings and
+ * long-form, SUSE for UI chrome, so the hierarchy is doing the work, not
+ * decoration. display and serif are one face today; they stay two roles so
+ * a screen can still split them.
  */
 :root {
   /* Each role leads with the loader's variable, not the human family name.
      `next/font/local` registers every face under a generated name, so a bare
-     'Playfair Display' matches nothing and silently renders Times — see
+     'Aleo' matches nothing and silently renders Times — see
      lib/landing/fonts.ts. The human names stay behind the variable as a
      courtesy to anyone who has the font installed. */
-  --font-display: var(--font-playfair), 'Playfair Display', var(--font-spectral), 'Spectral', georgia, serif;
-  --font-serif: var(--font-spectral), 'Spectral', var(--font-playfair), 'Playfair Display', georgia, serif;
-  --font-sans: var(--font-dm-sans), 'DM Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains), 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --font-display: var(--font-aleo), 'Aleo', georgia, serif;
+  --font-serif: var(--font-aleo), 'Aleo', georgia, serif;
+  --font-sans: var(--font-suse), 'SUSE', system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-plex-mono), 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
   --brand-forest: #1B6C42;
@@ -206,7 +207,7 @@ body { font-size: 14px; line-height: 1.5; }
 
 .h-serif { font-family: var(--font-display); letter-spacing: -0.015em; font-weight: 500; line-height: 1.15; }
 .h-sans  { font-family: var(--font-sans); letter-spacing: -0.005em; font-weight: 600; line-height: 1.2; }
-/* Body prose in Spectral for long-form reading surfaces (chat tutor, study guide bodies,
+/* Body prose in the serif role for long-form reading surfaces (chat tutor, study guide bodies,
  * About / Pending copy). Never for UI chrome. */
 .body-serif { font-family: var(--font-serif); font-weight: 400; line-height: 1.6; }
 .mono { font-family: var(--font-mono); font-feature-settings: "ss01"; letter-spacing: -0.02em; }
@@ -1187,9 +1188,9 @@ body { font-size: 14px; line-height: 1.5; }
    LANDING PAGE STYLES (ported from main branch)
    ══════════════════════════════════════════════════════════════════ */
 
-.font-playfair { font-family: var(--font-playfair), 'Playfair Display', serif; }
+.font-aleo { font-family: var(--font-aleo), 'Aleo', serif; }
 .font-inter    { font-family: var(--font-inter), sans-serif; }
-.font-jetbrains { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
+.font-plex-mono { font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace; }
 
 /* Prevent horizontal overflow without breaking position: sticky */
 .landing-page {
@@ -1417,7 +1418,7 @@ input[type="reset"]:disabled {
   --brand-glow:    color-mix(in oklch, var(--brand-forest) 70%, white);
 
   color: var(--text);
-  font-family: var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
@@ -1428,11 +1429,10 @@ input[type="reset"]:disabled {
 }
 
 /* Typography helpers main uses on the landing. */
-.landing-page .font-spectral   { font-family: var(--font-spectral), 'Spectral', Georgia, serif; }
-.landing-page .font-playfair   { font-family: var(--font-playfair), 'Playfair Display', serif; }
+.landing-page .font-aleo      { font-family: var(--font-aleo), 'Aleo', serif; }
 .landing-page .font-inter      { font-family: var(--font-inter), sans-serif; }
-.landing-page .font-jetbrains  { font-family: var(--font-jetbrains), 'JetBrains Mono', monospace; }
-.landing-page .font-dm-sans    { font-family: var(--font-dm-sans), 'DM Sans', sans-serif; }
+.landing-page .font-plex-mono { font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace; }
+.landing-page .font-suse      { font-family: var(--font-suse), 'SUSE', sans-serif; }
 
 /* Global mesh (animated blobs behind the hero). */
 .landing-page .sapling-mesh-bg {
@@ -1554,7 +1554,7 @@ input[type="reset"]:disabled {
 
 /* ── Knowledge graph demo (#344) ── */
 .landing-page .landing-graph-chip {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   padding: 7px 16px;
@@ -1666,7 +1666,7 @@ input[type="reset"]:disabled {
   min-height: 1.6rem;
 }
 .landing-page .landing-graph-detailname {
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 1.12rem;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -1690,7 +1690,7 @@ input[type="reset"]:disabled {
   border-radius: var(--r-full);
   border: 1px solid var(--tier);
   background: color-mix(in oklch, var(--tier) 8%, var(--bg));
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1846,7 +1846,7 @@ input[type="reset"]:disabled {
    knowledge-graph section sets inline one viewport above. */
 .landing-page .landing-eyebrow {
   display: inline-block;
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.7rem;
   font-weight: 500;
   letter-spacing: 0.32em;
@@ -1887,7 +1887,7 @@ input[type="reset"]:disabled {
 
 .landing-page .landing-band-headline {
   margin-top: 1.05rem;
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: clamp(1.95rem, 3.4vw, 3.1rem);
   font-weight: 600;
   line-height: 1.06;
@@ -1943,7 +1943,7 @@ input[type="reset"]:disabled {
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-md);
   overflow: hidden;
-  font-family: var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
+  font-family: var(--font-suse), 'SUSE', system-ui, sans-serif;
   color: var(--text);
 }
 
@@ -1958,7 +1958,7 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-title {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.62rem;
   font-weight: 500;
   letter-spacing: 0.2em;
@@ -1968,7 +1968,7 @@ input[type="reset"]:disabled {
 
 .landing-page .landing-surface-meta,
 .landing-page .landing-surface-mono {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.66rem;
   letter-spacing: 0.02em;
   color: var(--text-muted);
@@ -1991,7 +1991,7 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-label {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.6rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2077,7 +2077,7 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-status {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.6rem;
   letter-spacing: 0.06em;
   padding: 3px 8px;
@@ -2119,7 +2119,7 @@ input[type="reset"]:disabled {
 .landing-page .landing-surface-chip.is-count,
 .landing-page .landing-surface-chip.is-code,
 .landing-page .landing-surface-chip.is-hard {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2138,7 +2138,7 @@ input[type="reset"]:disabled {
 
 .landing-page .landing-surface-question {
   margin: 2px 0 4px;
-  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 0.98rem;
   line-height: 1.5;
   color: var(--text);
@@ -2169,7 +2169,7 @@ input[type="reset"]:disabled {
 }
 
 .landing-page .landing-surface-optionkey {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -2180,7 +2180,7 @@ input[type="reset"]:disabled {
 
 /* "The next question moved" — a status, so it takes a status colour. */
 .landing-page .landing-surface-tune {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2218,7 +2218,7 @@ input[type="reset"]:disabled {
   justify-content: center;
 }
 .landing-page .landing-surface-cardtext {
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 1.18rem;
   line-height: 1.28;
   letter-spacing: -0.01em;
@@ -2247,7 +2247,7 @@ input[type="reset"]:disabled {
   color: var(--text);
 }
 .landing-page .landing-surface-ratekey {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.6rem;
   padding: 1px 5px;
   border-radius: var(--r-xs);
@@ -2286,7 +2286,7 @@ input[type="reset"]:disabled {
   max-width: 88%;
   background: var(--bg);
   border: 1px solid var(--border);
-  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   color: var(--text);
 }
 /* Forest, not `--accent`: #2D8F5C under white is 4.04:1, below the AA bar at
@@ -2307,7 +2307,7 @@ input[type="reset"]:disabled {
   border-radius: var(--r-full);
   background: var(--ink-100);
   border: 1px solid var(--border);
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.6rem;
   letter-spacing: 0.02em;
   color: var(--text-dim);
@@ -2348,7 +2348,7 @@ input[type="reset"]:disabled {
 
 /* ── Notetaker ──────────────────────────────────────────────────────────── */
 .landing-page .landing-surface-notetitle {
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 1.35rem;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -2357,7 +2357,7 @@ input[type="reset"]:disabled {
 }
 .landing-page .landing-surface-prose {
   margin: 0 0 4px;
-  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 0.88rem;
   line-height: 1.7;
   color: var(--text-dim);
@@ -2374,7 +2374,7 @@ input[type="reset"]:disabled {
 
 /* ── Study Rooms ────────────────────────────────────────────────────────── */
 .landing-page .landing-surface-roomname {
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 1.12rem;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -2387,7 +2387,7 @@ input[type="reset"]:disabled {
    `--grade-a` (4.56:1 on this paper) as a glyph. The per-row letters below
    cannot, and don't. */
 .landing-page .landing-surface-letter {
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 3.1rem;
   font-weight: 600;
   line-height: 0.9;
@@ -2395,7 +2395,7 @@ input[type="reset"]:disabled {
   color: var(--grade-a);
 }
 .landing-page .landing-surface-pct {
-  font-family: var(--font-playfair), 'Playfair Display', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 1.3rem;
   font-weight: 600;
   color: var(--text);
@@ -2409,13 +2409,13 @@ input[type="reset"]:disabled {
   border-top: 1px solid var(--border);
 }
 .landing-page .landing-surface-assignment {
-  font-family: var(--font-spectral), 'Spectral', Georgia, serif;
+  font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--text);
 }
 .landing-page .landing-surface-points {
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text);
@@ -2435,7 +2435,7 @@ input[type="reset"]:disabled {
   border-radius: var(--r-full);
   border: 1px solid var(--grade);
   background: color-mix(in oklch, var(--grade) 8%, var(--bg));
-  font-family: var(--font-jetbrains), 'JetBrains Mono', monospace;
+  font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text);
@@ -2456,9 +2456,8 @@ input[type="reset"]:disabled {
    so these sit alongside the existing .landing-page surface above rather
    than replacing it in-place.
 
-   Fonts reuse the app's next/font variables: DM Sans, Spectral, Playfair
-   Display and JetBrains Mono are exactly the four families the source
-   pulls from Google Fonts, so no extra webfont request is needed.
+   Fonts reuse the app's next/font variables (Aleo, SUSE, IBM Plex Mono),
+   so no extra webfont request is needed.
 
    prefers-reduced-motion is deliberately NOT repeated here — the global
    block near the top of this file already collapses animation and
@@ -2490,13 +2489,14 @@ input[type="reset"]:disabled {
   --ld-tier-struggling: #E27A63;
   --ld-tier-unexplored: #9a9a9a;
 
-  /* The source uses Spectral for the wordmark + display serif and Playfair
-     as the secondary serif — the reverse of the app's --font-display /
-     --font-serif roles, so bind to the concrete families, not the roles. */
-  --ld-font-sans:    var(--font-dm-sans), 'DM Sans', system-ui, sans-serif;
-  --ld-font-display: var(--font-spectral), 'Spectral', georgia, serif;
-  --ld-font-serif:   var(--font-playfair), 'Playfair Display', georgia, serif;
-  --ld-font-mono:    var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace;
+  /* Bound to the concrete families, not the app's roles: the source's
+     display and secondary serif were the reverse of --font-display /
+     --font-serif. Both are Aleo now; the two names are kept so a landing
+     section can still split them. */
+  --ld-font-sans:    var(--font-suse), 'SUSE', system-ui, sans-serif;
+  --ld-font-display: var(--font-aleo), 'Aleo', georgia, serif;
+  --ld-font-serif:   var(--font-aleo), 'Aleo', georgia, serif;
+  --ld-font-mono:    var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace;
 
   background: var(--ld-page);
   color: var(--ld-ink);
@@ -2653,7 +2653,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 
 /* ── Landing v5 additions ──────────────────────────────────────────
    Ported from `Sapling Landing v5.dc.html`. The v5 hero is a ground-up
-   rebuild, not a v4 tweak: the wordmark is Playfair 600 in brand forest
+   rebuild, not a v4 tweak: the wordmark is the display serif at 600 in brand forest
    (not Archivo 800 in ink), it arrives via a character scramble rather
    than a wipe, and the DOM `.floating-card` rig is replaced by a WebGL
    scene. Everything above this comment is shared with v4.
@@ -2747,8 +2747,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
      actions tighten so "Get Started" never has to wrap. */
   .landing-v5 .sapling-nav       { padding: 14px 18px !important; }
   .landing-v5 .ld-nav-row        { gap: 12px !important; }
-  .landing-v5 .ld-nav-mark       { width: 26px !important; height: 26px !important; top: -2px !important; }
-  .landing-v5 .ld-nav-word       { font-size: 21px !important; }
+  .landing-v5 .ld-nav-mark       { width: 108px !important; height: auto !important; }
   .landing-v5 .ld-nav-actions    { gap: 14px !important; }
   .landing-v5 .ld-nav-signin     { font-size: 14px !important; }
   .landing-v5 .ld-nav-cta        { padding: 10px 14px !important; font-size: 14px !important; }

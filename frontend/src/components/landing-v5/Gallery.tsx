@@ -42,7 +42,7 @@ import { useEffect, useState } from 'react';
 import { GALLERY_MINIS } from './galleryMinis';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
 
 /** Card copy, indexed by `data-tk`. Distinct from the lab panels' copy in content.ts. */
 const CARDS = [
@@ -168,7 +168,7 @@ function Card({ i, ghost }: { i: number; ghost: boolean }) {
         </div>
         <div style={{ padding: '15px 12px 0', display: 'flex', flexDirection: 'column' }}>
           <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.28em', color: '#0C5638' }}>{c.kicker}</span>
-          <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
+          <h3 style={{ margin: '10px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.2, letterSpacing: '-0.015em', color: '#12201A' }}>
             {c.title}
           </h3>
           <p style={{ margin: '9px 0 0', fontSize: 12.5, lineHeight: 1.6, color: '#61726A', maxWidth: '40ch', textWrap: 'pretty' }}>
@@ -337,7 +337,7 @@ export function Gallery({
           <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
             And much more
           </span>
-          <h2 style={{ margin: '16px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
+          <h2 style={{ margin: '16px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#12201A' }}>
             The rest of the <em style={{ color: '#0C5638' }}>grove.</em>
           </h2>
           <p style={{ margin: '14px 0 0', color: '#61726A', fontSize: 14, lineHeight: 1.65, maxWidth: '62ch' }}>

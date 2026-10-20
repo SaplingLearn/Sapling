@@ -22,9 +22,9 @@ export interface NavTheme {
   ink: string;
   /** Hover / current-page colour. */
   inkHi: string;
-  logo: string;
-  /** CSS filter applied to the leaf mark, to lift it off a dark ground. */
-  iconFilter: string;
+  /** CSS filter on the wordmark. Dark grounds flatten its two greens to one
+   *  near-white; both values name the same two functions so the swap tweens. */
+  logoFilter: string;
   rule: string;
   pillBorder: string;
   pillBg: string;
@@ -38,8 +38,7 @@ export interface NavTheme {
 export const NAV_LIGHT: NavTheme = {
   ink: '#61726A',
   inkHi: '#12201A',
-  logo: '#0C5638',
-  iconFilter: 'none',
+  logoFilter: 'brightness(1) invert(0)',
   rule: 'rgba(18,32,26,0.14)',
   pillBorder: 'rgba(18,32,26,0.14)',
   pillBg: 'rgba(253,252,249,0.72)',
@@ -52,8 +51,7 @@ export const NAV_LIGHT: NavTheme = {
 export const NAV_DARK: NavTheme = {
   ink: 'rgba(214,234,222,0.62)',
   inkHi: '#F2FAF5',
-  logo: '#EAF3EC',
-  iconFilter: 'brightness(1.85) saturate(0.95)',
+  logoFilter: 'brightness(0) invert(0.93)',
   rule: 'rgba(214,234,222,0.2)',
   pillBorder: 'rgba(214,234,222,0.2)',
   pillBg: 'rgba(255,255,255,0.06)',
