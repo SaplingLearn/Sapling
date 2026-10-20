@@ -2592,7 +2592,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
    declarations ARE the effect — collapsing them onto one shared curve
    destroys it. Do not "simplify" these.
    ────────────────────────────────────────────────────────────────── */
-@keyframes s1Stem   { 0%,15% { clip-path:inset(100% 0 0 0); } 34%,100% { clip-path:inset(0 0 0 0); } }
+@keyframes s1Stem   { 0%,15% { clip-path:inset(100% 0 0 0) fill-box; } 34%,100% { clip-path:inset(0 0 0 0) fill-box; } }
 @keyframes s1LeafLo {
   0%,27% { transform:scale(0.05) rotate(9deg);  opacity:0; animation-timing-function:cubic-bezier(0.16,0.9,0.3,1); }
   36%    { transform:scale(1.03) rotate(5deg);  opacity:1; animation-timing-function:cubic-bezier(0.5,0,0.85,0.3); }

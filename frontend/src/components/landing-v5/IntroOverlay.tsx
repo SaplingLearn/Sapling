@@ -93,7 +93,7 @@ export function IntroOverlay({
         <div
           style={{
             marginTop: 13, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontWeight: 700,
-            fontSize: 33, letterSpacing: '-0.025em', color: '#0C5638', lineHeight: 1,
+            fontSize: 33, letterSpacing: '-0.025em', color: '#0C5638', lineHeight: 1, whiteSpace: 'nowrap',
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         >
