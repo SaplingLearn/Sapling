@@ -152,9 +152,46 @@ class TestGetSummaryDoc:
             result = get_summary_doc("sd1", "u1")
 
         assert result["content"] == {"type": "doc", "content": []}
-        assert result["sources"] == [{"document_id": "doc1", "file_name": "Lecture 4.pdf", "added_at": "t0"}]
+        assert result["sources"] == [{
+            "document_id": "doc1", "file_name": "Lecture 4.pdf", "added_at": "t0",
+            "has_original": False,
+        }]
         assert len(result["pending_suggestions"]) == 1
         assert result["pending_suggestions"][0]["instruction"] == "shorter"
+
+    def test_sources_report_has_original_per_document(self):
+        from services.encryption import encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = [
+                    {"document_id": "doc1", "added_at": "t0"},
+                    {"document_id": "doc2", "added_at": "t1"},
+                ]
+            elif name == "documents":
+                m.select.return_value = [
+                    {"id": "doc1", "file_name": "notes.pdf", "original_storage_path": "doc1/notes.pdf"},
+                    {"id": "doc2", "file_name": "slides.pptx", "original_storage_path": None},
+                ]
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = []
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            doc = get_summary_doc("sd1", "u1")
+
+        by_id = {s["document_id"]: s for s in doc["sources"]}
+        assert by_id["doc1"]["has_original"] is True
+        assert by_id["doc2"]["has_original"] is False
 
 
 class TestAddSource:

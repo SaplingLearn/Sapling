@@ -1725,3 +1725,31 @@ class TestGetOriginalUrl:
             ]
             r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
         assert r.status_code == 404
+
+
+# ── GET /api/documents/doc/{document_id}/extracted-text ────────────────────
+
+class TestGetExtractedText:
+    def test_returns_the_decrypted_text(self):
+        from services.encryption import encrypt_if_present
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "extracted_text": encrypt_if_present("Mitosis has four phases.")},
+            ]
+            r = client.get("/api/documents/doc/doc-1/extracted-text?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"text": "Mitosis has four phases."}
+
+    def test_404_when_document_not_found(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/documents/doc/doc-1/extracted-text?user_id=u1")
+        assert r.status_code == 404
+
+    def test_returns_empty_text_when_none_was_ever_extracted(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = [{"id": "doc-1", "extracted_text": None}]
+            r = client.get("/api/documents/doc/doc-1/extracted-text?user_id=u1")
+        assert r.status_code == 200
+        assert r.json() == {"text": ""}

@@ -34,7 +34,7 @@ from db.connection import storage_create_signed_url, storage_delete, storage_upl
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
-from services.encryption import encrypt_if_present, encrypt_json, decrypt_json
+from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json, decrypt_json
 from services.extraction_service import extract_text_from_file
 from services.summary_docs_service import (
     attach_summary_previews,
@@ -1374,6 +1374,24 @@ def get_original_url(document_id: str, request: Request, user_id: str):
         raise HTTPException(status_code=404, detail="No original file is available for this document.")
     url = storage_create_signed_url(ORIGINAL_DOCUMENTS_BUCKET, rows[0]["original_storage_path"])
     return {"url": url}
+
+
+@router.get("/doc/{document_id}/extracted-text")
+def get_extracted_text(document_id: str, request: Request, user_id: str):
+    """The document's OCR'd plaintext, for SourceTextViewer's DOCX/PPTX
+    fallback (source reference viewer, Task 9) — these formats have no
+    rasterization pipeline (design doc §8), so a read-only text view of
+    what's already stored is the v1 substitute for a rendered page."""
+    require_self(user_id, request)
+    _validate_user(user_id)
+    rows = table("documents").select(
+        "id,extracted_text",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {"text": decrypt_if_present(rows[0].get("extracted_text")) or ""}
 
 
 @router.post("/doc/{document_id}/scan-concepts")

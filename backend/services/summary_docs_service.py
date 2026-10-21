@@ -217,17 +217,24 @@ def get_summary_doc(summary_doc_id: str, user_id: str) -> dict | None:
     ) or []
     doc_ids = [s["document_id"] for s in source_rows]
     file_names: dict[str, str] = {}
+    has_original: dict[str, bool] = {}
     if doc_ids:
         in_clause = "in.(" + ",".join(doc_ids) + ")"
         files = table("documents").select(
-            "id,file_name", filters={"id": in_clause},
+            "id,file_name,original_storage_path", filters={"id": in_clause},
         ) or []
         file_names = {f["id"]: f["file_name"] for f in files}
+        has_original = {f["id"]: bool(f.get("original_storage_path")) for f in files}
     doc["sources"] = [
         {
             "document_id": s["document_id"],
             "file_name": file_names.get(s["document_id"], "Untitled"),
             "added_at": s["added_at"],
+            # Source reference viewer (Task 9): whether this source has a
+            # stored original file to view/circle — predates Task 3 (no
+            # backfill), so an older document reads False here, not an
+            # error.
+            "has_original": has_original.get(s["document_id"], False),
         }
         for s in source_rows
     ]
