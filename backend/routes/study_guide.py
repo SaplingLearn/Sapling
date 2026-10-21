@@ -40,6 +40,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/{user_id}/saved/{guide_id}")
+def read_saved_guide(user_id: str, guide_id: str, request: Request):
+    """Read existing content only; opening history must never generate or write."""
+    require_self(user_id, request)
+    rows = table("study_guides").select("content,generated_at", filters={
+        "user_id": f"eq.{user_id}", "id": f"eq.{guide_id}",
+    }, limit=1)
+    if not rows:
+        raise HTTPException(404, "This saved guide is no longer available.")
+    return {"guide": decrypt_json_column(rows[0]["content"]), "generated_at": rows[0]["generated_at"], "cached": True}
+
+
 def _offering_for(course_id: str, semester: str | None) -> str | None:
     """course → offering, term-aware (#141).
 

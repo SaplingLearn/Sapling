@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import logfire
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import FRONTEND_URL, MAX_AVATAR_SIZE, PORT, STORAGE_BUCKET, validate_config
+from services.database_schema import is_missing_schema, SCHEMA_UPDATE_DETAIL
 
 # App-wide log format. Per-request log lines (with request_id, duration,
 # status) are emitted from RequestIDMiddleware; this just sets the
@@ -308,6 +310,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         content=content,
         headers={"X-Request-ID": rid} if rid else {},
     )
+
+
+@app.exception_handler(httpx.HTTPStatusError)
+async def database_http_exception_handler(request: Request, exc: httpx.HTTPStatusError):
+    if is_missing_schema(exc):
+        logging.getLogger("main").warning("Database schema is behind the application version")
+        return await http_exception_handler(request, StarletteHTTPException(503, SCHEMA_UPDATE_DETAIL))
+    return await unhandled_exception_handler(request, exc)
 
 # PKG-06b (spec §3.5, A20): an over-budget model call answers 429 {"detail": "ai budget reached", "reset_at": …}.
 app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)

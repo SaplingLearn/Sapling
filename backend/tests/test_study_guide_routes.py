@@ -21,6 +21,25 @@ COURSE_ID = "course_1"
 EXAM_ID = "exam_1"
 
 
+def test_saved_history_reads_only_owned_content_without_generation():
+    stored = {"exam": "Earlier midterm", "due_date": "2026-01-01", "overview": "Saved coverage", "topics": []}
+    with patch("routes.study_guide.table") as factory, patch("routes.study_guide._generate_and_insert") as generate:
+        factory.return_value.select.return_value = [{"content": stored, "generated_at": "2026-01-01"}]
+        response = client.get(f"/api/study-guide/{USER_ID}/saved/saved-guide")
+        assert response.status_code == 200 and response.json()["guide"] == stored
+        assert response.json()["cached"] is True
+        assert factory.return_value.select.call_args.kwargs["filters"] == {"user_id": f"eq.{USER_ID}", "id": "eq.saved-guide"}
+        generate.assert_not_called()
+        factory.return_value.insert.assert_not_called()
+
+
+def test_missing_saved_history_never_generates_a_replacement():
+    with patch("routes.study_guide.table") as factory, patch("routes.study_guide._generate_and_insert") as generate:
+        factory.return_value.select.return_value = []
+        assert client.get(f"/api/study-guide/{USER_ID}/saved/missing").status_code == 404
+        generate.assert_not_called()
+
+
 def _agent_run_returning(content):
     """AsyncMock standing in for study_guide_agent.run; its .output.model_dump()
     yields the given legacy-dict content."""

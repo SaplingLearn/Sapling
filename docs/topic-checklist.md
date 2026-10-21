@@ -1,5 +1,10 @@
 # Topic Checklist
 
+The current interface combines assessment planning and automatic mastery tracking.
+See [Study plans](study-plans.md) for the active feature and deployment/test steps.
+The manual checklist API below remains supported for compatibility, but its
+checkmarks do not drive the new study plan's mastery indicators.
+
 On the knowledge map (`/tree`), select a course, then open **Topic checklist**.
 The checklist shows significant topics/subtopics, prerequisite gaps, study
 status, evidence sources and upcoming quiz/exam dates. Use the status filter to

@@ -101,9 +101,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       if (mine !== seq.current) return;
       const paused = budgetPauseOf(err);
       if (paused) setPause(paused);
-      else console.error("review next failed", err);
       setNext(null); // never leave a stale item on screen
-      setError("Couldn't load your review queue.");
+      setError(extractErrorDetail(err).detail || "Couldn't load your review queue.");
     } finally {
       if (mine === seq.current) setBusy(false);
     }

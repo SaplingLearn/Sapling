@@ -47,7 +47,7 @@ vi.mock("@/lib/api", () => ({
 
 import { Study } from "./Study";
 import { ToastProvider } from "../ToastProvider";
-import { getLoopStatus } from "@/lib/api";
+import { getLoopStatus, getFlashcards } from "@/lib/api";
 
 const mockedStatus = vi.mocked(getLoopStatus);
 
@@ -65,6 +65,17 @@ afterEach(() => {
 });
 
 describe("Study flashcards — Due today behind the loop", () => {
+  it("shows migration guidance instead of an empty-card claim and allows retry", async () => {
+    mockedStatus.mockResolvedValue({ active: false });
+    const detail = "The connected database needs an update. Apply the pending database migrations.";
+    vi.mocked(getFlashcards).mockRejectedValueOnce(Object.assign(new Error(JSON.stringify({ detail })), { status: 503, body: { detail } }));
+    renderStudy();
+    expect(await screen.findByRole("alert")).toHaveTextContent(detail);
+    expect(screen.queryByText("No cards here yet")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry flashcards" }));
+    await screen.findByText("No cards here yet");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
   it("renders the due queue when the loop is active", async () => {
     mockedStatus.mockResolvedValue({ active: true });
     renderStudy();

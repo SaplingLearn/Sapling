@@ -767,11 +767,12 @@ def _topic_checklist_handler(messages, info) -> ModelResponse:
     payload = json.loads(_last_user_prompt_text(messages))
     topics = []
     for name in ("Recursion", "Variables and Types"):
-        source = next((s for s in payload["sources"] if s["text"] == name), None)
+        source = next((s for s in payload["sources"] if name.casefold() in s["text"].casefold()), None)
         if source:
             topics.append({"name": name, "description": f"Study {name.lower()} using your course materials.",
-                           "importance": 0.9, "source_ids": [source["id"]]})
-    return _structured_output({"topics": topics})(messages, info)
+                           "importance": 0.9, "source_ids": [source["id"]],
+                           "study_points": [f"Explain {name.lower()} using the linked course material."]})
+    return _structured_output({"topics": topics, "overview": "Review the concepts supported by your selected course material."})(messages, info)
 
 
 register_function_handler("topic_checklist", _topic_checklist_handler)

@@ -68,6 +68,14 @@ beforeEach(() => {
   mockSummary.mockResolvedValue(summary());
 });
 
+it("shows actionable schema guidance without logging a raw ApiError", async () => {
+  const detail = "The connected database needs an update. Apply the pending database migrations.";
+  mockNext.mockRejectedValueOnce(new ApiError(JSON.stringify({ detail }), 503, { body: { detail } }));
+  render(<DueQueue userId="u1" />);
+  await screen.findByText(detail);
+  expect(console.error).not.toHaveBeenCalled();
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

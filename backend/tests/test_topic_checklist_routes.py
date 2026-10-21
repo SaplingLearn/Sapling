@@ -23,13 +23,21 @@ def client(monkeypatch):
     monkeypatch.setattr(routes, "get_checklist", lambda *args: {"args": args})
     monkeypatch.setattr(routes, "refresh_checklist", lambda *args: {"args": args})
     monkeypatch.setattr(routes, "set_reviewed", lambda *args: {"args": args})
+    for name in ("list_plans", "list_sources", "create_plan", "update_plan", "delete_plan"):
+        monkeypatch.setattr(routes.plans, name, lambda *args: {"ok": True})
     app = FastAPI()
     app.include_router(routes.router, prefix="/api/topic-checklist")
     with TestClient(app) as http:
         yield http
 
 
-@pytest.mark.parametrize("method,suffix,body", [("get", "", None), ("post", "/refresh", None), ("patch", "/topics/key", {"checked": True})])
+@pytest.mark.parametrize("method,suffix,body", [
+    ("get", "", None), ("post", "/refresh", None), ("patch", "/topics/key", {"checked": True}),
+    ("get", "/plans", None), ("get", "/plans/sources", None),
+    ("post", "/plans", {"title": "Exam", "assessment_date": "2026-11-01", "start_date": "2026-10-21", "coverage": "Recursion"}),
+    ("patch", "/plans/00000000-0000-0000-0000-000000000001", {"version": 1, "regenerate": True}),
+    ("delete", "/plans/00000000-0000-0000-0000-000000000001", None),
+])
 def test_authentication_and_cross_user_access(client, method, suffix, body):
     url = "/api/topic-checklist/u/courses/c" + suffix
     kwargs = {"json": body} if body else {}

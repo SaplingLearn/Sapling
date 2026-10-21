@@ -7,7 +7,6 @@ import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
 import { FilterPills } from "@/components/ui";
-import { CustomSelect } from "../CustomSelect";
 
 // Lazy-load to keep mermaid/katex/highlight.js out of the OpenNext
 // server bundle. See ChatPanel.tsx for the rationale.
@@ -41,50 +40,28 @@ function StudyModePanel({ mode, children }: { mode: string; children: React.Reac
     </div>
   );
 }
-import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
+import { FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
-import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessage";
+import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import {
   getCourses,
-  getStudyGuideExams,
-  getStudyGuide,
-  regenerateStudyGuide,
-  getCachedStudyGuides,
   getFlashcards,
   generateFlashcards,
   rateFlashcard,
   deleteFlashcard,
   getDocuments,
   type EnrolledCourse,
-  type StudyGuideContent,
-  type StudyGuideExam,
-  type StudyGuideCacheEntry,
 } from "@/lib/api";
 import { FlashcardImportModal } from "../flashcards/FlashcardImportModal";
+import { StudyPlans } from "../study/StudyPlans";
 import { DueQueue } from "../learn/DueQueue";
 import { RetentionCheck } from "../learn/RetentionCheck";
 import { useLoopStatus } from "../learn/useLoopStatus";
 
 type Mode = "guide" | "cards";
-
-// A guide load fails two ways that deserve different UI: the guide's target
-// isn't there (normal — a deleted exam, a stale "recent guides" entry, or a
-// term with no offering of the course, #475 F4; `message` carries the server's
-// sentence when it isn't the exam-deleted one), or the generation itself
-// broke. Only the second is worth a red toast, and it carries the ids + term
-// it was built from so retry replays the load that failed rather than whatever
-// the selects hold when the user gets around to clicking — they can have moved
-// on (or been reset by a course/term switch) in between, and a failed load
-// leaves nothing on screen tying them to it. `semester` is the term the failed
-// load resolved with ("" = unscoped).
-// (Until #476 the sharper reason was that a recent-open cleared the exam
-// selection outright; that's fixed — the selects now track the open.)
-type GuideProblem =
-  | { kind: "missing"; message?: string }
-  | { kind: "failed"; message: string; courseId: string; examId: string; semester: string };
 
 type RawCard = {
   id: string;
@@ -107,6 +84,7 @@ export function Study() {
     searchParams.get("mode") === "cards" ? "cards" : "guide",
   );
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
+  const planCourseId = searchParams.get("course") || "";
   const [activeSemester, , semesterHydrated] = useActiveSemester();
 
   React.useEffect(() => {
@@ -130,18 +108,13 @@ export function Study() {
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
       <TopBar
         title="Study"
-        subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
+        subtitle={mode === "guide" ? "Your guide, topics and study schedule in one place" : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
       <div className="fa26-study-header"><span>Study from your course material</span><StudyNavigation active={mode} onSelect={setMode} /></div>
       <StudyModePanel mode={mode}>
         {mode === "guide" ? (
-          <GuideMode
-            courses={scopedCourses}
-            isMobile={isMobile}
-            semester={activeSemester}
-            semesterReady={semesterHydrated}
-          />
+          <StudyPlans courses={scopedCourses} semester={activeSemester} semesterReady={semesterHydrated} initialCourseId={planCourseId} initialDocumentId={searchParams.get("document") || ""} />
         ) : (
           <FlashcardsMode
             courses={scopedCourses}
@@ -151,403 +124,6 @@ export function Study() {
           />
         )}
       </StudyModePanel>
-    </div>
-  );
-}
-
-// ── Study Guide mode ─────────────────────────────────────────────────────────
-
-function GuideMode({
-  courses,
-  isMobile,
-  semester,
-  semesterReady,
-}: {
-  courses: EnrolledCourse[];
-  isMobile: boolean;
-  // The active semester ("" = All semesters → unscoped fetches, #141) and its
-  // hydration flag — fetches wait for it so a stored term never produces an
-  // unscoped-then-scoped double fetch (the Dashboard pattern).
-  semester: string;
-  semesterReady: boolean;
-}) {
-  const toast = useToast();
-  const { userId } = useUser();
-  const [courseId, setCourseId] = React.useState<string>("");
-  const [examId, setExamId] = React.useState<string>("");
-  const [exams, setExams] = React.useState<StudyGuideExam[]>([]);
-  const [guide, setGuide] = React.useState<StudyGuideContent | null>(null);
-  const [generatedAt, setGeneratedAt] = React.useState<string>("");
-  const [cached, setCached] = React.useState<boolean>(false);
-  const [loadingExams, setLoadingExams] = React.useState(false);
-  const [loadingGuide, setLoadingGuide] = React.useState(false);
-  const [regenerating, setRegenerating] = React.useState(false);
-  const [recent, setRecent] = React.useState<StudyGuideCacheEntry[]>([]);
-  const [guideProblem, setGuideProblem] = React.useState<GuideProblem | null>(null);
-  // "" = resolved unscoped. See loadGuide.
-  const [loadedTerm, setLoadedTerm] = React.useState<string>("");
-
-  const loadRecent = React.useCallback(async () => {
-    if (!userId) return;
-    try {
-      const r = await getCachedStudyGuides(userId);
-      setRecent(r.guides || []);
-    } catch (err) {
-      console.error("recent guides failed", err);
-    }
-  }, [userId]);
-
-  React.useEffect(() => { loadRecent(); }, [loadRecent]);
-
-  // Dropping the exam selection is a response to two EVENTS — the user picking
-  // a different course, and the active term changing — never to `courseId`
-  // simply differing from its last value. That distinction is the whole of
-  // #476: openRecent changes courseId too, and a courseId-keyed effect can't
-  // tell a deliberate open from a user switch, so it wiped the exam openRecent
-  // had just set. It also landed a render late, so the loader below still got
-  // one read out of the stale pair before the reset applied.
-  const clearSelection = () => {
-    setExamId("");
-    setGuide(null);
-    setGuideProblem(null);
-  };
-
-  // Guarded on an actual CHANGE. CustomSelect fires onChange for the
-  // already-selected option too, and the effect this reset came out of got that
-  // for free — setCourseId(same) bails out, so the effect never re-ran. On a
-  // plain handler it has to be explicit, or re-confirming the course you are
-  // already on wipes the guide you are reading.
-  const selectCourse = (next: string) => {
-    if (next === courseId) return;
-    setCourseId(next);
-    clearSelection();
-  };
-
-  // A term switch re-scopes the exam list, so an exam picked under the old term
-  // need not exist in the new one. Adjusted during render (the StudyModePanel
-  // pattern above) rather than in an effect: an effect-time reset commits once
-  // on the stale pair first, re-reading the old exam under the new term and
-  // landing on the strict resolver. `null` = uninitialized, so hydration
-  // ("" → the stored term) is not a switch.
-  const [scopedTerm, setScopedTerm] = React.useState<string | null>(null);
-  if (semesterReady && scopedTerm !== semester) {
-    if (scopedTerm !== null) clearSelection();
-    setScopedTerm(semester);
-  }
-
-  // The OPTIONS follow the active selector, deliberately: #475 pins only the
-  // recent-open's own load to the entry's term, and later picker-driven loads
-  // go back to the selector — so listing the entry's term here would offer
-  // exams that the next load would then 404 on.
-  // Known edge that leaves: open a rail entry whose term ISN'T the active one
-  // and its exam is absent from this list, so CustomSelect falls back to the
-  // placeholder while the guide and Regenerate are live and correctly aimed at
-  // `loadedTerm`. Squaring that needs the screen to track "the term I'm
-  // viewing" as one thing across list + loads — a #475 change, not this one.
-  React.useEffect(() => {
-    setExams([]);
-    if (!courseId || !userId || !semesterReady) return;
-    setLoadingExams(true);
-    getStudyGuideExams(userId, courseId, semester || undefined)
-      .then(r => setExams(r.exams || []))
-      .catch(err => {
-        console.error("study exams load failed", err);
-        toast.error(humanizeError(err, "Couldn't load the exams for this course."));
-      })
-      .finally(() => setLoadingExams(false));
-  }, [courseId, userId, toast, semester, semesterReady]);
-
-  // A pending recent-open's OWN term (#475 F1), consumed by exactly one load:
-  // null = no pending recent open; "" = the entry has no term label, open
-  // explicitly unscoped.
-  const recentTermRef = React.useRef<string | null>(null);
-
-  const loadGuide = React.useCallback(async (cid: string, eid: string, termOverride?: string) => {
-    if (!userId) return;
-    // termOverride pins the term for THIS load ("" = explicitly unscoped):
-    // recent entries open as their own term (#475 F1) and retries replay the
-    // term that failed. Without it, the active selector applies.
-    const term = termOverride !== undefined ? (termOverride || undefined) : (semester || undefined);
-    setLoadingGuide(true);
-    setGuideProblem(null);
-    try {
-      const r = await getStudyGuide(userId, cid, eid, term);
-      setGuide(r.guide);
-      // The term this guide was actually resolved under — which is the entry's
-      // own term on a recent-open, not the active selector's (#475 F1).
-      // Regenerate has to replay it, or it rebuilds against a different
-      // offering than the one on screen.
-      setLoadedTerm(term ?? "");
-      setGeneratedAt(r.generated_at);
-      setCached(r.cached);
-      if (!r.cached) loadRecent();
-    } catch (err) {
-      console.error("study guide load failed", err);
-      setGuide(null);
-      if (isNotFound(err)) {
-        // #475 F4: not every 404 means "exam deleted" — strict semester
-        // resolution 404s when the course has no offering in the requested
-        // term. Surface the server's sentence unless it IS the exam-deleted
-        // one (or is absent).
-        const { detail } = extractErrorDetail(err);
-        setGuideProblem(
-          !detail || detail.startsWith("Exam not found")
-            ? { kind: "missing" }
-            : { kind: "missing", message: detail },
-        );
-      } else {
-        const message = humanizeError(err, "Couldn't build that study guide.");
-        setGuideProblem({ kind: "failed", message, courseId: cid, examId: eid, semester: term ?? "" });
-        toast.error(message);
-      }
-    } finally {
-      setLoadingGuide(false);
-    }
-  }, [userId, toast, loadRecent, semester]);
-
-  React.useEffect(() => {
-    if (courseId && examId) {
-      // Consume a pending recent-open term so ONLY this load is pinned to the
-      // entry's own term; later picker-driven loads follow the selector.
-      const recentTerm = recentTermRef.current;
-      recentTermRef.current = null;
-      loadGuide(courseId, examId, recentTerm ?? undefined);
-    }
-  }, [courseId, examId, loadGuide]);
-
-  const openRecent = (entry: StudyGuideCacheEntry) => {
-    // #475 F1: the entry's guide row keys on ITS offering/term, which need
-    // not match the active selector — a Spring guide in the rail must open as
-    // Spring, or the strict resolver cache-misses under the active term and
-    // silently generates (and persists) a mismatched row.
-    recentTermRef.current = entry.semester ?? "";
-    setCourseId(entry.course_id);
-    setExamId(entry.exam_id);
-  };
-
-  const regenerate = async () => {
-    // Regeneration is meaningless without a target exam, and the endpoint
-    // 400s on a blank one — bail before the request.
-    if (!userId || !courseId || !examId) return;
-    setRegenerating(true);
-    setGuideProblem(null);
-    try {
-      // Regenerates the term the DISPLAYED guide was read under, so rebuild
-      // and read key on the same offering. Before #476 this could use the
-      // active selector safely only because the button was unreachable on the
-      // recent-open path — the one path where the two differ.
-      const r = await regenerateStudyGuide(userId, courseId, examId, loadedTerm || undefined);
-      setGuide(r.guide);
-      setGeneratedAt(r.generated_at);
-      setCached(false);
-      await loadRecent();
-      toast.success("Study guide regenerated.");
-    } catch (err) {
-      console.error("study guide regenerate failed", err);
-      toast.error(humanizeError(err, "Couldn't regenerate that study guide."));
-    } finally {
-      setRegenerating(false);
-    }
-  };
-
-  return (
-    <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "24px 32px" }}>
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            flexWrap: "wrap",
-            alignItems: "flex-end",
-            marginBottom: 20,
-          }}
-        >
-          <div style={{ flex: "1 1 240px", minWidth: 220 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.08em",
-                  color: courseId ? "var(--accent)" : "var(--text-muted)",
-                  transition: "color var(--dur) var(--ease)",
-                }}
-              >
-                01
-              </span>
-              <span className="label-micro">Course</span>
-            </div>
-            <CustomSelect
-              value={courseId}
-              onChange={selectCourse}
-              placeholder="Pick a course…"
-              options={courses.map(c => ({
-                value: c.course_id,
-                label: c.course_code || c.course_name,
-                description: c.course_code ? c.course_name : undefined,
-              }))}
-            />
-          </div>
-          <div style={{ flex: "1 1 240px", minWidth: 220 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.08em",
-                  color: examId ? "var(--accent)" : courseId ? "var(--text-dim)" : "var(--text-muted)",
-                  transition: "color var(--dur) var(--ease)",
-                }}
-              >
-                02
-              </span>
-              <span className="label-micro">Exam</span>
-            </div>
-            <CustomSelect
-              value={examId}
-              onChange={v => setExamId(v)}
-              placeholder={loadingExams ? "Loading…" : (courseId ? "Pick an exam…" : "Select a course first")}
-              disabled={!courseId || loadingExams}
-              options={exams.map(e => ({
-                value: e.id,
-                label: e.title,
-                description: e.due_date ? `Due ${e.due_date}` : undefined,
-              }))}
-            />
-          </div>
-          {guide && (
-            <button
-              className="btn btn--sm"
-              onClick={regenerate}
-              disabled={regenerating || loadingGuide || !examId}
-            >
-              <Icon name="sparkle" size={12} /> {regenerating ? "Regenerating…" : "Regenerate"}
-            </button>
-          )}
-        </div>
-
-        {!courseId && (
-          <EmptyHint
-            title="Pick a course to get started"
-            body="Your generated study guides live here — grouped by exam and built from the documents in your library."
-          />
-        )}
-        {courseId && !examId && !guideProblem && !loadingExams && exams.length === 0 && (
-          <EmptyHint
-            title="No exams for this course yet"
-            body="Study guides are built one exam at a time. Import a syllabus on the Calendar page, or add an assignment with type = Exam, and it'll show up here."
-          />
-        )}
-        {courseId && !examId && !guideProblem && exams.length > 0 && (
-          <EmptyHint title="Choose an exam" body="The guide will be generated from your course material the first time." />
-        )}
-        {!loadingGuide && !regenerating && guideProblem?.kind === "missing" && (
-          guideProblem.message ? (
-            // #475 F4: the server said something more specific than "exam
-            // deleted" (e.g. no offering in the requested term) — show it.
-            <EmptyHint title="That guide isn't available" body={guideProblem.message} />
-          ) : (
-            <EmptyHint
-              title="That exam isn't around anymore"
-              body="It was probably deleted. Pick another exam above, or add one on the Calendar page to build a guide for it."
-            />
-          )
-        )}
-        {!loadingGuide && !regenerating && guideProblem?.kind === "failed" && (
-          <EmptyHint
-            title="That guide didn't come through"
-            body={guideProblem.message}
-            action={
-              <button
-                className="btn btn--sm btn--primary"
-                // Replays the exact load that failed — ids AND term (#475 F1).
-                onClick={() =>
-                  loadGuide(guideProblem.courseId, guideProblem.examId, guideProblem.semester)
-                }
-                disabled={loadingGuide}
-              >
-                Try again
-              </button>
-            }
-          />
-        )}
-
-        {(loadingGuide || regenerating) && <StudyGuideSkeleton />}
-
-        {!loadingGuide && guide && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="card" style={{ padding: "var(--pad-lg)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{guide.exam}</div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {guide.due_date && <span className="chip">Due {guide.due_date}</span>}
-                  <span className="chip" style={{ opacity: 0.7 }}>
-                    {cached ? "Cached" : "Fresh"} · {generatedAt ? new Date(generatedAt).toLocaleString() : ""}
-                  </span>
-                </div>
-              </div>
-              {guide.overview && (
-                <div style={{ marginTop: 10, fontSize: 13, color: "var(--text-dim)", lineHeight: 1.55 }}>
-                  <MarkdownChat>{guide.overview}</MarkdownChat>
-                </div>
-              )}
-            </div>
-
-            {(guide.topics || []).map((t, i) => (
-              <div key={`${t.name}-${i}`} className="card" style={{ padding: "var(--pad-lg)" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <span className="label-micro">Topic {i + 1}</span>
-                  <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>{t.name}</div>
-                </div>
-                {t.importance && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                    <MarkdownChat>{t.importance}</MarkdownChat>
-                  </div>
-                )}
-                {(t.concepts || []).length > 0 && (
-                  <ul style={{ margin: "10px 0 0 18px", padding: 0 }}>
-                    {(t.concepts || []).map((c, j) => (
-                      <li key={j} style={{ fontSize: 13, color: "var(--text)", marginBottom: 4, lineHeight: 1.5 }}>
-                        <MarkdownChat>{c}</MarkdownChat>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {!isMobile && (
-        <aside style={{
-          width: 260, borderLeft: "1px solid var(--border)", background: "var(--bg-subtle)",
-          padding: 16, overflowY: "auto", flexShrink: 0,
-        }}>
-          <div className="label-micro" style={{ marginBottom: 10 }}>Recent guides</div>
-          {recent.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No generated guides yet.</div>
-          )}
-          {recent.slice(0, 20).map(r => (
-            <button
-              key={r.id}
-              onClick={() => openRecent(r)}
-              style={{
-                width: "100%", textAlign: "left", padding: "10px 12px",
-                borderRadius: "var(--r-sm)", marginBottom: 6,
-                background: r.course_id === courseId && r.exam_id === examId ? "var(--bg-panel)" : "transparent",
-                border: r.course_id === courseId && r.exam_id === examId ? "1px solid var(--border)" : "1px solid transparent",
-              }}
-            >
-              <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.exam_title || "Untitled exam"}
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
-                {r.course_name} · {new Date(r.generated_at).toLocaleDateString()}
-              </div>
-            </button>
-          ))}
-        </aside>
-      )}
     </div>
   );
 }
@@ -562,7 +138,7 @@ function FlashcardsMode({
 }: {
   courses: EnrolledCourse[];
   isMobile: boolean;
-  // See GuideMode: "" = All semesters (unscoped); fetches gate on
+  // As with the assessment guide: "" = All semesters (unscoped); fetches gate on
   // semesterReady so a stored term never double-fetches (#141).
   semester: string;
   semesterReady: boolean;
@@ -580,6 +156,7 @@ function FlashcardsMode({
   const [docsUsed, setDocsUsed] = React.useState<number | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [docs, setDocs] = React.useState<{ id: string; file_name: string; category?: string }[]>([]);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
   // A failed status read is not an inactive learning loop: retain the legacy
   // flashcards and offer a retry so the student can still reach due reviews.
   const { status: loopActive, retry: retryLoopStatus } = useLoopStatus(userId, userReady);
@@ -594,13 +171,15 @@ function FlashcardsMode({
   const load = React.useCallback(async () => {
     if (!userId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await getFlashcards(userId, undefined, semester || undefined);
       setCards(res.flashcards || []);
       setIdx(0);
       setFlipped(false);
     } catch (err) {
-      console.error("flashcards load failed", err);
+      setLoadError(extractErrorDetail(err).detail || "Couldn't load your flashcards. Please try again.");
+      setCards([]);
     } finally {
       setLoading(false);
     }
@@ -743,7 +322,8 @@ function FlashcardsMode({
 
         <div style={{ flex: 1, padding: "40px 32px", display: "flex", flexDirection: "column", alignItems: "center", gap: 22, overflowY: "auto" }}>
           {loading && <FlashcardsSkeleton />}
-          {filtered.length === 0 && !loading && (
+          {loadError && <div role="alert"><p>{loadError}</p><button type="button" className="btn btn--sm" data-testid="flashcards-retry" onClick={load}>Retry flashcards</button></div>}
+          {filtered.length === 0 && !loading && !loadError && (
             <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 0" }}>
               <div className="h-serif" style={{ fontSize: 20 }}>No cards here yet</div>
               <div style={{ fontSize: 13, marginTop: 6 }}>
@@ -927,17 +507,5 @@ function CourseFilterRow({
         {subLabel && <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{subLabel}</div>}
       </div>
     </button>
-  );
-}
-
-function EmptyHint({ title, body, action }: { title: string; body: string; action?: React.ReactNode }) {
-  return (
-    <div className="card" style={{ padding: "32px 28px", textAlign: "center", color: "var(--text-muted)" }}>
-      <div className="h-serif" style={{ fontSize: 18, color: "var(--text)", marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 13 }}>{body}</div>
-      {action && (
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>{action}</div>
-      )}
-    </div>
   );
 }

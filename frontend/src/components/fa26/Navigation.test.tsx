@@ -25,6 +25,10 @@ afterEach(() => {
 });
 
 describe("FA26 phone rail", () => {
+  it("never renders an executable script during a client sidebar mount", () => {
+    const { container } = render(<Sidebar />);
+    expect(container.querySelector("script")).toBeNull();
+  });
   it("keeps Study selected for both flashcards and guides", () => {
     render(<PhoneRail />);
     expect(screen.getByRole("link", { name: "Study" })).toHaveAttribute("aria-current", "page");
@@ -53,7 +57,7 @@ describe("FA26 phone rail", () => {
   it("switches the study mode without discarding the mounted screen", () => {
     const select = vi.fn();
     render(<StudyNavigation active="guide" onSelect={select} />);
-    expect(screen.getByRole("button", { name: "Study Guides" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Study Guide" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Flashcards" }));
     expect(select).toHaveBeenCalledWith("cards");
     expect(screen.getByRole("link", { name: "Quiz" })).toHaveAttribute("href", "/quiz");

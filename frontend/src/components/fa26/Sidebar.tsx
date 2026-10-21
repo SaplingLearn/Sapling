@@ -74,11 +74,6 @@ const serverFalse = () => false;
 /** Test-only: forget this page's remembered nav state. */
 export function __resetMoreStateForTests() { moreStore.reset(); collapsedStore.reset(); }
 
-/* Applies a remembered collapse before the first paint of a server-rendered
-   page, so a collapsed sidebar never flashes open and shoves <main> over at
-   hydration (React then owns the attribute; see suppressHydrationWarning). */
-const PRE_PAINT_COLLAPSE = `(function(s){try{if(localStorage.getItem(${JSON.stringify(COLLAPSED_STORAGE_KEY)})==="1")s.parentElement.setAttribute("data-collapsed","")}catch(e){}})(document.currentScript)`;
-
 /**
  * The shell's desktop sidebar: the approved Pen nav (216px, sage panel,
  * wordmark, YOUR WORKSPACE, six botanical destinations, Settings and the
@@ -127,6 +122,12 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
 
   // Collapse to an icon rail: default expanded, remembered per browser.
   const collapsed = useSyncExternalStore(collapsedStore.subscribe, collapsedStore.read, serverFalse);
+  const sidebar = useRef<HTMLElement>(null);
+  // Restore the remembered state before the client paints, including a fresh
+  // client-side mount. Inline script elements do not execute on that path.
+  useLayoutEffect(() => {
+    sidebar.current?.toggleAttribute("data-collapsed", collapsedStore.read());
+  }, [collapsed]);
   const toggleCollapsed = () => { setTip(null); collapsedStore.write(!collapsed); };
   // Collapsed rows show their label in a tooltip on hover and focus. It is
   // fixed-positioned so the rail's clipping never cuts it off; the rows carry
@@ -215,13 +216,11 @@ export function Sidebar({ testids = true }: { testids?: boolean }) {
     </li>;
   };
 
-  return <aside id={sidebarId} className={styles.sidebar} aria-label="Sidebar" data-testid={tid("app-sidebar")}
+  return <aside ref={sidebar} id={sidebarId} className={styles.sidebar} aria-label="Sidebar" data-testid={tid("app-sidebar")}
     data-animated={(animated && !reducedMotion) || undefined} data-collapsed={collapsed || undefined}
-    suppressHydrationWarning
     onPointerOver={(e) => showTip(e.target)} onPointerLeave={() => setTip(null)}
     onFocus={(e) => showTip(e.target)} onBlur={() => setTip(null)}
     onKeyDown={(e) => { if (e.key === "Escape") setTip(null); }}>
-    <script dangerouslySetInnerHTML={{ __html: PRE_PAINT_COLLAPSE }} />
     <Suspense fallback={null}><ViewReader onSearch={setSearch} /></Suspense>
     <div className={styles.header}>
       {/* No approved standalone Sapling mark ships in public/design/sapling,

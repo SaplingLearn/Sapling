@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import httpx
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -410,6 +411,10 @@ def get_flashcards(
         if due_only:
             rows = due
         return {"flashcards": rows, "due_count": len(due)}
+    except httpx.HTTPStatusError:
+        # The shared handler distinguishes missing migrations from other DB
+        # failures and never returns a raw PostgREST URL to the browser.
+        raise
     except Exception as e:
         err_str = str(e).lower()
         if "not found" in err_str or "does not exist" in err_str or "42p01" in err_str:

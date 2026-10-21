@@ -21,7 +21,7 @@ import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from
 import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
-import { TopicChecklistPanel } from "../TopicChecklistPanel";
+import { StudyPlanPanel } from "../StudyPlanPanel";
 import { NodeConnections } from "../graph/NodeConnections";
 import type { AttemptSummary } from "@/lib/quiz/types";
 
@@ -570,7 +570,7 @@ export function Tree() {
       </div>
 
       {courseFilter !== "all" && userId && (
-        <TopicChecklistPanel key={`${userId}:${courseFilter}:${activeSemester}`} userId={userId} courseId={courseFilter} semester={activeSemester || undefined} semesters={courses.find((course) => course.course_id === courseFilter)?.terms} />
+        <StudyPlanPanel key={`${userId}:${courseFilter}:${activeSemester}`} userId={userId} courseId={courseFilter} semester={activeSemester || undefined} semesters={courses.find((course) => course.course_id === courseFilter)?.terms} />
       )}
 
       {/* The graph row absorbs whatever `<main>` has left after the TopBar and

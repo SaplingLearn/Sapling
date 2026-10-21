@@ -355,11 +355,11 @@ class ChecklistGeneration:
     error: BaseException | None = None
 
 
-async def _generate(payload: dict, user_id: str, reservation: checklist_budget.Reservation) -> ChecklistGeneration:
+async def _generate(payload: dict, user_id: str, reservation: checklist_budget.Reservation, *, agent=None) -> ChecklistGeneration:
     usage = RunUsage()
     dispatches = ChecklistDispatches(reservation=reservation)
     try:
-        result = await asyncio.wait_for(topic_checklist_agent.run(
+        result = await asyncio.wait_for((agent or topic_checklist_agent).run(
             json.dumps(payload), deps=payload, usage=usage, usage_limits=CHECKLIST_LIMITS,
             capabilities=[dispatches],
         ), timeout=GENERATION_TIMEOUT_SECONDS)
@@ -371,13 +371,14 @@ async def _generate(payload: dict, user_id: str, reservation: checklist_budget.R
         return ChecklistGeneration(usage, dispatches, error=error)
 
 
-def _finish_generation(generation: ChecklistGeneration, payload: dict) -> None:
+def _finish_generation(generation: ChecklistGeneration, payload: dict, *, publish: bool = True) -> None:
     tracker = generation.dispatches
     content = None
     if generation.error is None:
         try:
             validate_evidence(generation.outline, payload)
-            content = encrypt_json(generation.outline.model_dump())
+            if publish:
+                content = encrypt_json(generation.outline.model_dump())
         except Exception as error:
             generation.error = error
     receipt = None

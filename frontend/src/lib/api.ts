@@ -1436,6 +1436,10 @@ export const regenerateStudyGuide = (userId: string, courseId: string, examId: s
 export const getCachedStudyGuides = (userId: string) =>
   fetchJSON<{ guides: StudyGuideCacheEntry[] }>(`/api/study-guide/${encodeURIComponent(userId)}/cached`);
 
+export const getSavedStudyGuide = (userId: string, guideId: string, signal?: AbortSignal) =>
+  fetchJSON<{ guide: StudyGuideContent; generated_at: string; cached: boolean }>(
+    `/api/study-guide/${encodeURIComponent(userId)}/saved/${encodeURIComponent(guideId)}`, { signal });
+
 // Feedback
 export const submitFeedback = (data: {
   user_id: string; type: 'global' | 'session'; rating: number;

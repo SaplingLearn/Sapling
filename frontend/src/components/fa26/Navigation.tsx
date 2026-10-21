@@ -99,7 +99,7 @@ export function PhoneRail({ testids = true }: { testids?: boolean }) {
 export function StudyNavigation({ active, onSelect }: { active?: "guide" | "cards"; onSelect?: (value: "guide" | "cards") => void }) {
   return <nav className="fa26-study-tabs" aria-label="Study tools">
     <Link href="/quiz" aria-current={!active ? "page" : undefined}>Quiz</Link>
-    {([{ mode: "cards", label: "Flashcards" }, { mode: "guide", label: "Study Guides" }] as const).map(tab => onSelect
+    {([{ mode: "guide", label: "Study Guide" }, { mode: "cards", label: "Flashcards" }] as const).map(tab => onSelect
       ? <button type="button" key={tab.mode} aria-pressed={active === tab.mode} onClick={() => onSelect(tab.mode)}>{tab.label}</button>
       : <Link key={tab.mode} href={`/study?mode=${tab.mode}`} aria-current={active === tab.mode ? "page" : undefined}>{tab.label}</Link>)}
   </nav>;

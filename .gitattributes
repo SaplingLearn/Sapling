@@ -1,0 +1,4 @@
+# The PR #728 graph assets have byte-level provenance checks; retain their
+# canonical LF bytes on Windows as well as Linux.
+frontend/public/design/sapling/graph-reference.svg text eol=lf
+frontend/public/design/sapling/graph-pen-reference.svg text eol=lf
