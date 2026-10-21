@@ -30,7 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
-from db.connection import storage_upload, table
+from db.connection import storage_create_signed_url, storage_upload, table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
@@ -1341,6 +1341,26 @@ def _scan_concepts_for_course(
         "added": max(0, len(after_rows) - before_count),
         "existing": len(existing_concepts),
     }
+
+
+@router.get("/doc/{document_id}/original-url")
+def get_original_url(document_id: str, request: Request, user_id: str):
+    """A short-lived signed URL for the document's original uploaded file
+    (source reference viewer). 404 when the document doesn't exist, isn't
+    the caller's, or has no stored original — the last case covers every
+    document uploaded before this shipped (Task 3), which is a hard,
+    non-backfillable gap, not a transient failure."""
+    require_self(user_id, request)
+    _validate_user(user_id)
+    rows = table("documents").select(
+        "id,original_storage_path,file_name",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not rows or not rows[0].get("original_storage_path"):
+        raise HTTPException(status_code=404, detail="No original file is available for this document.")
+    url = storage_create_signed_url(ORIGINAL_DOCUMENTS_BUCKET, rows[0]["original_storage_path"])
+    return {"url": url}
 
 
 @router.post("/doc/{document_id}/scan-concepts")

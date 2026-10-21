@@ -1644,3 +1644,39 @@ class TestScanDocumentConcepts:
         assert r.status_code == 200
         mock_plain.assert_called_once_with("doc1")
         assert mock_scan.call_args.kwargs["doc_summary"] == "Intro to sorting."
+
+
+# ── GET /api/documents/doc/{document_id}/original-url ──────────────────────
+
+class TestGetOriginalUrl:
+    def test_returns_a_signed_url(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.storage_create_signed_url", return_value="https://signed.example/x") as mock_sign,
+        ):
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": "doc-1/notes.pdf", "file_name": "notes.pdf"},
+            ]
+            r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"url": "https://signed.example/x"}
+        mock_sign.assert_called_once_with("document-originals", "doc-1/notes.pdf")
+
+    def test_404_when_document_not_found(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
+        assert r.status_code == 404
+
+    def test_404_when_no_original_was_ever_stored(self):
+        """Pre-existing documents (uploaded before this shipped) have
+        original_storage_path = None — the hard, non-backfillable gap the
+        spec calls out."""
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": None, "file_name": "notes.pdf"},
+            ]
+            r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
+        assert r.status_code == 404
