@@ -350,7 +350,7 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
               </button>
             </div>
           )}
-          {askTarget && (
+          {askTarget && !reference && (
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
               <input
                 type="checkbox"
