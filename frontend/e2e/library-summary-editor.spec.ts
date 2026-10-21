@@ -109,3 +109,68 @@ test("highlight, ask, keep, and restore an earlier version of a summary doc", as
   );
   expect(summaryDocRowsAfterDelete).toHaveLength(0);
 });
+
+test("circling a PDF source and asking adds it to the summary", async ({ page }) => {
+  const health = (await (await fetch(`${BACKEND_URL}/api/health`)).json()) as { model_mode?: string };
+  expect(
+    health.model_mode,
+    "Stack is not in deterministic model mode. Reboot it with:\n" +
+      "  SAPLING_MODEL_MODE=function " +
+      "SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e make e2e-up",
+  ).toBe("function");
+
+  // ── Upload, same as the journey above ─────────────────────────────────
+  await page.goto("/library");
+  const uploadButton = page.getByTestId("library-upload");
+  await expect(uploadButton).toBeEnabled();
+  await uploadButton.click();
+  await page.getByTestId("upload-modal-file-input").setInputFiles(FIXTURE_PDF);
+  await expect(page.getByTestId("upload-modal-file-row-0")).toBeVisible();
+  await page.getByTestId("upload-modal-submit").click();
+  const doneButton = page.getByTestId("upload-modal-done");
+  await expect(doneButton).toBeVisible({ timeout: 60_000 });
+  await doneButton.click();
+  await expect(page.getByTestId("upload-modal")).toBeHidden();
+
+  const docs = await queryRaw(
+    `SELECT id FROM documents WHERE file_name = $1 AND deleted_at IS NULL`,
+    [FIXTURE_NAME],
+  );
+  const documentId = (docs[0] as { id: string }).id;
+
+  await page.getByTestId(`library-doc-${documentId}`).click();
+  await page.getByRole("link", { name: "Open summary" }).click();
+  await expect(page.getByTestId("summary-editor-content")).toBeVisible();
+
+  // ── Open the source as a split pane and circle a region ───────────────
+  await page.getByRole("button", { name: FIXTURE_NAME }).click();
+  const page0 = page.getByTestId("summary-editor-source-page-0");
+  await expect(page0).toBeVisible();
+  const box = await page0.boundingBox();
+  if (!box) throw new Error("source page canvas has no bounding box");
+  // A deliberate rectangular-ish lasso well over the MIN_LASSO_SPAN guard
+  // (SourceViewer.tsx: 8px of travel) so it registers as a real crop, not
+  // a stray click.
+  await page.mouse.move(box.x + 20, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 120, box.y + 20);
+  await page.mouse.move(box.x + 120, box.y + 120);
+  await page.mouse.move(box.x + 20, box.y + 120);
+  await page.mouse.up();
+
+  await expect(page.getByText("Circled region attached")).toBeVisible();
+
+  // ── Ask with the reference attached; it goes through the whole-doc path ──
+  await page.getByTestId("summary-editor-ask-input").fill("add this diagram's caption");
+  await page.getByRole("button", { name: "Ask" }).click();
+  await expect(page.getByText(SCRIPTED_SUMMARY_EDIT)).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Keep it" }).click();
+  await expect(page.getByRole("button", { name: "Keep it" })).toBeHidden();
+
+  const editable = page.getByTestId("summary-editor-content").locator('[contenteditable="true"]');
+  await expect(editable).toContainText(SCRIPTED_SUMMARY_EDIT);
+
+  // ── Closing the source tab returns to the plain summary view ──────────
+  await page.getByRole("button", { name: FIXTURE_NAME }).click();
+  await expect(page.getByTestId("summary-editor-source-pane")).toBeHidden();
+});
