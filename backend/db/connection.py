@@ -238,3 +238,42 @@ def rpc(function_name: str, params: dict) -> list:
     r = _client.post(url, json=params)
     r.raise_for_status()
     return r.json()
+
+
+STORAGE_URL = f"{SUPABASE_URL}/storage/v1"
+
+
+def storage_upload(bucket: str, path: str, data: bytes, content_type: str) -> None:
+    """Upload bytes to a private Supabase Storage bucket, overwriting any
+    existing object at `path` (`x-upsert`). Raises on failure — callers
+    that must not fail an otherwise-successful request (e.g. the upload
+    pipeline persisting a document's original file) wrap this in their own
+    try/except, the same best-effort convention `create_summary_doc`'s
+    caller already uses."""
+    r = _client.post(
+        f"{STORAGE_URL}/object/{bucket}/{path}",
+        content=data,
+        headers={"Content-Type": content_type, "x-upsert": "true"},
+    )
+    r.raise_for_status()
+
+
+def storage_delete(bucket: str, path: str) -> None:
+    """Delete one object from a Storage bucket. Raises on failure — same
+    best-effort-at-the-caller convention as storage_upload."""
+    r = _client.delete(f"{STORAGE_URL}/object/{bucket}/{path}")
+    r.raise_for_status()
+
+
+def storage_create_signed_url(bucket: str, path: str, *, expires_in: int = 300) -> str:
+    """A short-lived signed URL for a private object. `expires_in` seconds
+    (default 5 minutes — long enough to open the viewer, short enough that
+    a leaked link is useless shortly after). Raises on failure (object
+    missing, bucket missing) — the route calling this maps that to a 404."""
+    r = _client.post(
+        f"{STORAGE_URL}/object/sign/{bucket}/{path}",
+        json={"expiresIn": expires_in},
+    )
+    r.raise_for_status()
+    signed_path = r.json()["signedURL"]
+    return f"{STORAGE_URL}{signed_path}"
