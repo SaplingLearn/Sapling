@@ -30,7 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
-from db.connection import storage_create_signed_url, storage_upload, table
+from db.connection import storage_create_signed_url, storage_delete, storage_upload, table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
@@ -295,12 +295,13 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
     # Ensure the document belongs to the requesting user (and isn't already
     # soft-deleted)
     docs = table("documents").select(
-        "id",
+        "id,original_storage_path",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
+    original_storage_path = docs[0].get("original_storage_path")
     # Soft delete (0025): stamp deleted_at; reads filter it out. The
     # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
     table("documents").update(
@@ -325,6 +326,18 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
             "delete_summary_docs_for_document failed for document %s (best-effort)",
             document_id,
         )
+    # Source reference viewer (Task 5): the stored original is cleaned up
+    # the same best-effort way — the soft-delete above already succeeded
+    # (the user-facing action is done), so a Storage hiccup here is a rare,
+    # recoverable orphaned object, never a reason to fail the delete.
+    if original_storage_path:
+        try:
+            storage_delete(ORIGINAL_DOCUMENTS_BUCKET, original_storage_path)
+        except Exception:
+            logger.exception(
+                "storage_delete failed for document %s's original file (best-effort)",
+                document_id,
+            )
     return {"deleted": True}
 
 

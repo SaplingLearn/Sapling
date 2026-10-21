@@ -293,6 +293,51 @@ class TestDeleteDocument:
         assert r.json() == {"deleted": True}
 
 
+class TestDeleteDocumentRemovesOriginal:
+    def test_deletes_the_stored_original_best_effort(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document"),
+            patch("routes.documents.storage_delete") as mock_delete,
+        ):
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": "doc-1/notes.pdf"},
+            ]
+            r = client.delete("/api/documents/doc/doc-1?user_id=u1")
+
+        assert r.status_code == 200
+        mock_delete.assert_called_once_with("document-originals", "doc-1/notes.pdf")
+
+    def test_skips_storage_delete_when_no_original_was_stored(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document"),
+            patch("routes.documents.storage_delete") as mock_delete,
+        ):
+            t.return_value.select.return_value = [{"id": "doc-1", "original_storage_path": None}]
+            r = client.delete("/api/documents/doc/doc-1?user_id=u1")
+
+        assert r.status_code == 200
+        mock_delete.assert_not_called()
+
+    def test_storage_delete_failure_does_not_500_an_already_completed_delete(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document"),
+            patch("routes.documents.storage_delete", side_effect=RuntimeError("network blip")),
+        ):
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": "doc-1/notes.pdf"},
+            ]
+            r = client.delete("/api/documents/doc/doc-1?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"deleted": True}
+
+
 # ── PATCH /api/documents/doc/{document_id} ───────────────────────────────────
 
 class TestUpdateDocument:
