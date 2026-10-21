@@ -10,6 +10,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 # Feature flag — when true, the streaming /upload route runs OCR off the
 # request critical path via asyncio.to_thread, so the SSE stream opens
@@ -29,7 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
-from db.connection import table
+from db.connection import storage_upload, table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
@@ -72,6 +73,12 @@ router = APIRouter()
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+
+# Source reference viewer (docs/superpowers/specs/2026-10-14-source-reference-viewer-design.md):
+# the bucket the original upload is persisted to, provisioned by migration
+# 20261014090000_document_originals.sql.
+ORIGINAL_DOCUMENTS_BUCKET = "document-originals"
+
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -485,6 +492,8 @@ def _persist_document(
     course_id: str | None = None,
     char_count: int | None = None,
     extracted_text: str | None = None,
+    file_bytes: bytes | None = None,
+    content_type: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
@@ -511,6 +520,14 @@ def _persist_document(
     recovery path depend on the thing that failed: a document whose indexer
     never ran had nothing for a re-drive to work from. It is stripped from the
     returned row — `/upload/sync` hands that row to the client verbatim.
+
+    ``file_bytes``/``content_type`` (when provided) persist the original
+    upload to Storage (source reference viewer, Task 3) — best-effort, same
+    posture as ``create_summary_doc`` above: the ``documents`` row is
+    already committed by the time this runs, so a Storage failure is
+    logged and swallowed rather than 500ing an otherwise-successful upload,
+    and ``original_storage_path`` comes back ``None`` instead.
+
     Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
@@ -603,6 +620,29 @@ def _persist_document(
         full_row["summary_doc_id"] = None
         full_row["summary_preview"] = None
         full_row["summary_source_count"] = 0
+    # Best-effort, same posture as create_summary_doc above: the documents
+    # row already landed, so a Storage failure (bucket not provisioned,
+    # transient network error) must not 500 an otherwise-successful upload.
+    if file_bytes is not None:
+        storage_path = f"{full_row['id']}/{quote(filename, safe='')}"
+        try:
+            storage_upload(
+                ORIGINAL_DOCUMENTS_BUCKET, storage_path, file_bytes,
+                content_type or "application/octet-stream",
+            )
+            table("documents").update(
+                {"original_storage_path": storage_path},
+                filters={"id": f"eq.{full_row['id']}"},
+            )
+            full_row["original_storage_path"] = storage_path
+        except Exception:
+            logger.exception(
+                "original-file storage upload failed for document %s (best-effort)",
+                full_row["id"],
+            )
+            full_row["original_storage_path"] = None
+    else:
+        full_row["original_storage_path"] = None
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
     # upload_document_sync and the streaming upload_document (see docstring);
@@ -816,6 +856,7 @@ async def upload_document_sync(
         filename=filename, result=result, request_id=request_id,
         course_id=course_id, char_count=len(extracted_text),
         extracted_text=extracted_text,
+        file_bytes=file_bytes, content_type=file.content_type,
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
@@ -1153,6 +1194,7 @@ async def upload_document(
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
                 extracted_text=extracted_text,
+                file_bytes=file_bytes, content_type=file.content_type,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since

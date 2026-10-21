@@ -859,6 +859,61 @@ class TestUploadCreatesSummaryDoc:
         assert body["summary_preview"] is None
         assert body["summary_source_count"] == 0
 
+    def test_persist_document_stores_the_original_file_best_effort(self):
+        """Source reference viewer (Task 3): the raw upload is persisted to
+        Storage, best-effort, keyed on the fresh document id."""
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-1", "content": {"type": "doc", "content": []},
+            }),
+            patch("routes.documents.storage_upload") as mock_upload,
+        ):
+            t.return_value.insert.return_value = [row]
+            t.return_value.update.return_value = [row]
+            r = _make_upload(filename="notes.pdf", content=b"%PDF-1.4 sample content for testing")
+
+        assert r.status_code == 200
+        mock_upload.assert_called_once_with(
+            "document-originals", "doc-1/notes.pdf",
+            b"%PDF-1.4 sample content for testing", "application/pdf",
+        )
+        # The documents row got its storage path patched in.
+        update_calls = t.return_value.update.call_args_list
+        assert any(
+            call.args[0].get("original_storage_path") == "doc-1/notes.pdf"
+            for call in update_calls
+        )
+        assert r.json()["original_storage_path"] == "doc-1/notes.pdf"
+
+    def test_storage_upload_failure_does_not_500_an_already_persisted_upload(self):
+        """Mirrors test_create_summary_doc_failure_does_not_500_... — a
+        Storage failure (bucket not provisioned, transient network error)
+        must degrade to original_storage_path=None, not discard an
+        already-committed documents row."""
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-1", "content": {"type": "doc", "content": []},
+            }),
+            patch("routes.documents.storage_upload", side_effect=RuntimeError("bucket missing")),
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+
+        assert r.status_code == 200
+        assert r.json()["original_storage_path"] is None
+
 
 # ── POST /api/documents/upload/sync — agent-failure → HTTP status (#151b) ───
 
