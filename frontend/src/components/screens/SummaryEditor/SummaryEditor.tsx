@@ -309,7 +309,13 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
           </button>
         </div>
         {rightTab === "sources" ? (
-          <SourcesPanel doc={doc} userId={userId!} onDocChanged={setDoc} />
+          <SourcesPanel
+            doc={doc}
+            userId={userId!}
+            onDocChanged={setDoc}
+            // TODO(task 13): wire this up to open the source viewer tab.
+            onOpenSource={() => {}}
+          />
         ) : (
           <HistoryPanel
             summaryDocId={doc.id}

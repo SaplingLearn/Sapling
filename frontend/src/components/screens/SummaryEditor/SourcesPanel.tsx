@@ -8,9 +8,10 @@ export interface SourcesPanelProps {
   doc: SummaryDoc;
   userId: string;
   onDocChanged: (doc: SummaryDoc) => void;
+  onOpenSource: (documentId: string) => void;
 }
 
-export function SourcesPanel({ doc, userId, onDocChanged }: SourcesPanelProps) {
+export function SourcesPanel({ doc, userId, onDocChanged, onOpenSource }: SourcesPanelProps) {
   const toast = useToast();
   const [library, setLibrary] = React.useState<Doc[]>([]);
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -53,9 +54,20 @@ export function SourcesPanel({ doc, userId, onDocChanged }: SourcesPanelProps) {
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
         {doc.sources.map((s) => (
           <li key={s.document_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {s.file_name}
-            </span>
+            {s.has_original ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", justifyContent: "flex-start" }}
+                onClick={() => onOpenSource(s.document_id)}
+              >
+                {s.file_name}
+              </button>
+            ) : (
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.file_name}
+              </span>
+            )}
             {s.document_id !== doc.primary_document_id && (
               <button
                 type="button"
