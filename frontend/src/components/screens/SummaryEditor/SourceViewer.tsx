@@ -77,6 +77,17 @@ export function SourceViewer({ pdfUrl, onReference }: SourceViewerProps) {
     let cancelled = false;
     (async () => {
       const pdfjs = await import("pdfjs-dist");
+      // pdfjs-dist does its parsing/rendering off the main thread and throws
+      // "No GlobalWorkerOptions.workerSrc specified" at getDocument() time
+      // without this — the unit test can't catch the gap since it mocks the
+      // whole module; only a real browser run surfaces it. new URL(...,
+      // import.meta.url) lets the bundler (webpack/Turbopack) resolve and
+      // emit the worker asset itself, so the URL always matches the
+      // installed pdfjs-dist version.
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url,
+      ).toString();
       const doc = await pdfjs.getDocument({ url: pdfUrl }).promise;
       if (cancelled) return;
       setPageCount(doc.numPages);
