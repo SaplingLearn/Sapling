@@ -12,7 +12,7 @@ import type {
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
-  SummaryDoc, SummaryDocCore, SummaryDocSuggestion, SummaryDocVersion,
+  SummaryDoc, SummaryDocCore, SummaryDocSuggestion, SummaryDocVersion, AskReference,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 
@@ -828,7 +828,25 @@ export const removeSummaryDocSource = (summaryDocId: string, userId: string, doc
     { method: 'DELETE' },
   );
 
-export const askSummaryDocAgent = (
+// Signed URL to the stored original file for a document (backend/routes
+// `GET /doc/{id}/original-url`, Task 4) — used by the source reference
+// viewer to render the PDF a summary excerpt was circled from.
+export const getOriginalDocumentUrl = (documentId: string, userId: string) =>
+  fetchJSON<{ url: string }>(
+    `/api/documents/doc/${documentId}/original-url?user_id=${encodeURIComponent(userId)}`,
+  );
+
+// Base64-encodes a Blob (the circled-reference screenshot) for JSON transport —
+// fetch's body can't carry raw binary alongside the rest of the ask payload.
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+export const askSummaryDocAgent = async (
   summaryDocId: string,
   userId: string,
   body: {
@@ -837,12 +855,21 @@ export const askSummaryDocAgent = (
     anchor_to?: number | null;
     original_text?: string | null;
     allow_surrounding_edits?: boolean;
+    // A circled-reference excerpt from the original source document — either
+    // the selected text or a cropped screenshot. Threaded through to
+    // `reference_text`/`reference_image_base64` on the backend's `/ask` body.
+    reference?: AskReference | null;
   },
-) =>
-  fetchJSON<SummaryDocSuggestion>(`/api/summary-docs/${summaryDocId}/ask`, {
+) => {
+  const { reference, ...rest } = body;
+  const reference_text = reference?.kind === 'text' ? reference.text : null;
+  const reference_image_base64 =
+    reference?.kind === 'image' ? await blobToBase64(reference.blob) : null;
+  return fetchJSON<SummaryDocSuggestion>(`/api/summary-docs/${summaryDocId}/ask`, {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, ...body }),
+    body: JSON.stringify({ user_id: userId, ...rest, reference_text, reference_image_base64 }),
   });
+};
 
 export const keepSummaryDocSuggestion = (
   summaryDocId: string, userId: string, suggestionId: string, content: Record<string, unknown>,

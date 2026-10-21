@@ -166,6 +166,7 @@ export interface SummaryDocSource {
   document_id: string;
   file_name: string;
   added_at: string;
+  has_original: boolean;
 }
 
 export interface SummaryDocSuggestion {
@@ -178,6 +179,13 @@ export interface SummaryDocSuggestion {
   status: 'pending' | 'kept' | 'undone';
   created_at: string;
 }
+
+// A circled-reference excerpt (text selection or cropped screenshot of the
+// original source) attached to an `ask` request — see
+// `askSummaryDocAgent`/`AskReference` handling in `lib/api.ts`.
+export type AskReference =
+  | { kind: 'image'; blob: Blob }
+  | { kind: 'text'; text: string };
 
 export interface SummaryDocVersion {
   id: string;
