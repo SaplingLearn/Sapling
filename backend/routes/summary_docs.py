@@ -11,6 +11,8 @@ sync handlers in a worker thread with no event loop already running, so
 """
 from __future__ import annotations
 
+import base64
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -110,16 +112,25 @@ class AskBody(BaseModel):
     anchor_to: int | None = None
     original_text: str | None = None
     allow_surrounding_edits: bool = False
+    reference_text: str | None = None
+    reference_image_base64: str | None = None
 
 
 @router.post("/{summary_doc_id}/ask")
 def post_ask(summary_doc_id: str, body: AskBody, request: Request):
     require_self(body.user_id, request)
+    reference_image_bytes = (
+        base64.b64decode(body.reference_image_base64)
+        if body.reference_image_base64
+        else None
+    )
     suggestion = create_suggestion(
         summary_doc_id, body.user_id,
         anchor_from=body.anchor_from, anchor_to=body.anchor_to,
         instruction=body.instruction, original_text=body.original_text,
         allow_surrounding_edits=body.allow_surrounding_edits,
+        reference_text=body.reference_text,
+        reference_image_bytes=reference_image_bytes,
     )
     if suggestion is None:
         raise HTTPException(status_code=404, detail="Summary doc not found.")

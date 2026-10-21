@@ -127,6 +127,8 @@ class TestAsk:
             "sd1", "u1", anchor_from=0, anchor_to=5,
             instruction="make it shorter", original_text="Hello",
             allow_surrounding_edits=False,
+            reference_text=None,
+            reference_image_bytes=None,
         )
 
     def test_whole_doc_ask_has_null_anchors(self, client):
@@ -140,6 +142,46 @@ class TestAsk:
             "sd1", "u1", anchor_from=None, anchor_to=None,
             instruction="tighten this up", original_text=None,
             allow_surrounding_edits=False,
+            reference_text=None,
+            reference_image_bytes=None,
+        )
+
+    def test_reference_text_is_threaded_through(self, client):
+        with patch("routes.summary_docs.create_suggestion", return_value=_SUGGESTION) as mock_ask:
+            r = client.post(
+                "/api/summary-docs/sd1/ask",
+                json={
+                    "user_id": "u1", "instruction": "add this",
+                    "reference_text": "A circled DOCX excerpt.",
+                },
+            )
+        assert r.status_code == 200
+        mock_ask.assert_called_once_with(
+            "sd1", "u1", anchor_from=None, anchor_to=None,
+            instruction="add this", original_text=None,
+            allow_surrounding_edits=False,
+            reference_text="A circled DOCX excerpt.",
+            reference_image_bytes=None,
+        )
+
+    def test_reference_image_base64_is_decoded_to_bytes(self, client):
+        import base64
+        encoded = base64.b64encode(b"\x89PNG fake bytes").decode("ascii")
+        with patch("routes.summary_docs.create_suggestion", return_value=_SUGGESTION) as mock_ask:
+            r = client.post(
+                "/api/summary-docs/sd1/ask",
+                json={
+                    "user_id": "u1", "instruction": "add the diagram",
+                    "reference_image_base64": encoded,
+                },
+            )
+        assert r.status_code == 200
+        mock_ask.assert_called_once_with(
+            "sd1", "u1", anchor_from=None, anchor_to=None,
+            instruction="add the diagram", original_text=None,
+            allow_surrounding_edits=False,
+            reference_text=None,
+            reference_image_bytes=b"\x89PNG fake bytes",
         )
 
     def test_allow_surrounding_edits_is_threaded_through(self, client):
