@@ -11,12 +11,16 @@ import {
   updateSummaryDocContent,
   keepSummaryDocSuggestion,
   undoSummaryDocSuggestion,
+  getOriginalDocumentUrl,
+  getDocumentExtractedText,
 } from "@/lib/api";
-import type { SummaryDoc, SummaryDocSuggestion } from "@/lib/types";
+import type { SummaryDoc, SummaryDocSuggestion, AskReference } from "@/lib/types";
 import { SuggestionMark } from "@/lib/summaryEditor/suggestionMark";
 import { SuggestionDecorations, type PendingSuggestionWidget } from "@/lib/summaryEditor/suggestionDecorations";
 import { SourcesPanel } from "./SourcesPanel";
 import { HistoryPanel } from "./HistoryPanel";
+import { SourceViewer } from "./SourceViewer";
+import { SourceTextViewer } from "./SourceTextViewer";
 
 function prosemirrorDocFromText(text: string): Record<string, unknown> {
   const paragraphs = text.split("\n\n").map((p) => p.trim()).filter(Boolean);
@@ -40,12 +44,23 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
   const { userId, userReady } = useUser();
   const toast = useToast();
   const [doc, setDoc] = React.useState<SummaryDoc | null>(null);
-  const [rightTab, setRightTab] = React.useState<"sources" | "history">("sources");
+  const [rightTab, setRightTab] = React.useState<"sources" | "history" | "source">("sources");
   const [pendingSuggestions, setPendingSuggestions] = React.useState<SummaryDocSuggestion[]>([]);
   const [saveState, setSaveState] = React.useState<SaveState>("idle");
   const [askTarget, setAskTarget] = React.useState<AskTarget>(null);
   const [askInstruction, setAskInstruction] = React.useState("");
   const [asking, setAsking] = React.useState(false);
+  // The split pane rendering the clicked source's original — PDFs carry a
+  // signed `pdfUrl` (rendered page-by-page by SourceViewer); DOCX/PPTX
+  // sources carry their decrypted `text` instead (SourceTextViewer). Never
+  // both — only one pipeline ever applies to a given source.
+  const [openSource, setOpenSource] = React.useState<
+    { documentId: string; fileName: string; pdfUrl: string } | { documentId: string; fileName: string; text: string } | null
+  >(null);
+  // A circled-reference excerpt (text selection or cropped screenshot) from
+  // the open source, attached to the next ask. Forces anchor_from/anchor_to
+  // to null on submit — see submitAsk below.
+  const [reference, setReference] = React.useState<AskReference | null>(null);
   // Spec section 3 "Suggestion scope" — only meaningful for a selection
   // ask (a whole-doc ask has no "surrounding text" to protect), and
   // defaults off (confined to the highlight, the safer default).
@@ -201,25 +216,64 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
 
   const wholeDocSuggestions = pendingSuggestions.filter((s) => s.anchor_from === null);
 
+  // Called from SourcesPanel's onOpenSource — opens the clicked source as a
+  // split pane to the left of the main column. PDFs get a signed URL for
+  // SourceViewer's page-by-page render; everything else (DOCX/PPTX) gets
+  // decrypted extracted text for SourceTextViewer's plain-text render.
+  const openSourceTab = async (documentId: string) => {
+    if (!userId) return;
+    const source = doc?.sources.find((s) => s.document_id === documentId);
+    if (!source) return;
+    const isPdf = source.file_name.toLowerCase().endsWith(".pdf");
+    try {
+      if (isPdf) {
+        const { url } = await getOriginalDocumentUrl(documentId, userId);
+        setOpenSource({ documentId, fileName: source.file_name, pdfUrl: url });
+      } else {
+        const { text } = await getDocumentExtractedText(documentId, userId);
+        setOpenSource({ documentId, fileName: source.file_name, text });
+      }
+    } catch (err) {
+      toast.error(`Couldn't open the original — try again: ${String((err as Error)?.message || err)}`);
+      return;
+    }
+    setRightTab("source");
+  };
+
+  const closeSourceTab = () => {
+    setOpenSource(null);
+    setReference(null);
+    setRightTab("sources");
+  };
+
   const submitAsk = async () => {
     if (!doc || !userId || !askInstruction.trim()) return;
     setAsking(true);
     try {
       const { askSummaryDocAgent } = await import("@/lib/api");
+      // Spec section 3 (source reference viewer): a circled-reference
+      // excerpt always replaces any editor-selection anchor — the ask is
+      // "about the reference", never both at once, so anchor_from/anchor_to/
+      // original_text (and the surrounding-edits toggle, which only makes
+      // sense for an anchored selection) are forced off whenever one is
+      // attached.
+      const hasReference = reference !== null;
       const suggestion = await askSummaryDocAgent(doc.id, userId, {
         instruction: askInstruction.trim(),
-        anchor_from: askTarget?.from ?? null,
-        anchor_to: askTarget?.to ?? null,
-        original_text: askTarget?.text ?? null,
-        allow_surrounding_edits: askTarget ? allowSurroundingEdits : false,
+        anchor_from: hasReference ? null : askTarget?.from ?? null,
+        anchor_to: hasReference ? null : askTarget?.to ?? null,
+        original_text: hasReference ? null : askTarget?.text ?? null,
+        allow_surrounding_edits: askTarget && !hasReference ? allowSurroundingEdits : false,
+        reference,
       });
       setPendingSuggestions((prev) => [...prev, suggestion]);
-      if (askTarget) {
+      if (askTarget && !hasReference) {
         editor?.chain().setTextSelection(askTarget).setSuggestionMark(suggestion.id).run();
       }
       setAskInstruction("");
       setAskTarget(null);
       setAllowSurroundingEdits(false);
+      setReference(null);
     } catch (err) {
       toast.error(`Couldn't get a suggestion: ${String((err as Error)?.message || err)}`);
     } finally {
@@ -233,6 +287,31 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
 
   return (
     <div style={{ display: "flex", height: "100%" }}>
+      {openSource && (
+        <div
+          data-testid="summary-editor-source-pane"
+          style={{ width: "40%", flexShrink: 0, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", minWidth: 0 }}
+        >
+          <header style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "16px 24px", borderBottom: "1px solid var(--border)",
+          }}>
+            <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {openSource.fileName}
+            </span>
+            <button type="button" className="btn btn--ghost btn--sm" aria-label="Close source viewer" onClick={closeSourceTab}>
+              ✕
+            </button>
+          </header>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            {"pdfUrl" in openSource ? (
+              <SourceViewer pdfUrl={openSource.pdfUrl} onReference={setReference} />
+            ) : (
+              <SourceTextViewer text={openSource.text} onReference={setReference} />
+            )}
+          </div>
+        </div>
+      )}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <header style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -258,6 +337,19 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
           </div>
         </div>
         <div style={{ padding: "12px 24px", borderTop: "1px solid var(--border)" }}>
+          {reference && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
+              <span>{reference.kind === "image" ? "Circled region attached" : "Selected text attached"}</span>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                aria-label="Remove attached reference"
+                onClick={() => setReference(null)}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {askTarget && (
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
               <input
@@ -307,16 +399,25 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
           >
             History
           </button>
+          {openSource && (
+            <button
+              type="button"
+              className={`btn btn--sm ${rightTab === "source" ? "btn--primary" : "btn--ghost"}`}
+              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              onClick={() => (rightTab === "source" ? closeSourceTab() : setRightTab("source"))}
+            >
+              {openSource.fileName}
+            </button>
+          )}
         </div>
         {rightTab === "sources" ? (
           <SourcesPanel
             doc={doc}
             userId={userId!}
             onDocChanged={setDoc}
-            // TODO(task 13): wire this up to open the source viewer tab.
-            onOpenSource={() => {}}
+            onOpenSource={openSourceTab}
           />
-        ) : (
+        ) : rightTab === "history" ? (
           <HistoryPanel
             summaryDocId={doc.id}
             userId={userId!}
@@ -333,6 +434,10 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
               editor?.commands.setContent(updated.content, false);
             }}
           />
+        ) : (
+          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Viewing {openSource?.fileName}. Click the tab again to close.
+          </p>
         )}
       </aside>
     </div>

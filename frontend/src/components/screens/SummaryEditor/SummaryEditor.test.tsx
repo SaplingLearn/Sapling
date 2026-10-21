@@ -35,6 +35,9 @@ const mockGetSummaryDoc = vi.fn();
 const mockKeepSummaryDocSuggestion = vi.fn();
 const mockUndoSummaryDocSuggestion = vi.fn();
 const mockUpdateSummaryDocContent = vi.fn();
+const mockAskSummaryDocAgent = vi.fn();
+const mockGetOriginalDocumentUrl = vi.fn();
+const mockGetDocumentExtractedText = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getSummaryDoc: (...args: unknown[]) => mockGetSummaryDoc(...args),
@@ -43,7 +46,7 @@ vi.mock("@/lib/api", () => ({
   undoSummaryDocSuggestion: (...args: unknown[]) => mockUndoSummaryDocSuggestion(...args),
   addSummaryDocSource: vi.fn(),
   removeSummaryDocSource: vi.fn(),
-  askSummaryDocAgent: vi.fn(),
+  askSummaryDocAgent: (...args: unknown[]) => mockAskSummaryDocAgent(...args),
   listSummaryDocVersions: vi.fn().mockResolvedValue({ versions: [] }),
   restoreSummaryDocVersion: vi.fn(),
   // SourcesPanel (wired into the right rail in Task 22) calls this on mount
@@ -51,6 +54,27 @@ vi.mock("@/lib/api", () => ({
   // panel's effect throws into an unhandled rejection and the whole tree
   // unmounts before this test's own assertions ever run.
   getDocuments: vi.fn().mockResolvedValue({ documents: [] }),
+  getOriginalDocumentUrl: (...args: unknown[]) => mockGetOriginalDocumentUrl(...args),
+  getDocumentExtractedText: (...args: unknown[]) => mockGetDocumentExtractedText(...args),
+}));
+
+// SummaryEditor imports these from "./SourceViewer"/"./SourceTextViewer" and
+// renders whichever one matches the opened source's file type. Stub both so
+// a reference can be fired with a single click, without pulling in the real
+// pdfjs-dist render pipeline (Task 11 covers that pipeline on its own).
+vi.mock("./SourceViewer", () => ({
+  SourceViewer: ({ onReference }: { onReference: (r: { kind: "text"; text: string }) => void }) => (
+    <button data-testid="test-stub-fire-reference" onClick={() => onReference({ kind: "text", text: "stub" })}>
+      fire reference
+    </button>
+  ),
+}));
+vi.mock("./SourceTextViewer", () => ({
+  SourceTextViewer: ({ onReference }: { onReference: (r: { kind: "text"; text: string }) => void }) => (
+    <button data-testid="test-stub-fire-reference" onClick={() => onReference({ kind: "text", text: "stub" })}>
+      fire reference
+    </button>
+  ),
 }));
 
 import { SummaryEditor } from "./SummaryEditor";
@@ -88,7 +112,7 @@ const BASE_DOC = {
     content: [{ type: "paragraph", content: [{ type: "text", text: "Hello world." }] }],
   },
   created_at: "t0", updated_at: "t0",
-  sources: [{ document_id: "doc1", file_name: "Lecture 4.pdf", added_at: "t0" }],
+  sources: [{ document_id: "doc1", file_name: "Lecture 4.pdf", added_at: "t0", has_original: true }],
   pending_suggestions: [
     {
       id: "sg1", anchor_from: 1, anchor_to: 6,
@@ -115,5 +139,60 @@ describe("SummaryEditor — stale anchor guard on Keep", () => {
     await userEvent.click(screen.getByRole("button", { name: "Keep it" }));
 
     expect(mockKeepSummaryDocSuggestion).not.toHaveBeenCalled();
+  });
+});
+
+describe("SummaryEditor — source reference viewer", () => {
+  it("opens a source as a split pane when its Sources-tab button is clicked", async () => {
+    mockGetSummaryDoc.mockResolvedValue(BASE_DOC);
+    mockGetOriginalDocumentUrl.mockResolvedValue({ url: "https://signed.example/doc1.pdf" });
+    render(<SummaryEditor summaryDocId="sd1" />);
+    await waitFor(() => expect(screen.getByText("Hi")).toBeInTheDocument());
+
+    await userEvent.click(await screen.findByText("Lecture 4.pdf"));
+
+    expect(await screen.findByTestId("summary-editor-source-pane")).toBeInTheDocument();
+    expect(mockGetOriginalDocumentUrl).toHaveBeenCalledWith("doc1", "u1");
+  });
+
+  it("closes the split pane when the source tab is clicked again", async () => {
+    mockGetSummaryDoc.mockResolvedValue(BASE_DOC);
+    mockGetOriginalDocumentUrl.mockResolvedValue({ url: "https://signed.example/doc1.pdf" });
+    render(<SummaryEditor summaryDocId="sd1" />);
+    await waitFor(() => expect(screen.getByText("Hi")).toBeInTheDocument());
+
+    await userEvent.click(await screen.findByText("Lecture 4.pdf"));
+    await screen.findByTestId("summary-editor-source-pane");
+
+    // Once open, SourcesPanel's own row for this source is no longer
+    // rendered (the aside swaps to a short "Viewing..." notice instead) —
+    // the ONLY remaining element with this text is the active tab button,
+    // so this click is unambiguous.
+    await userEvent.click(screen.getByRole("button", { name: "Lecture 4.pdf" }));
+
+    expect(screen.queryByTestId("summary-editor-source-pane")).not.toBeInTheDocument();
+  });
+
+  it("forces anchor_from/anchor_to to null when asking with a reference attached", async () => {
+    mockGetSummaryDoc.mockResolvedValue(BASE_DOC);
+    mockGetOriginalDocumentUrl.mockResolvedValue({ url: "https://signed.example/doc1.pdf" });
+    mockAskSummaryDocAgent.mockResolvedValue({
+      id: "sg2", anchor_from: null, anchor_to: null, instruction: "add this",
+      original_text: null, proposed_text: "Woven in.", status: "pending", created_at: "t0",
+    });
+    render(<SummaryEditor summaryDocId="sd1" />);
+    await waitFor(() => expect(screen.getByText("Hi")).toBeInTheDocument());
+
+    await userEvent.click(await screen.findByText("Lecture 4.pdf"));
+    await userEvent.click(await screen.findByTestId("test-stub-fire-reference"));
+
+    await userEvent.type(screen.getByTestId("summary-editor-ask-input"), "add this");
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+
+    await waitFor(() => expect(mockAskSummaryDocAgent).toHaveBeenCalled());
+    const [, , body] = mockAskSummaryDocAgent.mock.calls[0];
+    expect(body.anchor_from).toBeNull();
+    expect(body.anchor_to).toBeNull();
+    expect(body.reference).toEqual({ kind: "text", text: "stub" });
   });
 });

@@ -836,6 +836,15 @@ export const getOriginalDocumentUrl = (documentId: string, userId: string) =>
     `/api/documents/doc/${documentId}/original-url?user_id=${encodeURIComponent(userId)}`,
   );
 
+// Decrypted extracted text for a document (backend/routes/documents.py
+// `GET /doc/{id}/extracted-text`, Task 9) — used by the source reference
+// viewer for non-PDF (DOCX/PPTX) sources, which render as plain text rather
+// than a page-by-page PDF canvas.
+export const getDocumentExtractedText = (documentId: string, userId: string) =>
+  fetchJSON<{ text: string }>(
+    `/api/documents/doc/${documentId}/extracted-text?user_id=${encodeURIComponent(userId)}`,
+  );
+
 // Base64-encodes a Blob (the circled-reference screenshot) for JSON transport —
 // fetch's body can't carry raw binary alongside the rest of the ask payload.
 async function blobToBase64(blob: Blob): Promise<string> {
