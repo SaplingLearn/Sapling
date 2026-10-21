@@ -743,6 +743,69 @@ class TestCreateSuggestion:
         assert result["status"] == "pending"
         assert result["proposed_text"] == "Shorter version."
 
+    def test_passes_a_reference_image_to_the_agent_as_binary_content(self, monkeypatch):
+        from pydantic_ai import BinaryContent
+        from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+        from services.encryption import encrypt_json
+
+        captured_user_prompts = []
+
+        def _capturing_handler(messages, info):
+            for m in messages:
+                if isinstance(m, ModelRequest):
+                    for part in m.parts:
+                        if isinstance(part, UserPromptPart):
+                            captured_user_prompts.append(part.content)
+            return ModelResponse(parts=[
+                ToolCallPart(tool_name="final_result", args={"proposed_text": "Woven in."}),
+            ])
+
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        register_function_handler("summary_edit", _capturing_handler)
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Existing text."}]},
+            ]}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = []
+            elif name in ("documents", "summary_doc_suggestions"):
+                m.select.return_value = []
+                m.insert.return_value = [{
+                    "id": "sg1", "summary_doc_id": "sd1", "anchor_from": None, "anchor_to": None,
+                    "instruction": "ciphertext", "original_text": None,
+                    "proposed_text": "ciphertext", "status": "pending",
+                    "created_at": "t0", "resolved_at": None,
+                }]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select), \
+             summary_edit_agent.override(model=model_for("summary_edit")):
+            result = create_suggestion(
+                "sd1", "u1",
+                anchor_from=None, anchor_to=None,
+                instruction="add the diagram",
+                original_text=None,
+                reference_image_bytes=b"\x89PNG fake bytes",
+            )
+
+        assert result["proposed_text"] == "Woven in."
+        # The captured user-turn content is a list (text + the image part),
+        # not a plain string, whenever a reference image is attached.
+        assert len(captured_user_prompts) == 1
+        parts = captured_user_prompts[0]
+        assert isinstance(parts, list)
+        image_parts = [p for p in parts if isinstance(p, BinaryContent)]
+        assert len(image_parts) == 1
+        assert image_parts[0].data == b"\x89PNG fake bytes"
+
 
 class TestBuildAskPrompt:
     def test_whole_doc_ask_uses_whole_document_framing(self):
@@ -776,6 +839,29 @@ class TestBuildAskPrompt:
         assert confined != relaxed
         assert "ONLY rewrite the exact text above" in confined
         assert "may also lightly adjust" in relaxed
+
+    def test_reference_text_is_added_as_its_own_block(self):
+        prompt = _build_ask_prompt(
+            instruction="add this",
+            selection_text=None,
+            doc_plaintext="Existing summary text.",
+            sources=[],
+            allow_surrounding_edits=False,
+            reference_text="A circled excerpt from the DOCX source.",
+        )
+        assert "A circled excerpt from the DOCX source." in prompt
+        assert "pointed at by the student" in prompt
+
+    def test_has_reference_image_adds_a_note_without_the_image_itself(self):
+        prompt = _build_ask_prompt(
+            instruction="add this",
+            selection_text=None,
+            doc_plaintext="Existing summary text.",
+            sources=[],
+            allow_surrounding_edits=False,
+            has_reference_image=True,
+        )
+        assert "image is attached" in prompt.lower()
 
 
 class TestPlaintextForPrimaryDocument:

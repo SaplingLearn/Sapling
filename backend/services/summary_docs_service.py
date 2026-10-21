@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from pydantic_ai import BinaryContent
+
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.summary_edit import summary_edit_agent
@@ -540,6 +542,8 @@ def _build_ask_prompt(
     doc_plaintext: str,
     sources: list[tuple[str, str]],
     allow_surrounding_edits: bool,
+    reference_text: str | None = None,
+    has_reference_image: bool = False,
 ) -> str:
     parts = [f"Instruction: {neutralize_delimiters(instruction)}"]
     if selection_text:
@@ -564,6 +568,20 @@ def _build_ask_prompt(
             "Text to rewrite (the whole document, nothing was highlighted):\n"
             + wrap_untrusted(doc_plaintext, source="the full summary document")
         )
+    if reference_text:
+        parts.append(
+            "Reference excerpt from a source document (pointed at by the "
+            "student — it may cover material outside what the summary "
+            "currently has):\n"
+            + wrap_untrusted(reference_text, source="circled reference excerpt")
+        )
+    if has_reference_image:
+        parts.append(
+            "A reference image is attached below — a region of a source "
+            "document the student circled (pointed at by the student — it "
+            "may cover material outside what the summary currently has). "
+            "Incorporate relevant content from it into the revised document."
+        )
     for file_name, text in sources:
         if not text:
             continue
@@ -583,9 +601,15 @@ def create_suggestion(
     instruction: str,
     original_text: str | None,
     allow_surrounding_edits: bool = False,
+    reference_text: str | None = None,
+    reference_image_bytes: bytes | None = None,
 ) -> dict | None:
     """Run the summary_edit agent and store its output as a pending
     suggestion. Returns None if the caller doesn't own this summary doc.
+
+    `reference_text`/`reference_image_bytes` are the optional circled-excerpt
+    reference from a source document (Task 6) — at most one is normally set
+    by the caller, but both are accepted and threaded through independently.
 
     This function is sync and calls run_agent_sync, which raises RuntimeError
     if invoked from a thread that already has a running event loop. An
@@ -598,10 +622,17 @@ def create_suggestion(
         return None
     doc_plaintext = plaintext_from_prosemirror(doc["content"])
     sources = _source_texts(summary_doc_id)
-    user_prompt = _build_ask_prompt(
+    prompt_text = _build_ask_prompt(
         instruction=instruction, selection_text=original_text,
         doc_plaintext=doc_plaintext, sources=sources,
         allow_surrounding_edits=allow_surrounding_edits,
+        reference_text=reference_text,
+        has_reference_image=reference_image_bytes is not None,
+    )
+    user_prompt = (
+        [prompt_text, BinaryContent(data=reference_image_bytes, media_type="image/png")]
+        if reference_image_bytes is not None
+        else prompt_text
     )
     deps = SaplingDeps(
         user_id=user_id, course_id=None, supabase=None,
