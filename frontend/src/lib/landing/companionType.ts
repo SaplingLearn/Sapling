@@ -23,7 +23,7 @@ export const DISPLAY = "var(--font-aleo), 'Aleo', Georgia, serif";
 export const INK = '#1a1814';
 export const BODY = '#3f3b31';
 export const MUTED = '#6f6857';
-export const ACCENT = '#2D8F5C';
+export const ACCENT = '#597536';
 
 /**
  * Cap for running prose inside the shared page box.

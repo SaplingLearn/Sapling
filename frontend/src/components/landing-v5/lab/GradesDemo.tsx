@@ -47,14 +47,14 @@ export function GradesDemo() {
           <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 46, fontWeight: 600, lineHeight: 1, transition: 'color 300ms' }}>
             {grade.toFixed(1)}
           </span>
-          <span style={{ padding: '5px 12px', borderRadius: 8, background: '#E6F2E8', border: '1px solid #0E9E5A', ...MONO, fontSize: 13, letterSpacing: '0.1em', color: '#0C5638' }}>
+          <span style={{ padding: '5px 12px', borderRadius: 8, background: '#EAF1E4', border: '1px solid #68951F', ...MONO, fontSize: 13, letterSpacing: '0.1em', color: '#445D22' }}>
             {letter}
           </span>
         </div>
-        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.14em', color: '#8B9891' }}>MA 242 · SPRING 2026</span>
+        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.14em', color: '#91978B' }}>MA 242 · SPRING 2026</span>
       </div>
 
-      <span style={{ fontSize: 12, color: '#8B9891' }}>
+      <span style={{ fontSize: 12, color: '#91978B' }}>
         Type a score to see the grade move — weights came from your syllabus.
       </span>
 
@@ -62,13 +62,13 @@ export function GradesDemo() {
         {GB_ROWS.map((r, i) => {
           const raw = parseFloat(earned[i]);
           const pct = isNaN(raw) ? null : Math.round((raw / r.possible) * 100);
-          const pctColor = pct === null ? '#C3CCC6' : pct >= 90 ? '#0C5638' : pct >= 80 ? '#c89b5e' : '#b25855';
+          const pctColor = pct === null ? '#C7CBC2' : pct >= 90 ? '#445D22' : pct >= 80 ? '#c89b5e' : '#b25855';
           return (
             <div key={r.title} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', borderRadius: 11, border: '1px solid #E8E5DA', background: '#FDFCF9' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, flex: '0 0 auto', background: r.cat === 'PSETS' ? '#0E9E5A' : '#c89b5e' }} />
+              <span style={{ width: 9, height: 9, borderRadius: 3, flex: '0 0 auto', background: r.cat === 'PSETS' ? '#68951F' : '#c89b5e' }} />
               <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#12201A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</span>
-                <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.1em', color: '#8B9891' }}>{r.cat}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#191F13', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</span>
+                <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.1em', color: '#91978B' }}>{r.cat}</span>
               </div>
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input
@@ -79,9 +79,9 @@ export function GradesDemo() {
                   }}
                   inputMode="decimal"
                   aria-label={`Points earned, ${r.title}`}
-                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#F6F8F4', ...MONO, fontSize: 12.5, textAlign: 'right', color: '#12201A', outline: 'none' }}
+                  style={{ width: 56, padding: '7px 8px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#F6F8F4', ...MONO, fontSize: 12.5, textAlign: 'right', color: '#191F13', outline: 'none' }}
                 />
-                <span style={{ ...MONO, fontSize: 12, color: '#9AA5A0' }}>/ {r.possible}</span>
+                <span style={{ ...MONO, fontSize: 12, color: '#9FA49A' }}>/ {r.possible}</span>
                 <span style={{ width: 44, textAlign: 'right', ...MONO, fontSize: 12, color: pctColor }}>
                   {pct === null ? '—' : `${pct}%`}
                 </span>
@@ -94,12 +94,12 @@ export function GradesDemo() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7, borderTop: '1px solid #ECE9DE', paddingTop: 12 }}>
         {cats.map((c) => (
           <div key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ width: 74, fontSize: 12, color: '#33443B' }}>{c.name}</span>
-            <span style={{ ...MONO, fontSize: 10, color: '#9AA5A0', width: 30 }}>{c.weight}</span>
-            <span style={{ flex: 1, height: 7, borderRadius: 99, background: '#E3EBE5', overflow: 'hidden' }}>
-              <span style={{ display: 'block', height: '100%', background: '#0E9E5A', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${c.pct === null ? 0 : Math.max(0, Math.min(100, c.pct))}%` }} />
+            <span style={{ width: 74, fontSize: 12, color: '#3B4233' }}>{c.name}</span>
+            <span style={{ ...MONO, fontSize: 10, color: '#9FA49A', width: 30 }}>{c.weight}</span>
+            <span style={{ flex: 1, height: 7, borderRadius: 99, background: '#E6EAE2', overflow: 'hidden' }}>
+              <span style={{ display: 'block', height: '100%', background: '#68951F', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${c.pct === null ? 0 : Math.max(0, Math.min(100, c.pct))}%` }} />
             </span>
-            <span style={{ width: 52, textAlign: 'right', ...MONO, fontSize: 11, color: '#0C5638' }}>
+            <span style={{ width: 52, textAlign: 'right', ...MONO, fontSize: 11, color: '#445D22' }}>
               {c.pct === null ? 'not yet' : `${c.pct.toFixed(1)}%`}
             </span>
           </div>

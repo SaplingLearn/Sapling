@@ -62,7 +62,7 @@ export function TutorDemo() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ flex: '0 0 auto', padding: '14px 22px 12px', borderBottom: '1px solid #ECE9DE', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
+        <div style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
           {MODES.map((k) => {
             const on = mode === k;
             return (
@@ -71,7 +71,7 @@ export function TutorDemo() {
                 onClick={() => switchMode(k)}
                 type="button"
                 aria-pressed={on}
-                style={{ padding: '7px 14px', borderRadius: 7, border: 'none', ...MONO, fontSize: 9.5, letterSpacing: '0.14em', cursor: 'pointer', transition: 'all 200ms', background: on ? '#12201A' : 'transparent', color: on ? '#FDFCF9' : '#61726A', fontWeight: on ? 600 : 400 }}
+                style={{ padding: '7px 14px', borderRadius: 7, border: 'none', ...MONO, fontSize: 9.5, letterSpacing: '0.14em', cursor: 'pointer', transition: 'all 200ms', background: on ? '#191F13' : 'transparent', color: on ? '#FDFCF9' : '#697062', fontWeight: on ? 600 : 400 }}
               >
                 {TUTOR[k].label}
               </button>
@@ -80,18 +80,18 @@ export function TutorDemo() {
         </div>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7 }}>
           <span style={{ width: 7, height: 7, borderRadius: 99, background: T.tone }} />
-          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#8B9891' }}>{T.topic}</span>
+          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#91978B' }}>{T.topic}</span>
         </span>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ fontSize: 12, color: '#8B9891' }}>{T.blurb}</span>
+        <span style={{ fontSize: 12, color: '#91978B' }}>{T.blurb}</span>
 
         {msgs.map((m, i) => (
           <div key={i} style={{ display: 'flex', gap: 9, animation: 'labIn 460ms cubic-bezier(0.22,1,0.36,1) both', justifyContent: m.isBot ? 'flex-start' : 'flex-end' }}>
             {m.isBot && (
-              <span style={{ width: 26, height: 26, flex: '0 0 auto', borderRadius: 99, background: '#E6F2E8', border: '1px solid #C3D8B3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="#0C5638">
+              <span style={{ width: 26, height: 26, flex: '0 0 auto', borderRadius: 99, background: '#EAF1E4', border: '1px solid #C5D7B2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="#445D22">
                   <path d="M8 0.9c.55 3.35 1.8 4.6 5.15 5.15C9.8 6.6 8.55 7.85 8 11.2 7.45 7.85 6.2 6.6 2.85 6.05 6.2 5.5 7.45 4.25 8 .9z" />
                 </svg>
               </span>
@@ -100,8 +100,8 @@ export function TutorDemo() {
               style={{
                 padding: '11px 14px', fontSize: 13, lineHeight: 1.6, maxWidth: '74%',
                 ...(m.isBot
-                  ? { background: '#F6F8F4', border: '1px solid #E3EBE5', borderRadius: '14px 14px 14px 4px', color: '#12201A' }
-                  : { background: '#0C5638', color: '#E6F2E8', borderRadius: '14px 14px 4px 14px' }),
+                  ? { background: '#F6F8F4', border: '1px solid #E6EAE2', borderRadius: '14px 14px 14px 4px', color: '#191F13' }
+                  : { background: '#445D22', color: '#EAF1E4', borderRadius: '14px 14px 4px 14px' }),
               }}
             >
               {m.text}
@@ -112,18 +112,18 @@ export function TutorDemo() {
         {thinking && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 5, paddingLeft: 35 }}>
             {[0, 0.15, 0.3].map((d) => (
-              <span key={d} style={{ width: 5, height: 5, borderRadius: 99, background: '#9AA5A0', animation: `typingDot 1.2s ease-in-out ${d}s infinite` }} />
+              <span key={d} style={{ width: 5, height: 5, borderRadius: 99, background: '#9FA49A', animation: `typingDot 1.2s ease-in-out ${d}s infinite` }} />
             ))}
           </span>
         )}
 
         {sources.length > 0 && !thinking && (
           <div style={{ marginLeft: 35, display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.2em', color: '#9AA5A0' }}>GROUNDED IN YOUR UPLOADS</span>
+            <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.2em', color: '#9FA49A' }}>GROUNDED IN YOUR UPLOADS</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {sources.map((src) => (
-                <span key={src} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #DCE7DE', ...MONO, fontSize: 9, color: '#33443B' }}>
-                  <span style={{ width: 5, height: 5, borderRadius: 99, background: '#0E9E5A' }} />
+                <span key={src} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E0E6DA', ...MONO, fontSize: 9, color: '#3B4233' }}>
+                  <span style={{ width: 5, height: 5, borderRadius: 99, background: '#68951F' }} />
                   {src}
                 </span>
               ))}
@@ -140,19 +140,19 @@ export function TutorDemo() {
               onClick={() => pick(i)}
               type="button"
               className="ld-labreply"
-              style={{ padding: '8px 13px', borderRadius: 99, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, color: '#33443B', cursor: 'pointer', transition: 'all 180ms' }}
+              style={{ padding: '8px 13px', borderRadius: 99, border: '1px solid #E0E6DA', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, color: '#3B4233', cursor: 'pointer', transition: 'all 180ms' }}
             >
               {r.text}
             </button>
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.14em', color: '#9AA5A0' }}>
+          <span style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.14em', color: '#9FA49A' }}>
             {current
               ? (mode === 'teachback' ? 'IT LISTENS FOR WHAT YOU SKIPPED' : 'IT NEVER HANDS OVER THE ANSWER')
               : 'SESSION COMPLETE · MASTERY WRITTEN BACK TO YOUR GRAPH'}
           </span>
-          <button onClick={reset} type="button" className="ld-labrecent" style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #DCE7DE', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12, color: '#61726A', cursor: 'pointer' }}>
+          <button onClick={reset} type="button" className="ld-labrecent" style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #E0E6DA', background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12, color: '#697062', cursor: 'pointer' }}>
             Start over
           </button>
         </div>

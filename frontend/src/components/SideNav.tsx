@@ -12,7 +12,7 @@ import { useVisibleNavSections } from "@/lib/useNavSections";
 
 type Entry = NavItem;
 
-export const SIDE_NAV_EXPANDED = 232;
+export const SIDE_NAV_EXPANDED = 200;
 export const SIDE_NAV_COLLAPSED = 64;
 const COLLAPSE_KEY = "sapling_sidenav_collapsed";
 
@@ -77,11 +77,9 @@ function fade(collapsed: boolean): React.CSSProperties {
 
 /* Active/hover surfaces.
  *
- * A plain neutral highlight. The selected row is a flat `--bg-soft`
- * (`--ink-100`) fill — one step off the rail's warm `--bg-subtle` ground —
- * with the label in bold ink. The earlier `--sap-100` green read as a
- * washed-out tint against the cream rail, and `--ink-200` read as too heavy;
- * one step of the shell's own warm grey is enough once the label goes bold.
+ * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
+ * which inside the olive rail resolves to a translucent cream wash (see
+ * [data-app-sidenav] in globals.css), with the label in bold cream.
  * No rail, no hue on the label: the fill IS the treatment.
  *
  * Hover is the same colour at half strength, so it is unmistakably the
@@ -124,8 +122,15 @@ export function SideNav() {
         width,
         minWidth: width,
         height: "100vh",
-        borderRight: "1px solid var(--border)",
-        background: "var(--bg-subtle)",
+        // Olive rail; the light-on-dark token overrides live on
+        // [data-app-sidenav] in globals.css. No right border: the olive edge
+        // is the divider, and ShellFrame rounds the content side into it.
+        background: "var(--sidenav-bg)",
+        // Above AtmosphericBackdrop's fixed z-0 canvas: unpositioned, the
+        // rail was tinted by the drifting orbs and no longer matched the
+        // flat olive of the .shell-corner pieces beside it.
+        position: "relative",
+        zIndex: 1,
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
@@ -154,12 +159,12 @@ export function SideNav() {
           pointerEvents: collapsed ? "none" : undefined,
         }}
       >
-        <SaplingWordmark width={112} decorative style={fade(collapsed)} />
+        <SaplingWordmark width={112} decorative tone="light" style={fade(collapsed)} />
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
           for them, with the scrollbar hidden (`scrollbarWidth` here, the
-          WebKit pseudo-element in globals.css) — a 10px gutter in a 232px
+          WebKit pseudo-element in globals.css) — a 10px gutter in a 200px
           rail read as clutter, and wheel/trackpad/keyboard scrolling all
           still work. `minHeight: 0` is what lets a flex child shrink below
           its content and scroll at all. */}

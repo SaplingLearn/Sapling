@@ -92,7 +92,7 @@ afterEach(() => {
 
 describe("SideNav — structure", () => {
   it("exposes the two shell widths ShellFrame lays out against", () => {
-    expect(SIDE_NAV_EXPANDED).toBe(232);
+    expect(SIDE_NAV_EXPANDED).toBe(200);
     expect(SIDE_NAV_COLLAPSED).toBe(64);
   });
 

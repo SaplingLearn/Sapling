@@ -28,7 +28,7 @@ test("manifest.webmanifest carries the brand identity", async ({ request }) => {
   expect(res.status()).toBe(200);
   const manifest = await res.json();
   expect(manifest.name).toContain("Sapling");
-  expect(manifest.theme_color).toBe("#1B6C42");
+  expect(manifest.theme_color).toBe("#445D22");
 });
 
 test("careers slugs from the sitemap resolve; unknown slugs hard-404 (#187)", async ({

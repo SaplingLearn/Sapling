@@ -9,13 +9,13 @@
       <feDisplacementMap in="SourceGraphic" in2="n" scale="1.4" xChannelSelector="R" yChannelSelector="G"/>
     </filter>
     <linearGradient id="leafL" x1="0" y1="18" x2="0" y2="46" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#B7DBBE"/><stop offset="0.5" stop-color="#6BA67B" stop-opacity="0.95"/><stop offset="1" stop-color="#3F7A52"/>
+      <stop offset="0" stop-color="#C5D8B2"/><stop offset="0.5" stop-color="#85A165" stop-opacity="0.95"/><stop offset="1" stop-color="#5B753B"/>
     </linearGradient>
     <linearGradient id="leafR" x1="0" y1="10" x2="0" y2="40" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#DAEEDD"/><stop offset="0.5" stop-color="#8FC29B" stop-opacity="0.95"/><stop offset="1" stop-color="#4E8A60"/>
+      <stop offset="0" stop-color="#E1ECD7"/><stop offset="0.5" stop-color="#A4BD89" stop-opacity="0.95"/><stop offset="1" stop-color="#6A8549"/>
     </linearGradient>
     <linearGradient id="stem" x1="0" y1="28" x2="0" y2="54" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8FC29B"/><stop offset="1" stop-color="#3F7A52"/>
+      <stop offset="0" stop-color="#A4BD89"/><stop offset="1" stop-color="#5B753B"/>
     </linearGradient>
   </defs>
 

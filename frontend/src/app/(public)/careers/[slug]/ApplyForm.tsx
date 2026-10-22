@@ -214,7 +214,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                 <div
                   style={{
                     width: 48, height: 48, borderRadius: '50%',
-                    background: 'rgba(45,143,92,0.10)', border: '1px solid rgba(45,143,92,0.28)',
+                    background: 'rgba(89,117,54,0.10)', border: '1px solid rgba(89,117,54,0.28)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     margin: '0 auto 18px',
                   }}
@@ -231,7 +231,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                 </p>
                 <Link
                   href="/careers"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13.5, fontWeight: 600, color: '#1B6C42' }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13.5, fontWeight: 600, color: 'var(--brand-forest)' }}
                 >
                   <span aria-hidden="true">←</span> All openings
                 </Link>
@@ -323,7 +323,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                         padding: '28px 20px',
                         textAlign: 'center',
                         cursor: 'pointer',
-                        background: dragging ? 'rgba(45,143,92,0.08)' : '#fff',
+                        background: dragging ? 'rgba(89,117,54,0.08)' : '#fff',
                         transition: 'border-color 200ms, background 200ms',
                       }}
                     >
@@ -341,7 +341,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                           >
                             <path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
                           </svg>
-                          <span style={{ fontSize: 13, color: '#1B6C42', fontWeight: 600 }}>
+                          <span style={{ fontSize: 13, color: 'var(--brand-forest)', fontWeight: 600 }}>
                             {resumeFile.name}
                           </span>
                           <button
@@ -372,7 +372,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                             <path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                           </svg>
                           <p style={{ fontSize: 13, color: BODY, margin: '0 0 3px' }}>
-                            <span style={{ fontWeight: 600, color: '#1B6C42' }}>Click to upload</span>{' '}
+                            <span style={{ fontWeight: 600, color: 'var(--brand-forest)' }}>Click to upload</span>{' '}
                             or drag and drop
                           </p>
                           <p style={{ fontSize: 11, color: MUTED, margin: 0 }}>PDF only</p>
@@ -396,14 +396,14 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                     required
                     checked={agreedToPrivacy}
                     onChange={(e) => setAgreedToPrivacy(e.target.checked)}
-                    style={{ marginTop: 2, accentColor: '#1B6C42', cursor: 'pointer', flexShrink: 0 }}
+                    style={{ marginTop: 2, accentColor: 'var(--brand-forest)', cursor: 'pointer', flexShrink: 0 }}
                   />
                   <label
                     htmlFor="privacy-consent"
                     style={{ fontSize: 13, color: BODY, lineHeight: 1.55, cursor: 'pointer' }}
                   >
                     I have read and agree to Sapling&apos;s{' '}
-                    <Link href="/privacy" target="_blank" style={{ color: '#1B6C42', fontWeight: 600, textDecoration: 'underline' }}>
+                    <Link href="/privacy" target="_blank" style={{ color: 'var(--brand-forest)', fontWeight: 600, textDecoration: 'underline' }}>
                       Privacy Policy
                     </Link>
                     , including how my application data is collected and used.
@@ -425,7 +425,7 @@ export default function ApplyForm({ job }: { job: Job | null }) {
                       display: 'flex',
                       justifyContent: 'center',
                       alignItems: 'center',
-                      background: '#1B6C42',
+                      background: 'var(--brand-forest)',
                       color: '#fff',
                       borderRadius: 8,
                       padding: '13px 22px',

@@ -24,25 +24,31 @@
   --font-sans: var(--font-suse), 'SUSE', system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-plex-mono), 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
 
-  /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
-  --brand-forest: #1B6C42;
+  /* Canonical brand green — olive ("forest" is the legacy role name; the
+     value moved from #1B6C42 to the moss olive #445D22). Mirrored by
+     BRAND_FOREST in lib/brand.ts. 7.4:1 under white text. */
+  --brand-forest: #445D22;
   /* Hover-darken of the base forest, for primary-forest button :hover states. */
-  --brand-forest-hover: #155A35;
-  /* Brighter forest used for the primary CTA fill + the hero "growth" leaf. */
-  --brand-forest-bright: #2D8F5C;
-  --brand-forest-bright-hover: #236F48;
+  --brand-forest-hover: #384E19;
+  /* Brighter olive used for the primary CTA fill + the hero "growth" leaf.
+     5.2:1 under white text — still AA for the white-on-accent sinks. */
+  --brand-forest-bright: #597536;
+  --brand-forest-bright-hover: #4B6627;
+  /* The SideNav rail's fill; read by the rail and the ShellFrame corners. */
+  --sidenav-bg: var(--brand-forest);
 
-  /* Brand greens */
-  --sap-50:  #f1f6ee;
-  --sap-100: #e0ecd8;
-  --sap-200: #c3d8b3;
-  --sap-300: #9cbd86;
-  --sap-400: #74a25d;
-  --sap-500: #4e873c;
-  --sap-600: #3a6a2c;
-  --sap-700: #2b5221;
-  --sap-800: #1f3e18;
-  --sap-900: #132610;
+  /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
+     the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
+  --sap-50:  #f2f6ee;
+  --sap-100: #e1ecd7;
+  --sap-200: #c5d7b2;
+  --sap-300: #a1bc83;
+  --sap-400: #7ea055;
+  --sap-500: #60842c;
+  --sap-600: #49671d;
+  --sap-700: #385015;
+  --sap-800: #293c0e;
+  --sap-900: #19250b;
 
   /* Warm neutrals (paper) */
   --ink-0:   #faf8f3;
@@ -134,9 +140,9 @@
   --r-xl: 22px;
   --r-full: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(19, 38, 16, 0.04), 0 1px 1px rgba(19, 38, 16, 0.03);
-  --shadow-md: 0 4px 12px rgba(19, 38, 16, 0.06), 0 1px 2px rgba(19, 38, 16, 0.04);
-  --shadow-lg: 0 20px 48px rgba(19, 38, 16, 0.10), 0 4px 8px rgba(19, 38, 16, 0.04);
+  --shadow-sm: 0 1px 2px rgba(25, 37, 11, 0.04), 0 1px 1px rgba(25, 37, 11, 0.03);
+  --shadow-md: 0 4px 12px rgba(25, 37, 11, 0.06), 0 1px 2px rgba(25, 37, 11, 0.04);
+  --shadow-lg: 0 20px 48px rgba(25, 37, 11, 0.10), 0 4px 8px rgba(25, 37, 11, 0.04);
   --shadow-inset: inset 0 1px 0 rgba(255,255,255,0.6), inset 0 -1px 0 rgba(42,39,31,0.04);
 
   --pad-sm: 10px;
@@ -255,7 +261,7 @@ body { font-size: 14px; line-height: 1.5; }
    One value here is a correction rather than a de-drift, and is worth naming:
    the shadow's base COLOUR was consistent across all five sites at
    rgba(15,23,42) — Tailwind slate-900, which nothing else in this app uses.
-   The token is rgba(19,38,16) = --sap-900, the same base as --shadow-sm/md/lg.
+   The token is rgba(25,37,11) = --sap-900, the same base as --shadow-sm/md/lg.
    So adopting it re-tints these shadows from cool slate to the warm green the
    rest of the surface language already casts. Deliberate; the token had no
    consumers, so this is the first time that value renders.
@@ -279,7 +285,7 @@ body { font-size: 14px; line-height: 1.5; }
 .card--hero {
   border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 24px;
-  box-shadow: var(--surface-hero-shadow, 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5));
+  box-shadow: var(--surface-hero-shadow, 0 20px 60px rgba(25, 37, 11, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5));
 }
 
 .divider { height: 1px; background: var(--border); }
@@ -503,13 +509,14 @@ body { font-size: 14px; line-height: 1.5; }
    `ShellFrame` picks TopNav vs SideNav from `useIsMobile`, which reports
    desktop on the server and on the hydrating render — it has to, or server
    and client markup disagree. So a phone is served the sidebar shell and
-   would paint a 232px desktop rail until hydration swaps it out. The rail is
+   would paint a 200px desktop rail (and its .shell-corner pieces) until hydration swaps it out. The rail is
    desktop-only by definition, so hide it below the hook's own breakpoint,
    where CSS reaches the very first frame and JS can't. After hydration React
    has already unmounted it and this rule is moot. Keep the width in sync with
    MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
 @media (max-width: 767px) {
-  [data-app-sidenav] {
+  [data-app-sidenav],
+  .shell-corner {
     display: none;
   }
 }
@@ -520,6 +527,50 @@ body { font-size: 14px; line-height: 1.5; }
    otherwise paint a 10px gutter inside the rail. */
 [data-sidenav-scroll]::-webkit-scrollbar {
   display: none;
+}
+
+/* The content side of the rail: two olive quarter-squares whose transparent
+   quarter-circle reads as the page's top-left / bottom-left corner rounding
+   into the rail. Painted, not a border-radius on <main>, because <main> is
+   transparent over the atmospheric canvas — giving it a fill to round would
+   bury the orbs. z-index 25: above the z-0 canvas (else the orbs tint them
+   and they stop matching the rail), above every screen's own opaque ground
+   and its sticky headers (z ≤ 20), and below the overlays and modals
+   (z ≥ 100). That only works because the sidebar layout's <main> sets no
+   z-index — a stacking context there would trap those overlays under the
+   corners (see ShellFrame). */
+.shell-corner {
+  --shell-corner-r: var(--r-lg);
+  position: absolute;
+  left: 0;
+  width: var(--shell-corner-r);
+  height: var(--shell-corner-r);
+  z-index: 25;
+  pointer-events: none;
+}
+.shell-corner--top {
+  top: 0;
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--shell-corner-r) - 0.5px), var(--sidenav-bg) var(--shell-corner-r));
+}
+.shell-corner--bottom {
+  bottom: 0;
+  background: radial-gradient(circle at 100% 0, transparent calc(var(--shell-corner-r) - 0.5px), var(--sidenav-bg) var(--shell-corner-r));
+}
+
+/* The rail is the one olive-filled surface in the shell. Rather than thread
+   light-on-dark colours through every row, it re-declares the semantic tokens
+   its children already read (text, border, the --bg-soft active fill, the
+   focus --accent), so SideNav keeps speaking in shell tokens and the swap
+   lives here. Text steps hold ≥4.5:1 on #445D22. Its fill, --sidenav-bg, is
+   declared on :root so the .shell-corner pieces outside this subtree read the
+   same value. */
+[data-app-sidenav] {
+  --text:        #faf8f3;
+  --text-dim:    rgba(250, 248, 243, 0.86);
+  --text-muted:  rgba(250, 248, 243, 0.72);
+  --border:      rgba(250, 248, 243, 0.14);
+  --bg-soft:     rgba(250, 248, 243, 0.16);
+  --accent:      #faf8f3;
 }
 
 /* Settings' "label on the left, control on the right" profile rows. */
@@ -1243,7 +1294,7 @@ body { font-size: 14px; line-height: 1.5; }
   align-items: center;
   justify-content: center;
   /* Keep background mostly transparent so graph dots stay visible */
-  background: radial-gradient(circle at 50% 50%, rgba(233,239,237,0.2) 0%, rgba(233,239,237,0) 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(236,238,234,0.2) 0%, rgba(236,238,234,0) 70%);
   transition: opacity 700ms cubic-bezier(0.22,1,0.36,1);
 }
 
@@ -1333,7 +1384,7 @@ body { font-size: 14px; line-height: 1.5; }
 .glass-input:focus {
   outline: none;
   border-color: var(--brand-forest);
-  box-shadow: 0 0 0 2px rgba(27, 108, 66, 0.2);
+  box-shadow: 0 0 0 2px rgba(68, 93, 34, 0.2);
 }
 
 /* Global pointer states for interactive controls */
@@ -1364,7 +1415,7 @@ input[type="reset"]:disabled {
   --rarity-common:       var(--text-dim);
   --rarity-common-bg:    rgba(107, 114, 128, 0.08);
   --rarity-uncommon:     var(--brand-forest);
-  --rarity-uncommon-bg:  rgba(27, 108, 66, 0.08);
+  --rarity-uncommon-bg:  rgba(68, 93, 34, 0.08);
   --rarity-rare:         #2b8c96;
   --rarity-rare-bg:      rgba(43, 140, 150, 0.08);
   --rarity-epic:         #8b5cf6;
@@ -1410,11 +1461,11 @@ input[type="reset"]:disabled {
      canonical warm values from :root. */
 
   /* Marketing-specific additive tokens (Layer 2). */
-  --bg-mesh:       #f0f4f2;
+  --bg-mesh:       #f2f4f0;
   --display-hero:  clamp(2.5rem, 5vw, 3rem);
   --display-hero-weight: 700;
-  --surface-hero:  linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%);
-  --surface-hero-shadow: 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255,255,255,0.5);
+  --surface-hero:  linear-gradient(145deg, #dce6d2 0%, #e9f0e2 45%, #f0ebe0 100%);
+  --surface-hero-shadow: 0 20px 60px rgba(25, 37, 11, 0.12), inset 0 0 0 1px rgba(255,255,255,0.5);
   --brand-glow:    color-mix(in oklch, var(--brand-forest) 70%, white);
 
   color: var(--text);
@@ -1445,8 +1496,8 @@ input[type="reset"]:disabled {
      then hold still. No perpetual loop — the calm is the point (#291). */
   animation: sapling-blob-settle 2.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(46, 125, 82, 0.22); }
-.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: 0.12s; }
+.landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(89, 119, 49, 0.22); }
+.landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(123, 158, 81, 0.2); animation-delay: 0.12s; }
 .landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: 0.24s; }
 @keyframes sapling-blob-settle {
   from { transform: translate(26px, -34px) scale(1.12); }
@@ -1495,7 +1546,7 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-overlay {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(circle at 50% 50%, rgba(233,239,237,0.2) 0%, rgba(233,239,237,0) 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(236,238,234,0.2) 0%, rgba(236,238,234,0) 70%);
   transition: opacity 700ms cubic-bezier(0.22,1,0.36,1);
 }
 @keyframes landing-intro-orbit {
@@ -2289,8 +2340,8 @@ input[type="reset"]:disabled {
   font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   color: var(--text);
 }
-/* Forest, not `--accent`: #2D8F5C under white is 4.04:1, below the AA bar at
-   this size. Forest is 6.4:1. */
+/* Forest, not `--accent`: forest is the darker of the pair (7.4:1 under
+   white vs the bright olive's 5.2:1), so the bubble keeps the most headroom. */
 .landing-page .landing-surface-bubble.is-student {
   max-width: 80%;
   background: var(--brand-forest);
@@ -2465,29 +2516,34 @@ input[type="reset"]:disabled {
    ══════════════════════════════════════════════════════════════════ */
 
 .landing-dc {
-  /* Core palette, literal source values.
-     These are NOT the app's brand tokens and must not be consolidated into
-     them: #0C5638 / #0E9E5A are their own scale, distinct from
-     --brand-forest (#1B6C42) / --brand-forest-bright (#2D8F5C). */
-  --ld-deep:       #0C5638;
-  --ld-bright:     #0E9E5A;
-  --ld-mid:        #4FA574;
-  --ld-pale:       #8FD9A8;
+  /* Core palette. Consolidated onto the brand olive: --ld-deep IS
+     --brand-forest, and every other green/green-grey step is the original
+     emerald value re-hued to the olive (OKLCH h≈129) at its own lightness and
+     chroma, so the landing's bright/mid/pale/stage contrasts are unchanged. */
+  --ld-deep:       var(--brand-forest);
+  --ld-bright:     #68951F;
+  --ld-mid:        #7B9E51;
+  --ld-pale:       #B1D28B;
   --ld-coral:      #E27A63;
-  --ld-ink:        #12201A;
-  --ld-muted:      #61726A;
-  --ld-page:       #f0f4f2;
-  --ld-stage:      #081F14;
-  --ld-stage-deep: #061710;
+  --ld-ink:        #191F13;
+  --ld-muted:      #697062;
+  --ld-page:       #f2f4f0;
+  --ld-stage:      #151D0A;
+  --ld-stage-deep: #0f1508;
 
   /* Mastery tiers — mirrored by XTIER in lib/landing/course.ts.
      --ld-tier-unexplored is byte-identical to --state-neutral today but is
      kept literal for the same reason --fallback-muted is: distinct concept,
      so a future neutral-state change can't silently move a landing tier. */
-  --ld-tier-mastered:   #0E9E5A;
-  --ld-tier-learning:   #4FA574;
+  --ld-tier-mastered:   #68951F;
+  --ld-tier-learning:   #7B9E51;
   --ld-tier-struggling: #E27A63;
   --ld-tier-unexplored: #9a9a9a;
+  /* App components rendered inside the landing (the hero legend, the gallery
+     minis) read the app's --state-mastery; point it at the landing's olive
+     tier so the page has one mastered colour. Scoped here, so the app's own
+     mastery green is untouched. */
+  --state-mastery: var(--ld-tier-mastered);
 
   /* Bound to the concrete families, not the app's roles: the source's
      display and secondary serif were the reverse of --font-display /
@@ -2612,7 +2668,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes saplingBlob { 0% { transform:translate(0,0) scale(1); } 33% { transform:translate(30px,-50px) scale(1.1); } 66% { transform:translate(-20px,20px) scale(0.9); } 100% { transform:translate(0,0) scale(1); } }
 @keyframes introOrbit { to { transform:rotate(360deg); } }
 @keyframes floatIndicator { 0%,100% { transform:translateY(0) translateX(-50%); } 50% { transform:translateY(6px) translateX(-50%); } }
-@keyframes betaGlow { 0%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0), 0 4px 20px rgba(14,158,90,0.15); } 50% { box-shadow:0 0 0 5px rgba(14,158,90,0.45), 0 4px 28px rgba(14,158,90,0.3); } }
+@keyframes betaGlow { 0%,100% { box-shadow:0 0 0 0 rgba(104,149,31,0), 0 4px 20px rgba(104,149,31,0.15); } 50% { box-shadow:0 0 0 5px rgba(104,149,31,0.45), 0 4px 28px rgba(104,149,31,0.3); } }
 @keyframes nodeFloatA { 0%,100% { transform:translate(0,0); } 33% { transform:translate(16px,-24px); } 66% { transform:translate(-12px,14px); } }
 @keyframes nodeFloatB { 0%,100% { transform:translate(0,0); } 40% { transform:translate(-18px,18px); } 75% { transform:translate(10px,-12px); } }
 
@@ -2627,7 +2683,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes coverRise { 0% { transform:translateY(46px) rotate(-1deg); opacity:0; } 16% { transform:translateY(0) rotate(-1deg); opacity:1; } 84% { transform:translateY(0) rotate(-1deg); opacity:1; } 100% { transform:translateY(46px) rotate(-1deg); opacity:0; } }
 @keyframes ringDraw { 0% { stroke-dashoffset:100; } 30%,85% { stroke-dashoffset:8.8; } 100% { stroke-dashoffset:100; } }
 @keyframes gaugeFloat { 0%,100% { transform:translateY(0); } 30% { transform:translateY(-52px); } 65% { transform:translateY(20px); } }
-@keyframes answerTick { 0%,55% { box-shadow:0 0 0 0 rgba(14,158,90,0); } 62% { box-shadow:0 0 0 7px rgba(14,158,90,0.22); } 72%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0); } }
+@keyframes answerTick { 0%,55% { box-shadow:0 0 0 0 rgba(104,149,31,0); } 62% { box-shadow:0 0 0 7px rgba(104,149,31,0.22); } 72%,100% { box-shadow:0 0 0 0 rgba(104,149,31,0); } }
 @keyframes waveBar { 0%,100% { transform:scaleY(0.25); } 50% { transform:scaleY(1); } }
 @keyframes gaugeMini { 0%,100% { transform:translate(-50%,0); } 30% { transform:translate(-50%,-32px); } 65% { transform:translate(-50%,12px); } }
 @keyframes coverMini { 0% { transform:translateY(30px); opacity:0; } 16% { transform:translateY(0); opacity:1; } 84% { transform:translateY(0); opacity:1; } 100% { transform:translateY(30px); opacity:0; } }
@@ -2703,7 +2759,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). */
-.landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
+.landing-v5 .ld-ghost:hover     { border-color:#445D22; color:#445D22; }
 
 /* Gallery + feature lab hover states.
    `.ld-galcard` carries a base `transform: scale(var(--gal-scale))` for the
@@ -2712,9 +2768,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
    full size the instant a cursor lands on it. */
 .landing-v5 .ld-galcard        { transform: scale(var(--gal-scale, 1)); }
 .landing-v5 .ld-galcard:hover  { transform: scale(var(--gal-scale, 1)) translateY(-5px); }
-.landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
-.landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
-.landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
+.landing-v5 .ld-labclose:hover { background: #191F13; color: #FDFCF9; }
+.landing-v5 .ld-post:hover      { border-color: rgba(25,31,19,0.16); }
+.landing-v5 .ld-emailinput:focus { border-color: #445D22; box-shadow: 0 0 0 3px rgba(68,93,34,0.12); }
 
 /* ── Landing v5 · tablet + phone ──────────────────────────────────
    Every landing section declares its desktop layout inline, so these
@@ -2775,9 +2831,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
      the ingest tiles on the floor. `svh` is the toolbar-visible height, so
      the stage always fits what can be seen; the vh line is the fallback. */
   .landing-v5 .ld-stage          { height: 100vh !important; height: 100svh !important; }
-  /* the graph stage's ground ends on solid #DCE7DF; the section behind it
+  /* the graph stage's ground ends on solid #E0E6DB; the section behind it
      matches so the strip below a short stage reads as the same ground */
-  .landing-v5 #act-graph         { background: #DCE7DF; }
+  .landing-v5 #act-graph         { background: #E0E6DB; }
 
   /* act II — the kicker, heading and pitch scroll in ahead of the act
      (.ld-ingest-intro, outside the section) and the pinned stage is all
@@ -2920,7 +2976,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
 
 .cp-navlink:hover  { color: #1a1814; }
-.cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
+.cp-menuitem:hover { background: rgba(68,93,34,0.07); color: #1a1814; }
 .cp-cta:hover      { filter: brightness(1.12); }
 
 /* ── Feature-lab demos ─────────────────────────────────────────────
@@ -2932,15 +2988,15 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes labSpin { to { transform:rotate(360deg); } }
 @keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
 
-/* The rest state is now #0C5638, so hover lifts to the bright green the
+/* The rest state is now #445D22, so hover lifts to the bright green the
    room's Send button already uses rather than repeating the base colour. */
-.landing-v5 .ld-labprimary:hover { background: #0E9E5A; }
+.landing-v5 .ld-labprimary:hover { background: #68951F; }
 .landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
-.landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
-.landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
-.landing-v5 .ld-labsend:hover    { background: #0E9E5A; }
-.landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
-.landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
+.landing-v5 .ld-labaction:hover  { background: #EAF1E4; }
+.landing-v5 .ld-labrecent:hover  { border-color: #68951F; }
+.landing-v5 .ld-labsend:hover    { background: #68951F; }
+.landing-v5 .ld-labupload:hover  { background: #E0E6DA; }
+.landing-v5 .ld-labreply:hover   { border-color: #68951F; background: #EAF1E4; }
 .cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
 
 /* Gallery shot — the whole panel is the button that expands it (#601 follow-up).
@@ -2952,7 +3008,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .cp-shot { transition: border-color 220ms, box-shadow 220ms, transform 220ms; }
 .cp-shot:hover { border-color: rgba(42,39,31,0.26); box-shadow: 0 16px 36px -18px rgba(26,24,20,0.6); transform: translateY(-3px); }
 .cp-shot:active { transform: translateY(-1px); transition-duration: 90ms; }
-.cp-shot:focus-visible { outline: 2px solid #1B6C42; outline-offset: 3px; }
+.cp-shot:focus-visible { outline: 2px solid var(--brand-forest); outline-offset: 3px; }
 
 /* Lightbox entrance (#601 follow-up). Keyframes rather than a transition on a
    state flip: the panel only mounts once the overlay hook has set `mounted`,
@@ -2987,4 +3043,4 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 /* Beta modal — recovered from the previous landing page. */
 .ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
 .ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
-.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); outline: none; }
+.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(68,93,34,0.12); outline: none; }

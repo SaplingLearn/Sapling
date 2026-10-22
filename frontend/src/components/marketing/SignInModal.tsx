@@ -297,7 +297,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           onMouseEnter={e => {
             if (waiting) return;
             e.currentTarget.style.borderColor = "var(--brand-forest)";
-            e.currentTarget.style.boxShadow = "0 6px 18px rgba(27,108,66,0.15)";
+            e.currentTarget.style.boxShadow = "0 6px 18px rgba(68,93,34,0.15)";
           }}
           onMouseLeave={e => {
             e.currentTarget.style.borderColor = "rgba(107,114,128,0.25)";

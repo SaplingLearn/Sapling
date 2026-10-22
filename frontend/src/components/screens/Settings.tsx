@@ -942,7 +942,7 @@ function PreviewModal({ profile, onClose }: { profile: UserProfile; onClose: () 
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(19,38,16,0.45)",
+        background: "rgba(25, 37, 11,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: 24,
       }}

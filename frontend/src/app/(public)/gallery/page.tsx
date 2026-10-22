@@ -54,8 +54,8 @@ export default function GalleryPage() {
                   padding: '8px 15px', borderRadius: 99, cursor: 'pointer',
                   fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 500,
                   transition: 'all 200ms',
-                  border: `1px solid ${on ? '#1B6C42' : 'rgba(42,39,31,0.16)'}`,
-                  background: on ? '#1B6C42' : 'transparent',
+                  border: `1px solid ${on ? 'var(--brand-forest)' : 'rgba(42,39,31,0.16)'}`,
+                  background: on ? 'var(--brand-forest)' : 'transparent',
                   color: on ? '#faf8f3' : '#6f6857',
                 }}
               >
@@ -86,7 +86,7 @@ export default function GalleryPage() {
               <figcaption style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 <span style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                   <span style={{ fontSize: 15, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{s.title}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 9, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>{s.group}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 9, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>{s.group}</span>
                 </span>
                 <span style={{ fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{s.body}</span>
               </figcaption>
@@ -96,7 +96,7 @@ export default function GalleryPage() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '46ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>
               Rather try it than look at it
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>
@@ -104,7 +104,7 @@ export default function GalleryPage() {
               runs a real scenario.
             </p>
           </div>
-          <Link href="/#gallery" className="cp-cta" style={{ background: '#1B6C42', color: '#fff', borderRadius: 8, padding: '13px 24px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <Link href="/#gallery" className="cp-cta" style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 8, padding: '13px 24px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
             Open the toolkit
           </Link>
         </div>
