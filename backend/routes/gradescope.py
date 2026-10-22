@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from db.connection import page_all, table
 from services import gradescope_service
 from services.academics import (
+    current_term,
     enrollment_id_for,
     offering_course_id,
     scoped_user_enrollments,
@@ -538,6 +539,16 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
             status_code=400,
             detail="No Gradescope course is linked to this Sapling course",
         )
+    if len(link_rows) > 1 and semester is None:
+        # A retake leaves a link on each term's enrollment. A caller that names
+        # no semester means the current one; only stay ambiguous when the
+        # current term doesn't settle it.
+        term = current_term()
+        current = {
+            e["id"]
+            for e in scoped_user_enrollments(user_id, course_id=sapling_course_id, term_id=term["id"])
+        } if term else set()
+        link_rows = [r for r in link_rows if r.get("enrollment_id") in current] or link_rows
     if len(link_rows) != 1:
         raise HTTPException(status_code=409, detail="Multiple Gradescope links match this course. Select a semester and reconnect the course.")
     gs_course_id = link_rows[0]["gradescope_course_id"]

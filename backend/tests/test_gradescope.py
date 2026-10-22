@@ -560,7 +560,7 @@ class TestAuthenticationValidation:
 
 
 class TestSyncPersistence:
-    def _sync(self, incoming, *, fail_insert=False, links=None, existing_rows=None):
+    def _sync(self, incoming, *, fail_insert=False, links=None, existing_rows=None, semester="Fall 2025", current_enrollments=()):
         tables = {name: MagicMock() for name in (
             "assignments", "gradebook_categories", "gradescope_course_links", "gradescope_credentials",
         )}
@@ -584,8 +584,15 @@ class TestSyncPersistence:
             patch("routes.gradescope._load_creds", return_value=MagicMock()),
             patch("routes.gradescope._establish_connection"),
             patch.object(gs, "list_assignments", return_value=incoming),
+            patch("routes.gradescope.current_term", return_value={"id": "current-term"}),
+            patch("routes.gradescope.scoped_user_enrollments", return_value=[
+                {"id": eid, "offering_id": f"{eid}-offering"} for eid in current_enrollments
+            ]),
         ):
-            response = client.post("/api/gradescope/sync/c1", params={"user_id": "u1", "semester": "Fall 2025"})
+            params = {"user_id": "u1"}
+            if semester is not None:
+                params["semester"] = semester
+            response = client.post("/api/gradescope/sync/c1", params=params)
         return response, tables
 
     def test_import_encrypts_scores_and_preserves_existing_missing_scores(self):
@@ -636,6 +643,26 @@ class TestSyncPersistence:
 
     def test_ambiguous_links_are_rejected_before_fetching_grades(self):
         response, tables = self._sync([], links=[
+            {"id": "one", "enrollment_id": "fall", "gradescope_course_id": "gs-one"},
+            {"id": "two", "enrollment_id": "spring", "gradescope_course_id": "gs-two"},
+        ])
+        assert response.status_code == 409
+        tables["assignments"].insert.assert_not_called()
+
+
+    def test_unscoped_sync_prefers_the_current_terms_link(self):
+        # A retake leaves a link on each term's enrollment; a caller without a
+        # semester means "now", not "ambiguous".
+        response, tables = self._sync([{"id": "new"}], semester=None, current_enrollments=["spring"], links=[
+            {"id": "one", "enrollment_id": "fall", "gradescope_course_id": "gs-one"},
+            {"id": "two", "enrollment_id": "spring", "gradescope_course_id": "gs-two"},
+        ])
+        assert response.status_code == 200
+        assert tables["assignments"].insert.call_args.args[0]["enrollment_id"] == "spring"
+        assert tables["gradescope_course_links"].update.call_args.kwargs["filters"] == {"id": "eq.two"}
+
+    def test_unscoped_sync_with_no_current_term_link_stays_ambiguous(self):
+        response, tables = self._sync([], semester=None, current_enrollments=["summer"], links=[
             {"id": "one", "enrollment_id": "fall", "gradescope_course_id": "gs-one"},
             {"id": "two", "enrollment_id": "spring", "gradescope_course_id": "gs-two"},
         ])
