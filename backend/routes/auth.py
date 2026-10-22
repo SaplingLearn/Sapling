@@ -37,7 +37,7 @@ from config import (
     APP_ENV,
     ALLOWED_EMAIL_DOMAINS,
 )
-from db.connection import table
+from db.connection import like_literal, pg_quote_value, table
 from services import events_service
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
@@ -98,6 +98,38 @@ def _email_domain_allowed(email: str) -> bool:
         return True
     domain = email.strip().lower().rsplit("@", 1)[-1]
     return domain in ALLOWED_EMAIL_DOMAINS
+
+
+def _waitlist_approved(email: str) -> bool:
+    """Whether an admin approved `email` on the waitlist (Admin → Allowlist).
+
+    `newsletter_emails` is the landing-page waitlist; `approved_at` is set by
+    `POST /api/admin/allowlist/approve`. Approving there lets the student in on
+    their first sign-in instead of an admin approving the `users` row after
+    they hit /pending. Case-insensitive, because the waitlist keeps the email
+    as typed; re-checked in Python because PostgREST rewrites `*` to a wildcard
+    that `like_literal` cannot escape. Fails closed: a lookup error leaves the
+    user pending rather than breaking sign-in.
+    """
+    wanted = email.strip().lower()
+    if not wanted:
+        return False
+    try:
+        needle = pg_quote_value(like_literal(wanted))
+        rows = table("newsletter_emails").select(
+            "email,approved_at",
+            filters={
+                "or": f"(email.ilike.{needle})",
+                "approved_at": "not.is.null",
+            },
+        )
+    except Exception:
+        logger.warning("waitlist approval lookup failed", exc_info=True)
+        return False
+    return any(
+        (r.get("email") or "").strip().lower() == wanted and r.get("approved_at")
+        for r in rows or []
+    )
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -573,6 +605,15 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     if _LOCAL_AUTO_APPROVE and not is_approved:
         is_approved = True
         table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
+
+    # Waitlist pre-approval: an admin who approved this email on the waitlist
+    # already said yes, so a pending account (new, or one that hit /pending
+    # before the approval) is promoted here. One-way: revoking the waitlist
+    # entry later does not unapprove the account — use Admin → Users for that.
+    if not is_approved and _waitlist_approved(email):
+        is_approved = True
+        table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
+        logger.info("user %s approved via waitlist at sign-in", user_id)
 
     if not is_approved:
         if popup_id:
