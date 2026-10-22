@@ -151,16 +151,24 @@ def body_to_prosemirror_nodes(body: str) -> list[dict]:
 
 
 def _table_cell(text: str, *, header: bool) -> dict:
-    # Flat text content, not a paragraph-wrapped block — matching the
-    # heading node convention above, not the list-item/paragraph one.
-    # Empty text yields an empty content list rather than a
+    # Paragraph-wrapped, not flat text: @tiptap/extension-table-cell and
+    # -table-header define their `content` as "block+" (one or more block
+    # nodes, e.g. paragraph) — a bare text node directly inside a cell is
+    # invalid against that schema and would fail when the frontend loads
+    # this JSON (editor.commands.setContent), even though nothing in this
+    # backend-only test file catches that, since these are plain dict
+    # comparisons with no real ProseMirror schema validation. Empty text
+    # still yields a paragraph (with empty content), never a
     # `{"type": "text", "text": ""}` node, since ProseMirror text nodes
     # must never carry empty text. Header and body cells share this exact
     # shape so an empty header cell and an empty body cell render
     # identically.
     return {
         "type": "tableHeader" if header else "tableCell",
-        "content": [{"type": "text", "text": text}] if text else [],
+        "content": [{
+            "type": "paragraph",
+            "content": [{"type": "text", "text": text}] if text else [],
+        }],
     }
 
 

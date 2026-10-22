@@ -133,22 +133,24 @@ class TestTableToProsemirrorNode:
         assert [c["type"] for c in header_row["content"]] == ["tableHeader", "tableHeader"]
         assert body_row["type"] == "tableRow"
         assert [c["type"] for c in body_row["content"]] == ["tableCell", "tableCell"]
-        assert body_row["content"][0]["content"] == [{"type": "text", "text": "Cells"}]
-        assert body_row["content"][1]["content"] == [{"type": "text", "text": "All living things are cells"}]
+        # Cell content is paragraph-wrapped, not bare text -- matches
+        # @tiptap/extension-table-cell's "block+" content expression.
+        assert body_row["content"][0]["content"] == [{"type": "paragraph", "content": [{"type": "text", "text": "Cells"}]}]
+        assert body_row["content"][1]["content"] == [{"type": "paragraph", "content": [{"type": "text", "text": "All living things are cells"}]}]
 
     def test_pads_short_rows(self):
         node = table_to_prosemirror_node(["A", "B", "C"], ["only one cell"])
         body_row = node["content"][1]
         assert len(body_row["content"]) == 3
-        assert body_row["content"][1]["content"] == []
-        assert body_row["content"][2]["content"] == []
+        assert body_row["content"][1]["content"] == [{"type": "paragraph", "content": []}]
+        assert body_row["content"][2]["content"] == [{"type": "paragraph", "content": []}]
 
     def test_truncates_long_rows(self):
         node = table_to_prosemirror_node(["A", "B"], ["one\ttwo\tthree\tfour"])
         body_row = node["content"][1]
         assert len(body_row["content"]) == 2
-        assert body_row["content"][0]["content"] == [{"type": "text", "text": "one"}]
-        assert body_row["content"][1]["content"] == [{"type": "text", "text": "two"}]
+        assert body_row["content"][0]["content"] == [{"type": "paragraph", "content": [{"type": "text", "text": "one"}]}]
+        assert body_row["content"][1]["content"] == [{"type": "paragraph", "content": [{"type": "text", "text": "two"}]}]
 
     def test_empty_rows_still_renders_header_only(self):
         node = table_to_prosemirror_node(["Only", "Headers"], [])
