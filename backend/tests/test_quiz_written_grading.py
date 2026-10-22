@@ -224,3 +224,67 @@ def test_mixed_top_up_states_both_rules():
     bad = _item(type="multiple_choice", options=["a", "b", "c"], correct_answer="a")
     message = _topup_message("mixed", [_item(), {**bad, "question": "Q2?"}, {**bad, "question": "Q3?"}])
     assert "VERBATIM in options" in message and "options must be empty" in message
+
+
+# ── Live click-through (2026-10-19): items a student cannot answer fairly ──
+# Dropped per item at GENERATION only (_agent_question_to_wire), never in
+# _validate_wire_question, which also re-checks stored attempts on resume.
+
+
+def _wire(**overrides):
+    from agents.quiz import QuizQuestion
+    from routes.quiz import _agent_question_to_wire
+    return _agent_question_to_wire(QuizQuestion.model_validate(_item(**overrides)), 1)
+
+
+@pytest.mark.parametrize("answer", ["lambda", "eigenvalue", "2theta", "alpha + beta"])
+def test_symbolic_key_spelled_as_a_word_is_dropped(answer):
+    """A letter run is an implicit product, so 'lambda' parsed as a*a*b*d*l*m:
+    served live as 'what is lambda?', it graded the real answer 'eigenvalue'
+    wrong and the anagram 'adlmba' right."""
+    assert _wire(type="symbolic", correct_answer=answer) is None
+
+
+@pytest.mark.parametrize("answer", ["2xy", "mgh", "x^2 - 1", "2(x + 1)", "ab/c"])
+def test_symbolic_key_with_short_products_is_kept(answer):
+    assert _wire(type="symbolic", correct_answer=answer) is not None
+
+
+@pytest.mark.parametrize("answer", [
+    "The base case is a condition that stops the recursion, preventing infinite calls. "
+    "It's crucial because without it, the function would call itself indefinitely.",
+    "It converts glucose and oxygen into ATP through cellular respiration in the cell",
+    "Stops recursion. Prevents overflow.",
+])
+def test_short_answer_key_that_is_a_sentence_is_dropped(answer):
+    """Exact-match grading cannot accept a paragraph: served live, the student
+    wrote the right idea ('the condition that stops the recursion') and was
+    marked wrong against a two-sentence key."""
+    assert _wire(correct_answer=answer) is None
+
+
+@pytest.mark.parametrize("answer", [
+    "Cellular respiration", "Krebs cycle and electron transport chain", "ATP", "base case.",
+])
+def test_short_answer_key_that_is_a_term_is_kept(answer):
+    assert _wire(correct_answer=answer) is not None
+
+
+@pytest.mark.parametrize("item", [
+    _item(question="What molecule is often referred to as the "),
+    _item(type="multiple_choice", options=["a", "b", "c", "d"], correct_answer="a",
+          question="Which is called the "),
+])
+def test_stem_cut_off_mid_string_is_dropped(item):
+    """Gemini sometimes ends a function-call string at an inner double quote:
+    served live as 'What molecule is often referred to as the ' (the model was
+    writing the "energy currency"). The trailing whitespace is the tell."""
+    from agents.quiz import QuizQuestion
+    from routes.quiz import _agent_question_to_wire
+    assert _agent_question_to_wire(QuizQuestion.model_validate(item), 1) is None
+
+
+def test_resume_still_accepts_a_stored_item_the_generation_guards_would_drop():
+    from routes.quiz import _validate_wire_question
+    assert _validate_wire_question({"type": "short_answer", "options": [],
+                                    "correct_answer": "The base case stops it. Always."})

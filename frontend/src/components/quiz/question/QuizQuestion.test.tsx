@@ -181,6 +181,34 @@ describe("QuizQuestion — the question", () => {
     fireEvent.click(screen.getByTestId("quiz-submit-answer"));
     expect(actions.submitAnswer).toHaveBeenCalledOnce();
   });
+  it.each([
+    ["numeric", /Enter only the number, without units/],
+    ["symbolic", /single-letter variables/],
+    ["short_answer", /Write a brief answer/],
+  ] as const)("shows the %s answer format rules on screen, not only to screen readers", (type, rule) => {
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] }));
+    const hint = screen.getByTestId("quiz-format-hint");
+    expect(hint).toHaveTextContent(rule);
+    // `.quiz-question__hint` is the visually hidden keyboard hint: the rules
+    // a sighted student must follow to be graded correctly can never live there.
+    expect(hint).not.toHaveClass("quiz-question__hint");
+    expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveAccessibleDescription(rule);
+    expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
+  });
+
+  it("ends the expected-answer feedback with exactly one full stop", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "Cellular respiration." } })] }));
+    expect(screen.getByText("Not quite — the expected answer is Cellular respiration.")).toBeInTheDocument();
+  });
+
+  it("keeps the multiple-choice keyboard hint for assistive tech, with no format rules", () => {
+    renderScreen(makeSession());
+    expect(screen.getByText(/Keyboard: press A to F/)).toHaveClass("quiz-question__hint");
+    expect(screen.queryByTestId("quiz-format-hint")).not.toBeInTheDocument();
+  });
+
   it("renders the stem, the options and the progress rail", () => {
     renderScreen(makeSession({ cursor: 1, items: [item(0, { verdict: { isCorrect: true, correctIndex: 1, explanation: "" }, selectedIndex: 1 }), item(1), item(2)] }));
 
