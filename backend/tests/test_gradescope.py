@@ -243,7 +243,7 @@ class TestLinkIsEnrollmentKeyed:
         with (
             patch("routes.gradescope.table", side_effect=_table_factory(rows)),
             patch(
-                "routes.gradescope.user_enrollment_ids",
+                "routes.gradescope.scoped_user_enrollments",
                 return_value=[{"id": "enr-1", "offering_id": "off-1"}],
             ),
             patch("routes.gradescope.offering_course_id", return_value="course-1"),
@@ -648,24 +648,34 @@ class TestSemesterScoping:
         from routes.gradescope import _all_enrollments_for
 
         with (
-            patch("routes.gradescope.user_offering_ids_for_course", return_value=["fall", "spring"]),
-            patch("routes.gradescope.user_enrollment_ids", return_value=[
+            patch("routes.gradescope.scoped_user_enrollments", return_value=[
                 {"id": "fall-enrollment", "offering_id": "fall"},
-                {"id": "spring-enrollment", "offering_id": "spring"},
-            ]),
+            ]) as scoped,
             patch("routes.gradescope.term_id_for_label", return_value="fall-term"),
-            patch("routes.gradescope.term_for_offering", side_effect=lambda oid: {"id": f"{oid}-term"}),
         ):
             assert _all_enrollments_for("u1", "c1", "Fall 2025") == ["fall-enrollment"]
+        scoped.assert_called_once_with("u1", course_id="c1", term_id="fall-term")
 
     def test_invalid_semester_never_falls_back_to_current_term(self):
         from routes.gradescope import _all_enrollments_for
 
         with (
-            patch("routes.gradescope.user_offering_ids_for_course", return_value=["spring"]),
+            patch("routes.gradescope.scoped_user_enrollments", return_value=[
+                {"id": "spring-enrollment", "offering_id": "spring"},
+            ]) as scoped,
             patch("routes.gradescope.term_id_for_label", return_value=None),
         ):
             assert _all_enrollments_for("u1", "c1", "Missing term") == []
+        scoped.assert_not_called()
+
+    def test_links_for_an_unknown_semester_are_empty_not_every_term(self):
+        with (
+            patch("routes.gradescope.scoped_user_enrollments") as scoped,
+            patch("routes.gradescope.term_id_for_label", return_value=None),
+        ):
+            r = client.get("/api/gradescope/links", params={"user_id": "u1", "semester": "Missing term"})
+        assert r.json() == {"links": []}
+        scoped.assert_not_called()
 
     def test_linking_a_term_preserves_other_terms_links(self):
         writes = MagicMock()

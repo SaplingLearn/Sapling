@@ -33,10 +33,8 @@ from services import gradescope_service
 from services.academics import (
     enrollment_id_for,
     offering_course_id,
-    term_for_offering,
+    scoped_user_enrollments,
     term_id_for_label,
-    user_enrollment_ids,
-    user_offering_ids_for_course,
 )
 from services.auth_guard import require_self
 from services.encryption import encrypt, decrypt, encrypt_if_present
@@ -172,28 +170,28 @@ def _enrollment_for(user_id: str, sapling_course_id: str) -> str | None:
     return enrollment_id_for(user_id, sapling_course_id)
 
 
+def _enrollments_in(user_id: str, semester: str | None, sapling_course_id: str | None = None) -> list[dict]:
+    """The user's enrollments ({id, offering_id}), optionally narrowed to a
+    course and/or a semester label.
+
+    An explicit semester that doesn't resolve to a term matches nothing — it
+    never widens to every term.
+    """
+    term_id = None
+    if semester is not None:
+        term_id = term_id_for_label(semester)
+        if not term_id:
+            return []
+    return scoped_user_enrollments(user_id, course_id=sapling_course_id, term_id=term_id)
+
+
 def _all_enrollments_for(user_id: str, sapling_course_id: str, semester: str | None = None) -> list[str]:
     """Owned enrollments in this course, optionally restricted to a semester.
 
     An explicit term never falls back to a different enrollment. Without a
     term, search all enrollments so legacy links survive a term rollover.
     """
-    offering_ids = set(user_offering_ids_for_course(user_id, sapling_course_id))
-    if semester is not None:
-        term_id = term_id_for_label(semester)
-        if not term_id:
-            return []
-        offering_ids = {
-            oid for oid in offering_ids
-            if (term_for_offering(oid) or {}).get("id") == term_id
-        }
-    if not offering_ids:
-        return []
-    return [
-        e["id"]
-        for e in user_enrollment_ids(user_id)
-        if e.get("offering_id") in offering_ids
-    ]
+    return [e["id"] for e in _enrollments_in(user_id, semester, sapling_course_id)]
 
 
 def _enforce_gs_rate_limit(user_id: str, action: str, *, limit: int, window_sec: int) -> None:
@@ -424,13 +422,7 @@ def list_links(user_id: str, request: Request, semester: str | None = None):
     leaves — the frontend contract is unchanged.
     """
     require_self(user_id, request)
-    enrollments = user_enrollment_ids(user_id)
-    if semester is not None:
-        term_id = term_id_for_label(semester)
-        enrollments = [
-            e for e in enrollments
-            if term_id and (term_for_offering(e.get("offering_id")) or {}).get("id") == term_id
-        ]
+    enrollments = _enrollments_in(user_id, semester)
     if not enrollments:
         return {"links": []}
 

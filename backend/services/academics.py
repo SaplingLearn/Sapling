@@ -312,6 +312,28 @@ def user_enrollment_ids(user_id: str) -> list[dict]:
     ) or []
 
 
+def scoped_user_enrollments(
+    user_id: str, *, course_id: str | None = None, term_id: str | None = None,
+) -> list[dict]:
+    """The user's enrollments (``{id, offering_id}`` rows), narrowed to one
+    abstract course and/or one term.
+
+    ``None`` means "don't filter on that axis", so a caller holding a semester
+    label that didn't resolve must short-circuit itself — passing ``None`` on
+    would widen the answer to every term. Offering → course / term go through
+    the cached immutable mappings, so this costs one ``enrollments`` read.
+    """
+    rows = user_enrollment_ids(user_id)
+    if course_id is not None:
+        rows = [e for e in rows if offering_course_id(e.get("offering_id")) == course_id]
+    if term_id is not None:
+        rows = [
+            e for e in rows
+            if (term_for_offering(e.get("offering_id")) or {}).get("id") == term_id
+        ]
+    return rows
+
+
 def school_peer_user_ids(user_id: str) -> set[str]:
     """The set of user_ids who share a school with ``user_id`` (includes them).
 
