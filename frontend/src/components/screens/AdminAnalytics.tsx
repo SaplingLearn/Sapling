@@ -279,7 +279,7 @@ function AnalyticsBody() {
                 <DayLineChart
                   points={eventPoints}
                   color="var(--brand-forest, #445D22)"
-                  fillColor="var(--sap-100, #e0ecd8)"
+                  fillColor="var(--sap-100, #e1ecd7)"
                   ariaLabel="Events per day"
                 />
                 <DaySeriesTable label="events per day" columns={[{ label: "Events", points: eventPoints }]} />
@@ -402,7 +402,7 @@ function AnalyticsBody() {
               <DayLineChart
                 points={costPoints}
                 color="var(--brand-forest, #445D22)"
-                fillColor="var(--sap-100, #e0ecd8)"
+                fillColor="var(--sap-100, #e1ecd7)"
                 ariaLabel="Cost per day"
                 format={(v) => `$${v.toFixed(2)}`}
               />
@@ -410,7 +410,7 @@ function AnalyticsBody() {
               <DayLineChart
                 points={tokenPoints}
                 color="var(--brand-forest, #445D22)"
-                fillColor="var(--sap-100, #e0ecd8)"
+                fillColor="var(--sap-100, #e1ecd7)"
                 ariaLabel="Tokens per day"
                 format={formatCompactCount}
               />

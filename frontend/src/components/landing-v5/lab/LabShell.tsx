@@ -13,20 +13,20 @@ export const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), '
 
 /** Lab-local tier swatches; see labData.ts for why they differ from the graph's. */
 export const LAB_TIER = {
-  mastered: '#3a7d4e', learning: '#c89b5e', struggling: '#b25855', unexplored: '#C3CCC6',
+  mastered: '#5a7834', learning: '#c89b5e', struggling: '#b25855', unexplored: '#C7CBC2',
 } as const;
 
 export function LabShell({ route, children }: { route: string; children: React.ReactNode }) {
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", color: '#12201A', background: '#FDFCF9', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", color: '#191F13', background: '#FDFCF9', display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: '0 0 auto', height: 38, borderBottom: '1px solid #ECE9DE', background: '#F6F8F4', display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px' }}>
         <span style={{ display: 'flex', gap: 5 }}>
           {[0, 1, 2].map((i) => (
             <span key={i} style={{ width: 8, height: 8, borderRadius: 99, background: '#E3E0D5' }} />
           ))}
         </span>
-        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.2em', color: '#8B9891' }}>{route}</span>
-        <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#0C5638', background: '#E6F2E8', border: '1px solid #DCE7DE', borderRadius: 99, padding: '3px 9px' }}>
+        <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.2em', color: '#91978B' }}>{route}</span>
+        <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#445D22', background: '#EAF1E4', border: '1px solid #E0E6DA', borderRadius: 99, padding: '3px 9px' }}>
           INTERACTIVE
         </span>
       </div>
@@ -39,22 +39,22 @@ export function LabShell({ route, children }: { route: string; children: React.R
  * Shared button styles the demos reuse.
  *
  * The primary sits on the brand green at rest. It used to be near-black ink
- * (#12201A) and turn green only on hover, which is the reverse of every other
+ * (#191F13) and turn green only on hover, which is the reverse of every other
  * primary in the lab — the flashcard "Flip", the quiz's own "Retake", the room
- * "Send" are all #0C5638 from the start. Assessment's "Submit answer" is the
+ * "Send" are all #445D22 from the start. Assessment's "Submit answer" is the
  * one button that runs through this shared style, so it was the one reading as
  * a different, darker control than the ones beside it.
  */
 export const PRIMARY_BTN: React.CSSProperties = {
-  padding: '11px 24px', borderRadius: 10, border: 'none', background: '#0C5638',
+  padding: '11px 24px', borderRadius: 10, border: 'none', background: '#445D22',
   color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13.5,
   fontWeight: 600, cursor: 'pointer', transition: 'background 200ms',
 };
 
 export const GHOST_BTN: React.CSSProperties = {
-  padding: '10px 20px', borderRadius: 10, border: '1px solid #DCE7DE',
+  padding: '10px 20px', borderRadius: 10, border: '1px solid #E0E6DA',
   background: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13,
-  color: '#33443B', cursor: 'pointer',
+  color: '#3B4233', cursor: 'pointer',
 };
 
 /** The segmented control used by the tutor and calendar demos. */
@@ -66,7 +66,7 @@ export function Segmented<T extends string>({
   onChange: (k: T) => void;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
+    <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
       {options.map((o) => {
         const on = o.key === value;
         return (
@@ -78,8 +78,8 @@ export function Segmented<T extends string>({
             style={{
               padding: '6px 13px', borderRadius: 7, border: 'none', cursor: 'pointer',
               ...MONO, fontSize: 9.5, letterSpacing: '0.14em',
-              background: on ? '#12201A' : 'transparent',
-              color: on ? '#FDFCF9' : '#61726A',
+              background: on ? '#191F13' : 'transparent',
+              color: on ? '#FDFCF9' : '#697062',
               fontWeight: on ? 600 : 400,
               transition: 'all 200ms',
             }}

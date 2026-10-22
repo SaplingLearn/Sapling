@@ -122,7 +122,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
           <p style={{ margin: 0, fontFamily: SERIF, fontSize: 17, lineHeight: 1.6, color: '#3f3b31', maxWidth: '46ch' }}>
             One letter a month, written by the four of us. Get the next one in your inbox.
           </p>
-          <Link href="/#newsletter" className="cp-cta" style={{ background: '#445D22', color: '#fff', borderRadius: 8, padding: '12px 22px', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <Link href="/#newsletter" className="cp-cta" style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 8, padding: '12px 22px', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
             Get the Journal
           </Link>
         </div>

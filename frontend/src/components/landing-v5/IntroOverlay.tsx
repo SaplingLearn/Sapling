@@ -37,7 +37,7 @@ export function IntroOverlay({
         // can never intercept a pointer or cost a paint
         display: introGone ? 'none' : 'flex',
         alignItems: 'center', justifyContent: 'center',
-        backgroundColor: '#f0f4f2',
+        backgroundColor: '#f2f4f0',
         backgroundImage:
           'radial-gradient(ellipse 100% 70% at 50% 30%, rgba(255,255,255,0.9) 0%, transparent 62%)',
         transition: 'opacity 700ms cubic-bezier(0.22,1,0.36,1)',
@@ -60,13 +60,13 @@ export function IntroOverlay({
               <feDisplacementMap in="SourceGraphic" in2="n" scale={1.4} xChannelSelector="R" yChannelSelector="G" />
             </filter>
             <linearGradient id="introLeafL" x1="0" y1="18" x2="0" y2="46" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stopColor="#B7DBBE" /><stop offset="0.5" stopColor="#6BA67B" stopOpacity="0.95" /><stop offset="1" stopColor="#3F7A52" />
+              <stop offset="0" stopColor="#C5D8B2" /><stop offset="0.5" stopColor="#85A165" stopOpacity="0.95" /><stop offset="1" stopColor="#5B753B" />
             </linearGradient>
             <linearGradient id="introLeafR" x1="0" y1="10" x2="0" y2="40" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stopColor="#DAEEDD" /><stop offset="0.5" stopColor="#8FC29B" stopOpacity="0.95" /><stop offset="1" stopColor="#4E8A60" />
+              <stop offset="0" stopColor="#E1ECD7" /><stop offset="0.5" stopColor="#A4BD89" stopOpacity="0.95" /><stop offset="1" stopColor="#6A8549" />
             </linearGradient>
             <linearGradient id="introStem" x1="0" y1="28" x2="0" y2="54" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stopColor="#8FC29B" /><stop offset="1" stopColor="#3F7A52" />
+              <stop offset="0" stopColor="#A4BD89" /><stop offset="1" stopColor="#5B753B" />
             </linearGradient>
           </defs>
           {/* stem: bends right at the crown and continues up into the right leaf */}
@@ -93,7 +93,7 @@ export function IntroOverlay({
         <div
           style={{
             marginTop: 13, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontWeight: 700,
-            fontSize: 33, letterSpacing: '-0.025em', color: '#0C5638', lineHeight: 1, whiteSpace: 'nowrap',
+            fontSize: 33, letterSpacing: '-0.025em', color: '#445D22', lineHeight: 1, whiteSpace: 'nowrap',
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         >
@@ -102,7 +102,7 @@ export function IntroOverlay({
         <div
           style={{
             marginTop: 12, width: 146, height: 1,
-            background: 'linear-gradient(90deg, rgba(12,86,56,0.55), rgba(79,165,116,0.25))',
+            background: 'linear-gradient(90deg, rgba(68,93,34,0.55), rgba(123,158,81,0.25))',
             transformOrigin: 'left center',
             animation: 's1Rule 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
@@ -111,13 +111,13 @@ export function IntroOverlay({
           style={{
             marginTop: 14, display: 'flex', alignItems: 'baseline', gap: 9,
             fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10,
-            letterSpacing: '0.3em', color: '#9AA5A0',
+            letterSpacing: '0.3em', color: '#9FA49A',
             animation: 's1Word 2.4s cubic-bezier(0.22,1,0.36,1) both',
           }}
         >
           <span>LOADING</span>
           {/* zero-padded to three digits so the lockup never reflows as it counts */}
-          <span style={{ color: '#61726A' }}>{String(Math.min(100, loadPct)).padStart(3, '0')}</span>
+          <span style={{ color: '#697062' }}>{String(Math.min(100, loadPct)).padStart(3, '0')}</span>
         </div>
       </div>
     </div>

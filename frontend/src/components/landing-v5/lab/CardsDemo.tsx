@@ -57,21 +57,21 @@ export function CardsDemo() {
       <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER.struggling }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: '#12201A' }}>Eigenvalues</span>
-          <span style={{ padding: '3px 8px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E3EBE5', ...MONO, fontSize: 9, letterSpacing: '0.1em', color: '#61726A' }}>MA 242</span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: '#191F13' }}>Eigenvalues</span>
+          <span style={{ padding: '3px 8px', borderRadius: 6, background: '#F6F8F4', border: '1px solid #E6EAE2', ...MONO, fontSize: 9, letterSpacing: '0.1em', color: '#697062' }}>MA 242</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.12em', color: '#8B9891' }}>
+          <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.12em', color: '#91978B' }}>
             DUE TODAY · {DECK.length - Math.min(idx, DECK.length)} LEFT
           </span>
-          <span style={{ fontSize: 12.5, color: '#61726A' }}>
+          <span style={{ fontSize: 12.5, color: '#697062' }}>
             Card {done ? DECK.length : idx + 1} of {DECK.length}
           </span>
         </div>
       </div>
 
-      <span style={{ flex: '0 0 auto', height: 5, borderRadius: 99, background: '#E3EBE5', overflow: 'hidden' }}>
-        <span style={{ display: 'block', height: '100%', borderRadius: 99, background: '#0E9E5A', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${Math.round((Math.min(idx, DECK.length) / DECK.length) * 100)}%` }} />
+      <span style={{ flex: '0 0 auto', height: 5, borderRadius: 99, background: '#E6EAE2', overflow: 'hidden' }}>
+        <span style={{ display: 'block', height: '100%', borderRadius: 99, background: '#68951F', transition: 'width 400ms cubic-bezier(0.22,1,0.36,1)', width: `${Math.round((Math.min(idx, DECK.length) / DECK.length) * 100)}%` }} />
       </span>
 
       {done ? (
@@ -79,8 +79,8 @@ export function CardsDemo() {
           <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 30, fontWeight: 600 }}>Deck complete</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 'min(340px,100%)' }}>
             {log.map((l, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 13px', borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
-                <span style={{ fontSize: 12.5, color: '#33443B', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.q}</span>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 13px', borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
+                <span style={{ fontSize: 12.5, color: '#3B4233', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.q}</span>
                 <span style={{ ...MONO, fontSize: 10.5, color: RATE_TONE[l.key] }}>
                   {RATE_LABEL[l.key].toUpperCase()} · {RATE_DUE[l.key]}
                 </span>
@@ -90,7 +90,7 @@ export function CardsDemo() {
           <button
             onClick={() => { setIdx(0); setFlipped(false); setLog([]); }}
             type="button"
-            style={{ marginTop: 4, padding: '10px 22px', borderRadius: 10, border: 'none', background: '#0C5638', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            style={{ marginTop: 4, padding: '10px 22px', borderRadius: 10, border: 'none', background: '#445D22', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
           >
             Study again
           </button>
@@ -100,15 +100,15 @@ export function CardsDemo() {
           <div onClick={flip} style={{ position: 'relative', flex: '1 1 auto', minHeight: 200, cursor: 'pointer' }}>
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', perspective: 1600 }}>
               <div style={{ position: 'relative', width: '100%', maxWidth: 600, aspectRatio: '16 / 9', maxHeight: '100%', transformStyle: 'preserve-3d', transition: 'transform 560ms cubic-bezier(0.4,0,0.2,1)', transform: `rotateY(${flipped ? 180 : 0}deg)` }}>
-                <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(18,32,26,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
-                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#9AA5A0' }}>FRONT</span>
-                  <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#12201A' }}>{card.q}</span>
-                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#B4BEB8' }}>click to reveal</span>
+                <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', borderRadius: 18, background: '#FDFCF9', border: '1px solid #E3E0D5', boxShadow: '0 18px 40px -18px rgba(25,31,19,0.28)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
+                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#9FA49A' }}>FRONT</span>
+                  <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(20px,2.3vw,27px)', fontWeight: 600, lineHeight: 1.3, color: '#191F13' }}>{card.q}</span>
+                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, fontSize: 11.5, color: '#B8BDB4' }}>click to reveal</span>
                 </div>
-                <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', borderRadius: 18, background: '#0C5638', border: '1px solid #0C5638', boxShadow: '0 18px 40px -18px rgba(12,86,56,0.5)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
-                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#8FD9A8' }}>BACK</span>
+                <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', borderRadius: 18, background: '#445D22', border: '1px solid #445D22', boxShadow: '0 18px 40px -18px rgba(68,93,34,0.5)', padding: '30px 34px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
+                  <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.26em', color: '#B1D28B' }}>BACK</span>
                   <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(18px,2.1vw,24px)', fontWeight: 500, lineHeight: 1.4, color: '#F6F8F4' }}>{card.a}</span>
-                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: 'rgba(230,242,232,0.5)' }}>HOW DID THAT GO?</span>
+                  <span style={{ position: 'absolute', bottom: 16, left: 0, right: 0, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: 'rgba(234,241,228,0.5)' }}>HOW DID THAT GO?</span>
                 </div>
               </div>
             </div>
@@ -125,13 +125,13 @@ export function CardsDemo() {
                   style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '11px 0', borderRadius: 11, fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", cursor: 'pointer', transition: 'all 180ms', border: `1px solid ${RATE_TONE[k]}66`, background: `${RATE_TONE[k]}12` }}
                 >
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: RATE_TONE[k] }}>
-                    {RATE_LABEL[k]} <b style={{ ...MONO, fontSize: 10, color: '#9AA5A0', fontWeight: 400 }}>{k}</b>
+                    {RATE_LABEL[k]} <b style={{ ...MONO, fontSize: 10, color: '#9FA49A', fontWeight: 400 }}>{k}</b>
                   </span>
                   <span style={{ ...MONO, fontSize: 10, color: `${RATE_TONE[k]}cc` }}>next in {RATE_DUE[k]}</span>
                 </button>
               ))}
             </div>
-            <span style={{ fontSize: 11.5, color: '#9AA5A0' }}>
+            <span style={{ fontSize: 11.5, color: '#9FA49A' }}>
               {flipped ? 'Rate it: 1 Forgot, 2 Hard, 3 Easy' : 'Click the card or press space to reveal'}
             </span>
           </div>

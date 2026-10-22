@@ -22,10 +22,10 @@ import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
-  { d: 0.30, s: { left: '6.5%', top: '22%', width: 7.4, height: 7.4, background: '#4FA574', opacity: 0.44, animation: 'nodeFloatA 15s ease-in-out -6s infinite' } },
-  { d: 0.44, s: { right: '8.2%', top: '31%', width: 6.2, height: 6.2, background: '#8FD9A8', opacity: 0.5, animation: 'nodeFloatB 13s ease-in-out -3s infinite' } },
-  { d: 0.22, s: { right: '13.6%', top: '74%', width: 9.6, height: 9.6, background: '#0E9E5A', opacity: 0.4, boxShadow: '0 0 22px #0E9E5A66', animation: 'nodeFloatA 18s ease-in-out -11s infinite' } },
-  { d: 0.37, s: { left: '14.2%', top: '81%', width: 5.6, height: 5.6, background: '#6FBF8F', opacity: 0.46, animation: 'nodeFloatB 16s ease-in-out -8s infinite' } },
+  { d: 0.30, s: { left: '6.5%', top: '22%', width: 7.4, height: 7.4, background: '#7B9E51', opacity: 0.44, animation: 'nodeFloatA 15s ease-in-out -6s infinite' } },
+  { d: 0.44, s: { right: '8.2%', top: '31%', width: 6.2, height: 6.2, background: '#B1D28B', opacity: 0.5, animation: 'nodeFloatB 13s ease-in-out -3s infinite' } },
+  { d: 0.22, s: { right: '13.6%', top: '74%', width: 9.6, height: 9.6, background: '#68951F', opacity: 0.4, boxShadow: '0 0 22px #68951F66', animation: 'nodeFloatA 18s ease-in-out -11s infinite' } },
+  { d: 0.37, s: { left: '14.2%', top: '81%', width: 5.6, height: 5.6, background: '#96B86F', opacity: 0.46, animation: 'nodeFloatB 16s ease-in-out -8s infinite' } },
 ];
 
 export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
@@ -48,22 +48,22 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
           maskImage: 'linear-gradient(180deg, transparent 0%, #000 16%, #000 84%, transparent 100%)',
         }}
       >
-        <div style={{ position: 'absolute', top: '8%', right: '-15%', width: '38vw', height: '38vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.38, background: 'rgba(46,125,82,0.22)' }} />
-        <div style={{ position: 'absolute', bottom: '8%', left: '-12%', width: '32vw', height: '32vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.28, background: 'rgba(43,140,150,0.2)' }} />
+        <div style={{ position: 'absolute', top: '8%', right: '-15%', width: '38vw', height: '38vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.38, background: 'rgba(89,119,49,0.22)' }} />
+        <div style={{ position: 'absolute', bottom: '8%', left: '-12%', width: '32vw', height: '32vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.28, background: 'rgba(123,158,81,0.2)' }} />
       </div>
 
       <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#12201A' }}>
-          Ready to <br /> Start <em style={{ color: '#0C5638', paddingRight: 8 }}>Growing?</em>
+        <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.8rem, 6vw, 4.6rem)', fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.05, color: '#191F13' }}>
+          Ready to <br /> Start <em style={{ color: '#445D22', paddingRight: 8 }}>Growing?</em>
         </h2>
-        <p style={{ margin: '24px 0 0', color: '#61726A', fontSize: 17, fontWeight: 400 }}>
+        <p style={{ margin: '24px 0 0', color: '#697062', fontSize: 17, fontWeight: 400 }}>
           Join students who learn smarter, not harder.
         </p>
         <div style={{ marginTop: 40, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <button
             onClick={onGetStarted}
             className="ld-btn-solid"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#445D22', color: '#fff', border: 'none', borderRadius: 6, padding: '14px 32px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600, fontSize: 15.5, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'filter 200ms' }}
           >
             Sign up for Beta Testing
           </button>
@@ -83,15 +83,15 @@ const FOOTER_LINKS = [
   { label: 'FAQ', href: '/faq' },
 ];
 
-const FOOTER_LINK: React.CSSProperties = { color: '#61726A', fontSize: 13.5, transition: 'color 300ms' };
+const FOOTER_LINK: React.CSSProperties = { color: '#697062', fontSize: 13.5, transition: 'color 300ms' };
 
 export function SiteFooter() {
   return (
-    <footer className="ld-footer" style={{ borderTop: '1px solid rgba(18,32,26,0.08)', padding: '48px 32px 44px', position: 'relative', zIndex: 1 }}>
+    <footer className="ld-footer" style={{ borderTop: '1px solid rgba(25,31,19,0.08)', padding: '48px 32px 44px', position: 'relative', zIndex: 1 }}>
       <div className="ld-footer-row" style={{ maxWidth: 1150, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <SaplingWordmark width={64} />
-          <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#61726A' }}>© 2026</span>
+          <span style={{ fontSize: 13.5, fontWeight: 300, letterSpacing: '0.02em', color: '#697062' }}>© 2026</span>
         </div>
         <div className="ld-footer-links" style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
           {FOOTER_LINKS.map((l) => (

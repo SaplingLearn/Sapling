@@ -42,11 +42,11 @@ export const CARD_H = H + M * 2; // 692
 const SANS = () => canvasFont('sans');
 const MONO = () => canvasFont('mono');
 const SERIF = () => canvasFont('display');
-const INK = '#12201A';
-const DIM = '#65736B';
+const INK = '#191F13';
+const DIM = '#6B7265';
 /** The lightest grey that still survives the downscale, for meta lines. */
-const FAINT = '#7E8C85';
-const LINE = 'rgba(20,45,32,0.10)';
+const FAINT = '#848B7E';
+const LINE = 'rgba(33,43,21,0.10)';
 
 export type CardKind = 0 | 1 | 2 | 3 | 4;
 
@@ -79,7 +79,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
 
   // card body — filled twice: once to cast the shadow, once opaque over it
   x.save();
-  x.shadowColor = 'rgba(18,45,32,0.24)';
+  x.shadowColor = 'rgba(32,43,20,0.24)';
   x.shadowBlur = 46;
   x.shadowOffsetY = 18;
   x.fillStyle = '#FDFCF9';
@@ -89,7 +89,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
   x.fillStyle = '#FDFCF9';
   rr(0, 0, W, H, 30);
   x.fill();
-  x.strokeStyle = 'rgba(20,45,32,0.13)';
+  x.strokeStyle = 'rgba(33,43,21,0.13)';
   x.lineWidth = 2;
   rr(1, 1, W - 2, H - 2, 30);
   x.stroke();
@@ -140,8 +140,8 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.font = '500 20px ' + SANS();
     x.fillStyle = DIM;
     x.fillText('course mastery', P + 100, 114);
-    bar(180, 'Kinematics', 0.84, '#3A7D4E');
-    bar(252, 'Momentum', 0.52, '#4FA574');
+    bar(180, 'Kinematics', 0.84, '#5A7834');
+    bar(252, 'Momentum', 0.52, '#7B9E51');
     bar(324, 'Rotational torque', 0.21, '#C89B5E');
     bar(396, 'Oscillation', 0.07, '#B25855');
     x.strokeStyle = LINE;
@@ -178,7 +178,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     const chips: [string, string][] = [
       ['Forgot', 'rgba(178,88,85,0.5)'],
       ['Hard', 'rgba(200,155,94,0.55)'],
-      ['Easy', 'rgba(58,125,78,0.6)'],
+      ['Easy', 'rgba(90,120,52,0.6)'],
     ];
     const cw = (W - P * 2 - 20) / 3;
     chips.forEach((ch, i) => {
@@ -219,10 +219,10 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     ];
     opts.forEach((o, i) => {
       const y = 268 + i * 74;
-      x.fillStyle = o[1] ? 'rgba(58,125,78,0.09)' : '#F2F5EF';
+      x.fillStyle = o[1] ? 'rgba(90,120,52,0.09)' : '#F2F5EF';
       rr(P, y, W - P * 2, 58, 14);
       x.fill();
-      x.strokeStyle = o[1] ? 'rgba(58,125,78,0.55)' : LINE;
+      x.strokeStyle = o[1] ? 'rgba(90,120,52,0.55)' : LINE;
       x.lineWidth = 2;
       rr(P + 1, y + 1, W - P * 2 - 2, 56, 14);
       x.stroke();
@@ -230,7 +230,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       x.fillStyle = o[1] ? '#445D22' : DIM;
       x.fillText(o[0], P + 24, y + 37);
       if (o[1]) {
-        x.strokeStyle = '#3A7D4E';
+        x.strokeStyle = '#5A7834';
         x.lineWidth = 3.4;
         x.lineCap = 'round';
         x.beginPath();
@@ -247,9 +247,9 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     // ── mini knowledge graph ──
     eyebrow('KNOWLEDGE GRAPH', 54);
     const nodes: [number, number, number, string][] = [
-      [230, 210, 26, '#3A7D4E'], [130, 140, 13, '#4FA574'], [330, 145, 12, '#C89B5E'],
-      [110, 300, 11, '#B25855'], [340, 300, 14, '#4FA574'], [230, 360, 10, '#9A9A9A'],
-      [180, 250, 8, '#3A7D4E'], [300, 235, 9, '#C89B5E'],
+      [230, 210, 26, '#5A7834'], [130, 140, 13, '#7B9E51'], [330, 145, 12, '#C89B5E'],
+      [110, 300, 11, '#B25855'], [340, 300, 14, '#7B9E51'], [230, 360, 10, '#9A9A9A'],
+      [180, 250, 8, '#5A7834'], [300, 235, 9, '#C89B5E'],
     ];
     x.strokeStyle = 'rgba(68,93,34,0.26)';
     x.lineWidth = 2;
@@ -278,7 +278,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.lineTo(W - P, 440);
     x.stroke();
     const leg: [string, string][] = [
-      ['Mastered', '#3A7D4E'], ['Learning', '#4FA574'], ['Needs work', '#B25855'],
+      ['Mastered', '#5A7834'], ['Learning', '#7B9E51'], ['Needs work', '#B25855'],
     ];
     leg.forEach((l, i) => {
       const y = 478 + i * 34;
@@ -309,10 +309,10 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     x.lineTo(W - P, 126);
     x.stroke();
     const evts: [string, string, number][] = [
-      ['PY 205 · Problem set', '#3A7D4E', 0.72],
+      ['PY 205 · Problem set', '#5A7834', 0.72],
       ['CS 111 · Midterm', '#B25855', 1],
       ['Review · 22 cards', '#C89B5E', 0.5],
-      ['EC 101 · Reading', '#4FA574', 0.34],
+      ['EC 101 · Reading', '#7B9E51', 0.34],
     ];
     evts.forEach((e, i) => {
       const y = 158 + i * 84;

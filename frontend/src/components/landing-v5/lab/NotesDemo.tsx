@@ -32,8 +32,8 @@ const MATCHERS: { name: string; tier: keyof typeof LAB_TIER; hit: RegExp }[] = [
 ];
 
 const ACTION_BTN: React.CSSProperties = {
-  padding: '9px 14px', borderRadius: 9, border: '1px solid #DCE7DE', background: '#FDFCF9',
-  ...MONO, fontSize: 9.5, letterSpacing: '0.1em', color: '#0C5638',
+  padding: '9px 14px', borderRadius: 9, border: '1px solid #E0E6DA', background: '#FDFCF9',
+  ...MONO, fontSize: 9.5, letterSpacing: '0.1em', color: '#445D22',
   cursor: 'pointer', transition: 'all 180ms',
 };
 
@@ -87,9 +87,9 @@ export function NotesDemo() {
             value={title}
             onChange={(e) => { setTitle(e.target.value); touchSave(); }}
             aria-label="Note title"
-            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, color: '#12201A', padding: 0 }}
+            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, color: '#191F13', padding: 0 }}
           />
-          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.16em', whiteSpace: 'nowrap', color: saved ? '#3a7d4e' : '#9AA5A0' }}>
+          <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.16em', whiteSpace: 'nowrap', color: saved ? '#5a7834' : '#9FA49A' }}>
             {saved ? 'SAVED' : 'SAVING…'}
           </span>
         </div>
@@ -99,7 +99,7 @@ export function NotesDemo() {
           onChange={(e) => { setBody(e.target.value); touchSave(); }}
           aria-label="Note body"
           spellCheck={false}
-          style={{ flex: 1, minHeight: 190, resize: 'none', border: '1px solid #E8E5DA', borderRadius: 12, background: '#FDFCF9', padding: '14px 16px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, lineHeight: 1.8, color: '#33443B', outline: 'none' }}
+          style={{ flex: 1, minHeight: 190, resize: 'none', border: '1px solid #E8E5DA', borderRadius: 12, background: '#FDFCF9', padding: '14px 16px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, lineHeight: 1.8, color: '#3B4233', outline: 'none' }}
         />
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -116,28 +116,28 @@ export function NotesDemo() {
         </div>
 
         {summary && (
-          <div style={{ borderRadius: 11, background: '#F6F8F4', border: '1px solid #E3EBE5', padding: '13px 15px', animation: 'labIn 280ms ease both' }}>
-            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#8B9891' }}>SUMMARY</span>
-            <p style={{ margin: '6px 0 0', fontSize: 13, lineHeight: 1.65, color: '#33443B' }}>{summary}</p>
+          <div style={{ borderRadius: 11, background: '#F6F8F4', border: '1px solid #E6EAE2', padding: '13px 15px', animation: 'labIn 280ms ease both' }}>
+            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#91978B' }}>SUMMARY</span>
+            <p style={{ margin: '6px 0 0', fontSize: 13, lineHeight: 1.65, color: '#3B4233' }}>{summary}</p>
           </div>
         )}
       </div>
 
       <div style={{ padding: '20px 18px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#8B9891' }}>LINKED CONCEPTS</span>
+        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#91978B' }}>LINKED CONCEPTS</span>
         {busy && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#8B9891' }}>
-            <span style={{ width: 12, height: 12, borderRadius: 99, border: '2px solid #DCE7DE', borderTopColor: '#0E9E5A', animation: 'labSpin 700ms linear infinite' }} />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#91978B' }}>
+            <span style={{ width: 12, height: 12, borderRadius: 99, border: '2px solid #E0E6DA', borderTopColor: '#68951F', animation: 'labSpin 700ms linear infinite' }} />
             reading the note…
           </span>
         )}
         {concepts.map((c) => (
-          <span key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 99, background: '#FDFCF9', border: '1px solid #DCE7DE', fontSize: 12, color: '#33443B', animation: 'labIn 300ms ease both' }}>
+          <span key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 99, background: '#FDFCF9', border: '1px solid #E0E6DA', fontSize: 12, color: '#3B4233', animation: 'labIn 300ms ease both' }}>
             <span style={{ width: 7, height: 7, borderRadius: 99, flex: '0 0 auto', background: LAB_TIER[c.tier] }} />
             {c.name}
           </span>
         ))}
-        <span style={{ marginTop: 'auto', fontSize: 11, lineHeight: 1.6, color: '#9AA5A0' }}>
+        <span style={{ marginTop: 'auto', fontSize: 11, lineHeight: 1.6, color: '#9FA49A' }}>
           {concepts.length
             ? `${concepts.length} concepts linked to your MA 242 graph.`
             : 'Concepts you extract are linked to your graph, not just tagged on the note.'}

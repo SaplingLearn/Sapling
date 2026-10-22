@@ -606,7 +606,7 @@ export function Tree() {
         <div
           onClick={() => setSelected(null)}
           style={{
-            position: "fixed", inset: 0, zIndex: 90, background: "rgba(19,38,16,0.35)",
+            position: "fixed", inset: 0, zIndex: 90, background: "rgba(25, 37, 11,0.35)",
             display: "flex", flexDirection: "column", justifyContent: "flex-end",
           }}
         >

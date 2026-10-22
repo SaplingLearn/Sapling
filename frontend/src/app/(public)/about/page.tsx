@@ -118,7 +118,7 @@ export default function AboutPage() {
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {ABOUT_DIFFERENTIATORS.map((d) => (
                 <li key={d} style={{ display: 'flex', gap: 12, fontFamily: SERIF, fontSize: 15, lineHeight: 1.6, color: '#3f3b31' }}>
-                  <span style={{ color: '#597536', marginTop: 2, flex: '0 0 auto' }}>&#8226;</span>
+                  <span style={{ color: 'var(--brand-forest-bright)', marginTop: 2, flex: '0 0 auto' }}>&#8226;</span>
                   <span>{d}</span>
                 </li>
               ))}
@@ -153,7 +153,7 @@ export default function AboutPage() {
                 style={{ display: 'flex', flexDirection: 'column', gap: 5, animation: 'fadeUp 700ms ease both', animationDelay: `${460 + i * 50}ms` }}
               >
                 <span style={{ fontSize: 15.5, fontWeight: 600, color: '#1a1814', letterSpacing: '-0.01em' }}>{m.name}</span>
-                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#597536' }}>{m.role}</span>
+                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>{m.role}</span>
                 <span style={{ fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{m.body}</span>
               </div>
             ))}
@@ -170,7 +170,7 @@ export default function AboutPage() {
                 key={w}
                 style={{ display: 'flex', gap: 12, alignItems: 'flex-start', animation: 'fadeUp 700ms ease both', animationDelay: `${760 + i * 50}ms` }}
               >
-                <span style={{ color: '#597536', marginTop: 2, flex: '0 0 auto' }}>&#8226;</span>
+                <span style={{ color: 'var(--brand-forest-bright)', marginTop: 2, flex: '0 0 auto' }}>&#8226;</span>
                 <span style={{ fontFamily: SERIF, fontSize: 15, lineHeight: 1.6, color: '#3f3b31' }}>{w}</span>
               </div>
             ))}
@@ -185,7 +185,7 @@ export default function AboutPage() {
             {ABOUT_AWARDS.map((a, i) => (
               <div key={a.title} style={{ animation: 'fadeUp 700ms ease both', animationDelay: `${960 + i * 60}ms` }}>
                 <p style={{ margin: 0, fontSize: 16, fontWeight: 600, color: '#1a1814' }}>{a.title}</p>
-                <p style={{ margin: '2px 0 0', fontSize: 12, fontWeight: 500, color: '#597536' }}>{a.org}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 12, fontWeight: 500, color: 'var(--brand-forest-bright)' }}>{a.org}</p>
                 <p style={{ margin: '8px 0 0', fontFamily: SERIF, fontSize: 14, lineHeight: 1.6, color: '#3f3b31' }}>{a.body}</p>
               </div>
             ))}

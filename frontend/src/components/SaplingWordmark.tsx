@@ -1,6 +1,7 @@
 import React from "react";
 
-/** The approved Pen wordmark (from #728), byte-for-byte. */
+/** The approved Pen wordmark (from #728), its two stroke colours moved onto
+ *  the olive brand: letterforms #445d22 (--brand-forest), leaf #71983c. */
 export const SAPLING_WORDMARK_SRC = "/design/sapling/sapling-wordmark-approved.svg";
 
 /** The same drawing recoloured cream (strokes #faf8f3, leaf #c5d7b2) for the

@@ -184,7 +184,7 @@ export function WikiRail() {
                    out of the accent colour under the cursor. */
                 className={on ? undefined : 'cp-navlink'}
                 aria-current={on ? 'true' : undefined}
-                style={{ ...LINK, color: on ? '#445D22' : '#6f6857', fontWeight: on ? 600 : 400 }}
+                style={{ ...LINK, color: on ? 'var(--brand-forest)' : '#6f6857', fontWeight: on ? 600 : 400 }}
               >
                 {t.title}
               </a>
