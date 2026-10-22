@@ -230,11 +230,23 @@ function UsersTab() {
               <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "10px 16px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Avatar name={u.name || "?"} size={28} />
-                    <span style={{ fontWeight: 500 }}>{u.name}</span>
+                    <Avatar name={u.name || u.email || "?"} size={28} />
+                    {u.undecryptable ? (
+                      <span
+                        data-testid="admin-user-undecryptable"
+                        title={`Encrypted with a different key than this server's; can't be read. User id: ${u.id}`}
+                        style={{ fontStyle: "italic", color: "var(--text-muted)" }}
+                      >
+                        Unreadable record
+                      </span>
+                    ) : u.name ? (
+                      <span style={{ fontWeight: 500 }}>{u.name}</span>
+                    ) : (
+                      <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>No profile name</span>
+                    )}
                   </div>
                 </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>{u.email}</td>
+                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>{u.email ?? "—"}</td>
                 <td style={{ padding: "10px 16px" }}>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                     {(u.roles || []).map(r => (
