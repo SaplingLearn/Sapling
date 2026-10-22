@@ -100,36 +100,45 @@ def _email_domain_allowed(email: str) -> bool:
     return domain in ALLOWED_EMAIL_DOMAINS
 
 
-def _waitlist_approved(email: str) -> bool:
-    """Whether an admin approved `email` on the waitlist (Admin → Allowlist).
+def _waitlist_entry(email: str) -> dict | None:
+    """The landing-page waitlist row (`newsletter_emails`) for `email`, if any.
 
-    `newsletter_emails` is the landing-page waitlist; `approved_at` is set by
-    `POST /api/admin/allowlist/approve`. Approving there lets the student in on
-    their first sign-in instead of an admin approving the `users` row after
-    they hit /pending. Case-insensitive, because the waitlist keeps the email
+    Admin → Allowlist sets its `approved_at` (`POST /api/admin/allowlist/approve`),
+    which lets the student in on their first sign-in instead of an admin
+    approving the `users` row after they hit /pending; `joined_at` records that
+    they actually got in. Case-insensitive, because the waitlist keeps the email
     as typed; re-checked in Python because PostgREST rewrites `*` to a wildcard
-    that `like_literal` cannot escape. Fails closed: a lookup error leaves the
-    user pending rather than breaking sign-in.
+    that `like_literal` cannot escape. Fails closed: a lookup error reads as "not
+    on the waitlist", leaving the user pending rather than breaking sign-in.
     """
     wanted = email.strip().lower()
     if not wanted:
-        return False
+        return None
     try:
         needle = pg_quote_value(like_literal(wanted))
         rows = table("newsletter_emails").select(
-            "email,approved_at",
-            filters={
-                "or": f"(email.ilike.{needle})",
-                "approved_at": "not.is.null",
-            },
+            "id,email,approved_at,joined_at",
+            filters={"or": f"(email.ilike.{needle})"},
         )
     except Exception:
-        logger.warning("waitlist approval lookup failed", exc_info=True)
-        return False
-    return any(
-        (r.get("email") or "").strip().lower() == wanted and r.get("approved_at")
-        for r in rows or []
-    )
+        logger.warning("waitlist lookup failed", exc_info=True)
+        return None
+    matches = [r for r in rows or [] if (r.get("email") or "").strip().lower() == wanted]
+    # Two rows can differ only by case; prefer an approved one.
+    matches.sort(key=lambda r: not r.get("approved_at"))
+    return matches[0] if matches else None
+
+
+def _mark_waitlist_joined(entry_id: str, user_id: str) -> None:
+    """Stamp the waitlist row as joined. Best-effort: never breaks sign-in."""
+    from datetime import datetime, timezone
+    try:
+        table("newsletter_emails").update(
+            {"joined_user_id": user_id, "joined_at": datetime.now(timezone.utc).isoformat()},
+            filters={"id": f"eq.{entry_id}", "joined_at": "is.null"},
+        )
+    except Exception:
+        logger.warning("waitlist joined stamp failed", exc_info=True)
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -610,10 +619,16 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     # already said yes, so a pending account (new, or one that hit /pending
     # before the approval) is promoted here. One-way: revoking the waitlist
     # entry later does not unapprove the account — use Admin → Users for that.
-    if not is_approved and _waitlist_approved(email):
+    waitlist = _waitlist_entry(email)
+    if not is_approved and waitlist and waitlist.get("approved_at"):
         is_approved = True
         table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
         logger.info("user %s approved via waitlist at sign-in", user_id)
+    # Waitlist → joined, shown in Admin → Allowlist. Users' emails are encrypted
+    # with per-call nonces, so this sign-in (plaintext email from Google in
+    # hand) is the only place the two can be matched.
+    if is_approved and waitlist and not waitlist.get("joined_at"):
+        _mark_waitlist_joined(waitlist["id"], user_id)
 
     if not is_approved:
         if popup_id:

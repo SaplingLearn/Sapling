@@ -589,7 +589,7 @@ def list_allowlist(request: Request):
     # reads this list; approve/revoke existed without the GET.
     require_admin(request)
     rows = table("newsletter_emails").select(
-        "id,email,created_at,approved_at",
+        "id,email,created_at,approved_at,joined_at,joined_user_id",
         order="created_at.desc",
     )
     return {"emails": rows or []}
