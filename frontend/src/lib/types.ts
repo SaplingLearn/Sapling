@@ -425,7 +425,10 @@ export interface AnalyticsOverview {
 export interface AdminUserListItem {
   id: string;
   name: string;
-  email: string;
+  /** null when the stored value can't be decrypted (see `undecryptable`). */
+  email: string | null;
+  /** The row's email/name are sealed under a different ENCRYPTION_KEY. */
+  undecryptable?: boolean;
   is_approved: boolean;
   is_admin?: boolean;
   last_sign_in_at: string | null;

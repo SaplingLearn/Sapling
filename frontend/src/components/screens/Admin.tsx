@@ -102,6 +102,13 @@ export function Admin() {
 
 // ── Users ────────────────────────────────────────────────────────────────────
 
+// One-line, ellipsized cell text: a long name or email (or an unreadable
+// ciphertext blob) must not stretch its column and push the actions off-card.
+const clipCell: React.CSSProperties = {
+  display: "block", minWidth: 0, maxWidth: 240,
+  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+};
+
 function UsersTab() {
   const toast = useToast();
   const [users, setUsers] = React.useState<AdminUser[]>([]);
@@ -215,98 +222,114 @@ function UsersTab() {
             />
           </div>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: "var(--bg-subtle)" }}>
-              {["User", "Email", "Roles", "Status", "Last seen", "Joined", ""].map(h => (
-                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {users.map(u => (
-              <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "10px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Avatar name={u.name || "?"} size={28} />
-                    <span style={{ fontWeight: 500 }}>{u.name}</span>
-                  </div>
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>{u.email}</td>
-                <td style={{ padding: "10px 16px" }}>
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                    {(u.roles || []).map(r => (
-                      <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <RoleBadge role={r} />
-                        <button
-                          title="Revoke"
-                          onClick={() => revoke(u.id, r.id)}
-                          style={{ color: "var(--text-muted)", padding: "1px 4px" }}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "var(--bg-subtle)" }}>
+                {["User", "Email", "Roles", "Status", "Last seen", "Joined", ""].map(h => (
+                  <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
+                  <td style={{ padding: "10px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Avatar name={u.name || u.email || "?"} size={28} />
+                      {u.undecryptable ? (
+                        <span
+                          data-testid="admin-user-undecryptable"
+                          title={`Encrypted with a different key than this server's; can't be read. User id: ${u.id}`}
+                          style={{ fontStyle: "italic", color: "var(--text-muted)" }}
                         >
-                          ×
+                          Unreadable record
+                        </span>
+                      ) : u.name ? (
+                        <span title={u.name} style={{ ...clipCell, fontWeight: 500 }}>{u.name}</span>
+                      ) : (
+                        <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>No profile name</span>
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
+                    <span title={u.email ?? undefined} style={clipCell}>{u.email ?? "—"}</span>
+                  </td>
+                  <td style={{ padding: "10px 16px" }}>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                      {(u.roles || []).map(r => (
+                        <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                          <RoleBadge role={r} />
+                          <button
+                            title="Revoke"
+                            onClick={() => revoke(u.id, r.id)}
+                            style={{ color: "var(--text-muted)", padding: "1px 4px" }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {assignFor === u.id ? (
+                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          <CustomSelect
+                            size="sm"
+                            value={assignRoleId}
+                            onChange={v => setAssignRoleId(v)}
+                            options={roles.filter(r => !(u.roles || []).some(ur => ur.id === r.id)).map(r => ({ value: r.id, label: r.name }))}
+                            placeholder="Role…"
+                          />
+                          <button className="btn btn--sm btn--primary" onClick={() => assign(u.id)} disabled={!assignRoleId}>
+                            Add
+                          </button>
+                          <button className="btn btn--sm btn--ghost" onClick={() => { setAssignFor(null); setAssignRoleId(""); }}>×</button>
+                        </span>
+                      ) : (
+                        <button
+                          className="btn btn--sm btn--ghost"
+                          onClick={() => { setAssignFor(u.id); setAssignRoleId(""); }}
+                          style={{ fontSize: 11 }}
+                        >
+                          + role
                         </button>
-                      </span>
-                    ))}
-                    {assignFor === u.id ? (
-                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                        <CustomSelect
-                          size="sm"
-                          value={assignRoleId}
-                          onChange={v => setAssignRoleId(v)}
-                          options={roles.filter(r => !(u.roles || []).some(ur => ur.id === r.id)).map(r => ({ value: r.id, label: r.name }))}
-                          placeholder="Role…"
-                        />
-                        <button className="btn btn--sm btn--primary" onClick={() => assign(u.id)} disabled={!assignRoleId}>
-                          Add
-                        </button>
-                        <button className="btn btn--sm btn--ghost" onClick={() => { setAssignFor(null); setAssignRoleId(""); }}>×</button>
-                      </span>
-                    ) : (
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: "10px 16px" }}>
+                    <span className={`chip ${u.is_approved ? "chip--accent" : "chip--warn"}`}>
+                      {u.is_approved ? "approved" : "pending"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                    {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                    {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    {u.is_approved ? (
                       <button
                         className="btn btn--sm btn--ghost"
-                        onClick={() => { setAssignFor(u.id); setAssignRoleId(""); }}
-                        style={{ fontSize: 11 }}
+                        onClick={() => unapprove(u.id)}
+                        title="Revoke approval"
                       >
-                        + role
+                        Unapprove
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn--sm btn--primary"
+                        onClick={() => approve(u.id)}
+                      >
+                        Approve
                       </button>
                     )}
-                  </div>
-                </td>
-                <td style={{ padding: "10px 16px" }}>
-                  <span className={`chip ${u.is_approved ? "chip--accent" : "chip--warn"}`}>
-                    {u.is_approved ? "approved" : "pending"}
-                  </span>
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                  {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                  {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
-                </td>
-                <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                  {u.is_approved ? (
-                    <button
-                      className="btn btn--sm btn--ghost"
-                      onClick={() => unapprove(u.id)}
-                      title="Revoke approval"
-                    >
-                      Unapprove
-                    </button>
-                  ) : (
-                    <button
-                      className="btn btn--sm btn--primary"
-                      onClick={() => approve(u.id)}
-                    >
-                      Approve
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
           padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
