@@ -31,8 +31,6 @@ const ROW_DOT = 14;
 export interface TopicListProps {
   groups: { course: EnrolledCourse; nodes: GraphNode[] }[];
   onPick: (nodeId: string) => void;
-  /** Rendered above the concepts — the "Review everything due" row. */
-  lead?: React.ReactNode;
 }
 
 function weakestFirst(a: GraphNode, b: GraphNode): number {
@@ -40,11 +38,10 @@ function weakestFirst(a: GraphNode, b: GraphNode): number {
   return a.concept_name.localeCompare(b.concept_name);
 }
 
-export function TopicList({ groups, onPick, lead }: TopicListProps) {
+export function TopicList({ groups, onPick }: TopicListProps) {
   const headed = groups.length > 1;
   return (
     <div className="quiz-home__topics" data-testid="quiz-pick-list">
-      {lead}
       {groups.map(({ course, nodes }) => {
         const color = colorFor(nodes[0], course);
         return (

@@ -26,6 +26,8 @@
 import React from "react";
 import { Button, EmptyState, InlineBanner } from "@/components/ui";
 import { Skeleton } from "@/components/Skeleton";
+import { Icon } from "@/components/Icon";
+import { Pill } from "@/components/Pill";
 import { useToast } from "@/components/ToastProvider";
 import { apiToGraphNode } from "@/lib/data";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
@@ -83,6 +85,8 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   const [adjustOpen, setAdjustOpen] = React.useState(false);
   const [dialogNodeId, setDialogNodeId] = React.useState<string | null>(null);
   const [topicQuery, setTopicQuery] = React.useState("");
+  /** "all", or the one course the topic list is narrowed to. */
+  const [topicCourse, setTopicCourse] = React.useState("all");
 
   // ── What the card is about ────────────────────────────────────────────
 
@@ -359,6 +363,20 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
 
   const topicsHead = <div className="label-micro quiz-eyebrow">Choose a topic</div>;
 
+  // The due set is a quiz of its own, so it sits with the card's actions, not
+  // among the concepts. On a due card the card already IS that quiz.
+  const dueLink =
+    home.due.count > 0 && mode !== "due" ? (
+      <Button
+        variant="link"
+        className="quiz-home__due"
+        data-testid="quiz-review-due"
+        onClick={() => startQueue("due", dueQueue, { ...session.config, count: QUEUE_COUNT })}
+      >
+        {`Or review everything due · ${home.due.count} concepts across ${home.due.courseCount} courses →`}
+      </Button>
+    ) : null;
+
   const proposal = card ? (
     <section className="quiz-home__proposal" data-testid="quiz-proposal">
       <div className="label-micro quiz-eyebrow">Ready for you</div>
@@ -397,6 +415,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           Adjust
         </Button>
       </div>
+      {dueLink}
     </section>
   ) : (
     // Every concept is mastered: there is nothing to propose, but every
@@ -415,9 +434,13 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   // concept included: hiding a match the student typed would read as missing.
   const query = topicQuery.trim().toLowerCase();
   const hiddenTopic = mode === "concept" && !query ? card?.node.id : undefined;
+  // A narrowed course that has since left the list (a semester switch) falls
+  // back to every course rather than an empty list.
+  const courseFilter = home.byCourse.some(g => g.course.course_id === topicCourse) ? topicCourse : "all";
   const topicGroups = React.useMemo(
     () =>
       home.byCourse
+        .filter(g => courseFilter === "all" || g.course.course_id === courseFilter)
         .map(g => ({
           ...g,
           nodes: g.nodes.filter(
@@ -429,51 +452,77 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           ),
         }))
         .filter(g => g.nodes.length > 0),
-    [home.byCourse, hiddenTopic, query],
+    [home.byCourse, hiddenTopic, query, courseFilter],
   );
 
-  // On a due card the card already IS "Review everything due"; while
-  // searching, the list is answering the search.
-  const dueRow =
-    home.due.count > 0 && mode !== "due" && !query ? (
-      <button
-        type="button"
-        className="quiz-home__row"
-        data-testid="quiz-review-due"
-        onClick={() => startQueue("due", dueQueue, { ...session.config, count: QUEUE_COUNT })}
-      >
-        <span className="quiz-home__row-mark quiz-home__row-mark--hollow" />
-        <span className="h-serif quiz-home__row-name">Review everything due</span>
-        <span className="quiz-home__row-spacer" />
-        <span className="quiz-home__row-meta">
-          {`${home.due.count} concepts across ${home.due.courseCount} courses`}
-        </span>
-      </button>
-    ) : null;
-
-  const search = (
-    <input
-      type="search"
-      className="field quiz-home__search"
-      data-testid="quiz-topic-search"
-      placeholder="Search your concepts"
-      aria-label="Search your concepts"
-      value={topicQuery}
-      onChange={e => setTopicQuery(e.target.value)}
-    />
+  // One row of controls over the list: the course pills on the left (only
+  // when there is more than one course to choose between), the search on the
+  // right, centred on one line.
+  const toolbar = (
+    <div className="quiz-home__toolbar">
+      {home.byCourse.length > 1 && (
+        <div className="quiz-home__courses" role="group" aria-label="Show concepts from">
+          <Pill active={courseFilter === "all"} onClick={() => setTopicCourse("all")} testId="quiz-course-all">
+            All
+          </Pill>
+          {home.byCourse.map(({ course, nodes }) => (
+            <Pill
+              key={course.course_id}
+              active={courseFilter === course.course_id}
+              onClick={() => setTopicCourse(course.course_id)}
+              testId={`quiz-course-${course.course_id}`}
+              icon={
+                <span
+                  className="quiz-home__course-dot"
+                  style={{ background: colorFor(nodes[0], course) }}
+                  aria-hidden
+                />
+              }
+            >
+              {course.course_code}
+            </Pill>
+          ))}
+        </div>
+      )}
+      <label className="quiz-home__search">
+        <Icon name="search" size={13} />
+        <input
+          type="search"
+          className="quiz-home__search-input"
+          data-testid="quiz-topic-search"
+          placeholder="Search concepts"
+          aria-label="Search your concepts"
+          value={topicQuery}
+          onChange={e => setTopicQuery(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Escape" && topicQuery) {
+              e.preventDefault();
+              setTopicQuery("");
+            }
+          }}
+        />
+      </label>
+    </div>
   );
+
+  const narrowedCourse = home.byCourse.find(g => g.course.course_id === courseFilter)?.course;
+  const emptyTopics = query
+    ? `No concepts match “${topicQuery.trim()}”`
+    : narrowedCourse
+      ? `Nothing else in ${narrowedCourse.course_code} yet`
+      : "Nothing else on your tree yet";
 
   const topics = (
     <section className="quiz-home__topics-col" aria-label="Choose a topic">
       {topicsHead}
-      {search}
+      {toolbar}
       {/* Capped to the proposal's height and scrolled inside (`home.css`). */}
       <div className="quiz-home__topics-scroll">
-        {topicGroups.length > 0 || dueRow ? (
-          <TopicList groups={topicGroups} onPick={openConcept} lead={dueRow} />
+        {topicGroups.length > 0 ? (
+          <TopicList groups={topicGroups} onPick={openConcept} />
         ) : (
           <p className="quiz-home__topics-empty" data-testid="quiz-topic-search-empty">
-            {query ? `No concepts match “${topicQuery.trim()}”` : "Nothing else on your tree yet"}
+            {emptyTopics}
           </p>
         )}
       </div>
@@ -503,7 +552,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     </div>,
     <div className="quiz-home__topics-col">
       {topicsHead}
-      <Skeleton width="100%" height={36} />
+      <Skeleton width="100%" height={28} />
       <div className="quiz-home__skeleton-rows">
         {[0, 1, 2, 3, 4, 5].map(i => (
           <Skeleton key={i} width="100%" height={18} />

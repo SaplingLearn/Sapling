@@ -63,8 +63,19 @@
 
   /* ── The topic list ───────────────────────────────────────────────── */
   --quiz-home-topics-top: 18px;
-  --quiz-home-search-top: 14px;
-  --quiz-home-scroll-top: 8px;
+  --quiz-home-toolbar-top: 14px;
+  --quiz-home-toolbar-gap: 12px;
+  --quiz-home-pill-gap: 6px;
+  /* The search pill copies `Pill`'s box (5px 11px, 12px text) so the two
+     sit at one height whatever the platform's line metrics. */
+  --quiz-home-pill-pad: 5px 11px;
+  --quiz-home-pill-fs: 12px;
+  --quiz-home-search-w: 200px;
+  --quiz-home-course-dot: 7px;
+  --quiz-home-due-top: 16px;
+  /* The fade over the list's last rows, saying there is more below. */
+  --quiz-home-scroll-fade: 28px;
+  --quiz-home-scroll-top: 18px;
   /* The list never shrinks below this, however short the proposal is; when
      the columns stack it is capped here instead of at the proposal. */
   --quiz-home-topics-min: 360px;
@@ -90,12 +101,9 @@
   --quiz-home-footer-top: 20px;
   --quiz-home-footer-pad: 18px;
 
-  /* The review-due row has no mastery, so its dot is the one mark drawn in CSS
-     rather than by <ConceptNode> (whose diameters are props, not tokens). The
-     ring is an 8px circle centred in the same box the topic rows' 14px dots
-     occupy. */
+  /* The topic rows' dot (`TopicList`'s ROW_DOT); a stacked row's meta line
+     indents past it. */
   --quiz-home-dot-sm: 14px;
-  --quiz-home-dot-hollow: 8px;
 
 }
 
@@ -148,9 +156,73 @@
   contain: size;
 }
 
-.quiz-home__search {
-  margin-top: var(--quiz-home-search-top);
+/* One row over the list: course pills left, search right, centred on a
+   shared line; it wraps (search under the pills) when the column is narrow. */
+.quiz-home__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--quiz-home-toolbar-gap);
+  margin-top: var(--quiz-home-toolbar-top);
   flex-shrink: 0;
+}
+
+.quiz-home__courses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--quiz-home-pill-gap);
+}
+
+.quiz-home__course-dot {
+  width: var(--quiz-home-course-dot);
+  height: var(--quiz-home-course-dot);
+  border-radius: var(--r-full);
+  flex-shrink: 0;
+}
+
+/* The search, drawn as a pill so it reads as one of the toolbar's controls
+   rather than a form field dropped into the list. */
+.quiz-home__search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--quiz-home-pill-gap);
+  width: var(--quiz-home-search-w);
+  max-width: 100%;
+  margin-left: auto;
+  padding: var(--quiz-home-pill-pad);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text-muted);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.quiz-home__search:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.quiz-home__search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--quiz-home-pill-fs);
+}
+
+.quiz-home__search-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* The native clear button is a second, unstyled control inside the pill;
+   Escape clears instead. */
+.quiz-home__search-input::-webkit-search-cancel-button {
+  display: none;
 }
 
 /* The rows bleed past the column (`--quiz-home-row-bleed`); the scroller is
@@ -163,6 +235,18 @@
   padding: 0 calc(-1 * var(--quiz-home-row-bleed));
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* No scrollbar. A visible one took its width out of the rows, so their
+     meta lines stopped short of the toolbar's right edge — by a different
+     amount per platform (0 where scrollbars overlay). The fade over the last
+     rows is the "there is more" cue instead, and the bottom padding lets the
+     final row scroll clear of it. */
+  padding-bottom: var(--quiz-home-scroll-fade);
+  scrollbar-width: none;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--quiz-home-scroll-fade)), transparent);
+}
+
+.quiz-home__topics-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .quiz-home__topics-empty {
@@ -267,6 +351,14 @@
   background: var(--border);
 }
 
+/* "Or review everything due": the other quiz on offer, under the card's own
+   actions — a link, so it never competes with Start. */
+.quiz-home__due {
+  display: block;
+  margin-top: var(--quiz-home-due-top);
+  text-align: left;
+}
+
 .quiz-home__actions {
   display: flex;
   align-items: center;
@@ -301,23 +393,6 @@
   flex-shrink: 0;
   align-self: center;
   display: inline-flex;
-}
-
-/* The review-due row has no mastery to draw, so its dot is an outline — an 8px
-   ring centred in the same box the other row dots fill. */
-.quiz-home__row-mark--hollow {
-  width: var(--quiz-home-dot-sm);
-  height: var(--quiz-home-dot-sm);
-  align-items: center;
-  justify-content: center;
-}
-
-.quiz-home__row-mark--hollow::before {
-  content: "";
-  width: var(--quiz-home-dot-hollow);
-  height: var(--quiz-home-dot-hollow);
-  border: 1px solid var(--text-muted);
-  border-radius: var(--r-full);
 }
 
 .quiz-home__row-name {
@@ -362,8 +437,7 @@
   margin: var(--quiz-home-group-top) 0 var(--quiz-home-group-bottom);
 }
 
-.quiz-home__topics > section:first-child .quiz-home__pick-group,
-.quiz-home__topics > .quiz-home__row:first-child + section .quiz-home__pick-group {
+.quiz-home__topics > section:first-child .quiz-home__pick-group {
   margin-top: var(--quiz-home-group-bottom);
 }
 

@@ -507,11 +507,17 @@ describe("QuizHome — searching the topic list", () => {
       screen.getByTestId("quiz-pick-list").querySelectorAll("[data-testid^='quiz-pick-']"),
     ).map(el => el.getAttribute("data-testid"));
 
-  it("filters by concept name, case-insensitively, and hides the due row", () => {
+  it("filters by concept name, case-insensitively", () => {
     mount();
     search("STACK");
     expect(rowIds()).toEqual(["quiz-pick-stack-frames"]);
-    expect(screen.queryByTestId("quiz-review-due")).toBeNull();
+  });
+
+  it("clears on Escape", () => {
+    mount();
+    search("stack");
+    fireEvent.keyDown(screen.getByTestId("quiz-topic-search"), { key: "Escape" });
+    expect(screen.getByTestId("quiz-topic-search")).toHaveValue("");
   });
 
   it("matches a course code", () => {
@@ -539,7 +545,57 @@ describe("QuizHome — searching the topic list", () => {
     expect(screen.getByTestId("quiz-topic-search-empty")).toHaveTextContent("No concepts match “zzz”");
     search("");
     expect(screen.queryByTestId("quiz-topic-search-empty")).toBeNull();
-    expect(screen.getByTestId("quiz-review-due")).toBeInTheDocument();
+  });
+});
+
+describe("QuizHome — narrowing the topic list to a course", () => {
+  const rowIds = () =>
+    Array.from(
+      screen.getByTestId("quiz-pick-list").querySelectorAll("[data-testid^='quiz-pick-']"),
+    ).map(el => el.getAttribute("data-testid"));
+
+  it("offers All plus one pill per course, and a pill shows only that course", () => {
+    mount();
+    expect(screen.getByTestId("quiz-course-all")).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByTestId("quiz-course-c-math"));
+    expect(screen.getByTestId("quiz-course-c-math")).toHaveAttribute("aria-pressed", "true");
+    expect(rowIds()).toEqual(["quiz-pick-determinants", "quiz-pick-eigenvalues", "quiz-pick-matrices"]);
+    // One course on screen: no heading restating the pill.
+    expect(within(screen.getByTestId("quiz-pick-list")).queryByText(/MATH/)).toBeNull();
+
+    fireEvent.click(screen.getByTestId("quiz-course-all"));
+    expect(rowIds()).toHaveLength(6);
+  });
+
+  it("composes with the search", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-course-c-cs"));
+    fireEvent.change(screen.getByTestId("quiz-topic-search"), { target: { value: "re" } });
+    // Both filters apply: CS101 concepts whose name contains "re".
+    expect(rowIds()).toEqual(["quiz-pick-tail-recursion", "quiz-pick-recursion"]);
+  });
+
+  it("names the course when it has nothing else to offer", () => {
+    const csOnlyOne = NODES.filter(n => n.course_id === "c-math" || n.id === "recursion");
+    mount({ home: { nodes: csOnlyOne } });
+    fireEvent.click(screen.getByTestId("quiz-course-c-cs"));
+    // Recursion is the card, so CS101 has nothing left to list.
+    expect(screen.getByTestId("quiz-topic-search-empty")).toHaveTextContent("Nothing else in CS101 yet");
+  });
+
+  it("draws no pills for a single course", () => {
+    mount({ home: { nodes: NODES.filter(n => n.course_id === "c-cs") } });
+    expect(screen.queryByTestId("quiz-course-all")).toBeNull();
+  });
+});
+
+describe("QuizHome — the due set", () => {
+  it("is a link under the card's actions, not a row in the topic list", () => {
+    mount();
+    const due = screen.getByTestId("quiz-review-due");
+    expect(within(screen.getByTestId("quiz-proposal")).getByTestId("quiz-review-due")).toBe(due);
+    expect(within(screen.getByTestId("quiz-pick-list")).queryByTestId("quiz-review-due")).toBeNull();
   });
 });
 

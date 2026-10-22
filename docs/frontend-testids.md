@@ -225,10 +225,11 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-start` | "Start" on that card |
 | `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
 | `quiz-adjust` | "Adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
-| `quiz-review-due` | "Review everything due" row, first in the topic list |
+| `quiz-review-due` | "Or review everything due · …" link under the card's Start / Adjust (absent on a due card) |
 | `quiz-pick-list` | the "Choose a topic" list beside the proposal — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
 | `quiz-pick-{nodeId}` | one concept row in that list |
-| `quiz-topic-search` | the search box above that list — filters by concept name or course code |
+| `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears |
+| `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses |
 | `quiz-topic-search-empty` | "No concepts match …" when the search finds nothing |
 | `quiz-neighbourhood` | the live neighbourhood window under the proposal (`KnowledgeGraph2D` inside; its own `graph-*` ids apply) |
 | `quiz-empty-state` | the home's empty states (`ui/EmptyState`) — no courses, empty tree, or nothing left to propose; they are alternatives, so only one ever mounts |
