@@ -150,6 +150,36 @@ def body_to_prosemirror_nodes(body: str) -> list[dict]:
     return nodes
 
 
+def _table_cell(text: str, *, header: bool) -> dict:
+    # Flat text content, not a paragraph-wrapped block — matching the
+    # heading node convention above, not the list-item/paragraph one.
+    # Empty text yields an empty content list rather than a
+    # `{"type": "text", "text": ""}` node, since ProseMirror text nodes
+    # must never carry empty text. Header and body cells share this exact
+    # shape so an empty header cell and an empty body cell render
+    # identically.
+    return {
+        "type": "tableHeader" if header else "tableCell",
+        "content": [{"type": "text", "text": text}] if text else [],
+    }
+
+
+def table_to_prosemirror_node(headers: list[str], rows: list[str]) -> dict:
+    """Direct structural conversion from NotesSection.table_headers/
+    table_rows — no parsing of ambiguous free text, since the data already
+    arrived structured. Each row string's cells are tab-separated; a row
+    with fewer cells than len(headers) is padded with empty cells, a row
+    with more is truncated — never raises."""
+    width = len(headers)
+    header_row = {"type": "tableRow", "content": [_table_cell(h, header=True) for h in headers]}
+    body_rows = []
+    for row in rows:
+        cells = row.split("\t")[:width]
+        cells += [""] * (width - len(cells))
+        body_rows.append({"type": "tableRow", "content": [_table_cell(c, header=False) for c in cells]})
+    return {"type": "table", "content": [header_row, *body_rows]}
+
+
 def prosemirror_doc_from_sections(sections: list[dict]) -> dict:
     """Seed a TipTap/ProseMirror doc from comprehensive-notes sections
     (`agents.document_notes.ComprehensiveNotes.sections`, already

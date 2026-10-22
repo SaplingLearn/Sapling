@@ -21,6 +21,7 @@ from services.summary_docs_service import (
     prosemirror_doc_from_text,
     remove_source,
     restore_version,
+    table_to_prosemirror_node,
     undo_suggestion,
     update_content,
 )
@@ -121,6 +122,38 @@ class TestBodyToProsemirrorNodes:
         assert nodes[0]["type"] == "paragraph"
         assert nodes[1]["type"] == "bulletList"
         assert nodes[2]["type"] == "paragraph"
+
+
+class TestTableToProsemirrorNode:
+    def test_builds_header_and_body_rows(self):
+        node = table_to_prosemirror_node(["Claim", "Description"], ["Cells\tAll living things are cells"])
+        assert node["type"] == "table"
+        header_row, body_row = node["content"]
+        assert header_row["type"] == "tableRow"
+        assert [c["type"] for c in header_row["content"]] == ["tableHeader", "tableHeader"]
+        assert body_row["type"] == "tableRow"
+        assert [c["type"] for c in body_row["content"]] == ["tableCell", "tableCell"]
+        assert body_row["content"][0]["content"] == [{"type": "text", "text": "Cells"}]
+        assert body_row["content"][1]["content"] == [{"type": "text", "text": "All living things are cells"}]
+
+    def test_pads_short_rows(self):
+        node = table_to_prosemirror_node(["A", "B", "C"], ["only one cell"])
+        body_row = node["content"][1]
+        assert len(body_row["content"]) == 3
+        assert body_row["content"][1]["content"] == []
+        assert body_row["content"][2]["content"] == []
+
+    def test_truncates_long_rows(self):
+        node = table_to_prosemirror_node(["A", "B"], ["one\ttwo\tthree\tfour"])
+        body_row = node["content"][1]
+        assert len(body_row["content"]) == 2
+        assert body_row["content"][0]["content"] == [{"type": "text", "text": "one"}]
+        assert body_row["content"][1]["content"] == [{"type": "text", "text": "two"}]
+
+    def test_empty_rows_still_renders_header_only(self):
+        node = table_to_prosemirror_node(["Only", "Headers"], [])
+        assert len(node["content"]) == 1
+        assert node["content"][0]["type"] == "tableRow"
 
 
 class TestPlaintextFromProsemirror:
