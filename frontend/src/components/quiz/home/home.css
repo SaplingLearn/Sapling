@@ -447,6 +447,16 @@
   padding: var(--quiz-home-setting-pad);
 }
 
+/* The line under the format row explaining "Mixed". Visible, unlike the
+   question screen's `.quiz-question__hint` it used to borrow (a 1px clip). */
+.quiz-home-settings__note {
+  margin: 0;
+  padding-bottom: var(--quiz-home-setting-gap);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
 .quiz-home-settings__label {
   width: var(--quiz-home-setting-label-w);
   flex-shrink: 0;

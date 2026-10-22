@@ -237,7 +237,11 @@ def _wire(**overrides):
     return _agent_question_to_wire(QuizQuestion.model_validate(_item(**overrides)), 1)
 
 
-@pytest.mark.parametrize("answer", ["lambda", "eigenvalue", "2theta", "alpha + beta"])
+@pytest.mark.parametrize("answer", [
+    "lambda", "eigenvalue", "2theta", "alpha + beta",
+    # Short constant names are words too: "pi r^2" grades as p*i*r^2.
+    "pi r^2", "mu g", "rho V",
+])
 def test_symbolic_key_spelled_as_a_word_is_dropped(answer):
     """A letter run is an implicit product, so 'lambda' parsed as a*a*b*d*l*m:
     served live as 'what is lambda?', it graded the real answer 'eigenvalue'
@@ -268,6 +272,38 @@ def test_short_answer_key_that_is_a_sentence_is_dropped(answer):
 ])
 def test_short_answer_key_that_is_a_term_is_kept(answer):
     assert _wire(correct_answer=answer) is not None
+
+
+@pytest.mark.parametrize("answer", [
+    "John F. Kennedy", "U.S. Constitution", "St. Louis", "Mt. Everest", "Dr. Seuss",
+])
+def test_short_answer_key_with_an_abbreviation_is_not_a_sentence(answer):
+    """An initial or abbreviation is not a sentence break; dropping these
+    shortened the quiz for keys exact matching handles fine."""
+    assert _wire(correct_answer=answer) is not None
+
+
+def test_short_answer_sentence_key_with_a_term_alias_is_kept():
+    """The grader accepts the alias, so a student who writes the term gets it
+    right even though the canonical key is a sentence."""
+    item = _wire(
+        correct_answer="The condition that stops the recursion before the stack overflows",
+        accepted_answers=["base case"],
+    )
+    assert item is not None
+
+
+@pytest.mark.parametrize("question", [
+    "Which structure is shown?\n",
+    "What is the output of this code?\n```\nprint(1)\n```\n",
+    "What molecule is called the energy currency? ",
+])
+def test_whole_stem_with_trailing_whitespace_is_kept_and_trimmed(question):
+    """Only a space after a word is the truncation tell; a stem the model ends
+    with a newline, or with a space after its question mark, is whole."""
+    item = _wire(question=question)
+    assert item is not None
+    assert item["question"] == question.rstrip()
 
 
 @pytest.mark.parametrize("item", [

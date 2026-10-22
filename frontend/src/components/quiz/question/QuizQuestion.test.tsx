@@ -203,6 +203,18 @@ describe("QuizQuestion — the question", () => {
     expect(screen.getByText("Not quite — the expected answer is Cellular respiration.")).toBeInTheDocument();
   });
 
+  it.each([
+    ["Why?", "Why?"],
+    ["respiration. ", "respiration."],
+    ["Stop!", "Stop!"],
+    ["ATP", "ATP."],
+  ])("never doubles the key's own terminal punctuation (%j)", (key, shown) => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: key } })] }));
+    expect(screen.getByText(`Not quite — the expected answer is ${shown}`)).toBeInTheDocument();
+  });
+
   it("keeps the multiple-choice keyboard hint for assistive tech, with no format rules", () => {
     renderScreen(makeSession());
     expect(screen.getByText(/Keyboard: press A to F/)).toHaveClass("quiz-question__hint");

@@ -91,6 +91,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+/** The key as the end of a sentence: one full stop, unless it already ends in
+ *  terminal punctuation ("Why?" stays "Why?", never "Why?." or "respiration. ."). */
+function withFullStop(answer: string): string {
+  const key = answer.trim();
+  return /[.!?]$/.test(key) ? key : `${key}.`;
+}
+
 export function QuizQuestion({
   session,
   actions,
@@ -454,7 +461,7 @@ export function QuizQuestion({
                 {verdict.isCorrect
                   ? "Correct."
                   : verdict.correctAnswer
-                    ? `Not quite — the expected answer is ${verdict.correctAnswer.replace(/\.+$/, "")}.`
+                    ? `Not quite — the expected answer is ${withFullStop(verdict.correctAnswer)}`
                   : correctLabel
                     ? `Not quite — the answer is ${correctLabel}.`
                     : "Not quite."}
