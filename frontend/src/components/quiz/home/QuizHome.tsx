@@ -3,10 +3,12 @@
 /**
  * Quiz home (§5 B1) — `phase: home | configuring`.
  *
- * One proposal you can start in a single click, two alternatives, the whole
- * due set as one row, and a way to find anything else. The old screen opened
- * on an empty course/concept dropdown and asked the student to know what they
- * wanted; this one arrives with an answer and lets them disagree.
+ * Two columns. On the left, one proposal you can start in a single click,
+ * with its neighbourhood on the tree drawn underneath. On the right, "Choose a
+ * topic": the whole due set as one row, then every concept on the tree. The
+ * old screen opened on an empty course/concept dropdown and asked the student
+ * to know what they wanted; this one arrives with an answer and keeps every
+ * alternative in view.
  *
  * Everything on it is derived, never invented: the ranking is
  * `lib/quiz/proposals` (a cited mirror of `graph_service.get_recommendations`,
@@ -25,7 +27,6 @@ import { Button, EmptyState, InlineBanner } from "@/components/ui";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import { ConceptNeighbourhood } from "@/components/graph/ConceptNeighbourhood";
-import { ConceptNode } from "@/components/graph/ConceptNode";
 import { apiToGraphNode } from "@/lib/data";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { cancelTarget } from "@/lib/quiz/exits";
@@ -47,7 +48,7 @@ import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/us
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { AdjustDialog } from "./AdjustDialog";
 import { ConceptDialog } from "./ConceptDialog";
-import { PickList } from "./PickList";
+import { TopicList } from "./TopicList";
 import { accentStyle } from "./accent";
 import "./home.css";
 
@@ -63,13 +64,10 @@ export interface QuizHomeProps {
 /** The card's three shapes (§5 B1.2). `course` and `due` run as queues. */
 type CardMode = "concept" | "course" | "due";
 
-/** The home neighbourhood canvas, per §3. */
-const CANVAS = { width: 320, height: 204, scale: 2 } as const;
-
-/** The mark beside the concept name — `node`, so it carries the soft glow. */
-const CARD_NODE_SIZE = 26;
-/** The dot on an "Also worth a look" row. */
-const ALT_DOT_SIZE = 11;
+/** The home neighbourhood canvas. It is drawn in a frame under the proposal
+ *  and scales down with the column (`home.css`); these are its intrinsic
+ *  proportions. Under 480 wide, so the `compact` composition. */
+const CANVAS = { width: 360, height: 150, scale: 1.5 } as const;
 
 /** Why a deep-linked concept is the one on offer (§5 B1.2). */
 const DEEP_LINK_RATIONALE: Partial<Record<SourceKind, string>> = {
@@ -83,7 +81,6 @@ const UNRESOLVED_COPY = "That concept isn't in your current semester";
 
 export function QuizHome({ userId, home, config, entry, session, actions }: QuizHomeProps) {
   const toast = useToast();
-  const [picking, setPicking] = React.useState(false);
   const [adjustOpen, setAdjustOpen] = React.useState(false);
   const [dialogNodeId, setDialogNodeId] = React.useState<string | null>(null);
 
@@ -342,166 +339,154 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     [home.nodes],
   );
 
+  const cancel = (
+    <Button
+      variant="link"
+      data-testid="quiz-cancel"
+      onClick={() => actions.exit(cancelTarget(session))}
+    >
+      Cancel
+    </Button>
+  );
+
   /**
-   * The eyebrow-and-Cancel row (§5 B1.8). It sits above whatever the body turns
-   * out to be rather than inside the proposal, so the three no-card states —
-   * empty tree, no courses, everything mastered, a failed load — still have a
-   * way back to wherever the student came from, and nothing below it moves as
-   * the load resolves.
+   * The Cancel row for the screens that are not the two columns (§5 B1.8): an
+   * empty tree, no courses, a failed load. They still need a way back to
+   * wherever the student came from. On the two columns, Cancel sits in the
+   * "Choose a topic" head instead, top-right of the screen, and the skeleton
+   * draws that same head so nothing moves as the load resolves.
    */
-  const cardHead = (eyebrow: string | null) => (
+  const cardHead = <div className="quiz-home__card-head">{cancel}</div>;
+
+  const topicsHead = (
     <div className="quiz-home__card-head">
-      {eyebrow && <div className="label-micro quiz-eyebrow">{eyebrow}</div>}
-      <Button
-        variant="link"
-        data-testid="quiz-cancel"
-        onClick={() => actions.exit(cancelTarget(session))}
-      >
-        Cancel
-      </Button>
+      <div className="label-micro quiz-eyebrow">Choose a topic</div>
+      {cancel}
     </div>
   );
 
   const proposal = card ? (
-    <section data-testid="quiz-proposal">
-      <div className="quiz-home__card">
-        <div className="quiz-home__card-main">
-          <div className="quiz-home__name">
-            {!queued && (
-              <ConceptNode
-                size={CARD_NODE_SIZE}
-                nodeId={card.node.id}
-                mastery={card.node.mastery_score}
-                tier={card.node.mastery_tier}
-                courseColor={card.color}
-              />
-            )}
-            <span className="h-serif quiz-home__name-text">{title}</span>
-          </div>
+    <section className="quiz-home__proposal" data-testid="quiz-proposal">
+      <div className="label-micro quiz-eyebrow">Ready for you</div>
+      <div className="h-serif quiz-home__name">{title}</div>
 
-          {meta && <p className="quiz-home__meta">{meta}</p>}
-          {rationale && <p className="quiz-home__rationale">{rationale}</p>}
-          {definition && <p className="body-serif quiz-home__definition">{definition}</p>}
-          <p className="quiz-home__config">{configLine}</p>
+      {meta && <p className="quiz-home__meta">{meta}</p>}
+      {rationale && <p className="quiz-home__rationale">{rationale}</p>}
+      {definition && <p className="quiz-home__definition">{definition}</p>}
+      <p className="quiz-home__config">{configLine}</p>
 
-          <div className="quiz-home__actions">
-            <Button
-              variant="primary"
-              data-testid="quiz-start"
-              onClick={() => startCard(effectiveConfig)}
-            >
-              Start
-            </Button>
-            <Button
-              variant="link"
-              data-testid="quiz-adjust"
-              aria-pressed={adjustOpen}
-              data-active={adjustOpen ? "true" : undefined}
-              onClick={() => openAdjust(!adjustOpen)}
-            >
-              adjust
-            </Button>
-          </div>
-        </div>
+      <div className="quiz-home__neighbourhood">
+        <ConceptNeighbourhood
+          centre={{
+            id: card.node.id,
+            name: card.node.concept_name,
+            mastery: card.node.mastery_score,
+            tier: card.node.mastery_tier,
+          }}
+          siblings={cardSiblings}
+          courseColor={card.color}
+          width={CANVAS.width}
+          height={CANVAS.height}
+          scale={CANVAS.scale}
+          showCentreLabel={false}
+          ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
+        />
+      </div>
 
-        <div className="quiz-home__card-divider" />
-        <div className="quiz-home__neighbourhood">
-          <ConceptNeighbourhood
-            centre={{
-              id: card.node.id,
-              name: card.node.concept_name,
-              mastery: card.node.mastery_score,
-              tier: card.node.mastery_tier,
-            }}
-            siblings={cardSiblings}
-            courseColor={card.color}
-            width={CANVAS.width}
-            height={CANVAS.height}
-            scale={CANVAS.scale}
-            ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
-          />
-        </div>
+      <div className="quiz-home__actions">
+        <Button
+          variant="primary"
+          data-testid="quiz-start"
+          onClick={() => startCard(effectiveConfig)}
+        >
+          Start
+        </Button>
+        <Button
+          variant="link"
+          data-testid="quiz-adjust"
+          aria-pressed={adjustOpen}
+          data-active={adjustOpen ? "true" : undefined}
+          onClick={() => openAdjust(!adjustOpen)}
+        >
+          Adjust
+        </Button>
       </div>
     </section>
   ) : (
-    // Every concept is mastered: there is nothing to propose, but the list is
-    // still there, so this is a signpost rather than a dead end.
+    // Every concept is mastered: there is nothing to propose, but every
+    // concept is still in the list beside this, so it is a signpost rather
+    // than a dead end.
     <EmptyState
       testid="quiz-empty-state"
       title="Nothing needs review right now"
-      body="Every concept on your tree is in good shape. Pick something specific if you'd like to quiz it anyway."
-      action={
-        <Button data-testid="quiz-pick-open" onClick={() => setPicking(true)}>
-          Pick something specific →
-        </Button>
-      }
+      body="Every concept on your tree is in good shape. Pick one from the list to quiz it anyway."
     />
   );
 
-  const alternatives = (
-    <>
-      {home.alternatives.map(alt => (
-        <button
-          key={alt.node.id}
-          type="button"
-          className="quiz-home__row"
-          data-testid={`quiz-alternative-${alt.node.id}`}
-          onClick={() => openConcept(alt.node.id)}
-        >
-          <span className="quiz-home__row-mark">
-            <ConceptNode
-              size={ALT_DOT_SIZE}
-              variant={{ kind: "dot" }}
-              nodeId={alt.node.id}
-              mastery={alt.node.mastery_score}
-              tier={alt.node.mastery_tier}
-              courseColor={alt.color}
-            />
-          </span>
-          <span className="h-serif quiz-home__row-name">{alt.node.concept_name}</span>
-          {alt.course && <span className="quiz-home__row-code">{alt.course.course_code}</span>}
-          <span className="quiz-home__row-spacer" />
-          <span className="quiz-home__row-meta">{alt.rationale}</span>
-        </button>
-      ))}
-
-      {home.due.count > 0 && (
-        <button
-          type="button"
-          className="quiz-home__row"
-          data-testid="quiz-review-due"
-          onClick={() => startQueue("due", dueQueue, { ...session.config, count: QUEUE_COUNT })}
-        >
-          <span className="quiz-home__row-mark quiz-home__row-mark--hollow" />
-          <span className="h-serif quiz-home__row-name">Review everything due</span>
-          <span className="quiz-home__row-spacer" />
-          <span className="quiz-home__row-meta">
-            {`${home.due.count} concepts across ${home.due.courseCount} courses`}
-          </span>
-        </button>
-      )}
-    </>
+  // The card's own concept is not offered again beside it. A queued card is
+  // titled for the course or the due set, not its first concept, so there the
+  // first concept stays in the list.
+  const hiddenTopic = mode === "concept" ? card?.node.id : undefined;
+  const topicGroups = React.useMemo(
+    () =>
+      home.byCourse
+        .map(g => ({ ...g, nodes: g.nodes.filter(n => n.id !== hiddenTopic) }))
+        .filter(g => g.nodes.length > 0),
+    [home.byCourse, hiddenTopic],
   );
 
-  const skeleton = (
-    <div className="quiz-home__skeleton">
-      <div className="quiz-home__skeleton-main">
-        <Skeleton width={110} height={10} />
-        <div className="quiz-home__skeleton-name">
-          <Skeleton circle width={CARD_NODE_SIZE} height={CARD_NODE_SIZE} />
-          <Skeleton width={220} height={28} />
-        </div>
-        <Skeleton width={260} height={13} />
-        <Skeleton width={380} height={13} />
-        <Skeleton width={340} height={13} />
-        <Skeleton width={180} height={14} />
-        <Skeleton width={120} height={34} />
-      </div>
-      <div className="quiz-home__card-divider" />
-      <div className="quiz-home__neighbourhood">
-        <Skeleton width={CANVAS.width} height={CANVAS.height} />
-      </div>
+  const dueRow =
+    home.due.count > 0 ? (
+      <button
+        type="button"
+        className="quiz-home__row"
+        data-testid="quiz-review-due"
+        onClick={() => startQueue("due", dueQueue, { ...session.config, count: QUEUE_COUNT })}
+      >
+        <span className="quiz-home__row-mark quiz-home__row-mark--hollow" />
+        <span className="h-serif quiz-home__row-name">Review everything due</span>
+        <span className="quiz-home__row-spacer" />
+        <span className="quiz-home__row-meta">
+          {`${home.due.count} concepts across ${home.due.courseCount} courses`}
+        </span>
+      </button>
+    ) : null;
+
+  const topics = (
+    <section className="quiz-home__topics-col" aria-label="Choose a topic">
+      {topicsHead}
+      <TopicList groups={topicGroups} onPick={openConcept} lead={dueRow} />
+    </section>
+  );
+
+  /** The two columns, with whatever each one holds. */
+  const columns = (lead: React.ReactNode, side: React.ReactNode) => (
+    <div className="quiz-home__grid">
+      <div className="quiz-home__lead">{lead}</div>
+      <div className="quiz-home__grid-divider" />
+      {side}
     </div>
+  );
+
+  const skeleton = columns(
+    <div className="quiz-home__skeleton-main">
+      <Skeleton width={90} height={10} />
+      <Skeleton width={240} height={32} />
+      <Skeleton width={220} height={12} />
+      <Skeleton width={380} height={13} />
+      <Skeleton width={340} height={13} />
+      <Skeleton width={160} height={16} />
+      <Skeleton width={CANVAS.width} height={CANVAS.height} />
+      <Skeleton width={120} height={34} />
+    </div>,
+    <div className="quiz-home__topics-col">
+      {topicsHead}
+      <div className="quiz-home__skeleton-rows">
+        {[0, 1, 2, 3, 4, 5].map(i => (
+          <Skeleton key={i} width="100%" height={18} />
+        ))}
+      </div>
+    </div>,
   );
 
   const errorCard = (
@@ -516,8 +501,8 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     </div>
   );
 
-  /** Which arrival the screen is rendering. Named once so the head row above
-   *  the body can know whether it has an eyebrow to carry. */
+  /** Which arrival the screen is rendering. Named once so the Cancel row
+   *  above the body knows whether the two columns already carry Cancel. */
   const view =
     home.status === "error"
       ? "error"
@@ -527,14 +512,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           ? "no-courses"
           : conceptCount === 0
             ? "empty-tree"
-            : picking
-              ? "picking"
-              : "home";
-
-  // "Also worth a look" is a heading for the rows under it; with no
-  // alternatives AND nothing due (a deep link to a mastered concept, say) it
-  // would sit between two rules with nothing in between.
-  const hasMore = home.alternatives.length > 0 || home.due.count > 0;
+            : "home";
 
   const body = () => {
     if (view === "error") return errorCard;
@@ -571,34 +549,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       );
     }
 
-    if (view === "picking") {
-      return <PickList groups={home.byCourse} onPick={openConcept} onBack={() => setPicking(false)} />;
-    }
-
-    return (
-      <>
-        {proposal}
-        {card && (
-          <>
-            <hr className="quiz-home__rule" />
-            {hasMore && (
-              <>
-                <div className="label-micro quiz-eyebrow quiz-home__section-eyebrow">
-                  Also worth a look
-                </div>
-                {alternatives}
-                <hr className="quiz-home__rule quiz-home__rule--tight" />
-              </>
-            )}
-            <div className="quiz-home__pick-open">
-              <Button variant="link" data-testid="quiz-pick-open" onClick={() => setPicking(true)}>
-                Pick something specific →
-              </Button>
-            </div>
-          </>
-        )}
-      </>
-    );
+    return columns(proposal, topics);
   };
 
   return (
@@ -609,13 +560,12 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           everything else gets the column and the page padding back here. The
           two are NESTED rather than stacked on one element: `box-sizing:
           border-box` is global, so a single div carrying both would eat the
-          64px of page padding out of the 780px measure and set the card at 716.
-          The design puts the padding outside the column. */}
+          64px of page padding out of the column's measure. The design puts the
+          padding outside the column. */}
       <div className="quiz-inset--home">
         <div className="quiz-col quiz-col--home">
-          {/* The pick list has its own `← Back`; a Cancel beside it would be a
-              second escape from a screen the student just navigated INTO. */}
-          {view !== "picking" && cardHead(view === "home" && card ? "Ready for you" : null)}
+          {/* The two columns (and their skeleton) carry Cancel in their own head. */}
+          {view !== "home" && view !== "loading" && cardHead}
           {body()}
         </div>
       </div>

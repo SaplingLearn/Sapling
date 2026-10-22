@@ -412,11 +412,10 @@ describe("QuizHome — the due row", () => {
 });
 
 describe("QuizHome — the concept dialog", () => {
-  it("opens off an alternative and starts with the config chosen in it", () => {
+  it("opens off a topic row and starts with the config chosen in it", () => {
     const { actions } = mount();
 
-    // The two alternatives are the next-weakest after the primary.
-    fireEvent.click(screen.getByTestId("quiz-alternative-determinants"));
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
 
     const dialog = screen.getByTestId("quiz-concept-dialog");
     expect(dialog).toHaveTextContent("Determinants");
@@ -447,11 +446,11 @@ describe("QuizHome — the concept dialog", () => {
     expect(window.localStorage.getItem(PREFS_KEY)).toContain("fierce");
   });
 
-  it("opens off a pick-list row", () => {
+  it("opens off a row in the topic list, which is always in view", () => {
     mount();
-    fireEvent.click(screen.getByTestId("quiz-pick-open"));
 
     const list = screen.getByTestId("quiz-pick-list");
+    // Two courses, so each is headed.
     expect(within(list).getByText("CS101 · Intro to Computer Science")).toBeInTheDocument();
 
     fireEvent.click(within(list).getByTestId("quiz-pick-base-cases"));
@@ -462,7 +461,6 @@ describe("QuizHome — the concept dialog", () => {
     // The dialog's meta already opens with the course code and carries the
     // tier; the built sentence used to repeat both back (M6).
     mount();
-    fireEvent.click(screen.getByTestId("quiz-pick-open"));
     fireEvent.click(within(screen.getByTestId("quiz-pick-list")).getByTestId("quiz-pick-base-cases"));
 
     const dialog = screen.getByTestId("quiz-concept-dialog");
@@ -471,12 +469,33 @@ describe("QuizHome — the concept dialog", () => {
     expect(dialog).not.toHaveTextContent("CS101 · learning · 1 connected concept");
   });
 
-  it("collapses the pick list again", () => {
+  it("lists each course weakest first, without the concept already proposed", () => {
     mount();
-    fireEvent.click(screen.getByTestId("quiz-pick-open"));
-    fireEvent.click(screen.getByTestId("quiz-pick-back"));
-    expect(screen.queryByTestId("quiz-pick-list")).toBeNull();
-    expect(screen.getByTestId("quiz-proposal")).toBeInTheDocument();
+
+    const list = screen.getByTestId("quiz-pick-list");
+    const ids = Array.from(list.querySelectorAll("[data-testid^='quiz-pick-']")).map(el =>
+      el.getAttribute("data-testid"),
+    );
+    // Recursion is on the card, so it is not offered again beside it. Each
+    // row carries the same meta line as the card.
+    expect(ids).toEqual([
+      "quiz-pick-tail-recursion",
+      "quiz-pick-stack-frames",
+      "quiz-pick-base-cases",
+      "quiz-pick-determinants",
+      "quiz-pick-eigenvalues",
+      "quiz-pick-matrices",
+    ]);
+    expect(within(list).getByTestId("quiz-pick-base-cases")).toHaveTextContent("52% · learning");
+  });
+
+  it("draws no course heading when there is only one course", () => {
+    const csOnly = NODES.filter(n => n.course_id === "c-cs");
+    mount({ home: { nodes: csOnly } });
+
+    const list = screen.getByTestId("quiz-pick-list");
+    expect(within(list).queryByText("CS101 · Intro to Computer Science")).toBeNull();
+    expect(within(list).getByTestId("quiz-pick-base-cases")).toBeInTheDocument();
   });
 });
 
@@ -627,9 +646,9 @@ describe("QuizHome — arrival", () => {
     expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("From your note");
   });
 
-  it("drops the 'Also worth a look' heading when there is nothing under it", () => {
-    // A deep link onto a tree with nothing left to review: the card stands, but
-    // there are no alternatives and nothing is due.
+  it("keeps the topic list beside a deep link when nothing is due", () => {
+    // A deep link onto a tree with nothing left to review: the card stands,
+    // nothing is due, and every other concept is still one click away.
     const mastered = NODES.map(n => ({ ...n, mastery_tier: "mastered" as const }));
     mount({
       home: { nodes: mastered },
@@ -637,9 +656,10 @@ describe("QuizHome — arrival", () => {
     });
 
     expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Matrices");
-    expect(screen.queryByText("Also worth a look")).toBeNull();
-    // …and the way out of the dead end is still there.
-    expect(screen.getByTestId("quiz-pick-open")).toBeInTheDocument();
+    expect(screen.queryByTestId("quiz-review-due")).toBeNull();
+    const list = screen.getByTestId("quiz-pick-list");
+    expect(within(list).queryByTestId("quiz-pick-matrices")).toBeNull();
+    expect(within(list).getByTestId("quiz-pick-recursion")).toBeInTheDocument();
   });
 
   it("says so once when the link names something outside the semester", () => {
@@ -724,8 +744,10 @@ describe("QuizHome — the states with no proposal", () => {
     mount({ home: { nodes: mastered } });
 
     expect(screen.getByTestId("quiz-empty-state")).toHaveTextContent("Nothing needs review");
-    fireEvent.click(screen.getByTestId("quiz-pick-open"));
-    expect(screen.getByTestId("quiz-pick-list")).toBeInTheDocument();
+    // No card, so nothing is held back from the list.
+    expect(
+      within(screen.getByTestId("quiz-pick-list")).getByTestId("quiz-pick-recursion"),
+    ).toBeInTheDocument();
   });
 
   it("offers a retry when the load failed", () => {

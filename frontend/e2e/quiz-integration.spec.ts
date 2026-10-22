@@ -411,7 +411,7 @@ test("the note's Generate quiz gate holds, and the round trip reopens the note",
 /**
  * §6: a deep link into a term the student is not looking at says so ONCE and
  * then gets out of the way — the ordinary home renders underneath, and the
- * "pick something specific" list offers only in-scope courses.
+ * "Choose a topic" list offers only in-scope courses.
  *
  * The seed makes CS101 an awkward probe: rich-user-active is enrolled in it in
  * BOTH Fall 2025 and Spring 2026, so no term excludes it while still leaving
@@ -437,15 +437,20 @@ test("a deep link outside the active semester toasts and falls back to the ordin
   await expect(proposal).toBeVisible();
   await expect(proposal).not.toContainText(NODE_BIO_DNA_NAME);
 
-  // The pick list groups only the in-scope courses.
-  await page.getByTestId("quiz-pick-open").click();
+  // The topic list beside it groups only the in-scope courses.
   const list = page.getByTestId("quiz-pick-list");
   await expect(list).toBeVisible();
   await expect(list).toContainText("CS101");
   await expect(list).toContainText("MATH210");
   await expect(list).not.toContainText("BIO110");
   await expect(page.getByTestId(`quiz-pick-${NODE_BIO_DNA}`)).toHaveCount(0);
-  await expect(page.getByTestId(`quiz-pick-${NODE_RECURSION}`)).toBeVisible();
+  // Recursion is in scope: it is a row in the list unless it is the concept
+  // already on the card, which the list does not offer twice.
+  await expect(
+    page
+      .getByTestId(`quiz-pick-${NODE_RECURSION}`)
+      .or(proposal.filter({ hasText: "Recursion" })),
+  ).toBeVisible();
 });
 
 test("All semesters resolves the same deep link to its concept card", async ({ page }) => {
