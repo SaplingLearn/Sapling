@@ -449,7 +449,7 @@ test("a deep link outside the active semester toasts and falls back to the ordin
   await expect(
     page
       .getByTestId(`quiz-pick-${NODE_RECURSION}`)
-      .or(proposal.filter({ hasText: "Recursion" })),
+      .or(page.getByTestId("quiz-proposal-name").filter({ hasText: /^Recursion$/ })),
   ).toBeVisible();
 });
 

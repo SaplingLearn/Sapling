@@ -197,8 +197,8 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           ? metaLine(card.node)
           : "";
 
-  // Only a deep link explains itself on the card; the ranked proposal's reason
-  // lives on the alternatives rows, where there is something to compare against.
+  // Only a deep link explains itself on the card: it is the one arrival whose
+  // proposal the student did not just get from the ranking.
   const rationale =
     mode === "concept" && selection.conceptId && card
       ? DEEP_LINK_RATIONALE[entry.source.kind] ?? DEFAULT_DEEP_LINK_RATIONALE
@@ -352,23 +352,20 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   /**
    * The Cancel row for the screens that are not the two columns (§5 B1.8): an
    * empty tree, no courses, a failed load. They still need a way back to
-   * wherever the student came from. On the two columns, Cancel sits in the
-   * "Choose a topic" head instead, top-right of the screen, and the skeleton
-   * draws that same head so nothing moves as the load resolves.
+   * wherever the student came from. The two columns (and their skeleton) pin
+   * Cancel to their own top-right corner instead, so it stays at the top of
+   * the screen when the columns stack and does not move as the load resolves.
    */
   const cardHead = <div className="quiz-home__card-head">{cancel}</div>;
 
-  const topicsHead = (
-    <div className="quiz-home__card-head">
-      <div className="label-micro quiz-eyebrow">Choose a topic</div>
-      {cancel}
-    </div>
-  );
+  const topicsHead = <div className="label-micro quiz-eyebrow">Choose a topic</div>;
 
   const proposal = card ? (
     <section className="quiz-home__proposal" data-testid="quiz-proposal">
       <div className="label-micro quiz-eyebrow">Ready for you</div>
-      <div className="h-serif quiz-home__name">{title}</div>
+      <div className="h-serif quiz-home__name" data-testid="quiz-proposal-name">
+        {title}
+      </div>
 
       {meta && <p className="quiz-home__meta">{meta}</p>}
       {rationale && <p className="quiz-home__rationale">{rationale}</p>}
@@ -435,8 +432,9 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     [home.byCourse, hiddenTopic],
   );
 
+  // On a due card the card already IS "Review everything due".
   const dueRow =
-    home.due.count > 0 ? (
+    home.due.count > 0 && mode !== "due" ? (
       <button
         type="button"
         className="quiz-home__row"
@@ -462,6 +460,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   /** The two columns, with whatever each one holds. */
   const columns = (lead: React.ReactNode, side: React.ReactNode) => (
     <div className="quiz-home__grid">
+      <div className="quiz-home__grid-cancel">{cancel}</div>
       <div className="quiz-home__lead">{lead}</div>
       <div className="quiz-home__grid-divider" />
       {side}

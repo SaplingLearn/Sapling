@@ -112,16 +112,31 @@
 /* ── The two columns ────────────────────────────────────────────────── */
 
 .quiz-home__grid {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, var(--quiz-home-lead-w)) 1px minmax(0, 1fr);
   gap: var(--quiz-home-grid-gap);
   align-items: start;
 }
 
-/* The proposal stays in view while a long topic list scrolls past it. */
-.quiz-home__lead {
-  position: sticky;
+/* Cancel (§5 B1.8) sits in the grid's top-right corner, level with the
+   eyebrows: beside "Choose a topic" on two columns, beside "Ready for you"
+   once they stack — at the top of the screen either way. */
+.quiz-home__grid-cancel {
+  position: absolute;
   top: 0;
+  right: 0;
+  line-height: 1;
+}
+
+/* The proposal stays in view while a long topic list scrolls past it — but
+   only when the window is tall enough to show all of it. Pinned in a shorter
+   pane, Start would sit below the fold until the whole list had scrolled by. */
+@media (min-width: 901px) and (min-height: 760px) {
+  .quiz-home__lead {
+    position: sticky;
+    top: 0;
+  }
 }
 
 /* The vertical hairline between the columns; it runs the height of the
@@ -141,18 +156,12 @@
     gap: var(--quiz-home-stack-gap);
   }
 
-  .quiz-home__lead {
-    position: static;
-  }
-
   .quiz-home__grid-divider {
     height: 1px;
   }
 }
 
-/* The eyebrow-and-Cancel row heading the topic list (§5 B1.8): Cancel sits at
-   the top-right of the screen. The same class is the Cancel-only row the
-   empty, no-course and error states draw. */
+/* The Cancel-only row the empty, no-course and error states draw (§5 B1.8). */
 .quiz-home__card-head {
   display: flex;
   align-items: baseline;
@@ -160,9 +169,7 @@
   gap: var(--quiz-home-head-gap);
 }
 
-.quiz-home__card-head .quiz-eyebrow {
-  flex: 1;
-  min-width: 0;
+.quiz-home__topics-col > .quiz-eyebrow {
   margin-bottom: 0;
 }
 
@@ -214,6 +221,13 @@
     color-mix(in srgb, var(--brand-forest-bright) 55%, transparent);
   border-radius: var(--r-sm);
   padding: var(--quiz-home-frame-pad);
+}
+
+/* The vertical hairline between the Concept dialog's text and its canvas. */
+.quiz-home__card-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: var(--border);
 }
 
 .quiz-home__neighbourhood svg {

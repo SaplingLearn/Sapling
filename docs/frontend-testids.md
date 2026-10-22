@@ -221,6 +221,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-resume` | "Resume" on that banner |
 | `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
 | `quiz-proposal` | the "Ready for you" primary proposal card |
+| `quiz-proposal-name` | the card's title — the concept name, or "Practice {course}" / "Review everything due" on a queued card |
 | `quiz-start` | "Start" on that card |
 | `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
 | `quiz-adjust` | "Adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
