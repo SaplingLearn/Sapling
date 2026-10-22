@@ -483,17 +483,21 @@ _SYMBOLIC_NAMES = frozenset({"pi", "nu", "rho", "tau", "phi", "chi", "psi", "eta
 # A short-answer key is a term or brief fact (docs/quiz-formats.md); exact
 # matching can never accept a sentence or paragraph key. A sentence break is a
 # semicolon, "!" or "?", or a full stop, each followed by more text, except a
-# full stop after an initial ("John F. Kennedy", "U.S.", "e.g.") or a known
-# abbreviation ("St. Louis", "Prof. Xavier", "Sept. 11").
+# full stop right after an initial ("John F. Kennedy", "U.S.", "e.g.") or a
+# known abbreviation ("St. Louis", "Prof. Xavier", "Sept. 11"). A full stop
+# after anything else — a word, a number, a bracket, a quote, a percent sign
+# ("x (y). Then", '"ATP". It', "10%. Then") — ends a sentence.
 _SHORT_ANSWER_MAX_WORDS = 8
-# How a whole stem ends: terminal punctuation, a closing bracket or quote, a
-# code fence or emphasis, or a fill-in blank.
-_WHOLE_STEM_ENDINGS = tuple("?.!)]\"'`*_")
-_SENTENCE_BREAK = re.compile(r"(?:;|([A-Za-z0-9]+)([.!?]))\s+\S")
+# How a stem that carries trailing whitespace can still be whole: it ends in
+# its question mark, a fill-in blank, or a code fence. Anything else before
+# the whitespace — a word, ":", ",", even "." ("Consider this definition. "
+# cut at the quote that followed) — is the tell of a stem cut off mid-string.
+_WHOLE_STEM_ENDINGS = ("?", "_", "`")
+_SENTENCE_BREAK = re.compile(r"(?:;|([A-Za-z0-9]*)([.!?]))\s+\S")
 _ABBREVIATIONS = frozenset({
     "mr", "mrs", "ms", "dr", "prof", "st", "mt", "ft", "jr", "sr", "sgt", "capt", "col",
     "gen", "lt", "pres", "gov", "sen", "rep", "rev", "hon", "dept", "univ", "inc", "ltd",
-    "co", "corp", "vs", "etc", "approx", "no", "vol", "fig", "eq", "ch", "sec", "jan",
+    "co", "corp", "vs", "etc", "approx", "vol", "fig", "eq", "ch", "sec", "jan",
     "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
 })
 
@@ -510,11 +514,11 @@ def _is_sentence(key: str) -> bool:
         return True
     for m in _SENTENCE_BREAK.finditer(key):
         word, mark = m.groups()
-        if word is None or mark != ".":
+        if mark is None or mark != ".":
             return True  # a semicolon, "!" or "?" mid-key
         if (len(word) == 1 and word.isalpha()) or word.lower() in _ABBREVIATIONS:
             continue
-        return True
+        return True  # after a word, a number, or punctuation (word == "")
     return False
 
 

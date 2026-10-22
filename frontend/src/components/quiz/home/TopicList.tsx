@@ -28,12 +28,15 @@ import { colorFor, metaLine } from "@/lib/quiz/proposals";
 /** Diameters from the design; the tokens live in `home.css`. */
 const COURSE_DOT = 9;
 const ROW_DOT = 14;
+/** How long a row must be pointed at or focused before it counts as intent. */
+const INTENT_DWELL_MS = 350;
 
 export interface TopicListProps {
   groups: { course: EnrolledCourse; nodes: GraphNode[] }[];
   onPick: (nodeId: string) => void;
-  /** The student is pointing at (or focused on) a row: warm what picking it
-   *  will need, so the card has it the moment it swaps. */
+  /** The student has rested on (or focused) a row for a moment: warm what
+   *  picking it will need, so the card has it the moment it swaps. A sweep of
+   *  the pointer or a tab through the list costs nothing. */
   onIntent?: (nodeId: string) => void;
   /** The row a concept just returned to; it is tinted once (`home.css`). */
   returnedId?: string | null;
@@ -51,6 +54,16 @@ export function TopicList({
   returnedId = null,
 }: TopicListProps) {
   const headed = groups.length > 1;
+  const dwell = React.useRef<number | null>(null);
+  const settle = () => {
+    if (dwell.current !== null) window.clearTimeout(dwell.current);
+    dwell.current = null;
+  };
+  const aim = (nodeId: string) => {
+    settle();
+    if (onIntent) dwell.current = window.setTimeout(() => onIntent(nodeId), INTENT_DWELL_MS);
+  };
+  React.useEffect(() => settle, []);
   return (
     <div className="quiz-home__topics" data-testid="quiz-pick-list">
       {groups.map(({ course, nodes }) => {
@@ -87,8 +100,10 @@ export function TopicList({
                   data-testid={`quiz-pick-${node.id}`}
                   data-returned={node.id === returnedId ? "true" : undefined}
                   onClick={() => onPick(node.id)}
-                  onPointerEnter={onIntent ? () => onIntent(node.id) : undefined}
-                  onFocus={onIntent ? () => onIntent(node.id) : undefined}
+                  onPointerEnter={() => aim(node.id)}
+                  onPointerLeave={settle}
+                  onFocus={() => aim(node.id)}
+                  onBlur={settle}
                 >
                   <span className="quiz-home__row-mark">
                     <ConceptNode

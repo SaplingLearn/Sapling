@@ -374,7 +374,7 @@ export function useQuizHome(
   const cardCourseLabel = labelFor(cardNode);
   const remembered =
     cardConceptId !== null
-      ? described[cardConceptId] ?? (cardName ? cachedDescription(cardName, cardCourseLabel) : null)
+      ? described[cardConceptId] ?? (cardName ? cachedDescription(userId, cardName, cardCourseLabel) : null)
       : null;
 
   useEffect(() => {
@@ -402,15 +402,16 @@ export function useQuizHome(
   const prefetchDescription = useCallback(
     (conceptId: string) => {
       const node = scopedNodes.find(n => n.id === conceptId);
-      if (!userId || !node) return;
+      // Already known either way: nothing to warm, and a failure is not retried
+      // on every hover (the card itself retries if the concept is picked).
+      if (!userId || !node || conceptId in described || failed[conceptId]) return;
+      if (cachedDescription(userId, node.concept_name, labelFor(node))) return;
       loadDescription(userId, node.concept_name, labelFor(node)).then(
         text => setDescribed(d => (d[conceptId] === text ? d : { ...d, [conceptId]: text })),
-        () => {
-          // A prefetch is best-effort; the card fetches again if it is picked.
-        },
+        () => setFailed(f => ({ ...f, [conceptId]: true })),
       );
     },
-    [userId, scopedNodes, labelFor],
+    [userId, scopedNodes, labelFor, described, failed],
   );
 
   return {
