@@ -72,11 +72,13 @@ pydantic-ai-slim[google]>=1.11.1,<2
 # returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
 # 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every
 # Gemini run reports 0 tokens, so llm_usage (cost rollups, AI budget caps)
-# records zeros. The Dockerfile installs THIS file, not the lock, so the cap
-# must live here. Lift it only together with a pydantic-ai bump that accepts
-# the new fields — tests/test_agent_usage.py::test_real_gemini_response_*
-# goes red under the broken pairing, and agents/usage.py WARNs on any real run
-# that reports 0 tokens.
+# records zeros. The Dockerfile now applies requirements.lock as constraints
+# (#694), which pins it, but the lock is compiled FROM this file: without the
+# cap a re-lock would pick 0.1.x up again. Lift it only together with a
+# pydantic-ai bump that accepts the new fields —
+# tests/test_agent_usage.py::test_real_gemini_response_* goes red under the
+# broken pairing, and events_service.log_llm_usage WARNs on any real call that
+# reports 0 tokens.
 genai-prices<0.1
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
