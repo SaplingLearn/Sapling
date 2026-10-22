@@ -69,6 +69,7 @@ const eslintConfig = [
       "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",
       "src/components/quiz/question/QuizQuestion.tsx",
+      "src/components/quiz/question/WrittenAnswer.tsx",
       "src/components/quiz/question/AskPanel.tsx",
       "src/components/quiz/question/LeaveDialog.tsx",
       "src/components/quiz/results/QuizResults.tsx",

@@ -49,6 +49,16 @@ describe("KnowledgeGraph2D — initialZoom", () => {
     expect(viewTransform(container)).toBe("translate(-200, -150) scale(2)");
   });
 
+  it("keeps the student's own pan/zoom when the window is re-measured", () => {
+    const view = render(
+      <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} initialZoom={2} />,
+    );
+    fireEvent.click(screen.getByTestId("graph-zoom-out"));
+    const moved = viewTransform(view.container);
+    view.rerender(<KnowledgeGraph2D nodes={NODES} edges={EDGES} width={600} height={340} initialZoom={2} />);
+    expect(viewTransform(view.container)).toBe(moved);
+  });
+
   it("re-centres when the window is measured to a new size", () => {
     const view = render(
       <KnowledgeGraph2D nodes={NODES} edges={EDGES} width={400} height={300} initialZoom={2} />,
