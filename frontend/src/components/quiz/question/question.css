@@ -390,6 +390,13 @@
   gap: var(--pad-sm);
 }
 
+.quiz-question__format-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
 .quiz-question__written-input {
   width: 100%;
   min-width: 0;
