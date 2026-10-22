@@ -679,6 +679,52 @@ class TestChatViaAgent:
         assert inserts[0]["content"] == "ENC:USER_PROMPT"
         assert inserts[1]["content"] == "ENC:MODEL_REPLY"
 
+    def test_text_written_before_a_tool_call_is_persisted_too(self):
+        """ADR 0030: Claude explains, calls update_mastery_tool, then adds a
+        line — two text parts in two model responses. `.output` is only the
+        LAST one; the persisted reply must be the whole turn, joined the way
+        the stream renders it (`join_text_parts`)."""
+        from pydantic_ai.messages import (
+            ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart,
+        )
+        from tests.agent_run_fakes import FakeRunResult
+
+        result = FakeRunResult("I've nudged your mastery.", [
+            ModelResponse(parts=[
+                TextPart(content="Big-O describes growth."),
+                ToolCallPart(tool_name="update_mastery_tool", args={}, tool_call_id="t1"),
+            ]),
+            ModelRequest(parts=[ToolReturnPart(tool_name="update_mastery_tool", content="ok", tool_call_id="t1")]),
+            ModelResponse(parts=[TextPart(content="I've nudged your mastery.")]),
+        ])
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=result)
+        inserts: list[dict] = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "messages":
+                mock.select.return_value = []
+                mock.insert.side_effect = lambda payload: inserts.append(payload) or [payload]
+            elif name == "sessions":
+                mock.select.return_value = [{"offering_id": "off1", "user_id": "user_andres"}]
+            else:
+                mock.select.return_value = []
+                mock.insert.return_value = []
+            mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.learn.table", side_effect=factory),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.encrypt_if_present", side_effect=lambda v: v),
+        ):
+            r = self._post(message="Explain Big-O")
+
+        assert r.status_code == 200
+        assert inserts[1]["content"] == "Big-O describes growth.\n\nI've nudged your mastery."
+        assert r.json()["reply"] == inserts[1]["content"]
+
     def test_smart_pref_overrides_agent_model(self):
         """body.model_pref='smart' → agent.run gets `model=AnthropicModel('claude-sonnet-5-5')`."""
         agent = MagicMock()

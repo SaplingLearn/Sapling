@@ -756,12 +756,14 @@ async def _start_session_agent(
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
             request_id=request_id,
         )
-        # str — chat_tutor agents return plain Markdown. Safe to read
-        # `.output` directly here (no `_new_run_text` narrowing): this call
-        # passes `message_history=[]` above, so there is no prior assistant
-        # message for a textless response to resolve back to — the stale-read
-        # hazard needs history in the run's message list.
-        reply = result.output
+        # str — chat_tutor agents return plain Markdown. Read every text
+        # part this turn wrote (`_new_run_text`), not `.output`: `.output` is
+        # only the FINAL model response, so a Claude turn that explains,
+        # calls a tool, then adds a line would persist just that line (ADR
+        # 0030). (The stale-history hazard doesn't apply here — this call
+        # passes `message_history=[]` — but the same reader keeps all three
+        # non-streamed paths and the stream persisting identical text.)
+        reply = _new_run_text(result)
         if not reply.strip():
             # Same textless shape as the chat turns (#646), and this is the
             # LAST rung on the opener path: a streamed /start-session/stream
@@ -986,9 +988,11 @@ async def _chat_via_agent(
         # This matters here more than anywhere: `_chat_turn_json` is both the
         # POST /api/learn/chat route AND the streamed route's Rung-1
         # fallback, which is exactly where the streaming fix now sends
-        # textless turns.
-        new_text = _new_run_text(result)
-        reply = result.output if new_text.strip() else new_text
+        # textless turns. And `.output` is only the FINAL model response even
+        # when this run did write text: a Claude turn that explains, calls a
+        # tool, then adds a line would persist just that line (ADR 0030) — so
+        # the reply is always this run's own joined text.
+        reply = _new_run_text(result)
 
         if not reply.strip():
             # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
@@ -1682,9 +1686,9 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's
     # model response carries no text part — and `save_message` below would
-    # persist that duplicate. See `_new_run_text`.
-    new_text = _new_run_text(result)
-    reply = result.output if new_text.strip() else new_text
+    # persist that duplicate — and is only the FINAL model response anyway,
+    # dropping text written before a tool call (ADR 0030). See `_new_run_text`.
+    reply = _new_run_text(result)
     if not reply.strip():
         # #153: degenerate whitespace-only output, or a turn that ended after
         # tool calls with no text at all. Finish the turn if the model will
