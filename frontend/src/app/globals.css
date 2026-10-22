@@ -24,25 +24,29 @@
   --font-sans: var(--font-suse), 'SUSE', system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-plex-mono), 'IBM Plex Mono', 'Fira Code', ui-monospace, monospace;
 
-  /* Canonical brand green ("forest"). Mirrored by BRAND_FOREST in lib/brand.ts. */
-  --brand-forest: #1B6C42;
+  /* Canonical brand green — olive ("forest" is the legacy role name; the
+     value moved from #1B6C42 to the moss olive #445D22). Mirrored by
+     BRAND_FOREST in lib/brand.ts. 7.4:1 under white text. */
+  --brand-forest: #445D22;
   /* Hover-darken of the base forest, for primary-forest button :hover states. */
-  --brand-forest-hover: #155A35;
-  /* Brighter forest used for the primary CTA fill + the hero "growth" leaf. */
-  --brand-forest-bright: #2D8F5C;
-  --brand-forest-bright-hover: #236F48;
+  --brand-forest-hover: #384E19;
+  /* Brighter olive used for the primary CTA fill + the hero "growth" leaf.
+     5.2:1 under white text — still AA for the white-on-accent sinks. */
+  --brand-forest-bright: #597536;
+  --brand-forest-bright-hover: #4B6627;
 
-  /* Brand greens */
-  --sap-50:  #f1f6ee;
-  --sap-100: #e0ecd8;
-  --sap-200: #c3d8b3;
-  --sap-300: #9cbd86;
-  --sap-400: #74a25d;
-  --sap-500: #4e873c;
-  --sap-600: #3a6a2c;
-  --sap-700: #2b5221;
-  --sap-800: #1f3e18;
-  --sap-900: #132610;
+  /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
+     the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
+  --sap-50:  #f2f6ee;
+  --sap-100: #e1ecd7;
+  --sap-200: #c5d7b2;
+  --sap-300: #a1bc83;
+  --sap-400: #7ea055;
+  --sap-500: #60842c;
+  --sap-600: #49671d;
+  --sap-700: #385015;
+  --sap-800: #293c0e;
+  --sap-900: #19250b;
 
   /* Warm neutrals (paper) */
   --ink-0:   #faf8f3;
@@ -520,6 +524,44 @@ body { font-size: 14px; line-height: 1.5; }
    otherwise paint a 10px gutter inside the rail. */
 [data-sidenav-scroll]::-webkit-scrollbar {
   display: none;
+}
+
+/* The rail is the one olive-filled surface in the shell. Rather than thread
+   light-on-dark colours through every row, it re-declares the semantic tokens
+   its children already read (text, border, the --bg-soft active fill, the
+   focus --accent), so SideNav keeps speaking in shell tokens and the swap
+   lives here. Text steps hold ≥4.5:1 on #445D22. */
+/* The content side of the rail: two olive quarter-squares whose transparent
+   quarter-circle reads as the page's top-left / bottom-left corner rounding
+   into the rail. Painted, not a border-radius on <main>, because <main> is
+   transparent over the atmospheric canvas — giving it a fill to round would
+   bury the orbs. */
+.shell-corner {
+  --shell-corner-r: var(--r-xl);
+  position: absolute;
+  left: 0;
+  width: var(--shell-corner-r);
+  height: var(--shell-corner-r);
+  z-index: 2;
+  pointer-events: none;
+}
+.shell-corner--top {
+  top: 0;
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--shell-corner-r) - 0.5px), var(--brand-forest) var(--shell-corner-r));
+}
+.shell-corner--bottom {
+  bottom: 0;
+  background: radial-gradient(circle at 100% 0, transparent calc(var(--shell-corner-r) - 0.5px), var(--brand-forest) var(--shell-corner-r));
+}
+
+[data-app-sidenav] {
+  --sidenav-bg: var(--brand-forest);
+  --text:        #faf8f3;
+  --text-dim:    rgba(250, 248, 243, 0.86);
+  --text-muted:  rgba(250, 248, 243, 0.72);
+  --border:      rgba(250, 248, 243, 0.14);
+  --bg-soft:     rgba(250, 248, 243, 0.16);
+  --accent:      #faf8f3;
 }
 
 /* Settings' "label on the left, control on the right" profile rows. */
@@ -2289,8 +2331,8 @@ input[type="reset"]:disabled {
   font-family: var(--font-aleo), 'Aleo', Georgia, serif;
   color: var(--text);
 }
-/* Forest, not `--accent`: #2D8F5C under white is 4.04:1, below the AA bar at
-   this size. Forest is 6.4:1. */
+/* Forest, not `--accent`: forest is the darker of the pair (7.4:1 under
+   white vs the bright olive's 5.2:1), so the bubble keeps the most headroom. */
 .landing-page .landing-surface-bubble.is-student {
   max-width: 80%;
   background: var(--brand-forest);
@@ -2468,7 +2510,7 @@ input[type="reset"]:disabled {
   /* Core palette, literal source values.
      These are NOT the app's brand tokens and must not be consolidated into
      them: #0C5638 / #0E9E5A are their own scale, distinct from
-     --brand-forest (#1B6C42) / --brand-forest-bright (#2D8F5C). */
+     --brand-forest (#445D22) / --brand-forest-bright (#597536). */
   --ld-deep:       #0C5638;
   --ld-bright:     #0E9E5A;
   --ld-mid:        #4FA574;
@@ -2920,7 +2962,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
 
 .cp-navlink:hover  { color: #1a1814; }
-.cp-menuitem:hover { background: rgba(27,108,66,0.07); color: #1a1814; }
+.cp-menuitem:hover { background: rgba(68,93,34,0.07); color: #1a1814; }
 .cp-cta:hover      { filter: brightness(1.12); }
 
 /* ── Feature-lab demos ─────────────────────────────────────────────
@@ -2952,7 +2994,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .cp-shot { transition: border-color 220ms, box-shadow 220ms, transform 220ms; }
 .cp-shot:hover { border-color: rgba(42,39,31,0.26); box-shadow: 0 16px 36px -18px rgba(26,24,20,0.6); transform: translateY(-3px); }
 .cp-shot:active { transform: translateY(-1px); transition-duration: 90ms; }
-.cp-shot:focus-visible { outline: 2px solid #1B6C42; outline-offset: 3px; }
+.cp-shot:focus-visible { outline: 2px solid var(--brand-forest); outline-offset: 3px; }
 
 /* Lightbox entrance (#601 follow-up). Keyframes rather than a transition on a
    state flip: the panel only mounts once the overlay hook has set `mounted`,
@@ -2987,4 +3029,4 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 /* Beta modal — recovered from the previous landing page. */
 .ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
 .ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
-.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(27,108,66,0.12); outline: none; }
+.ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(68,93,34,0.12); outline: none; }

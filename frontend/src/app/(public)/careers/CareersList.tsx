@@ -133,9 +133,9 @@ export default function CareersList() {
                 <span
                   style={{
                     flex: '0 0 auto', width: 26, height: 26, borderRadius: 99,
-                    border: `1px solid ${isOpen ? '#1B6C42' : 'rgba(42,39,31,0.16)'}`,
+                    border: `1px solid ${isOpen ? '#445D22' : 'rgba(42,39,31,0.16)'}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: isOpen ? '#1B6C42' : 'transparent',
+                    background: isOpen ? '#445D22' : 'transparent',
                     color: isOpen ? '#faf8f3' : MUTED,
                     transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
                     transition: 'all 260ms cubic-bezier(0.22,1,0.36,1)',
@@ -204,7 +204,7 @@ export default function CareersList() {
                       className="cp-cta"
                       style={{
                         marginTop: 24, display: 'inline-flex', alignItems: 'center', gap: 9,
-                        background: '#1B6C42', color: '#fff', borderRadius: 8,
+                        background: '#445D22', color: '#fff', borderRadius: 8,
                         padding: '13px 22px', fontSize: 14.5, fontWeight: 600,
                       }}
                     >
@@ -231,7 +231,7 @@ export default function CareersList() {
           <a
             href="mailto:careers@saplinglearn.com"
             className="cp-cta"
-            style={{ background: '#1B6C42', color: '#fff', borderRadius: 8, padding: '13px 22px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}
+            style={{ background: '#445D22', color: '#fff', borderRadius: 8, padding: '13px 22px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}
           >
             Get in touch
           </a>

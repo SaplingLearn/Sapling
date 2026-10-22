@@ -130,7 +130,7 @@ const MASTHEAD_PAD = 42;
 const MASTHEAD_GAP = 56;
 
 /** The green mono key that opens a row. */
-const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.06em', color: '#1B6C42' };
+const KEY: React.CSSProperties = { fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.06em', color: '#445D22' };
 /** The value a spec row states, above its reason. */
 const VALUE: React.CSSProperties = { fontSize: 17, fontWeight: 600, color: '#1a1814' };
 
@@ -233,7 +233,7 @@ function FactList({ items }: { items: readonly string[] }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {items.map((d) => (
         <div key={d} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 5 }}>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#597536" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 5 }}>
             <path d="M20 6L9 17l-5-5" />
           </svg>
           <span style={PROSE}>{d}</span>
@@ -330,7 +330,7 @@ export default function WikiPage() {
                   {WIKI_MASTERY_MOVES.map((m) => (
                     <div key={m.source} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,132px) minmax(0,1fr)`, gap: ROW_GAP, alignItems: 'baseline', padding: '15px 0', borderTop: ROW_TOP }}>
                       <span style={VALUE}>{m.source}</span>
-                      <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#1B6C42', whiteSpace: 'nowrap' }}>{m.value}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 13.5, color: '#445D22', whiteSpace: 'nowrap' }}>{m.value}</span>
                       <span style={DEF}>{m.note}</span>
                     </div>
                   ))}
@@ -388,7 +388,7 @@ export default function WikiPage() {
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {WIKI_PIPELINE.map((p) => (
                   <div key={p.num} style={{ display: 'grid', gridTemplateColumns: `${KEY_COL} minmax(0,1fr)`, gap: ROW_GAP, padding: '15px 0', borderTop: ROW_TOP }}>
-                    <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: '#2D8F5C', paddingTop: 2 }}>{p.num}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 13.5, letterSpacing: '0.16em', color: '#597536', paddingTop: 2 }}>{p.num}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                       <span style={VALUE}>{p.title}</span>
                       <span style={DEF}>{p.body}</span>
@@ -494,7 +494,7 @@ export default function WikiPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {WIKI_DATA_FACTS.map((d) => (
                   <div key={d.fact} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#2D8F5C" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 6 }}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#597536" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 6 }}>
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>

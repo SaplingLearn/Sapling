@@ -47,7 +47,7 @@ export default function FaqPage() {
         <div style={{ marginTop: 44, display: 'flex', flexDirection: 'column', gap: 34 }}>
           {INDEXED.map((g) => (
             <section key={g.label}>
-              <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C', marginBottom: 6 }}>
+              <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#597536', marginBottom: 6 }}>
                 {g.label}
               </span>
               {g.items.map((item) => {
@@ -65,11 +65,11 @@ export default function FaqPage() {
                       <span
                         style={{
                           flex: '0 0 auto', width: 22, height: 22, marginTop: 1, borderRadius: 99,
-                          border: `1px solid ${isOpen ? '#1B6C42' : 'rgba(42,39,31,0.16)'}`,
+                          border: `1px solid ${isOpen ? '#445D22' : 'rgba(42,39,31,0.16)'}`,
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           // the plus rotates into a cross and fills in when open
                           transform: isOpen ? 'rotate(45deg)' : 'rotate(0deg)',
-                          background: isOpen ? '#1B6C42' : 'transparent',
+                          background: isOpen ? '#445D22' : 'transparent',
                           color: isOpen ? '#faf8f3' : '#6f6857',
                           transition: 'all 260ms cubic-bezier(0.22,1,0.36,1)',
                         }}
@@ -93,7 +93,7 @@ export default function FaqPage() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '44ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#597536' }}>
               Still curious
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>
@@ -105,7 +105,7 @@ export default function FaqPage() {
             <Link href="/wiki" style={{ border: '1px solid rgba(42,39,31,0.16)', borderRadius: 8, padding: '13px 20px', fontSize: 14.5, fontWeight: 600, color: '#1a1814', background: '#faf8f3', whiteSpace: 'nowrap' }}>
               Read the Wiki
             </Link>
-            <Link href="/#newsletter" className="cp-cta" style={{ background: '#1B6C42', color: '#fff', borderRadius: 8, padding: '13px 22px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            <Link href="/#newsletter" className="cp-cta" style={{ background: '#445D22', color: '#fff', borderRadius: 8, padding: '13px 22px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
               Join the beta
             </Link>
           </div>

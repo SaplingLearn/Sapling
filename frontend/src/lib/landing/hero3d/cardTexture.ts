@@ -135,7 +135,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
     // ── course mastery ──
     eyebrow('PY 205 · MECHANICS', 54);
     x.font = '700 46px ' + SERIF();
-    x.fillStyle = '#1B6C42';
+    x.fillStyle = '#445D22';
     x.fillText('61%', P, 116);
     x.font = '500 20px ' + SANS();
     x.fillStyle = DIM;
@@ -227,7 +227,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       rr(P + 1, y + 1, W - P * 2 - 2, 56, 14);
       x.stroke();
       x.font = '500 21px ' + SANS();
-      x.fillStyle = o[1] ? '#1B6C42' : DIM;
+      x.fillStyle = o[1] ? '#445D22' : DIM;
       x.fillText(o[0], P + 24, y + 37);
       if (o[1]) {
         x.strokeStyle = '#3A7D4E';
@@ -251,7 +251,7 @@ export function drawHeroCard(kind: CardKind): HTMLCanvasElement {
       [110, 300, 11, '#B25855'], [340, 300, 14, '#4FA574'], [230, 360, 10, '#9A9A9A'],
       [180, 250, 8, '#3A7D4E'], [300, 235, 9, '#C89B5E'],
     ];
-    x.strokeStyle = 'rgba(27,108,66,0.26)';
+    x.strokeStyle = 'rgba(68,93,34,0.26)';
     x.lineWidth = 2;
     const edges = [[0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], [0, 7], [1, 6], [2, 7], [3, 5]];
     edges.forEach((e) => {

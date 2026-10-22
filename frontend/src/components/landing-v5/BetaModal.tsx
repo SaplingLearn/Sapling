@@ -37,7 +37,7 @@ const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
  *  Waitlist perks first, the newsletter's last — phones show only the
  *  first two. */
 const PERKS = [
-  { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+  { dot: '#445D22', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
   { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
   { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
 ];
@@ -269,7 +269,7 @@ export function BetaModal({
                 width: '100%', padding: '14px 16px', borderRadius: 10,
                 background: subscribing ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
                 fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
-                boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
+                boxShadow: '0 8px 24px rgba(68,93,34,0.3)',
                 border: 'none', cursor: subscribing ? 'default' : 'pointer',
                 transition: 'all 0.18s', display: 'flex', alignItems: 'center',
                 justifyContent: 'center', gap: 8, fontFamily: SANS,

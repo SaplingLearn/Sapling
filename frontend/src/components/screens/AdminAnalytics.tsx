@@ -278,7 +278,7 @@ function AnalyticsBody() {
                 {d.truncated && <TruncatedBadge />}
                 <DayLineChart
                   points={eventPoints}
-                  color="var(--brand-forest, #1B6C42)"
+                  color="var(--brand-forest, #445D22)"
                   fillColor="var(--sap-100, #e0ecd8)"
                   ariaLabel="Events per day"
                 />
@@ -401,7 +401,7 @@ function AnalyticsBody() {
               </div>
               <DayLineChart
                 points={costPoints}
-                color="var(--brand-forest, #1B6C42)"
+                color="var(--brand-forest, #445D22)"
                 fillColor="var(--sap-100, #e0ecd8)"
                 ariaLabel="Cost per day"
                 format={(v) => `$${v.toFixed(2)}`}
@@ -409,7 +409,7 @@ function AnalyticsBody() {
               <h3 className="label-micro" style={{ margin: "16px 0 8px" }}>Tokens per day</h3>
               <DayLineChart
                 points={tokenPoints}
-                color="var(--brand-forest, #1B6C42)"
+                color="var(--brand-forest, #445D22)"
                 fillColor="var(--sap-100, #e0ecd8)"
                 ariaLabel="Tokens per day"
                 format={formatCompactCount}
