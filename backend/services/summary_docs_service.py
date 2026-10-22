@@ -199,8 +199,9 @@ def prosemirror_doc_from_sections(sections: list[dict]) -> dict:
     are enough top-level topics to be worth one), a divider before each new
     top-level topic, and a heading node at the section's own level (2 or 3)
     followed by one paragraph per blank-line-separated block of its body.
-    Matches StarterKit's default schema, which the editor
-    (SummaryEditor.tsx) already loads."""
+    Matches the editor's schema (SummaryEditor.tsx) — StarterKit plus the
+    table/underline/highlight/math extensions this plan's frontend tasks
+    add."""
     topic_titles = [
         (s.get("heading") or "").strip()
         for s in sections
@@ -221,13 +222,10 @@ def prosemirror_doc_from_sections(sections: list[dict]) -> dict:
         heading = (section.get("heading") or "").strip()
         if heading:
             content.append(_heading_node(heading, level))
-        paragraphs = [p.strip() for p in (section.get("body") or "").split("\n\n")]
-        for p in paragraphs:
-            if p:
-                content.append({
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": p}],
-                })
+        content.extend(body_to_prosemirror_nodes(section.get("body") or ""))
+        table_headers = section.get("table_headers") or []
+        if table_headers:
+            content.append(table_to_prosemirror_node(table_headers, section.get("table_rows") or []))
     return {"type": "doc", "content": content}
 
 

@@ -18,6 +18,7 @@ from services.summary_docs_service import (
     list_versions,
     plaintext_for_primary_document,
     plaintext_from_prosemirror,
+    prosemirror_doc_from_sections,
     prosemirror_doc_from_text,
     remove_source,
     restore_version,
@@ -156,6 +157,41 @@ class TestTableToProsemirrorNode:
         node = table_to_prosemirror_node(["Only", "Headers"], [])
         assert len(node["content"]) == 1
         assert node["content"][0]["type"] == "tableRow"
+
+
+class TestProsemirrorDocFromSectionsRichContent:
+    def test_section_with_list_body_produces_a_list_node(self):
+        doc = prosemirror_doc_from_sections([
+            {"heading": "Steps", "heading_level": 2, "body": "- First\n- Second", "table_headers": [], "table_rows": []},
+        ])
+        types = [n["type"] for n in doc["content"]]
+        assert "bulletList" in types
+
+    def test_section_with_table_appends_a_table_node_after_the_body(self):
+        doc = prosemirror_doc_from_sections([
+            {
+                "heading": "Comparison", "heading_level": 2, "body": "See below.",
+                "table_headers": ["A", "B"], "table_rows": ["x\ty"],
+            },
+        ])
+        types = [n["type"] for n in doc["content"]]
+        assert types.index("table") > types.index("paragraph")
+        table_node = next(n for n in doc["content"] if n["type"] == "table")
+        assert len(table_node["content"]) == 2  # header row + one body row
+
+    def test_section_with_no_table_fields_emits_no_table_node(self):
+        doc = prosemirror_doc_from_sections([
+            {"heading": "Plain", "heading_level": 2, "body": "Just prose.", "table_headers": [], "table_rows": []},
+        ])
+        assert "table" not in [n["type"] for n in doc["content"]]
+
+    def test_section_missing_table_keys_entirely_does_not_error(self):
+        # Sections built before this task's change have no table_headers/
+        # table_rows keys at all -- .get(...) must degrade gracefully.
+        doc = prosemirror_doc_from_sections([
+            {"heading": "Old shape", "heading_level": 2, "body": "Still works."},
+        ])
+        assert "table" not in [n["type"] for n in doc["content"]]
 
 
 class TestPlaintextFromProsemirror:
