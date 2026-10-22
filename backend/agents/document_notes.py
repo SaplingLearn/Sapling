@@ -25,7 +25,12 @@ class NotesSection(BaseModel):
     FLAT (no nested sub-section lists) to stay within Gemini's structured-
     output budget (see tests/test_agent_output_schemas.py) — `heading_level`
     expresses outline depth without adding a nesting level: a 3 immediately
-    follows the 2 it belongs under, in document order."""
+    follows the 2 it belongs under, in document order. `table_headers`/
+    `table_rows` follow the same flatten-instead-of-nest pattern for tabular
+    content: a `TableBlock` sub-model would add a second level of object
+    nesting (ComprehensiveNotes -> list[NotesSection] -> TableBlock), which
+    the same budget test forbids (`MAX_OBJECT_DEPTH = 2`, "no optional
+    nested models")."""
 
     heading: str = Field(description="Short section title naming the topic.")
     heading_level: int = Field(
@@ -38,10 +43,31 @@ class NotesSection(BaseModel):
     body: str = Field(
         description=(
             "The full notes for this section: one or more paragraphs, "
-            "separated by a blank line, in plain prose with no markdown, "
-            "math notation, or fenced blocks. Thorough enough to study "
-            "from directly — definitions, explanations, examples, and "
-            "relationships between ideas, not just a one-line summary."
+            "separated by a blank line, in plain prose. Thorough enough to "
+            "study from directly — definitions, explanations, examples, and "
+            "relationships between ideas, not just a one-line summary. May "
+            "contain \"- \" (bullet) or \"1. \" (numbered) list lines, and "
+            "inline ($...$) or block ($$...$$) math notation for any "
+            "mathematical expression. No other markdown syntax, no HTML, "
+            "no fenced code blocks."
+        ),
+    )
+    table_headers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Column headers for this section's table, when the material is "
+            "naturally tabular (a comparison, a list of named facts). Empty "
+            "list means this section has no table. When a section is "
+            "primarily a table, give it a dedicated heading and do not "
+            "also restate the table's content as prose in body."
+        ),
+    )
+    table_rows: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Each entry is one table row: its cells, in the same order as "
+            "table_headers, joined with a single tab character. Must be "
+            "empty when table_headers is empty."
         ),
     )
 
@@ -71,13 +97,22 @@ _SYSTEM_PROMPT = (
     "the order the source presents them. Give each section a heading_level: "
     "2 for a new top-level topic, 3 for a subheading that breaks a large "
     "topic into named sub-parts (a 3 must immediately follow the 2 it "
-    "belongs under). Each section's body is plain prose paragraphs (no "
-    "markdown, math notation, or fenced blocks), thorough enough that "
-    "studying the notes alone would prepare the student to understand "
-    "that topic. Stay grounded in the source: do not invent facts it does "
-    "not state. If the document is sparse or near-empty, produce a single "
-    "level-2 section that says so rather than padding with invented "
-    "content."
+    "belongs under). Each section's body is plain prose paragraphs, "
+    "thorough enough that studying the notes alone would prepare the "
+    "student to understand that topic.\n\n"
+    "Use the structure that makes the notes most useful to actually study "
+    "from, not uniformly for its own sake: use \"- \" or \"1. \" list lines "
+    "in body for enumerable steps or criteria; use $...$ (inline) or "
+    "$$...$$ (block) math notation for any mathematical expression rather "
+    "than describing it in prose; use table_headers/table_rows when "
+    "comparing multiple items or listing structured facts side by side, "
+    "giving that section its own heading rather than also restating the "
+    "table as prose. Write currency and plain numeric amounts in words "
+    "(e.g. \"25 dollars\") rather than a bare $ sign, so $ only ever "
+    "appears as a math delimiter.\n\n"
+    "Stay grounded in the source: do not invent facts it does not state. "
+    "If the document is sparse or near-empty, produce a single level-2 "
+    "section that says so rather than padding with invented content."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
