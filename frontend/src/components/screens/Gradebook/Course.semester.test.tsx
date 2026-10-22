@@ -68,7 +68,6 @@ vi.mock("@/components/Gradebook/AssignmentList", () => ({
 }));
 vi.mock("@/components/Gradebook/GradescopeSyncModal", () => ({ GradescopeSyncModal: () => null }));
 vi.mock("@/components/Gradebook/GradePredictorPanel", () => ({ GradePredictorPanel: () => null }));
-vi.mock("@/components/Gradebook/AmbientOrbs", () => ({ AmbientOrbs: () => null }));
 
 import { GradebookCourseScreen } from "./Course";
 import {

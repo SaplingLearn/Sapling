@@ -77,7 +77,7 @@ export function ConnectedAccounts() {
         <header style={{ marginBottom: 32 }}>
           <h1
             style={{
-              fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
               fontWeight: 500,
               fontSize: "clamp(28px, 3.6vw, 40px)",
               lineHeight: 1.05,
@@ -90,7 +90,7 @@ export function ConnectedAccounts() {
           </h1>
           <p
             style={{
-              fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+              fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
               fontSize: 15,
               lineHeight: 1.6,
               color: "var(--text-dim)",
@@ -177,7 +177,7 @@ function ProviderCard({
           <h2
             style={{
               fontFamily:
-                "var(--font-display), 'Playfair Display', Georgia, serif",
+                "var(--font-display), 'Aleo', Georgia, serif",
               fontWeight: 500,
               fontSize: 22,
               letterSpacing: "-0.01em",
@@ -220,7 +220,7 @@ function ProviderCard({
         </div>
         <p
           style={{
-            fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
             fontSize: 13,
             lineHeight: 1.55,
             color: "var(--text-dim)",

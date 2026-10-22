@@ -13,10 +13,12 @@ QuizQuestion items, no further nesting.
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
+from pydantic_core import PydanticCustomError
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
@@ -26,6 +28,9 @@ from agents.tools.graph_read import (
 )
 from agents.tools.quiz_history import read_recent_quiz_attempts_tool
 from services.prompt_safety import INJECTION_GUARD_PROMPT
+from services.quiz_config import QUIZ_MAX_QUESTIONS
+
+logger = logging.getLogger(__name__)
 
 
 # Difficulty + question type are Literals so Gemini's enum constraint
@@ -34,6 +39,34 @@ from services.prompt_safety import INJECTION_GUARD_PROMPT
 # not a question type. Every emitted item has one concrete answer format.
 QuizDifficulty = Literal["easy", "medium", "hard"]
 QuizQuestionType = Literal["multiple_choice", "short_answer", "numeric", "symbolic"]
+
+# Output caps, enforced by OUR validation after the call, never by the schema
+# Gemini compiles. Constrained decoding multiplies array bounds: each
+# `maxItems` nested inside a bounded `questions` list is repeated per outer
+# item. With #726's `accepted_answers` (8) beside `options` (4) inside
+# `questions` (1..10), the `final_result` declaration plus the three read
+# tools (function-calling mode ANY unions them) crossed gemini-2.5-flash-lite's
+# "too many states for serving" limit, and every live quiz 400'd before
+# generating anything. Measured live 2026-10-19: all bounds -> 400, either
+# nesting alone -> served, none -> served. So the schema carries no length
+# bounds at all. `questions` and `accepted_answers` are clipped below
+# (keep the first N, in model order, logged) instead of failing the whole
+# Quiz, which would burn the output retries and 502. `options` is never
+# clipped: a fifth option is MCQ format drift, and the route's exactly-4
+# check drops that item rather than serving it truncated.
+# Pinned by tests/test_quiz_schema_states.py.
+MAX_QUESTIONS = QUIZ_MAX_QUESTIONS
+MAX_ACCEPTED_ANSWERS = 8
+
+
+def _clip(value, limit: int, field: str):
+    """Keep the first `limit` entries of a raw list input, in model order,
+    logging the clip so drift past a cap stays visible. Anything that is not
+    a list is left for normal validation to reject."""
+    if isinstance(value, list) and len(value) > limit:
+        logger.warning("quiz: clipped %s from %d to %d", field, len(value), limit)
+        return value[:limit]
+    return value
 
 
 class QuizQuestion(BaseModel):
@@ -55,10 +88,10 @@ class QuizQuestion(BaseModel):
     # lives in the ROUTE (routes/quiz.py::_agent_question_to_wire), never in a
     # model validator here: a validator failure rejects the whole Quiz, which
     # burns the agent's output retries and 502s the request over one bad item.
-    # The route drops just that item. Only the bounds Gemini's schema can
-    # express (maxItems) stay on the fields.
-    options: list[str] = Field(default_factory=list, max_length=4)
-    accepted_answers: list[str] = Field(default_factory=list, max_length=8)
+    # The route drops just that item, which is also why `options` carries no
+    # bound or clip here (see MAX_QUESTIONS above).
+    options: list[str] = Field(default_factory=list)
+    accepted_answers: list[str] = Field(default_factory=list)
     # The option text the agent considers correct. Must appear verbatim
     # in `options`; the route validates this and drops questions that
     # violate the contract rather than silently mis-marking them.
@@ -69,14 +102,39 @@ class QuizQuestion(BaseModel):
     # on a correct answer.
     concept: str
 
+    # The clips run BEFORE item validation, as decoding-time maxItems did: a
+    # malformed surplus entry past the cap is discarded, never a reason to
+    # reject the valid prefix and spend an output retry.
+    @field_validator("accepted_answers", mode="before")
+    @classmethod
+    def _clip_accepted_answers(cls, accepted):
+        return _clip(accepted, MAX_ACCEPTED_ANSWERS, "accepted_answers")
+
 
 class Quiz(BaseModel):
     """The agent's structured output."""
 
-    # Capped at 10 (down from 20): fewer array-repetition states in the
-    # constrained-decoding schema, needed to clear "too many states for
-    # serving" on gemini-2.5-flash-lite. See QuizQuestion note above.
-    questions: list[QuizQuestion] = Field(min_length=1, max_length=10)
+    # 1..MAX_QUESTIONS, enforced here rather than as minItems/maxItems in the
+    # schema (see MAX_QUESTIONS above).
+    questions: list[QuizQuestion]
+
+    @field_validator("questions", mode="before")
+    @classmethod
+    def _clip_questions(cls, questions):
+        return _clip(questions, MAX_QUESTIONS, "questions")
+
+    @field_validator("questions", mode="after")
+    @classmethod
+    def _require_questions(cls, questions: list[QuizQuestion]) -> list[QuizQuestion]:
+        # Empty stays the same `too_short` error the old min_length=1 raised,
+        # so the bounded output retry still fires with the same feedback.
+        if not questions:
+            raise PydanticCustomError(
+                "too_short",
+                "List should have at least 1 item after validation, not 0",
+                {"field_type": "List", "min_length": 1, "actual_length": 0},
+            )
+        return questions
 
 
 _SYSTEM_PROMPT = (
@@ -175,12 +233,16 @@ _SYSTEM_PROMPT += (
     "For multiple_choice, supply four options and exactly one correct_answer. "
     "For short_answer, ask for a precise term, fill-in-the-blank, or brief factual answer; "
     "provide a canonical correct_answer and accepted_answers with common equivalent "
-    "wordings/abbreviations. Do not ask open-ended essays requiring subjective grading. "
+    "wordings/abbreviations. The correct_answer is itself that term or brief fact: at "
+    "most 8 words and never a full sentence (put the reasoning in explanation). "
+    "Do not ask open-ended essays requiring subjective grading. "
     "For numeric, correct_answer must be a plain number or fraction; specify required "
     "units and rounding in the question, asking students to enter the number only. "
     "For symbolic, ask for an algebraic expression, with a correct_answer using only "
     "single-letter variables, rational numbers, + - * / ^ and parentheses, and integer "
     "powers from -8 to 8. Implicit multiplication such as 2(x+1) is supported. "
+    "Never put a word, a Greek-letter name (pi, lambda, theta) or a named constant in a "
+    "symbolic correct_answer; name any constant with a single letter defined in the question. "
     "Do not ask for equations, functions, roots or trigonometric notation. "
     "Numeric grading accepts equivalent fractions, decimals, percentages and scientific "
     "notation, with exact equality. For numeric questions, do not ask for symbolic expressions or approximate "

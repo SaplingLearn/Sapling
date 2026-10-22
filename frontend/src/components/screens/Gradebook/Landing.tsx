@@ -8,7 +8,6 @@ import {
   COURSE_CARD_GRID_GAP,
   COURSE_CARD_HEIGHT,
 } from "@/components/Gradebook/CourseCard";
-import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { useUser } from "@/context/UserContext";
 import { getGradebookSummary, getCourses, getSemesters } from "@/lib/api";
 import { courseTermLabels, currentTerm } from "@/lib/semesters";
@@ -247,7 +246,6 @@ export function GradebookLanding() {
           flex: "1 0 auto",
         }}
       >
-        <AmbientOrbs />
         <div style={{ position: "relative", zIndex: 1 }}>
         <div
           style={{

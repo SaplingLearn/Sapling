@@ -11,16 +11,16 @@
  * The header matches the landing bar: wordmark + Sign In + Get Started,
  * nothing else. The page links live in the footer, same as on `/`.
  *
- * Note these pages use the WARM paper palette (#f4f1ea / #1a1814 / #1B6C42),
+ * Note these pages use the WARM paper palette (#f4f1ea / #1a1814 / --brand-forest),
  * not the landing page's cool one. That is deliberate in the design and
  * matches the app's existing public pages — do not "unify" them.
  */
 
-import Image from 'next/image';
 import Link from 'next/link';
+import { SaplingWordmark } from '@/components/SaplingWordmark';
 import { PAGE_MAX, PAGE_PAD } from '@/lib/landing/companionType';
 
-const SANS = "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
+const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 
 /**
  * Page order as it appears in the footer. No Home entry: the wordmark in the
@@ -97,11 +97,8 @@ export function CompanionShell({
           }}
         />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, position: 'relative', pointerEvents: 'auto' }}>
-          <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: '0 0 auto' }}>
-            <Image src="/sapling-icon.svg" alt="" width={26} height={26} style={{ flexShrink: 0, position: 'relative', top: -2 }} />
-            <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 20, color: '#1B6C42', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
-              Sapling
-            </span>
+          <Link href="/" style={{ display: 'flex', alignItems: 'center', flex: '0 0 auto' }}>
+            <SaplingWordmark width={104} />
           </Link>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'nowrap', minWidth: 0 }}>
@@ -109,7 +106,7 @@ export function CompanionShell({
             <Link
               href="/#newsletter"
               className="cp-cta"
-              style={{ background: '#1B6C42', color: '#fff', borderRadius: 6, padding: '8px 16px', fontFamily: SANS, fontWeight: 600, fontSize: 13.5, whiteSpace: 'nowrap', transition: 'filter 200ms' }}
+              style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 6, padding: '8px 16px', fontFamily: SANS, fontWeight: 600, fontSize: 13.5, whiteSpace: 'nowrap', transition: 'filter 200ms' }}
             >
               Get Started
             </Link>
@@ -134,8 +131,8 @@ export function CompanionShell({
       <footer style={{ borderTop: '1px solid rgba(42,39,31,0.10)', background: '#faf8f3', padding: `48px ${PAGE_PAD}px`, boxSizing: 'border-box' }}>
         <div style={{ maxWidth: PAGE_MAX, margin: '0 auto', boxSizing: 'border-box', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Image src="/sapling-icon.svg" alt="Sapling" width={20} height={20} />
-            <span style={{ fontSize: 14, color: '#6f6857' }}>Sapling · © 2026</span>
+            <SaplingWordmark width={64} />
+            <span style={{ fontSize: 14, color: '#6f6857' }}>© 2026</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
             {COMPANION_NAV.map((n) => (

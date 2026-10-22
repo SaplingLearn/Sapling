@@ -24,7 +24,7 @@ import { POSTS, POST_FLOAT_DELAYS } from '@/lib/landing/content';
 import { DragField } from './DragField';
 import { FadeIn } from '@/components/landing/anim';
 
-const MONO: React.CSSProperties = { fontFamily: "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace" };
+const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
 
 export function Journal({
   email,
@@ -50,14 +50,11 @@ export function Journal({
             laptop, it read as a stray caption floating off to the right */}
         <FadeIn className="ld-journal-head" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 18, marginBottom: 56 }}>
           <div>
-            <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#0C5638', textTransform: 'uppercase', fontWeight: 500 }}>
-              The Sapling Journal
-            </span>
-            <h2 style={{ margin: '20px 0 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(2.2rem, 4.4vw, 3.6rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#12201A' }}>
-              The story of Sapling, <em style={{ color: '#0C5638' }}>as it grows.</em>
+            <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem, 4.4vw, 3.6rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
+              The story of Sapling, <em style={{ color: '#445D22' }}>as it grows.</em>
             </h2>
           </div>
-          <p style={{ margin: 0, maxWidth: '56ch', color: '#61726A', fontSize: 15, lineHeight: 1.7 }}>
+          <p style={{ margin: 0, maxWidth: '56ch', color: '#697062', fontSize: 15, lineHeight: 1.7 }}>
             Why we built it, where it&rsquo;s headed, and what we&rsquo;re learning about learning,
             written by the four of us, once a month.
           </p>
@@ -69,21 +66,21 @@ export function Journal({
               <a
                 href={`/news/${p.slug}`}
                 className="ld-post"
-                style={{ display: 'flex', flexDirection: 'column', width: '100%', background: '#FDFCF9', border: '1px solid rgba(18,32,26,0.09)', borderRadius: 16, padding: '14px 14px 20px', color: 'inherit' }}
+                style={{ display: 'flex', flexDirection: 'column', width: '100%', background: '#FDFCF9', border: '1px solid rgba(25,31,19,0.09)', borderRadius: 16, padding: '14px 14px 20px', color: 'inherit' }}
               >
                 <div style={{ position: 'relative', width: '100%', borderRadius: 11, overflow: 'hidden', background: '#EEF1EC', aspectRatio: '860 / 574' }}>
                   <ArticleArt art={p.art} sizes="(max-width: 900px) 100vw, 33vw" />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, padding: '0 6px' }}>
-                  <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.26em', color: '#0C5638', textTransform: 'uppercase' }}>{p.tag}</span>
-                  <span style={{ ...MONO, fontSize: 9.5, color: '#61726A' }}>{p.date}</span>
+                  <span style={{ ...MONO, fontSize: 9.5, letterSpacing: '0.26em', color: '#445D22', textTransform: 'uppercase' }}>{p.tag}</span>
+                  <span style={{ ...MONO, fontSize: 9.5, color: '#697062' }}>{p.date}</span>
                 </div>
-                <h3 style={{ margin: '12px 6px 0', fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.22, letterSpacing: '-0.01em' }}>
+                <h3 style={{ margin: '12px 6px 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 22, fontWeight: 600, lineHeight: 1.22, letterSpacing: '-0.01em' }}>
                   {p.title}
                 </h3>
-                <p style={{ margin: '12px 6px 18px', color: '#61726A', fontSize: 13.5, lineHeight: 1.7, flex: 1 }}>{p.excerpt}</p>
-                <div style={{ margin: '0 6px', paddingTop: 14, borderTop: '1px solid #EBF1EC' }}>
-                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.2em', color: '#0C5638' }}>READ · {p.time}</span>
+                <p style={{ margin: '12px 6px 18px', color: '#697062', fontSize: 13.5, lineHeight: 1.7, flex: 1 }}>{p.excerpt}</p>
+                <div style={{ margin: '0 6px', paddingTop: 14, borderTop: '1px solid #EDF0EA' }}>
+                  <span style={{ ...MONO, fontSize: 10, letterSpacing: '0.2em', color: '#445D22' }}>READ · {p.time}</span>
                 </div>
               </a>
             </div>
@@ -107,10 +104,10 @@ export function Journal({
           }}
         >
           <div>
-            <h3 style={{ margin: 0, fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 'clamp(1.5rem, 2.4vw, 2rem)', fontWeight: 600, letterSpacing: '-0.015em', color: '#12201A' }}>
+            <h3 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(1.5rem, 2.4vw, 2rem)', fontWeight: 600, letterSpacing: '-0.015em', color: '#191F13' }}>
               Get the Journal, and a seat in the beta.
             </h3>
-            <p style={{ margin: '10px 0 0', color: '#33443B', fontSize: 14, lineHeight: 1.7, maxWidth: '52ch' }}>
+            <p style={{ margin: '10px 0 0', color: '#3B4233', fontSize: 14, lineHeight: 1.7, maxWidth: '52ch' }}>
               One letter a month while we build. First in the inbox, first on the tree when beta
               invites go out. No spam. We&rsquo;re students too.
             </p>
@@ -118,8 +115,8 @@ export function Journal({
 
           {subscribed ? (
             <div style={{ textAlign: 'center', padding: '0 12px' }}>
-              <div style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 24, fontWeight: 600, color: '#12201A' }}>
-                You&rsquo;re on the <em style={{ color: '#0C5638' }}>tree.</em>
+              <div style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 24, fontWeight: 600, color: '#191F13' }}>
+                You&rsquo;re on the <em style={{ color: '#445D22' }}>tree.</em>
               </div>
               <p style={{ margin: '6px 0 0', fontSize: 14, color: '#4b5563', fontStyle: 'italic' }}>
                 See you in the inbox · The Team
@@ -136,13 +133,13 @@ export function Journal({
                   placeholder="you@school.edu"
                   aria-label="Email address"
                   className="ld-emailinput"
-                  style={{ width: 250, background: '#fdfcf9', border: '1px solid rgba(18,32,26,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, color: '#12201A', outline: 'none' }}
+                  style={{ width: 250, background: '#fdfcf9', border: '1px solid rgba(25,31,19,0.14)', borderRadius: 6, padding: '13px 16px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, color: '#191F13', outline: 'none' }}
                 />
                 <button
                   type="submit"
                   disabled={subscribing}
                   className="ld-btn-solid"
-                  style={{ background: '#0C5638', color: '#fff', border: 'none', borderRadius: 6, padding: '13px 22px', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontWeight: 600, fontSize: 14, cursor: subscribing ? 'not-allowed' : 'pointer', opacity: subscribing ? 0.6 : 1, whiteSpace: 'nowrap', transition: 'filter 200ms, opacity 200ms' }}
+                  style={{ background: '#445D22', color: '#fff', border: 'none', borderRadius: 6, padding: '13px 22px', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontWeight: 600, fontSize: 14, cursor: subscribing ? 'not-allowed' : 'pointer', opacity: subscribing ? 0.6 : 1, whiteSpace: 'nowrap', transition: 'filter 200ms, opacity 200ms' }}
                 >
                   {subscribing ? 'Signing you up…' : 'Join the list'}
                 </button>

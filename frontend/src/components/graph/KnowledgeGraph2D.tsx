@@ -58,6 +58,13 @@ type Props = {
   comparisonColor?: string;
   /** Label for the legend/tooltip — usually the partner's display name. */
   comparisonLabel?: string;
+  /**
+   * The zoom the graph opens (and resets) at, centred on the window. Default
+   * 1. A small fragment (quiz home's neighbourhood) settles to a cluster far
+   * smaller than its window; this lets it fill the frame without changing the
+   * simulation's spacing, which the full tree depends on.
+   */
+  initialZoom?: number;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -99,6 +106,7 @@ function KnowledgeGraph2DImpl({
   comparison = null,
   comparisonColor = "#8a7bc4",
   comparisonLabel,
+  initialZoom = 1,
 }: Props) {
   const comparisonByName = React.useMemo(() => {
     const map = new Map<string, GraphComparisonEntry>();
@@ -114,7 +122,21 @@ function KnowledgeGraph2DImpl({
 
   const [, forceRerender] = React.useReducer((x) => x + 1, 0);
   const [hovered, setHovered] = React.useState<GraphNode | null>(null);
-  const [view, setView] = React.useState({ tx: 0, ty: 0, scale: 1 });
+  const initialView = React.useCallback(
+    () => ({
+      tx: (width / 2) * (1 - initialZoom),
+      ty: (height / 2) * (1 - initialZoom),
+      scale: initialZoom,
+    }),
+    [width, height, initialZoom],
+  );
+  const [view, setView] = React.useState(initialView);
+  // A zoomed opening view is centred on the window, so a new window size
+  // re-centres it. At the default zoom the view is the identity at any size,
+  // and a resize keeps whatever the student panned or zoomed to.
+  React.useEffect(() => {
+    if (initialZoom !== 1) setView(initialView());
+  }, [initialZoom, initialView]);
   const dragRef = React.useRef<DragState>(null);
   const movedRef = React.useRef(false);
 
@@ -432,7 +454,7 @@ function KnowledgeGraph2DImpl({
     });
   };
 
-  const resetView = () => setView({ tx: 0, ty: 0, scale: 1 });
+  const resetView = () => setView(initialView());
 
   const hoveredMastery = hovered
     ? hovered.is_subject_root

@@ -8,14 +8,14 @@
 
 import type { Mouse } from './ambient';
 
-/** Weighted palette — the cloud is mostly cool, with coral for contrast. */
+/** Weighted palette — the cloud is mostly olive, with coral for contrast. */
 const PALETTE: { c: string; w: number }[] = [
-  { c: '#8A63D2', w: 0.24 },
-  { c: '#3e6f8a', w: 0.24 },
+  { c: '#445D22', w: 0.24 },
+  { c: '#7B9E51', w: 0.24 },
   { c: '#E27A63', w: 0.2 },
-  { c: '#14B8A6', w: 0.15 },
-  { c: '#9CA3AF', w: 0.1 },
-  { c: '#D1D5DB', w: 0.07 },
+  { c: '#B1D28B', w: 0.15 },
+  { c: '#A39E8F', w: 0.1 },
+  { c: '#D6D1C4', w: 0.07 },
 ];
 
 const CLUSTERS = [
@@ -125,7 +125,7 @@ export function startHeroCanvas(
         if (d2 < reach * reach) {
           const a = (1 - Math.sqrt(d2) / reach) * 0.15 * Math.min(1, p1.sc);
           if (a > 0.002) {
-            ctx.strokeStyle = 'rgba(156,163,175,' + a.toFixed(3) + ')';
+            ctx.strokeStyle = 'rgba(163,158,143,' + a.toFixed(3) + ')';
             ctx.beginPath();
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);

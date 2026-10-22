@@ -92,7 +92,7 @@ export function AssignmentList({
       >
         <h2
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: 22,
             lineHeight: 1.15,
@@ -458,7 +458,7 @@ function CategoryGroup({
                 >
                   <span
                     style={{
-                      fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+                      fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
                       fontWeight: 500,
                       fontSize: 15,
                       color: isDropped ? "var(--text-muted)" : "var(--text)",
@@ -572,7 +572,7 @@ function EmptyEntries({ onAdd }: { onAdd: () => void }) {
     <div style={{ padding: "48px 0", maxWidth: 560 }}>
       <h3
         style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
           fontWeight: 500,
           fontSize: 28,
           lineHeight: 1.1,
@@ -585,7 +585,7 @@ function EmptyEntries({ onAdd }: { onAdd: () => void }) {
       </h3>
       <p
         style={{
-          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
           fontSize: 16,
           lineHeight: 1.6,
           color: "var(--text-dim)",

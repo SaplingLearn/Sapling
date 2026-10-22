@@ -145,7 +145,7 @@ export const NEWS_FILTERS = [
 /** Wiki's own tier swatches. Warmer than the landing's XTIER — these sit on
  *  the paper palette, not the dark act ground, so they are deliberately
  *  distinct values rather than a shared token. */
-const TIER = { mastered: '#3a7d4e', learning: '#c89b5e', struggling: '#b25855', unexplored: '#9a9a9a' };
+const TIER = { mastered: '#5a7834', learning: '#c89b5e', struggling: '#b25855', unexplored: '#9a9a9a' };
 
 /** Grouped, because a flat rail of sixteen entries is a wall. The groups
  *  mirror how the product is organised: learn, capture, the semester, the

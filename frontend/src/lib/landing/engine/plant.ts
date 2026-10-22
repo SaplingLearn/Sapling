@@ -58,7 +58,7 @@ export function createPlantField(): PlantField {
       .slice(0, 2);
     nodes.push({
       tx: x, ty: y, x, y: animate ? -20 : y, vy: 0,
-      label, color: '#8FD9A8', r: 5, born: Date.now(),
+      label, color: '#B1D28B', r: 5, born: Date.now(),
       links: dists.map((d) => d.i), seed: Math.random() * 100,
     });
     if (label) labels.push(label);
@@ -110,7 +110,7 @@ export function createPlantField(): PlantField {
       (n.links || []).forEach((li) => {
         const o = nodes[li];
         if (!o) return;
-        ctx.strokeStyle = 'rgba(143,217,168,0.22)';
+        ctx.strokeStyle = 'rgba(177,210,139,0.22)';
         ctx.beginPath();
         ctx.moveTo(n.x, n.y + Math.sin(t + n.seed) * 3);
         ctx.lineTo(o.x, o.y + Math.sin(t + o.seed) * 3);
@@ -124,19 +124,19 @@ export function createPlantField(): PlantField {
       const glow = n.label && age < 3 ? (3 - age) / 3 : 0;
       ctx.beginPath();
       ctx.arc(n.x, n.y + wob, n.label ? 5 : 3, 0, Math.PI * 2);
-      ctx.fillStyle = n.label ? '#8FD9A8' : '#4FA574';
+      ctx.fillStyle = n.label ? '#B1D28B' : '#7B9E51';
       ctx.fill();
       if (glow > 0) {
         ctx.globalAlpha = glow * 0.5;
         ctx.beginPath();
         ctx.arc(n.x, n.y + wob, 5 + glow * 12, 0, Math.PI * 2);
-        ctx.strokeStyle = '#8FD9A8';
+        ctx.strokeStyle = '#B1D28B';
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
       if (n.label) {
         ctx.font = '10px ' + canvasFont('mono');
-        ctx.fillStyle = 'rgba(230,242,232,0.85)';
+        ctx.fillStyle = 'rgba(234,241,228,0.85)';
         ctx.fillText(n.label, n.x + 9, n.y + wob + 3);
       }
     });

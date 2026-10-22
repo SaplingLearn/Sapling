@@ -105,11 +105,18 @@ def test_blank_or_unbounded_accepted_answers_are_filtered_not_fatal():
     assert wire is not None and wire["accepted_answers"] == ["the base case"]
 
 
-def test_quiz_output_schema_keeps_the_constraints_gemini_can_honour():
+def test_quiz_output_list_caps_are_clipped_not_declared_in_the_schema():
+    # The nested maxItems bounds 400'd live on gemini-2.5-flash-lite ("too
+    # many states for serving"); the caps moved into validation. Full
+    # coverage: tests/test_quiz_schema_states.py.
     from agents.quiz import Quiz
     item = Quiz.model_json_schema()["$defs"]["QuizQuestion"]["properties"]
-    assert item["options"]["maxItems"] == 4
-    assert item["accepted_answers"]["maxItems"] == 8
+    assert "maxItems" not in item["options"]
+    assert "maxItems" not in item["accepted_answers"]
+    q = Quiz.model_validate({"questions": [
+        _item(accepted_answers=[f"a{i}" for i in range(12)]),
+    ]}).questions[0]
+    assert len(q.accepted_answers) == 8
 
 
 # ── #726 review: implicit products and scientific-notation ambiguity ──
@@ -217,3 +224,118 @@ def test_mixed_top_up_states_both_rules():
     bad = _item(type="multiple_choice", options=["a", "b", "c"], correct_answer="a")
     message = _topup_message("mixed", [_item(), {**bad, "question": "Q2?"}, {**bad, "question": "Q3?"}])
     assert "VERBATIM in options" in message and "options must be empty" in message
+
+
+# ── Live click-through (2026-10-19): items a student cannot answer fairly ──
+# Dropped per item at GENERATION only (_agent_question_to_wire), never in
+# _validate_wire_question, which also re-checks stored attempts on resume.
+
+
+def _wire(**overrides):
+    from agents.quiz import QuizQuestion
+    from routes.quiz import _agent_question_to_wire
+    return _agent_question_to_wire(QuizQuestion.model_validate(_item(**overrides)), 1)
+
+
+@pytest.mark.parametrize("answer", [
+    "lambda", "eigenvalue", "2theta", "alpha + beta",
+    # Short constant names are words too: "pi r^2" grades as p*i*r^2.
+    "pi r^2", "rho V", "2 tau",
+])
+def test_symbolic_key_spelled_as_a_word_is_dropped(answer):
+    """A letter run is an implicit product, so 'lambda' parsed as a*a*b*d*l*m:
+    served live as 'what is lambda?', it graded the real answer 'eigenvalue'
+    wrong and the anagram 'adlmba' right."""
+    assert _wire(type="symbolic", correct_answer=answer) is None
+
+
+@pytest.mark.parametrize("answer", [
+    "2xy", "mgh", "x^2 - 1", "2(x + 1)", "ab/c",
+    # m*u is mass times initial velocity, an ordinary mechanics product.
+    "mu", "mv - mu", "mu^2/2",
+])
+def test_symbolic_key_with_short_products_is_kept(answer):
+    assert _wire(type="symbolic", correct_answer=answer) is not None
+
+
+@pytest.mark.parametrize("answer", [
+    "The base case is a condition that stops the recursion, preventing infinite calls. "
+    "It's crucial because without it, the function would call itself indefinitely.",
+    "It converts glucose and oxygen into ATP through cellular respiration in the cell",
+    "Stops recursion. Prevents overflow.",
+    "It is ATP. It stores energy.",
+    "It ended in 1945. Then peace.",
+    "Glycolysis; then the Krebs cycle",
+])
+def test_short_answer_key_that_is_a_sentence_is_dropped(answer):
+    """Exact-match grading cannot accept a paragraph: served live, the student
+    wrote the right idea ('the condition that stops the recursion') and was
+    marked wrong against a two-sentence key."""
+    assert _wire(correct_answer=answer) is None
+
+
+@pytest.mark.parametrize("answer", [
+    "Cellular respiration", "Krebs cycle and electron transport chain", "ATP", "base case.",
+])
+def test_short_answer_key_that_is_a_term_is_kept(answer):
+    assert _wire(correct_answer=answer) is not None
+
+
+@pytest.mark.parametrize("answer", [
+    "John F. Kennedy", "U.S. Constitution", "St. Louis", "Mt. Everest", "Dr. Seuss",
+    "Prof. Xavier", "Sept. 11, 2001", "Capt. James Cook", "Dept. of Energy", "Pres. Lincoln",
+    "e.g. mitochondria",
+])
+def test_short_answer_key_with_an_abbreviation_is_not_a_sentence(answer):
+    """An initial or abbreviation is not a sentence break; dropping these
+    shortened the quiz for keys exact matching handles fine."""
+    assert _wire(correct_answer=answer) is not None
+
+
+def test_short_answer_sentence_key_with_a_term_alias_is_kept():
+    """The grader accepts the alias, so a student who writes the term gets it
+    right even though the canonical key is a sentence."""
+    item = _wire(
+        correct_answer="The condition that stops the recursion before the stack overflows",
+        accepted_answers=["base case"],
+    )
+    assert item is not None
+
+
+@pytest.mark.parametrize("question", [
+    "Which structure is shown?\n",
+    "What is the output of this code?\n```\nprint(1)\n```\n",
+    "What molecule is called the energy currency? ",
+    "The mitochondria is the ___ of the cell. ",
+    "Name the organelle (the cell's powerhouse) ",
+])
+def test_whole_stem_with_trailing_whitespace_is_kept_and_trimmed(question):
+    """Trailing whitespace after closing punctuation, a code fence or a blank
+    is padding on a whole stem, not a cut."""
+    item = _wire(question=question)
+    assert item is not None
+    assert item["question"] == question.rstrip()
+
+
+@pytest.mark.parametrize("item", [
+    _item(question="What molecule is often referred to as the "),
+    # The cut can land after punctuation too: the quote followed ": " or ", ".
+    _item(question="Fill in the blank: "),
+    _item(question="Consider the term, "),
+    _item(question="Read the code:\n"),
+    _item(type="multiple_choice", options=["a", "b", "c", "d"], correct_answer="a",
+          question="Which is called the "),
+])
+def test_stem_cut_off_mid_string_is_dropped(item):
+    """Gemini sometimes ends a function-call string at an inner double quote:
+    served live as 'What molecule is often referred to as the ' (the model was
+    writing the "energy currency"). The trailing whitespace is the tell."""
+    from agents.quiz import QuizQuestion
+    from routes.quiz import _agent_question_to_wire
+    assert _agent_question_to_wire(QuizQuestion.model_validate(item), 1) is None
+
+
+def test_resume_still_accepts_a_stored_item_the_generation_guards_would_drop():
+    from routes.quiz import _validate_wire_question
+    assert _validate_wire_question({"type": "short_answer", "options": [],
+                                    "correct_answer": "The base case stops it. Always."})

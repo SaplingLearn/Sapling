@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { HeroCard } from "@/components/marketing/HeroCard";
+import { SaplingWordmark } from "@/components/SaplingWordmark";
 import { postSignInRoute } from "@/lib/localSeed";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -142,7 +143,11 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       typeof crypto !== "undefined" &&
       typeof crypto.randomUUID === "function";
 
-    const sameTabUrl = `${API_URL}/api/auth/google`;
+    // A PR preview's origin isn't the backend's FRONTEND_URL: the staging
+    // backend sends the hand-off back here when it's an allowlisted preview
+    // origin and ignores it everywhere else.
+    const returnTo = encodeURIComponent(window.location.origin);
+    const sameTabUrl = `${API_URL}/api/auth/google?return_to=${returnTo}`;
 
     if (!supportsPopup) {
       setWaiting(true);
@@ -151,7 +156,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
     }
 
     const popupId = crypto.randomUUID();
-    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}`;
+    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}&return_to=${returnTo}`;
 
     cleanupPopupListeners();
     const channel = new BroadcastChannel(`sapling_signin:${popupId}`);
@@ -247,14 +252,11 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
         >×</button>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 24 }}>
-          <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 22, height: 22 }} />
-          <span style={{ fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif", fontWeight: 700, fontSize: 17, color: "var(--brand-forest)", letterSpacing: "-0.02em" }}>Sapling</span>
-        </div>
+        <SaplingWordmark width={88} style={{ marginBottom: 24 }} />
 
         <h2 style={{
           margin: 0,
-          fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
           fontSize: 34, lineHeight: 1.05, fontWeight: 600,
           letterSpacing: "-0.02em", color: "#1a1a1a",
         }}>
@@ -292,14 +294,14 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
             cursor: waiting ? "wait" : "pointer",
             opacity: waiting ? 0.7 : 1,
             display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-            fontFamily: "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif",
+            fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif",
             transition: "all 0.18s",
             boxShadow: "0 4px 14px rgba(15,23,42,0.06)",
           }}
           onMouseEnter={e => {
             if (waiting) return;
             e.currentTarget.style.borderColor = "var(--brand-forest)";
-            e.currentTarget.style.boxShadow = "0 6px 18px rgba(27,108,66,0.15)";
+            e.currentTarget.style.boxShadow = "0 6px 18px rgba(68,93,34,0.15)";
           }}
           onMouseLeave={e => {
             e.currentTarget.style.borderColor = "rgba(107,114,128,0.25)";
@@ -329,7 +331,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
               color: "#6b7280",
               fontSize: 12.5,
               cursor: "pointer",
-              fontFamily: "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif",
+              fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif",
             }}
           >
             Cancel
