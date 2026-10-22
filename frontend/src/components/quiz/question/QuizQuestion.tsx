@@ -30,6 +30,7 @@ import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import type { QuizConfig, QuizSession } from "@/lib/quiz/types";
 import { isWrittenType } from "@/lib/quiz/types";
+import { WrittenAnswer, type WrittenType } from "./WrittenAnswer";
 import { AskPanel, type AskSeed } from "./AskPanel";
 import { LeaveDialog } from "./LeaveDialog";
 import "./question.css";
@@ -158,11 +159,14 @@ export function QuizQuestion({
 
   // The keyboard map is attached to the screen root, so the root has to hold
   // focus for it to hear anything before the student clicks. Moving focus onto
-  // each new question is also the right announcement.
+  // each new question is also the right announcement. A written question
+  // focuses its answer input instead, so the student can start typing: the
+  // input is labelled by the stem, so the question is still what is read out.
   useEffect(() => {
     if (phase !== "active") return;
-    rootRef.current?.focus();
-  }, [phase, cursor]);
+    const input = written ? document.getElementById("quiz-written-answer") : null;
+    (input ?? rootRef.current)?.focus();
+  }, [phase, cursor, written]);
 
   // ...and when the verdict lands, focus moves to the line that carries it, so
   // a screen reader hears the result. Nothing else on the screen moves.
@@ -380,7 +384,7 @@ export function QuizQuestion({
       <div className="quiz-question__col">
         {header}
 
-        <h2 className="quiz-question__stem h-serif">{item?.question.question ?? ""}</h2>
+        <h2 className="quiz-question__stem h-serif" id="quiz-question-stem">{item?.question.question ?? ""}</h2>
         {item?.question.material_context && (
           <p className="label-micro" data-testid="quiz-material-context">
             {item.question.material_context === "course_material" ? "Course material provided for this question"
@@ -398,7 +402,7 @@ export function QuizQuestion({
 
         {written ? (
           <div className="quiz-question__written">
-            <label htmlFor="quiz-written-answer" className="label-micro">Your answer</label>
+            <label htmlFor="quiz-written-answer" className="label-micro" id="quiz-written-label">Your answer</label>
             {/* Visible, unlike the keyboard hint: these are the rules the
                 grader applies, so a sighted student needs them as much as a
                 screen-reader user does. */}
@@ -409,18 +413,16 @@ export function QuizQuestion({
                   ? "Enter only the number, without units. Equivalent fractions, decimals, percentages, and scientific notation are accepted. Follow the rounding requested in the question."
                   : "Write a brief answer. Capitalization and extra spacing do not affect your score."}
             </p>
-            <textarea
-              id="quiz-written-answer"
-              data-testid="quiz-written-answer"
-              className="quiz-question__written-input"
-              aria-describedby="quiz-format-hint"
-              rows={item?.question.type === "short_answer" ? 4 : 2}
-              maxLength={2000}
+            <WrittenAnswer
+              type={(item?.question.type ?? "short_answer") as WrittenType}
               value={item?.answerText ?? ""}
               disabled={!selectable}
-              onChange={event => actions.write?.(event.target.value)}
-              autoComplete="off"
-              spellCheck={item?.question.type === "short_answer"}
+              onChange={text => actions.write?.(text)}
+              onSubmit={() => {
+                if (primary.enabled) primary.activate();
+              }}
+              describedBy="quiz-format-hint"
+              labelledBy="quiz-written-label quiz-question-stem"
             />
           </div>
         ) : <div
