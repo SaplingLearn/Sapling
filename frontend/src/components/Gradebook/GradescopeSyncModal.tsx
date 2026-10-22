@@ -13,7 +13,7 @@ import {
   type GradescopeCourse,
   type GradescopeSyncResult,
 } from "@/lib/api";
-import { humanizeError, statusOf } from "@/lib/errorMessage";
+import { extractErrorDetail, humanizeError, statusOf } from "@/lib/errorMessage";
 import { useScrollLock } from "@/lib/useScrollLock";
 
 interface Props {
@@ -45,6 +45,37 @@ type Stage =
   | "ready"
   | "syncing"
   | "done";
+
+/**
+ * Copy for a failed BU SSO attempt. Classified on the status and the RAW
+ * server detail: humanizeError drops the status and swaps any long or
+ * diagnostic detail (the backend appends a page dump) for generic copy, which
+ * turned a Duo timeout into "That took too long" and a BU failure into
+ * "Your session expired" — Sapling's session was never the problem here.
+ */
+function buSsoErrorCopy(e: unknown): string {
+  const { detail = "", status } = extractErrorDetail(e);
+  // Match the backend's sentence, never the page dump appended after it.
+  const head = detail.split(/\bpage=/)[0];
+  if (status === 408 || /duo.*time.?out|wasn.?t approved/i.test(head)) {
+    return "Duo push wasn't approved in time. Tap Approve quickly when your phone buzzes.";
+  }
+  if (/login failed|incorrect|invalid/i.test(head)) {
+    return "BU login failed. Username or password is incorrect.";
+  }
+  if (/denied|declined|rejected/i.test(head)) {
+    return "Duo push was denied. Try again and tap Approve.";
+  }
+  if (/captcha/i.test(head)) {
+    return "BU asked for a CAPTCHA. The automated flow can't solve those. Use the cookie-paste option instead.";
+  }
+  if (status === 401) {
+    // Status-less so a diagnostic detail falls back to BU copy, not the
+    // generic 401 "sign in again" meant for Sapling's own session.
+    return humanizeError({ detail }, "BU sign-in failed. Try again, or connect with session cookies instead.");
+  }
+  return humanizeError(e, "SSO failed unexpectedly.");
+}
 
 export function GradescopeSyncModal(props: Props) {
   if (!props.open) return null;
@@ -219,23 +250,8 @@ function GradescopeSyncDialog({
       await refreshState();
     } catch (e: unknown) {
       if (!active.current) return;
-      const msg = humanizeError(e, "BU sign-in failed.");
       setBuPassword(""); // never leave a wrong password sitting in state
-      if (/408|duo.*timeout|wasn.?t approved/i.test(msg)) {
-        setError(
-          "Duo push wasn't approved in time. Tap Approve quickly when your phone buzzes.",
-        );
-      } else if (/login failed|incorrect|invalid/i.test(msg)) {
-        setError("BU login failed. Username or password is incorrect.");
-      } else if (/denied|declined|rejected/i.test(msg)) {
-        setError("Duo push was denied. Try again and tap Approve.");
-      } else if (/captcha/i.test(msg)) {
-        setError(
-          "BU asked for a CAPTCHA. The automated flow can't solve those. Use the cookie-paste option instead.",
-        );
-      } else {
-        setError(msg || "SSO failed unexpectedly.");
-      }
+      setError(buSsoErrorCopy(e));
       setStage("bu-sso-form");
     } finally {
       submitting.current = false;

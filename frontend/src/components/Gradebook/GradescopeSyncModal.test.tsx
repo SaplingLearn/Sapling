@@ -156,4 +156,37 @@ describe('Gradescope sync results', () => {
     expect(await screen.findByText('Waiting for Duo approval')).toBeInTheDocument();
     expect(connectGradescopeViaBuSso).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    [
+      'a Duo timeout whose detail carries the page dump',
+      408,
+      "Stuck on Shibboleth after Duo for 120s. page=https://shib.bu.edu/idp title='Duo' elements=[input[name='j_username' type='text']]",
+      "Duo push wasn't approved in time. Tap Approve quickly when your phone buzzes.",
+    ],
+    [
+      'an SSO failure whose detail is a page dump',
+      401,
+      "SSO ended at an unexpected URL: https://example.edu/x. page=https://example.edu/x title='Oops' elements=[a[text='Help' href='']]",
+      'BU sign-in failed. Try again, or connect with session cookies instead.',
+    ],
+    [
+      'a wrong BU password',
+      401,
+      'BU login failed — username or password is incorrect.',
+      'BU login failed. Username or password is incorrect.',
+    ],
+  ])('explains %s in BU SSO terms, not Sapling-session terms', async (_case, status, detail, copy) => {
+    vi.mocked(connectGradescopeViaBuSso).mockRejectedValue(
+      Object.assign(new Error(JSON.stringify({ detail })), { status }),
+    );
+    const user = userEvent.setup();
+    render(<GradescopeSyncModal open reconnect userId="u1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /BU SSO \+ Duo/ }));
+    await user.type(screen.getByLabelText('BU username'), 'student');
+    await user.type(screen.getByLabelText('BU password'), 'test-password');
+    await user.click(screen.getByRole('button', { name: 'Sign in & send Duo push' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy);
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Your session expired');
+  });
 });
