@@ -23,7 +23,7 @@
  *
  * The section carries `.landing-page` so main's scoped landing CSS (the mesh
  * blobs, the panel surfaces, the marketing tokens) applies inside it without
- * being re-declared for `.landing-v5`; the v5 root sets the same #f0f4f2
+ * being re-declared for `.landing-v5`; the v5 root sets the same #f2f4f0
  * ground, so the scope's own background is a no-op.
  */
 
@@ -364,7 +364,7 @@ export function Hero({
       {/* Bottom legibility band — the one v5 idea this hero borrows. On main the
           hero sat on a mesh that ran the whole page, so its blobs and point
           cloud could trail off however they liked; here the opaque descent
-          band below starts on a flat #F0F4F2, and a blurred blob cut dead at
+          band below starts on a flat #F2F4F0, and a blurred blob cut dead at
           that edge reads as a seam. Fade everything to that exact colour before
           the boundary instead. Above the canvas and the cards, below the copy. */}
       <div
@@ -372,7 +372,7 @@ export function Hero({
         className="absolute inset-x-0 bottom-0 z-10 pointer-events-none"
         style={{
           height: '26%',
-          background: 'linear-gradient(0deg, #F0F4F2 0%, rgba(240,244,242,0.9) 22%, rgba(240,244,242,0.55) 55%, rgba(240,244,242,0) 100%)',
+          background: 'linear-gradient(0deg, #F2F4F0 0%, rgba(242,244,240,0.9) 22%, rgba(242,244,240,0.55) 55%, rgba(242,244,240,0) 100%)',
         }}
       />
 

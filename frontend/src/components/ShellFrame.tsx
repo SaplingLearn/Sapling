@@ -47,6 +47,9 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             never scroll away, and track the rail's width as it collapses
             because they ride this column's left edge. See .shell-corner. */}
         <div style={{ flex: 1, minWidth: 0, display: "flex", position: "relative" }}>
+          {/* Before <main> so main's stacking context paints over them. */}
+          <span aria-hidden className="shell-corner shell-corner--top" />
+          <span aria-hidden className="shell-corner shell-corner--bottom" />
           <main
             id="main-content"
             tabIndex={-1}
@@ -67,8 +70,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           >
             <NavFeatureGate>{children}</NavFeatureGate>
           </main>
-          <span aria-hidden className="shell-corner shell-corner--top" />
-          <span aria-hidden className="shell-corner shell-corner--bottom" />
         </div>
         <FloatingActions />
         <Suspense fallback={null}>

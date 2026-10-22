@@ -27,7 +27,7 @@ import { canvasFont } from '../fonts';
 /** Focal length for the perspective divide. */
 const FL = 1050;
 /** The grey every node starts as, before its tier colour bleeds in. */
-const GREY = '#7d8a84';
+const GREY = '#83897e';
 
 export interface Cam {
   rotY: number;
@@ -197,7 +197,7 @@ export function drawScroll(
     const ex = a.x + (b.x - a.x) * ep;
     const ey = a.y + (b.y - a.y) * ep;
     const alpha = 0.16 * Math.min(1, a.sc) * (1 + 0.4 * smooth((p - 0.82) / 0.14));
-    ctx.strokeStyle = 'rgba(12,86,56,' + alpha.toFixed(3) + ')';
+    ctx.strokeStyle = 'rgba(68,93,34,' + alpha.toFixed(3) + ')';
     ctx.lineWidth = 0.7;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -251,7 +251,7 @@ export function drawScroll(
     proj.forEach((pr) => {
       if (!pr.n.hub) return;
       ctx.globalAlpha = la * 0.85;
-      ctx.fillStyle = '#33443B';
+      ctx.fillStyle = '#3B4233';
       ctx.fillText(pr.n.label.toUpperCase(), pr.x + 14, pr.y + 4);
     });
     ctx.globalAlpha = 1;
@@ -278,12 +278,12 @@ export function drawScroll(
     if (bx + bw > w - 12) bx = hv.x - bw - 16;
     if (by < 12) by = hv.y + 16;
     ctx.fillStyle = 'rgba(253,252,249,0.96)';
-    ctx.strokeStyle = 'rgba(12,86,56,0.35)';
+    ctx.strokeStyle = 'rgba(68,93,34,0.35)';
     ctx.beginPath();
     ctx.roundRect(bx, by, bw, bh, 9);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#12201A';
+    ctx.fillStyle = '#191F13';
     ctx.font = '600 12px ' + canvasFont('sans');
     ctx.fillText(label, bx + 12, by + 17);
     ctx.fillStyle = cp < 0.05 ? '#9a9a9a' : hv.n.final;
@@ -360,8 +360,8 @@ export function drawExplore(
     if (eReveal <= 0.01) return;
     ctx.globalAlpha = dim * eReveal;
     ctx.strokeStyle = hot
-      ? 'rgba(12,86,56,0.55)'
-      : 'rgba(12,86,56,' + (ed.cross ? 0.1 : 0.16) + ')';
+      ? 'rgba(68,93,34,0.55)'
+      : 'rgba(68,93,34,' + (ed.cross ? 0.1 : 0.16) + ')';
     ctx.lineWidth = hot ? 1.6 : 0.7;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -410,7 +410,7 @@ export function drawExplore(
       ctx.globalAlpha = dim * fog * la;
       ctx.beginPath();
       ctx.arc(pr.x, pr.y, ar, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(18,32,26,0.10)';
+      ctx.strokeStyle = 'rgba(25,31,19,0.10)';
       ctx.lineWidth = 2.2 * pr.sc;
       ctx.stroke();
       ctx.beginPath();
@@ -423,7 +423,7 @@ export function drawExplore(
         ctx.globalAlpha = 1;
         ctx.beginPath();
         ctx.arc(pr.x, pr.y, ar + 8 * pr.sc, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(18,32,26,0.45)';
+        ctx.strokeStyle = 'rgba(25,31,19,0.45)';
         ctx.lineWidth = 1.4;
         ctx.stroke();
       }
@@ -437,7 +437,7 @@ export function drawExplore(
           : n.hub
             ? '11px ' + canvasFont('mono')
             : '11px ' + canvasFont('sans');
-        ctx.fillStyle = n.root ? '#12201A' : n.hub ? '#33443B' : '#61726A';
+        ctx.fillStyle = n.root ? '#191F13' : n.hub ? '#3B4233' : '#697062';
         ctx.textAlign = 'center';
         ctx.fillText(n.hub ? n.label.toUpperCase() : n.label, pr.x, pr.y + ar + 15 * pr.sc + 4);
         ctx.textAlign = 'left';

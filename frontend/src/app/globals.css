@@ -34,6 +34,8 @@
      5.2:1 under white text — still AA for the white-on-accent sinks. */
   --brand-forest-bright: #597536;
   --brand-forest-bright-hover: #4B6627;
+  /* The SideNav rail's fill; read by the rail and the ShellFrame corners. */
+  --sidenav-bg: var(--brand-forest);
 
   /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
      the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
@@ -507,13 +509,14 @@ body { font-size: 14px; line-height: 1.5; }
    `ShellFrame` picks TopNav vs SideNav from `useIsMobile`, which reports
    desktop on the server and on the hydrating render — it has to, or server
    and client markup disagree. So a phone is served the sidebar shell and
-   would paint a 200px desktop rail until hydration swaps it out. The rail is
+   would paint a 200px desktop rail (and its .shell-corner pieces) until hydration swaps it out. The rail is
    desktop-only by definition, so hide it below the hook's own breakpoint,
    where CSS reaches the very first frame and JS can't. After hydration React
    has already unmounted it and this rule is moot. Keep the width in sync with
    MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
 @media (max-width: 767px) {
-  [data-app-sidenav] {
+  [data-app-sidenav],
+  .shell-corner {
     display: none;
   }
 }
@@ -526,36 +529,40 @@ body { font-size: 14px; line-height: 1.5; }
   display: none;
 }
 
-/* The rail is the one olive-filled surface in the shell. Rather than thread
-   light-on-dark colours through every row, it re-declares the semantic tokens
-   its children already read (text, border, the --bg-soft active fill, the
-   focus --accent), so SideNav keeps speaking in shell tokens and the swap
-   lives here. Text steps hold ≥4.5:1 on #445D22. */
 /* The content side of the rail: two olive quarter-squares whose transparent
    quarter-circle reads as the page's top-left / bottom-left corner rounding
    into the rail. Painted, not a border-radius on <main>, because <main> is
    transparent over the atmospheric canvas — giving it a fill to round would
-   bury the orbs. */
+   bury the orbs. z-index 1 and placed BEFORE <main> in ShellFrame: they clear
+   the z-0 canvas (else the orbs tint them and they stop matching the rail)
+   but stay under <main>'s stacking context, so full-screen overlays rendered
+   inside it (graph full view, modals) cover them. */
 .shell-corner {
   --shell-corner-r: var(--r-lg);
   position: absolute;
   left: 0;
   width: var(--shell-corner-r);
   height: var(--shell-corner-r);
-  z-index: 2;
+  z-index: 1;
   pointer-events: none;
 }
 .shell-corner--top {
   top: 0;
-  background: radial-gradient(circle at 100% 100%, transparent calc(var(--shell-corner-r) - 0.5px), var(--brand-forest) var(--shell-corner-r));
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--shell-corner-r) - 0.5px), var(--sidenav-bg) var(--shell-corner-r));
 }
 .shell-corner--bottom {
   bottom: 0;
-  background: radial-gradient(circle at 100% 0, transparent calc(var(--shell-corner-r) - 0.5px), var(--brand-forest) var(--shell-corner-r));
+  background: radial-gradient(circle at 100% 0, transparent calc(var(--shell-corner-r) - 0.5px), var(--sidenav-bg) var(--shell-corner-r));
 }
 
+/* The rail is the one olive-filled surface in the shell. Rather than thread
+   light-on-dark colours through every row, it re-declares the semantic tokens
+   its children already read (text, border, the --bg-soft active fill, the
+   focus --accent), so SideNav keeps speaking in shell tokens and the swap
+   lives here. Text steps hold ≥4.5:1 on #445D22. Its fill, --sidenav-bg, is
+   declared on :root so the .shell-corner pieces outside this subtree read the
+   same value. */
 [data-app-sidenav] {
-  --sidenav-bg: var(--brand-forest);
   --text:        #faf8f3;
   --text-dim:    rgba(250, 248, 243, 0.86);
   --text-muted:  rgba(250, 248, 243, 0.72);
@@ -1285,7 +1292,7 @@ body { font-size: 14px; line-height: 1.5; }
   align-items: center;
   justify-content: center;
   /* Keep background mostly transparent so graph dots stay visible */
-  background: radial-gradient(circle at 50% 50%, rgba(233,239,237,0.2) 0%, rgba(233,239,237,0) 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(236,238,234,0.2) 0%, rgba(236,238,234,0) 70%);
   transition: opacity 700ms cubic-bezier(0.22,1,0.36,1);
 }
 
@@ -1375,7 +1382,7 @@ body { font-size: 14px; line-height: 1.5; }
 .glass-input:focus {
   outline: none;
   border-color: var(--brand-forest);
-  box-shadow: 0 0 0 2px rgba(27, 108, 66, 0.2);
+  box-shadow: 0 0 0 2px rgba(68, 93, 34, 0.2);
 }
 
 /* Global pointer states for interactive controls */
@@ -1406,7 +1413,7 @@ input[type="reset"]:disabled {
   --rarity-common:       var(--text-dim);
   --rarity-common-bg:    rgba(107, 114, 128, 0.08);
   --rarity-uncommon:     var(--brand-forest);
-  --rarity-uncommon-bg:  rgba(27, 108, 66, 0.08);
+  --rarity-uncommon-bg:  rgba(68, 93, 34, 0.08);
   --rarity-rare:         #2b8c96;
   --rarity-rare-bg:      rgba(43, 140, 150, 0.08);
   --rarity-epic:         #8b5cf6;
@@ -1452,11 +1459,11 @@ input[type="reset"]:disabled {
      canonical warm values from :root. */
 
   /* Marketing-specific additive tokens (Layer 2). */
-  --bg-mesh:       #f0f4f2;
+  --bg-mesh:       #f2f4f0;
   --display-hero:  clamp(2.5rem, 5vw, 3rem);
   --display-hero-weight: 700;
-  --surface-hero:  linear-gradient(145deg, #d5e8d8 0%, #e8f0e3 45%, #f0ebe0 100%);
-  --surface-hero-shadow: 0 20px 60px rgba(19, 38, 16, 0.12), inset 0 0 0 1px rgba(255,255,255,0.5);
+  --surface-hero:  linear-gradient(145deg, #dce6d2 0%, #e9f0e2 45%, #f0ebe0 100%);
+  --surface-hero-shadow: 0 20px 60px rgba(25, 37, 11, 0.12), inset 0 0 0 1px rgba(255,255,255,0.5);
   --brand-glow:    color-mix(in oklch, var(--brand-forest) 70%, white);
 
   color: var(--text);
@@ -1487,7 +1494,7 @@ input[type="reset"]:disabled {
      then hold still. No perpetual loop — the calm is the point (#291). */
   animation: sapling-blob-settle 2.4s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(46, 125, 82, 0.22); }
+.landing-page .sapling-mesh-blob--1 { top: -10%; left: -10%; width: 50vw; height: 50vw; max-width: 900px; max-height: 900px; background: rgba(89, 119, 49, 0.22); }
 .landing-page .sapling-mesh-blob--2 { top: 20%; right: -10%; width: 40vw; height: 40vw; max-width: 720px; max-height: 720px; background: rgba(43, 140, 150, 0.2); animation-delay: 0.12s; }
 .landing-page .sapling-mesh-blob--3 { bottom: -20%; left: 20%; width: 60vw; height: 60vw; max-width: 1000px; max-height: 1000px; background: rgba(232, 163, 58, 0.18); opacity: 0.6; animation-delay: 0.24s; }
 @keyframes sapling-blob-settle {
@@ -1537,7 +1544,7 @@ input[type="reset"]:disabled {
 .landing-page .landing-intro-overlay {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
-  background: radial-gradient(circle at 50% 50%, rgba(233,239,237,0.2) 0%, rgba(233,239,237,0) 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(236,238,234,0.2) 0%, rgba(236,238,234,0) 70%);
   transition: opacity 700ms cubic-bezier(0.22,1,0.36,1);
 }
 @keyframes landing-intro-orbit {
@@ -2507,27 +2514,27 @@ input[type="reset"]:disabled {
    ══════════════════════════════════════════════════════════════════ */
 
 .landing-dc {
-  /* Core palette, literal source values.
-     These are NOT the app's brand tokens and must not be consolidated into
-     them: #0C5638 / #0E9E5A are their own scale, distinct from
-     --brand-forest (#445D22) / --brand-forest-bright (#597536). */
-  --ld-deep:       #0C5638;
-  --ld-bright:     #0E9E5A;
-  --ld-mid:        #4FA574;
-  --ld-pale:       #8FD9A8;
+  /* Core palette. Consolidated onto the brand olive: --ld-deep IS
+     --brand-forest, and every other green/green-grey step is the original
+     emerald value re-hued to the olive (OKLCH h≈129) at its own lightness and
+     chroma, so the landing's bright/mid/pale/stage contrasts are unchanged. */
+  --ld-deep:       var(--brand-forest);
+  --ld-bright:     #68951F;
+  --ld-mid:        #7B9E51;
+  --ld-pale:       #B1D28B;
   --ld-coral:      #E27A63;
-  --ld-ink:        #12201A;
-  --ld-muted:      #61726A;
-  --ld-page:       #f0f4f2;
-  --ld-stage:      #081F14;
-  --ld-stage-deep: #061710;
+  --ld-ink:        #191F13;
+  --ld-muted:      #697062;
+  --ld-page:       #f2f4f0;
+  --ld-stage:      #151D0A;
+  --ld-stage-deep: #0f1508;
 
   /* Mastery tiers — mirrored by XTIER in lib/landing/course.ts.
      --ld-tier-unexplored is byte-identical to --state-neutral today but is
      kept literal for the same reason --fallback-muted is: distinct concept,
      so a future neutral-state change can't silently move a landing tier. */
-  --ld-tier-mastered:   #0E9E5A;
-  --ld-tier-learning:   #4FA574;
+  --ld-tier-mastered:   #68951F;
+  --ld-tier-learning:   #7B9E51;
   --ld-tier-struggling: #E27A63;
   --ld-tier-unexplored: #9a9a9a;
 
@@ -2654,7 +2661,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes saplingBlob { 0% { transform:translate(0,0) scale(1); } 33% { transform:translate(30px,-50px) scale(1.1); } 66% { transform:translate(-20px,20px) scale(0.9); } 100% { transform:translate(0,0) scale(1); } }
 @keyframes introOrbit { to { transform:rotate(360deg); } }
 @keyframes floatIndicator { 0%,100% { transform:translateY(0) translateX(-50%); } 50% { transform:translateY(6px) translateX(-50%); } }
-@keyframes betaGlow { 0%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0), 0 4px 20px rgba(14,158,90,0.15); } 50% { box-shadow:0 0 0 5px rgba(14,158,90,0.45), 0 4px 28px rgba(14,158,90,0.3); } }
+@keyframes betaGlow { 0%,100% { box-shadow:0 0 0 0 rgba(104,149,31,0), 0 4px 20px rgba(104,149,31,0.15); } 50% { box-shadow:0 0 0 5px rgba(104,149,31,0.45), 0 4px 28px rgba(104,149,31,0.3); } }
 @keyframes nodeFloatA { 0%,100% { transform:translate(0,0); } 33% { transform:translate(16px,-24px); } 66% { transform:translate(-12px,14px); } }
 @keyframes nodeFloatB { 0%,100% { transform:translate(0,0); } 40% { transform:translate(-18px,18px); } 75% { transform:translate(10px,-12px); } }
 
@@ -2669,7 +2676,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes coverRise { 0% { transform:translateY(46px) rotate(-1deg); opacity:0; } 16% { transform:translateY(0) rotate(-1deg); opacity:1; } 84% { transform:translateY(0) rotate(-1deg); opacity:1; } 100% { transform:translateY(46px) rotate(-1deg); opacity:0; } }
 @keyframes ringDraw { 0% { stroke-dashoffset:100; } 30%,85% { stroke-dashoffset:8.8; } 100% { stroke-dashoffset:100; } }
 @keyframes gaugeFloat { 0%,100% { transform:translateY(0); } 30% { transform:translateY(-52px); } 65% { transform:translateY(20px); } }
-@keyframes answerTick { 0%,55% { box-shadow:0 0 0 0 rgba(14,158,90,0); } 62% { box-shadow:0 0 0 7px rgba(14,158,90,0.22); } 72%,100% { box-shadow:0 0 0 0 rgba(14,158,90,0); } }
+@keyframes answerTick { 0%,55% { box-shadow:0 0 0 0 rgba(104,149,31,0); } 62% { box-shadow:0 0 0 7px rgba(104,149,31,0.22); } 72%,100% { box-shadow:0 0 0 0 rgba(104,149,31,0); } }
 @keyframes waveBar { 0%,100% { transform:scaleY(0.25); } 50% { transform:scaleY(1); } }
 @keyframes gaugeMini { 0%,100% { transform:translate(-50%,0); } 30% { transform:translate(-50%,-32px); } 65% { transform:translate(-50%,12px); } }
 @keyframes coverMini { 0% { transform:translateY(30px); opacity:0; } 16% { transform:translateY(0); opacity:1; } 84% { transform:translateY(0); opacity:1; } 100% { transform:translateY(30px); opacity:0; } }
@@ -2745,7 +2752,7 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 
 /* v5 hover states (the source's `style-hover` attribute has no inline
    React equivalent). */
-.landing-v5 .ld-ghost:hover     { border-color:#0C5638; color:#0C5638; }
+.landing-v5 .ld-ghost:hover     { border-color:#445D22; color:#445D22; }
 
 /* Gallery + feature lab hover states.
    `.ld-galcard` carries a base `transform: scale(var(--gal-scale))` for the
@@ -2754,9 +2761,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
    full size the instant a cursor lands on it. */
 .landing-v5 .ld-galcard        { transform: scale(var(--gal-scale, 1)); }
 .landing-v5 .ld-galcard:hover  { transform: scale(var(--gal-scale, 1)) translateY(-5px); }
-.landing-v5 .ld-labclose:hover { background: #12201A; color: #FDFCF9; }
-.landing-v5 .ld-post:hover      { border-color: rgba(18,32,26,0.16); }
-.landing-v5 .ld-emailinput:focus { border-color: #0C5638; box-shadow: 0 0 0 3px rgba(12,86,56,0.12); }
+.landing-v5 .ld-labclose:hover { background: #191F13; color: #FDFCF9; }
+.landing-v5 .ld-post:hover      { border-color: rgba(25,31,19,0.16); }
+.landing-v5 .ld-emailinput:focus { border-color: #445D22; box-shadow: 0 0 0 3px rgba(68,93,34,0.12); }
 
 /* ── Landing v5 · tablet + phone ──────────────────────────────────
    Every landing section declares its desktop layout inline, so these
@@ -2817,9 +2824,9 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
      the ingest tiles on the floor. `svh` is the toolbar-visible height, so
      the stage always fits what can be seen; the vh line is the fallback. */
   .landing-v5 .ld-stage          { height: 100vh !important; height: 100svh !important; }
-  /* the graph stage's ground ends on solid #DCE7DF; the section behind it
+  /* the graph stage's ground ends on solid #E0E6DB; the section behind it
      matches so the strip below a short stage reads as the same ground */
-  .landing-v5 #act-graph         { background: #DCE7DF; }
+  .landing-v5 #act-graph         { background: #E0E6DB; }
 
   /* act II — the kicker, heading and pitch scroll in ahead of the act
      (.ld-ingest-intro, outside the section) and the pinned stage is all
@@ -2974,15 +2981,15 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 @keyframes labSpin { to { transform:rotate(360deg); } }
 @keyframes labDot  { 0%,60%,100% { opacity:0.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
 
-/* The rest state is now #0C5638, so hover lifts to the bright green the
+/* The rest state is now #445D22, so hover lifts to the bright green the
    room's Send button already uses rather than repeating the base colour. */
-.landing-v5 .ld-labprimary:hover { background: #0E9E5A; }
+.landing-v5 .ld-labprimary:hover { background: #68951F; }
 .landing-v5 .ld-labrate:hover    { transform: translateY(-2px); }
-.landing-v5 .ld-labaction:hover  { background: #E6F2E8; }
-.landing-v5 .ld-labrecent:hover  { border-color: #0E9E5A; }
-.landing-v5 .ld-labsend:hover    { background: #0E9E5A; }
-.landing-v5 .ld-labupload:hover  { background: #DCE7DE; }
-.landing-v5 .ld-labreply:hover   { border-color: #0E9E5A; background: #E6F2E8; }
+.landing-v5 .ld-labaction:hover  { background: #EAF1E4; }
+.landing-v5 .ld-labrecent:hover  { border-color: #68951F; }
+.landing-v5 .ld-labsend:hover    { background: #68951F; }
+.landing-v5 .ld-labupload:hover  { background: #E0E6DA; }
+.landing-v5 .ld-labreply:hover   { border-color: #68951F; background: #EAF1E4; }
 .cp-newscard:hover { border-color: rgba(42,39,31,0.22); transform: translateY(-3px); }
 
 /* Gallery shot — the whole panel is the button that expands it (#601 follow-up).

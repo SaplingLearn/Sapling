@@ -11,7 +11,7 @@
  * The header matches the landing bar: wordmark + Sign In + Get Started,
  * nothing else. The page links live in the footer, same as on `/`.
  *
- * Note these pages use the WARM paper palette (#f4f1ea / #1a1814 / #1B6C42),
+ * Note these pages use the WARM paper palette (#f4f1ea / #1a1814 / --brand-forest),
  * not the landing page's cool one. That is deliberate in the design and
  * matches the app's existing public pages — do not "unify" them.
  */
@@ -106,7 +106,7 @@ export function CompanionShell({
             <Link
               href="/#newsletter"
               className="cp-cta"
-              style={{ background: '#1B6C42', color: '#fff', borderRadius: 6, padding: '8px 16px', fontFamily: SANS, fontWeight: 600, fontSize: 13.5, whiteSpace: 'nowrap', transition: 'filter 200ms' }}
+              style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 6, padding: '8px 16px', fontFamily: SANS, fontWeight: 600, fontSize: 13.5, whiteSpace: 'nowrap', transition: 'filter 200ms' }}
             >
               Get Started
             </Link>

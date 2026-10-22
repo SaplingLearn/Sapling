@@ -25,17 +25,17 @@ const CAP_LABEL = "The graph";
 const CAPTIONS = [
   {
     eyebrow: null,
-    head: <>A hundred names you don&rsquo;t know <em style={{ color: '#0C5638' }}>yet.</em></>,
+    head: <>A hundred names you don&rsquo;t know <em style={{ color: '#445D22' }}>yet.</em></>,
     body: "Every concept in your course becomes a node. Right now, they're strangers.",
   },
   {
     eyebrow: CAP_LABEL,
-    head: <>You study. They <em style={{ color: '#0C5638' }}>connect.</em></>,
+    head: <>You study. They <em style={{ color: '#445D22' }}>connect.</em></>,
     body: 'Every quiz, note, and card you touch draws an edge. Structure appears.',
   },
   {
     eyebrow: CAP_LABEL,
-    head: <>Mastery is the <em style={{ color: '#0C5638' }}>color.</em></>,
+    head: <>Mastery is the <em style={{ color: '#445D22' }}>color.</em></>,
     body: null,
   },
 ];
@@ -45,7 +45,7 @@ const CAP_SCRIM: React.CSSProperties = {
   position: 'absolute', left: -58, right: -72, top: -46, bottom: -46,
   pointerEvents: 'none',
   background:
-    'radial-gradient(ellipse 62% 58% at 38% 50%, rgba(240,244,242,0.82) 0%, rgba(240,244,242,0.66) 45%, rgba(240,244,242,0.28) 72%, rgba(240,244,242,0) 100%)',
+    'radial-gradient(ellipse 62% 58% at 38% 50%, rgba(242,244,240,0.82) 0%, rgba(242,244,240,0.66) 45%, rgba(242,244,240,0.28) 72%, rgba(242,244,240,0) 100%)',
   filter: 'blur(18px)',
 };
 
@@ -58,33 +58,33 @@ const CAP_BOX: React.CSSProperties = {
 const EYEBROW: React.CSSProperties = {
   position: 'relative', display: 'inline-block',
   fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10.5,
-  letterSpacing: '0.34em', color: '#0C5638', textTransform: 'uppercase',
-  textShadow: '0 1px 10px rgba(240,244,242,0.9)',
+  letterSpacing: '0.34em', color: '#445D22', textTransform: 'uppercase',
+  textShadow: '0 1px 10px rgba(242,244,240,0.9)',
 };
 
 const CAP_H2: React.CSSProperties = {
   position: 'relative', margin: '18px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
   fontSize: 'clamp(2.4rem,4.6vw,4rem)', fontWeight: 600, lineHeight: 1.06,
-  letterSpacing: '-0.02em', color: '#12201A',
-  textShadow: '0 2px 26px rgba(240,244,242,0.85)',
+  letterSpacing: '-0.02em', color: '#191F13',
+  textShadow: '0 2px 26px rgba(242,244,240,0.85)',
 };
 
 const CAP_P: React.CSSProperties = {
-  position: 'relative', margin: '16px 0 0', color: '#33443B',
-  fontSize: 15.5, lineHeight: 1.7, textShadow: '0 1px 14px rgba(240,244,242,0.9)',
+  position: 'relative', margin: '16px 0 0', color: '#3B4233',
+  fontSize: 15.5, lineHeight: 1.7, textShadow: '0 1px 14px rgba(242,244,240,0.9)',
 };
 
 const MONO_TINY: React.CSSProperties = {
   fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5,
-  letterSpacing: '0.22em', color: '#61726A',
+  letterSpacing: '0.22em', color: '#697062',
 };
 
 /** Four blurred blobs that read as out-of-focus foliage at the frame edges. */
 const FOLIAGE = [
-  { style: { left: '-16%', top: '-12%', width: '46vw', height: '40vw', borderRadius: '48% 62% 55% 45%', background: 'radial-gradient(ellipse at 30% 30%, rgba(176,206,189,0.6), rgba(176,206,189,0) 68%)', filter: 'blur(34px)' } },
-  { style: { right: '-18%', top: '-8%', width: '44vw', height: '38vw', borderRadius: '55% 45% 60% 50%', background: 'radial-gradient(ellipse at 70% 30%, rgba(186,214,197,0.55), rgba(186,214,197,0) 68%)', filter: 'blur(38px)' } },
-  { style: { left: '-14%', bottom: '-14%', width: '44vw', height: '40vw', borderRadius: '60% 50% 45% 62%', background: 'radial-gradient(ellipse at 35% 60%, rgba(176,206,189,0.6), rgba(176,206,189,0) 68%)', filter: 'blur(36px)' } },
-  { style: { right: '-15%', bottom: '-12%', width: '46vw', height: '42vw', borderRadius: '50% 60% 52% 48%', background: 'radial-gradient(ellipse at 65% 62%, rgba(186,214,197,0.55), rgba(186,214,197,0) 68%)', filter: 'blur(40px)' } },
+  { style: { left: '-16%', top: '-12%', width: '46vw', height: '40vw', borderRadius: '48% 62% 55% 45%', background: 'radial-gradient(ellipse at 30% 30%, rgba(190,203,176,0.6), rgba(190,203,176,0) 68%)', filter: 'blur(34px)' } },
+  { style: { right: '-18%', top: '-8%', width: '44vw', height: '38vw', borderRadius: '55% 45% 60% 50%', background: 'radial-gradient(ellipse at 70% 30%, rgba(198,211,185,0.55), rgba(198,211,185,0) 68%)', filter: 'blur(38px)' } },
+  { style: { left: '-14%', bottom: '-14%', width: '44vw', height: '40vw', borderRadius: '60% 50% 45% 62%', background: 'radial-gradient(ellipse at 35% 60%, rgba(190,203,176,0.6), rgba(190,203,176,0) 68%)', filter: 'blur(36px)' } },
+  { style: { right: '-15%', bottom: '-12%', width: '46vw', height: '42vw', borderRadius: '50% 60% 52% 48%', background: 'radial-gradient(ellipse at 65% 62%, rgba(198,211,185,0.55), rgba(198,211,185,0) 68%)', filter: 'blur(40px)' } },
 ];
 
 export function ActGraph({
@@ -132,7 +132,7 @@ export function ActGraph({
           // the first two gradients feather the top and bottom edges so the act
           // dissolves into the light sections rather than butting against them
           background:
-            'linear-gradient(180deg, #DCE7DF 0%, rgba(220,231,223,0.7) 6%, rgba(220,231,223,0) 16%), linear-gradient(0deg, #DCE7DF 0%, rgba(220,231,223,0.7) 5%, rgba(220,231,223,0) 14%), radial-gradient(ellipse 90% 80% at 50% 42%, #EAF1EC 0%, #E2ECE5 62%, #DCE7DF 100%)',
+            'linear-gradient(180deg, #E0E6DB 0%, rgba(224,230,219,0.7) 6%, rgba(224,230,219,0) 16%), linear-gradient(0deg, #E0E6DB 0%, rgba(224,230,219,0.7) 5%, rgba(224,230,219,0) 14%), radial-gradient(ellipse 90% 80% at 50% 42%, #EDF0E9 0%, #E6EBE1 62%, #E0E6DB 100%)',
         }}
       >
         <div
@@ -183,14 +183,14 @@ export function ActGraph({
                         style={{
                           width: 9, height: 9, borderRadius: 99, background: XTIER[t],
                           // only the mastered dot glows
-                          boxShadow: t === 'mastered' ? '0 0 10px rgba(14,158,90,0.6)' : undefined,
+                          boxShadow: t === 'mastered' ? '0 0 10px rgba(104,149,31,0.6)' : undefined,
                         }}
                       />
                       <span
                         style={{
                           fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11,
                           letterSpacing: '0.14em',
-                          color: t === 'mastered' ? '#12201A' : '#33443B',
+                          color: t === 'mastered' ? '#191F13' : '#3B4233',
                         }}
                       >
                         {XTIER_LABEL[t].toUpperCase()}
@@ -209,7 +209,7 @@ export function ActGraph({
               style={{
                 position: 'absolute', left: '50%', top: -52, bottom: -52,
                 width: 'min(1080px,92vw)', transform: 'translateX(-50%)', pointerEvents: 'none',
-                background: 'radial-gradient(ellipse 54% 62% at 50% 50%, rgba(240,244,242,0.82) 0%, rgba(240,244,242,0.66) 45%, rgba(240,244,242,0.28) 72%, rgba(240,244,242,0) 100%)',
+                background: 'radial-gradient(ellipse 54% 62% at 50% 50%, rgba(242,244,240,0.82) 0%, rgba(242,244,240,0.66) 45%, rgba(242,244,240,0.28) 72%, rgba(242,244,240,0) 100%)',
                 filter: 'blur(18px)',
               }}
             />
@@ -217,16 +217,16 @@ export function ActGraph({
               style={{
                 position: 'relative', margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
                 fontSize: 'clamp(3rem,7vw,6.4rem)', fontWeight: 600, lineHeight: 1.02,
-                letterSpacing: '-0.025em', color: '#12201A', textShadow: '0 3px 34px rgba(240,244,242,0.85)',
+                letterSpacing: '-0.025em', color: '#191F13', textShadow: '0 3px 34px rgba(242,244,240,0.85)',
               }}
             >
-              See what you <em style={{ color: '#0C5638' }}>know.</em>
+              See what you <em style={{ color: '#445D22' }}>know.</em>
             </h2>
-            <p style={{ position: 'relative', margin: '14px 0 0', color: '#33443B', fontSize: 16, textShadow: '0 1px 14px rgba(240,244,242,0.9)' }}>
+            <p style={{ position: 'relative', margin: '14px 0 0', color: '#3B4233', fontSize: 16, textShadow: '0 1px 14px rgba(242,244,240,0.9)' }}>
               Your whole semester, one living map, updated as you learn.
             </p>
-            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18, fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: '0.22em', color: '#0C5638' }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0C5638" strokeWidth="2" strokeLinecap="round">
+            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 18, fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10.5, letterSpacing: '0.22em', color: '#445D22' }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#445D22" strokeWidth="2" strokeLinecap="round">
                 <path d="M5 9l-3 3 3 3" /><path d="M9 5l3-3 3 3" /><path d="M15 19l-3 3-3-3" />
                 <path d="M19 9l3 3-3 3" /><path d="M2 12h20" /><path d="M12 2v20" />
               </svg>
@@ -237,7 +237,7 @@ export function ActGraph({
           {/* stage rail — the engine lights the tick matching the live caption */}
           <div aria-hidden="true" style={{ position: 'absolute', right: 'max(4vw,24px)', top: '50%', transform: 'translateY(-50%)', zIndex: 4, display: 'flex', flexDirection: 'column', gap: 14 }}>
             {[0, 1, 2, 3].map((i) => (
-              <span key={i} data-tick={i} style={{ width: 5, height: 26, borderRadius: 99, background: 'rgba(18,32,26,0.14)', transition: 'background 300ms' }} />
+              <span key={i} data-tick={i} style={{ width: 5, height: 26, borderRadius: 99, background: 'rgba(25,31,19,0.14)', transition: 'background 300ms' }} />
             ))}
           </div>
         </div>
@@ -246,35 +246,35 @@ export function ActGraph({
         {exploring && (
           <div className={node ? 'ld-hud ld-hud--node' : 'ld-hud'} style={{ position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none', animation: 'panelFade 420ms ease 520ms both' }}>
             <div className="ld-hud-course" style={{ position: 'absolute', left: 'max(3vw,20px)', top: 24, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11, letterSpacing: '0.28em', color: '#0C5638' }}>{COURSE.code}</span>
-              <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 21, fontWeight: 600, color: '#12201A' }}>{COURSE.name}</span>
+              <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11, letterSpacing: '0.28em', color: '#445D22' }}>{COURSE.code}</span>
+              <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 21, fontWeight: 600, color: '#191F13' }}>{COURSE.name}</span>
             </div>
 
-            <div className="ld-hud-legend" style={{ position: 'absolute', left: 'max(3vw,20px)', bottom: 26, display: 'flex', flexDirection: 'column', gap: 9, padding: '14px 16px', borderRadius: 14, background: 'rgba(253,252,249,0.8)', border: '1px solid rgba(18,32,26,0.10)', backdropFilter: 'blur(10px)', pointerEvents: 'auto' }}>
+            <div className="ld-hud-legend" style={{ position: 'absolute', left: 'max(3vw,20px)', bottom: 26, display: 'flex', flexDirection: 'column', gap: 9, padding: '14px 16px', borderRadius: 14, background: 'rgba(253,252,249,0.8)', border: '1px solid rgba(25,31,19,0.10)', backdropFilter: 'blur(10px)', pointerEvents: 'auto' }}>
               <span style={{ ...MONO_TINY, letterSpacing: '0.24em' }}>
                 {COURSE.term} · {Math.max(0, nodes.length - 1)} CONCEPTS MAPPED
               </span>
               {XTIER_ORDER.map((t) => (
-                <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 11.5, color: '#33443B' }}>
+                <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 11.5, color: '#3B4233' }}>
                   <span style={{ width: 9, height: 9, borderRadius: 99, flex: '0 0 auto', background: XTIER[t] }} />
                   {XTIER_LABEL[t]}
-                  <b style={{ marginLeft: 'auto', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10, fontWeight: 400, color: '#61726A' }}>{counts[t]}</b>
+                  <b style={{ marginLeft: 'auto', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10, fontWeight: 400, color: '#697062' }}>{counts[t]}</b>
                 </span>
               ))}
             </div>
 
-            <span className="ld-hud-hint" style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 9, letterSpacing: '0.22em', color: '#61726A', whiteSpace: 'nowrap' }}>
+            <span className="ld-hud-hint" style={{ position: 'absolute', left: '50%', bottom: 26, transform: 'translateX(-50%)', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 9, letterSpacing: '0.22em', color: '#697062', whiteSpace: 'nowrap' }}>
               DRAG TO ORBIT · SCROLL TO ZOOM · CLICK A CONCEPT
             </span>
 
             {node && (
-              <div className="ld-hud-inspector" style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(253,252,249,0.92)', border: '1px solid rgba(18,32,26,0.12)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
+              <div className="ld-hud-inspector" style={{ position: 'absolute', right: 'max(3vw,20px)', top: 78, bottom: 70, width: 'min(340px,32vw)', overflow: 'auto', padding: '22px 22px 20px', borderRadius: 18, background: 'rgba(253,252,249,0.92)', border: '1px solid rgba(25,31,19,0.12)', backdropFilter: 'blur(14px)', pointerEvents: 'auto', animation: 'panelFade 300ms ease both' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                   <span style={{ width: 10, height: 10, borderRadius: 99, flex: '0 0 auto', background: XTIER[node.tier] }} />
                   <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.24em', color: XTIER[node.tier] }}>
                     {XTIER_LABEL[node.tier].toUpperCase()}
                   </span>
-                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8, letterSpacing: '0.16em', color: '#61726A' }}>
+                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8, letterSpacing: '0.16em', color: '#697062' }}>
                     {node.root
                       ? 'COURSE'
                       : node.hub
@@ -285,21 +285,21 @@ export function ActGraph({
                     onClick={() => onSelectNode(null)}
                     aria-label="Close concept"
                     type="button"
-                    style={{ marginLeft: 'auto', width: 24, height: 24, borderRadius: 99, border: '1px solid rgba(18,32,26,0.12)', background: 'transparent', color: '#33443B', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}
+                    style={{ marginLeft: 'auto', width: 24, height: 24, borderRadius: 99, border: '1px solid rgba(25,31,19,0.12)', background: 'transparent', color: '#3B4233', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}
                   >
                     ×
                   </button>
                 </div>
-                <h4 style={{ margin: '12px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#12201A' }}>{node.label}</h4>
-                <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.65, color: '#33443B' }}>{node.blurb}</p>
+                <h4 style={{ margin: '12px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 26, fontWeight: 600, lineHeight: 1.15, color: '#191F13' }}>{node.label}</h4>
+                <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.65, color: '#3B4233' }}>{node.blurb}</p>
 
                 <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ flex: 1, height: 6, borderRadius: 99, background: 'rgba(18,32,26,0.10)', overflow: 'hidden' }}>
+                  <span style={{ flex: 1, height: 6, borderRadius: 99, background: 'rgba(25,31,19,0.10)', overflow: 'hidden' }}>
                     <span style={{ display: 'block', height: '100%', borderRadius: 99, transition: 'width 420ms cubic-bezier(0.22,1,0.36,1)', width: `${Math.round(node.mastery * 100)}%`, background: XTIER[node.tier] }} />
                   </span>
-                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11, color: '#12201A' }}>{Math.round(node.mastery * 100)}%</span>
+                  <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 11, color: '#191F13' }}>{Math.round(node.mastery * 100)}%</span>
                 </div>
-                <span style={{ display: 'block', marginTop: 5, ...MONO_TINY, letterSpacing: '0.16em', color: '#61726A' }}>
+                <span style={{ display: 'block', marginTop: 5, ...MONO_TINY, letterSpacing: '0.16em', color: '#697062' }}>
                   MASTERY SCORE · UPDATED AFTER EVERY SESSION
                 </span>
 
@@ -313,7 +313,7 @@ export function ActGraph({
                       onClick={() => onSelectNode(j)}
                       type="button"
                       className="ld-expchip"
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(18,32,26,0.04)', color: '#12201A', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 11.5, cursor: 'pointer', transition: 'all 200ms' }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 99, border: '1px solid rgba(25,31,19,0.14)', background: 'rgba(25,31,19,0.04)', color: '#191F13', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 11.5, cursor: 'pointer', transition: 'all 200ms' }}
                     >
                       <span style={{ width: 7, height: 7, borderRadius: 99, background: XTIER[nodes[j].tier] }} />
                       {nodes[j].label}
@@ -324,22 +324,22 @@ export function ActGraph({
                 <span style={{ display: 'block', marginTop: 18, ...MONO_TINY }}>WHAT SAPLING DOES WITH THIS NODE</span>
                 <div style={{ marginTop: 9, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {nodeUses(node, neighbours.length).map((u, i) => (
-                    <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 11, borderLeft: '2px solid rgba(12,86,56,0.3)' }}>
-                      <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#0C5638' }}>{u.tag}</span>
-                      <span style={{ fontSize: 12, lineHeight: 1.6, color: '#33443B' }}>{u.text}</span>
+                    <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 11, borderLeft: '2px solid rgba(68,93,34,0.3)' }}>
+                      <span style={{ fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#445D22' }}>{u.tag}</span>
+                      <span style={{ fontSize: 12, lineHeight: 1.6, color: '#3B4233' }}>{u.text}</span>
                     </div>
                   ))}
                 </div>
 
                 <div style={{ marginTop: 18, display: 'flex', gap: 8 }}>
-                  <button onClick={onQuiz} type="button" className="ld-expquiz" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: 'none', background: '#0C5638', color: '#fff', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'background 200ms' }}>
+                  <button onClick={onQuiz} type="button" className="ld-expquiz" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: 'none', background: '#445D22', color: '#fff', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, fontWeight: 600, cursor: 'pointer', transition: 'background 200ms' }}>
                     Quiz me on this
                   </button>
-                  <button onClick={onLearn} type="button" className="ld-explearn" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: '1px solid rgba(18,32,26,0.2)', background: 'transparent', color: '#12201A', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, cursor: 'pointer', transition: 'background 200ms' }}>
+                  <button onClick={onLearn} type="button" className="ld-explearn" style={{ flex: 1, padding: '10px 12px', borderRadius: 9, border: '1px solid rgba(25,31,19,0.2)', background: 'transparent', color: '#191F13', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12.5, cursor: 'pointer', transition: 'background 200ms' }}>
                     Ask the tutor
                   </button>
                 </div>
-                <span style={{ display: 'block', marginTop: 9, ...MONO_TINY, letterSpacing: '0.1em', color: '#61726A' }}>
+                <span style={{ display: 'block', marginTop: 9, ...MONO_TINY, letterSpacing: '0.1em', color: '#697062' }}>
                   /learn?topic={encodeURIComponent(node.label)}&amp;mode=socratic
                 </span>
               </div>
@@ -349,7 +349,7 @@ export function ActGraph({
               onClick={onExitExplore}
               type="button"
               className="ld-exitexplore ld-hud-exit"
-              style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(18,32,26,0.14)', background: 'rgba(253,252,249,0.85)', color: '#33443B', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: '0.2em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
+              style={{ position: 'absolute', right: 'max(3vw,20px)', top: 26, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 99, border: '1px solid rgba(25,31,19,0.14)', background: 'rgba(253,252,249,0.85)', color: '#3B4233', fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 9.5, letterSpacing: '0.2em', cursor: 'pointer', pointerEvents: 'auto', transition: 'all 220ms' }}
             >
               ✕ EXIT EXPLORE
             </button>
@@ -371,7 +371,7 @@ export function RiseBand() {
       style={{
         position: 'relative', height: '34vh',
         background:
-          'linear-gradient(180deg, #DCE7DF 0%, rgba(220,231,223,0.75) 20%, rgba(220,231,223,0.3) 55%, rgba(220,231,223,0) 100%)',
+          'linear-gradient(180deg, #E0E6DB 0%, rgba(224,230,219,0.75) 20%, rgba(224,230,219,0.3) 55%, rgba(224,230,219,0) 100%)',
       }}
     />
   );

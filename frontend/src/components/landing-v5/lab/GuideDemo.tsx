@@ -24,8 +24,8 @@ const RECENT = [
 ];
 
 const SELECT: React.CSSProperties = {
-  padding: '9px 12px', borderRadius: 9, border: '1px solid #DCE7DE', background: '#FDFCF9',
-  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, color: '#33443B', cursor: 'pointer',
+  padding: '9px 12px', borderRadius: 9, border: '1px solid #E0E6DA', background: '#FDFCF9',
+  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, color: '#3B4233', cursor: 'pointer',
 };
 
 export function GuideDemo() {
@@ -85,7 +85,7 @@ export function GuideDemo() {
             onClick={generate}
             type="button"
             className="ld-labprimary"
-            style={{ marginLeft: 'auto', padding: '10px 18px', borderRadius: 9, border: 'none', background: '#12201A', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            style={{ marginLeft: 'auto', padding: '10px 18px', borderRadius: 9, border: 'none', background: '#191F13', color: '#FDFCF9', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
           >
             {phase === 'guide' ? 'Regenerate' : 'Generate guide'}
           </button>
@@ -93,39 +93,39 @@ export function GuideDemo() {
 
         {phase === 'loading' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <span style={{ width: 26, height: 26, borderRadius: 99, border: '3px solid #E3EBE5', borderTopColor: '#0E9E5A', animation: 'labSpin 700ms linear infinite' }} />
-            <span style={{ fontSize: 12.5, color: '#8B9891' }}>Reading your library — 11 documents…</span>
+            <span style={{ width: 26, height: 26, borderRadius: 99, border: '3px solid #E6EAE2', borderTopColor: '#68951F', animation: 'labSpin 700ms linear infinite' }} />
+            <span style={{ fontSize: 12.5, color: '#91978B' }}>Reading your library — 11 documents…</span>
           </div>
         )}
 
         {phase === 'guide' && (
           <div style={{ flex: 1, overflow: 'auto', borderRadius: 12, border: '1px solid #E8E5DA', background: '#FDFCF9', padding: '18px 20px', animation: 'labIn 320ms ease both' }}>
-            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#8B9891' }}>{course.toUpperCase()} · STUDY GUIDE</span>
+            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.2em', color: '#91978B' }}>{course.toUpperCase()} · STUDY GUIDE</span>
             <h4 style={{ margin: '8px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 20, fontWeight: 600 }}>{exam}</h4>
-            <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#61726A' }}>{set.overview}</p>
+            <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: 1.7, color: '#697062' }}>{set.overview}</p>
             <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
               {set.topics.map((t) => (
                 <div key={t.name}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 99, background: LAB_TIER[t.tier as keyof typeof LAB_TIER] }} />
-                    <span style={{ fontSize: 14, fontWeight: 600, color: '#12201A' }}>{t.name}</span>
-                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9.5, color: '#8B9891' }}>{t.weight}</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#191F13' }}>{t.name}</span>
+                    <span style={{ marginLeft: 'auto', ...MONO, fontSize: 9.5, color: '#91978B' }}>{t.weight}</span>
                   </div>
-                  <p style={{ margin: '4px 0 0 16px', fontSize: 12, fontStyle: 'italic', color: '#8B9891' }}>{t.importance}</p>
+                  <p style={{ margin: '4px 0 0 16px', fontSize: 12, fontStyle: 'italic', color: '#91978B' }}>{t.importance}</p>
                   <ul style={{ margin: '6px 0 0 16px', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {t.bullets.map((b) => (
-                      <li key={b} style={{ fontSize: 12.5, lineHeight: 1.6, color: '#33443B' }}>{b}</li>
+                      <li key={b} style={{ fontSize: 12.5, lineHeight: 1.6, color: '#3B4233' }}>{b}</li>
                     ))}
                   </ul>
                 </div>
               ))}
             </div>
-            <span style={{ display: 'block', marginTop: 16, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#9AA5A0' }}>{stamp}</span>
+            <span style={{ display: 'block', marginTop: 16, ...MONO, fontSize: 9, letterSpacing: '0.14em', color: '#9FA49A' }}>{stamp}</span>
           </div>
         )}
 
         {phase === 'empty' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#9AA5A0' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#9FA49A' }}>
             <span style={{ fontSize: 14 }}>No guide yet</span>
             <span style={{ fontSize: 12 }}>Pick a course and exam, then Generate Guide.</span>
           </div>
@@ -133,17 +133,17 @@ export function GuideDemo() {
       </div>
 
       <div style={{ padding: '20px 16px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 9 }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#8B9891' }}>RECENT GUIDES</span>
+        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#91978B' }}>RECENT GUIDES</span>
         {RECENT.map((r) => (
           <button
             key={r.i}
             onClick={() => openRecent(r)}
             type="button"
             className="ld-labrecent"
-            style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 10, border: '1px solid #DCE7DE', background: '#FDFCF9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, transition: 'all 180ms' }}
+            style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 10, border: '1px solid #E0E6DA', background: '#FDFCF9', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2, transition: 'all 180ms' }}
           >
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: '#12201A' }}>{r.exam}</span>
-            <span style={{ ...MONO, fontSize: 9, color: '#8B9891' }}>{r.meta}</span>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: '#191F13' }}>{r.exam}</span>
+            <span style={{ ...MONO, fontSize: 9, color: '#91978B' }}>{r.meta}</span>
           </button>
         ))}
       </div>

@@ -13,7 +13,7 @@
 
 import { cv } from './dom';
 
-const PALETTE = ['#0E9E5A', '#4FA574', '#8FD9A8', '#0C5638', '#9CA3AF'];
+const PALETTE = ['#68951F', '#7B9E51', '#B1D28B', '#445D22', '#9CA3AF'];
 
 /** Squared link distance — 110px, pre-squared to keep it out of the loop. */
 const LINK_D2 = 12100;
@@ -79,7 +79,7 @@ export function createAmbient(): AmbientField {
         const dy = pts[i].y - pts[j].y;
         if (dx * dx + dy * dy < LINK_D2) {
           const d = Math.sqrt(dx * dx + dy * dy);
-          ctx.strokeStyle = 'rgba(79,165,116,' + (fade * 0.1 * (1 - d / LINK_D)).toFixed(3) + ')';
+          ctx.strokeStyle = 'rgba(123,158,81,' + (fade * 0.1 * (1 - d / LINK_D)).toFixed(3) + ')';
           ctx.beginPath();
           ctx.moveTo(pts[i].x, pts[i].y);
           ctx.lineTo(pts[j].x, pts[j].y);
