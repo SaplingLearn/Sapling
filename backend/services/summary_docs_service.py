@@ -390,15 +390,21 @@ def get_summary_doc(summary_doc_id: str, user_id: str) -> dict | None:
         filters={"summary_doc_id": f"eq.{summary_doc_id}", "status": "eq.pending"},
         order="created_at.asc",
     ) or []
-    doc["pending_suggestions"] = [
-        {
+
+    def _with_decrypted_fields(s: dict) -> dict:
+        proposed_text = decrypt_if_present(s.get("proposed_text")) or ""
+        return {
             **s,
             "instruction": decrypt_if_present(s.get("instruction")) or "",
             "original_text": decrypt_if_present(s.get("original_text")),
-            "proposed_text": decrypt_if_present(s.get("proposed_text")) or "",
+            "proposed_text": proposed_text,
+            # Same "computed on every read, never persisted" rule as
+            # create_suggestion -- the Keep flow works identically whether
+            # the suggestion was just created or fetched on a later load.
+            "proposed_content": body_to_prosemirror_nodes(proposed_text),
         }
-        for s in suggestion_rows
-    ]
+
+    doc["pending_suggestions"] = [_with_decrypted_fields(s) for s in suggestion_rows]
     return doc
 
 
@@ -809,6 +815,12 @@ def create_suggestion(
     row["instruction"] = instruction
     row["original_text"] = original_text
     row["proposed_text"] = proposed_text
+    # Computed fresh from the already-decrypted proposed_text above, never
+    # passed to the insert() call -- summary_doc_suggestions.proposed_text
+    # stays the sole encrypted-at-rest source of this content (no new
+    # plaintext-at-rest column). The frontend's Keep flow inserts this
+    # structured fragment instead of the raw string (SummaryEditor.tsx).
+    row["proposed_content"] = body_to_prosemirror_nodes(proposed_text)
     return row
 
 

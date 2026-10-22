@@ -337,6 +337,40 @@ class TestGetSummaryDoc:
         assert len(result["pending_suggestions"]) == 1
         assert result["pending_suggestions"][0]["instruction"] == "shorter"
 
+    def test_pending_suggestions_include_computed_proposed_content(self):
+        from services.encryption import encrypt_if_present, encrypt_json
+
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        def _select(name):
+            m = MagicMock()
+            if name == "summary_docs":
+                m.select.return_value = [doc_row]
+            elif name == "summary_doc_sources":
+                m.select.return_value = []
+            elif name == "documents":
+                m.select.return_value = []
+            elif name == "summary_doc_suggestions":
+                m.select.return_value = [{
+                    "id": "sg1", "anchor_from": None, "anchor_to": None,
+                    "instruction": encrypt_if_present("add this"),
+                    "original_text": None,
+                    "proposed_text": encrypt_if_present("A new point."),
+                    "status": "pending", "created_at": "t0", "resolved_at": None,
+                }]
+            return m
+
+        with patch("services.summary_docs_service.table", side_effect=_select):
+            doc = get_summary_doc("sd1", "u1")
+
+        assert doc["pending_suggestions"][0]["proposed_content"] == [
+            {"type": "paragraph", "content": [{"type": "text", "text": "A new point."}]},
+        ]
+
     def test_sources_report_has_original_per_document(self):
         from services.encryption import encrypt_json
 
@@ -1020,6 +1054,65 @@ class TestCreateSuggestion:
         image_parts = [p for p in parts if isinstance(p, BinaryContent)]
         assert len(image_parts) == 1
         assert image_parts[0].data == b"\x89PNG fake bytes"
+
+    def test_response_includes_proposed_content(self, monkeypatch):
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+        from services.encryption import encrypt_json
+
+        def _handler(messages, info):
+            return ModelResponse(parts=[
+                ToolCallPart(tool_name="final_result", args={"proposed_text": "- Point one\n- Point two"}),
+            ])
+
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        register_function_handler("summary_edit", _handler)
+        doc_row = {
+            "id": "sd1", "owner_user_id": "u1", "primary_document_id": "doc1",
+            "content": encrypt_json({"type": "doc", "content": []}),
+            "created_at": "t0", "updated_at": "t0",
+        }
+
+        # fake_tables keys by table name, so the SAME mock is returned on
+        # every table(name) call -- unlike a fresh-MagicMock-per-call
+        # side_effect, this lets the post-call assertion below inspect the
+        # actual insert() payload create_suggestion built, not an unrelated
+        # mock instance that was never invoked.
+        fake_tables = {
+            "summary_docs": MagicMock(select=MagicMock(return_value=[doc_row])),
+            "summary_doc_sources": MagicMock(select=MagicMock(return_value=[])),
+            "documents": MagicMock(select=MagicMock(return_value=[])),
+            "summary_doc_suggestions": MagicMock(
+                select=MagicMock(return_value=[]),
+                insert=MagicMock(return_value=[{
+                    "id": "sg1", "summary_doc_id": "sd1", "anchor_from": None, "anchor_to": None,
+                    "instruction": "ciphertext", "original_text": None,
+                    "proposed_text": "ciphertext", "status": "pending",
+                    "created_at": "t0", "resolved_at": None,
+                }]),
+            ),
+        }
+
+        with patch(
+            "services.summary_docs_service.table",
+            side_effect=lambda name: fake_tables[name],
+        ), summary_edit_agent.override(model=model_for("summary_edit")):
+            result = create_suggestion(
+                "sd1", "u1", anchor_from=None, anchor_to=None,
+                instruction="list the key points", original_text=None,
+            )
+
+        assert result["proposed_content"] == [{
+            "type": "bulletList",
+            "content": [
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Point one"}]}]},
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Point two"}]}]},
+            ],
+        }]
+        # Never persisted -- the insert() call to summary_doc_suggestions
+        # must not carry a proposed_content key.
+        fake_tables["summary_doc_suggestions"].insert.assert_called_once()
+        insert_payload = fake_tables["summary_doc_suggestions"].insert.call_args[0][0]
+        assert "proposed_content" not in insert_payload
 
 
 class TestBuildAskPrompt:
