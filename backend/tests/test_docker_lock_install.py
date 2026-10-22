@@ -698,3 +698,43 @@ def test_verify_ignores_missing_packages_and_non_matching_markers():
         marker_applies=lambda marker: marker != "sys_platform == 'win32'",
     )
     assert problems == [] and checked == 1
+
+
+class _FakeDist:
+    def __init__(self, name, version="1.0"):
+        self.metadata = {"Name": name}
+        self.version = version
+        self.requires = None
+
+
+def _fake_metadata(dists):
+    from importlib import metadata
+
+    return type(
+        "FakeMetadata",
+        (),
+        {
+            "distributions": staticmethod(lambda: list(dists)),
+            "version": staticmethod(metadata.version),
+            "PackageNotFoundError": metadata.PackageNotFoundError,
+        },
+    )
+
+
+def test_verify_survives_a_dist_info_with_no_name(monkeypatch, capsys):
+    """A malformed .dist-info (no Name) must not crash the build check with a
+    TypeError; the real CUDA distribution beside it is still reported."""
+    dists = [_FakeDist(None), _FakeDist("nvidia-cublas-cu12")]
+    monkeypatch.setattr(lock_constraints, "metadata", _fake_metadata(dists))
+    assert lock_constraints._verify([]) == 1
+    assert "nvidia-cublas-cu12" in capsys.readouterr().err
+
+
+def test_installed_dists_dedupe_on_the_canonical_name(monkeypatch):
+    # The same project under two spellings is one distribution; the first on
+    # sys.path wins, as for imports.
+    dists = [_FakeDist("typing_extensions", "4.12.2"), _FakeDist("typing-extensions", "4.9.0")]
+    monkeypatch.setattr(lock_constraints, "metadata", _fake_metadata(dists))
+    assert lock_constraints._installed_dists() == [
+        InstalledDist("typing_extensions", "4.12.2", ())
+    ]

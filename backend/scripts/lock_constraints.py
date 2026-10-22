@@ -285,11 +285,16 @@ def nms_keeps() -> list[int]:
 
 
 def _installed_dists() -> list[InstalledDist]:
+    from packaging.utils import canonicalize_name
+
     seen: dict[str, InstalledDist] = {}
     for d in metadata.distributions():
         name = d.metadata["Name"]
-        if name and name.lower() not in seen:  # first on sys.path wins, as for imports
-            seen[name.lower()] = InstalledDist(name, d.version, tuple(d.requires or ()))
+        if not name:  # a malformed .dist-info
+            continue
+        key = canonicalize_name(name)
+        if key not in seen:  # first on sys.path wins, as for imports
+            seen[key] = InstalledDist(name, d.version, tuple(d.requires or ()))
     return list(seen.values())
 
 
@@ -352,7 +357,7 @@ def _verify(pins: list[LockedPin]) -> int:
         version_of=_installed_version,
         marker_applies=lambda marker: Marker(marker).evaluate(),
     )
-    cuda = cuda_distributions(d.metadata["Name"] for d in metadata.distributions())
+    cuda = cuda_distributions(d.name for d in _installed_dists())
     if cuda:
         problems.append(
             "CUDA distributions installed (torch must be the CPU build): " + ", ".join(cuda)
