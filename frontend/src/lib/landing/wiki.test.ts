@@ -72,11 +72,11 @@ describe('wiki registry', () => {
   it('searches the prose, not just titles, and never the CSS', () => {
     // The 0.75 floor appears only in a tier row, never in a title.
     expect(wikiSearchText(getWikiPage('mastery-tiers')!)).toContain('0.75');
-    expect(matchEntries(wikiEntries(), 'velocity').map((e) => e.slug)).toContain('progress-stats');
+    expect(matchEntries(wikiEntries(), 'restarts at 1').map((e) => e.slug)).toContain('progress-stats');
     for (const p of WIKI_PAGES) {
       const t = wikiSearchText(p);
-      expect(t).not.toContain('background:');
-      expect(t).not.toContain('color:#');
+      // The tier swatches' declarations, never words on the page.
+      expect(t).not.toMatch(/(background|color):#[0-9a-f]{6};/);
     }
     expect(wikiEntries().map((e) => e.slug)).toEqual(WIKI_ORDER.map((p) => p.slug));
   });

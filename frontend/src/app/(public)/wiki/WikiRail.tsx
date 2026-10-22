@@ -14,12 +14,17 @@ import { matchEntries } from './WikiSearch';
  * on and the rail is plain links — every other topic one click away without
  * going back to the index.
  *
+ * Five groups of up to eleven links do not fit a laptop window, and a
+ * scrollbar inside a sticky box is one most people never find. So the
+ * groups fold: the one you are reading is open, the others show their name
+ * and how many pages they hold, and a click opens them. Filtering opens
+ * every group, because a match hidden in a closed group is no match.
+ *
  * The rail's two tiers keep the sizing the scrollspy version settled on: the
  * group label in the page's heading voice (display face, ink) and the links
  * in the quieter face and grey, both sized in `vh` between a floor and their
- * full size so the whole list fits a laptop window instead of scrolling
- * inside a sticky box most people never think to scroll. `lineHeight` is
- * pinned because the leading is most of a row's height at these sizes.
+ * full size. `lineHeight` is pinned because the leading is most of a row's
+ * height at these sizes.
  *
  * Below 900px the rail does not stack above the article: two dozen links on
  * top of every page would push the page you asked for off the first screen.
@@ -47,6 +52,20 @@ function Contents({ entries, groups, current, idPrefix }: {
   idPrefix: string;
 }) {
   const [query, setQuery] = React.useState('');
+  const here = entries.find((e) => e.slug === current)?.group;
+  const [open, setOpen] = React.useState<ReadonlySet<WikiGroup>>(() => new Set(here ? [here] : []));
+  // Client navigation to another page can keep this component mounted, so
+  // the group of the page you land on is opened here rather than only at
+  // first render.
+  React.useEffect(() => {
+    if (here) setOpen((prev) => (prev.has(here) ? prev : new Set([...prev, here])));
+  }, [here]);
+  const filtering = query.trim() !== '';
+  const toggle = (g: WikiGroup) => setOpen((prev) => {
+    const next = new Set(prev);
+    if (next.has(g)) next.delete(g); else next.add(g);
+    return next;
+  });
   const hits = matchEntries(entries, query.trim().toLowerCase());
   const shown = groups
     .map((group) => ({ group, items: hits.filter((e) => e.group === group) }))
@@ -77,12 +96,27 @@ function Contents({ entries, groups, current, idPrefix }: {
 
       {shown.map(({ group, items }) => {
         const labelId = `${idPrefix}-${group.toLowerCase()}`;
+        const expanded = filtering || open.has(group);
         return (
           /* `aria-labelledby` rather than a real heading: the article owns
              the page's heading outline, and five more would compete with it. */
           <div key={group} role="group" aria-labelledby={labelId} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span id={labelId} style={GROUP}>{group}</span>
-            {items.map((e) => {
+            <button
+              type="button"
+              id={labelId}
+              aria-expanded={expanded}
+              disabled={filtering}
+              onClick={() => toggle(group)}
+              className="wiki-rail-group"
+              style={{ ...GROUP, background: 'none', border: 0, padding: 0, cursor: filtering ? 'default' : 'pointer', textAlign: 'left', display: 'flex', alignItems: 'baseline', gap: 8, width: '100%' }}
+            >
+              <span>{group}</span>
+              {!expanded && (
+                <span style={{ fontFamily: 'inherit', fontSize: 12, color: '#8d866f', fontWeight: 400 }}>{items.length}</span>
+              )}
+              <span aria-hidden="true" style={{ marginLeft: 'auto', fontSize: 11, color: '#8d866f' }}>{expanded ? '▾' : '▸'}</span>
+            </button>
+            {expanded && items.map((e) => {
               const on = e.slug === current;
               return (
                 <Link

@@ -2598,7 +2598,8 @@ input[type="reset"]:disabled {
   transition: border-color 140ms ease, background 140ms ease;
 }
 .wiki-card:hover { border-color: var(--brand-forest); background: #fffdf7; }
-.wiki-card:focus-visible { outline: 2px solid var(--brand-forest); outline-offset: 2px; }
+.wiki-card:focus-visible,
+.wiki-rail-group:focus-visible { outline: 2px solid var(--brand-forest); outline-offset: 2px; }
 
 /* The mobile contents disclosure; desktop has the sticky rail instead. */
 .wiki-rail-mobile { display: none; }

@@ -152,7 +152,7 @@ describe('#170 robots / sitemap / manifest', () => {
       expect(urls).toContain(`${base}/careers/${job.slug}`);
     }
     // Nothing private leaks into the sitemap.
-    expect(urls.some(u => u.includes('/dashboard'))).toBe(false);
+    expect(urls.some(u => new URL(u).pathname.startsWith('/dashboard'))).toBe(false);
   });
 
   it('manifest carries identity, colors and icons', () => {

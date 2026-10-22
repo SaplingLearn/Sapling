@@ -165,7 +165,7 @@ export const FAQS: Faq[] = [
   },
   {
     q: 'What happens to my notes and documents?',
-    a: 'They stay yours. Uploads, notes, and messages are encrypted at rest (AES-256), used only to build your graph and study materials, and never sold or used to train outside models. Delete a document and its data goes with it.',
+    a: 'They stay yours. Uploads, notes, and messages are encrypted at rest (AES-256), used to build your graph and study materials, and never sold. The wiki’s Your data page lists exactly what is and is not encrypted, and what deleting a document leaves behind.',
   },
   {
     q: 'Are tools like Sapling allowed in my classes?',
