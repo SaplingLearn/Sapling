@@ -609,11 +609,15 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
         return None
 
     inserted = updated = skipped = failed = 0
+    # A scrape can repeat an assignment id; the first occurrence wins and the
+    # rest are skipped rather than overwriting it as an "update".
+    seen: set[str] = set()
     for a in gs_assignments:
         gs_id = a.get("id")
-        if not gs_id:
+        if not gs_id or gs_id in seen:
             skipped += 1
             continue
+        seen.add(gs_id)
         title = a.get("name") or "(untitled)"
         due_date = _due_to_date_string(a.get("due_date"))
         points_earned = a.get("points_earned")

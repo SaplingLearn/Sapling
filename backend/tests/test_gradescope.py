@@ -620,12 +620,18 @@ class TestSyncPersistence:
         tables["gradescope_course_links"].update.assert_not_called()
         tables["gradescope_credentials"].update.assert_not_called()
 
-    def test_duplicate_scraped_id_updates_the_same_new_assignment(self):
-        response, tables = self._sync([{"id": "new", "name": "Homework"}] * 2)
-        assert response.json() == {"inserted": 1, "updated": 1, "skipped": 0, "failed": 0}
+    def test_duplicate_scraped_id_is_skipped_not_written_twice(self):
+        response, tables = self._sync([
+            {"id": "new", "name": "Homework", "points_earned": 9},
+            {"id": "new", "name": "Homework (copy)", "points_earned": 1},
+            {"id": "existing", "name": "Exam"},
+            {"id": "existing", "name": "Exam (copy)"},
+        ])
+        assert response.json() == {"inserted": 1, "updated": 1, "skipped": 2, "failed": 0}
         tables["assignments"].insert.assert_called_once()
-        inserted_id = tables["assignments"].insert.call_args.args[0]["id"]
-        assert tables["assignments"].update.call_args.kwargs["filters"] == {"id": f"eq.{inserted_id}"}
+        assert tables["assignments"].insert.call_args.args[0]["title"] == "Homework"
+        tables["assignments"].update.assert_called_once()
+        assert tables["assignments"].update.call_args.args[0]["title"] == "Exam"
 
     def test_existing_assignments_beyond_the_postgrest_cap_are_updated(self):
         existing = [{"id": f"saved-{i}", "gradescope_assignment_id": f"gs-{i}"} for i in range(1001)]
