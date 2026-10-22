@@ -27,7 +27,10 @@ import { siblingsFor } from "@/lib/graph/neighbourhood";
 /** How many neighbours the window shows, strongest edges first. */
 const MAX_NEIGHBOURS = 8;
 /** Before the first measurement (and wherever ResizeObserver is missing). */
-const FALLBACK_SIZE = { w: 400, h: 220 };
+const FALLBACK_SIZE = { w: 500, h: 340 };
+/** The fragment settles to a cluster about the size of the tree's own spacing;
+ *  this zooms it to fill the window instead of floating in the middle. */
+const INITIAL_ZOOM = 1.6;
 
 export interface LiveNeighbourhoodProps {
   centreId: string;
@@ -95,6 +98,7 @@ export function LiveNeighbourhood({ centreId, nodes, edges, onPick, ariaLabel }:
         height={size.h}
         highlightId={centreId}
         onNodeClick={pick}
+        initialZoom={INITIAL_ZOOM}
       />
     </div>
   );

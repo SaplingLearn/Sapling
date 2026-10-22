@@ -66,7 +66,7 @@ export interface QuizHomeProps {
 type CardMode = "concept" | "course" | "due";
 
 /** The neighbourhood window's height while the tree loads (`home.css`). */
-const GRAPH_SKELETON_HEIGHT = 220;
+const GRAPH_SKELETON_HEIGHT = 340;
 
 /** Why a deep-linked concept is the one on offer (§5 B1.2). */
 const DEEP_LINK_RATIONALE: Partial<Record<SourceKind, string>> = {

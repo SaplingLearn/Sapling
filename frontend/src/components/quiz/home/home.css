@@ -26,10 +26,10 @@
   /* ── Measures ─────────────────────────────────────────────────────── */
   /* The definition paragraph is set to a reading measure rather than the
      column, exactly as the design draws it. */
-  --quiz-home-def-width: 400px;
+  --quiz-home-def-width: 460px;
   --quiz-home-dialog-def-width: 340px;
   /* The proposal column; the topic list takes the rest. */
-  --quiz-home-lead-w: 440px;
+  --quiz-home-lead-w: 500px;
   --quiz-home-dialog-card-min: 280px;
   --quiz-home-setting-label-w: 96px;
 
@@ -45,11 +45,6 @@
   --quiz-home-grid-gap: 56px;
   /* Below this the columns stack: the proposal first, the list under it. */
   --quiz-home-stack-gap: 32px;
-  /* The panel both columns sit in. */
-  --quiz-home-panel-pad-y: 36px;
-  --quiz-home-panel-pad-x: 44px;
-  --quiz-home-panel-pad-y-sm: 24px;
-  --quiz-home-panel-pad-x-sm: 18px;
 
   /* ── The proposal's rhythm ────────────────────────────────────────── */
   --quiz-home-head-gap: 16px;
@@ -61,7 +56,7 @@
   --quiz-home-frame-top: 14px;
   --quiz-home-frame-border: 3px;
   /* The live neighbourhood window. The graph fills it and is measured. */
-  --quiz-home-graph-h: 220px;
+  --quiz-home-graph-h: 340px;
   --quiz-home-actions-gap: 18px;
   --quiz-home-actions-top: 28px;
   --quiz-home-skeleton-gap: 12px;
@@ -120,26 +115,20 @@
 
 /* ── The two columns ────────────────────────────────────────────────── */
 
-/* Both columns sit in one panel — a rounded rectangle on the page. */
 .quiz-home__grid {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, var(--quiz-home-lead-w)) 1px minmax(0, 1fr);
   gap: var(--quiz-home-grid-gap);
-  padding: var(--quiz-home-panel-pad-y) var(--quiz-home-panel-pad-x);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--bg-panel);
-  box-shadow: var(--shadow-sm);
 }
 
-/* Cancel (§5 B1.8) sits in the panel's top-right corner, level with the
+/* Cancel (§5 B1.8) sits in the grid's top-right corner, level with the
    eyebrows: beside "Choose a topic" on two columns, beside "Ready for you"
    once they stack — at the top of the screen either way. */
 .quiz-home__grid-cancel {
   position: absolute;
-  top: var(--quiz-home-panel-pad-y);
-  right: var(--quiz-home-panel-pad-x);
+  top: 0;
+  right: 0;
   line-height: 1;
 }
 
@@ -202,17 +191,6 @@
   .quiz-home__topics-scroll {
     flex: none;
     max-height: var(--quiz-home-topics-stacked-max);
-  }
-}
-
-@media (max-width: 560px) {
-  .quiz-home__grid {
-    padding: var(--quiz-home-panel-pad-y-sm) var(--quiz-home-panel-pad-x-sm);
-  }
-
-  .quiz-home__grid-cancel {
-    top: var(--quiz-home-panel-pad-y-sm);
-    right: var(--quiz-home-panel-pad-x-sm);
   }
 }
 
