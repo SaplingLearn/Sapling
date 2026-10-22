@@ -17,6 +17,13 @@ import {
 import type { SummaryDoc, SummaryDocSuggestion, AskReference } from "@/lib/types";
 import { SuggestionMark } from "@/lib/summaryEditor/suggestionMark";
 import { SuggestionDecorations, type PendingSuggestionWidget } from "@/lib/summaryEditor/suggestionDecorations";
+import Table from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableCell from "@tiptap/extension-table-cell";
+import TableHeader from "@tiptap/extension-table-header";
+import Underline from "@tiptap/extension-underline";
+import Highlight from "@tiptap/extension-highlight";
+import { MathNode } from "@/lib/summaryEditor/mathNode";
 import { SourcesPanel } from "./SourcesPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { SourceViewer } from "./SourceViewer";
@@ -68,7 +75,11 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
   const autosaveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const editor = useEditor({
-    extensions: [StarterKit, SuggestionMark, SuggestionDecorations],
+    extensions: [
+      StarterKit, SuggestionMark, SuggestionDecorations,
+      Table.configure({ resizable: false }), TableRow, TableCell, TableHeader,
+      Underline, Highlight, MathNode,
+    ],
     content: { type: "doc", content: [] },
     onUpdate: ({ editor: e }) => scheduleAutosave(e.getJSON() as Record<string, unknown>),
     onSelectionUpdate: ({ editor: e }) => {
