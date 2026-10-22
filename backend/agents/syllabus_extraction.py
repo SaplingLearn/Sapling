@@ -14,7 +14,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, PromptedOutput
 
-from agents._bounded import clip_prose
+from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -46,8 +46,12 @@ class GradingCategory(BaseModel):
 class SyllabusAssignments(BaseModel):
     course_title: str | None = Field(default=None, max_length=300)
     instructor: str | None = Field(default=None, max_length=200)
-    assignments: list[SyllabusAssignment] = Field(max_length=50)
-    grading_categories: list[GradingCategory] = Field(
+    assignments: Annotated[
+        list[SyllabusAssignment], clip_list(50, "syllabus.assignments")
+    ] = Field(max_length=50)
+    grading_categories: Annotated[
+        list[GradingCategory], clip_list(20, "syllabus.grading_categories")
+    ] = Field(
         default_factory=list,
         max_length=20,
         description="Top-level grading-weight buckets (e.g. Exams 40%, "

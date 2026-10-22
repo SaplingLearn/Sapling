@@ -226,6 +226,24 @@ def test_claude_haiku_long_prompt_switches_rate_card():
     assert over == pytest.approx(100_001 * 0.0005 / 1000 + 1000 * 0.0025 / 1000)
 
 
+def test_long_prompt_card_is_per_request_not_per_run():
+    """Anthropic applies the >100K card per REQUEST. A five-request tool loop
+    of ~25K prompts sums to 125K but never crossed the threshold — pricing it
+    on the sum billed the quiz/tutor loops at 5x."""
+    loop = llm_pricing.cost_usd("claude-haiku-5-5", 125_000, 2000, requests=5)
+    assert loop == pytest.approx(125_000 * 0.0001 / 1000 + 2000 * 0.0005 / 1000)
+    single = llm_pricing.cost_usd("claude-haiku-5-5", 125_000, 2000, requests=1)
+    assert single == pytest.approx(125_000 * 0.0005 / 1000 + 2000 * 0.0025 / 1000)
+
+
+def test_request_count_reads_run_usage():
+    from pydantic_ai.usage import RunUsage
+
+    assert llm_pricing.request_count(RunUsage(requests=4)) == 4
+    assert llm_pricing.request_count({"prompt_tokens": 3}) == 1
+    assert llm_pricing.request_count(None) == 1
+
+
 def test_provider_qualified_claude_name_is_priced():
     assert llm_pricing.cost_usd("anthropic:claude-haiku-5-5", 1000, 0) == (
         llm_pricing.cost_usd("claude-haiku-5-5", 1000, 0)
@@ -268,9 +286,24 @@ def test_gemini_cache_tokens_keep_the_full_input_rate():
     )
 
 
-def test_cache_usage_reads_run_usage_and_raw_anthropic_fields():
+def test_cache_usage_reads_run_usage_only():
+    """RunUsage.input_tokens INCLUDES cache tokens, which cost_usd relies on;
+    a raw Anthropic Usage excludes them, so its field names are ignored
+    rather than mispriced."""
     from pydantic_ai.usage import RunUsage
 
     assert llm_pricing.cache_usage(RunUsage(input_tokens=10, cache_read_tokens=4, cache_write_tokens=3)) == (4, 3)
-    assert llm_pricing.cache_usage({"cache_read_input_tokens": 7, "cache_creation_input_tokens": 2}) == (7, 2)
+    assert llm_pricing.cache_usage({"cache_read_input_tokens": 7, "cache_creation_input_tokens": 2}) == (0, 0)
     assert llm_pricing.cache_usage(None) == (0, 0)
+
+
+def test_snapshot_suffixed_claude_ids_are_priced_at_the_family_rate():
+    """A dated snapshot id in the response's `model` must not NULL-cost every
+    call (the `jev-` family entry's reason, applied to Claude)."""
+    assert llm_pricing.cost_usd("claude-haiku-5-5-20261001", 1000, 1000) == (
+        llm_pricing.cost_usd("claude-haiku-5-5", 1000, 1000)
+    )
+    assert llm_pricing.cost_usd("claude-haiku-5-5-20261001", 100_001, 0) == (
+        llm_pricing.cost_usd("claude-haiku-5-5", 100_001, 0)
+    )
+    assert llm_pricing.cost_usd("claude-sonnet-5-5-20261001", 10, 10) is not None

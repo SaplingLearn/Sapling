@@ -12,7 +12,9 @@ summary three times on a 145-150-char headline against a 140 cap).
 For FREE-PROSE fields, where a few trailing words are not load-bearing, the
 right local equivalent of a decode-time cap is a clip, exactly as
 `agents/quiz.py::_clip` already does for list caps: trim at a word boundary,
-log it so drift stays visible, never reject the run. Identifier-like fields
+log it so drift stays visible, never reject the run. Bounded LISTS get the
+same treatment (`clip_list`): keep the first N in model order, as a
+decode-time `maxItems` did. Identifier-like fields
 (concept names, titles, enum-ish strings) deliberately keep the strict
 `max_length` — a truncated name breaks identity, so a retry is the better
 failure there.
@@ -52,3 +54,21 @@ def clip_prose(limit: int, field: str) -> BeforeValidator:
     the schema's `max_length` (a decode-time cap on Gemini, a description
     hint on Claude) and clip an overshoot before Pydantic checks it."""
     return BeforeValidator(lambda v: clip_prose_value(v, limit, field))
+
+
+def clip_list_value(value, limit: int, field: str):
+    """Keep the first `limit` entries of a raw list, in model order, logging
+    the clip. Non-lists pass through for normal validation to reject."""
+    if isinstance(value, list) and len(value) > limit:
+        logger.warning("clipped %s from %d to %d items", field, len(value), limit)
+        return value[:limit]
+    return value
+
+
+def clip_list(limit: int, field: str) -> BeforeValidator:
+    """`Annotated[list[X], clip_list(N, "x")] = Field(max_length=N, ...)`: the
+    list-cap twin of `clip_prose` (and of `agents/quiz.py::_clip`). The schema
+    keeps `max_length` — decode-enforced on Gemini, a description hint on
+    Claude — and a surplus past it is dropped before Pydantic checks it, so it
+    never burns an output retry. A `min_length` stays a real error."""
+    return BeforeValidator(lambda v: clip_list_value(v, limit, field))

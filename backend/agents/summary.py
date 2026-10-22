@@ -13,7 +13,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from agents._bounded import clip_prose
+from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -29,7 +29,7 @@ class Summary(BaseModel):
         max_length=1500,
         description="3-5 sentence overview. Plain text. No markdown.",
     )
-    key_points: list[str] = Field(
+    key_points: Annotated[list[str], clip_list(8, "summary.key_points")] = Field(
         min_length=3,
         max_length=8,
         description="3-8 most important takeaways, each one sentence.",

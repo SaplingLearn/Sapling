@@ -344,7 +344,7 @@ class TestOrchestratorLimitsWired:
         with (
             patch("routes.learn.agent_for_mode", return_value=mock_agent),
             patch("routes.learn._resolve_model_pref", return_value=None),
-            patch("routes.learn._build_deep_turn_model_settings", return_value={}),
+            patch("routes.learn._build_deep_turn_model_settings", return_value=None),
         ):
             from routes.learn import _chat_via_agent
             import asyncio as _asyncio
@@ -440,7 +440,7 @@ class TestOrchestratorLimitsWired:
             patch("routes.learn.agent_for_mode", return_value=mock_agent),
             patch("routes.learn._get_session_offering_id", return_value=None),
             patch("routes.learn._resolve_model_pref", return_value=None),
-            patch("routes.learn._build_deep_turn_model_settings", return_value={}),
+            patch("routes.learn._build_deep_turn_model_settings", return_value=None),
             patch("routes.learn.save_message", side_effect=mock_save_message),
             patch("routes.learn._consume_pending"),
             patch("routes.learn.require_session_owner"),

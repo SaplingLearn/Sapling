@@ -61,17 +61,15 @@ _PREF_MODEL_NAMES: dict[str, str] = {
     "smart": "claude-sonnet-5-5",
 }
 
-# Thinking depth for every non-"fast" tutor turn. On Claude this is the
-# `effort` level; a Claude 5.x model rejects a token budget. It equals the
-# chat_tutor slot's own default (agents/_providers._ANTHROPIC_EFFORT): `medium`
-# bought no measurable tutor quality over `low` on Sonnet 5.5 and cost ~2x
-# (ADR 0030), so "smart" now differs from "fast" by MODEL (Sonnet vs Haiku),
-# not effort. Kept as an explicit run-level setting so raising it is a
-# one-line change the route tests pin. If the slot is pointed back at a gemini-* model, Pro's thinking
-# budget is capped instead: dynamic thinking (-1) on multi-turn pedagogy can
-# spend 10s+ before any tokens stream, and 2048 tokens is enough to plan a
-# multi-step explanation without burning latency the student can feel.
-_DEEP_TURN_EFFORT = "low"
+# Cap Pro's thinking budget on a deep (non-"fast") tutor turn served by a
+# Gemini model — only reachable when the chat_tutor slot or a pref is pointed
+# back at a gemini-* model (ADR 0030). Dynamic thinking (-1) on multi-turn
+# pedagogy can spend 10s+ before any tokens stream; 2048 tokens is enough to
+# plan a multi-step explanation without burning latency the student can feel.
+# Claude turns need no run-level setting: their depth is the slot's model-level
+# `effort` (agents/_providers._ANTHROPIC_EFFORT). `medium` bought no
+# measurable tutor quality over `low` on Sonnet 5.5 at ~2x the cost, so
+# "smart" differs from "fast" by MODEL (Sonnet vs Haiku), not effort.
 _PRO_THINKING_BUDGET = 2048
 
 
@@ -79,13 +77,14 @@ def _resolve_model_pref(model_pref: str | None):
     """Build a provider-model override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    Lazy-imports `provider_model` so that constructing a provider (which
+    Lazy-imports `override_model` so that constructing a provider (which
     reads its API key at call time) only happens when an override is
-    actually requested — not at module import.
+    actually requested — not at module import; built once per process
+    thereafter.
     """
     if not model_pref:
         return None
-    from agents._providers import _model_mode, provider_model
+    from agents._providers import _model_mode, override_model
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
         # SAPLING_MODEL_MODE by constructing a live provider model — the browser
@@ -97,7 +96,7 @@ def _resolve_model_pref(model_pref: str | None):
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return provider_model(name, task="chat_tutor")
+    return override_model(name, "chat_tutor")
 
 
 def _ran_on(result, agent, run_kwargs: dict, model_pref: str | None) -> tuple[str, str | None]:
@@ -156,25 +155,21 @@ def _observe_persisted_turn(
         logger.debug("could not schedule the tutor router", exc_info=True)
 
 
-def _build_deep_turn_model_settings(model_pref: str | None):
-    """Run-level settings for a deep (non-"fast") tutor turn, shaped for the
-    provider that will actually serve it.
+def _build_deep_turn_model_settings(model):
+    """Run-level settings for a deep (non-"fast") tutor turn served by
+    `model` — the model the run will ACTUALLY use (the pref override, else
+    the agent's own), so this can't disagree with `_resolve_model_pref`.
 
-    Apply this whenever the effective chat-tutor model is the step-up model
-    (explicit "smart" pref OR no pref → agent default). The served model is
-    the pref's model when one resolves, else the chat_tutor slot's configured
-    model; Claude gets `effort`, a gemini-* slot gets the capped Pro thinking
-    budget. Function mode serves neither — its FunctionModel ignores both.
+    Only a Gemini model gets any: the capped Pro thinking budget. A Claude
+    model's depth is already its slot's model-level `effort`, and the
+    function-mode seam's FunctionModel takes neither — both return None.
 
-    Imported lazily for the same reason as `provider_model` — keeps provider
-    SDK types off the import path.
+    Imported lazily so provider SDK types stay off the import path.
     """
-    from agents._providers import model_name_for, provider_for_model
+    from pydantic_ai.models.google import GoogleModel
 
-    name = _PREF_MODEL_NAMES.get(model_pref or "") or model_name_for("chat_tutor")
-    if provider_for_model(name) == "anthropic":
-        from pydantic_ai.models.anthropic import AnthropicModelSettings
-        return AnthropicModelSettings(anthropic_effort=_DEEP_TURN_EFFORT)
+    if not isinstance(model, GoogleModel):
+        return None
     from google.genai.types import ThinkingConfig
     from pydantic_ai.models.google import GoogleModelSettings
     return GoogleModelSettings(
@@ -921,11 +916,15 @@ def _prepare_chat_run(
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    # Deeper thinking on every step-up-model run (explicit "smart" OR no-pref
-    # falling through to the agent default). Explicit "fast" keeps the slot's
-    # model-level default (Claude `effort=low`).
+    # Capped thinking on every step-up-model run (explicit "smart" OR no-pref
+    # falling through to the agent default) — a Gemini-only setting, so on the
+    # default Claude slots this adds nothing. Explicit "fast" never gets it.
     if model_pref != "fast":
-        run_kwargs["model_settings"] = _build_deep_turn_model_settings(model_pref)
+        deep = _build_deep_turn_model_settings(
+            model_override if model_override is not None else getattr(agent, "model", None)
+        )
+        if deep is not None:
+            run_kwargs["model_settings"] = deep
 
     return agent, user_message, run_kwargs, deps
 

@@ -65,10 +65,10 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart  # noqa: E402
 from pydantic_ai.models import Model, ModelRequestParameters  # noqa: E402
 
 from agents._providers import (  # noqa: E402
+    api_key_env_for_model,
     model_for,
     model_mode,
     model_name_for,
-    provider_for_model,
 )
 from agents.quiz import _SYSTEM_PROMPT  # noqa: E402
 from services.exam_proximity import exam_prompt_line  # noqa: E402
@@ -104,9 +104,7 @@ def _get_model() -> Model:
             "token counting needs the real provider transport. Unset the var "
             "(or set it to 'real') and re-run."
         )
-    key_var = (
-        "ANTHROPIC_API_KEY" if provider_for_model(MODEL) == "anthropic" else "GEMINI_API_KEY"
-    )
+    key_var = api_key_env_for_model(MODEL)
     if not os.getenv(key_var):
         raise SystemExit(
             f"bench_quiz_prompt_budget: {key_var} is not set — count_tokens "

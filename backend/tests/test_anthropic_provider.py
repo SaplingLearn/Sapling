@@ -139,9 +139,15 @@ def test_flashcard_gemini_only_settings_follow_the_slot_to_google(monkeypatch):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     claude = model_for("flashcard")
     assert "temperature" not in (claude.settings or {})
+    # Thinking counts against max_tokens on Claude: the legacy 8192 output cap
+    # must not shrink the slot's 16K budget (it would truncate a big deck).
+    assert claude.settings["max_tokens"] == _ANTHROPIC_MAX_TOKENS
+    from agents.flashcard import flashcard_agent
+    assert not flashcard_agent.model_settings
     monkeypatch.setenv("SAPLING_MODEL_FLASHCARD", "gemini-2.5-flash")
     gemini = model_for("flashcard")
     assert gemini.settings["temperature"] == 0.7
+    assert gemini.settings["max_tokens"] == 8192
     assert gemini.settings["google_thinking_config"].thinking_budget == 0
 
 
@@ -243,3 +249,59 @@ def test_the_seam_uses_a_dummy_key_when_unset(monkeypatch):
     monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
     provider = _providers._new_anthropic_provider()
     assert provider.client.api_key == "dummy-key-for-import"
+
+
+# ── Local bounds (Claude can't enforce maxLength/maxItems at decode) ─────
+
+
+def test_prose_overshoot_is_clipped_at_a_word_boundary_not_rejected():
+    from agents.summary import Summary
+
+    s = Summary(headline="word " * 60, abstract="a", key_points=["a", "b", "c"])
+    assert len(s.headline) <= 140
+    assert s.headline.endswith("…")
+    assert not s.headline[:-1].endswith(" ")
+
+
+def test_list_overshoot_is_clipped_not_rejected_but_minimums_still_bite():
+    from pydantic import ValidationError
+
+    from agents.concept_extraction import ConceptList
+    from agents.summary import Summary
+
+    many = [{"name": f"C{i}", "description": "d", "importance": 0.5} for i in range(34)]
+    assert len(ConceptList(concepts=many).concepts) == 30
+    assert len(Summary(headline="h", abstract="a", key_points=list("abcdefghij")).key_points) == 8
+    with pytest.raises(ValidationError):
+        Summary(headline="h", abstract="a", key_points=["only one"])
+
+
+def test_concepts_are_ordered_by_importance_whatever_the_model_sent():
+    from agents.concept_extraction import ConceptList
+
+    c = ConceptList(concepts=[
+        {"name": "Low", "description": "d", "importance": 0.1},
+        {"name": "High", "description": "d", "importance": 0.9},
+        {"name": "Mid", "description": "d", "importance": 0.5},
+    ])
+    assert [x.name for x in c.concepts] == ["High", "Mid", "Low"]
+
+
+def test_the_per_request_override_model_is_built_once_per_process():
+    """The browser sends a fast/smart pref on every tutor turn; a fresh model
+    per turn meant fresh, never-closed provider connection pools."""
+    from agents._providers import override_model
+    from routes.learn import _resolve_model_pref
+
+    a = _resolve_model_pref("smart")
+    b = _resolve_model_pref("smart")
+    assert a is b
+    assert a is override_model("claude-sonnet-5-5", "chat_tutor")
+    assert _resolve_model_pref("fast") is not a
+
+
+def test_api_key_env_follows_the_provider():
+    from agents._providers import api_key_env_for_model
+
+    assert api_key_env_for_model("claude-haiku-5-5") == "ANTHROPIC_API_KEY"
+    assert api_key_env_for_model("gemini-2.5-flash") == "GEMINI_API_KEY"

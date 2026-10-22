@@ -88,9 +88,8 @@ def _text_from(event: Any) -> str | None:
     `TextPart.part_kind == "text"`, `TextPartDelta.part_delta_kind ==
     "text"` (verified by inspecting the installed library — `ThinkingPart`/
     `ThinkingPartDelta` carry `"thinking"` in the same fields). Today
-    `_build_deep_turn_model_settings` requests no thinking display (Claude's
-    default is `"omitted"`: thinking blocks stream with empty text), so this
-    is latent — but the moment thought summaries are enabled, an ungated
+    no tutor setting requests a thinking display (Claude's default is
+    `"omitted"`: thinking blocks stream with empty text), so this is latent — but the moment thought summaries are enabled, an ungated
     reader would stream raw chain-of-thought into a student's chat bubble.
     """
     cls_name = type(event).__name__

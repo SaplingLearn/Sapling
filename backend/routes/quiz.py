@@ -727,7 +727,7 @@ def _resolve_model_pref(model_pref: str | None):
     """Build a provider-model override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    `provider_model` is imported lazily so that constructing a provider
+    `override_model` is imported lazily so that constructing a provider
     (which reads its API key at call time) only happens when an override
     is actually requested — not at module import. agents.quiz is already
     in this route's import graph, so this isn't about import-path isolation; it's about deferring the
@@ -736,7 +736,7 @@ def _resolve_model_pref(model_pref: str | None):
     """
     if not model_pref:
         return None
-    from agents._providers import _model_mode, provider_model
+    from agents._providers import _model_mode, override_model
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
         # SAPLING_MODEL_MODE by constructing a live provider model. Same fix as
@@ -749,7 +749,7 @@ def _resolve_model_pref(model_pref: str | None):
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return provider_model(name, task="quiz")
+    return override_model(name, "quiz")
 
 
 class BuCodeLookup(NamedTuple):

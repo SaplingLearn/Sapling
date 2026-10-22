@@ -180,8 +180,8 @@ def test_thinking_part_never_produces_a_token():
     attributes a TextPart/TextPartDelta uses. Without gating on
     part_kind/part_delta_kind, reasoning content would stream into the
     student's chat bubble the moment thought summaries are enabled
-    (latent today only because _build_deep_turn_model_settings requests no
-    thinking display). Text-shaped parts in the same run must still
+    (latent today only because no tutor setting requests a thinking
+    display). Text-shaped parts in the same run must still
     produce tokens normally."""
     async def run():
         agent = FakeAgent([

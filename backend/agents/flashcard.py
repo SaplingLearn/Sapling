@@ -14,7 +14,6 @@ import hashlib
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.settings import ModelSettings
 
 from agents._providers import model_for
 
@@ -41,13 +40,13 @@ _SYSTEM_PROMPT = (
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
-# The 8192-token output cap the legacy `call_gemini` flashcard path used —
-# the one provider-neutral piece of its settings. The rest of that pin
-# (temperature 0.7, thinking budget 0) is Gemini-only and now lives in
-# agents/_providers._google_settings_for("flashcard"): Claude 4.7+ rejects a
-# non-default temperature, and the Claude slot gets `effort=low` from
-# `_ANTHROPIC_EFFORT` instead (ADR 0030).
-_FLASHCARD_SETTINGS = ModelSettings(max_tokens=8192)
+# No agent-level settings: the legacy `call_gemini` flashcard pin
+# (temperature 0.7, 8192 output tokens, thinking budget 0) is Gemini-only and
+# lives in agents/_providers._google_settings_for("flashcard"). On the Claude
+# slot (ADR 0030) Claude 4.7+ rejects a non-default temperature, `effort=low`
+# replaces the thinking budget, and the 8192 cap must NOT apply — Claude's
+# thinking tokens count against max_tokens, so it would truncate a large
+# deck's JSON; the slot's 16K default does instead.
 
 
 flashcard_agent = Agent[None, Flashcards](
@@ -58,6 +57,5 @@ flashcard_agent = Agent[None, Flashcards](
     # (see the validation-retry policy note in agents/__init__.py).
     retries=2,
     system_prompt=_SYSTEM_PROMPT,
-    model_settings=_FLASHCARD_SETTINGS,
     metadata={"prompt_version": _PROMPT_HASH, "agent": "flashcard"},
 )

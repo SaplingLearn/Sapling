@@ -13,7 +13,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 
-from agents._bounded import clip_prose
+from agents._bounded import clip_list, clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -31,7 +31,7 @@ class Concept(BaseModel):
 
 
 class ConceptList(BaseModel):
-    concepts: list[Concept] = Field(
+    concepts: Annotated[list[Concept], clip_list(30, "concepts")] = Field(
         min_length=1, max_length=30,
         description="Extracted concepts, ordered by importance descending.",
     )

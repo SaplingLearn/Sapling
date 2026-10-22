@@ -21,6 +21,7 @@ Anthropic has no embeddings API.
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
 import os
 import threading
@@ -179,12 +180,14 @@ def _google_settings_for(task: AgentTask | None) -> GoogleModelSettings | None:
     when a slot is pointed back at a gemini-* model."""
     if task == "flashcard":
         # Parity with the legacy call_gemini flashcard path: temperature 0.7,
-        # thinking disabled. (Claude 4.7+ rejects non-default sampling
-        # settings, so this cannot sit on the agent anymore.)
+        # an 8192-token output cap, thinking disabled. (Claude 4.7+ rejects
+        # non-default sampling settings, and on Claude thinking counts
+        # against max_tokens, so none of this can sit on the agent anymore.)
         from google.genai.types import ThinkingConfig
 
         return GoogleModelSettings(
             temperature=0.7,
+            max_tokens=8192,
             google_thinking_config=ThinkingConfig(thinking_budget=0),
         )
     return None
@@ -706,6 +709,13 @@ def provider_for_model(name: str) -> ProviderName:
     )
 
 
+def api_key_env_for_model(name: str) -> str:
+    """The env var holding the key `name`'s provider needs — for callers that
+    check a key is configured before a billable call (the OCR vision backend,
+    the offline benchmarks, the opt-in live tests). One rule, here."""
+    return "ANTHROPIC_API_KEY" if provider_for_model(name) == "anthropic" else "GEMINI_API_KEY"
+
+
 def model_name_for(task: AgentTask) -> str:
     """The model *name* configured for a task, without building a Model.
 
@@ -736,6 +746,27 @@ def provider_model(name: str, *, task: AgentTask | None = None) -> "Model":
     if provider_for_model(bare) == "anthropic":
         return _LoopSafeAnthropicModel(bare, settings=_anthropic_settings_for(task))
     return _LoopSafeGoogleModel(bare, settings=_google_settings_for(task))
+
+
+@functools.lru_cache(maxsize=16)
+def override_model(name: str, task: AgentTask) -> "Model":
+    """`provider_model(name, task=task)`, built once per process and shared.
+
+    For the per-request fast/smart override (routes/learn.py, routes/quiz.py):
+    the browser sends a pref on EVERY tutor turn, and a fresh model per
+    request meant fresh provider httpx pools (a TLS handshake per turn) that
+    were never closed. The import-time agents already share one model for the
+    process; this gives the override path the same lifetime. Safe to share for
+    the same reason they are: the loop-safe mixin resolves a per-event-loop
+    provider at every `.client` read, and nothing mutates a built Model.
+    Deterministic in (name, task) — the env read happens in the caller — and
+    `clear_override_model_cache()` is the invalidation hook (#98).
+    """
+    return provider_model(name, task=task)
+
+
+def clear_override_model_cache() -> None:
+    override_model.cache_clear()
 
 
 def model_for(task: AgentTask) -> "Model":

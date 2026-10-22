@@ -67,13 +67,20 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
 #: prices the family, not the build; a new rate gets its own exact entry.
 MODEL_FAMILY_PRICING: tuple[tuple[str, tuple[float, float]], ...] = (
     ("jev-", (0.000042, 0.0)),
+    # The same guard for Claude: a served id that carries a dated snapshot
+    # suffix (`claude-haiku-5-5-2026xxxx`) must not NULL-cost every call.
+    ("claude-haiku-5-5", (0.0001, 0.0005)),
+    ("claude-sonnet-5-5", (0.002, 0.010)),
+    ("claude-opus-5-5", (0.004, 0.020)),
 )
 
 #: Models whose rate card switches above a prompt-length threshold:
 #: model -> (threshold_prompt_tokens, (input_rate, output_rate)). Anthropic
-#: applies the card per request; a usage row is a whole agent run, so a
-#: multi-request run is priced on its SUMMED prompt tokens — an over-estimate
-#: only for a run whose individual requests each stayed under the threshold.
+#: applies the card PER REQUEST, while a usage row is a whole agent run — a
+#: tool loop of five ~25K-token requests sums to 125K. So the card is chosen on
+#: the run's MEAN prompt per request (`requests`, from RunUsage): exact for a
+#: single-request run, and for a loop it can only misprice a run whose
+#: requests straddle the threshold, never 5x a run that never crossed it.
 _LONG_PROMPT_PRICING: dict[str, tuple[int, tuple[float, float]]] = {
     "claude-haiku-5-5": (100_000, (0.0005, 0.0025)),
 }
@@ -88,8 +95,13 @@ _CACHE_MULTIPLIERS: tuple[tuple[str, tuple[float, float]], ...] = (
     ("claude-", (0.1, 1.25)),
 )
 
-_CACHE_READ_FIELDS = ("cache_read_tokens", "cache_read_input_tokens")
-_CACHE_WRITE_FIELDS = ("cache_write_tokens", "cache_creation_input_tokens")
+# pydantic-ai RunUsage names ONLY. Its `input_tokens` INCLUDES cache reads and
+# writes, which is what `cost_usd` assumes. A raw Anthropic SDK `Usage`
+# (`cache_read_input_tokens` / `cache_creation_input_tokens`) reports
+# `input_tokens` EXCLUDING them, so accepting those names here would price it
+# wrong — deliberately unsupported; nothing in the app logs raw SDK usage.
+_CACHE_READ_FIELDS = ("cache_read_tokens",)
+_CACHE_WRITE_FIELDS = ("cache_write_tokens",)
 
 #: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
 #: (migration 20261016063803_llm_cost_precision.sql, shipped with this seam). Six (the old NUMERIC(12,6)) rounded the
@@ -152,11 +164,17 @@ def normalize_usage(usage: Any) -> dict[str, int]:
     }
 
 
+def request_count(usage: Any) -> int:
+    """Model requests in the run (pydantic-ai ``RunUsage.requests``); 1 when
+    the source doesn't say — a single request is the conservative reading."""
+    return max(_read_int(usage, ("requests",)), 1) if usage is not None else 1
+
+
 def cache_usage(usage: Any) -> tuple[int, int]:
-    """``(cache_read_tokens, cache_write_tokens)`` from a usage object/dict —
-    both already INCLUDED in its prompt/input token count (pydantic-ai's
-    ``RunUsage.input_tokens`` is uncached + read + write). ``(0, 0)`` when the
-    source reports none."""
+    """``(cache_read_tokens, cache_write_tokens)`` from a pydantic-ai
+    ``RunUsage`` (or a dict with its field names) — both already INCLUDED in
+    its ``input_tokens`` (uncached + read + write). ``(0, 0)`` when the source
+    reports none."""
     if usage is None:
         return 0, 0
     return _read_int(usage, _CACHE_READ_FIELDS), _read_int(usage, _CACHE_WRITE_FIELDS)
@@ -192,15 +210,20 @@ def usage_provider(model: str) -> str:
     return "unknown"
 
 
-def _rates_for(model: str, prompt_tokens: int = 0) -> tuple[float, float] | None:
+def _rates_for(
+    model: str, prompt_tokens: int = 0, requests: int = 1,
+) -> tuple[float, float] | None:
     """Exact price entry first (raw, then provider-stripped), then the
     model's family prefix. A model with a long-prompt card switches to it
-    above that card's prompt-token threshold."""
+    when the run's mean prompt per request exceeds that card's threshold."""
     if not model:
         return None
     canonical = _canonical_model(model)
-    long_card = _LONG_PROMPT_PRICING.get(canonical)
-    if long_card is not None and prompt_tokens > long_card[0]:
+    long_card = next(
+        (card for prefix, card in _LONG_PROMPT_PRICING.items() if canonical.startswith(prefix)),
+        None,
+    )
+    if long_card is not None and prompt_tokens / max(requests, 1) > long_card[0]:
         return long_card[1]
     rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(canonical)
     if rates is not None:
@@ -218,6 +241,7 @@ def cost_usd(
     *,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
+    requests: int = 1,
 ) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
 
@@ -225,12 +249,14 @@ def cost_usd(
     ``prompt_tokens`` served from / written to the provider's prompt cache;
     for a family in ``_CACHE_MULTIPLIERS`` they are re-priced at its
     multiples of the input rate, otherwise they cost like any prompt token.
+    ``requests`` (model requests in the run) picks a per-request rate card
+    — see ``_LONG_PROMPT_PRICING``.
 
     Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
     ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
     and warns once.
     """
-    rates = _rates_for(model, int(prompt_tokens))
+    rates = _rates_for(model, int(prompt_tokens), int(requests or 1))
     if rates is None:
         # SAPLING_MODEL_MODE=function runs (the e2e/CI seam) report the model
         # as 'function:<task>' — a deliberate free stand-in, not an unpriced
