@@ -45,9 +45,6 @@ vi.mock("@/lib/api", () => ({
 
 // Presentational children — stubbed so the test only exercises the landing's
 // own term resolution.
-vi.mock("@/components/Gradebook/AmbientOrbs", () => ({
-  AmbientOrbs: () => null,
-}));
 vi.mock("@/components/Gradebook/SyllabusUploadFlow", () => ({
   SyllabusUploadFlow: () => null,
 }));

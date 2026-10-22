@@ -532,9 +532,8 @@ body { font-size: 14px; line-height: 1.5; }
 /* The content side of the rail: two olive quarter-squares whose transparent
    quarter-circle reads as the page's top-left / bottom-left corner rounding
    into the rail. Painted, not a border-radius on <main>, because <main> is
-   transparent over the atmospheric canvas — giving it a fill to round would
-   bury the orbs. z-index 25: above the z-0 canvas (else the orbs tint them
-   and they stop matching the rail), above every screen's own opaque ground
+   transparent over the page background. z-index 25: above every screen's
+   own opaque ground
    and its sticky headers (z ≤ 20), and below the overlays and modals
    (z ≥ 100). That only works because the sidebar layout's <main> sets no
    z-index — a stacking context there would trap those overlays under the
@@ -604,36 +603,6 @@ body { font-size: 14px; line-height: 1.5; }
   transform: scaleX(var(--bar-fill, 1));
   animation: bar-segment-grow 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   will-change: transform;
-}
-
-/* Ambient orb drift — atmospheric brand motion per .impeccable.md.
- * Six orbs each get their own slow keyframe path so the field never
- * resolves into a recognizable loop. Durations 38s–64s; alternate
- * ease-in-out so they drift, never travel. prefers-reduced-motion is
- * already neutralized globally below. */
-@keyframes orb-drift-1 {
-  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate(-50%, -50%) translate3d(60px, -40px, 0) scale(1.08); }
-}
-@keyframes orb-drift-2 {
-  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate(-50%, -50%) translate3d(-50px, 50px, 0) scale(0.94); }
-}
-@keyframes orb-drift-3 {
-  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate(-50%, -50%) translate3d(40px, 80px, 0) scale(1.10); }
-}
-@keyframes orb-drift-4 {
-  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate(-50%, -50%) translate3d(-30px, -60px, 0) scale(1.06); }
-}
-@keyframes orb-drift-5 {
-  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate(-50%, -50%) translate3d(80px, 30px, 0) scale(0.92); }
-}
-@keyframes orb-drift-6 {
-  0%, 100% { transform: translate(-50%, -50%) translate3d(0, 0, 0) scale(1); }
-  50%      { transform: translate(-50%, -50%) translate3d(-70px, -20px, 0) scale(1.04); }
 }
 
 @keyframes shimmer { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }

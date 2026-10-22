@@ -126,9 +126,8 @@ export function SideNav() {
         // [data-app-sidenav] in globals.css. No right border: the olive edge
         // is the divider, and ShellFrame rounds the content side into it.
         background: "var(--sidenav-bg)",
-        // Above AtmosphericBackdrop's fixed z-0 canvas: unpositioned, the
-        // rail was tinted by the drifting orbs and no longer matched the
-        // flat olive of the .shell-corner pieces beside it.
+        // Positioned and lifted so the rail paints over the content column
+        // it borders (the .shell-corner pieces round that column into it).
         position: "relative",
         zIndex: 1,
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
