@@ -54,8 +54,10 @@ const eslintConfig = [
     files: [
       "src/components/marketing/SignInModal.tsx",
       "src/app/pending/page.tsx",
+      "src/app/setting-up/page.tsx",
       "src/components/screens/Onboarding.tsx",
       "src/components/DocumentUploadModal.tsx",
+      "src/components/TopicChecklistPanel.tsx",
       "src/components/chat/ChatPanel.tsx",
       // Quiz redesign (#537). The three screens carry every answer/submit/exit
       // control the Playwright journeys drive; the three `ui/` primitives are
@@ -64,8 +66,7 @@ const eslintConfig = [
       "src/components/quiz/QuizScreen.tsx",
       "src/components/quiz/home/QuizHome.tsx",
       "src/components/quiz/home/AdjustDialog.tsx",
-      "src/components/quiz/home/ConceptDialog.tsx",
-      "src/components/quiz/home/PickList.tsx",
+      "src/components/quiz/home/TopicList.tsx",
       "src/components/quiz/home/QuizSettings.tsx",
       "src/components/quiz/question/QuizQuestion.tsx",
       "src/components/quiz/question/AskPanel.tsx",

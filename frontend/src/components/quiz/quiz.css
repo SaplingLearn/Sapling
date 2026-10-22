@@ -17,7 +17,7 @@
  */
 
 .quiz-root {
-  --quiz-col-home: 780px;
+  --quiz-col-home: 1200px;
   --quiz-col-question: 680px;
   --quiz-col-results: 640px;
 
@@ -54,14 +54,14 @@
    the two:
 
      <div class="quiz-inset--home">          <- page padding, full width
-       <div class="quiz-col quiz-col--home"> <- the 780px measure
+       <div class="quiz-col quiz-col--home"> <- the 1200px measure
          ...everything below the resume strip
        </div>
      </div>
 
    Nested, not stacked on one element. `box-sizing: border-box` is global, so a
-   single div carrying both classes resolves `max-width: 780px` INCLUSIVE of the
-   64px of page padding and the card measures 716px instead of 780px. The design
+   single div carrying both classes resolves `max-width` INCLUSIVE of the 64px of
+   page padding and the columns lose 64px of their measure. The design
    puts the padding outside the column, so the DOM has to as well.
 
    Question and results are unchanged: `QuizScreen` still wraps those in

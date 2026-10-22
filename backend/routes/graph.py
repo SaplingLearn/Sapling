@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 
 import httpx
@@ -6,6 +7,7 @@ from pydantic import BaseModel, ValidationError
 from typing import Optional
 from pydantic_ai.exceptions import AgentRunError
 
+from services import cache
 from services.auth_guard import require_self
 from services.graph_service import (
     get_graph, get_recommendations,
@@ -14,7 +16,7 @@ from services.graph_service import (
 )
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
-from agents._providers import UnregisteredHandlerError
+from agents._providers import UnregisteredHandlerError, model_name_for
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
 from agents.concept_describe import concept_describe_agent, build_message
@@ -140,6 +142,16 @@ def set_node_color(user_id: str, node_id: str, body: UpdateNodeColorBody, reques
 # in practice; caps keep a pathological payload from bloating the prompt.
 _MAX_CONCEPT_LEN = 200
 _MAX_COURSE_LABEL_LEN = 120
+# A description depends only on the concept and its course label, not on who
+# asks, so one cached sentence serves every student (#97's Redis cache; a
+# no-op without REDIS_URL). Keyed on the model too, so a model swap re-writes.
+_DESCRIPTION_CACHE_TTL = 30 * 24 * 3600
+
+
+def _description_cache_key(concept: str, course_label: str | None) -> str:
+    subject = f"{concept.casefold()}|{(course_label or '').casefold()}"
+    digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()
+    return f"concept_desc:v1:{model_name_for('concept_describe')}:{digest}"
 
 
 @router.post("/{user_id}/concept-description")
@@ -155,6 +167,9 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
     if not concept:
         raise HTTPException(status_code=400, detail="concept is required")
     course_label = (body.course_label or "").strip()[:_MAX_COURSE_LABEL_LEN] or None
+    cache_key = _description_cache_key(concept, course_label) if cache.enabled() else None
+    if cache_key and (hit := cache.get_str(cache_key)):
+        return {"description": hit}
     deps = SaplingDeps(
         user_id=user_id,
         course_id=None,
@@ -187,4 +202,7 @@ def describe_concept(user_id: str, body: ConceptDescriptionBody, request: Reques
         raise HTTPException(
             status_code=502, detail=f"concept-description agent failed: {e}"
         ) from e
-    return {"description": result.output.description}
+    description = result.output.description
+    if cache_key and description.strip():
+        cache.set_str(cache_key, description, ttl_seconds=_DESCRIPTION_CACHE_TTL)
+    return {"description": description}

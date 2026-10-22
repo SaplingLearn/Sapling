@@ -46,6 +46,7 @@ class ActionBody(BaseModel):
 # ── Quiz ──────────────────────────────────────────────────────────────────────
 
 class GenerateQuizBody(BaseModel):
+    question_format: Literal["multiple_choice", "short_answer", "numeric", "symbolic", "mixed"] = "multiple_choice"
     user_id: str = "user_andres"
     concept_node_id: str
     # Bounds come from services/quiz_config.py — the same constants
@@ -127,10 +128,19 @@ class AnswerQuestionBody(BaseModel):
     would then lock in). The response echoes both either way."""
 
     question_index: int = Field(ge=0)
-    selected_index: int = Field(ge=0)
+    selected_index: Optional[int] = Field(default=None, ge=0)
+    answer_text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     question_id: Optional[int] = None
     time_ms: Optional[int] = Field(default=None, ge=0)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def one_answer(self):
+        if (self.selected_index is None) == (self.answer_text is None):
+            raise ValueError("Supply either an answer choice or a written answer.")
+        if self.answer_text is not None and not self.answer_text.strip():
+            raise ValueError("The answer must not be blank.")
+        return self
 
 
 class AnswerItem(BaseModel):

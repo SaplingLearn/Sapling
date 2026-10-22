@@ -5,13 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
+import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
 import type { NavItem } from "@/lib/navFeatures";
 import { useVisibleNavSections } from "@/lib/useNavSections";
 
 type Entry = NavItem;
 
-export const SIDE_NAV_EXPANDED = 232;
+export const SIDE_NAV_EXPANDED = 200;
 export const SIDE_NAV_COLLAPSED = 64;
 const COLLAPSE_KEY = "sapling_sidenav_collapsed";
 
@@ -76,11 +77,9 @@ function fade(collapsed: boolean): React.CSSProperties {
 
 /* Active/hover surfaces.
  *
- * A plain neutral highlight. The selected row is a flat `--bg-soft`
- * (`--ink-100`) fill — one step off the rail's warm `--bg-subtle` ground —
- * with the label in bold ink. The earlier `--sap-100` green read as a
- * washed-out tint against the cream rail, and `--ink-200` read as too heavy;
- * one step of the shell's own warm grey is enough once the label goes bold.
+ * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
+ * which inside the olive rail resolves to a translucent cream wash (see
+ * [data-app-sidenav] in globals.css), with the label in bold cream.
  * No rail, no hue on the label: the fill IS the treatment.
  *
  * Hover is the same colour at half strength, so it is unmistakably the
@@ -123,8 +122,14 @@ export function SideNav() {
         width,
         minWidth: width,
         height: "100vh",
-        borderRight: "1px solid var(--border)",
-        background: "var(--bg-subtle)",
+        // Olive rail; the light-on-dark token overrides live on
+        // [data-app-sidenav] in globals.css. No right border: the olive edge
+        // is the divider, and ShellFrame rounds the content side into it.
+        background: "var(--sidenav-bg)",
+        // Positioned and lifted so the rail paints over the content column
+        // it borders (the .shell-corner pieces round that column into it).
+        position: "relative",
+        zIndex: 1,
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
@@ -135,61 +140,30 @@ export function SideNav() {
         transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
-      {/* Logo */}
+      {/* Logo — the approved wordmark (#728). There is no approved standalone
+          mark, so the collapsed rail shows no logo: the wordmark fades and the
+          row keeps its height, and it leaves the tab order while hidden. */}
       <Link
         href="/dashboard"
         aria-label="Sapling — home"
+        tabIndex={collapsed ? -1 : undefined}
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 2,
-          // Wide: the mark sits 6px in. Narrow: centred (computed, so it tweens).
-          padding: `2px 0 14px ${collapsed ? (RAIL_INNER_NARROW - 32) / 2 : 6}px`,
+          padding: "0 0 14px 6px",
           overflow: "hidden",
-          transition: GEOMETRY_TRANSITION,
           borderBottom: "1px solid var(--border)",
           marginBottom: 8,
           textDecoration: "none",
+          pointerEvents: collapsed ? "none" : undefined,
         }}
       >
-        <img
-          src="/sapling-icon.svg"
-          alt="Sapling"
-          width={32}
-          height={32}
-          decoding="async"
-          style={{
-            width: 32,
-            height: 32,
-            marginTop: -4,
-            marginRight: -4,
-            alignSelf: "center",
-            flexShrink: 0,
-          }}
-        />
-        <div
-            aria-hidden={collapsed || undefined}
-            style={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-start", ...fade(collapsed) }}
-          >
-            <span
-              style={{
-                fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-                fontWeight: 700,
-                fontSize: 20,
-                color: "var(--brand-forest)",
-                letterSpacing: "-0.02em",
-                textShadow: "0 0 12px rgba(26, 92, 42, 0.2)",
-                lineHeight: 1.1,
-              }}
-            >
-              Sapling
-            </span>
-          </div>
+        <SaplingWordmark width={112} decorative tone="light" style={fade(collapsed)} />
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
           for them, with the scrollbar hidden (`scrollbarWidth` here, the
-          WebKit pseudo-element in globals.css) — a 10px gutter in a 232px
+          WebKit pseudo-element in globals.css) — a 10px gutter in a 200px
           rail read as clutter, and wheel/trackpad/keyboard scrolling all
           still work. `minHeight: 0` is what lets a flex child shrink below
           its content and scroll at all. */}

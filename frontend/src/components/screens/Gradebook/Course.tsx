@@ -26,7 +26,6 @@ import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
 import { LetterScaleEditor } from "@/components/Gradebook/LetterScaleEditor";
 import { GradescopeSyncModal } from "@/components/Gradebook/GradescopeSyncModal";
-import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
 import { GradePredictorPanel } from "@/components/Gradebook/GradePredictorPanel";
@@ -517,7 +516,6 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   return (
     <FullHeightScreen>
-      <AmbientOrbs />
       <TopBar
         breadcrumb={
           <Link href="/gradebook" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
@@ -781,7 +779,7 @@ function Masthead({ data }: { data: GradebookCourse }) {
         </div>
         <h1
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: "clamp(26px, 3vw, 38px)",
             lineHeight: 1.08,
@@ -805,7 +803,7 @@ function Masthead({ data }: { data: GradebookCourse }) {
       >
         <span
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: 42,
             lineHeight: 1,
@@ -919,7 +917,7 @@ function GradeCompositionBar({
         <SectionHead label="Composition" onEdit={onEditWeights} />
         <div
           style={{
-            fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
             color: "var(--text-dim)",
             fontSize: 15,
             lineHeight: 1.55,
@@ -1185,7 +1183,7 @@ function GradeCompositionBar({
             >
               <div
                 style={{
-                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
                   fontSize: 12,
                   color: "var(--text)",
                   overflow: "hidden",
@@ -1354,7 +1352,7 @@ function CompositionStatus({
     <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
       <span
         style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
           fontWeight: 500,
           fontSize: 20,
           lineHeight: 1,
@@ -1367,7 +1365,7 @@ function CompositionStatus({
       {currentTier && (
         <span
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontSize: 14,
             color: "var(--text-dim)",
             fontWeight: 400,
@@ -1499,7 +1497,7 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
     >
       <div
         style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
           fontSize: 14,
           fontWeight: 500,
           marginBottom: 6,

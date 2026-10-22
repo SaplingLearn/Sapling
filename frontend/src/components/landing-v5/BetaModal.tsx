@@ -25,20 +25,19 @@
  */
 
 import { useEffect, useId, useRef, useState } from 'react';
-import Image from 'next/image';
+import { SaplingWordmark } from '@/components/SaplingWordmark';
 import { HeroCard } from '@/components/marketing/HeroCard';
 import { useScrollLock } from '@/lib/useScrollLock';
 
-const PLAYFAIR = "var(--font-playfair), 'Playfair Display', Georgia, serif";
-const SPECTRAL = "var(--font-spectral), 'Spectral', Georgia, serif";
-const JETBRAINS = "var(--font-jetbrains), var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace";
-const DM = "var(--font-dm-sans), var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
+const SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
+const MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
+const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
 
 /** The three perks of being on the list, each with its own accent dot.
  *  Waitlist perks first, the newsletter's last — phones show only the
  *  first two. */
 const PERKS = [
-  { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+  { dot: '#445D22', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
   { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
   { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
 ];
@@ -115,7 +114,7 @@ export function BetaModal({
           aria-modal="true"
           aria-labelledby={labelId}
         >
-          <h2 id={labelId} style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
+          <h2 id={labelId} style={{ margin: 0, fontFamily: SERIF, fontSize: 32, lineHeight: 1.1, fontWeight: 600, letterSpacing: '-0.02em', color: '#1a1a1a' }}>
             You&apos;re on the <span style={{ fontStyle: 'italic', color: 'var(--brand-forest)' }}>waitlist.</span>
           </h2>
           <p style={{ margin: '10px 0 0', fontSize: 17, color: '#4b5563', fontStyle: 'italic' }}>
@@ -163,18 +162,15 @@ export function BetaModal({
 
         {/* ── left: brand + beta tester role ── */}
         <div className="hero-surface ld-beta-left" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Image src="/sapling-icon.svg" alt="Sapling" width={22} height={22} />
-            <span style={{ fontFamily: SPECTRAL, fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
-          </div>
+          <SaplingWordmark width={88} />
 
           <div>
-            <div style={{ fontFamily: JETBRAINS, fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
+            <div style={{ fontFamily: MONO, fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
               Early access
             </div>
-            <h2 style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+            <h2 style={{ margin: 0, fontFamily: SERIF, fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
               Learn early.<br />
-              <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Grow</span> with us.
+              <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: SERIF }}>Grow</span> with us.
             </h2>
             <p style={{ margin: '14px 0 0', fontSize: 13.5, lineHeight: 1.55, color: '#4b5563', maxWidth: 360 }}>
               Sapling is being built alongside the students who&apos;ll use it most. Join early and
@@ -185,20 +181,20 @@ export function BetaModal({
           <div style={{ height: 1, flexShrink: 0, background: 'rgba(107,114,128,0.15)' }} />
 
           <div>
-            <h3 style={{ margin: '0 0 12px', fontFamily: PLAYFAIR, fontSize: 22, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+            <h3 style={{ margin: '0 0 12px', fontFamily: SERIF, fontSize: 22, fontWeight: 700, color: '#1a1a1a', letterSpacing: '-0.02em' }}>
               Beta Tester Role
             </h3>
             <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: '#EBE6DC', border: '1px solid #D6D1C6' }}>
-              <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: DM, letterSpacing: '0.02em' }}>
+              <div className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#374151', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: SANS, letterSpacing: '0.02em' }}>
                 AK
               </div>
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: DM }}>Alex Kim</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: SANS }}>Alex Kim</span>
                   <span
                     style={{
                       display: 'inline-flex', alignItems: 'center', padding: '3px 10px',
-                      borderRadius: 9999, fontSize: 10, fontWeight: 500, fontFamily: JETBRAINS,
+                      borderRadius: 9999, fontSize: 10, fontWeight: 500, fontFamily: MONO,
                       letterSpacing: '0.1em', textTransform: 'uppercase',
                       background: 'rgba(212,175,55,0.08)', color: '#C9A227',
                       border: '1.5px solid rgba(212,175,55,0.55)',
@@ -207,7 +203,7 @@ export function BetaModal({
                     Beta Tester
                   </span>
                 </div>
-                <span style={{ fontSize: 11, color: '#9CA3AF', fontFamily: DM }}>@alexkim</span>
+                <span style={{ fontSize: 11, color: '#9CA3AF', fontFamily: SANS }}>@alexkim</span>
               </div>
             </div>
             <p style={{ margin: '10px 2px 0', fontSize: 12.5, color: '#6b7280', lineHeight: 1.5, fontStyle: 'italic' }}>
@@ -220,9 +216,9 @@ export function BetaModal({
 
         {/* ── right: newsletter ── */}
         <div className="hero-surface ld-beta-right" style={{ padding: '44px 42px 36px', display: 'flex', flexDirection: 'column' }}>
-          <h1 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: PLAYFAIR, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
+          <h1 id={labelId} className="ld-beta-title" style={{ margin: 0, fontFamily: SERIF, fontSize: 48, lineHeight: 1.05, fontWeight: 600, letterSpacing: '-0.025em', color: '#1a1a1a' }}>
             Join the{' '}
-            <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: PLAYFAIR }}>Waitlist</span>
+            <span style={{ fontStyle: 'italic', fontWeight: 800, color: 'var(--brand-forest)', fontFamily: SERIF }}>Waitlist</span>
           </h1>
           <p style={{ margin: '14px 0 0', fontSize: 15, color: '#4b5563', lineHeight: 1.5 }}>
             Leave your email and we&apos;ll let you in when your spot opens.
@@ -256,11 +252,11 @@ export function BetaModal({
                   background: 'rgba(255,255,255,0.6)',
                   border: '1.5px solid rgba(107,114,128,0.25)', borderRadius: 10,
                   transition: 'border-color 0.15s, box-shadow 0.15s',
-                  fontFamily: DM, color: '#1a1a1a', boxSizing: 'border-box',
+                  fontFamily: SANS, color: '#1a1a1a', boxSizing: 'border-box',
                 }}
               />
               {(localError || error) && (
-                <p role="alert" style={{ margin: '6px 0 0', fontSize: 11.5, color: '#dc2626', fontFamily: DM }}>
+                <p role="alert" style={{ margin: '6px 0 0', fontSize: 11.5, color: '#dc2626', fontFamily: SANS }}>
                   {localError || error}
                 </p>
               )}
@@ -273,10 +269,10 @@ export function BetaModal({
                 width: '100%', padding: '14px 16px', borderRadius: 10,
                 background: subscribing ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
                 fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
-                boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
+                boxShadow: '0 8px 24px rgba(68,93,34,0.3)',
                 border: 'none', cursor: subscribing ? 'default' : 'pointer',
                 transition: 'all 0.18s', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', gap: 8, fontFamily: DM,
+                justifyContent: 'center', gap: 8, fontFamily: SANS,
               }}
             >
               {subscribing ? 'Planting your node…' : <>Join the Waitlist <span style={{ opacity: 0.7 }}>→</span></>}

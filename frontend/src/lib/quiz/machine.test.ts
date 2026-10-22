@@ -31,6 +31,33 @@ const CONFIG: QuizConfig = {
 
 const PREFS: QuizPrefs = { count: null, difficulty: null, feedback: "at-end" };
 
+it("does not skip an unsent written draft when resuming", () => {
+  const session = initialSession({ source: { kind: "nav" } }, CONFIG, PREFS);
+  const resumed = reduce(session, { type: "RESUME", stored: null, detail: {
+    quiz_id: "written", concept_node_id: "c1", difficulty: "medium", resumable: true,
+    status: "in_progress", questions: [{ id: 1, type: "short_answer", question: "Name it", options: [], difficulty: "easy" }],
+    responses: [], score: null, total: null, created_at: "2026-10-18T00:00:00Z",
+  } });
+  const draft = reduce(resumed, { type: "WRITE", text: "  " });
+  expect(canSubmitAnswer(draft)).toBe(false);
+  const ready = reduce(draft, { type: "WRITE", text: "WHO" });
+  expect(canSubmitAnswer(ready)).toBe(true);
+  expect(firstUnansweredIndex(ready.items)).toBe(0);
+});
+
+it("restores recorded written answers from the server on a different device", () => {
+  const session = initialSession({ source: { kind: "nav" } }, CONFIG, PREFS);
+  const resumed = reduce(session, { type: "RESUME", stored: null, detail: {
+    quiz_id: "written", concept_node_id: "c1", difficulty: "medium", resumable: true,
+    status: "in_progress", questions: [{ id: 1, type: "numeric", question: "Half?", options: [], difficulty: "easy" }],
+    responses: [{ question_index: 0, selected_index: null, answer_text: "1/2", is_correct: true, answered_at: "2026-10-18T00:00:00Z" }],
+    score: null, total: null, created_at: "2026-10-18T00:00:00Z",
+  } });
+  expect(resumed.items[0].answerText).toBe("1/2");
+  expect(resumed.phase).toBe("answered");
+  expect(reduce(resumed, { type: "NEXT" }).phase).toBe("submitting");
+});
+
 const TREE_SOURCE: QuizSource = {
   kind: "tree",
   returnTo: "/tree?node=c1",

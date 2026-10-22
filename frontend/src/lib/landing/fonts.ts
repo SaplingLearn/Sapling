@@ -1,38 +1,39 @@
 /**
- * The landing's four font stacks, in one place.
+ * The landing's four font stacks, in one place (display and serif are both
+ * Aleo today; they stay separate names so a section can split them).
  *
  * Every family is loaded by `next/font/local` (see `app/layout.tsx`), which
  * assigns each one a generated family name and publishes it as a CSS variable.
- * That generated name is NOT the human name: a `const playfairDisplay` becomes
- * the family `playfairDisplay`, so a stack written as `'Playfair Display',
- * serif` matches nothing and silently renders Times. It looks almost right —
- * the metric-adjusted fallback sees to that — which is exactly why it went
- * unnoticed across 23 files.
+ * That generated name is NOT the human name: a `const aleo` becomes
+ * the family `aleo`, so a stack written as `'Aleo', serif` matches nothing
+ * and silently renders Times. It looks almost right — the metric-adjusted
+ * fallback sees to that — which is exactly why it went unnoticed across 23
+ * files.
  *
  * So the variable comes first and the human name second, as a fallback for the
  * rare visitor who has the font installed locally. Never write a bare family
  * name in a style; use these.
  */
 
-export const FONT_DISPLAY = "var(--font-spectral), 'Spectral', Georgia, serif";
-export const FONT_SERIF = "var(--font-playfair), 'Playfair Display', Georgia, serif";
-export const FONT_SANS = "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif";
-export const FONT_MONO = "var(--font-jetbrains), 'JetBrains Mono', ui-monospace, monospace";
+export const FONT_DISPLAY = "var(--font-aleo), 'Aleo', Georgia, serif";
+export const FONT_SERIF = "var(--font-aleo), 'Aleo', Georgia, serif";
+export const FONT_SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
+export const FONT_MONO = "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace";
 
 type FontKind = 'display' | 'serif' | 'sans' | 'mono';
 
 const CSS_VAR: Record<FontKind, string> = {
-  display: '--font-spectral',
-  serif: '--font-playfair',
-  sans: '--font-dm-sans',
-  mono: '--font-jetbrains',
+  display: '--font-aleo',
+  serif: '--font-aleo',
+  sans: '--font-suse',
+  mono: '--font-plex-mono',
 };
 
 const BARE: Record<FontKind, string> = {
-  display: "'Spectral', Georgia, serif",
-  serif: "'Playfair Display', Georgia, serif",
-  sans: "'DM Sans', system-ui, sans-serif",
-  mono: "'JetBrains Mono', ui-monospace, monospace",
+  display: "'Aleo', Georgia, serif",
+  serif: "'Aleo', Georgia, serif",
+  sans: "'SUSE', system-ui, sans-serif",
+  mono: "'IBM Plex Mono', ui-monospace, monospace",
 };
 
 const resolved: Partial<Record<FontKind, string>> = {};

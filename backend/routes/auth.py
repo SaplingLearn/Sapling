@@ -5,6 +5,7 @@ Google OAuth sign-in with unified calendar access.
 Restricts sign-in to @bu.edu email accounts only.
 """
 
+import asyncio
 import json
 import base64
 import hashlib
@@ -113,6 +114,17 @@ OAUTH_STATE_COOKIE = "sapling_oauth_state"
 _OAUTH_COOKIE_MAX_AGE = 600
 _POPUP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
+# Cloudflare preview URLs of the frontend-staging worker, one per PR/version:
+# https://<alias>-frontend-staging.saplinglearn.workers.dev. Google only accepts
+# exact redirect URIs, so a preview can't be registered. Instead it starts sign-in
+# here with ?return_to=<its origin>: Google still calls back to the one registered
+# api.staging URI, and only the final hand-off redirect goes back to the preview.
+# The <alias> label is capped so the whole DNS label stays within 63 chars.
+_PREVIEW_ORIGIN_RE = re.compile(
+    r"^https://[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?"
+    r"-frontend-staging\.saplinglearn\.workers\.dev$"
+)
+
 # TTL of the one-shot HMAC token handed to the frontend on the OAuth-callback
 # redirect. This is NOT the session lifetime (#168): the frontend session BFF
 # (frontend/src/app/api/auth/session) verifies this token once and re-mints a
@@ -202,6 +214,19 @@ def _clean_popup_id(s: str | None) -> str | None:
     if not s:
         return None
     return s if _POPUP_ID_RE.match(s) else None
+
+
+def _clean_return_to(s: str | None) -> str | None:
+    """Accept `return_to` only on the staging backend and only for a preview origin.
+
+    The callback hands the one-shot auth_token to this origin, so anything looser
+    is a token-exfiltration redirect. Production never honours it (its previews,
+    if any, hold staging's SESSION_SECRET and couldn't use a prod token anyway).
+    Read APP_ENV live, like _test_auth_enabled, so tests can flip it.
+    """
+    if not s or config.APP_ENV != "staging":
+        return None
+    return s if _PREVIEW_ORIGIN_RE.fullmatch(s) else None
 
 
 def _encode_oauth_cookie(payload: dict) -> str:
@@ -345,7 +370,7 @@ def get_me(request: Request):
 
 
 @router.get("/google")
-def google_login(popup_id: str = Query(None)):
+def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
     """Redirect to Google consent screen with identity + calendar scopes."""
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google OAuth not configured")
@@ -353,6 +378,9 @@ def google_login(popup_id: str = Query(None)):
     code_verifier, code_challenge = _generate_pkce_pair()
     nonce = secrets.token_urlsafe(32)
     clean_popup = _clean_popup_id(popup_id)
+    # Kept in the signed state cookie, never re-read from the callback query: the
+    # callback trusts only what /google validated and signed.
+    clean_return_to = _clean_return_to(return_to)
 
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
@@ -368,6 +396,7 @@ def google_login(popup_id: str = Query(None)):
         "n": nonce,
         "cv": code_verifier,
         "popup_id": clean_popup,
+        **({"rt": clean_return_to} if clean_return_to else {}),
     })
     response = RedirectResponse(auth_url)
     response.set_cookie(
@@ -389,15 +418,20 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None
     cookie_nonce = cookie_payload.get("n") if cookie_payload else None
+    # Re-checked here as well as at /google, so the token only ever leaves for an
+    # origin the CURRENT config allows; anything else lands on FRONTEND_URL.
+    frontend_url = (
+        _clean_return_to(cookie_payload.get("rt")) if cookie_payload else None
+    ) or FRONTEND_URL
 
     def _fail_redirect(error_code: str, fallback_path: str = "/auth") -> RedirectResponse:
         # In popup mode, route failures through /auth/callback so the popup
         # can broadcast the error and self-close instead of stranding the opener.
         if popup_id:
             params = urlencode({"error": error_code, "popup_id": popup_id})
-            resp = RedirectResponse(f"{FRONTEND_URL}/auth/callback?{params}")
+            resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
         else:
-            resp = RedirectResponse(f"{FRONTEND_URL}{fallback_path}?error={error_code}")
+            resp = RedirectResponse(f"{frontend_url}{fallback_path}?error={error_code}")
         resp.set_cookie(
             key=OAUTH_STATE_COOKIE,
             value="",
@@ -543,7 +577,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     if not is_approved:
         if popup_id:
             return _fail_redirect("not_approved")
-        resp = RedirectResponse(f"{FRONTEND_URL}/pending")
+        resp = RedirectResponse(f"{frontend_url}/pending")
         resp.set_cookie(
             key=OAUTH_STATE_COOKIE,
             value="",
@@ -607,7 +641,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         **({"auth_token": auth_token} if auth_token else {}),
         **({"popup_id": popup_id} if popup_id else {}),
     })
-    resp = RedirectResponse(f"{FRONTEND_URL}/auth/callback?{params}")
+    resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
     resp.set_cookie(
         key=OAUTH_STATE_COOKIE,
         value="",
@@ -735,3 +769,38 @@ async def mint_test_session(request: Request):
         path="/",
     )
     return response
+
+
+# ── GET /api/auth/local-seed ──────────────────────────────────────────────────
+
+
+@router.get("/local-seed", include_in_schema=False)
+async def local_seed_status(request: Request):
+    """Where the signed-in account's local sample data stands (#715). LOCAL ONLY.
+
+    On a developer's local stack, services/local_seed_watcher.py copies the
+    rich sample dataset onto each Google account. The post-sign-in routing asks
+    here first: `pending`/`seeding` sends a new account to the hold screen
+    instead of /onboarding, `ready` straight to the dashboard, `failed` (with
+    `error`) offers to continue to onboarding anyway.
+
+    404 — the frontend's cue to keep its normal routing — whenever the watcher
+    would not run (any non-local backend, gated per REQUEST on the same
+    predicate as the seed CLI's guard, checked before the session) and for any
+    account the watcher never seeds: a non-Google fixture account, a missing
+    or soft-deleted one, an ensure_user_exists stub (no google_id). A `pending`
+    answer wakes the watcher so a fresh sign-in waits one seed, not a poll.
+    """
+    from services import local_seed_watcher
+
+    if not local_seed_watcher.watcher_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    user_id = get_session_user_id(request)
+    if not local_seed_watcher.is_oauth_account(user_id):
+        raise HTTPException(status_code=404, detail="Not Found")
+    status = await asyncio.to_thread(local_seed_watcher.status_for, user_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if status["state"] == "pending":
+        local_seed_watcher.nudge()
+    return status

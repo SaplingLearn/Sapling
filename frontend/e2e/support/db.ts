@@ -162,6 +162,29 @@ export async function queryRaw(
 }
 
 /**
+ * Insert a users row exactly as a first Google sign-in leaves it (#715):
+ * `user_<google id>` id, google_id set, approved, NOT onboarded, no profile.
+ * That is the account shape the local-seed watcher
+ * (backend/services/local_seed_watcher.py) copies the sample dataset onto —
+ * real OAuth cannot be driven headlessly, so local-seed.spec.ts creates the
+ * row here and gets it a session through test-login. Cleanup is the per-test
+ * reset: `users` (and every row the seed hangs off it) is not in the
+ * TRUNCATE_DENYLIST, so the next test starts without it.
+ */
+export async function insertGoogleAccount(userId: string, googleId: string): Promise<void> {
+  if (!userId.startsWith("user_")) {
+    throw new Error(`insertGoogleAccount: ${userId} is not a user_<google id> account id`);
+  }
+  await withDb((client) =>
+    client.query(
+      `INSERT INTO users (id, google_id, is_approved, onboarding_completed)
+       VALUES ($1, $2, true, false)`,
+      [userId, googleId],
+    ),
+  );
+}
+
+/**
  * Mint XP the same way the app does — for journeys that need "the user just
  * earned XP" without driving a real quiz/session/upload through the UI
  * (gamification.spec.ts, Task 17).

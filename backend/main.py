@@ -31,10 +31,12 @@ from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
+from routes.topic_checklist import router as topic_checklist_router
 from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
+from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -42,6 +44,10 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.local_seed_watcher import (
+    start_watcher as start_local_seed_watcher,
+    stop_watcher as stop_local_seed_watcher,
+)
 from services import typesafe_client
 
 try:
@@ -95,6 +101,10 @@ async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
+    # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
+    # and writes the real environment can never decrypt.
+    verify_encryption_key()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -119,11 +129,15 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    # #715: on a developer's LOCAL stack only, copy the rich sample dataset
+    # onto each Google account that signs in. Not started anywhere else.
+    start_local_seed_watcher()
     # #672: the decision seam's backends moved from env vars to the
     # decision_router flag; say so if a deployment still sets the old ones.
     from services import decisions
     decisions.warn_removed_env()
     yield
+    await stop_local_seed_watcher()
     await stop_sweeper()
     # Let in-flight tutor-router decisions finish first: each one emits a
     # decision.made row through the Jev client and the events worker closed
@@ -286,6 +300,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 app.include_router(graph.router,       prefix="/api/graph")
+app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
 app.include_router(quiz.router,        prefix="/api/quiz")
 app.include_router(calendar.router,    prefix="/api/calendar")
