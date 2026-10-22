@@ -166,11 +166,29 @@ describe("QuizQuestion — the question", () => {
     fireEvent.click(screen.getByRole("button", { name: "See results" }));
     expect(actions.next).toHaveBeenCalledOnce();
   });
+  it.each(["short_answer", "numeric", "symbolic"] as const)("answers %s on one line, focused, with Enter to submit", type => {
+    const actions = makeActions();
+    const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] }, answerText: "" })] });
+    const view = renderScreen(session, actions);
+    const input = screen.getByRole("textbox", { name: /^Your answer/ });
+    // A single-line input, not a paragraph box, and ready to type into.
+    expect(input.tagName).toBe("INPUT");
+    expect(input).toHaveFocus();
+    expect(input).toHaveAccessibleName(/base case in a recursive function/);
+    // Enter with nothing typed does nothing...
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    // ...and submits once there is an answer.
+    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: "42" }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
+
   it.each(["short_answer", "numeric", "symbolic"] as const)("supports %s without answer choices", type => {
     const actions = makeActions();
     const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
     const view = renderScreen(session, actions);
-    const input = screen.getByRole("textbox", { name: "Your answer" });
+    const input = screen.getByRole("textbox", { name: /^Your answer/ });
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
     fireEvent.change(input, { target: { value: "2(x+1)" } });
@@ -192,7 +210,7 @@ describe("QuizQuestion — the question", () => {
     // `.quiz-question__hint` is the visually hidden keyboard hint: the rules
     // a sighted student must follow to be graded correctly can never live there.
     expect(hint).not.toHaveClass("quiz-question__hint");
-    expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveAccessibleDescription(rule);
+    expect(screen.getByRole("textbox", { name: /^Your answer/ })).toHaveAccessibleDescription(rule);
     expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
   });
 
@@ -201,6 +219,18 @@ describe("QuizQuestion — the question", () => {
       items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
         verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "Cellular respiration." } })] }));
     expect(screen.getByText("Not quite — the expected answer is Cellular respiration.")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Why?", "Why?"],
+    ["respiration. ", "respiration."],
+    ["Stop!", "Stop!"],
+    ["ATP", "ATP."],
+  ])("never doubles the key's own terminal punctuation (%j)", (key, shown) => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: key } })] }));
+    expect(screen.getByText(`Not quite — the expected answer is ${shown}`)).toBeInTheDocument();
   });
 
   it("keeps the multiple-choice keyboard hint for assistive tech, with no format rules", () => {

@@ -468,24 +468,67 @@ _MAX_ANSWER_CHARS = 2000
 # Generation-only guards for items a student cannot answer fairly (found
 # clicking through live quizzes). Applied in _agent_question_to_wire, never in
 # _validate_wire_question, which also re-checks stored attempts on resume.
-# A symbolic key with a 4+ letter run is a word, not a product: the grammar
+# A symbolic key whose letter run is a word is not a product: the grammar
 # reads "lambda" as a*a*b*d*l*m, so the real answer is wrong and an anagram
-# is right. Short products ("2xy", "mgh") stay allowed.
-_SYMBOLIC_WORD = re.compile(r"[A-Za-z]{4,}")
+# is right. A 4+ letter run is taken as a word; so is a short Greek-letter or
+# constant name ("pi r^2" grades as p*i*r^2, and a student typing the symbol
+# cannot match it at all). Short products ("2xy", "mgh") stay allowed. Function
+# names need no entry here: the grammar refuses them, and
+# _validate_wire_question drops a key it cannot parse.
+_SYMBOLIC_LETTER_RUN = re.compile(r"[A-Za-z]+")
+_SYMBOLIC_WORD_MIN = 4
+# "mu" and "xi" are left out: m*u (mass times initial velocity) and x*i are
+# ordinary products in mechanics and algebra keys.
+_SYMBOLIC_NAMES = frozenset({"pi", "nu", "rho", "tau", "phi", "chi", "psi", "eta"})
 # A short-answer key is a term or brief fact (docs/quiz-formats.md); exact
-# matching can never accept a sentence or paragraph key.
+# matching can never accept a sentence or paragraph key. A sentence break is a
+# semicolon, "!" or "?", or a full stop, each followed by more text, except a
+# full stop after an initial ("John F. Kennedy", "U.S.", "e.g.") or a known
+# abbreviation ("St. Louis", "Prof. Xavier", "Sept. 11").
 _SHORT_ANSWER_MAX_WORDS = 8
-_SENTENCE_BREAK = re.compile(r"[.!?;]\s+\S")
+# How a whole stem ends: terminal punctuation, a closing bracket or quote, a
+# code fence or emphasis, or a fill-in blank.
+_WHOLE_STEM_ENDINGS = tuple("?.!)]\"'`*_")
+_SENTENCE_BREAK = re.compile(r"(?:;|([A-Za-z0-9]+)([.!?]))\s+\S")
+_ABBREVIATIONS = frozenset({
+    "mr", "mrs", "ms", "dr", "prof", "st", "mt", "ft", "jr", "sr", "sgt", "capt", "col",
+    "gen", "lt", "pres", "gov", "sen", "rep", "rev", "hon", "dept", "univ", "inc", "ltd",
+    "co", "corp", "vs", "etc", "approx", "no", "vol", "fig", "eq", "ch", "sec", "jan",
+    "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+})
+
+
+def _is_symbolic_word(key: str) -> bool:
+    return any(
+        len(run) >= _SYMBOLIC_WORD_MIN or run.lower() in _SYMBOLIC_NAMES
+        for run in _SYMBOLIC_LETTER_RUN.findall(key)
+    )
+
+
+def _is_sentence(key: str) -> bool:
+    if len(key.split()) > _SHORT_ANSWER_MAX_WORDS:
+        return True
+    for m in _SENTENCE_BREAK.finditer(key):
+        word, mark = m.groups()
+        if word is None or mark != ".":
+            return True  # a semicolon, "!" or "?" mid-key
+        if (len(word) == 1 and word.isalpha()) or word.lower() in _ABBREVIATIONS:
+            continue
+        return True
+    return False
 
 
 def _unfair_written_key(q: QuizQuestion) -> str | None:
-    """Why this written item's key cannot be fairly matched, or None."""
-    key = q.correct_answer.strip()
-    if q.type == "symbolic" and _SYMBOLIC_WORD.search(key):
+    """Why this written item's key cannot be fairly matched, or None.
+
+    An item is judged on everything the grader accepts, not the canonical key
+    alone: a sentence-length key with a short alias ("base case") still lets
+    the student who writes the term get it right.
+    """
+    keys = [k.strip() for k in (q.correct_answer, *q.accepted_answers) if k.strip()]
+    if q.type == "symbolic" and _is_symbolic_word(q.correct_answer.strip()):
         return "symbolic key is a word"
-    if q.type == "short_answer" and (
-        len(key.split()) > _SHORT_ANSWER_MAX_WORDS or _SENTENCE_BREAK.search(key)
-    ):
+    if q.type == "short_answer" and all(_is_sentence(k) for k in keys):
         return "short-answer key is a sentence"
     return None
 
@@ -544,12 +587,18 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 
     Returning None lets the caller filter questions out cleanly.
     """
-    if q.question != q.question.rstrip():
+    stem = q.question.rstrip()
+    if stem != q.question:
         # Gemini can end a function-call string at an inner double quote
-        # ('...referred to as the "energy currency"' served as '...as the '):
-        # trailing whitespace is the tell of a stem cut off mid-sentence.
-        logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
-        return None
+        # ('...referred to as the "energy currency"' served as '...as the ',
+        # 'Fill in the blank: "..."' as 'Fill in the blank: '): trailing
+        # whitespace is the tell. A whole stem the model merely padded ends in
+        # closing punctuation ("?\n", a code fence, a blank), so that one is
+        # served trimmed; anything else (a word, ":" or ",") was cut off.
+        if not stem.endswith(_WHOLE_STEM_ENDINGS):
+            logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
+            return None
+        q = q.model_copy(update={"question": stem})
     if q.type in WRITTEN_TYPES:
         if (reason := _unfair_written_key(q)) is not None:
             logger.warning("quiz: dropping question id=%d — %s", qid, reason)
@@ -1103,8 +1152,10 @@ _MCQ_TOPUP_RULE = (
 )
 _WRITTEN_TOPUP_RULE = (
     "for short_answer, numeric and symbolic items options must be empty and "
-    "correct_answer is the canonical answer (numeric: a plain number or "
-    "fraction; symbolic: an expression in the supported grammar)."
+    "correct_answer is the canonical answer (short_answer: a term or brief fact "
+    "of at most 8 words, never a sentence; numeric: a plain number or fraction; "
+    "symbolic: an expression in the supported grammar, with single-letter "
+    "variables only and no words or Greek-letter names)."
 )
 
 

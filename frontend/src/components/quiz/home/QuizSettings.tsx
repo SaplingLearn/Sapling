@@ -122,7 +122,9 @@ export function QuizSettings({ config, value, onChange, flush = false }: QuizSet
         </Row>
       )}
       {value.questionFormat === "mixed" && (
-        <p className="quiz-question__hint">A variety suited to your course: written answers and multiple choice, with math only when relevant.</p>
+        <p className="quiz-home-settings__note" data-testid="quiz-format-mixed-note">
+          A variety suited to your course: written answers and multiple choice, with math only when relevant.
+        </p>
       )}
     </div>
   );
