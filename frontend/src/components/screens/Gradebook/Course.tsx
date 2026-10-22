@@ -26,7 +26,6 @@ import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
 import { LetterScaleEditor } from "@/components/Gradebook/LetterScaleEditor";
 import { GradescopeSyncModal } from "@/components/Gradebook/GradescopeSyncModal";
-import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
 import { GradePredictorPanel } from "@/components/Gradebook/GradePredictorPanel";
@@ -517,7 +516,6 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   return (
     <FullHeightScreen>
-      <AmbientOrbs />
       <TopBar
         breadcrumb={
           <Link href="/gradebook" style={{ color: "var(--text-dim)", textDecoration: "none" }}>

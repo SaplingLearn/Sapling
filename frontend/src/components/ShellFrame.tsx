@@ -6,7 +6,6 @@ import { SideNav } from "./SideNav";
 import { FloatingActions } from "./FloatingActions";
 import { FeedbackFlow } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
-import { AtmosphericBackdrop } from "./AtmosphericBackdrop";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
 import { NavFeatureGate } from "./NavFeatureGate";
 import { useLayoutPref } from "@/lib/useLayoutPref";
@@ -38,7 +37,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           position: "relative",
         }}
       >
-        <AtmosphericBackdrop />
         <a href="#main-content" className="skip-link">Skip to content</a>
         <SideNav />
         {/* The content column. Its wrapper exists only to anchor the two
@@ -59,8 +57,7 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
             // so this — not <body> — is what scrolls. `useScrollLock` targets it.
             data-scroll-container=""
-            // No z-index: DOM order already lifts <main> over the z-0
-            // backdrop canvas, and a stacking context here would trap every
+            // No z-index: a stacking context here would trap every
             // overlay inside it (graph full view, modals) below the
             // .shell-corner pieces, which must sit above opaque screens.
             style={{
@@ -93,7 +90,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
         position: "relative",
       }}
     >
-      <AtmosphericBackdrop />
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopNav />
       <main
