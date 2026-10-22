@@ -126,10 +126,9 @@ export function SideNav() {
         // [data-app-sidenav] in globals.css. No right border: the olive edge
         // is the divider, and ShellFrame rounds the content side into it.
         background: "var(--sidenav-bg)",
-        // Positioned and lifted so the rail paints over the content column
-        // it borders (the .shell-corner pieces round that column into it).
+        // The containing block for the rail's own absolutely positioned
+        // pieces (the header's fading labels).
         position: "relative",
-        zIndex: 1,
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
         display: "flex",
         flexDirection: "column",
