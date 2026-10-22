@@ -437,7 +437,6 @@ def list_links(user_id: str, request: Request, semester: str | None = None):
     links = [
         {
             "id": r["id"],
-            "enrollment_id": r["enrollment_id"],
             "sapling_course_id": course_by_enrollment[r.get("enrollment_id")],
             "gradescope_course_id": r.get("gradescope_course_id"),
             "last_synced_at": r.get("last_synced_at"),

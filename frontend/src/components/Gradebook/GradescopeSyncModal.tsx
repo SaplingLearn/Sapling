@@ -87,8 +87,8 @@ export function GradescopeSyncModal(props: Props) {
   ])} {...props} />;
 }
 
+// The wrapper only mounts this while open, so `open` itself is never read here.
 function GradescopeSyncDialog({
-  open,
   userId,
   saplingCourseId,
   saplingCourseLabel,
@@ -96,7 +96,7 @@ function GradescopeSyncDialog({
   reconnect = false,
   onClose,
   onSynced,
-}: Props) {
+}: Omit<Props, "open">) {
   const [mounted, setMounted] = React.useState(false);
   const [stage, setStage] = React.useState<Stage>("loading");
   const [error, setError] = React.useState<string | null>(null);
@@ -125,7 +125,7 @@ function GradescopeSyncDialog({
   const active = React.useRef(true);
   const dialogRef = React.useRef<HTMLDivElement>(null);
   const fieldId = React.useId();
-  useScrollLock(open);
+  useScrollLock(true);
 
   React.useEffect(() => {
     active.current = true;
@@ -207,7 +207,6 @@ function GradescopeSyncDialog({
   }, [userId, saplingCourseId, semester, chooseCourse, failVerification]);
 
   React.useEffect(() => {
-    if (!open) return;
     setResult(null);
     setError(null);
     setEmail("");
@@ -218,9 +217,9 @@ function GradescopeSyncDialog({
     setBuPassword("");
     if (reconnect) setStage("choose-mode");
     else refreshState();
-  }, [open, reconnect, refreshState]);
+  }, [reconnect, refreshState]);
 
-  if (!mounted || !open) return null;
+  if (!mounted) return null;
 
   async function onSubmitCredentials(e: React.FormEvent) {
     e.preventDefault();

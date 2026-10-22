@@ -1630,7 +1630,6 @@ export interface GradescopeCourse {
 
 export interface GradescopeLink {
   id: string;
-  enrollment_id?: string;
   sapling_course_id: string;
   gradescope_course_id: string;
   last_synced_at: string | null;
