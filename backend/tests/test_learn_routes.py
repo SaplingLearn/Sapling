@@ -407,7 +407,7 @@ class TestModelPref:
         """Default-parity invariant (PR #78/#71, folded here from the deleted
         TestResolveLegacyModel in #151a): when body.model_pref is None,
         `_resolve_model_pref` returns no override, so the run lands on the
-        agent's default model — gemini-2.5-pro per
+        agent's default model — claude-sonnet-5-5 per
         agents/_providers.py:_DEFAULTS["chat_tutor"] — which is exactly the
         tier an explicit "smart" pref selects. A drift in either direction
         (a different agent default, or a "smart" map entry pointing
@@ -418,7 +418,7 @@ class TestModelPref:
         assert _resolve_model_pref(None) is None, (
             "no pref must fall through to the agent default, not build an override"
         )
-        assert _PREF_MODEL_NAMES["smart"] == _DEFAULTS["chat_tutor"] == "gemini-2.5-pro"
+        assert _PREF_MODEL_NAMES["smart"] == _DEFAULTS["chat_tutor"] == "claude-sonnet-5-5"
 
 
 # ── POST /api/learn/chat (agent path + legacy fallback) ──────────────────────
@@ -680,7 +680,7 @@ class TestChatViaAgent:
         assert inserts[1]["content"] == "ENC:MODEL_REPLY"
 
     def test_smart_pref_overrides_agent_model(self):
-        """body.model_pref='smart' → agent.run gets `model=GoogleModel('gemini-2.5-pro')`."""
+        """body.model_pref='smart' → agent.run gets `model=AnthropicModel('claude-sonnet-5-5')`."""
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
@@ -691,10 +691,10 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model" in kwargs, "smart pref must pass an explicit model override"
-        assert kwargs["model"].model_name == "gemini-2.5-pro"
+        assert kwargs["model"].model_name == "claude-sonnet-5-5"
 
     def test_fast_pref_overrides_agent_model(self):
-        """body.model_pref='fast' → agent.run gets `model=GoogleModel('gemini-2.5-flash-lite')`."""
+        """body.model_pref='fast' → agent.run gets `model=AnthropicModel('claude-haiku-5-5')`."""
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
@@ -705,7 +705,7 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model" in kwargs
-        assert kwargs["model"].model_name == "gemini-2.5-flash-lite"
+        assert kwargs["model"].model_name == "claude-haiku-5-5"
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO `model` kwarg; agent default wins."""
@@ -720,15 +720,15 @@ class TestChatViaAgent:
         kwargs = agent.run.call_args.kwargs
         assert "model" not in kwargs
 
-    def test_smart_pref_attaches_thinking_cap(self):
-        """smart pref → agent.run gets model_settings with thinking_budget=2048.
+    def test_smart_pref_attaches_deep_turn_effort(self):
+        """smart pref → agent.run gets model_settings raising Claude's effort.
 
         Regression guard: a future refactor that drops the
-        `_build_pro_model_settings()` call would silently restore Pro to
-        unbounded dynamic thinking — the exact latency regression this PR
-        fixed. Pin the budget value, not just the kwarg's presence.
+        `_build_deep_turn_model_settings()` call would silently leave smart
+        turns at the slot's `low` default. Pin the value, not just the
+        kwarg's presence.
         """
-        from routes.learn import _PRO_THINKING_BUDGET
+        from routes.learn import _DEEP_TURN_EFFORT
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
@@ -739,17 +739,14 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model_settings" in kwargs
-        # GoogleModelSettings is a TypedDict at the type level but a plain
-        # dict at runtime; ThinkingConfig is a regular Pydantic-style object.
-        budget = kwargs["model_settings"]["google_thinking_config"].thinking_budget
-        assert budget == _PRO_THINKING_BUDGET
-        assert _PRO_THINKING_BUDGET == 2048  # pin the literal too
+        assert kwargs["model_settings"] == {"anthropic_effort": _DEEP_TURN_EFFORT}
+        assert _DEEP_TURN_EFFORT == "medium"  # pin the literal too
 
-    def test_no_pref_attaches_thinking_cap(self):
-        """No model_pref → falls through to Pro default → still capped.
+    def test_no_pref_attaches_deep_turn_effort(self):
+        """No model_pref → falls through to the step-up default → deep turn.
 
-        The cap protects every path that lands on Pro, including the
-        no-pref agent default — not just explicit "smart" requests.
+        The setting covers every path that lands on the step-up model,
+        including the no-pref agent default — not just explicit "smart".
         """
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
@@ -761,23 +758,25 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model_settings" in kwargs
-        assert kwargs["model_settings"]["google_thinking_config"].thinking_budget == 2048
+        assert kwargs["model_settings"] == {"anthropic_effort": "medium"}
 
-    def test_build_pro_model_settings_uses_constant(self):
-        """Direct unit test on the helper. The integration tests above
-        cover the contract end-to-end via a mocked agent; this one pins
-        the helper itself so a refactor of `_build_pro_model_settings`
-        can't drift from `_PRO_THINKING_BUDGET` silently."""
-        from routes.learn import _build_pro_model_settings, _PRO_THINKING_BUDGET
-        s = _build_pro_model_settings()
-        assert s["google_thinking_config"].thinking_budget == _PRO_THINKING_BUDGET
+    def test_deep_turn_settings_follow_the_serving_provider(self, monkeypatch):
+        """Direct unit test on the helper: Claude gets `effort`; a chat_tutor
+        slot pointed back at a gemini-* model (ADR 0030 rollback) gets the
+        capped Pro thinking budget instead — a Claude 5.x model rejects a
+        budget and Gemini has no `effort`."""
+        from routes.learn import _build_deep_turn_model_settings, _PRO_THINKING_BUDGET
+        assert _build_deep_turn_model_settings("smart") == {"anthropic_effort": "medium"}
+        monkeypatch.delenv("SAPLING_MODEL_CHAT_TUTOR", raising=False)
+        assert _build_deep_turn_model_settings(None) == {"anthropic_effort": "medium"}
+        monkeypatch.setenv("SAPLING_MODEL_CHAT_TUTOR", "gemini-2.5-pro")
+        s = _build_deep_turn_model_settings(None)
+        assert s["google_thinking_config"].thinking_budget == _PRO_THINKING_BUDGET == 2048
 
-    def test_fast_pref_does_not_attach_thinking_cap(self):
-        """fast pref → Lite model → no model_settings.
-
-        Lite doesn't think, so passing a thinking_config is wasted at
-        best and could be rejected by the provider. The route's
-        `if model_pref != "fast":` guard is the contract; pin it.
+    def test_fast_pref_does_not_attach_deep_turn_settings(self):
+        """fast pref → Haiku at the slot's `low` effort → no run-level
+        model_settings. The route's `if model_pref != "fast":` guard is the
+        contract; pin it.
         """
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))

@@ -8,10 +8,12 @@ study_guide generation in a future prompt.
 from __future__ import annotations
 
 import hashlib
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
+from agents._bounded import clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -19,11 +21,11 @@ from agents.deps import SaplingDeps
 class Summary(BaseModel):
     """Typed output for the summary agent."""
 
-    headline: str = Field(
+    headline: Annotated[str, clip_prose(140, "summary.headline")] = Field(
         max_length=140,
         description="Single-sentence summary for a card view.",
     )
-    abstract: str = Field(
+    abstract: Annotated[str, clip_prose(1500, "summary.abstract")] = Field(
         max_length=1500,
         description="3-5 sentence overview. Plain text. No markdown.",
     )

@@ -57,9 +57,17 @@ ruff==0.15.18
 # >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
 # the #646 continuation appends run-level `run(instructions=...)` (added in
 # 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
-# requirements.lock pins 1.107.0, which is what CI installs; a local venv may
-# be older (the #707 work was run locally on 1.89.1). Both are above the floor.
-pydantic-ai-slim[google]>=1.11.1,<2
+# >=1.107.0 + the `anthropic` extra: the Claude slots (ADR 0030) rely on the
+# 1.107 AnthropicModelProfile fields (`anthropic_supports_forced_tool_choice`,
+# `anthropic_disallows_sampling_settings`, native `output_config` structured
+# output) that `agents/_providers.py` sets for Claude 5.x model names. The
+# `google` extra stays: RAG embeddings remain on Gemini (Anthropic has no
+# embeddings API) and any slot can still be pointed back at a gemini-* model.
+pydantic-ai-slim[google,anthropic]>=1.107.0,<2
+# <1: pydantic-ai 1.107.x's AnthropicModel is written against the 0.x SDK
+# surface; 1.107.9 itself tightens its extra to `anthropic<1`. An unpinned
+# resolve jumps to the 2.x SDK.
+anthropic>=0.108.0,<1
 # <0.1 (#689): genai-prices is pydantic-ai's usage extractor. From 0.1.0 it
 # returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
 # 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every

@@ -9,17 +9,21 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, PromptedOutput
 
+from agents._bounded import clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
 
 class SyllabusAssignment(BaseModel):
     title: str = Field(max_length=200)
-    description: str | None = Field(default=None, max_length=1000)
+    description: Annotated[
+        str | None, clip_prose(1000, "syllabus.assignment.description")
+    ] = Field(default=None, max_length=1000)
     due_date: date | None = Field(
         default=None,
         description="ONLY a concrete calendar date. Null for relative "

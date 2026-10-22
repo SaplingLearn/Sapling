@@ -269,7 +269,11 @@ async def _run_with_retry(agent, case_input: str, deps):
 
 def _is_transient(exc: Exception) -> bool:
     status = getattr(exc, "status_code", None)
-    if status in (429, 503):
+    # 429/503 for both providers; 529 is Anthropic's `overloaded_error`.
+    if status in (429, 503, 529):
         return True
     text = str(exc).upper()
-    return "UNAVAILABLE" in text or "503" in text or "RESOURCE_EXHAUSTED" in text
+    return (
+        "UNAVAILABLE" in text or "503" in text or "RESOURCE_EXHAUSTED" in text
+        or "OVERLOADED" in text
+    )

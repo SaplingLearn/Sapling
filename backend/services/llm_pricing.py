@@ -27,11 +27,22 @@ logger = logging.getLogger("sapling.llm_pricing")
 
 
 # Per-1,000-token USD prices as ``(input_rate, output_rate)``. Sourced from
-# Google Gemini API list pricing (and TypeSafe's, for Jev); kept deliberately small and editable. A model
+# Anthropic and Google Gemini API list pricing (and TypeSafe's, for Jev); kept
+# deliberately small and editable. A model
 # missing here is not an error — its usage is still recorded, just with
 # ``cost_usd = NULL``. Update this map (not the call sites) when prices change
 # or a new model ships.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # Anthropic first-party list prices (ADR 0030). Haiku 5.5's row is its
+    # ≤100K-token-prompt card; longer prompts bill at the
+    # `_LONG_PROMPT_PRICING` card below. Thinking tokens arrive inside
+    # output_tokens, so they are priced as output — which is what they bill as.
+    # Prompt caching (enabled on the tool-loop slots, agents/_providers.py)
+    # bills cache reads/writes at multiples of the input rate — see
+    # `_CACHE_MULTIPLIERS`.
+    "claude-haiku-5-5": (0.0001, 0.0005),
+    "claude-sonnet-5-5": (0.002, 0.010),
+    "claude-opus-5-5": (0.004, 0.020),
     "gemini-2.5-pro": (0.00125, 0.010),
     "gemini-2.5-flash": (0.0003, 0.0025),
     "gemini-2.5-flash-lite": (0.0001, 0.0004),
@@ -57,6 +68,28 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
 MODEL_FAMILY_PRICING: tuple[tuple[str, tuple[float, float]], ...] = (
     ("jev-", (0.000042, 0.0)),
 )
+
+#: Models whose rate card switches above a prompt-length threshold:
+#: model -> (threshold_prompt_tokens, (input_rate, output_rate)). Anthropic
+#: applies the card per request; a usage row is a whole agent run, so a
+#: multi-request run is priced on its SUMMED prompt tokens — an over-estimate
+#: only for a run whose individual requests each stayed under the threshold.
+_LONG_PROMPT_PRICING: dict[str, tuple[int, tuple[float, float]]] = {
+    "claude-haiku-5-5": (100_000, (0.0005, 0.0025)),
+}
+
+#: Prompt-cache pricing as ``(read_multiplier, write_multiplier)`` of the input
+#: rate, by model-family prefix. Anthropic: reads 0.1x, 5-minute writes 1.25x
+#: (the agents use the default 5-minute TTL; a 1-hour TTL writes at 2x and
+#: would need its own entry). Families without an entry keep pricing every
+#: prompt token at the full input rate — Gemini's implicit-cache discount is
+#: not modelled, exactly as before ADR 0030.
+_CACHE_MULTIPLIERS: tuple[tuple[str, tuple[float, float]], ...] = (
+    ("claude-", (0.1, 1.25)),
+)
+
+_CACHE_READ_FIELDS = ("cache_read_tokens", "cache_read_input_tokens")
+_CACHE_WRITE_FIELDS = ("cache_write_tokens", "cache_creation_input_tokens")
 
 #: Fractional digits of a stored cost — llm_usage.cost_usd is NUMERIC(18,10)
 #: (migration 20261016063803_llm_cost_precision.sql, shipped with this seam). Six (the old NUMERIC(12,6)) rounded the
@@ -119,6 +152,16 @@ def normalize_usage(usage: Any) -> dict[str, int]:
     }
 
 
+def cache_usage(usage: Any) -> tuple[int, int]:
+    """``(cache_read_tokens, cache_write_tokens)`` from a usage object/dict —
+    both already INCLUDED in its prompt/input token count (pydantic-ai's
+    ``RunUsage.input_tokens`` is uncached + read + write). ``(0, 0)`` when the
+    source reports none."""
+    if usage is None:
+        return 0, 0
+    return _read_int(usage, _CACHE_READ_FIELDS), _read_int(usage, _CACHE_WRITE_FIELDS)
+
+
 def _canonical_model(model: str) -> str:
     """Strip a provider qualifier so 'google-gla:gemini-2.5-flash' matches.
 
@@ -128,12 +171,37 @@ def _canonical_model(model: str) -> str:
     return model.rsplit(":", 1)[-1].strip() if model else model
 
 
-def _rates_for(model: str) -> tuple[float, float] | None:
+def usage_provider(model: str) -> str:
+    """The ``llm_usage.provider`` label for a served model name.
+
+    ``anthropic`` / ``gemini`` / ``typesafe`` (Jev) by name, ``function`` for
+    the SAPLING_MODEL_MODE=function seam's free stand-ins, ``unknown``
+    otherwise. Until ADR 0030 every agent row was hard-labelled ``gemini``;
+    deriving the label from the model keeps it honest when a slot is moved
+    between providers by an env flip.
+    """
+    if model and model.startswith("function:"):
+        return "function"
+    canonical = _canonical_model(model or "")
+    if canonical.startswith("claude-"):
+        return "anthropic"
+    if canonical.startswith("gemini-"):
+        return "gemini"
+    if canonical.startswith("jev-"):
+        return "typesafe"
+    return "unknown"
+
+
+def _rates_for(model: str, prompt_tokens: int = 0) -> tuple[float, float] | None:
     """Exact price entry first (raw, then provider-stripped), then the
-    model's family prefix."""
+    model's family prefix. A model with a long-prompt card switches to it
+    above that card's prompt-token threshold."""
     if not model:
         return None
     canonical = _canonical_model(model)
+    long_card = _LONG_PROMPT_PRICING.get(canonical)
+    if long_card is not None and prompt_tokens > long_card[0]:
+        return long_card[1]
     rates = MODEL_PRICING.get(model) or MODEL_PRICING.get(canonical)
     if rates is not None:
         return rates
@@ -143,14 +211,26 @@ def _rates_for(model: str) -> tuple[float, float] | None:
     return None
 
 
-def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+def cost_usd(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    *,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float | None:
     """Compute USD cost for a call, or ``None`` if the model isn't priced.
+
+    ``cache_read_tokens`` / ``cache_write_tokens`` are the parts of
+    ``prompt_tokens`` served from / written to the provider's prompt cache;
+    for a family in ``_CACHE_MULTIPLIERS`` they are re-priced at its
+    multiples of the input rate, otherwise they cost like any prompt token.
 
     Rounds to ``COST_SCALE`` (10) decimal places, half-up, to match
     ``llm_usage.cost_usd numeric(18,10)``. An unknown model returns ``None``
     and warns once.
     """
-    rates = _rates_for(model)
+    rates = _rates_for(model, int(prompt_tokens))
     if rates is None:
         # SAPLING_MODEL_MODE=function runs (the e2e/CI seam) report the model
         # as 'function:<task>' — a deliberate free stand-in, not an unpriced
@@ -169,8 +249,19 @@ def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | 
         return None
 
     in_rate, out_rate = rates
+    read, write = int(cache_read_tokens), int(cache_write_tokens)
+    read_mult = write_mult = 1.0
+    canonical = _canonical_model(model)
+    for prefix, multipliers in _CACHE_MULTIPLIERS:
+        if canonical.startswith(prefix):
+            read_mult, write_mult = multipliers
+            break
+    uncached = max(int(prompt_tokens) - read - write, 0)
+    in_rate_d = Decimal(str(in_rate))
     cost = (
-        Decimal(str(in_rate)) * Decimal(int(prompt_tokens))
+        in_rate_d * Decimal(uncached)
+        + in_rate_d * Decimal(str(read_mult)) * Decimal(read)
+        + in_rate_d * Decimal(str(write_mult)) * Decimal(write)
         + Decimal(str(out_rate)) * Decimal(int(completion_tokens))
     ) / Decimal(1000)
     return float(cost.quantize(_COST_QUANTUM, rounding=ROUND_HALF_UP))

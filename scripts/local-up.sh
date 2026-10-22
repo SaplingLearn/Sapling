@@ -8,7 +8,7 @@
 # skips rows that exist. For a destructive clean slate use scripts/local-db-reset.sh.
 #
 # First-time setup on a new machine:
-#   cp backend/.env.local.example backend/.env       # then fill in GEMINI_API_KEY
+#   cp backend/.env.local.example backend/.env       # then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY
 #   cp frontend/.env.local.example frontend/.env.local
 #   python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
 #   set -Ux DOCKER_HOST "unix:///run/user/"(id -u)"/podman/podman.sock"   # fish

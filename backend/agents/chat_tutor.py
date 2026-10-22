@@ -12,13 +12,14 @@ prompts at construction time (passed as `instructions=`, so they are sent
 on every turn — see `_build_agent`). The route picks the right agent
 instance per request based on body.mode.
 
-Per-call thinking budget: the Pro thinking cap is applied at the route
-layer (`routes.learn._build_pro_model_settings`), not on the agent
-itself, because the same agent instance also serves Lite runs (via the
-"fast" model_pref override) where thinking_config is wasted at best.
-Direct callers of `chat_tutor_agent.run(...)` that bypass the route
-will get unbounded Pro thinking — pin a `model_settings=` kwarg there
-if that matters.
+Per-call thinking depth: the deep-turn setting (Claude `effort=medium`, or
+the capped Pro thinking budget on a gemini-* slot) is applied at the route
+layer (`routes.learn._build_deep_turn_model_settings`), not on the agent
+itself, because the same agent instance also serves "fast" runs (the
+Haiku model_pref override) that keep the slot's `effort=low` default.
+Direct callers of `chat_tutor_agent.run(...)` that bypass the route get
+that model-level default — pin a `model_settings=` kwarg there if that
+matters.
 """
 
 from __future__ import annotations
@@ -77,6 +78,13 @@ _SHARED_PREAMBLE = (
     "progress, search their uploaded course documents, and update their "
     "knowledge graph mastery scores. Use tools when relevant — don't "
     "fabricate context.\n\n"
+    # ADR 0030: Claude reads "when relevant" narrowly and answers course
+    # questions from general knowledge; Gemini searched by default. Name the
+    # trigger so retrieval-grounded answers don't depend on the model's taste.
+    "Course materials: when the student asks about a topic from their "
+    "course, call search_course_materials before you explain, so you teach "
+    "with their course's notation, terms, and examples. Skip it only for "
+    "small talk or a follow-up this conversation has already covered.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
     # #150: injection resistance — single source of truth in
@@ -109,7 +117,9 @@ _SOCRATIC_PROMPT = _SHARED_PREAMBLE + (
     "not lectures. Each turn: ask one focused question that reveals what "
     "they already know or where they're confused. Avoid giving the answer "
     "directly; provide hints only after they've made an attempt. End "
-    "every response with a question."
+    "every response with a question: the final sentence must be that "
+    "question, ending in '?', with nothing after it — no offer, no "
+    "sign-off."
 )
 
 _EXPOSITORY_PROMPT = _SHARED_PREAMBLE + (
@@ -124,7 +134,8 @@ _TEACHBACK_PROMPT = _SHARED_PREAMBLE + (
     "their explanation, then identify what's correct, what's missing, "
     "and any specific misconceptions. Praise accuracy where it exists. "
     "End with one targeted question that probes the weakest spot in "
-    "their understanding."
+    "their understanding: the final sentence must be that question, "
+    "ending in '?', with nothing after it."
 )
 
 _PROMPTS: dict[TutorMode, str] = {

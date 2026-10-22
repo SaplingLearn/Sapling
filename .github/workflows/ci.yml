@@ -43,9 +43,10 @@ jobs:
         env:
           # Non-secret dummy values so config validation / DB-URL construction /
           # encryption-key import all succeed in CI. The gated tests mock their
-          # own Supabase/Gemini calls (conftest stubs the auth guard).
+          # own Supabase/LLM calls (conftest stubs the auth guard).
           ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
           GEMINI_API_KEY: dummy-not-used-in-tests
+          ANTHROPIC_API_KEY: dummy-not-used-in-tests
           SUPABASE_URL: https://dummy.supabase.co
           SUPABASE_SERVICE_KEY: dummy-service-key
           SESSION_SECRET: dummy-session-secret
@@ -197,6 +198,7 @@ jobs:
         env:
           ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
           GEMINI_API_KEY: dummy-not-used-in-tests
+          ANTHROPIC_API_KEY: dummy-not-used-in-tests
           SUPABASE_URL: https://dummy.supabase.co
           SUPABASE_SERVICE_KEY: dummy-service-key
           SESSION_SECRET: dummy-session-secret

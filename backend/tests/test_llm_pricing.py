@@ -202,3 +202,75 @@ def test_any_served_jev_version_is_priced_at_the_family_rate():
         del llm_pricing.MODEL_PRICING["jev-9.9.9"]
     llm_pricing._warned_models.discard("jevish-model")
     assert llm_pricing.cost_usd("jevish-model", 100, 0) is None
+
+
+# ── Anthropic (ADR 0030) ─────────────────────────────────────────────────
+
+
+def test_claude_haiku_cost():
+    # claude-haiku-5-5: $0.10 in / $0.50 out per 1M tokens (prompt ≤100K).
+    assert llm_pricing.cost_usd("claude-haiku-5-5", 1000, 1000) == pytest.approx(0.0006)
+
+
+def test_claude_sonnet_cost():
+    # claude-sonnet-5-5: $2 in / $10 out per 1M tokens.
+    assert llm_pricing.cost_usd("claude-sonnet-5-5", 1000, 1000) == pytest.approx(0.012)
+
+
+def test_claude_haiku_long_prompt_switches_rate_card():
+    """Haiku 5.5 bills a >100K-token prompt at $0.50/$2.50, not $0.10/$0.50:
+    pricing a long document run at the short card would under-count it 5x."""
+    at_threshold = llm_pricing.cost_usd("claude-haiku-5-5", 100_000, 1000)
+    assert at_threshold == pytest.approx(100_000 * 0.0001 / 1000 + 1000 * 0.0005 / 1000)
+    over = llm_pricing.cost_usd("claude-haiku-5-5", 100_001, 1000)
+    assert over == pytest.approx(100_001 * 0.0005 / 1000 + 1000 * 0.0025 / 1000)
+
+
+def test_provider_qualified_claude_name_is_priced():
+    assert llm_pricing.cost_usd("anthropic:claude-haiku-5-5", 1000, 0) == (
+        llm_pricing.cost_usd("claude-haiku-5-5", 1000, 0)
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "label"),
+    [
+        ("claude-haiku-5-5", "anthropic"),
+        ("anthropic:claude-sonnet-5-5", "anthropic"),
+        ("gemini-2.5-flash", "gemini"),
+        ("google-gla:gemini-2.5-pro", "gemini"),
+        ("jev-1.13.0", "typesafe"),
+        ("function:quiz", "function"),
+        ("mystery-model", "unknown"),
+        ("", "unknown"),
+    ],
+)
+def test_usage_provider_label_follows_the_served_model(model, label):
+    """Every agent row used to be hard-labelled 'gemini'; the label now
+    follows the model so a slot moved between providers stays honest."""
+    assert llm_pricing.usage_provider(model) == label
+
+
+def test_claude_cache_reads_and_writes_are_repriced():
+    """pydantic-ai's input_tokens INCLUDES cache reads/writes; Anthropic bills
+    reads at 0.1x and 5-minute writes at 1.25x of the input rate."""
+    # 3393 in = 6 uncached + 1659 read + 1728 written (a live tutor turn).
+    cost = llm_pricing.cost_usd(
+        "claude-sonnet-5-5", 3393, 174, cache_read_tokens=1659, cache_write_tokens=1728,
+    )
+    expected = (6 * 0.002 + 1659 * 0.002 * 0.1 + 1728 * 0.002 * 1.25 + 174 * 0.010) / 1000
+    assert cost == pytest.approx(expected)
+
+
+def test_gemini_cache_tokens_keep_the_full_input_rate():
+    assert llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0, cache_read_tokens=800) == (
+        llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0)
+    )
+
+
+def test_cache_usage_reads_run_usage_and_raw_anthropic_fields():
+    from pydantic_ai.usage import RunUsage
+
+    assert llm_pricing.cache_usage(RunUsage(input_tokens=10, cache_read_tokens=4, cache_write_tokens=3)) == (4, 3)
+    assert llm_pricing.cache_usage({"cache_read_input_tokens": 7, "cache_creation_input_tokens": 2}) == (7, 2)
+    assert llm_pricing.cache_usage(None) == (0, 0)

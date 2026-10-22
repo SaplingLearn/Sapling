@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import hashlib
 
-from google.genai.types import ThinkingConfig
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModelSettings
+from pydantic_ai.settings import ModelSettings
 
 from agents._providers import model_for
 
@@ -42,18 +41,13 @@ _SYSTEM_PROMPT = (
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
 
 
-# Pin the sampling params the legacy `call_gemini` flashcard path used so the
-# migration doesn't silently flip cost/latency/determinism: temperature 0.7,
-# an 8192-token output cap, and thinking disabled (budget 0). GoogleModel's
-# defaults would otherwise enable dynamic thinking and provider-default
-# temperature. 2.5 Flash and 3.1 Flash-Lite accept thinking_budget=0; Pro and
-# 3.5 Flash-Lite reject it with a 400 (checked live 2026-09-26) — re-check
-# before moving the `flashcard` slot to another model.
-_FLASHCARD_SETTINGS = GoogleModelSettings(
-    temperature=0.7,
-    max_tokens=8192,
-    google_thinking_config=ThinkingConfig(thinking_budget=0),
-)
+# The 8192-token output cap the legacy `call_gemini` flashcard path used —
+# the one provider-neutral piece of its settings. The rest of that pin
+# (temperature 0.7, thinking budget 0) is Gemini-only and now lives in
+# agents/_providers._google_settings_for("flashcard"): Claude 4.7+ rejects a
+# non-default temperature, and the Claude slot gets `effort=low` from
+# `_ANTHROPIC_EFFORT` instead (ADR 0030).
+_FLASHCARD_SETTINGS = ModelSettings(max_tokens=8192)
 
 
 flashcard_agent = Agent[None, Flashcards](

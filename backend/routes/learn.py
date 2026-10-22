@@ -22,7 +22,7 @@ from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id
-from services.chat_stream import merge_graph_updates, stream_agent_turn
+from services.chat_stream import join_text_parts, merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present
 from services.profiles import get_display_name
 from services.graph_service import get_graph
@@ -54,34 +54,38 @@ MODE_DISPLAY_NAMES = {
 
 # Per-request agent-model override map. Mirrors `routes.quiz._PREF_MODEL_NAMES`
 # verbatim — the chat tutor and quiz routes share the same fast/smart toggle
-# so a user choosing "smart" in either UI pulls the same Pro tier model.
-# None falls through to model_for("chat_tutor") (default `gemini-2.5-pro`).
+# so a user choosing "smart" in either UI pulls the same step-up model.
+# None falls through to model_for("chat_tutor") (default `claude-sonnet-5-5`).
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "gemini-2.5-flash-lite",
-    "smart": "gemini-2.5-pro",
+    "fast": "claude-haiku-5-5",
+    "smart": "claude-sonnet-5-5",
 }
 
-# Cap Pro's thinking budget for chat tutor turns. Dynamic thinking (-1) on
-# multi-turn pedagogy can spend 10s+ in the thinking phase before any tokens
-# stream; 2048 tokens is enough for the agent to plan a multi-step
-# explanation without burning latency the student can feel.
+# Thinking depth for every non-"fast" tutor turn. On Claude this is the
+# `effort` level (the chat_tutor slot's model-level default is `low`, see
+# agents/_providers._ANTHROPIC_EFFORT); a Claude 5.x model rejects a token
+# budget. If the slot is pointed back at a gemini-* model, Pro's thinking
+# budget is capped instead: dynamic thinking (-1) on multi-turn pedagogy can
+# spend 10s+ before any tokens stream, and 2048 tokens is enough to plan a
+# multi-step explanation without burning latency the student can feel.
+_DEEP_TURN_EFFORT = "medium"
 _PRO_THINKING_BUDGET = 2048
 
 
 def _resolve_model_pref(model_pref: str | None):
-    """Build a GoogleModel override for the per-request fast/smart
+    """Build a provider-model override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    Lazy-imports `google_model` so that constructing a GoogleProvider
-    (which reads `GEMINI_API_KEY` at call time) only happens when an
-    override is actually requested — not at module import.
+    Lazy-imports `provider_model` so that constructing a provider (which
+    reads its API key at call time) only happens when an override is
+    actually requested — not at module import.
     """
     if not model_pref:
         return None
-    from agents._providers import _model_mode, google_model
+    from agents._providers import _model_mode, provider_model
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
-        # SAPLING_MODEL_MODE by constructing a live GoogleModel — the browser
+        # SAPLING_MODEL_MODE by constructing a live provider model — the browser
         # always sends a model_pref (ModelToggle defaults to "fast"), so
         # without this the E2E function-mode lane would silently dial Gemini
         # on every tutor turn. Fall through to the agent's default model,
@@ -90,7 +94,7 @@ def _resolve_model_pref(model_pref: str | None):
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return google_model(name)
+    return provider_model(name, task="chat_tutor")
 
 
 def _ran_on(result, agent, run_kwargs: dict, model_pref: str | None) -> tuple[str, str | None]:
@@ -149,17 +153,25 @@ def _observe_persisted_turn(
         logger.debug("could not schedule the tutor router", exc_info=True)
 
 
-def _build_pro_model_settings():
-    """Return a GoogleModelSettings capping Pro's thinking budget.
+def _build_deep_turn_model_settings(model_pref: str | None):
+    """Run-level settings for a deep (non-"fast") tutor turn, shaped for the
+    provider that will actually serve it.
 
-    Apply this whenever the effective chat-tutor model is Pro (explicit
-    "smart" pref OR no pref → agent default). Don't apply to Flash-Lite
-    runs — Lite doesn't think, and passing thinking_config there would be
-    wasted at best.
+    Apply this whenever the effective chat-tutor model is the step-up model
+    (explicit "smart" pref OR no pref → agent default). The served model is
+    the pref's model when one resolves, else the chat_tutor slot's configured
+    model; Claude gets `effort`, a gemini-* slot gets the capped Pro thinking
+    budget. Function mode serves neither — its FunctionModel ignores both.
 
-    Imported lazily for the same reason as `google_model` — keeps the
-    GoogleProvider construction off the import path.
+    Imported lazily for the same reason as `provider_model` — keeps provider
+    SDK types off the import path.
     """
+    from agents._providers import model_name_for, provider_for_model
+
+    name = _PREF_MODEL_NAMES.get(model_pref or "") or model_name_for("chat_tutor")
+    if provider_for_model(name) == "anthropic":
+        from pydantic_ai.models.anthropic import AnthropicModelSettings
+        return AnthropicModelSettings(anthropic_effort=_DEEP_TURN_EFFORT)
     from google.genai.types import ThinkingConfig
     from pydantic_ai.models.google import GoogleModelSettings
     return GoogleModelSettings(
@@ -181,10 +193,11 @@ def _new_run_text(result) -> str:
 
     `new_messages()` excludes the history that was passed in, so joining the
     TextParts of its model responses is exactly "what this turn said" — the
-    non-streaming twin of the `joined.strip()` narrowing in
-    `services/chat_stream.py`. ThinkingParts and ToolCallParts are not
-    output text and are skipped: a turn that only thought and called tools
-    produced no reply.
+    non-streaming twin of the streamed reply in `services/chat_stream.py`,
+    joined the same way (`join_text_parts`: a paragraph break between a
+    Claude explanation and the line it adds after a tool call). ThinkingParts
+    and ToolCallParts are not output text and are skipped: a turn that only
+    thought and called tools produced no reply.
     """
     parts: list[str] = []
     for msg in result.new_messages():
@@ -193,7 +206,7 @@ def _new_run_text(result) -> str:
         for part in msg.parts:
             if isinstance(part, TextPart):
                 parts.append(part.content or "")
-    return "".join(parts)
+    return join_text_parts(parts)
 
 
 #: The user turn that triggers the continuation (#646). Deliberately minimal:
@@ -903,11 +916,11 @@ def _prepare_chat_run(
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    # Cap thinking budget on every Pro run (explicit "smart" OR no-pref
-    # falling through to the agent default). Skip the cap for explicit
-    # "fast" (Lite has no thinking).
+    # Deeper thinking on every step-up-model run (explicit "smart" OR no-pref
+    # falling through to the agent default). Explicit "fast" keeps the slot's
+    # model-level default (Claude `effort=low`).
     if model_pref != "fast":
-        run_kwargs["model_settings"] = _build_pro_model_settings()
+        run_kwargs["model_settings"] = _build_deep_turn_model_settings(model_pref)
 
     return agent, user_message, run_kwargs, deps
 

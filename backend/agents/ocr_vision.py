@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 
 from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModelSettings
+from pydantic_ai.settings import ModelSettings
 
 from agents._providers import model_for
 
@@ -60,9 +60,10 @@ _PROMPT_HASH = hashlib.sha256(TRANSCRIBE_PROMPT.encode("utf-8")).hexdigest()[:12
 
 
 # Bounded on purpose: this runs inside the upload pipeline, so a stalled call
-# must not hang the request indefinitely. `ModelSettings.timeout` is seconds;
+# must not hang the request indefinitely. `ModelSettings.timeout` is seconds
+# and provider-neutral: AnthropicModel forwards it as the SDK request timeout,
 # GoogleModel converts it to the google-genai HttpOptions timeout in ms.
-_OCR_VISION_SETTINGS = GoogleModelSettings(timeout=60.0)
+_OCR_VISION_SETTINGS = ModelSettings(timeout=60.0)
 
 
 ocr_vision_agent = Agent[None, str](
