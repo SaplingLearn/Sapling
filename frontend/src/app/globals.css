@@ -2585,42 +2585,51 @@ input[type="reset"]:disabled {
   .landing-dc .ld-handnote { display: none !important; }
 }
 
-/* ── Wiki contents rail ────────────────────────────────────────────
-   The rail is a fixed 190px column beside the article. That holds until the
-   window is narrow enough for 190px to be most of it: at 390px wide the
-   rail took 190 and left the reference itself 112px, so the page whose job
-   is showing you exact definitions had them wrapping two words to a line.
+/* ── Wiki ──────────────────────────────────────────────────────────
+   A card per topic on /wiki, and the previous/next pair at the foot of each
+   /wiki/<slug> page. Hover lifts the border to the brand colour rather than
+   moving the card: a grid of two dozen that jumps under the cursor reads as
+   noise. */
+.wiki-card {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 20px 20px 18px; border-radius: 12px;
+  background: #faf8f3; border: 1px solid rgba(42, 39, 31, 0.10);
+  text-decoration: none; min-height: 100%; box-sizing: border-box;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.wiki-card:hover { border-color: var(--brand-forest); background: #fffdf7; }
+.wiki-card:focus-visible { outline: 2px solid var(--brand-forest); outline-offset: 2px; }
 
-   Under 900px the grid collapses to one column and the rail stops being a
-   sidebar: static rather than sticky, unbounded rather than capped, and its
-   five groups flow as a wrapping row above the article. Nothing scrolls
-   inside it at any width — on a short window the page scrolls, which is what
-   a reader expects; a scrollbar inside a sticky box is one most people never
-   find. `!important` throughout because every one of these properties is set
-   inline on the element (see WikiRail.tsx).
+/* The mobile contents disclosure; desktop has the sticky rail instead. */
+.wiki-rail-mobile { display: none; }
+.wiki-rail-mobile > summary {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
+  cursor: pointer; list-style: none;
+  padding: 12px 16px; border-radius: 10px;
+  background: #faf8f3; border: 1px solid rgba(42, 39, 31, 0.12);
+  font-size: 14px; font-weight: 600; color: #1a1814;
+}
+.wiki-rail-mobile > summary::-webkit-details-marker { display: none; }
+.wiki-rail-mobile > summary::after { content: '▾'; margin-left: auto; color: #6f6857; }
+.wiki-rail-mobile[open] > summary::after { content: '▴'; }
 
-   The `max-height` half of the query matters as much as the width half. The
-   rail's height is set by its eighteen entries, not by the window's width,
-   so a wide-but-short window — 960x560, a half-height window on a laptop —
-   keeps the sidebar and cannot fit it however far the clamps in WikiRail.tsx
-   squeeze. Below 580px tall the same collapse applies at any width: measured,
-   600px tall is the shortest window the column still fits. */
-@media (max-width: 899px), (max-height: 580px) {
+/* The rail is a fixed 190px column beside the article. That holds until the
+   window is narrow enough for 190px to be most of it: at 390px wide it left
+   the reference itself 112px. Under 900px the grid goes to one column and
+   the rail folds into the "Contents" disclosure above the article, rather
+   than stacking two dozen links on top of every page. `!important` because
+   the grid template is set inline (see [slug]/page.tsx). */
+@media (max-width: 899px) {
   .wiki-grid { grid-template-columns: minmax(0, 1fr) !important; }
-  .wiki-rail {
-    position: static !important;
-    max-height: none !important;
-    overflow: visible !important;
-    flex-direction: row !important;
-    flex-wrap: wrap !important;
-    gap: 18px 28px !important;
-    padding-bottom: 8px;
-    border-bottom: 1px solid rgba(42, 39, 31, 0.12);
-  }
-  /* Each group keeps its own label-over-links stack; the groups are what
-     wrap, so the contents still read as five named sets rather than one
-     undifferentiated run of eighteen links. */
-  .wiki-rail > div { min-width: 132px; }
+  .wiki-rail { display: none !important; }
+  .wiki-rail-mobile { display: block; }
+  .wiki-pager { grid-template-columns: minmax(0, 1fr) !important; }
+}
+/* A wide-but-short window keeps the sidebar but cannot fit it however far the
+   clamps in WikiRail.tsx squeeze, so it stops being sticky and scrolls with
+   the page instead of inside itself. */
+@media (min-width: 900px) and (max-height: 580px) {
+  .wiki-rail { position: static !important; max-height: none !important; overflow: visible !important; }
 }
 /* The grove's cards keep one size at every viewport height.
    Two `max-height` rules used to tighten them in steps — the demo pane to

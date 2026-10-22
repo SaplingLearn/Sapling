@@ -147,40 +147,6 @@ export const NEWS_FILTERS = [
  *  distinct values rather than a shared token. */
 const TIER = { mastered: '#5a7834', learning: '#c89b5e', struggling: '#b25855', unexplored: '#9a9a9a' };
 
-/** Grouped, because a flat rail of sixteen entries is a wall. The groups
- *  mirror how the product is organised: learn, capture, the semester, the
- *  people, and you. */
-export const WIKI_TOC = [
-  { group:'Learn', items: [
-    { title:'Knowledge graph', href:'#graph' },
-    { title:'Mastery tiers', href:'#mastery' },
-    { title:'How mastery moves', href:'#deltas' },
-    { title:'Progress stats', href:'#progress' },
-    { title:'Adaptive quizzes', href:'#quizzes' },
-    { title:'Tutor modes', href:'#tutor' },
-  ]},
-  { group:'Capture', items: [
-    { title:'Uploads', href:'#uploads' },
-    { title:'Ingestion', href:'#ingestion' },
-    { title:'Notetaker', href:'#notes' },
-    { title:'Flashcards', href:'#flashcards' },
-    { title:'Study guide', href:'#guide' },
-  ]},
-  { group:'Semester', items: [
-    { title:'Syllabus and calendar', href:'#calendar' },
-    { title:'Grade scale', href:'#grades' },
-  ]},
-  { group:'Together', items: [
-    { title:'Study rooms', href:'#rooms' },
-    { title:'Class intelligence', href:'#class' },
-  ]},
-  { group:'You', items: [
-    { title:'Onboarding', href:'#onboarding' },
-    { title:'Achievements', href:'#achievements' },
-    { title:'Your data', href:'#privacy' },
-  ]},
-] as const;
-
 export const WIKI_GRAPH_TERMS = [
   { term:'Node', def:'One concept in one course, carrying a mastery score from 0.00 to 1.00. Every concept you touch anywhere in Sapling resolves to a node.' },
   { term:'Course root', def:'The labelled hub at the centre of a course’s cluster. Every concept in the course wires back to it.' },
@@ -348,7 +314,7 @@ export const WIKI_DATA_FACTS = [
 ] as const;
 
 /**
- * Product screenshots, keyed by wiki section id.
+ * Product screenshots, keyed by wiki page slug (lib/landing/wiki.ts).
  *
  * The files are the twelve `/gallery/<slot>.png` captures at 1440x900 — the
  * same set the gallery uses, so this page borrows them rather than owning
@@ -366,31 +332,31 @@ export const WIKI_DATA_FACTS = [
  * across the panel.
  *
  * Two slots have no row here on purpose. `shot-tree` would otherwise appear
- * twice in adjacent sections, which reads as a mistake rather than a
- * reference; it stays on the graph section, and mastery tiers goes without.
+ * twice on adjacent pages, which reads as a mistake rather than a
+ * reference; it stays on the graph page, and mastery tiers goes without.
  * `shot-planner` is a screenshot of a "Coming soon" panel — a reference page
  * has nothing to define about a screen that does not exist yet.
  */
 export const WIKI_SHOTS: Record<string, { slot: string; route: string; title: string; caption: string }> = {
-  graph: { slot:'shot-tree', route:'/tree', title:'Knowledge graph',
+  'knowledge-graph': { slot:'shot-tree', route:'/tree', title:'Knowledge graph',
     caption:'The knowledge tree: concept nodes joined by edges, each ringed to show its mastery.' },
-  quizzes: { slot:'shot-quiz', route:'/quiz', title:'Adaptive quiz',
+  'adaptive-quizzes': { slot:'shot-quiz', route:'/quiz', title:'Adaptive quiz',
     caption:'An adaptive quiz mid-session, showing a multiple-choice question and its difficulty.' },
-  tutor: { slot:'shot-learn', route:'/learn', title:'AI tutor',
+  'tutor-modes': { slot:'shot-learn', route:'/learn', title:'AI tutor',
     caption:'The tutor answering in Socratic mode, leading with a question rather than an answer.' },
   ingestion: { slot:'shot-library', route:'/library', title:'Library',
     caption:'The document library, listing uploads beside the summary and concepts each produced.' },
-  notes: { slot:'shot-notetaker', route:'/notetaker', title:'Notetaker',
+  notetaker: { slot:'shot-notetaker', route:'/notetaker', title:'Notetaker',
     caption:'The notetaker with a note open and its generated summary in the side rail.' },
   flashcards: { slot:'shot-study', route:'/study', title:'Flashcard review',
     caption:'A flashcard mid-review with its three rating buttons.' },
-  guide: { slot:'shot-guide', route:'/study', title:'Study guide',
+  'study-guide': { slot:'shot-guide', route:'/study', title:'Study guide',
     caption:'A generated study guide for one course, laid out in sections.' },
-  calendar: { slot:'shot-calendar', route:'/calendar', title:'Calendar',
+  'syllabus-and-calendar': { slot:'shot-calendar', route:'/calendar', title:'Calendar',
     caption:'The calendar, showing assignments and dates extracted from a syllabus.' },
-  grades: { slot:'shot-gradebook', route:'/gradebook', title:'Gradebook',
+  'grade-scale': { slot:'shot-gradebook', route:'/gradebook', title:'Gradebook',
     caption:'A course gradebook showing weighted categories and the resulting letter grade.' },
-  rooms: { slot:'shot-social', route:'/social', title:'Study rooms',
+  'study-rooms': { slot:'shot-social', route:'/social', title:'Study rooms',
     caption:'A study room with its chat thread beside the room member list.' },
   achievements: { slot:'shot-achievements', route:'/achievements', title:'Achievements',
     caption:'The achievements screen showing earned milestones and a study streak.' },

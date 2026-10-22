@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 import { resolveSiteUrl } from '@/lib/deployGuard';
 import { JOBS } from './(public)/careers/jobs';
+import { WIKI_PAGES } from '@/lib/landing/wiki';
 
 // Only the public marketing/legal surface belongs here — the app shell is
 // auth-gated and disallowed in robots.ts.
@@ -12,6 +13,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${base}/careers`, changeFrequency: 'weekly', priority: 0.6 },
     { url: `${base}/privacy`, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${base}/terms`, changeFrequency: 'yearly', priority: 0.3 },
+    { url: `${base}/wiki`, changeFrequency: 'monthly', priority: 0.6 },
+    ...WIKI_PAGES.map(page => ({
+      url: `${base}/wiki/${page.slug}`,
+      changeFrequency: 'monthly' as const,
+      priority: 0.5,
+    })),
     ...JOBS.map(job => ({
       url: `${base}/careers/${job.slug}`,
       changeFrequency: 'weekly' as const,

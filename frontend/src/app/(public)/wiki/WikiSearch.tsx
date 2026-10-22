@@ -1,93 +1,58 @@
 'use client';
 
 /**
- * The wiki's search, split across two places on the page.
+ * The wiki's search: one matcher, one input, used by the index and the rail.
  *
- * The box belongs in the masthead, under the deck, where it reads as "search
- * this reference"; the results belong in the contents rail, which is already
- * the list of everywhere you can go. Those two sit in different branches of
- * the layout, and the page between them is a server component that has to
- * stay one so it keeps exporting `metadata` — so the shared query rides a
- * context whose provider wraps both slots, and the server-rendered sections
- * pass through it untouched as children.
+ * On the single-page wiki the search read every section's text out of the
+ * DOM, because every section was in it. Each topic is its own page now, so
+ * the text comes in as `WikiEntry.text` — built from the same blocks the
+ * pages render (`wikiSearchText`), so it is still one copy of the content
+ * and cannot drift from what is on screen.
  *
- * The alternative was hoisting the whole page to a client component to get
- * one `useState`, which would have cost the metadata export and shipped
- * eighteen sections of static reference prose to the browser as JavaScript.
+ * It matches prose, not just titles: the question is nearly always "which
+ * page talks about X", and nobody hunting the retention intervals searches
+ * for "How mastery moves". Matching the group name too means "capture" finds
+ * the whole Capture set, which is how people search a contents list.
  */
 
 import * as React from 'react';
-import { WIKI_TOC } from '@/lib/landing/companionContent';
+import type { WikiEntry } from '@/lib/landing/wiki';
 
-interface WikiSearchValue {
-  /** Raw input text. */
-  query: string;
-  /** Trimmed and lowercased — what every matcher should actually test. */
-  q: string;
-  setQuery: (v: string) => void;
-  /** Section id → that section's text, lowercased. Empty until first use. */
-  prose: Record<string, string>;
-  /** Read the sections out of the document, once, on the first keystroke. */
-  index: () => void;
+export function matchEntries(entries: readonly WikiEntry[], q: string): WikiEntry[] {
+  if (!q) return [...entries];
+  return entries.filter((e) => e.text.toLowerCase().includes(q));
 }
-
-const Ctx = React.createContext<WikiSearchValue | null>(null);
 
 /**
- * Read every section's rendered text.
- *
- * The rail is handed titles and nothing else, so a title-only search answers
- * "is this section called X" when the question is nearly always "which
- * section talks about X" — nobody hunting the retention intervals searches
- * for "How mastery moves". Every section is already in the document, so the
- * prose is there to read; taking it from the DOM keeps one copy of the
- * content instead of an index beside `WIKI_TOC` that would drift the first
- * time a paragraph changed.
+ * A short window of the page's text around the first hit, so a result says
+ * why it matched. `null` when the title already explains it.
  */
-function readSections(): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const group of WIKI_TOC) {
-    for (const item of group.items) {
-      const id = item.href.slice(1);
-      const el = document.getElementById(id);
-      if (el) map[id] = (el.innerText || '').toLowerCase();
-    }
-  }
-  return map;
+export function snippet(entry: WikiEntry, q: string, radius = 70): string | null {
+  if (!q || entry.title.toLowerCase().includes(q)) return null;
+  // Search the summary first so a hit there is shown in its own words.
+  const summaryAt = entry.summary.toLowerCase().indexOf(q);
+  if (summaryAt >= 0) return null;
+  // The page's own words only: the text opens with the title, group and
+  // summary, and a hit on the group name ("capture") is not worth quoting.
+  const s = entry.text.indexOf(entry.summary);
+  const text = s >= 0 ? entry.text.slice(s + entry.summary.length).trim() : entry.text;
+  const at = text.toLowerCase().indexOf(q);
+  if (at < 0) return null;
+  // Widen to whole words, so the window never opens or closes mid-word.
+  let start = Math.max(0, at - radius);
+  let end = Math.min(text.length, at + q.length + radius);
+  if (start > 0) start = Math.min(at, text.indexOf(' ', start) + 1 || at);
+  if (end < text.length) end = Math.max(at + q.length, text.lastIndexOf(' ', end));
+  const body = text.slice(start, end).replace(/\s+/g, ' ').trim();
+  return `${start > 0 ? '…' : ''}${body}${end < text.length ? '…' : ''}`;
 }
 
-export function WikiSearchProvider({ children }: { children: React.ReactNode }) {
-  const [query, setQuery] = React.useState('');
-  const [prose, setProse] = React.useState<Record<string, string>>({});
-  const indexed = React.useRef(false);
-
-  // Built from the event handler rather than an effect, so a reader who never
-  // searches never pays to walk eighteen sections, and nothing touches the
-  // DOM during render.
-  const index = React.useCallback(() => {
-    if (indexed.current) return;
-    indexed.current = true;
-    setProse(readSections());
-  }, []);
-
-  const value = React.useMemo(
-    () => ({ query, q: query.trim().toLowerCase(), setQuery, prose, index }),
-    [query, prose, index],
-  );
-
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-}
-
-export function useWikiSearch(): WikiSearchValue {
-  const v = React.useContext(Ctx);
-  if (!v) throw new Error('useWikiSearch outside WikiSearchProvider');
-  return v;
-}
-
-/** The input itself, for the masthead. */
-export function WikiSearchBox({ style }: { style?: React.CSSProperties }) {
-  const { query, setQuery, index } = useWikiSearch();
-
+export function WikiSearchBox({ value, onChange, style, autoFocus }: {
+  value: string;
+  onChange: (v: string) => void;
+  style?: React.CSSProperties;
+  autoFocus?: boolean;
+}) {
   return (
     <div style={{ position: 'relative', maxWidth: 420, ...style }}>
       <svg
@@ -100,12 +65,12 @@ export function WikiSearchBox({ style }: { style?: React.CSSProperties }) {
       </svg>
       <input
         type="search"
-        value={query}
-        onChange={(e) => { index(); setQuery(e.target.value); }}
-        /* Escape clears rather than blurs: this filters the contents rail, and
-           a stale query left behind hides most of the page from someone who
-           has moved on to reading. */
-        onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+        value={value}
+        autoFocus={autoFocus}
+        onChange={(e) => onChange(e.target.value)}
+        /* Escape clears rather than blurs: a stale query left behind hides
+           most of the wiki from someone who has moved on to reading. */
+        onKeyDown={(e) => { if (e.key === 'Escape') onChange(''); }}
         placeholder="Search the wiki"
         aria-label="Search the wiki"
         className="wiki-search"

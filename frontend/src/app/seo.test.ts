@@ -145,7 +145,7 @@ describe('#170 robots / sitemap / manifest', () => {
   it('sitemap enumerates every public route including job slugs', () => {
     const urls = sitemap().map(e => e.url);
     const base = resolveSiteUrl(process.env);
-    for (const p of ['', '/about', '/careers', '/privacy', '/terms']) {
+    for (const p of ['', '/about', '/careers', '/privacy', '/terms', '/wiki', '/wiki/knowledge-graph']) {
       expect(urls).toContain(p ? `${base}${p}` : `${base}/`);
     }
     for (const job of JOBS) {
