@@ -364,6 +364,19 @@ describe("QuizHome — the proposal", () => {
     expect(home.prefetchDescription).toHaveBeenCalledTimes(2);
   });
 
+  it("does not let the pointer leaving one row cancel keyboard focus on another", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { home } = mount();
+    fireEvent.focus(screen.getByTestId("quiz-pick-base-cases"));
+    fireEvent.pointerEnter(screen.getByTestId("quiz-pick-eigenvalues"));
+    fireEvent.pointerLeave(screen.getByTestId("quiz-pick-eigenvalues"));
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(home.prefetchDescription).toHaveBeenCalledWith("base-cases");
+    expect(home.prefetchDescription).not.toHaveBeenCalledWith("eigenvalues");
+  });
+
   it("cancels back to the session's source", () => {
     // `cancelTarget` reads `session.source.returnTo`. A session that carries one
     // must land there — not on the fallback the no-source case uses.

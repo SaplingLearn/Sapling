@@ -20,6 +20,10 @@
 import { describeConcept } from "./api";
 
 const STORAGE_KEY = "sapling_concept_descriptions_v2";
+/** The first, unkeyed store: removed on first use, so the per-student keying
+ *  also covers what was already on a shared device. */
+const LEGACY_KEYS = ["sapling_concept_descriptions_v1"];
+let legacyCleared = false;
 /** Oldest entries are dropped past this, so the store stays small. */
 const MAX_ENTRIES = 300;
 /** A remembered description is re-fetched after this long. */
@@ -38,6 +42,10 @@ let parsedCache: { raw: string | null; store: Store } = { raw: null, store: {} }
 
 function readStore(): Store {
   try {
+    if (!legacyCleared) {
+      legacyCleared = true;
+      for (const key of LEGACY_KEYS) window.localStorage.removeItem(key);
+    }
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw === parsedCache.raw) return parsedCache.store;
     const parsed: unknown = raw ? JSON.parse(raw) : null;

@@ -17,7 +17,7 @@
  * has one behaviour across every surface that reads the graph.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import { courseInTerm } from "@/lib/useActiveSemester";
 import type { GraphEdge, GraphNode } from "@/lib/types";
@@ -361,6 +361,10 @@ export function useQuizHome(
   // student is pointing at (`prefetchDescription`).
   const [described, setDescribed] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<Record<string, true>>({});
+  // Concepts whose hover prefetch failed: not retried on every hover. Kept
+  // apart from `failed`, which is the CARD's verdict — a prefetch failure must
+  // not stop a later pick from showing its placeholder while it retries.
+  const prefetchFailed = useRef<Set<string>>(new Set());
   const labelFor = useCallback(
     (node: GraphNode | null | undefined) =>
       node?.course_id ? scopedCourses.find(c => c.course_id === node.course_id)?.course_code : undefined,
@@ -404,14 +408,16 @@ export function useQuizHome(
       const node = scopedNodes.find(n => n.id === conceptId);
       // Already known either way: nothing to warm, and a failure is not retried
       // on every hover (the card itself retries if the concept is picked).
-      if (!userId || !node || conceptId in described || failed[conceptId]) return;
+      if (!userId || !node || conceptId in described || prefetchFailed.current.has(conceptId)) return;
       if (cachedDescription(userId, node.concept_name, labelFor(node))) return;
       loadDescription(userId, node.concept_name, labelFor(node)).then(
         text => setDescribed(d => (d[conceptId] === text ? d : { ...d, [conceptId]: text })),
-        () => setFailed(f => ({ ...f, [conceptId]: true })),
+        () => {
+          prefetchFailed.current.add(conceptId);
+        },
       );
     },
-    [userId, scopedNodes, labelFor, described, failed],
+    [userId, scopedNodes, labelFor, described],
   );
 
   return {

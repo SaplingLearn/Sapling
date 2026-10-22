@@ -65,6 +65,16 @@ describe("conceptDescriptions", () => {
     spy.mockRestore();
   });
 
+  it("clears the old unkeyed store", async () => {
+    // Module state: the first read of this test file already cleared it, so
+    // this pins the end state rather than the moment of removal.
+    window.localStorage.setItem("sapling_concept_descriptions_v1", "{}");
+    vi.resetModules();
+    const fresh = await import("./conceptDescriptions");
+    fresh.cachedDescription("u1", "Anything");
+    expect(window.localStorage.getItem("sapling_concept_descriptions_v1")).toBeNull();
+  });
+
   it("still describes when storage is unavailable", async () => {
     const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("quota");

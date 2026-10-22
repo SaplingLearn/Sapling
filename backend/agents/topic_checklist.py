@@ -34,6 +34,28 @@ def normalized_name(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def _raw_name(topic) -> str:
+    """A raw (pre-validation) topic's normalized name, or "" if it has none."""
+    name = topic.get("name") if isinstance(topic, dict) else None
+    return normalized_name(name) if isinstance(name, str) else ""
+
+
+def _without_refs_to(topic, clipped: set[str]):
+    """A raw topic with parent/prerequisite references to `clipped` removed."""
+    if not clipped or not isinstance(topic, dict):
+        return topic
+    out = dict(topic)
+    parent = out.get("parent")
+    if isinstance(parent, str) and normalized_name(parent) in clipped:
+        out["parent"] = ""
+    prerequisites = out.get("prerequisites")
+    if isinstance(prerequisites, list):
+        out["prerequisites"] = [
+            p for p in prerequisites if not (isinstance(p, str) and normalized_name(p) in clipped)
+        ]
+    return out
+
+
 class ChecklistTopic(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1, max_length=500)
@@ -77,9 +99,18 @@ class TopicOutline(BaseModel):
     @field_validator("topics", mode="before")
     @classmethod
     def _clip_topics(cls, topics):
-        # Runs before validate_hierarchy, so a reference to a clipped topic is
-        # a dangling reference there, as it was under decoding-time maxItems.
-        return _clip(topics, MAX_TOPICS)
+        # Runs before validate_hierarchy. Under decoding-time maxItems the model
+        # could never name topic 61, so a kept topic pointing at a clipped one
+        # is an artefact of the clip, not a model error: the reference is
+        # dropped (a clipped parent leaves the topic at the root) rather than
+        # failing the whole outline and spending a retry on a "missing" topic
+        # the model did in fact return.
+        if not isinstance(topics, list) or len(topics) <= MAX_TOPICS:
+            return topics
+        kept, cut = topics[:MAX_TOPICS], topics[MAX_TOPICS:]
+        kept_names = {_raw_name(t) for t in kept}
+        clipped = {_raw_name(t) for t in cut} - kept_names - {""}
+        return [_without_refs_to(t, clipped) for t in kept]
 
     @model_validator(mode="after")
     def validate_hierarchy(self):

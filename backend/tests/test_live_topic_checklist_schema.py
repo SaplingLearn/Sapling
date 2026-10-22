@@ -51,7 +51,12 @@ def test_real_model_serves_the_topic_checklist_schema():
     # Opted in but unconfigured is a failure, never a silent skip: the run
     # was asked to check the live schema and must not report success unchecked.
     assert os.getenv("GEMINI_API_KEY"), "RUN_LIVE_TOPIC_CHECKLIST=1 needs GEMINI_API_KEY"
-    from agents._providers import model_name_for
+    from agents._providers import model_mode, model_name_for
+
+    # Checked BEFORE the billable run: under the function-mode seam the call
+    # would hit a stand-in handler and prove nothing about Gemini's schema.
+    assert model_mode() == "real", "the live schema check needs SAPLING_MODEL_MODE unset (real mode)"
+    assert model_name_for("topic_checklist") == "gemini-2.5-flash"
     from agents.topic_checklist import MAX_TOPICS, topic_checklist_agent
     from services.topic_checklist_service import validate_evidence
 
@@ -59,7 +64,6 @@ def test_real_model_serves_the_topic_checklist_schema():
     # ModelHTTPError 400 INVALID_ARGUMENT — before any generation.
     result = topic_checklist_agent.run_sync(json.dumps(_PAYLOAD), deps=_PAYLOAD)
 
-    assert model_name_for("topic_checklist") == "gemini-2.5-flash"
     topics = result.output.topics
     assert 1 <= len(topics) <= MAX_TOPICS
     validate_evidence(result.output, _PAYLOAD)

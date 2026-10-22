@@ -488,16 +488,19 @@ _SYMBOLIC_NAMES = frozenset({"pi", "nu", "rho", "tau", "phi", "chi", "psi", "eta
 # after anything else — a word, a number, a bracket, a quote, a percent sign
 # ("x (y). Then", '"ATP". It', "10%. Then") — ends a sentence.
 _SHORT_ANSWER_MAX_WORDS = 8
-# How a stem that carries trailing whitespace can still be whole: it ends in
-# its question mark, a fill-in blank, or a code fence. Anything else before
-# the whitespace — a word, ":", ",", even "." ("Consider this definition. "
-# cut at the quote that followed) — is the tell of a stem cut off mid-string.
+# A stem cut at an inner quote ends in the space that preceded the quote
+# ('...as the ', 'Consider this definition. '); a whole stem the model padded
+# usually ends in a newline ("Define osmosis.\n", a code fence). So: trailing
+# spaces are a cut unless the stem ends in its question mark, a "___" blank or
+# a code fence; a trailing newline is padding unless the stem stops on ":" or
+# "," (content was coming: 'Read the code:\n').
 _WHOLE_STEM_ENDINGS = ("?", "_", "`")
+_CUT_BEFORE_NEWLINE = (":", ",")
 _SENTENCE_BREAK = re.compile(r"(?:;|([A-Za-z0-9]*)([.!?]))\s+\S")
 _ABBREVIATIONS = frozenset({
     "mr", "mrs", "ms", "dr", "prof", "st", "mt", "ft", "jr", "sr", "sgt", "capt", "col",
     "gen", "lt", "pres", "gov", "sen", "rep", "rev", "hon", "dept", "univ", "inc", "ltd",
-    "co", "corp", "vs", "etc", "approx", "vol", "fig", "eq", "ch", "sec", "jan",
+    "co", "corp", "vs", "etc", "approx", "no", "vol", "fig", "eq", "ch", "sec", "jan",
     "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
 })
 
@@ -516,7 +519,9 @@ def _is_sentence(key: str) -> bool:
         word, mark = m.groups()
         if mark is None or mark != ".":
             return True  # a semicolon, "!" or "?" mid-key
-        if (len(word) == 1 and word.isalpha()) or word.lower() in _ABBREVIATIONS:
+        if word.lower() == "no" and key[m.end() - 1].isdigit():
+            continue  # "Symphony No. 9", "No. 10 Downing Street" — but not "No. It is not."
+        if word.lower() != "no" and ((len(word) == 1 and word.isalpha()) or word.lower() in _ABBREVIATIONS):
             continue
         return True  # after a word, a number, or punctuation (word == "")
     return False
@@ -595,11 +600,16 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     if stem != q.question:
         # Gemini can end a function-call string at an inner double quote
         # ('...referred to as the "energy currency"' served as '...as the ',
-        # 'Fill in the blank: "..."' as 'Fill in the blank: '): trailing
-        # whitespace is the tell. A whole stem the model merely padded ends in
-        # closing punctuation ("?\n", a code fence, a blank), so that one is
-        # served trimmed; anything else (a word, ":" or ",") was cut off.
-        if not stem.endswith(_WHOLE_STEM_ENDINGS):
+        # 'Fill in the blank: "..."' as 'Fill in the blank: '). See
+        # _WHOLE_STEM_ENDINGS for how a cut is told from padding; a whole stem
+        # is served trimmed.
+        padded_with_newline = "\n" in q.question[len(stem):]
+        cut = (
+            stem.endswith(_CUT_BEFORE_NEWLINE)
+            if padded_with_newline
+            else not stem.endswith(_WHOLE_STEM_ENDINGS)
+        )
+        if cut:
             logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
             return None
         q = q.model_copy(update={"question": stem})

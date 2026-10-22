@@ -130,14 +130,25 @@ def test_a_topic_without_sources_is_still_a_validation_error():
         ChecklistTopic.model_validate(_topic(source_ids=[]))
 
 
-def test_clipping_a_referenced_topic_away_is_still_a_hierarchy_error():
-    """Clipping runs before the hierarchy check, exactly as decoding-time
-    maxItems truncated before it: a reference to a topic past the cap is a
-    dangling reference, never silently kept."""
+def test_a_reference_to_a_clipped_topic_is_dropped_not_fatal():
+    """Under decoding-time maxItems the model could never name topic 61, so a
+    kept topic pointing at a clipped one is an artefact of the clip: the
+    reference goes (a clipped parent leaves the topic at the root) instead of
+    failing the whole outline and spending a retry on a topic it did return."""
     topics = [_topic(i) for i in range(MAX_TOPICS)]
-    topics[0]["prerequisites"] = ["Overflow"]
+    topics[0]["prerequisites"] = ["Overflow", "Topic 1"]
+    topics[2]["parent"] = "overflow"
+    outline = TopicOutline.model_validate({"topics": topics + [_topic(name="Overflow")]})
+    assert len(outline.topics) == MAX_TOPICS
+    assert outline.topics[0].prerequisites == ["Topic 1"]
+    assert outline.topics[2].parent == ""
+
+
+def test_a_reference_to_a_topic_never_returned_is_still_a_hierarchy_error():
+    topics = [_topic(i) for i in range(3)]
+    topics[0]["prerequisites"] = ["Nowhere"]
     with pytest.raises(ValidationError):
-        TopicOutline.model_validate({"topics": topics + [_topic(name="Overflow")]})
+        TopicOutline.model_validate({"topics": topics})
 
 
 def test_over_cap_output_is_clipped_without_spending_a_retry():

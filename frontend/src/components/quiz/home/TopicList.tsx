@@ -54,16 +54,25 @@ export function TopicList({
   returnedId = null,
 }: TopicListProps) {
   const headed = groups.length > 1;
-  const dwell = React.useRef<number | null>(null);
-  const settle = () => {
-    if (dwell.current !== null) window.clearTimeout(dwell.current);
-    dwell.current = null;
+  // One dwell per input: the pointer leaving a row must not cancel the one
+  // keyboard focus armed on another (and vice versa).
+  const dwell = React.useRef<Record<"pointer" | "focus", number | null>>({ pointer: null, focus: null });
+  const settle = (source: "pointer" | "focus") => {
+    const timer = dwell.current[source];
+    if (timer !== null) window.clearTimeout(timer);
+    dwell.current[source] = null;
   };
-  const aim = (nodeId: string) => {
-    settle();
-    if (onIntent) dwell.current = window.setTimeout(() => onIntent(nodeId), INTENT_DWELL_MS);
+  const aim = (source: "pointer" | "focus", nodeId: string) => {
+    settle(source);
+    if (onIntent) dwell.current[source] = window.setTimeout(() => onIntent(nodeId), INTENT_DWELL_MS);
   };
-  React.useEffect(() => settle, []);
+  React.useEffect(
+    () => () => {
+      settle("pointer");
+      settle("focus");
+    },
+    [],
+  );
   return (
     <div className="quiz-home__topics" data-testid="quiz-pick-list">
       {groups.map(({ course, nodes }) => {
@@ -100,10 +109,10 @@ export function TopicList({
                   data-testid={`quiz-pick-${node.id}`}
                   data-returned={node.id === returnedId ? "true" : undefined}
                   onClick={() => onPick(node.id)}
-                  onPointerEnter={() => aim(node.id)}
-                  onPointerLeave={settle}
-                  onFocus={() => aim(node.id)}
-                  onBlur={settle}
+                  onPointerEnter={() => aim("pointer", node.id)}
+                  onPointerLeave={() => settle("pointer")}
+                  onFocus={() => aim("focus", node.id)}
+                  onBlur={() => settle("focus")}
                 >
                   <span className="quiz-home__row-mark">
                     <ConceptNode
