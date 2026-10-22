@@ -147,6 +147,27 @@ function GradescopeSyncDialog({
     if (mounted && !dialogRef.current?.contains(document.activeElement)) dialogRef.current?.focus();
   }, [mounted, stage]);
 
+  const failVerification = React.useCallback((e: unknown) => {
+    if (!active.current) return;
+    setError(humanizeError(e, "Couldn't verify the Gradescope connection."));
+    setStage(statusOf(e) === 401 ? "choose-mode" : "verification-error");
+  }, []);
+
+  // Listing courses is a full live Gradescope login + scrape (rate-limited
+  // server-side), so it only runs when the user actually has to pick one.
+  // It doubles as the check that saved credentials still authenticate.
+  const chooseCourse = React.useCallback(async () => {
+    setStage("loading");
+    try {
+      const gs = await listGradescopeCourses(userId);
+      if (!active.current) return;
+      setCourses(gs.courses);
+      setStage("link");
+    } catch (e: unknown) {
+      failVerification(e);
+    }
+  }, [userId, failVerification]);
+
   const refreshState = React.useCallback(async () => {
     setError(null);
     setStage("loading");
@@ -159,14 +180,12 @@ function GradescopeSyncDialog({
         setStage("choose-mode");
         return;
       }
-      // Saved credentials can expire. Verify them before showing a connected
-      // or ready state, and use this same response for the course picker.
-      const gs = await listGradescopeCourses(userId);
-      if (!active.current) return;
-      setCourses(gs.courses);
-      // Settings-mode (no course): we're done at "connected" once creds
-      // are saved — there's no course to link or sync from here.
+      // Settings-mode (no course): there's no sync to prove the saved
+      // credentials still work, so verify them here with one live listing.
       if (!saplingCourseId) {
+        const gs = await listGradescopeCourses(userId);
+        if (!active.current) return;
+        setCourses(gs.courses);
         setStage("connected");
         return;
       }
@@ -174,18 +193,18 @@ function GradescopeSyncDialog({
       if (!active.current) return;
       const myLink = links.links.find((l) => l.sapling_course_id === saplingCourseId);
       setLastSyncedAt(myLink?.last_synced_at ?? null);
-      if (myLink && gs.courses.some((course) => course.id === myLink.gradescope_course_id)) {
-        setLinkedGsCourseId(myLink.gradescope_course_id);
-        setStage("ready");
-      } else {
-        setStage("link");
+      if (!myLink) {
+        await chooseCourse();
+        return;
       }
+      // Already linked: show "ready" without logging in. Sync logs in itself,
+      // and an expired session there returns to sign-in (onSyncNow).
+      setLinkedGsCourseId(myLink.gradescope_course_id);
+      setStage("ready");
     } catch (e: unknown) {
-      if (!active.current) return;
-      setError(humanizeError(e, "Couldn't verify the Gradescope connection."));
-      setStage(statusOf(e) === 401 ? "choose-mode" : "verification-error");
+      failVerification(e);
     }
-  }, [userId, saplingCourseId, semester]);
+  }, [userId, saplingCourseId, semester, chooseCourse, failVerification]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -331,7 +350,12 @@ function GradescopeSyncDialog({
     } catch (e: unknown) {
       if (!active.current) return;
       setError(humanizeError(e, "Sync failed"));
-      setStage(statusOf(e) === 401 ? "choose-mode" : "ready");
+      const status = statusOf(e);
+      if (status === 401) setStage("choose-mode");
+      // More than one link matches: re-picking replaces them with one, so a
+      // retry can't hit the same ambiguity again.
+      else if (status === 409) void chooseCourse();
+      else setStage("ready");
     } finally {
       submitting.current = false;
     }
@@ -817,7 +841,7 @@ function GradescopeSyncDialog({
                 <button
                   type="button"
                   className="btn btn--ghost"
-                  onClick={() => setStage("link")}
+                  onClick={() => void chooseCourse()}
                   disabled={stage === "syncing"}
                 >
                   Change course

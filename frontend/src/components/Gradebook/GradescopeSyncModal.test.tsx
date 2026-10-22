@@ -37,14 +37,39 @@ describe('Gradescope sync results', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Gradescope session expired.');
   });
 
+  it('opens an already-linked course without a live Gradescope login', async () => {
+    // Every course listing is a full Gradescope login + scrape on a 10/5min
+    // budget; Sync logs in anyway, so opening the dialog must not.
+    render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Sync now' })).toBeInTheDocument();
+    expect(listGradescopeCourses).not.toHaveBeenCalled();
+  });
+
   it('lets an existing link select a different course without deleting credentials', async () => {
     const user = userEvent.setup();
     render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Change course' }));
     expect(await screen.findByText('Pick the matching Gradescope course')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /CS101/ })).toBeInTheDocument();
+    expect(listGradescopeCourses).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends an ambiguous sync to the course picker instead of retrying it', async () => {
+    vi.mocked(syncGradescopeCourse).mockRejectedValue(Object.assign(
+      new Error('{"detail":"Multiple Gradescope links match this course. Select a semester and reconnect the course."}'),
+      { status: 409 },
+    ));
+    const user = userEvent.setup();
+    render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    expect(await screen.findByText('Pick the matching Gradescope course')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Multiple Gradescope links match this course.');
+    expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+    expect(syncGradescopeCourse).toHaveBeenCalledTimes(1);
   });
 
   it('asks for reconnection when saved credentials no longer authenticate', async () => {
+    vi.mocked(listGradescopeLinks).mockResolvedValue({ links: [] });
     vi.mocked(listGradescopeCourses).mockRejectedValue(Object.assign(new Error('{"detail":"Session expired"}'), { status: 401 }));
     render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
     expect(await screen.findByText('Connect Gradescope')).toBeInTheDocument();
@@ -87,11 +112,12 @@ describe('Gradescope sync results', () => {
   });
 
   it('retries a temporary outage without asking for replacement credentials', async () => {
+    vi.mocked(listGradescopeLinks).mockResolvedValue({ links: [] });
     vi.mocked(listGradescopeCourses).mockRejectedValueOnce(Object.assign(new Error('Gradescope unavailable'), { status: 502 }));
     const user = userEvent.setup();
     render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Retry connection' }));
-    expect(await screen.findByRole('button', { name: 'Sync now' })).toBeInTheDocument();
+    expect(await screen.findByText('Pick the matching Gradescope course')).toBeInTheDocument();
     expect(saveGradescopeCredentials).not.toHaveBeenCalled();
   });
 
