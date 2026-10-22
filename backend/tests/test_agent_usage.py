@@ -203,14 +203,28 @@ class _ZeroResult(_FakeResult):
 
 def test_real_run_reporting_zero_tokens_warns(sink, monkeypatch, caplog):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+    with caplog.at_level("WARNING"):
         record_agent_usage(_ZeroResult(), feature="graph", task="concept_describe")
+    # Exactly once: the check lives in log_llm_usage, which record_agent_usage
+    # writes through, so it must not ALSO warn on its own.
+    assert sum("reported 0 tokens" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_direct_llm_usage_writer_reporting_zero_tokens_warns(sink, monkeypatch, caplog):
+    """Writers that bypass record_agent_usage (services/decisions.py's Jev
+    row) are covered too: the check sits on the llm_usage write itself."""
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    with caplog.at_level("WARNING"):
+        events_service.log_llm_usage(
+            feature="tutor", task="decision", model="jev-1", usage={},
+            provider="typesafe", requests=1,
+        )
     assert any("reported 0 tokens" in r.getMessage() for r in caplog.records)
 
 
 def test_function_mode_zero_tokens_stay_quiet(sink, monkeypatch, caplog):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+    with caplog.at_level("WARNING"):
         record_agent_usage(_ZeroResult(), feature="graph", task="concept_describe")
     assert not any("reported 0 tokens" in r.getMessage() for r in caplog.records)
 
@@ -224,6 +238,6 @@ def test_real_run_with_tokens_stays_quiet(sink, monkeypatch, caplog):
             return _Usage()
 
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    with caplog.at_level("WARNING", logger="sapling.agents.usage"):
+    with caplog.at_level("WARNING"):
         record_agent_usage(_Result(), feature="graph", task="concept_describe")
     assert not any("reported 0 tokens" in r.getMessage() for r in caplog.records)
