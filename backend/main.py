@@ -36,6 +36,7 @@ from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
+from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -100,6 +101,10 @@ async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
+    # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
+    # and writes the real environment can never decrypt.
+    verify_encryption_key()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
