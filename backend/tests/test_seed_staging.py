@@ -1,13 +1,13 @@
 """Hermetic tests for db/seed_staging.py (#258).
 
 No real DB: `db.seed_helpers.table` (the shared idempotency helpers seed_staging
-delegates to — #363 prep) is patched to a recording FakeTable backed by an
-in-memory per-table store that mimics PostgREST's eq-filter select, insert,
-and upsert(merge-duplicates) semantics closely enough to exercise the seed's
-idempotency, FK consistency, enum validity, multi-term, and encryption boundaries.
+delegates to — #363 prep) is patched to the shared PostgREST fake in
+tests/conftest.py (`fake_postgrest`), which models PostgREST's eq-filter select,
+insert, and upsert(merge-duplicates) semantics closely enough to exercise the
+seed's idempotency, FK consistency, enum validity, multi-term, and encryption
+boundaries. It is the same fake test_import_offerings.py uses: the two used to be
+separate forks, so a divergence in one was invisible to the other.
 """
-from unittest.mock import patch
-
 import pytest
 
 import db.seed_staging as seed
@@ -32,90 +32,18 @@ CURVE_MODES = {"raw", "curved"}
 PRESEEDED_TERMS = {"fall-2025", "spring-2026", "fall-2026"}
 
 
-# Primary key column per table (user_profiles is keyed on user_id, not id).
-_PK = {"user_profiles": "user_id"}
-
-
-def _pk(name: str) -> str:
-    return _PK.get(name, "id")
-
-
-class _FakeStore:
-    """Shared in-memory DB: {table_name: {pk_value: row}}.
-
-    Pre-populated with the canonical terms (which 0019 seeds and the seed only
-    reads), so any term FK the seed uses resolves.
-    """
-
-    def __init__(self):
-        self.tables: dict[str, dict] = {
-            "terms": {t: {"id": t} for t in PRESEEDED_TERMS},
-        }
-
-    def rows(self, name: str) -> list[dict]:
-        return list(self.tables.get(name, {}).items())
-
-
-class _FakeTable:
-    def __init__(self, name: str, store: _FakeStore):
-        self.name = name
-        self.store = store
-        self.store.tables.setdefault(name, {})
-
-    @property
-    def _t(self) -> dict:
-        return self.store.tables[self.name]
-
-    def select(self, columns="*", filters=None, order=None, limit=None):
-        rows = list(self._t.values())
-        if filters:
-            for col, expr in filters.items():
-                # Only the eq.<val> form is used by the seed's presence checks.
-                assert expr.startswith("eq."), f"unexpected filter {expr!r}"
-                val = expr[len("eq."):]
-                rows = [r for r in rows if str(r.get(col)) == val]
-        if limit is not None:
-            rows = rows[:limit]
-        return rows
-
-    def insert(self, data):
-        pk = _pk(self.name)
-        rows = data if isinstance(data, list) else [data]
-        for row in rows:
-            rid = row[pk]
-            assert rid not in self._t, (
-                f"duplicate insert into {self.name} {pk}={rid} (not idempotent)"
-            )
-            self._t[rid] = dict(row)
-        return rows
-
-    def upsert(self, data, on_conflict="id"):
-        pk = _pk(self.name)
-        rows = data if isinstance(data, list) else [data]
-        keys = on_conflict.split(",")
-        for row in rows:
-            # merge-duplicates: find any existing row matching the conflict key.
-            match_id = None
-            for existing_id, existing in self._t.items():
-                if all(str(existing.get(k)) == str(row.get(k)) for k in keys):
-                    match_id = existing_id
-                    break
-            rid = match_id if match_id is not None else row[pk]
-            merged = dict(self._t.get(rid, {}))
-            merged.update(row)
-            self._t[rid] = merged
-        return rows
+# `user_profiles` is keyed on user_id, not id — everything else uses `id`.
+_PK_COLUMNS = {"user_profiles": "user_id"}
 
 
 @pytest.fixture
-def store():
-    s = _FakeStore()
-
-    def _factory(name: str):
-        return _FakeTable(name, s)
-
-    with patch.object(seed_helpers, "table", side_effect=_factory):
-        yield s
+def store(fake_postgrest):
+    # Terms are pre-populated because 0019 seeds them and the seed only reads them.
+    return fake_postgrest(
+        seed_helpers,
+        pk_columns=_PK_COLUMNS,
+        tables={"terms": [{"id": t} for t in PRESEEDED_TERMS]},
+    )
 
 
 def _run(store):
@@ -296,8 +224,8 @@ def test_second_run_adds_no_rows(store):
     _run(store)
     counts_after_first = {name: len(rows) for name, rows in store.tables.items()}
 
-    # A 2nd run must not insert duplicates. _FakeTable.insert asserts on a
-    # duplicate id, so this also fails loudly if insert-if-absent regresses.
+    # A 2nd run must not insert duplicates. The shared fake's insert asserts on a
+    # duplicate primary key, so this also fails loudly if insert-if-absent regresses.
     seed.main()
 
     counts_after_second = {name: len(rows) for name, rows in store.tables.items()}
