@@ -1703,7 +1703,7 @@ function LearnInner() {
               border: "1px solid var(--border)",
               borderRight: "none",
               borderRadius: "10px 0 0 10px",
-              boxShadow: "-3px 0 8px rgba(19, 38, 16, 0.06)",
+              boxShadow: "-3px 0 8px rgba(25, 37, 11, 0.06)",
               color: railOpen ? "var(--brand-forest)" : "var(--text-muted)",
               zIndex: 20,
               transition: railDragging

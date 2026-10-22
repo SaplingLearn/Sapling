@@ -13,7 +13,7 @@
  *
  * Color notes (dataviz skill, validated via validate_palette.js): every chart
  * here is single-series, so hues encode panel identity, not categories — the
- * forest green (#1B6C42) and the status red (--err) never share a plot, and
+ * forest green (#445D22) and the status red (--err) never share a plot, and
  * the errors panel carries its title + labels so identity is never
  * color-alone. Text always wears text tokens, never the series color.
  */
@@ -193,7 +193,7 @@ function barPath(w: number, h: number): string {
 export function CategoryBars({
   rows,
   ariaLabel,
-  color = "var(--brand-forest, #1B6C42)",
+  color = "var(--brand-forest, #445D22)",
   format = (v: number) => String(v),
 }: {
   rows: { label: string; value: number }[];

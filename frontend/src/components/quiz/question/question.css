@@ -28,6 +28,11 @@
      will. Not `--answer-letter-w`: that is the letter column's WIDTH, which is
      the same number today by coincidence, not by construction. */
   --quiz-q-skeleton-inset: 14px;
+  --quiz-q-written-fs: 18px;   /* the answer line reads at near-stem size */
+  --quiz-q-numeric-w: 22ch;    /* a number needs a field, not the column */
+  --quiz-q-key-h: 34px;
+  --quiz-q-key-min-w: 44px;    /* touch-sized, on the decimal-pad screens */
+  --quiz-q-key-gap: 6px;
 
   display: flex;
   align-items: stretch;
@@ -390,21 +395,108 @@
   gap: var(--pad-sm);
 }
 
+.quiz-question__format-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* The input, its symbol keys and its read-back (`WrittenAnswer`). */
+.quiz-written {
+  display: grid;
+  gap: var(--pad-sm);
+  justify-items: start;
+}
+
 .quiz-question__written-input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  resize: vertical;
   padding: var(--pad-md);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--bg-panel);
   color: var(--text);
   font: inherit;
-  line-height: 1.6;
+  font-size: var(--quiz-q-written-fs);
+  line-height: 1.4;
+}
+
+.quiz-question__written-input::placeholder {
+  color: var(--text-muted);
 }
 
 .quiz-question__written-input:focus-visible {
   outline: 2px solid var(--border-strong);
   outline-offset: 2px;
+}
+
+.quiz-question__written-input[aria-invalid="true"] {
+  border-color: var(--state-struggle);
+}
+
+/* A number is short: a field sized to it, digits aligned. */
+.quiz-written__input--numeric {
+  max-width: var(--quiz-q-numeric-w);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An expression is code-like: monospace, so x, × and 1 stay distinct. */
+.quiz-written__input--symbolic {
+  font-family: var(--font-mono);
+}
+
+.quiz-written__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--quiz-q-key-gap);
+}
+
+.quiz-written__key {
+  min-width: var(--quiz-q-key-min-w);
+  height: var(--quiz-q-key-h);
+  padding: 0 var(--pad-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.quiz-written__key:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-panel));
+}
+
+.quiz-written__key:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+
+.quiz-written__key:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.quiz-written__readback {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.quiz-written__readback[data-ok="false"] {
+  color: var(--state-struggle);
+}
+
+.quiz-written__value {
+  color: var(--text);
+  font-size: var(--fs-md);
+}
+
+.quiz-written__expr {
+  font-family: var(--font-mono);
 }

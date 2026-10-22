@@ -57,8 +57,8 @@ export function CalendarDemo() {
     <div className="ld-lab-split" style={{ display: 'grid', gridTemplateColumns: '1fr 250px', minHeight: '100%', boxSizing: 'border-box' }}>
       <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, borderRight: '1px solid #ECE9DE' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontFamily: "var(--font-playfair), 'Playfair Display', Georgia, serif", fontSize: 20, fontWeight: 600 }}>October 2026</span>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E3EBE5' }}>
+          <span style={{ fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 20, fontWeight: 600 }}>October 2026</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, padding: 3, borderRadius: 9, background: '#F6F8F4', border: '1px solid #E6EAE2' }}>
             {VIEWS.map((v) => {
               const on = view === v.key;
               return (
@@ -67,7 +67,7 @@ export function CalendarDemo() {
                   onClick={() => setView(v.key)}
                   type="button"
                   aria-pressed={on}
-                  style={{ padding: '6px 13px', borderRadius: 7, border: 'none', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 12, cursor: 'pointer', transition: 'all 180ms', background: on ? '#12201A' : 'transparent', color: on ? '#FDFCF9' : '#61726A', fontWeight: on ? 600 : 400 }}
+                  style={{ padding: '6px 13px', borderRadius: 7, border: 'none', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 12, cursor: 'pointer', transition: 'all 180ms', background: on ? '#191F13' : 'transparent', color: on ? '#FDFCF9' : '#697062', fontWeight: on ? 600 : 400 }}
                 >
                   {v.label}
                 </button>
@@ -78,7 +78,7 @@ export function CalendarDemo() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 5 }}>
           {DOWS.map((d, i) => (
-            <span key={i} style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.12em', color: '#9AA5A0', textAlign: 'center' }}>{d}</span>
+            <span key={i} style={{ ...MONO, fontSize: 8.5, letterSpacing: '0.12em', color: '#9FA49A', textAlign: 'center' }}>{d}</span>
           ))}
         </div>
 
@@ -93,17 +93,17 @@ export function CalendarDemo() {
                 style={{
                   position: 'relative', minHeight: 44, borderRadius: 8, padding: 5,
                   display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start',
-                  fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", transition: 'all 160ms',
+                  fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", transition: 'all 160ms',
                   ...(c.blank
                     ? { background: 'transparent', border: 'none', cursor: 'default' }
                     : {
-                        border: `1px solid ${selected ? '#0E9E5A' : '#EBF1EC'}`,
-                        background: selected ? '#E6F2E8' : '#FDFCF9',
+                        border: `1px solid ${selected ? '#68951F' : '#EDF0EA'}`,
+                        background: selected ? '#EAF1E4' : '#FDFCF9',
                         cursor: 'pointer',
                       }),
                 }}
               >
-                <span style={{ ...MONO, fontSize: 9, color: selected ? '#0C5638' : '#9AA5A0' }}>{c.day}</span>
+                <span style={{ ...MONO, fontSize: 9, color: selected ? '#445D22' : '#9FA49A' }}>{c.day}</span>
                 {c.chips.map((ch, j) => (
                   <span key={j} style={{ width: '100%', height: 5, borderRadius: 2, animation: 'labIn 300ms ease both', background: TYPE[ch.type as keyof typeof TYPE] }} />
                 ))}
@@ -114,22 +114,22 @@ export function CalendarDemo() {
       </div>
 
       <div style={{ padding: '18px 16px', background: '#F6F8F4', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#8B9891' }}>OCTOBER {day}</span>
+        <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.18em', color: '#91978B' }}>OCTOBER {day}</span>
 
         {sideItems.map((a, i) => (
-          <div key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#FDFCF9', border: '1px solid #DCE7DE', display: 'flex', flexDirection: 'column', gap: 3, animation: 'labIn 280ms ease both' }}>
+          <div key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#FDFCF9', border: '1px solid #E0E6DA', display: 'flex', flexDirection: 'column', gap: 3, animation: 'labIn 280ms ease both' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, flex: '0 0 auto', background: TYPE[a.type as keyof typeof TYPE] }} />
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: '#12201A' }}>{a.title}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: '#191F13' }}>{a.title}</span>
             </div>
-            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.08em', color: '#8B9891' }}>
+            <span style={{ ...MONO, fontSize: 9, letterSpacing: '0.08em', color: '#91978B' }}>
               {a.course} · {a.type.toUpperCase()}
             </span>
           </div>
         ))}
 
         {sideItems.length === 0 && (
-          <span style={{ fontSize: 12, color: '#9AA5A0' }}>Nothing due. Click another day.</span>
+          <span style={{ fontSize: 12, color: '#9FA49A' }}>Nothing due. Click another day.</span>
         )}
 
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -137,11 +137,11 @@ export function CalendarDemo() {
             onClick={upload}
             type="button"
             className="ld-labupload"
-            style={{ padding: '10px 12px', borderRadius: 9, border: '1px dashed #0E9E5A', background: '#E6F2E8', ...MONO, fontSize: 9.5, letterSpacing: '0.1em', color: '#0C5638', cursor: 'pointer' }}
+            style={{ padding: '10px 12px', borderRadius: 9, border: '1px dashed #68951F', background: '#EAF1E4', ...MONO, fontSize: 9.5, letterSpacing: '0.1em', color: '#445D22', cursor: 'pointer' }}
           >
             {uploading ? 'READING SYLLABUS…' : uploaded ? 'SYLLABUS APPLIED' : '+ UPLOAD MA242_SYLLABUS.PDF'}
           </button>
-          <span style={{ fontSize: 11, lineHeight: 1.6, color: '#9AA5A0' }}>
+          <span style={{ fontSize: 11, lineHeight: 1.6, color: '#9FA49A' }}>
             {uploaded
               ? '6 assignments extracted and synced to Google Calendar.'
               : 'One upload fills the month — every pset, quiz, and exam, dated.'}
