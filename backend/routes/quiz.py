@@ -477,14 +477,25 @@ _MAX_ANSWER_CHARS = 2000
 # _validate_wire_question drops a key it cannot parse.
 _SYMBOLIC_LETTER_RUN = re.compile(r"[A-Za-z]+")
 _SYMBOLIC_WORD_MIN = 4
-_SYMBOLIC_NAMES = frozenset({"pi", "mu", "nu", "xi", "rho", "tau", "phi", "chi", "psi", "eta"})
+# "mu" and "xi" are left out: m*u (mass times initial velocity) and x*i are
+# ordinary products in mechanics and algebra keys.
+_SYMBOLIC_NAMES = frozenset({"pi", "nu", "rho", "tau", "phi", "chi", "psi", "eta"})
 # A short-answer key is a term or brief fact (docs/quiz-formats.md); exact
-# matching can never accept a sentence or paragraph key. A sentence break is
-# terminal punctuation after a word of 3+ lowercase letters, or a semicolon:
-# that leaves initials and abbreviations ("John F. Kennedy", "U.S.
-# Constitution", "St. Louis") alone.
+# matching can never accept a sentence or paragraph key. A sentence break is a
+# semicolon, "!" or "?", or a full stop, each followed by more text, except a
+# full stop after an initial ("John F. Kennedy", "U.S.", "e.g.") or a known
+# abbreviation ("St. Louis", "Prof. Xavier", "Sept. 11").
 _SHORT_ANSWER_MAX_WORDS = 8
-_SENTENCE_BREAK = re.compile(r"(?:(?<=[a-z]{3})[.!?]|;)\s+\S")
+# How a whole stem ends: terminal punctuation, a closing bracket or quote, a
+# code fence or emphasis, or a fill-in blank.
+_WHOLE_STEM_ENDINGS = tuple("?.!)]\"'`*_")
+_SENTENCE_BREAK = re.compile(r"(?:;|([A-Za-z0-9]+)([.!?]))\s+\S")
+_ABBREVIATIONS = frozenset({
+    "mr", "mrs", "ms", "dr", "prof", "st", "mt", "ft", "jr", "sr", "sgt", "capt", "col",
+    "gen", "lt", "pres", "gov", "sen", "rep", "rev", "hon", "dept", "univ", "inc", "ltd",
+    "co", "corp", "vs", "etc", "approx", "no", "vol", "fig", "eq", "ch", "sec", "jan",
+    "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+})
 
 
 def _is_symbolic_word(key: str) -> bool:
@@ -495,7 +506,16 @@ def _is_symbolic_word(key: str) -> bool:
 
 
 def _is_sentence(key: str) -> bool:
-    return len(key.split()) > _SHORT_ANSWER_MAX_WORDS or bool(_SENTENCE_BREAK.search(key))
+    if len(key.split()) > _SHORT_ANSWER_MAX_WORDS:
+        return True
+    for m in _SENTENCE_BREAK.finditer(key):
+        word, mark = m.groups()
+        if word is None or mark != ".":
+            return True  # a semicolon, "!" or "?" mid-key
+        if (len(word) == 1 and word.isalpha()) or word.lower() in _ABBREVIATIONS:
+            continue
+        return True
+    return False
 
 
 def _unfair_written_key(q: QuizQuestion) -> str | None:
@@ -568,17 +588,16 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
     Returning None lets the caller filter questions out cleanly.
     """
     stem = q.question.rstrip()
-    trailing = q.question[len(stem):]
-    if trailing and "\n" not in trailing and stem[-1:].isalnum():
+    if stem != q.question:
         # Gemini can end a function-call string at an inner double quote
-        # ('...referred to as the "energy currency"' served as '...as the '):
-        # a space after a word with no closing punctuation is the tell of a
-        # stem cut off mid-sentence. A stem the model ends with a newline (after
-        # a code block, say) or with spaces after "?" is whole, and is served
-        # trimmed below.
-        logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
-        return None
-    if trailing:
+        # ('...referred to as the "energy currency"' served as '...as the ',
+        # 'Fill in the blank: "..."' as 'Fill in the blank: '): trailing
+        # whitespace is the tell. A whole stem the model merely padded ends in
+        # closing punctuation ("?\n", a code fence, a blank), so that one is
+        # served trimmed; anything else (a word, ":" or ",") was cut off.
+        if not stem.endswith(_WHOLE_STEM_ENDINGS):
+            logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
+            return None
         q = q.model_copy(update={"question": stem})
     if q.type in WRITTEN_TYPES:
         if (reason := _unfair_written_key(q)) is not None:

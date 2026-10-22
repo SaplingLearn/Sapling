@@ -240,7 +240,7 @@ def _wire(**overrides):
 @pytest.mark.parametrize("answer", [
     "lambda", "eigenvalue", "2theta", "alpha + beta",
     # Short constant names are words too: "pi r^2" grades as p*i*r^2.
-    "pi r^2", "mu g", "rho V",
+    "pi r^2", "rho V", "2 tau",
 ])
 def test_symbolic_key_spelled_as_a_word_is_dropped(answer):
     """A letter run is an implicit product, so 'lambda' parsed as a*a*b*d*l*m:
@@ -249,7 +249,11 @@ def test_symbolic_key_spelled_as_a_word_is_dropped(answer):
     assert _wire(type="symbolic", correct_answer=answer) is None
 
 
-@pytest.mark.parametrize("answer", ["2xy", "mgh", "x^2 - 1", "2(x + 1)", "ab/c"])
+@pytest.mark.parametrize("answer", [
+    "2xy", "mgh", "x^2 - 1", "2(x + 1)", "ab/c",
+    # m*u is mass times initial velocity, an ordinary mechanics product.
+    "mu", "mv - mu", "mu^2/2",
+])
 def test_symbolic_key_with_short_products_is_kept(answer):
     assert _wire(type="symbolic", correct_answer=answer) is not None
 
@@ -259,6 +263,9 @@ def test_symbolic_key_with_short_products_is_kept(answer):
     "It's crucial because without it, the function would call itself indefinitely.",
     "It converts glucose and oxygen into ATP through cellular respiration in the cell",
     "Stops recursion. Prevents overflow.",
+    "It is ATP. It stores energy.",
+    "It ended in 1945. Then peace.",
+    "Glycolysis; then the Krebs cycle",
 ])
 def test_short_answer_key_that_is_a_sentence_is_dropped(answer):
     """Exact-match grading cannot accept a paragraph: served live, the student
@@ -276,6 +283,8 @@ def test_short_answer_key_that_is_a_term_is_kept(answer):
 
 @pytest.mark.parametrize("answer", [
     "John F. Kennedy", "U.S. Constitution", "St. Louis", "Mt. Everest", "Dr. Seuss",
+    "Prof. Xavier", "Sept. 11, 2001", "Capt. James Cook", "Dept. of Energy", "Pres. Lincoln",
+    "e.g. mitochondria",
 ])
 def test_short_answer_key_with_an_abbreviation_is_not_a_sentence(answer):
     """An initial or abbreviation is not a sentence break; dropping these
@@ -297,10 +306,12 @@ def test_short_answer_sentence_key_with_a_term_alias_is_kept():
     "Which structure is shown?\n",
     "What is the output of this code?\n```\nprint(1)\n```\n",
     "What molecule is called the energy currency? ",
+    "The mitochondria is the ___ of the cell. ",
+    "Name the organelle (the cell's powerhouse) ",
 ])
 def test_whole_stem_with_trailing_whitespace_is_kept_and_trimmed(question):
-    """Only a space after a word is the truncation tell; a stem the model ends
-    with a newline, or with a space after its question mark, is whole."""
+    """Trailing whitespace after closing punctuation, a code fence or a blank
+    is padding on a whole stem, not a cut."""
     item = _wire(question=question)
     assert item is not None
     assert item["question"] == question.rstrip()
@@ -308,6 +319,10 @@ def test_whole_stem_with_trailing_whitespace_is_kept_and_trimmed(question):
 
 @pytest.mark.parametrize("item", [
     _item(question="What molecule is often referred to as the "),
+    # The cut can land after punctuation too: the quote followed ": " or ", ".
+    _item(question="Fill in the blank: "),
+    _item(question="Consider the term, "),
+    _item(question="Read the code:\n"),
     _item(type="multiple_choice", options=["a", "b", "c", "d"], correct_answer="a",
           question="Which is called the "),
 ])
