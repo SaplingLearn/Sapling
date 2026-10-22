@@ -18,6 +18,7 @@ is sync and calls into this module directly), not the async notes.py style.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from pydantic_ai import BinaryContent
@@ -85,6 +86,68 @@ def _bullet_list_node(items: list[str]) -> dict:
             for item in items
         ],
     }
+
+
+_LIST_LINE_RE = re.compile(r"^(?:-\s+|\d+\.\s+)")
+_BULLET_LINE_RE = re.compile(r"^-\s+(.*)$")
+_NUMBERED_LINE_RE = re.compile(r"^\d+\.\s+(.*)$")
+_MATH_SPAN_RE = re.compile(r"\$\$(.+?)\$\$|\$(.+?)\$")
+
+
+def _parse_inline_spans(text: str) -> list[dict]:
+    """Split text into text/math inline nodes on $...$/$$...$$ spans. An
+    unclosed delimiter (no matching close) never matches the regex at all,
+    so it's left as literal text by construction — not a special case to
+    handle, just what "no match" means here."""
+    nodes: list[dict] = []
+    pos = 0
+    for m in _MATH_SPAN_RE.finditer(text):
+        if m.start() > pos:
+            nodes.append({"type": "text", "text": text[pos:m.start()]})
+        if m.group(1) is not None:
+            nodes.append({"type": "math", "attrs": {"latex": m.group(1), "block": True}})
+        else:
+            nodes.append({"type": "math", "attrs": {"latex": m.group(2), "block": False}})
+        pos = m.end()
+    if pos < len(text):
+        nodes.append({"type": "text", "text": text[pos:]})
+    return nodes
+
+
+def _list_node_from_lines(lines: list[str]) -> dict:
+    is_numbered = all(_NUMBERED_LINE_RE.match(ln) for ln in lines)
+    pattern = _NUMBERED_LINE_RE if is_numbered else _BULLET_LINE_RE
+    items = []
+    for ln in lines:
+        m = pattern.match(ln)
+        item_text = m.group(1) if m else ln
+        items.append({
+            "type": "listItem",
+            "content": [{"type": "paragraph", "content": _parse_inline_spans(item_text)}],
+        })
+    return {"type": "orderedList" if is_numbered else "bulletList", "content": items}
+
+
+def body_to_prosemirror_nodes(body: str) -> list[dict]:
+    """Convert a NotesSection.body string into ProseMirror paragraph/list
+    nodes. Recognizes exactly three things: blank-line-separated blocks,
+    "- "/"N. " list lines (every non-empty line in the block starts with
+    one of those markers), and $...$/$$...$$ inline math spans within any
+    text. Nothing else — no headings, links, emphasis, or HTML; those
+    don't belong in body text (headings come from the section's own
+    heading/heading_level fields instead). Used both at seed time
+    (prosemirror_doc_from_sections) and for a suggestion's proposed_content
+    (create_suggestion) — the one implementation this dialect has."""
+    blocks = [b for b in re.split(r"\n\s*\n", body or "") if b.strip()]
+    nodes: list[dict] = []
+    for block in blocks:
+        lines = [ln.strip() for ln in block.split("\n") if ln.strip()]
+        if lines and all(_LIST_LINE_RE.match(ln) for ln in lines):
+            nodes.append(_list_node_from_lines(lines))
+        else:
+            text = " ".join(lines)
+            nodes.append({"type": "paragraph", "content": _parse_inline_spans(text)})
+    return nodes
 
 
 def prosemirror_doc_from_sections(sections: list[dict]) -> dict:

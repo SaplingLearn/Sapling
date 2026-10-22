@@ -9,6 +9,7 @@ from services.summary_docs_service import (
     _build_ask_prompt,
     add_source,
     attach_summary_previews,
+    body_to_prosemirror_nodes,
     create_suggestion,
     create_summary_doc,
     delete_summary_docs_for_document,
@@ -48,6 +49,78 @@ class TestProsemirrorDocFromText:
                 {"type": "paragraph", "content": [{"type": "text", "text": "Just one paragraph of text."}]},
             ],
         }
+
+
+class TestBodyToProsemirrorNodes:
+    def test_single_paragraph(self):
+        nodes = body_to_prosemirror_nodes("Just one paragraph.")
+        assert nodes == [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Just one paragraph."}]},
+        ]
+
+    def test_multiple_paragraphs_blank_line_separated(self):
+        nodes = body_to_prosemirror_nodes("First.\n\nSecond.")
+        assert nodes == [
+            {"type": "paragraph", "content": [{"type": "text", "text": "First."}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "Second."}]},
+        ]
+
+    def test_bullet_list_lines(self):
+        nodes = body_to_prosemirror_nodes("- First law\n- Second law\n- Third law")
+        assert nodes == [{
+            "type": "bulletList",
+            "content": [
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "First law"}]}]},
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Second law"}]}]},
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Third law"}]}]},
+            ],
+        }]
+
+    def test_numbered_list_lines(self):
+        nodes = body_to_prosemirror_nodes("1. Step one\n2. Step two")
+        assert nodes == [{
+            "type": "orderedList",
+            "content": [
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Step one"}]}]},
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Step two"}]}]},
+            ],
+        }]
+
+    def test_inline_math_span(self):
+        nodes = body_to_prosemirror_nodes("The formula is $F = ma$ for force.")
+        assert nodes == [{
+            "type": "paragraph",
+            "content": [
+                {"type": "text", "text": "The formula is "},
+                {"type": "math", "attrs": {"latex": "F = ma", "block": False}},
+                {"type": "text", "text": " for force."},
+            ],
+        }]
+
+    def test_block_math_span(self):
+        nodes = body_to_prosemirror_nodes("$$\\lim_{x \\to a} f(x) = L$$")
+        assert nodes == [{
+            "type": "paragraph",
+            "content": [{"type": "math", "attrs": {"latex": "\\lim_{x \\to a} f(x) = L", "block": True}}],
+        }]
+
+    def test_unclosed_math_delimiter_falls_back_to_literal_text(self):
+        nodes = body_to_prosemirror_nodes("The price was $5 and that's it.")
+        assert nodes == [{
+            "type": "paragraph",
+            "content": [{"type": "text", "text": "The price was $5 and that's it."}],
+        }]
+
+    def test_empty_body_returns_empty_list(self):
+        assert body_to_prosemirror_nodes("") == []
+        assert body_to_prosemirror_nodes("   \n\n  ") == []
+
+    def test_mixed_paragraph_and_list_blocks(self):
+        nodes = body_to_prosemirror_nodes("Intro paragraph.\n\n- Item one\n- Item two\n\nClosing paragraph.")
+        assert len(nodes) == 3
+        assert nodes[0]["type"] == "paragraph"
+        assert nodes[1]["type"] == "bulletList"
+        assert nodes[2]["type"] == "paragraph"
 
 
 class TestPlaintextFromProsemirror:
