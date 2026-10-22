@@ -17,7 +17,7 @@
  */
 
 .quiz-root {
-  --quiz-col-home: 1120px;
+  --quiz-col-home: 1200px;
   --quiz-col-question: 680px;
   --quiz-col-results: 640px;
 
@@ -54,7 +54,7 @@
    the two:
 
      <div class="quiz-inset--home">          <- page padding, full width
-       <div class="quiz-col quiz-col--home"> <- the 1120px measure
+       <div class="quiz-col quiz-col--home"> <- the 1200px measure
          ...everything below the resume strip
        </div>
      </div>

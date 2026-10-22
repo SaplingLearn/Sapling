@@ -499,6 +499,70 @@ describe("QuizHome — the concept dialog", () => {
   });
 });
 
+describe("QuizHome — searching the topic list", () => {
+  const search = (q: string) =>
+    fireEvent.change(screen.getByTestId("quiz-topic-search"), { target: { value: q } });
+  const rowIds = () =>
+    Array.from(
+      screen.getByTestId("quiz-pick-list").querySelectorAll("[data-testid^='quiz-pick-']"),
+    ).map(el => el.getAttribute("data-testid"));
+
+  it("filters by concept name, case-insensitively, and hides the due row", () => {
+    mount();
+    search("STACK");
+    expect(rowIds()).toEqual(["quiz-pick-stack-frames"]);
+    expect(screen.queryByTestId("quiz-review-due")).toBeNull();
+  });
+
+  it("matches a course code", () => {
+    mount();
+    search("cs101");
+    expect(rowIds()).toEqual([
+      "quiz-pick-tail-recursion",
+      "quiz-pick-recursion",
+      "quiz-pick-stack-frames",
+      "quiz-pick-base-cases",
+    ]);
+  });
+
+  it("finds the concept on the card too", () => {
+    // Recursion is held back from the list while it is the proposal, but a
+    // student who types its name expects to see it.
+    mount();
+    search("recursion");
+    expect(rowIds()).toContain("quiz-pick-recursion");
+  });
+
+  it("says so when nothing matches, and restores the list when cleared", () => {
+    mount();
+    search("zzz");
+    expect(screen.getByTestId("quiz-topic-search-empty")).toHaveTextContent("No concepts match “zzz”");
+    search("");
+    expect(screen.queryByTestId("quiz-topic-search-empty")).toBeNull();
+    expect(screen.getByTestId("quiz-review-due")).toBeInTheDocument();
+  });
+});
+
+describe("QuizHome — the live neighbourhood", () => {
+  it("draws the card's concept with its neighbours, and a neighbour opens its dialog", () => {
+    mount();
+    const graph = screen.getByTestId("quiz-neighbourhood");
+    const ids = Array.from(graph.querySelectorAll("[data-testid='graph-node-item']")).map(li =>
+      li.getAttribute("data-node-id"),
+    );
+    // Recursion's real neighbours, from EDGES.
+    expect(ids).toEqual(expect.arrayContaining(["recursion", "base-cases", "stack-frames", "tail-recursion"]));
+
+    const activate = (id: string) =>
+      graph.querySelector(`[data-node-id='${id}'] [data-testid='graph-node-activate']`) as HTMLElement;
+    fireEvent.click(activate("recursion"));
+    expect(screen.queryByTestId("quiz-concept-dialog")).toBeNull();
+
+    fireEvent.click(activate("base-cases"));
+    expect(screen.getByTestId("quiz-concept-dialog")).toHaveTextContent("Base cases");
+  });
+});
+
 describe("QuizHome — the adjust dialog", () => {
   it("marks the link active while open and writes the choices back on Done", () => {
     const { actions } = mount();

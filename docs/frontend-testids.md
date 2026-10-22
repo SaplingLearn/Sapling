@@ -226,8 +226,11 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
 | `quiz-adjust` | "Adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
 | `quiz-review-due` | "Review everything due" row, first in the topic list |
-| `quiz-pick-list` | the "Choose a topic" list beside the proposal — every in-scope concept, grouped by course, weakest first; leaves out the concept already on the card |
+| `quiz-pick-list` | the "Choose a topic" list beside the proposal — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
 | `quiz-pick-{nodeId}` | one concept row in that list |
+| `quiz-topic-search` | the search box above that list — filters by concept name or course code |
+| `quiz-topic-search-empty` | "No concepts match …" when the search finds nothing |
+| `quiz-neighbourhood` | the live neighbourhood window under the proposal (`KnowledgeGraph2D` inside; its own `graph-*` ids apply) |
 | `quiz-empty-state` | the home's empty states (`ui/EmptyState`) — no courses, empty tree, or nothing left to propose; they are alternatives, so only one ever mounts |
 | `quiz-home-error` | the home's load-failure card |
 | `quiz-home-retry` | "Retry" inside it |

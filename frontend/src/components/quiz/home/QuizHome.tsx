@@ -14,7 +14,8 @@
  * `lib/quiz/proposals` (a cited mirror of `graph_service.get_recommendations`,
  * R-7), the meta and rationale lines are its formatters, the option lists come
  * off `GET /api/quiz/config`, and the marks are the tree's own arithmetic
- * through `ConceptNode` / `ConceptNeighbourhood`.
+ * through `ConceptNode`, and the neighbourhood window is the tree's own 2D
+ * renderer (`LiveNeighbourhood`).
  *
  * The card has three shapes, chosen by how you arrived (§6): a concept (the
  * default, and every `?concept=` / `?topic=` deep link), a course (`?course=`)
@@ -26,7 +27,6 @@ import React from "react";
 import { Button, EmptyState, InlineBanner } from "@/components/ui";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
-import { ConceptNeighbourhood } from "@/components/graph/ConceptNeighbourhood";
 import { apiToGraphNode } from "@/lib/data";
 import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { cancelTarget } from "@/lib/quiz/exits";
@@ -48,6 +48,7 @@ import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/us
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
 import { AdjustDialog } from "./AdjustDialog";
 import { ConceptDialog } from "./ConceptDialog";
+import { LiveNeighbourhood } from "./LiveNeighbourhood";
 import { TopicList } from "./TopicList";
 import { accentStyle } from "./accent";
 import "./home.css";
@@ -64,10 +65,8 @@ export interface QuizHomeProps {
 /** The card's three shapes (§5 B1.2). `course` and `due` run as queues. */
 type CardMode = "concept" | "course" | "due";
 
-/** The home neighbourhood canvas. It is drawn in a frame under the proposal
- *  and scales down with the column (`home.css`); these are its intrinsic
- *  proportions. Under 480 wide, so the `compact` composition. */
-const CANVAS = { width: 360, height: 150, scale: 1.5 } as const;
+/** The neighbourhood window's height while the tree loads (`home.css`). */
+const GRAPH_SKELETON_HEIGHT = 220;
 
 /** Why a deep-linked concept is the one on offer (§5 B1.2). */
 const DEEP_LINK_RATIONALE: Partial<Record<SourceKind, string>> = {
@@ -83,6 +82,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   const toast = useToast();
   const [adjustOpen, setAdjustOpen] = React.useState(false);
   const [dialogNodeId, setDialogNodeId] = React.useState<string | null>(null);
+  const [topicQuery, setTopicQuery] = React.useState("");
 
   // ── What the card is about ────────────────────────────────────────────
 
@@ -172,7 +172,6 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     [home.edges],
   );
 
-  const cardSiblings = React.useMemo(() => siblingsOf(card?.node.id), [siblingsOf, card]);
 
   // ── Copy ──────────────────────────────────────────────────────────────
 
@@ -372,23 +371,13 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       {definition && <p className="quiz-home__definition">{definition}</p>}
       <p className="quiz-home__config">{configLine}</p>
 
-      <div className="quiz-home__neighbourhood">
-        <ConceptNeighbourhood
-          centre={{
-            id: card.node.id,
-            name: card.node.concept_name,
-            mastery: card.node.mastery_score,
-            tier: card.node.mastery_tier,
-          }}
-          siblings={cardSiblings}
-          courseColor={card.color}
-          width={CANVAS.width}
-          height={CANVAS.height}
-          scale={CANVAS.scale}
-          showCentreLabel={false}
-          ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
-        />
-      </div>
+      <LiveNeighbourhood
+        centreId={card.node.id}
+        nodes={viewNodes}
+        edges={home.edges}
+        onPick={openConcept}
+        ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
+      />
 
       <div className="quiz-home__actions">
         <Button
@@ -422,19 +411,31 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
 
   // The card's own concept is not offered again beside it. A queued card is
   // titled for the course or the due set, not its first concept, so there the
-  // first concept stays in the list.
-  const hiddenTopic = mode === "concept" ? card?.node.id : undefined;
+  // first concept stays in the list. A search finds everything, the card's
+  // concept included: hiding a match the student typed would read as missing.
+  const query = topicQuery.trim().toLowerCase();
+  const hiddenTopic = mode === "concept" && !query ? card?.node.id : undefined;
   const topicGroups = React.useMemo(
     () =>
       home.byCourse
-        .map(g => ({ ...g, nodes: g.nodes.filter(n => n.id !== hiddenTopic) }))
+        .map(g => ({
+          ...g,
+          nodes: g.nodes.filter(
+            n =>
+              n.id !== hiddenTopic &&
+              (!query ||
+                n.concept_name.toLowerCase().includes(query) ||
+                g.course.course_code.toLowerCase().includes(query)),
+          ),
+        }))
         .filter(g => g.nodes.length > 0),
-    [home.byCourse, hiddenTopic],
+    [home.byCourse, hiddenTopic, query],
   );
 
-  // On a due card the card already IS "Review everything due".
+  // On a due card the card already IS "Review everything due"; while
+  // searching, the list is answering the search.
   const dueRow =
-    home.due.count > 0 && mode !== "due" ? (
+    home.due.count > 0 && mode !== "due" && !query ? (
       <button
         type="button"
         className="quiz-home__row"
@@ -450,10 +451,32 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       </button>
     ) : null;
 
+  const search = (
+    <input
+      type="search"
+      className="field quiz-home__search"
+      data-testid="quiz-topic-search"
+      placeholder="Search your concepts"
+      aria-label="Search your concepts"
+      value={topicQuery}
+      onChange={e => setTopicQuery(e.target.value)}
+    />
+  );
+
   const topics = (
     <section className="quiz-home__topics-col" aria-label="Choose a topic">
       {topicsHead}
-      <TopicList groups={topicGroups} onPick={openConcept} lead={dueRow} />
+      {search}
+      {/* Capped to the proposal's height and scrolled inside (`home.css`). */}
+      <div className="quiz-home__topics-scroll">
+        {topicGroups.length > 0 || dueRow ? (
+          <TopicList groups={topicGroups} onPick={openConcept} lead={dueRow} />
+        ) : (
+          <p className="quiz-home__topics-empty" data-testid="quiz-topic-search-empty">
+            {query ? `No concepts match “${topicQuery.trim()}”` : "Nothing else on your tree yet"}
+          </p>
+        )}
+      </div>
     </section>
   );
 
@@ -475,11 +498,12 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       <Skeleton width={380} height={13} />
       <Skeleton width={340} height={13} />
       <Skeleton width={160} height={16} />
-      <Skeleton width={CANVAS.width} height={CANVAS.height} />
+      <Skeleton width="100%" height={GRAPH_SKELETON_HEIGHT} />
       <Skeleton width={120} height={34} />
     </div>,
     <div className="quiz-home__topics-col">
       {topicsHead}
+      <Skeleton width="100%" height={36} />
       <div className="quiz-home__skeleton-rows">
         {[0, 1, 2, 3, 4, 5].map(i => (
           <Skeleton key={i} width="100%" height={18} />
