@@ -66,12 +66,16 @@
   --quiz-home-toolbar-top: 14px;
   --quiz-home-toolbar-gap: 12px;
   --quiz-home-pill-gap: 6px;
-  /* The search pill copies `Pill`'s box (5px 11px, 12px text) so the two
-     sit at one height whatever the platform's line metrics. */
-  --quiz-home-pill-pad: 5px 11px;
-  --quiz-home-pill-fs: 12px;
-  --quiz-home-search-w: 200px;
-  --quiz-home-course-dot: 7px;
+  /* The search pill copies the course pills' box (`Pill size="md"`: 7px 15px,
+     14px text) so the two sit at one height whatever the line metrics. */
+  --quiz-home-pill-pad: 7px 15px;
+  --quiz-home-pill-fs: 14px;
+  /* The eyebrows here sit over 34px and 18px type; `.label-micro`'s 10px
+     read as a footnote beside them. */
+  --quiz-home-eyebrow-fs: 12px;
+  --quiz-home-search-w: 240px;
+  --quiz-home-search-min: 160px;
+  --quiz-home-course-dot: 8px;
   --quiz-home-due-top: 16px;
   /* The fade over the list's last rows, saying there is more below. */
   --quiz-home-scroll-fade: 28px;
@@ -188,8 +192,10 @@
   display: inline-flex;
   align-items: center;
   gap: var(--quiz-home-pill-gap);
-  width: var(--quiz-home-search-w);
-  max-width: 100%;
+  /* Shrinks before the toolbar wraps; on its own line it stays this wide. */
+  flex: 1 1 var(--quiz-home-search-min);
+  max-width: var(--quiz-home-search-w);
+  min-width: var(--quiz-home-search-min);
   margin-left: auto;
   padding: var(--quiz-home-pill-pad);
   border: 1px solid var(--border);
@@ -204,7 +210,10 @@
 }
 
 .quiz-home__search-input {
-  flex: 1;
+  /* Zero basis: an input's default ~20ch width would otherwise be the
+     search's minimum and wrap the toolbar long before the pills fill it. */
+  flex: 1 1 0;
+  width: 0;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -288,6 +297,11 @@
 
 .quiz-home__topics-col > .quiz-eyebrow {
   margin-bottom: 0;
+}
+
+.quiz-home .quiz-eyebrow,
+.quiz-home__pick-group .label-micro {
+  font-size: var(--quiz-home-eyebrow-fs);
 }
 
 /* ── The proposal ───────────────────────────────────────────────────── */

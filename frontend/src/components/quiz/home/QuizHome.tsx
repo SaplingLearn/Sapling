@@ -462,11 +462,17 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     <div className="quiz-home__toolbar">
       {home.byCourse.length > 1 && (
         <div className="quiz-home__courses" role="group" aria-label="Show concepts from">
-          <Pill active={courseFilter === "all"} onClick={() => setTopicCourse("all")} testId="quiz-course-all">
+          <Pill
+            size="md"
+            active={courseFilter === "all"}
+            onClick={() => setTopicCourse("all")}
+            testId="quiz-course-all"
+          >
             All
           </Pill>
           {home.byCourse.map(({ course, nodes }) => (
             <Pill
+              size="md"
               key={course.course_id}
               active={courseFilter === course.course_id}
               onClick={() => setTopicCourse(course.course_id)}
@@ -485,7 +491,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
         </div>
       )}
       <label className="quiz-home__search">
-        <Icon name="search" size={13} />
+        <Icon name="search" size={15} />
         <input
           type="search"
           className="quiz-home__search-input"
