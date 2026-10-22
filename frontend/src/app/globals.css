@@ -537,7 +537,7 @@ body { font-size: 14px; line-height: 1.5; }
    transparent over the atmospheric canvas — giving it a fill to round would
    bury the orbs. */
 .shell-corner {
-  --shell-corner-r: var(--r-xl);
+  --shell-corner-r: var(--r-lg);
   position: absolute;
   left: 0;
   width: var(--shell-corner-r);
