@@ -19,22 +19,17 @@ import {
 } from '@/lib/landing/course';
 import type { BuiltGraph } from '@/lib/landing/engine/graph';
 
-const CAP_LABEL = "The graph";
-
 /** The four caption stages, in scroll order. */
 const CAPTIONS = [
   {
-    eyebrow: null,
     head: <>A hundred names you don&rsquo;t know <em style={{ color: '#445D22' }}>yet.</em></>,
     body: "Every concept in your course becomes a node. Right now, they're strangers.",
   },
   {
-    eyebrow: CAP_LABEL,
     head: <>You study. They <em style={{ color: '#445D22' }}>connect.</em></>,
     body: 'Every quiz, note, and card you touch draws an edge. Structure appears.',
   },
   {
-    eyebrow: CAP_LABEL,
     head: <>Mastery is the <em style={{ color: '#445D22' }}>color.</em></>,
     body: null,
   },
@@ -55,15 +50,8 @@ const CAP_BOX: React.CSSProperties = {
   opacity: 0, pointerEvents: 'none',
 };
 
-const EYEBROW: React.CSSProperties = {
-  position: 'relative', display: 'inline-block',
-  fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace", fontSize: 10.5,
-  letterSpacing: '0.34em', color: '#445D22', textTransform: 'uppercase',
-  textShadow: '0 1px 10px rgba(242,244,240,0.9)',
-};
-
 const CAP_H2: React.CSSProperties = {
-  position: 'relative', margin: '18px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
+  position: 'relative', margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif",
   fontSize: 'clamp(2.4rem,4.6vw,4rem)', fontWeight: 600, lineHeight: 1.06,
   letterSpacing: '-0.02em', color: '#191F13',
   textShadow: '0 2px 26px rgba(242,244,240,0.85)',
@@ -171,7 +159,6 @@ export function ActGraph({
           {CAPTIONS.map((c, i) => (
             <div key={i} data-cap={i} className="ld-cap" style={CAP_BOX}>
               <span aria-hidden="true" style={CAP_SCRIM} />
-              {c.eyebrow && <span style={EYEBROW}>{c.eyebrow}</span>}
               <h2 style={CAP_H2}>{c.head}</h2>
               {c.body && <p style={CAP_P}>{c.body}</p>}
               {/* the mastery legend rides along with caption 2 */}

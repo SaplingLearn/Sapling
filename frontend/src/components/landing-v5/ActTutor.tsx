@@ -29,14 +29,14 @@ const CAPTIONS = [
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.47, s: { right: '28.6%', top: '4.2%', width: 6.9, height: 6.9, background: '#96B86F', opacity: 0.46, animation: 'nodeFloatA 12.1s ease-in-out -9s infinite' } },
-  { d: 0.41, s: { right: '8.9%', top: '56.6%', width: 8.8, height: 8.8, background: '#68951F', opacity: 0.59, boxShadow: '0 0 21px #0E9E5A66', animation: 'nodeFloatB 13.1s ease-in-out -2.1s infinite' } },
+  { d: 0.41, s: { right: '8.9%', top: '56.6%', width: 8.8, height: 8.8, background: '#68951F', opacity: 0.59, boxShadow: '0 0 21px #68951F66', animation: 'nodeFloatB 13.1s ease-in-out -2.1s infinite' } },
   { d: 0.33, s: { right: '8.0%', top: '2.8%', width: 7, height: 7, background: '#68951F', opacity: 0.56, animation: 'nodeFloatB 17.5s ease-in-out -17.2s infinite' } },
-  { d: 0.17, s: { right: '12.1%', top: '64.7%', width: 10.5, height: 10.5, background: '#7B9E51', opacity: 0.39, boxShadow: '0 0 25px #4FA57466', animation: 'nodeFloatA 10s ease-in-out -8.9s infinite' } },
+  { d: 0.17, s: { right: '12.1%', top: '64.7%', width: 10.5, height: 10.5, background: '#7B9E51', opacity: 0.39, boxShadow: '0 0 25px #7B9E5166', animation: 'nodeFloatA 10s ease-in-out -8.9s infinite' } },
   { d: 0.40, s: { left: '13.5%', top: '94.8%', width: 6.7, height: 6.7, background: '#7B9E51', opacity: 0.56, animation: 'nodeFloatA 15.1s ease-in-out -17.3s infinite' } },
   { d: 0.21, s: { right: '43.6%', top: '5.2%', width: 5.7, height: 5.7, background: '#96B86F', opacity: 0.53, animation: 'nodeFloatB 18.1s ease-in-out -5.2s infinite' } },
-  { d: 0.37, s: { right: '10.0%', top: '92.0%', width: 8.1, height: 8.1, background: '#68951F', opacity: 0.58, boxShadow: '0 0 19px #0E9E5A66', animation: 'nodeFloatA 17.8s ease-in-out -16.5s infinite' } },
+  { d: 0.37, s: { right: '10.0%', top: '92.0%', width: 8.1, height: 8.1, background: '#68951F', opacity: 0.58, boxShadow: '0 0 19px #68951F66', animation: 'nodeFloatA 17.8s ease-in-out -16.5s infinite' } },
   { d: 0.22, s: { left: '5.1%', top: '51.6%', width: 4.7, height: 4.7, background: '#B1D28B', opacity: 0.51, animation: 'nodeFloatB 15.6s ease-in-out -1.7s infinite' } },
-  { d: 0.46, s: { left: '5.1%', top: '17.7%', width: 7.9, height: 7.9, background: '#597731', opacity: 0.41, boxShadow: '0 0 19px #2E7D5266', animation: 'nodeFloatA 17s ease-in-out -10.1s infinite' } },
+  { d: 0.46, s: { left: '5.1%', top: '17.7%', width: 7.9, height: 7.9, background: '#597731', opacity: 0.41, boxShadow: '0 0 19px #59773166', animation: 'nodeFloatA 17s ease-in-out -10.1s infinite' } },
   { d: 0.47, s: { left: '35.5%', top: '4.3%', width: 6.5, height: 6.5, background: '#68951F', opacity: 0.56, animation: 'nodeFloatB 14.5s ease-in-out -9.6s infinite' } },
 ];
 
@@ -97,12 +97,11 @@ export function ActTutor({
 
         <div className="ld-tutor-grid" style={{ maxWidth: 1220, width: '100%', margin: '0 auto', padding: '0 24px', display: 'grid', gridTemplateColumns: '5fr 7fr', gap: 32, alignItems: 'center' }}>
           <div className="ld-tutor-copy" style={{ position: 'relative', zIndex: 2 }}>
-            {/* Wraps only the eyebrow and heading. The [data-tcap] captions
+            {/* Wraps only the heading. The [data-tcap] captions
                 that follow are driven by the engine's own opacity writes, so
                 a second animation on them would fight the scrub. */}
             <FadeIn>
-              <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#445D22', textTransform: 'uppercase' }}>AI tutor</span>
-              <h2 className="ld-tutor-h2" style={{ margin: '16px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
+              <h2 className="ld-tutor-h2" style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.4rem,4.8vw,4.2rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
                 Three ways to learn this. Your <em style={{ color: '#445D22' }}>pick.</em>
               </h2>
             </FadeIn>

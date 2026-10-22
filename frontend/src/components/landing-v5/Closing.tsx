@@ -24,7 +24,7 @@ import { FadeIn } from '@/components/landing/anim';
 const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.30, s: { left: '6.5%', top: '22%', width: 7.4, height: 7.4, background: '#7B9E51', opacity: 0.44, animation: 'nodeFloatA 15s ease-in-out -6s infinite' } },
   { d: 0.44, s: { right: '8.2%', top: '31%', width: 6.2, height: 6.2, background: '#B1D28B', opacity: 0.5, animation: 'nodeFloatB 13s ease-in-out -3s infinite' } },
-  { d: 0.22, s: { right: '13.6%', top: '74%', width: 9.6, height: 9.6, background: '#68951F', opacity: 0.4, boxShadow: '0 0 22px #0E9E5A66', animation: 'nodeFloatA 18s ease-in-out -11s infinite' } },
+  { d: 0.22, s: { right: '13.6%', top: '74%', width: 9.6, height: 9.6, background: '#68951F', opacity: 0.4, boxShadow: '0 0 22px #68951F66', animation: 'nodeFloatA 18s ease-in-out -11s infinite' } },
   { d: 0.37, s: { left: '14.2%', top: '81%', width: 5.6, height: 5.6, background: '#96B86F', opacity: 0.46, animation: 'nodeFloatB 16s ease-in-out -8s infinite' } },
 ];
 
@@ -49,7 +49,7 @@ export function FinalCta({ onGetStarted }: { onGetStarted: () => void }) {
         }}
       >
         <div style={{ position: 'absolute', top: '8%', right: '-15%', width: '38vw', height: '38vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.38, background: 'rgba(89,119,49,0.22)' }} />
-        <div style={{ position: 'absolute', bottom: '8%', left: '-12%', width: '32vw', height: '32vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.28, background: 'rgba(43,140,150,0.2)' }} />
+        <div style={{ position: 'absolute', bottom: '8%', left: '-12%', width: '32vw', height: '32vw', borderRadius: '50%', filter: 'blur(64px)', opacity: 0.28, background: 'rgba(123,158,81,0.2)' }} />
       </div>
 
       <FadeIn style={{ position: 'relative', zIndex: 1, maxWidth: 768, margin: '0 auto', textAlign: 'center' }}>

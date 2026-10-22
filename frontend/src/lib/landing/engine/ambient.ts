@@ -13,7 +13,7 @@
 
 import { cv } from './dom';
 
-const PALETTE = ['#68951F', '#7B9E51', '#B1D28B', '#445D22', '#9CA3AF'];
+const PALETTE = ['#68951F', '#7B9E51', '#B1D28B', '#445D22', '#A39E8F'];
 
 /** Squared link distance — 110px, pre-squared to keep it out of the loop. */
 const LINK_D2 = 12100;

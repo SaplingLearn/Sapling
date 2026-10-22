@@ -27,16 +27,25 @@
  * ground, so the scope's own background is a no-op.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { PenSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { IS_TEST_MODE, now, random } from '@/lib/testMode';
 import { LeafI } from './LeafI';
 
 // Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
-// fillStyle where CSS var() doesn't resolve. #3e6f8a mirrors --info in
-// globals.css — the muted blue chosen to de-neon the old #3B82F6 (#106).
-const CLUSTER_COLORS = ['#9CA3AF', '#D97706', '#3e6f8a', '#8A63D2', '#14B8A6', '#EF4444'];
+// fillStyle where CSS var() doesn't resolve. Anchored on the olive brand
+// (#445D22 = --brand-forest, #7B9E51 = --ld-mid, #B1D28B = --ld-pale) with
+// amber/coral as the warm complement and warm greys for the quiet points.
+const CLUSTER_COLORS = ['#A39E8F', '#D97706', '#7B9E51', '#445D22', '#B1D28B', '#E27A63'];
+/** See the legibility-glow comment in the hero content. */
+const HERO_SCRIM: CSSProperties = {
+  position: 'absolute', left: 0, right: 0, top: '-6%', bottom: '-4%',
+  pointerEvents: 'none', zIndex: -1,
+  background:
+    'radial-gradient(ellipse 50% 50% at 50% 46%, rgba(242,244,240,0.86) 0%, rgba(242,244,240,0.7) 45%, rgba(242,244,240,0.3) 75%, rgba(242,244,240,0) 100%)',
+  filter: 'blur(18px)',
+};
 const CLUSTER_SEEDS_BG = [10.0, 11.3, 12.6, 13.9, 15.2, 16.5];
 const CLUSTER_INIT_POS = [
   { ox: -222, oy: -29, oz:  15 },
@@ -89,11 +98,11 @@ export function Hero({
     // as prefers-reduced-motion.
     let animating = !IS_TEST_MODE && !reduceMotion.matches;
 
-    // #3e6f8a mirrors --info (globals.css); literal because canvas can't resolve var().
+    // Literals because canvas can't resolve var(); see CLUSTER_COLORS.
     const palette = [
-      { c: '#8A63D2', w: 0.24 }, { c: '#3e6f8a', w: 0.24 },
-      { c: '#D97706', w: 0.20 }, { c: '#14B8A6', w: 0.15 },
-      { c: '#9CA3AF', w: 0.10 }, { c: '#D1D5DB', w: 0.07 },
+      { c: '#445D22', w: 0.24 }, { c: '#7B9E51', w: 0.24 },
+      { c: '#D97706', w: 0.20 }, { c: '#B1D28B', w: 0.15 },
+      { c: '#A39E8F', w: 0.10 }, { c: '#D6D1C4', w: 0.07 },
     ];
     function randColor() {
       const r = random();
@@ -186,7 +195,7 @@ export function Hero({
           if (d2 < maxD2) {
             const a = (1 - Math.sqrt(d2) / maxD) * aScale;
             if (a > 0.002) {
-              ctx.strokeStyle = `rgba(156,163,175,${a})`;
+              ctx.strokeStyle = `rgba(163,158,143,${a})`;
               ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
             }
           }
@@ -378,16 +387,15 @@ export function Hero({
 
       {/* Hero Content */}
       <div ref={heroContentRef} className="relative z-20 flex flex-col items-center text-center max-w-4xl px-6">
-        {/* There is deliberately no legibility veil behind the copy.
-            A blurred, washed plate used to sit here — `backdrop-filter:
-            blur(4px)` plus a radial wash of the page colour — because the
-            point cloud runs straight through the wordmark and was breaking
-            the letterforms. It was inset -10%/-16%, wider than the text it
-            was protecting, so it also caught the two floating cards either
-            side and left them permanently hazy: a fix for the copy that cost
-            the panels their focus. Removed by request. If the dots ever need
-            taming again, do it to the dots — thin the field behind the copy
-            in the canvas — not with a plate over everything behind them. */}
+        {/* Legibility glow behind the copy, the same plate ActGraph puts
+            behind its captions: a radial wash of the page colour, softened
+            with a blur on the plate itself. It is deliberately NOT a
+            `backdrop-filter` veil — an earlier one (blur(4px), inset -10%/-16%,
+            wider than the text) also caught the floating cards either side
+            and left them hazy, and was removed for it. This wash calms the
+            point cloud behind the letterforms only: it reaches zero before
+            the column's edges, so the cards keep their focus. */}
+        <span aria-hidden="true" style={HERO_SCRIM} />
         {/* The wordmark scrambles in client-side, so the accessible name is
             the only server-rendered trace of it — public-seo.spec pins that. */}
         <h1 aria-label="Sapling" style={{

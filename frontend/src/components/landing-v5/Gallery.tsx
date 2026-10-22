@@ -61,17 +61,17 @@ const TRACK_A = [0, 1, 2, 3];
 const TRACK_B = [7, 6, 5, 4];
 
 const MOTES: { d: number; s: React.CSSProperties }[] = [
-  { d: 0.38, s: { right: '5.4%', top: '63.7%', width: 8, height: 8, background: '#7B9E51', opacity: 0.58, boxShadow: '0 0 20px #4FA57466', animation: 'nodeFloatA 16s ease-in-out -6s infinite' } },
+  { d: 0.38, s: { right: '5.4%', top: '63.7%', width: 8, height: 8, background: '#7B9E51', opacity: 0.58, boxShadow: '0 0 20px #7B9E5166', animation: 'nodeFloatA 16s ease-in-out -6s infinite' } },
   { d: 0.43, s: { left: '15.2%', top: '17.6%', width: 4.2, height: 4.2, background: '#96B86F', opacity: 0.4, animation: 'nodeFloatB 13s ease-in-out -3s infinite' } },
-  { d: 0.34, s: { left: '13.1%', top: '88.7%', width: 9.4, height: 9.4, background: '#B1D28B', opacity: 0.46, boxShadow: '0 0 22px #8FD9A866', animation: 'nodeFloatA 18s ease-in-out -11s infinite' } },
-  { d: 0.40, s: { left: '12.4%', top: '50.2%', width: 10.9, height: 10.9, background: '#7B9E51', opacity: 0.48, boxShadow: '0 0 26px #4FA57466', animation: 'nodeFloatB 15s ease-in-out -8s infinite' } },
+  { d: 0.34, s: { left: '13.1%', top: '88.7%', width: 9.4, height: 9.4, background: '#B1D28B', opacity: 0.46, boxShadow: '0 0 22px #B1D28B66', animation: 'nodeFloatA 18s ease-in-out -11s infinite' } },
+  { d: 0.40, s: { left: '12.4%', top: '50.2%', width: 10.9, height: 10.9, background: '#7B9E51', opacity: 0.48, boxShadow: '0 0 26px #7B9E5166', animation: 'nodeFloatB 15s ease-in-out -8s infinite' } },
   { d: 0.27, s: { right: '9.2%', top: '65.0%', width: 7, height: 7, background: '#96B86F', opacity: 0.36, animation: 'nodeFloatA 12s ease-in-out -2s infinite' } },
-  { d: 0.45, s: { left: '5.4%', top: '81.7%', width: 9.3, height: 9.3, background: '#7B9E51', opacity: 0.44, boxShadow: '0 0 23px #4FA57466', animation: 'nodeFloatB 17s ease-in-out -14s infinite' } },
+  { d: 0.45, s: { left: '5.4%', top: '81.7%', width: 9.3, height: 9.3, background: '#7B9E51', opacity: 0.44, boxShadow: '0 0 23px #7B9E5166', animation: 'nodeFloatB 17s ease-in-out -14s infinite' } },
   { d: 0.42, s: { right: '41.3%', top: '6.1%', width: 5.8, height: 5.8, background: '#B1D28B', opacity: 0.59, animation: 'nodeFloatA 14s ease-in-out -5s infinite' } },
   { d: 0.47, s: { right: '7.9%', top: '59.7%', width: 6.4, height: 6.4, background: '#597731', opacity: 0.53, animation: 'nodeFloatB 19s ease-in-out -9s infinite' } },
-  { d: 0.18, s: { left: '12.0%', top: '37.7%', width: 8, height: 8, background: '#68951F', opacity: 0.53, boxShadow: '0 0 20px #0E9E5A66', animation: 'nodeFloatA 11s ease-in-out -7s infinite' } },
+  { d: 0.18, s: { left: '12.0%', top: '37.7%', width: 8, height: 8, background: '#68951F', opacity: 0.53, boxShadow: '0 0 20px #68951F66', animation: 'nodeFloatA 11s ease-in-out -7s infinite' } },
   { d: 0.42, s: { left: '4.5%', top: '13.5%', width: 7, height: 7, background: '#B1D28B', opacity: 0.48, animation: 'nodeFloatB 16s ease-in-out -12s infinite' } },
-  { d: 0.27, s: { right: '7.0%', top: '57.4%', width: 8, height: 8, background: '#597731', opacity: 0.46, boxShadow: '0 0 20px #2E7D5266', animation: 'nodeFloatA 13s ease-in-out -4s infinite' } },
+  { d: 0.27, s: { right: '7.0%', top: '57.4%', width: 8, height: 8, background: '#597731', opacity: 0.46, boxShadow: '0 0 20px #59773166', animation: 'nodeFloatA 13s ease-in-out -4s infinite' } },
 ];
 
 /**
@@ -334,10 +334,7 @@ export function Gallery({
 
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 1220, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
         <FadeIn>
-          <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#445D22', textTransform: 'uppercase', fontWeight: 500 }}>
-            And much more
-          </span>
-          <h2 style={{ margin: '16px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
+          <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem,4.4vw,3.6rem)', fontWeight: 600, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#191F13' }}>
             The rest of the <em style={{ color: '#445D22' }}>grove.</em>
           </h2>
           <p style={{ margin: '14px 0 0', color: '#697062', fontSize: 14, lineHeight: 1.65, maxWidth: '62ch' }}>

@@ -63,16 +63,16 @@ const MOTES: { d: number; s: React.CSSProperties }[] = [
   { d: 0.37, s: { right: '5.0%', top: '67.2%', width: 7.3, height: 7.3, background: '#68951F', opacity: 0.46, animation: 'nodeFloatB 16s ease-in-out -10.6s infinite' } },
   { d: 0.47, s: { right: 6, top: '50.1%', width: 4.9, height: 4.9, background: '#96B86F', opacity: 0.41, animation: 'nodeFloatB 11.1s ease-in-out -4.1s infinite' } },
   { d: 0.20, s: { right: '27.6%', top: '91.8%', width: 6.4, height: 6.4, background: '#96B86F', opacity: 0.39, animation: 'nodeFloatA 14s ease-in-out -10.4s infinite' } },
-  { d: 0.28, s: { right: '12.4%', top: '53.8%', width: 10.8, height: 10.8, background: '#96B86F', opacity: 0.48, boxShadow: '0 0 26px #6FBF8F66', animation: 'nodeFloatA 19.3s ease-in-out -4.9s infinite' } },
+  { d: 0.28, s: { right: '12.4%', top: '53.8%', width: 10.8, height: 10.8, background: '#96B86F', opacity: 0.48, boxShadow: '0 0 26px #96B86F66', animation: 'nodeFloatA 19.3s ease-in-out -4.9s infinite' } },
   { d: 0.23, s: { left: '7.0%', top: '92.2%', width: 6.2, height: 6.2, background: '#96B86F', opacity: 0.47, animation: 'nodeFloatA 9.6s ease-in-out -3.7s infinite' } },
   { d: 0.28, s: { right: '2.8%', top: '46.4%', width: 6.5, height: 6.5, background: '#96B86F', opacity: 0.43, animation: 'nodeFloatA 19.9s ease-in-out -15.7s infinite' } },
-  { d: 0.38, s: { left: '11.1%', top: '93.8%', width: 9.4, height: 9.4, background: '#96B86F', opacity: 0.47, boxShadow: '0 0 23px #6FBF8F66', animation: 'nodeFloatB 19.3s ease-in-out -14.1s infinite' } },
+  { d: 0.38, s: { left: '11.1%', top: '93.8%', width: 9.4, height: 9.4, background: '#96B86F', opacity: 0.47, boxShadow: '0 0 23px #96B86F66', animation: 'nodeFloatB 19.3s ease-in-out -14.1s infinite' } },
   { d: 0.32, s: { right: '5.1%', top: '15.3%', width: 4.2, height: 4.2, background: '#96B86F', opacity: 0.42, animation: 'nodeFloatA 12.7s ease-in-out -2.7s infinite' } },
   { d: 0.29, s: { left: '3.0%', top: '80.8%', width: 7.4, height: 7.4, background: '#96B86F', opacity: 0.35, animation: 'nodeFloatB 11.5s ease-in-out -0.8s infinite' } },
   { d: 0.37, s: { right: '12.4%', top: '63.0%', width: 6.6, height: 6.6, background: '#B1D28B', opacity: 0.52, animation: 'nodeFloatB 16.2s ease-in-out -2.7s infinite' } },
-  { d: 0.18, s: { left: '2.9%', top: '45.0%', width: 10.9, height: 10.9, background: '#96B86F', opacity: 0.37, boxShadow: '0 0 26px #6FBF8F66', animation: 'nodeFloatB 10.9s ease-in-out -8.4s infinite' } },
+  { d: 0.18, s: { left: '2.9%', top: '45.0%', width: 10.9, height: 10.9, background: '#96B86F', opacity: 0.37, boxShadow: '0 0 26px #96B86F66', animation: 'nodeFloatB 10.9s ease-in-out -8.4s infinite' } },
   { d: 0.36, s: { left: '44.0%', top: '4.5%', width: 5, height: 5, background: '#B1D28B', opacity: 0.57, animation: 'nodeFloatB 12.6s ease-in-out -4.8s infinite' } },
-  { d: 0.35, s: { left: '11.2%', top: '43.9%', width: 8.8, height: 8.8, background: '#96B86F', opacity: 0.4, boxShadow: '0 0 21px #6FBF8F66', animation: 'nodeFloatA 15.2s ease-in-out -13.9s infinite' } },
+  { d: 0.35, s: { left: '11.2%', top: '43.9%', width: 8.8, height: 8.8, background: '#96B86F', opacity: 0.4, boxShadow: '0 0 21px #96B86F66', animation: 'nodeFloatA 15.2s ease-in-out -13.9s infinite' } },
 ];
 
 const MONO: React.CSSProperties = { fontFamily: "var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, monospace" };
@@ -87,13 +87,12 @@ const TILE_COUNT: React.CSSProperties = { fontFamily: "var(--font-aleo), 'Aleo',
 /** Underline that marks a concept inside the document. */
 const MARK: React.CSSProperties = { fontWeight: 600, color: '#3B4233', boxShadow: 'inset 0 -4px 0 rgba(104,149,31,0.18)' };
 
-/** Kicker and heading. Rendered twice — pinned in the stage from tablet up,
+/** The heading. Rendered twice — pinned in the stage from tablet up,
  *  and in the phone intro that scrolls in ahead of the act. */
 function IngestHeading() {
   return (
     <FadeIn>
-      <span style={{ ...MONO, fontSize: 10.5, letterSpacing: '0.34em', color: '#445D22', textTransform: 'uppercase' }}>Ingest</span>
-      <h2 style={{ margin: '14px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
+      <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem,4.2vw,3.5rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
         Drop in the whole <em style={{ color: '#445D22' }}>course.</em>
       </h2>
     </FadeIn>

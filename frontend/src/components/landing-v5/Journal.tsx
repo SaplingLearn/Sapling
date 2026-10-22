@@ -50,10 +50,7 @@ export function Journal({
             laptop, it read as a stray caption floating off to the right */}
         <FadeIn className="ld-journal-head" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 18, marginBottom: 56 }}>
           <div>
-            <span style={{ ...MONO, fontSize: 11, letterSpacing: '0.32em', color: '#445D22', textTransform: 'uppercase', fontWeight: 500 }}>
-              The Sapling Journal
-            </span>
-            <h2 style={{ margin: '20px 0 0', fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem, 4.4vw, 3.6rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
+            <h2 style={{ margin: 0, fontFamily: "var(--font-aleo), 'Aleo', Georgia, serif", fontSize: 'clamp(2.2rem, 4.4vw, 3.6rem)', fontWeight: 600, lineHeight: 1.05, letterSpacing: '-0.02em', color: '#191F13' }}>
               The story of Sapling, <em style={{ color: '#445D22' }}>as it grows.</em>
             </h2>
           </div>
