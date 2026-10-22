@@ -21,7 +21,7 @@
 
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import type { GraphEdge, GraphNode } from "@/lib/types";
 import {
@@ -35,6 +35,7 @@ import { PREFS_KEY, QUEUE_COUNT } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
+import { __resetReducedMotionStoreForTests } from "@/lib/usePrefersReducedMotion";
 import type {
   AttemptDetail,
   AttemptSummary,
@@ -219,6 +220,10 @@ function buildHome(over: Partial<QuizHomeData> = {}): QuizHomeData {
     cardConceptId: primary?.node.id ?? null,
     cardDescription: null,
     primaryDescription: null,
+    // Settled by default: a failed or finished fetch, so the built sentence
+    // shows; the in-flight placeholder has its own test.
+    cardDescriptionPending: false,
+    prefetchDescription: vi.fn(),
     refresh: vi.fn(),
     discard: vi.fn(),
     ...over,
@@ -258,6 +263,7 @@ function mount(
 ) {
   const home = buildHome(over.home);
   const actions = buildActions();
+  const onPickedChange = vi.fn();
   const view = render(
     <QuizHome
       userId="u1"
@@ -266,14 +272,16 @@ function mount(
       entry={over.entry ?? entry()}
       session={over.session ?? session()}
       actions={actions}
+      onPickedChange={onPickedChange}
     />,
   );
-  return { home, actions, view };
+  return { home, actions, view, onPickedChange };
 }
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
   window.localStorage.clear();
 });
 
@@ -313,12 +321,30 @@ describe("QuizHome — the proposal", () => {
     expect(proposal).toHaveTextContent("A rectangular array of numbers.");
   });
 
-  it("falls back to the built sentence while the description is in flight", () => {
-    mount({ home: { cardDescription: null } });
+  it("holds a placeholder, not a stand-in sentence, while the description is in flight", () => {
+    // Showing the built sentence and then replacing it a moment later read as
+    // a glitch; the stand-in is only for a fetch that failed.
+    mount({ home: { cardDescription: null, cardDescriptionPending: true } });
+
+    const proposal = screen.getByTestId("quiz-proposal");
+    expect(screen.getByTestId("quiz-definition-pending")).toBeInTheDocument();
+    expect(proposal).not.toHaveTextContent("connected concepts");
+  });
+
+  it("falls back to the built sentence when the description could not be fetched", () => {
+    mount({ home: { cardDescription: null, cardDescriptionPending: false } });
 
     expect(screen.getByTestId("quiz-proposal")).toHaveTextContent(
       "CS101 · struggling · 3 connected concepts",
     );
+  });
+
+  it("warms a row's description when the student points at it", () => {
+    const { home } = mount();
+    fireEvent.pointerEnter(screen.getByTestId("quiz-pick-determinants"));
+    fireEvent.focus(screen.getByTestId("quiz-pick-base-cases"));
+    expect(home.prefetchDescription).toHaveBeenCalledWith("determinants");
+    expect(home.prefetchDescription).toHaveBeenCalledWith("base-cases");
   });
 
   it("cancels back to the session's source", () => {
@@ -411,28 +437,19 @@ describe("QuizHome — the due row", () => {
   });
 });
 
-describe("QuizHome — the concept dialog", () => {
-  it("opens off a topic row and starts with the config chosen in it", () => {
-    const { actions } = mount();
+describe("QuizHome — picking a concept", () => {
+  it("makes a topic row the card, and Start acts on it", () => {
+    const { actions, onPickedChange } = mount();
 
     fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
 
-    const dialog = screen.getByTestId("quiz-concept-dialog");
-    expect(dialog).toHaveTextContent("Determinants");
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Determinants");
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Your pick");
+    // No dialog: the card beside the list is where it is started from.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onPickedChange).toHaveBeenLastCalledWith("determinants");
 
-    // Every length offered is one `/config` named.
-    const lengths = within(dialog).getByTestId("quiz-seg-count");
-    expect(lengths).toHaveTextContent("2 questions");
-    expect(lengths).toHaveTextContent("4 questions");
-    expect(lengths).not.toHaveTextContent("5 questions");
-    expect(lengths).not.toHaveTextContent("10 questions");
-
-    fireEvent.click(within(dialog).getByTestId("quiz-seg-count-4"));
-    fireEvent.click(within(dialog).getByTestId("quiz-seg-difficulty-fierce"));
-    expect(within(dialog).getByTestId("quiz-concept-start")).toHaveTextContent("Start · 4 fierce");
-
-    fireEvent.click(within(dialog).getByTestId("quiz-concept-start"));
-
+    fireEvent.click(screen.getByTestId("quiz-start"));
     expect(actions.start).toHaveBeenCalledWith(
       {
         intent: "practice",
@@ -440,33 +457,75 @@ describe("QuizHome — the concept dialog", () => {
         conceptId: "determinants",
         courseId: "c-math",
       },
-      { count: 4, difficulty: "fierce", feedback: "at-end" },
+      SESSION_CONFIG,
     );
-    // Started from a dialog, so the choices are remembered (§5 B1.6).
-    expect(window.localStorage.getItem(PREFS_KEY)).toContain("fierce");
   });
 
-  it("opens off a row in the topic list, which is always in view", () => {
+  it("swaps the list too: the picked row leaves, the old card's concept returns, tinted once", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
 
     const list = screen.getByTestId("quiz-pick-list");
-    // Two courses, so each is headed.
-    expect(within(list).getByText("CS101 · Intro to Computer Science")).toBeInTheDocument();
-
-    fireEvent.click(within(list).getByTestId("quiz-pick-base-cases"));
-    expect(screen.getByTestId("quiz-concept-dialog")).toHaveTextContent("Base cases");
+    expect(within(list).queryByTestId("quiz-pick-determinants")).toBeNull();
+    expect(within(list).getByTestId("quiz-pick-recursion")).toHaveAttribute("data-returned", "true");
+    // The tint runs once; a later re-render of the list must not replay it.
+    act(() => {
+      vi.advanceTimersByTime(1400);
+    });
+    expect(within(screen.getByTestId("quiz-pick-list")).getByTestId("quiz-pick-recursion")).not.toHaveAttribute(
+      "data-returned",
+    );
   });
 
-  it("does not restate the meta line in the stand-in definition", () => {
-    // The dialog's meta already opens with the course code and carries the
-    // tier; the built sentence used to repeat both back (M6).
+  it("plays the card's entrance on a swap, not on arrival", () => {
+    // Motion allowed, explicitly: the entrance is skipped under "reduce".
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as typeof window.matchMedia;
+    __resetReducedMotionStoreForTests();
     mount();
-    fireEvent.click(within(screen.getByTestId("quiz-pick-list")).getByTestId("quiz-pick-base-cases"));
+    expect(screen.getByTestId("quiz-proposal")).not.toHaveAttribute("data-entering");
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    expect(screen.getByTestId("quiz-proposal")).toHaveAttribute("data-entering", "true");
+    window.matchMedia = original;
+    __resetReducedMotionStoreForTests();
+  });
 
-    const dialog = screen.getByTestId("quiz-concept-dialog");
-    expect(dialog).toHaveTextContent("CS101 · 52% · learning");
-    expect(dialog).toHaveTextContent("1 connected concept on your tree.");
-    expect(dialog).not.toHaveTextContent("CS101 · learning · 1 connected concept");
+  it("opens Adjust on the picked concept", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-base-cases"));
+    fireEvent.click(screen.getByTestId("quiz-adjust"));
+    expect(screen.getByTestId("quiz-adjust-dialog")).toHaveTextContent("Base cases · CS101");
+  });
+
+  it("goes back to the suggestion", () => {
+    const { onPickedChange } = mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    fireEvent.click(screen.getByTestId("quiz-pick-reset"));
+
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Ready for you");
+    expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
+    expect(onPickedChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("drops a deep link's reason once the student picks something else", () => {
+    mount({ entry: entry({ concept: "matrices", source: { kind: "notes", noteId: "n1" } }) });
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("From your note");
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    expect(screen.getByTestId("quiz-proposal")).not.toHaveTextContent("From your note");
+  });
+
+  it("holds the definition's placeholder until the hook has described the pick", () => {
+    // The hook describes ITS card, and catches up with a pick a render later;
+    // until then there is no sentence to show for the new concept.
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-base-cases"));
+    expect(screen.getByTestId("quiz-definition-pending")).toBeInTheDocument();
   });
 
   it("lists each course weakest first, without the concept already proposed", () => {
@@ -600,7 +659,7 @@ describe("QuizHome — the due set", () => {
 });
 
 describe("QuizHome — the live neighbourhood", () => {
-  it("draws the card's concept with its neighbours, and a neighbour opens its dialog", () => {
+  it("draws the card's concept with its neighbours, and a neighbour becomes the card", () => {
     mount();
     const graph = screen.getByTestId("quiz-neighbourhood");
     const ids = Array.from(graph.querySelectorAll("[data-testid='graph-node-item']")).map(li =>
@@ -611,11 +670,13 @@ describe("QuizHome — the live neighbourhood", () => {
 
     const activate = (id: string) =>
       graph.querySelector(`[data-node-id='${id}'] [data-testid='graph-node-activate']`) as HTMLElement;
+    // The centre already is the card.
     fireEvent.click(activate("recursion"));
-    expect(screen.queryByTestId("quiz-concept-dialog")).toBeNull();
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
+    expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
 
     fireEvent.click(activate("base-cases"));
-    expect(screen.getByTestId("quiz-concept-dialog")).toHaveTextContent("Base cases");
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Base cases");
   });
 });
 

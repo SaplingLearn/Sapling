@@ -13,9 +13,10 @@
  * Within a course the order is weakest first, the same order the proposal is
  * ranked by, so the top of the list is what the student most likely wants.
  *
- * Each row is a real `<button>` and opens the Concept dialog rather than
- * starting immediately: a concept chosen from a list of forty is exactly the
- * moment to show what it is and what the quiz will be.
+ * Each row is a real `<button>`, and picking it makes that concept the card
+ * beside the list rather than starting a quiz:
+ * a concept chosen from a list of forty is exactly the moment to show what
+ * it is and what the quiz will be, with Start and Adjust right there.
  */
 
 import React from "react";
@@ -31,6 +32,11 @@ const ROW_DOT = 14;
 export interface TopicListProps {
   groups: { course: EnrolledCourse; nodes: GraphNode[] }[];
   onPick: (nodeId: string) => void;
+  /** The student is pointing at (or focused on) a row: warm what picking it
+   *  will need, so the card has it the moment it swaps. */
+  onIntent?: (nodeId: string) => void;
+  /** The row a concept just returned to; it is tinted once (`home.css`). */
+  returnedId?: string | null;
 }
 
 function weakestFirst(a: GraphNode, b: GraphNode): number {
@@ -38,7 +44,12 @@ function weakestFirst(a: GraphNode, b: GraphNode): number {
   return a.concept_name.localeCompare(b.concept_name);
 }
 
-export function TopicList({ groups, onPick }: TopicListProps) {
+export function TopicList({
+  groups,
+  onPick,
+  onIntent,
+  returnedId = null,
+}: TopicListProps) {
   const headed = groups.length > 1;
   return (
     <div className="quiz-home__topics" data-testid="quiz-pick-list">
@@ -74,7 +85,10 @@ export function TopicList({ groups, onPick }: TopicListProps) {
                   type="button"
                   className="quiz-home__row"
                   data-testid={`quiz-pick-${node.id}`}
+                  data-returned={node.id === returnedId ? "true" : undefined}
                   onClick={() => onPick(node.id)}
+                  onPointerEnter={onIntent ? () => onIntent(node.id) : undefined}
+                  onFocus={onIntent ? () => onIntent(node.id) : undefined}
                 >
                   <span className="quiz-home__row-mark">
                     <ConceptNode

@@ -30,7 +30,6 @@ import { Icon } from "@/components/Icon";
 import { Pill } from "@/components/Pill";
 import { useToast } from "@/components/ToastProvider";
 import { apiToGraphNode } from "@/lib/data";
-import { siblingsFor } from "@/lib/graph/neighbourhood";
 import { cancelTarget } from "@/lib/quiz/exits";
 import type { SessionConfig } from "@/lib/quiz/machine";
 import { savePrefs } from "@/lib/quiz/prefs";
@@ -48,8 +47,8 @@ import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizConfig, QuizSession, SourceKind } from "@/lib/quiz/types";
 import { fallbackDefinition, type QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
+import { usePrefersReducedMotion } from "@/lib/usePrefersReducedMotion";
 import { AdjustDialog } from "./AdjustDialog";
-import { ConceptDialog } from "./ConceptDialog";
 import { LiveNeighbourhood } from "./LiveNeighbourhood";
 import { TopicList } from "./TopicList";
 import { accentStyle } from "./accent";
@@ -62,6 +61,9 @@ export interface QuizHomeProps {
   entry: EntryRequest;
   session: QuizSession;
   actions: QuizActions;
+  /** The concept picked off the topic list changed (`null`: back to the
+   *  suggestion). QuizScreen hands it to the home hook, which describes it. */
+  onPickedChange?: (conceptId: string | null) => void;
 }
 
 /** The card's three shapes (§5 B1.2). `course` and `due` run as queues. */
@@ -77,13 +79,16 @@ const DEEP_LINK_RATIONALE: Partial<Record<SourceKind, string>> = {
 };
 const DEFAULT_DEEP_LINK_RATIONALE = "Suggested for you";
 
+/** How long a swapped-out concept's row stays tinted — `--quiz-home-returned-dur`. */
+const RETURNED_TINT_MS = 1400;
+
 /** §6: a link into a term the student isn't looking at. */
 const UNRESOLVED_COPY = "That concept isn't in your current semester";
 
-export function QuizHome({ userId, home, config, entry, session, actions }: QuizHomeProps) {
+export function QuizHome({ home, config, entry, session, actions, onPickedChange }: QuizHomeProps) {
   const toast = useToast();
+  const reducedMotion = usePrefersReducedMotion();
   const [adjustOpen, setAdjustOpen] = React.useState(false);
-  const [dialogNodeId, setDialogNodeId] = React.useState<string | null>(null);
   const [topicQuery, setTopicQuery] = React.useState("");
   /** "all", or the one course the topic list is narrowed to. */
   const [topicCourse, setTopicCourse] = React.useState("all");
@@ -110,7 +115,19 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   );
   const dueQueue = React.useMemo(() => queueFor("due", home.nodes), [home.nodes]);
 
-  const mode: CardMode = selection.conceptId
+  // A concept picked off the topic list (or the neighbourhood). It belongs to
+  // the arrival it was made on: a new entry (another deep link) starts from
+  // that entry's own card again, without an effect to reset it.
+  const entryKey = `${entry.concept ?? ""}|${entry.topic ?? ""}|${entry.course ?? ""}|${entry.scope ?? ""}`;
+  const [pick, setPick] = React.useState<{ entryKey: string; id: string } | null>(null);
+  const pickedId =
+    pick && pick.entryKey === entryKey && home.nodes.some(n => n.id === pick.id) ? pick.id : null;
+
+  React.useEffect(() => {
+    onPickedChange?.(pickedId);
+  }, [pickedId, onPickedChange]);
+
+  const mode: CardMode = pickedId || selection.conceptId
     ? "concept"
     : entry.course && courseQueue.length > 0
       ? "course"
@@ -143,11 +160,20 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     [home.candidates, home.nodes, home.courses, home.attempts],
   );
 
-  const card = React.useMemo(() => {
-    if (mode === "course") return candidateFor(courseQueue[0]);
-    if (mode === "due") return candidateFor(dueQueue[0]);
+  /** The card the arrival itself proposes — what "Back to the suggestion"
+   *  returns to. */
+  const suggested = React.useMemo(() => {
+    if (!selection.conceptId && entry.course && courseQueue.length > 0) return candidateFor(courseQueue[0]);
+    if (!selection.conceptId && !entry.course && entry.scope === "due" && dueQueue.length > 0) {
+      return candidateFor(dueQueue[0]);
+    }
     return candidateFor(selection.conceptId) ?? home.primary;
-  }, [mode, candidateFor, courseQueue, dueQueue, selection.conceptId, home.primary]);
+  }, [selection.conceptId, entry.course, entry.scope, courseQueue, dueQueue, candidateFor, home.primary]);
+
+  const card = React.useMemo(
+    () => (pickedId ? candidateFor(pickedId) : suggested),
+    [pickedId, candidateFor, suggested],
+  );
 
   const entryCourse = React.useMemo(
     () => home.courses.find(c => c.course_id === entry.course) ?? null,
@@ -162,11 +188,6 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   const viewNodes = React.useMemo(
     () => home.nodes.map(n => apiToGraphNode(n, home.courses)),
     [home.nodes, home.courses],
-  );
-
-  const siblingsOf = React.useCallback(
-    (nodeId: string | undefined) => (nodeId ? siblingsFor(nodeId, viewNodes, home.edges) : []),
-    [viewNodes, home.edges],
   );
 
   /** The `n` in "{Course} · {tier} · {n} connected concepts" (R-8's fallback). */
@@ -203,7 +224,7 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   // Only a deep link explains itself on the card: it is the one arrival whose
   // proposal the student did not just get from the ranking.
   const rationale =
-    mode === "concept" && selection.conceptId && card
+    mode === "concept" && !pickedId && selection.conceptId && card
       ? DEEP_LINK_RATIONALE[entry.source.kind] ?? DEFAULT_DEEP_LINK_RATIONALE
       : null;
 
@@ -212,9 +233,16 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
   // is in flight or after it fails. The two queued shapes show no definition at
   // all: it describes one concept and would read as a caption for the wrong
   // thing under "Practice CS101".
-  const definition = queued
+  // The hook describes ITS card; for the frame between a pick here and the
+  // hook catching up, the two can differ, and that frame counts as pending.
+  const hookOnCard = home.cardConceptId === card?.node.id;
+  const description = hookOnCard ? home.cardDescription : null;
+  const definitionPending = !queued && !description && (!hookOnCard || home.cardDescriptionPending);
+  // The built sentence is only for a description that could not be fetched:
+  // shown first and replaced a moment later, it read as a glitch.
+  const definition = queued || definitionPending
     ? null
-    : home.cardDescription ?? (card ? fallbackDefinition(card, connectedTo(card.node.id)) : "");
+    : description ?? (card ? fallbackDefinition(card, connectedTo(card.node.id)) : "");
 
   const feedbackSuffix = session.config.feedback === "as-you-go" ? " · answers as you go" : "";
   const configLine = queued
@@ -283,20 +311,45 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
 
   // ── Dialogs ───────────────────────────────────────────────────────────
 
-  const dialogCandidate = React.useMemo(
-    () => candidateFor(dialogNodeId),
-    [candidateFor, dialogNodeId],
-  );
-
   const openAdjust = (open: boolean) => {
     setAdjustOpen(open);
     // `configuring` is the machine's own name for "the adjust dialog is open".
     actions.configure(open);
   };
 
-  const openConcept = (nodeId: string) => {
-    if (adjustOpen) openAdjust(false);
-    setDialogNodeId(nodeId);
+  // ── Swapping the card ─────────────────────────────────────────────────
+  //
+  // Picking a concept makes it the card, in place: Start and Adjust then act
+  // on it. The swap is deliberately quiet: the card fades up into place (its
+  // neighbourhood re-settles around the new concept), and the row the old
+  // card's concept returns to is tinted for a moment so the eye finds it.
+  // Reduced motion: it just changes.
+  const [swapped, setSwapped] = React.useState(false);
+  /** The row a swapped-out concept returns to, flashed once. */
+  const [returnedId, setReturnedId] = React.useState<string | null>(null);
+  const proposalRef = React.useRef<HTMLElement>(null);
+
+  // The tint lasts as long as its animation; cleared after, so a later
+  // re-render of the list (a filter, a search) does not replay it.
+  React.useEffect(() => {
+    if (!returnedId) return;
+    const timer = window.setTimeout(() => setReturnedId(null), RETURNED_TINT_MS);
+    return () => window.clearTimeout(timer);
+  }, [returnedId]);
+
+  const choose = (target: string | null) => {
+    const incomingId = target ?? suggested?.node.id ?? null;
+    const outgoingId = card?.node.id ?? null;
+    if (!incomingId || incomingId === outgoingId) return;
+    setPick(target ? { entryKey, id: target } : null);
+    setSwapped(true);
+    // A queued card is titled for its course or the due set; its first
+    // concept never left the list, so there is no row to point back to.
+    setReturnedId(mode === "concept" ? outgoingId : null);
+    // Stacked (phone), the card is above the list the student clicked in.
+    if (window.matchMedia?.("(max-width: 900px)").matches) {
+      proposalRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+    }
   };
 
   // ── Regions ───────────────────────────────────────────────────────────
@@ -378,22 +431,50 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
     ) : null;
 
   const proposal = card ? (
-    <section className="quiz-home__proposal" data-testid="quiz-proposal">
-      <div className="label-micro quiz-eyebrow">Ready for you</div>
+    <section
+      ref={proposalRef}
+      className="quiz-home__proposal"
+      data-testid="quiz-proposal"
+      // Keyed on the concept so a swap remounts the card and plays its
+      // entrance; the first card of a visit arrives without one.
+      key={card.node.id}
+      data-entering={swapped && !reducedMotion ? "true" : undefined}
+    >
+      <div className="quiz-home__eyebrow-row">
+        <div className="label-micro quiz-eyebrow">{pickedId ? "Your pick" : "Ready for you"}</div>
+        {pickedId && suggested && (
+          <Button variant="link" data-testid="quiz-pick-reset" onClick={() => choose(null)}>
+            ← Back to the suggestion
+          </Button>
+        )}
+      </div>
       <div className="h-serif quiz-home__name" data-testid="quiz-proposal-name">
         {title}
       </div>
 
       {meta && <p className="quiz-home__meta">{meta}</p>}
       {rationale && <p className="quiz-home__rationale">{rationale}</p>}
-      {definition && <p className="quiz-home__definition">{definition}</p>}
+      {/* Keyed on its text: the AI sentence replacing the built stand-in a
+          moment later fades in rather than snapping. */}
+      {definitionPending && (
+        <div className="quiz-home__definition-pending" data-testid="quiz-definition-pending" aria-hidden>
+          <Skeleton width="100%" height={13} />
+          <Skeleton width="92%" height={13} />
+          <Skeleton width="60%" height={13} />
+        </div>
+      )}
+      {definition && (
+        <p className="quiz-home__definition" key={definition}>
+          {definition}
+        </p>
+      )}
       <p className="quiz-home__config">{configLine}</p>
 
       <LiveNeighbourhood
         centreId={card.node.id}
         nodes={viewNodes}
         edges={home.edges}
-        onPick={openConcept}
+        onPick={choose}
         ariaLabel={`${card.node.concept_name} and its neighbours on your knowledge tree`}
       />
 
@@ -525,7 +606,12 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
       {/* Capped to the proposal's height and scrolled inside (`home.css`). */}
       <div className="quiz-home__topics-scroll">
         {topicGroups.length > 0 ? (
-          <TopicList groups={topicGroups} onPick={openConcept} />
+          <TopicList
+            groups={topicGroups}
+            onPick={choose}
+            onIntent={home.prefetchDescription}
+            returnedId={returnedId}
+          />
         ) : (
           <p className="quiz-home__topics-empty" data-testid="quiz-topic-search-empty">
             {emptyTopics}
@@ -647,25 +733,6 @@ export function QuizHome({ userId, home, config, entry, session, actions }: Quiz
           {body()}
         </div>
       </div>
-
-      {dialogCandidate && (
-        <ConceptDialog
-          key={dialogCandidate.node.id}
-          open
-          userId={userId}
-          candidate={dialogCandidate}
-          siblings={siblingsOf(dialogCandidate.node.id)}
-          connected={connectedTo(dialogCandidate.node.id)}
-          config={config}
-          initialConfig={session.config}
-          onCancel={() => setDialogNodeId(null)}
-          onStart={cfg => {
-            setDialogNodeId(null);
-            remember(cfg);
-            startConcept(dialogCandidate, cfg);
-          }}
-        />
-      )}
 
       {adjustOpen && card && (
         <AdjustDialog

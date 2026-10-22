@@ -124,3 +124,64 @@ def test_unrelated_key_error_falls_through_to_500():
         resp = safe_client.post(URL, json={"concept": "Recursion"})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "Internal server error."
+
+
+# ── Cross-student description cache (#97's Redis cache) ───────────────────────
+
+
+class _FakeCache:
+    """Dict-backed stand-in for services.cache with Redis configured."""
+
+    def __init__(self, on: bool = True):
+        self.on = on
+        self.store: dict[str, str] = {}
+
+    def enabled(self) -> bool:
+        return self.on
+
+    def get_str(self, key: str):
+        return self.store.get(key)
+
+    def set_str(self, key: str, value: str, ttl_seconds=None):
+        self.store[key] = value
+
+
+def test_description_is_cached_across_calls_and_students():
+    fake = _FakeCache()
+    with _agent_run_stub(), patch("routes.graph.cache", fake), \
+         patch("routes.graph.run_agent_sync", return_value=_result("Recursion is self-reference.")) as run:
+        first = client.post(URL, json={"concept": "Recursion", "course_label": "CS 101"})
+        # Case and the asking student don't matter: the sentence is about the concept.
+        second = client.post(
+            "/api/graph/user_andres/concept-description",
+            json={"concept": "recursion", "course_label": "cs 101"},
+        )
+    assert first.json() == second.json() == {"description": "Recursion is self-reference."}
+    assert run.call_count == 1
+
+
+def test_a_different_course_label_is_a_different_description():
+    fake = _FakeCache()
+    with _agent_run_stub(), patch("routes.graph.cache", fake), \
+         patch("routes.graph.run_agent_sync", return_value=_result("ok")) as run:
+        client.post(URL, json={"concept": "Kernel", "course_label": "Linear Algebra"})
+        client.post(URL, json={"concept": "Kernel", "course_label": "Operating Systems"})
+    assert run.call_count == 2
+
+
+def test_no_cache_configured_calls_the_agent_every_time():
+    fake = _FakeCache(on=False)
+    with _agent_run_stub(), patch("routes.graph.cache", fake), \
+         patch("routes.graph.run_agent_sync", return_value=_result("ok")) as run:
+        client.post(URL, json={"concept": "Recursion"})
+        client.post(URL, json={"concept": "Recursion"})
+    assert run.call_count == 2
+    assert fake.store == {}
+
+
+def test_a_blank_description_is_not_cached():
+    fake = _FakeCache()
+    with _agent_run_stub(), patch("routes.graph.cache", fake), \
+         patch("routes.graph.run_agent_sync", return_value=_result("   ")):
+        client.post(URL, json={"concept": "Recursion"})
+    assert fake.store == {}
