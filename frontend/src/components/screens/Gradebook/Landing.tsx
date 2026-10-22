@@ -104,7 +104,13 @@ export function GradebookLanding() {
   const [termGpa, setTermGpa] = React.useState<number | null>(null);
   const [colorMap, setColorMap] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
-  const [termsReady, setTermsReady] = React.useState(false);
+  // Whose terms `semesters`/`selected` currently hold: null while they load,
+  // else the userId they were loaded for ('' = the logged-out preview). On an
+  // identity change the summary effect runs in the same commit as the reset,
+  // still seeing the old selection; comparing owners keeps it from summarising
+  // the previous identity's term under the new id.
+  const [termsFor, setTermsFor] = React.useState<string | null>(null);
+  const termsReady = termsFor !== null && termsFor === (userId ?? "");
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [transcriptOpen, setTranscriptOpen] = React.useState(false);
 
@@ -131,14 +137,17 @@ export function GradebookLanding() {
     let stale = false;
     setSemesters([]);
     setSelected("");
-    setTermsReady(false);
+    setCourses([]);
+    setTermGpa(null);
+    setColorMap({});
+    setTermsFor(null);
     setLoading(true);
     // SAMPLE_SEMESTERS is the logged-out marketing preview only. A signed-in
     // user with no terms must see their own empty state, never demo chips.
     if (!userId) {
       setSemesters(SAMPLE_SEMESTERS);
       setSelected(SAMPLE_SEMESTERS[0]);
-      setTermsReady(true);
+      setTermsFor("");
       return;
     }
     Promise.all([
@@ -171,7 +180,7 @@ export function GradebookLanding() {
         setSelected("");
       })
       .finally(() => {
-        if (!stale) setTermsReady(true);
+        if (!stale) setTermsFor(userId);
       });
     // An identity that changes mid-load must not have the old identity's
     // terms applied over it.
