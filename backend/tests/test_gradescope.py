@@ -692,6 +692,37 @@ class TestSemesterScoping:
         assert writes.delete.call_args.kwargs["filters"]["enrollment_id"] == "in.(fall-enrollment)"
 
 
+class TestRemoveLink:
+    def _remove(self, *, enrollments, deleted, semester="Fall 2025"):
+        links = MagicMock()
+        links.delete.return_value = deleted
+        with (
+            patch("routes.gradescope.table", return_value=links),
+            patch("routes.gradescope._all_enrollments_for", return_value=enrollments),
+        ):
+            params = {"user_id": "u1"}
+            if semester is not None:
+                params["semester"] = semester
+            response = client.delete("/api/gradescope/link/c1", params=params)
+        return response, links
+
+    def test_unresolvable_semester_is_not_reported_as_removed(self):
+        response, links = self._remove(enrollments=[], deleted=[])
+        assert response.status_code == 404
+        links.delete.assert_not_called()
+
+    def test_a_delete_that_matched_no_link_is_not_reported_as_removed(self):
+        response, _ = self._remove(enrollments=["fall-enrollment"], deleted=[])
+        assert response.status_code == 404
+
+    def test_removing_an_existing_link_succeeds(self):
+        response, links = self._remove(
+            enrollments=["fall-enrollment"], deleted=[{"id": "link"}], semester=None,
+        )
+        assert response.status_code == 200
+        assert links.delete.call_args.kwargs["filters"] == {"enrollment_id": "in.(fall-enrollment)"}
+
+
 class TestBuSsoCredentials:
     def test_validated_sso_stores_only_encrypted_cookies(self):
         from services.encryption import decrypt

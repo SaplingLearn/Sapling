@@ -484,20 +484,21 @@ def upsert_link(body: LinkBody, request: Request):
 
 @router.delete("/link/{sapling_course_id}")
 def remove_link(sapling_course_id: str, user_id: str, request: Request, semester: str | None = None):
-    """Remove the Gradescope link for a Sapling course."""
+    """Remove the Gradescope link for a Sapling course (one semester's, when given)."""
     require_self(user_id, request)
-    # Across ALL the user's enrollments in the course: a link created under a
-    # previous term must still be removable once the term has rolled over.
-    # Resolving the single term-preferred enrollment here deleted nothing while
-    # still answering ok:true (#265 review).
+    # Without a semester, across ALL the user's enrollments in the course: a
+    # link created under a previous term must still be removable once the term
+    # has rolled over. With one, only that term's enrollment. Either way a
+    # delete that removed nothing is a 404, never ok:true — answering success
+    # while deleting nothing is the #265 review bug.
     all_enrollments = _all_enrollments_for(user_id, sapling_course_id, semester)
-    if not all_enrollments:
-        # Nothing resolvable to delete; stay idempotent rather than 404 on a
-        # remove, matching the previous behaviour of a no-match delete.
-        return {"ok": True}
-    table("gradescope_course_links").delete(
-        filters={"enrollment_id": f"in.({','.join(all_enrollments)})"}
-    )
+    deleted = []
+    if all_enrollments:
+        deleted = table("gradescope_course_links").delete(
+            filters={"enrollment_id": f"in.({','.join(all_enrollments)})"}
+        )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No Gradescope link found for this course")
     return {"ok": True}
 
 
