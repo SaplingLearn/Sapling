@@ -52,7 +52,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from agents import WORKER_LIMITS
+from agents import NOTES_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.classifier import classifier_agent, DocumentClassification
 from agents.summary import summary_agent, Summary
@@ -116,7 +116,7 @@ async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
 @durable_step
 async def _step_notes(text: str, deps: SaplingDeps) -> ComprehensiveNotes:
     result = record_agent_usage(
-        await document_notes_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
+        await document_notes_agent.run(text, deps=deps, usage_limits=NOTES_LIMITS),
         feature="document", task="document_notes", user_id=deps.user_id,
     )
     return result.output
