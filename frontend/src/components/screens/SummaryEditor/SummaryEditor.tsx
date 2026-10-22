@@ -2,6 +2,7 @@
 import React from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { Fragment } from "@tiptap/pm/model";
 import Link from "next/link";
 
 import { useUser } from "@/context/UserContext";
@@ -28,17 +29,6 @@ import { SourcesPanel } from "./SourcesPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { SourceViewer } from "./SourceViewer";
 import { SourceTextViewer } from "./SourceTextViewer";
-
-function prosemirrorDocFromText(text: string): Record<string, unknown> {
-  const paragraphs = text.split("\n\n").map((p) => p.trim()).filter(Boolean);
-  return {
-    type: "doc",
-    content: paragraphs.map((p) => ({
-      type: "paragraph",
-      content: [{ type: "text", text: p }],
-    })),
-  };
-}
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 type AskTarget = { from: number; to: number; text: string } | null;
@@ -158,12 +148,18 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
         }
         // insertContentAt inherits the stored marks active at the insertion
         // point — since the replaced range carries suggestionMark, the
-        // inserted text would otherwise keep the "pending" highlight
+        // inserted content would otherwise keep the "pending" highlight
         // forever. Select exactly what was inserted and strip the mark.
+        // proposed_content is structured ProseMirror JSON (may contain a
+        // math/table/list node, not just plain text) -- its on-document
+        // size doesn't equal s.proposed_text.length once it does, so the
+        // selection end is computed from the actual inserted fragment via
+        // Fragment.fromJSON, not the raw string's character count.
+        const insertedSize = Fragment.fromJSON(editor.schema, s.proposed_content).size;
         editor
           .chain()
-          .insertContentAt({ from: s.anchor_from, to: s.anchor_to }, s.proposed_text)
-          .setTextSelection({ from: s.anchor_from, to: s.anchor_from + s.proposed_text.length })
+          .insertContentAt({ from: s.anchor_from, to: s.anchor_to }, s.proposed_content)
+          .setTextSelection({ from: s.anchor_from, to: s.anchor_from + insertedSize })
           .unsetSuggestionMark()
           .run();
       } else {
@@ -172,9 +168,8 @@ export function SummaryEditor({ summaryDocId }: SummaryEditorProps) {
         // whole-doc ask has no selection, so original_text is always
         // null) — so this path has no staleness guard at all. Keeping a
         // whole-doc suggestion always replaces the entire document with
-        // the agent's rewrite, discarding any edits made since the ask
-        // and any formatting split("\n\n") can't reconstruct.
-        editor.commands.setContent(prosemirrorDocFromText(s.proposed_text));
+        // the agent's rewrite, discarding any edits made since the ask.
+        editor.commands.setContent({ type: "doc", content: s.proposed_content });
       }
       const content = editor.getJSON() as Record<string, unknown>;
       try {

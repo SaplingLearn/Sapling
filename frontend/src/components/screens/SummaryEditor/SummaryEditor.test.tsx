@@ -117,6 +117,7 @@ const BASE_DOC = {
     {
       id: "sg1", anchor_from: 1, anchor_to: 6,
       instruction: "shorter", original_text: "Hello", proposed_text: "Hi",
+      proposed_content: [{ type: "paragraph", content: [{ type: "text", text: "Hi" }] }],
       status: "pending", created_at: "t0",
     },
   ],
@@ -139,6 +140,30 @@ describe("SummaryEditor — stale anchor guard on Keep", () => {
     await userEvent.click(screen.getByRole("button", { name: "Keep it" }));
 
     expect(mockKeepSummaryDocSuggestion).not.toHaveBeenCalled();
+  });
+
+  it("inserts proposed_content (structured JSON), not proposed_text, when keeping an anchored suggestion", async () => {
+    const mathSuggestion = {
+      id: "sg-math", anchor_from: 1, anchor_to: 6,
+      instruction: "add the formula", original_text: "Hello",
+      proposed_text: "$F = ma$",
+      proposed_content: [{
+        type: "paragraph",
+        content: [{ type: "math", attrs: { latex: "F = ma", block: false } }],
+      }],
+      status: "pending", created_at: "t0",
+    };
+    mockGetSummaryDoc.mockResolvedValue({ ...BASE_DOC, pending_suggestions: [mathSuggestion] });
+    render(<SummaryEditor summaryDocId="sd1" />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Keep it" }));
+
+    await waitFor(() => expect(mockKeepSummaryDocSuggestion).toHaveBeenCalled());
+    const [, , , content] = mockKeepSummaryDocSuggestion.mock.calls[0];
+    const serialized = JSON.stringify(content);
+    expect(serialized).toContain('"type":"math"');
+    expect(serialized).toContain('"latex":"F = ma"');
+    expect(serialized).not.toContain("$F = ma$");
   });
 });
 
@@ -178,7 +203,9 @@ describe("SummaryEditor — source reference viewer", () => {
     mockGetOriginalDocumentUrl.mockResolvedValue({ url: "https://signed.example/doc1.pdf" });
     mockAskSummaryDocAgent.mockResolvedValue({
       id: "sg2", anchor_from: null, anchor_to: null, instruction: "add this",
-      original_text: null, proposed_text: "Woven in.", status: "pending", created_at: "t0",
+      original_text: null, proposed_text: "Woven in.",
+      proposed_content: [{ type: "paragraph", content: [{ type: "text", text: "Woven in." }] }],
+      status: "pending", created_at: "t0",
     });
     render(<SummaryEditor summaryDocId="sd1" />);
     await waitFor(() => expect(screen.getByText("Hi")).toBeInTheDocument());

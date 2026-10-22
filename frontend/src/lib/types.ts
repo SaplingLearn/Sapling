@@ -176,6 +176,7 @@ export interface SummaryDocSuggestion {
   instruction: string;
   original_text: string | null;
   proposed_text: string;
+  proposed_content: Record<string, unknown>[];
   status: 'pending' | 'kept' | 'undone';
   created_at: string;
 }
