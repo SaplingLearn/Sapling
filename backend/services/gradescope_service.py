@@ -335,16 +335,18 @@ def login(email: str, password: str) -> GSConnection:
         )
 
     # A redirect alone can land on SSO or an error page. Confirm the session
-    # can open the account before storing credentials or scraping grades.
-    try:
-        account_page = session.get(f"{base_url}/account", timeout=20, allow_redirects=True)
-    except requests.RequestException as e:
-        session.close()
-        raise GradescopeFetchError("Couldn't verify the Gradescope login. Please retry.") from e
-    _check_availability(account_page, session)
-    if account_page.status_code != 200 or not _is_gradescope_url(account_page.url or "", account=True):
-        session.close()
-        raise GradescopeAuthError("Gradescope login did not create an authenticated session.")
+    # can open the account before storing credentials or scraping grades —
+    # unless the redirect chain already ended on /account with a 200.
+    if not _is_gradescope_url(resp.url or "", account=True):
+        try:
+            account_page = session.get(f"{base_url}/account", timeout=20, allow_redirects=True)
+        except requests.RequestException as e:
+            session.close()
+            raise GradescopeFetchError("Couldn't verify the Gradescope login. Please retry.") from e
+        _check_availability(account_page, session)
+        if account_page.status_code != 200 or not _is_gradescope_url(account_page.url or "", account=True):
+            session.close()
+            raise GradescopeAuthError("Gradescope login did not create an authenticated session.")
 
     # Pick up X-CSRF-Token from the landed page so subsequent POSTs work.
     landed_soup = BeautifulSoup(resp.text, "html.parser")

@@ -429,7 +429,7 @@ class TestAuthenticationValidation:
         session.post.return_value = SimpleNamespace(
             status_code=503 if step == "login" else 200,
             history=[SimpleNamespace(status_code=302)],
-            url="https://www.gradescope.com/account", text="",
+            url="https://www.gradescope.com/", text="",
         )
         with patch.object(gs, "_new_session", return_value=session):
             with pytest.raises(gs.GradescopeFetchError, match="temporarily unavailable"):
@@ -482,6 +482,19 @@ class TestAuthenticationValidation:
         assert connection.session is session
         assert session.headers.update.call_args.args[0] == {"X-CSRF-Token": "token"}
 
+    def test_password_login_landing_on_account_is_not_verified_twice(self):
+        session = MagicMock()
+        session.get.side_effect = [
+            SimpleNamespace(text='<form action="/login"><input name="authenticity_token" value="csrf"></form>', raise_for_status=lambda: None),
+        ]
+        session.post.return_value = SimpleNamespace(
+            status_code=200, history=[SimpleNamespace(status_code=302)],
+            url="https://www.gradescope.com/account", text="",
+        )
+        with patch.object(gs, "_new_session", return_value=session):
+            gs.login("student@example.edu", "test-password")
+        assert session.get.call_count == 1, "the POST already landed on /account"
+
     @pytest.mark.parametrize("url", [
         "https://gradescope.com.evil.example/account",
         "https://shib.bu.edu/?next=gradescope.com/account",
@@ -527,7 +540,7 @@ class TestAuthenticationValidation:
         ]
         session.post.return_value = SimpleNamespace(
             status_code=200, history=[SimpleNamespace(status_code=302)],
-            url="https://www.gradescope.com/account", text="",
+            url="https://www.gradescope.com/", text="",
         )
         with patch.object(gs, "_new_session", return_value=session):
             with pytest.raises(gs.GradescopeAuthError, match="authenticated session"):
