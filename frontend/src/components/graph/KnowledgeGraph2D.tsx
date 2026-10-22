@@ -132,10 +132,18 @@ function KnowledgeGraph2DImpl({
   );
   const [view, setView] = React.useState(initialView);
   // A zoomed opening view is centred on the window, so a new window size
-  // re-centres it. At the default zoom the view is the identity at any size,
-  // and a resize keeps whatever the student panned or zoomed to.
+  // re-centres it — but only while the student hasn't moved it: once they
+  // have panned or zoomed, a resize keeps their view. At the default zoom the
+  // view is the identity at any size, so there is nothing to re-centre.
+  const openedAt = React.useRef(view);
   React.useEffect(() => {
-    if (initialZoom !== 1) setView(initialView());
+    if (initialZoom === 1) return;
+    const next = initialView();
+    const previous = openedAt.current;
+    openedAt.current = next;
+    setView(v =>
+      v.tx === previous.tx && v.ty === previous.ty && v.scale === previous.scale ? next : v,
+    );
   }, [initialZoom, initialView]);
   const dragRef = React.useRef<DragState>(null);
   const movedRef = React.useRef(false);

@@ -49,6 +49,9 @@ _SYSTEM_PROMPT = (
     "given course."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+# Public alias, so a cache of this agent's output can key on the prompt that
+# wrote it (routes/graph.py's description cache).
+PROMPT_VERSION = _PROMPT_HASH
 
 
 concept_describe_agent = Agent[SaplingDeps, ConceptDescription](

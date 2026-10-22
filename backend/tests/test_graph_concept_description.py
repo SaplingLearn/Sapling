@@ -185,3 +185,17 @@ def test_a_blank_description_is_not_cached():
          patch("routes.graph.run_agent_sync", return_value=_result("   ")):
         client.post(URL, json={"concept": "Recursion"})
     assert fake.store == {}
+
+
+def test_cache_key_names_the_model_mode_and_prompt_version():
+    """Function-mode stand-ins must never land under a real model's key, and a
+    prompt edit must not keep serving the old prompt's text (#737 review)."""
+    from agents.concept_describe import PROMPT_VERSION
+    from routes.graph import _description_cache_key
+
+    with patch("routes.graph.model_mode", return_value="real"):
+        real = _description_cache_key("Recursion", "CS101")
+    with patch("routes.graph.model_mode", return_value="function"):
+        stand_in = _description_cache_key("Recursion", "CS101")
+    assert real != stand_in
+    assert PROMPT_VERSION in real

@@ -266,6 +266,11 @@ def test_symbolic_key_with_short_products_is_kept(answer):
     "It is ATP. It stores energy.",
     "It ended in 1945. Then peace.",
     "Glycolysis; then the Krebs cycle",
+    # A full stop after punctuation ends a sentence too (#737 review).
+    "Mitosis (cell division). Then cytokinesis",
+    '"ATP". It stores energy',
+    "About 10%. Then less",
+    "No. It is not.",
 ])
 def test_short_answer_key_that_is_a_sentence_is_dropped(answer):
     """Exact-match grading cannot accept a paragraph: served live, the student
@@ -285,6 +290,8 @@ def test_short_answer_key_that_is_a_term_is_kept(answer):
     "John F. Kennedy", "U.S. Constitution", "St. Louis", "Mt. Everest", "Dr. Seuss",
     "Prof. Xavier", "Sept. 11, 2001", "Capt. James Cook", "Dept. of Energy", "Pres. Lincoln",
     "e.g. mitochondria",
+    # "No." before a number is an abbreviation, not "No." the sentence.
+    "Symphony No. 9", "No. 10 Downing Street", "Federalist No. 10",
 ])
 def test_short_answer_key_with_an_abbreviation_is_not_a_sentence(answer):
     """An initial or abbreviation is not a sentence break; dropping these
@@ -306,12 +313,16 @@ def test_short_answer_sentence_key_with_a_term_alias_is_kept():
     "Which structure is shown?\n",
     "What is the output of this code?\n```\nprint(1)\n```\n",
     "What molecule is called the energy currency? ",
-    "The mitochondria is the ___ of the cell. ",
-    "Name the organelle (the cell's powerhouse) ",
+    "The powerhouse of the cell is the ___ ",
+    # A trailing newline is padding, whatever the stem ends in (#730 review).
+    "Define osmosis.\n",
+    "Name the organelle that makes ATP.\n",
+    "Compute $\\int x\\,dx$\n",
+    "The mitochondria is the ___ of the cell.\n",
 ])
 def test_whole_stem_with_trailing_whitespace_is_kept_and_trimmed(question):
-    """Trailing whitespace after closing punctuation, a code fence or a blank
-    is padding on a whole stem, not a cut."""
+    """A trailing newline, or trailing spaces after the question mark, a code
+    fence or a blank, is padding on a whole stem, not a cut."""
     item = _wire(question=question)
     assert item is not None
     assert item["question"] == question.rstrip()
@@ -323,6 +334,8 @@ def test_whole_stem_with_trailing_whitespace_is_kept_and_trimmed(question):
     _item(question="Fill in the blank: "),
     _item(question="Consider the term, "),
     _item(question="Read the code:\n"),
+    # A cut right after a sentence: the quote it stopped at held the question.
+    _item(question="Consider this definition. "),
     _item(type="multiple_choice", options=["a", "b", "c", "d"], correct_answer="a",
           question="Which is called the "),
 ])

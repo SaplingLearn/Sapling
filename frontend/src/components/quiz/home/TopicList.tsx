@@ -28,12 +28,15 @@ import { colorFor, metaLine } from "@/lib/quiz/proposals";
 /** Diameters from the design; the tokens live in `home.css`. */
 const COURSE_DOT = 9;
 const ROW_DOT = 14;
+/** How long a row must be pointed at or focused before it counts as intent. */
+const INTENT_DWELL_MS = 350;
 
 export interface TopicListProps {
   groups: { course: EnrolledCourse; nodes: GraphNode[] }[];
   onPick: (nodeId: string) => void;
-  /** The student is pointing at (or focused on) a row: warm what picking it
-   *  will need, so the card has it the moment it swaps. */
+  /** The student has rested on (or focused) a row for a moment: warm what
+   *  picking it will need, so the card has it the moment it swaps. A sweep of
+   *  the pointer or a tab through the list costs nothing. */
   onIntent?: (nodeId: string) => void;
   /** The row a concept just returned to; it is tinted once (`home.css`). */
   returnedId?: string | null;
@@ -51,6 +54,25 @@ export function TopicList({
   returnedId = null,
 }: TopicListProps) {
   const headed = groups.length > 1;
+  // One dwell per input: the pointer leaving a row must not cancel the one
+  // keyboard focus armed on another (and vice versa).
+  const dwell = React.useRef<Record<"pointer" | "focus", number | null>>({ pointer: null, focus: null });
+  const settle = (source: "pointer" | "focus") => {
+    const timer = dwell.current[source];
+    if (timer !== null) window.clearTimeout(timer);
+    dwell.current[source] = null;
+  };
+  const aim = (source: "pointer" | "focus", nodeId: string) => {
+    settle(source);
+    if (onIntent) dwell.current[source] = window.setTimeout(() => onIntent(nodeId), INTENT_DWELL_MS);
+  };
+  React.useEffect(
+    () => () => {
+      settle("pointer");
+      settle("focus");
+    },
+    [],
+  );
   return (
     <div className="quiz-home__topics" data-testid="quiz-pick-list">
       {groups.map(({ course, nodes }) => {
@@ -87,8 +109,10 @@ export function TopicList({
                   data-testid={`quiz-pick-${node.id}`}
                   data-returned={node.id === returnedId ? "true" : undefined}
                   onClick={() => onPick(node.id)}
-                  onPointerEnter={onIntent ? () => onIntent(node.id) : undefined}
-                  onFocus={onIntent ? () => onIntent(node.id) : undefined}
+                  onPointerEnter={() => aim("pointer", node.id)}
+                  onPointerLeave={() => settle("pointer")}
+                  onFocus={() => aim("focus", node.id)}
+                  onBlur={() => settle("focus")}
                 >
                   <span className="quiz-home__row-mark">
                     <ConceptNode

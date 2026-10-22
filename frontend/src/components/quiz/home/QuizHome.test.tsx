@@ -31,7 +31,7 @@ import {
   primaryOf,
   rankCandidates,
 } from "@/lib/quiz/proposals";
-import { PREFS_KEY, QUEUE_COUNT } from "@/lib/quiz/session";
+import { QUEUE_COUNT } from "@/lib/quiz/session";
 import type { EntryRequest } from "@/lib/quiz/source";
 import type { QuizHome as QuizHomeData } from "@/lib/quiz/useQuizHome";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
@@ -339,12 +339,42 @@ describe("QuizHome — the proposal", () => {
     );
   });
 
-  it("warms a row's description when the student points at it", () => {
+  it("warms a row's description once the student rests on it, not on a sweep", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { home } = mount();
+    // A pass over a row on the way somewhere else costs nothing.
+    fireEvent.pointerEnter(screen.getByTestId("quiz-pick-eigenvalues"));
+    fireEvent.pointerLeave(screen.getByTestId("quiz-pick-eigenvalues"));
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(home.prefetchDescription).not.toHaveBeenCalled();
+
     fireEvent.pointerEnter(screen.getByTestId("quiz-pick-determinants"));
-    fireEvent.focus(screen.getByTestId("quiz-pick-base-cases"));
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
     expect(home.prefetchDescription).toHaveBeenCalledWith("determinants");
+
+    fireEvent.focus(screen.getByTestId("quiz-pick-base-cases"));
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
     expect(home.prefetchDescription).toHaveBeenCalledWith("base-cases");
+    expect(home.prefetchDescription).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let the pointer leaving one row cancel keyboard focus on another", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { home } = mount();
+    fireEvent.focus(screen.getByTestId("quiz-pick-base-cases"));
+    fireEvent.pointerEnter(screen.getByTestId("quiz-pick-eigenvalues"));
+    fireEvent.pointerLeave(screen.getByTestId("quiz-pick-eigenvalues"));
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(home.prefetchDescription).toHaveBeenCalledWith("base-cases");
+    expect(home.prefetchDescription).not.toHaveBeenCalledWith("eigenvalues");
   });
 
   it("cancels back to the session's source", () => {
@@ -511,6 +541,30 @@ describe("QuizHome — picking a concept", () => {
     expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Ready for you");
     expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
     expect(onPickedChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("treats picking the suggested concept back as returning to the suggestion", () => {
+    mount();
+    fireEvent.click(screen.getByTestId("quiz-pick-determinants"));
+    // Recursion — the suggestion — is back in the list; picking it is "back".
+    fireEvent.click(screen.getByTestId("quiz-pick-recursion"));
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Recursion");
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Ready for you");
+    expect(screen.queryByTestId("quiz-pick-reset")).toBeNull();
+  });
+
+  it("lets a queue card's first concept be picked, and Back returns to the queue", () => {
+    mount({ entry: entry({ course: "c-cs", source: { kind: "dashboard" } }) });
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Practice CS101");
+
+    // The queue opens on Tail recursion, which stays in the list; picking it
+    // must do something.
+    fireEvent.click(screen.getByTestId("quiz-pick-tail-recursion"));
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Tail recursion");
+    expect(screen.getByTestId("quiz-proposal")).toHaveTextContent("Your pick");
+
+    fireEvent.click(screen.getByTestId("quiz-pick-reset"));
+    expect(screen.getByTestId("quiz-proposal-name")).toHaveTextContent("Practice CS101");
   });
 
   it("drops a deep link's reason once the student picks something else", () => {

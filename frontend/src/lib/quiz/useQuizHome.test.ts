@@ -559,6 +559,28 @@ describe("the card definition (R-8)", () => {
     expect(quizApi.describeConcept).not.toHaveBeenCalled();
   });
 
+  it("keeps a picked concept pending while it retries a failed prefetch", async () => {
+    // A hover prefetch that failed must not mark the CARD as failed: picking
+    // that concept shows the placeholder while the card's own fetch retries.
+    quizApi.describeConcept.mockImplementation((_u: string, name: string) =>
+      name === "n2" ? Promise.reject(new ApiError("down", 502)) : Promise.resolve(`About ${name}.`));
+    const { result, rerender } = renderHook(
+      ({ picked }: { picked: string | null }) => useQuizHome("u1", "", undefined, picked),
+      { initialProps: { picked: null as string | null } },
+    );
+    await waitFor(() => expect(result.current.cardDescription).toBe("About n1."));
+    act(() => result.current.prefetchDescription("n2"));
+    await waitFor(() => expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n2", "CS 330"));
+    await new Promise(r => setTimeout(r, 0));
+
+    let resolve!: (t: string) => void;
+    quizApi.describeConcept.mockReturnValue(new Promise<string>(r => (resolve = r)));
+    rerender({ picked: "n2" });
+    expect(result.current.cardDescriptionPending).toBe(true);
+    resolve("About n2.");
+    await waitFor(() => expect(result.current.cardDescription).toBe("About n2."));
+  });
+
   it("still describes when an unusable ?course= falls back to the primary card", async () => {
     const { result } = renderHook(() =>
       useQuizHome("u1", "", { source: { kind: "tree" }, course: "no-such-course" }));
