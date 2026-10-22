@@ -220,11 +220,42 @@ describe('roster fetch removed; /me owns the display name', () => {
     });
   });
 
-  it("treats a /me answer for a different user as a stale identity", async () => {
+  it("adopts the session's identity when /me answers for a different user", async () => {
     // Shared browser: localStorage holds user A (stale-1) while the session
-    // cookie belongs to user B. /me answers for the cookie, so its name must
-    // never be shown next to A's id; the client identity is cleared instead.
+    // cookie belongs to user B. /me answers for the cookie, and the server
+    // session is the source of truth: the tab becomes B (never B's name next
+    // to A's id), rather than showing signed-out while B's cookie is live.
     seed();
+    const fetchMock = stubFetch(() => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ user_id: 'someone-else', name: 'Other Person', roles: [] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <UserProvider>
+        <Probe />
+        <NameProbe />
+      </UserProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('in:someone-else'));
+    expect(screen.getByTestId('name').textContent).toBe('Other Person');
+    expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({
+      id: 'someone-else',
+      name: 'Other Person',
+    });
+    // The adopted identity's own profile is then loaded under its own id.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('user_id=someone-else'))).toBe(true),
+    );
+  });
+
+  it("clears rather than adopts a mismatched /me on the auth-flow routes", async () => {
+    // /auth/* owns its own bootstrap (the callback mints the cookie, then
+    // sets the identity itself); adopting a pre-existing cookie's user there
+    // could flash the wrong account before the callback overwrites it.
+    seed();
+    window.history.replaceState({}, '', '/auth/callback');
     vi.stubGlobal(
       'fetch',
       stubFetch(() => ({

@@ -78,6 +78,24 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const profileGeneration = React.useRef(0);
   const activeIdentity = React.useRef('');
 
+  const setActiveUser = useCallback((id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
+    // A repeated confirmation of the same account must not cancel its
+    // profile load: userId would be unchanged, so the effect would not retry.
+    if (id !== activeIdentity.current) profileGeneration.current += 1;
+    activeIdentity.current = id;
+    setUserId(id);
+    setUserName(name);
+    if (avatar) setAvatarUrl(avatar);
+    setIsAuthenticated(true);
+    // #191: persist only an identity confirmed against the live session.
+    // Callers pass { persist: false } when GET /api/auth/me could not
+    // confirm — the tab still works, and the next full load reconciles via
+    // the cookie fallback below instead of trusting a stale localStorage copy.
+    if (opts?.persist !== false) {
+      localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
+    }
+  }, []);
+
   useEffect(() => {
     const saved = localStorage.getItem('sapling_user');
     if (saved) {
@@ -152,7 +170,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setActiveUser]);
 
   // Shared teardown for "this client's identity is no longer valid": local
   // state plus the persisted localStorage copy. Used by signOut and by the
@@ -204,12 +222,19 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       // /me answers for whoever owns the session cookie and ignores
       // ?user_id=. A different user_id means this client's identity (e.g. a
       // localStorage copy from another account on a shared browser) is not
-      // the session's: the same stale-identity case as a 401 above.
+      // the session's. The live session is the source of truth, so the tab
+      // adopts it: clearing alone left a signed-out tab over a valid cookie
+      // that nothing re-bootstraps off the shell routes. The old identity's
+      // profile fields are dropped first, and the userId change refetches
+      // the adopted one's. A response that lost a race to an account switch
+      // or sign-out never gets here (the generation checks above).
       if (data.user_id && data.user_id !== uid) {
         clearStaleClientAuth();
-        if (typeof window !== 'undefined' && shouldBounceToSignin(window.location.pathname)) {
-          window.location.replace('/?error=session_expired');
-        }
+        // The auth-flow routes own their own bootstrap (see the cookie
+        // fallback above): just drop the stale identity there.
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) return;
+        setActiveUser(data.user_id, data.name || '', data.avatar_url || '');
+        if (data.is_approved) setIsApproved(true);
         return;
       }
       // /me is the source of truth for the display name (it may have changed
@@ -253,31 +278,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       const fr = data.equipped_cosmetics?.featured_role ?? null;
       setFeaturedRole(fr);
     } catch {}
-  }, [clearStaleClientAuth]);
+  }, [clearStaleClientAuth, setActiveUser]);
 
   useEffect(() => {
     if (userReady && userId) fetchProfileData(userId);
   }, [userReady, userId, fetchProfileData]);
 
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
-
-  const setActiveUser = (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
-    // A repeated confirmation of the same account must not cancel its
-    // profile load: userId would be unchanged, so the effect would not retry.
-    if (id !== activeIdentity.current) profileGeneration.current += 1;
-    activeIdentity.current = id;
-    setUserId(id);
-    setUserName(name);
-    if (avatar) setAvatarUrl(avatar);
-    setIsAuthenticated(true);
-    // #191: persist only an identity confirmed against the live session.
-    // Callers pass { persist: false } when GET /api/auth/me could not
-    // confirm — the tab still works, and the next full load reconciles via
-    // the cookie fallback above instead of trusting a stale localStorage copy.
-    if (opts?.persist !== false) {
-      localStorage.setItem('sapling_user', JSON.stringify({ id, name, avatar: avatar || '' }));
-    }
-  };
 
   const confirmApproved = () => setIsApproved(true);
 
@@ -296,7 +303,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
     }),
     [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
-     username, roles, equippedCosmetics, featuredRole, isAdmin, refreshProfile, signOut]
+     username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
