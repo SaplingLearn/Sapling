@@ -245,8 +245,10 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
-| `quiz-written-answer` | labeled written-answer textarea for short answers, numeric answers, and algebra |
-| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer textarea |
+| `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input |
+| `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`) or algebra (`squared`/`power`/`brackets`/`times`/`divide`/`minus`) input; inserts at the cursor |
+| `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
 | `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
 | `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |

@@ -337,20 +337,39 @@ export function QuizHome({ home, config, entry, session, actions, onPickedChange
     return () => window.clearTimeout(timer);
   }, [returnedId]);
 
-  const choose = (target: string | null) => {
-    const incomingId = target ?? suggested?.node.id ?? null;
-    const outgoingId = card?.node.id ?? null;
-    if (!incomingId || incomingId === outgoingId) return;
-    setPick(target ? { entryKey, id: target } : null);
-    setSwapped(true);
-    // A queued card is titled for its course or the due set; its first
-    // concept never left the list, so there is no row to point back to.
-    setReturnedId(mode === "concept" ? outgoingId : null);
-    // Stacked (phone), the card is above the list the student clicked in.
-    if (window.matchMedia?.("(max-width: 900px)").matches) {
-      proposalRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
-    }
-  };
+  /** The arrival proposes a queue ("Practice CS101", "Review everything
+   *  due") rather than one concept. */
+  const suggestedIsQueue =
+    !selection.conceptId &&
+    ((Boolean(entry.course) && courseQueue.length > 0) ||
+      (!entry.course && entry.scope === "due" && dueQueue.length > 0));
+
+  // Stable across renders that don't change what a pick means, so the
+  // neighbourhood's memoised graph isn't re-rendered on every search keystroke.
+  const choose = React.useCallback(
+    (requested: string | null) => {
+      // Picking the suggestion's own concept IS going back to the suggestion —
+      // except when the suggestion is a queue, where that one concept on its
+      // own is a real choice (and the queue card has no other way to it).
+      const target =
+        requested && !suggestedIsQueue && requested === suggested?.node.id ? null : requested;
+      // Compare the PICK, not the concept on screen: a queue card shows its
+      // first concept without that concept being picked.
+      if (target === pickedId) return;
+      const outgoingId = card?.node.id ?? null;
+      const incomingId = target ?? suggested?.node.id ?? null;
+      setPick(target ? { entryKey, id: target } : null);
+      setSwapped(true);
+      // A queued card is titled for its course or the due set; its first
+      // concept never left the list, so there is no row to point back to.
+      setReturnedId(mode === "concept" && outgoingId !== incomingId ? outgoingId : null);
+      // Stacked (phone), the card is above the list the student clicked in.
+      if (window.matchMedia?.("(max-width: 900px)").matches) {
+        proposalRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+      }
+    },
+    [suggestedIsQueue, suggested, pickedId, card, entryKey, mode, reducedMotion],
+  );
 
   // ── Regions ───────────────────────────────────────────────────────────
 

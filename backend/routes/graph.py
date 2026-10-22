@@ -16,10 +16,10 @@ from services.graph_service import (
 )
 from services.request_context import current_request_id
 from agents import WORKER_LIMITS
-from agents._providers import UnregisteredHandlerError, model_name_for
+from agents._providers import UnregisteredHandlerError, model_mode, model_name_for
 from agents._run import run_agent_sync
 from agents.deps import SaplingDeps
-from agents.concept_describe import concept_describe_agent, build_message
+from agents.concept_describe import PROMPT_VERSION, concept_describe_agent, build_message
 from agents.usage import record_agent_usage
 
 router = APIRouter()
@@ -144,14 +144,19 @@ _MAX_CONCEPT_LEN = 200
 _MAX_COURSE_LABEL_LEN = 120
 # A description depends only on the concept and its course label, not on who
 # asks, so one cached sentence serves every student (#97's Redis cache; a
-# no-op without REDIS_URL). Keyed on the model too, so a model swap re-writes.
+# no-op without REDIS_URL). Keyed on the model mode, the model and the prompt
+# version too, so function-mode stand-ins never land under a real model's key
+# and a model swap or a prompt edit re-writes instead of serving stale text.
 _DESCRIPTION_CACHE_TTL = 30 * 24 * 3600
 
 
 def _description_cache_key(concept: str, course_label: str | None) -> str:
     subject = f"{concept.casefold()}|{(course_label or '').casefold()}"
     digest = hashlib.sha256(subject.encode("utf-8")).hexdigest()
-    return f"concept_desc:v1:{model_name_for('concept_describe')}:{digest}"
+    return (
+        f"concept_desc:v2:{model_mode()}:{model_name_for('concept_describe')}"
+        f":{PROMPT_VERSION}:{digest}"
+    )
 
 
 @router.post("/{user_id}/concept-description")

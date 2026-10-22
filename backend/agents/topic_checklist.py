@@ -4,28 +4,113 @@ from __future__ import annotations
 import hashlib
 import unicodedata
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from agents._providers import model_for
+
+# Array caps, enforced by OUR validation after the call, never by the schema
+# Gemini compiles. Constrained decoding multiplies array bounds: each
+# `maxItems` nested inside the bounded `topics` list is repeated per topic,
+# and #726's bounds 400'd every live refresh on gemini-2.5-flash ("too many
+# states for serving"). Measured live 2026-10-19: array bounds -> 400, array
+# bounds removed with the string bounds kept -> served. So lists carry no
+# length bounds; the validators below clip them to the first N in model order
+# (what decoding-time maxItems did). Pinned by
+# tests/test_topic_checklist_schema_states.py.
+MAX_TOPICS = 60
+MAX_PREREQUISITES = 10
+MAX_SOURCE_IDS = 30
+MAX_ASSESSMENT_IDS = 20
+
+
+def _clip(value, limit: int):
+    """Keep the first `limit` entries of a raw list input, in model order.
+    Anything that is not a list is left for normal validation to reject."""
+    return value[:limit] if isinstance(value, list) else value
 
 
 def normalized_name(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def _raw_name(topic) -> str:
+    """A raw (pre-validation) topic's normalized name, or "" if it has none."""
+    name = topic.get("name") if isinstance(topic, dict) else None
+    return normalized_name(name) if isinstance(name, str) else ""
+
+
+def _without_refs_to(topic, clipped: set[str]):
+    """A raw topic with parent/prerequisite references to `clipped` removed."""
+    if not clipped or not isinstance(topic, dict):
+        return topic
+    out = dict(topic)
+    parent = out.get("parent")
+    if isinstance(parent, str) and normalized_name(parent) in clipped:
+        out["parent"] = ""
+    prerequisites = out.get("prerequisites")
+    if isinstance(prerequisites, list):
+        out["prerequisites"] = [
+            p for p in prerequisites if not (isinstance(p, str) and normalized_name(p) in clipped)
+        ]
+    return out
+
+
 class ChecklistTopic(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1, max_length=500)
     parent: str = Field(default="", max_length=120)
-    prerequisites: list[str] = Field(default_factory=list, max_length=10)
-    source_ids: list[str] = Field(min_length=1, max_length=30)
-    assessment_ids: list[str] = Field(default_factory=list, max_length=20)
+    prerequisites: list[str] = Field(default_factory=list)
+    source_ids: list[str]
+    assessment_ids: list[str] = Field(default_factory=list)
     importance: float = Field(ge=0, le=1)
+
+    # The clips run BEFORE item validation, as decoding-time maxItems did: a
+    # malformed surplus entry past the cap is discarded, never a reason to
+    # reject the valid prefix and spend an output retry.
+    @field_validator("prerequisites", mode="before")
+    @classmethod
+    def _clip_prerequisites(cls, prerequisites):
+        return _clip(prerequisites, MAX_PREREQUISITES)
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def _clip_source_ids(cls, source_ids):
+        return _clip(source_ids, MAX_SOURCE_IDS)
+
+    @field_validator("source_ids", mode="after")
+    @classmethod
+    def _require_source_ids(cls, source_ids: list[str]) -> list[str]:
+        # Every topic cites evidence: empty stays a validation error, so the
+        # output retry still fires exactly as it did for the old min_length=1.
+        if not source_ids:
+            raise ValueError("Each topic must cite at least one source_id.")
+        return source_ids
+
+    @field_validator("assessment_ids", mode="before")
+    @classmethod
+    def _clip_assessment_ids(cls, assessment_ids):
+        return _clip(assessment_ids, MAX_ASSESSMENT_IDS)
 
 
 class TopicOutline(BaseModel):
-    topics: list[ChecklistTopic] = Field(max_length=60)
+    topics: list[ChecklistTopic]
+
+    @field_validator("topics", mode="before")
+    @classmethod
+    def _clip_topics(cls, topics):
+        # Runs before validate_hierarchy. Under decoding-time maxItems the model
+        # could never name topic 61, so a kept topic pointing at a clipped one
+        # is an artefact of the clip, not a model error: the reference is
+        # dropped (a clipped parent leaves the topic at the root) rather than
+        # failing the whole outline and spending a retry on a "missing" topic
+        # the model did in fact return.
+        if not isinstance(topics, list) or len(topics) <= MAX_TOPICS:
+            return topics
+        kept, cut = topics[:MAX_TOPICS], topics[MAX_TOPICS:]
+        kept_names = {_raw_name(t) for t in kept}
+        clipped = {_raw_name(t) for t in cut} - kept_names - {""}
+        return [_without_refs_to(t, clipped) for t in kept]
 
     @model_validator(mode="after")
     def validate_hierarchy(self):

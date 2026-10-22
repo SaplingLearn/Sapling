@@ -98,8 +98,8 @@ test("the landing page's copy is in the server-rendered HTML (#344)", async ({ r
   expect(html).toContain("Mastered");
   expect(html).toContain("Sign up for Beta Testing");
 
-  // the acts below the hero state what the product does
-  expect(html).toContain("Ingest");
+  // the acts below the hero state what the product does (the section eyebrows
+  // — "INGEST" and the rest — were dropped in #736; the headings carry it)
   expect(html).toContain("Drop in the whole");
   expect(html).toContain("Ready to");
 });
