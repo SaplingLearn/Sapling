@@ -12,11 +12,12 @@ prompts at construction time (passed as `instructions=`, so they are sent
 on every turn — see `_build_agent`). The route picks the right agent
 instance per request based on body.mode.
 
-Per-call thinking depth: the deep-turn setting (Claude `effort=medium`, or
-the capped Pro thinking budget on a gemini-* slot) is applied at the route
-layer (`routes.learn._build_deep_turn_model_settings`), not on the agent
-itself, because the same agent instance also serves "fast" runs (the
-Haiku model_pref override) that keep the slot's `effort=low` default.
+Per-call thinking depth: the deep-turn setting (Claude `effort`, currently
+`low` like the slot default per the ADR 0030 cost A/B, or the capped Pro
+thinking budget on a gemini-* slot) is applied at the route layer
+(`routes.learn._build_deep_turn_model_settings`), not on the agent itself,
+because the same agent instance also serves "fast" runs (the Haiku
+model_pref override) that keep the slot's default.
 Direct callers of `chat_tutor_agent.run(...)` that bypass the route get
 that model-level default — pin a `model_settings=` kwarg there if that
 matters.

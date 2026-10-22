@@ -214,7 +214,7 @@ def test_tools_plus_structured_output_never_force_tool_choice(captured_create):
     assert [t["name"] for t in kw["tools"]] == ["lookup"]
     assert kw["tool_choice"]["type"] == "auto"
     assert kw["output_config"]["format"]["schema"]["additionalProperties"] is False
-    assert kw["output_config"]["effort"] == "medium"
+    assert kw["output_config"]["effort"] == "low"
 
 
 def test_a_stray_temperature_is_dropped_not_sent(captured_create):

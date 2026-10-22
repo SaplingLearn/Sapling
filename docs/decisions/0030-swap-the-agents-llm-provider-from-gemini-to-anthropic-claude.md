@@ -30,9 +30,9 @@ one slot back to Gemini with no code change. Every slot defaults to Claude:
 Claude Haiku 5.5 for all former Flash and Flash-Lite slots (it lists at
 $0.10/$0.50 per MTok against Flash-Lite's $0.10/$0.40 and Flash's $0.30/$2.50,
 which keeps the no-price-increase rule) with per-task `effort` (`low` where
-Flash-Lite ran without thinking, `medium` where Flash thought), and Claude
-Sonnet 5.5 for the tutor (the role Pro held), with the route raising effort to
-`medium` on non-"fast" turns where it used to grant Pro a thinking budget. We
+Flash-Lite ran without thinking — quiz included — and `medium` where Flash
+thought), and Claude Sonnet 5.5 at `effort=low` for the tutor (the role Pro
+held). Prompt caching is on for the tool-loop slots (tutor, quiz, note chat). We
 stay on pydantic-ai 1.107 and supply the Claude 5.x facts ourselves in
 `_anthropic_profile` (native constrained-JSON output by default, no forced
 tool choice, no sampling settings, adaptive thinking + effort), resolving the
@@ -51,7 +51,22 @@ identifier-like fields stay strict.
   5.x profile, per-task settings and the exact request sent to the SDK.
 - Positive: the live eval re-recording kept or raised output volume on every
   dataset (summaries, quiz explanations, tutor replies), kept syllabus
-  weights verbatim, and kept quiz generation at 1.0 on every evaluator.
+  weights verbatim, kept quiz generation at 1.0 on every evaluator, and the
+  tutor now searches the student's course materials on nearly every turn
+  (Gemini did so on 5 of 16 eval turns, Claude on 13).
+- Cost, measured live on the eval datasets (2026-10-22, same inputs both
+  sides): the full mix fell from $0.389 (Gemini) to ~$0.20 (Claude). By slot:
+  concepts −90%, syllabus −88% (Flash → Haiku); tutor deep turns −41%
+  (Pro → Sonnet at `effort=low`, cached). The former Flash-Lite slots did
+  NOT hold the no-price-increase rule: quiz +19%, classifier +83%, summary
+  +133%, fast-tier tutor +43% — Haiku 5.5 is the cheapest Claude model, its
+  tokenizer counts more tokens than Gemini's, and its output rate is $0.50
+  vs $0.40. Disabling thinking did not close the gap and cost quality (quiz
+  question count/coverage, classifier shareability), so it was rejected.
+  Quiz was ~88% of production spend in the last snapshot, so production
+  spend is expected to rise modestly until the doc-pipeline/tutor savings
+  dominate; `llm_usage` (now provider-labelled and cache-aware) is the
+  authority to watch.
 - Positive: the swap surfaced and fixed a provider-independent bug — the
   streamed tutor persisted only the FINAL model response's text, so a turn
   that explained, called a tool, then added a line lost the explanation from
@@ -80,6 +95,10 @@ identifier-like fields stay strict.
   the `services/extraction_backends/gemini_vision_backend.py` module and the
   decision seam's `flash_lite` backend name keep their pre-swap names to
   avoid breaking deployed config and flags; they now drive Claude.
-- Neutral: prompt caching is not enabled on any agent, so
-  `services/llm_pricing.py` carries no cache-read/-write rates; turning
-  caching on must add them first.
+- Neutral: prompt caching is enabled only on the tool-loop slots;
+  `services/llm_pricing.py` prices cache reads at 0.1x and 5-minute writes at
+  1.25x of input (Claude only — Gemini's implicit-cache discount stays
+  unmodelled, as before).
+- Neutral: Claude's strict JSON mode cannot enforce `maxLength` etc. at
+  decode time; prose caps are clipped locally (`agents/_bounded.py`) and an
+  ordering callers depend on is imposed in a validator.

@@ -62,13 +62,16 @@ _PREF_MODEL_NAMES: dict[str, str] = {
 }
 
 # Thinking depth for every non-"fast" tutor turn. On Claude this is the
-# `effort` level (the chat_tutor slot's model-level default is `low`, see
-# agents/_providers._ANTHROPIC_EFFORT); a Claude 5.x model rejects a token
-# budget. If the slot is pointed back at a gemini-* model, Pro's thinking
+# `effort` level; a Claude 5.x model rejects a token budget. It equals the
+# chat_tutor slot's own default (agents/_providers._ANTHROPIC_EFFORT): `medium`
+# bought no measurable tutor quality over `low` on Sonnet 5.5 and cost ~2x
+# (ADR 0030), so "smart" now differs from "fast" by MODEL (Sonnet vs Haiku),
+# not effort. Kept as an explicit run-level setting so raising it is a
+# one-line change the route tests pin. If the slot is pointed back at a gemini-* model, Pro's thinking
 # budget is capped instead: dynamic thinking (-1) on multi-turn pedagogy can
 # spend 10s+ before any tokens stream, and 2048 tokens is enough to plan a
 # multi-step explanation without burning latency the student can feel.
-_DEEP_TURN_EFFORT = "medium"
+_DEEP_TURN_EFFORT = "low"
 _PRO_THINKING_BUDGET = 2048
 
 

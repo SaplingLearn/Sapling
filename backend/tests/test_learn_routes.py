@@ -740,7 +740,7 @@ class TestChatViaAgent:
         kwargs = agent.run.call_args.kwargs
         assert "model_settings" in kwargs
         assert kwargs["model_settings"] == {"anthropic_effort": _DEEP_TURN_EFFORT}
-        assert _DEEP_TURN_EFFORT == "medium"  # pin the literal too
+        assert _DEEP_TURN_EFFORT == "low"  # pin the literal too (ADR 0030 cost A/B)
 
     def test_no_pref_attaches_deep_turn_effort(self):
         """No model_pref → falls through to the step-up default → deep turn.
@@ -758,7 +758,7 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model_settings" in kwargs
-        assert kwargs["model_settings"] == {"anthropic_effort": "medium"}
+        assert kwargs["model_settings"] == {"anthropic_effort": "low"}
 
     def test_deep_turn_settings_follow_the_serving_provider(self, monkeypatch):
         """Direct unit test on the helper: Claude gets `effort`; a chat_tutor
@@ -766,9 +766,9 @@ class TestChatViaAgent:
         capped Pro thinking budget instead — a Claude 5.x model rejects a
         budget and Gemini has no `effort`."""
         from routes.learn import _build_deep_turn_model_settings, _PRO_THINKING_BUDGET
-        assert _build_deep_turn_model_settings("smart") == {"anthropic_effort": "medium"}
+        assert _build_deep_turn_model_settings("smart") == {"anthropic_effort": "low"}
         monkeypatch.delenv("SAPLING_MODEL_CHAT_TUTOR", raising=False)
-        assert _build_deep_turn_model_settings(None) == {"anthropic_effort": "medium"}
+        assert _build_deep_turn_model_settings(None) == {"anthropic_effort": "low"}
         monkeypatch.setenv("SAPLING_MODEL_CHAT_TUTOR", "gemini-2.5-pro")
         s = _build_deep_turn_model_settings(None)
         assert s["google_thinking_config"].thinking_budget == _PRO_THINKING_BUDGET == 2048

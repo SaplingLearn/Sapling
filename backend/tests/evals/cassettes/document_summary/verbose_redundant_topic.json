@@ -1,11 +1,13 @@
 {
-  "abstract": "This document details binary search trees (BSTs), defining them as binary trees where each node's key is greater than all keys in its left subtree and less than all keys in its right subtree. It explains insertion and lookup operations by traversing the tree based on key comparisons. Deletion, particularly for nodes with two children, is addressed by replacing the node with its in-order successor. The notes also highlight the BST's worst-case O(n) performance due to potential imbalance and introduce self-balancing variants like AVL and red-black trees as solutions.",
-  "headline": "Binary Search Trees: Properties, Operations, and Balancing",
+  "abstract": "These notes give a detailed treatment of binary search trees (BSTs), defined as binary trees where each node's key exceeds all keys in its left subtree and is less than all keys in its right subtree. Insertion and lookup both descend from the root by comparing keys, with insertion attaching a new leaf at the empty position reached. Deletion is identified as the most difficult operation, particularly when the node has two children, and the standard remedy is to replace it with its in-order successor. The notes also observe that worst-case performance degrades to O(n) when the tree becomes unbalanced, which motivates self-balancing variants such as AVL and red-black trees.",
+  "headline": "Notes on binary search trees covering their definition, insertion, lookup, deletion via in-order successor, and O(n) worst case motivating\u2026",
   "key_points": [
-    "A Binary Search Tree (BST) organizes nodes such that each node's key is greater than all keys in its left subtree and less than all keys in its right subtree.",
-    "Insertion and lookup in a BST involve traversing the tree from the root, comparing keys to determine the correct path.",
-    "Deleting a node with two children typically involves replacing it with its in-order successor to maintain BST properties.",
-    "The performance of a BST can degrade to O(n) in the worst case if the tree becomes unbalanced.",
-    "Self-balancing BST variants, such as AVL trees and red-black trees, are used to prevent imbalance and ensure efficient operations."
+    "A BST requires every node's key to be greater than all keys in its left subtree and less than all keys in its right subtree.",
+    "Insertion descends from the root comparing keys and attaches a new leaf at the appropriate empty slot.",
+    "Lookup works symmetrically to insertion, descending from the root by key comparisons.",
+    "Deletion is the trickiest operation, especially when the deleted node has two children.",
+    "For a node with two children, the standard fix is to replace it with its in-order successor.",
+    "Worst-case performance degrades to O(n) when the tree becomes unbalanced.",
+    "This degradation motivates self-balancing variants such as AVL and red-black trees."
   ]
 }

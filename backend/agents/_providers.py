@@ -123,14 +123,17 @@ _ANTHROPIC_MAX_TOKENS = 16_000
 
 # `effort` is the Claude quality/cost dial. Haiku 5.5 defaults to `medium`;
 # the slots that ran on Flash-Lite (no thinking) drop to `low`, the slots that
-# ran on full Flash (dynamic thinking) keep `medium`. The tutor sits at `low`
-# (Anthropic's guidance for chat on Sonnet 5.5); routes/learn.py raises it to
-# `medium` for the "smart" preference the same way it used to grant Pro a
-# thinking budget.
+# ran on full Flash (dynamic thinking) keep `medium`. Measured live over the
+# eval datasets (2026-10-22, ADR 0030): quiz at `low` scored 1.0 on every
+# evaluator at 41% less than `medium`; the tutor at `low` matched `medium` on
+# every evaluator at 41% under gemini-2.5-pro's cost. Disabling thinking
+# outright is NOT a further saving worth having — it cut quiz question-count
+# and coverage scores and classifier shareability accuracy (the field that
+# gates sharing) for a few percent.
 _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "classifier": "low",
     "summary": "low",
-    "quiz": "medium",
+    "quiz": "low",
     "concepts": "medium",
     "syllabus": "medium",
     "topic_checklist": "medium",

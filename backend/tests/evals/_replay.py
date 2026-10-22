@@ -1,7 +1,7 @@
 """Record-and-replay layer for offline eval runs.
 
 Mode is selected by the SAPLING_EVAL_MODE env var:
-  - "record": run agents against live Gemini, write each response to a
+  - "record": run agents against their live model, write each response to a
     cassette file keyed by (dataset, case_name).
   - "replay" (default): load cassettes; if a case has no cassette, raise
     so CI fails loudly instead of silently skipping.
