@@ -953,3 +953,19 @@ class TestFallbackTextIsNotCached:
         good = ("# Table", 1, {"fallback_pages": [], "per_page_markdown": ["# Table"]})
         set_str = self._run(monkeypatch, good)
         set_str.assert_called_once()
+
+    def test_docling_not_installed_result_is_cached(self, monkeypatch):
+        """No Docling at all is the normal state, not a degradation: tesseract
+        is the only engine there is, so its text must still be cached."""
+        from services.extraction_backends.docling_backend import DoclingUnavailableError
+
+        monkeypatch.setattr("services.extraction_service._docling_package_installed", lambda: False)
+        set_str = self._run(monkeypatch, DoclingUnavailableError("not installed"))
+        set_str.assert_called_once()
+
+    def test_installed_docling_missing_dependency_is_not_cached(self, monkeypatch):
+        from services.extraction_backends.docling_backend import DoclingUnavailableError
+
+        monkeypatch.setattr("services.extraction_service._docling_package_installed", lambda: True)
+        set_str = self._run(monkeypatch, DoclingUnavailableError("Docling not installed: libGL.so.1"))
+        set_str.assert_not_called()

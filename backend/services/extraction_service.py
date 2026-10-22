@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # to Tesseract, which drops table rows, with no log line at all).
 _DOCLING_UNAVAILABLE_WARNED = False
 
-# Set whenever an extraction fell back from Docling to Tesseract, so
+# Set whenever an installed Docling failed and Tesseract took over, so
 # extract_text_from_file can skip caching the degraded text (it would outlive
 # the fix by the cache TTL).
 _DOCLING_FELL_BACK: contextvars.ContextVar[bool] = contextvars.ContextVar(
@@ -76,8 +76,9 @@ def reset_docling_fallback_state() -> None:
 
 def _warn_docling_fallback(err: Exception, where: str) -> None:
     global _DOCLING_UNAVAILABLE_WARNED
-    _DOCLING_FELL_BACK.set(True)
     if isinstance(err, DoclingUnavailableError) and not _docling_package_installed():
+        # Not a degradation: with no Docling, tesseract text is the only result
+        # there is, so it stays cacheable.
         if _DOCLING_UNAVAILABLE_WARNED:
             return
         _DOCLING_UNAVAILABLE_WARNED = True
@@ -86,6 +87,7 @@ def _warn_docling_fallback(err: Exception, where: str) -> None:
             "(logged once per process)", err, where,
         )
         return
+    _DOCLING_FELL_BACK.set(True)
     logger.warning(
         "Docling failed (%s: %s); %s falls back to tesseract, which loses "
         "tables and layout", type(err).__name__, err, where, exc_info=err,
