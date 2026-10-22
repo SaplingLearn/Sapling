@@ -380,6 +380,43 @@ export interface AllowlistEmail {
   /** Set at the first approved sign-in with this email (routes/auth.py). */
   joined_at: string | null;
   joined_user_id: string | null;
+  /** Delivery state of the "you're in" email to this address; null = never sent. */
+  invite_status: InviteStatus | null;
+}
+
+/** "skipped" = Resend not configured; "suppressed" = the address unsubscribed. */
+export type InviteStatus = "queued" | "sent" | "skipped" | "failed" | "suppressed";
+
+/** GET /api/admin/email/status. When `configured` is false, emails are recorded but not sent. */
+export interface EmailStatus {
+  configured: boolean;
+  from_address: string;
+}
+
+export type EmailAudienceKey =
+  | "waitlist_all"
+  | "waitlist_pending"
+  | "waitlist_approved_not_joined"
+  | "users_all";
+
+export interface EmailAudience {
+  key: EmailAudienceKey;
+  label: string;
+  count: number;
+}
+
+export interface EmailBroadcast {
+  id: string;
+  subject: string;
+  audience: string;
+  status: "sending" | "sent" | "failed";
+  recipient_count: number;
+  sent_count: number;
+  skipped_count: number;
+  failed_count: number;
+  created_at: string;
+  sent_at: string | null;
+  created_by: string | null;
 }
 
 export interface AchievementTrigger {
