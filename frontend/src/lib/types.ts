@@ -377,6 +377,9 @@ export interface AllowlistEmail {
   email: string;
   created_at: string;
   approved_at: string | null;
+  /** Set at the first approved sign-in with this email (routes/auth.py). */
+  joined_at: string | null;
+  joined_user_id: string | null;
 }
 
 export interface AchievementTrigger {

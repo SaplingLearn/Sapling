@@ -784,7 +784,7 @@ class TestListAllowlist:
         columns = call.args[0] if call.args else call.kwargs["columns"]
         # Shape matches the frontend AllowlistEmail type (types.ts).
         assert {c.strip() for c in columns.split(",")} == {
-            "id", "email", "created_at", "approved_at",
+            "id", "email", "created_at", "approved_at", "joined_at", "joined_user_id",
         }
         assert call.kwargs.get("order") == "created_at.desc"
 

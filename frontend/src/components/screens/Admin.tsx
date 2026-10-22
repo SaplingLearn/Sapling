@@ -973,6 +973,7 @@ function AllowlistTab() {
     ? emails.filter(e => e.email.toLowerCase().includes(query.toLowerCase()))
     : emails;
   const approved = emails.filter(e => e.approved_at).length;
+  const joined = emails.filter(e => e.joined_at).length;
   const pending = emails.length - approved;
 
   const add = async () => {
@@ -1012,7 +1013,7 @@ function AllowlistTab() {
     <>
       <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
         <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
-        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
+        <span style={{ color: "var(--accent)" }}>{approved} approved</span> · {joined} joined
         {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} unapproved signups</span></>}
       </div>
       <div className="card" style={{ padding: 0 }}>
@@ -1046,7 +1047,7 @@ function AllowlistTab() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "var(--bg-subtle)" }}>
-              {["Email", "Status", "Submitted", "Approved", ""].map(h => (
+              {["Email", "Status", "Submitted", "Approved", "Joined", ""].map(h => (
                 <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
                   {h}
                 </th>
@@ -1058,8 +1059,8 @@ function AllowlistTab() {
               <tr key={row.id} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "10px 16px", fontWeight: 500 }}>{row.email}</td>
                 <td style={{ padding: "10px 16px" }}>
-                  <span className={`chip ${row.approved_at ? "chip--accent" : "chip--warn"}`}>
-                    {row.approved_at ? "approved" : "signup"}
+                  <span className={`chip ${row.joined_at || row.approved_at ? "chip--accent" : "chip--warn"}`}>
+                    {row.joined_at ? "joined" : row.approved_at ? "approved" : "signup"}
                   </span>
                 </td>
                 <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
@@ -1067,6 +1068,9 @@ function AllowlistTab() {
                 </td>
                 <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
                   {row.approved_at ? new Date(row.approved_at).toLocaleDateString() : "—"}
+                </td>
+                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                  {row.joined_at ? new Date(row.joined_at).toLocaleDateString() : "—"}
                 </td>
                 <td style={{ padding: "10px 16px", textAlign: "right" }}>
                   <button

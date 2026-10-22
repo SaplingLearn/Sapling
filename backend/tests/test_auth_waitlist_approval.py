@@ -5,7 +5,9 @@ An admin approving an email under Admin → Allowlist sets
 `newsletter_emails.approved_at`. Before this, nothing read that column at
 sign-in, so the student still landed on /pending and had to be approved a
 second time as a `users` row. The callback now promotes a pending account whose
-email is approved on the waitlist.
+email is approved on the waitlist, and stamps the waitlist row as joined once
+an approved account gets in (users.email is encrypted, so sign-in is the only
+place the two can be matched).
 """
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
@@ -92,6 +94,13 @@ def _pending_user():
     return [{"id": "user_112233", "is_approved": False, "streak_count": 1}]
 
 
+def _joined_update(tables):
+    for c in tables["newsletter_emails"].update.call_args_list:
+        if "joined_at" in c.args[0]:
+            return c
+    return None
+
+
 def _approved_update(tables) -> bool:
     return any(
         c.args and c.args[0] == {"is_approved": True}
@@ -102,10 +111,14 @@ def _approved_update(tables) -> bool:
 def test_waitlist_approved_email_skips_pending(callback, monkeypatch):
     tables = _tables(
         monkeypatch, users_rows=_pending_user(),
-        waitlist_rows=[{"email": EMAIL, "approved_at": APPROVED_AT}],
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT}],
     )
     assert callback() == "/auth/callback"
     assert _approved_update(tables)
+    joined = _joined_update(tables)
+    assert joined.args[0]["joined_user_id"] == "user_112233"
+    # Only an unstamped row: a repeat sign-in never moves joined_at.
+    assert joined.kwargs["filters"] == {"id": "eq.w1", "joined_at": "is.null"}
 
 
 def test_new_account_on_approved_waitlist_is_let_in(callback, monkeypatch):
@@ -113,7 +126,7 @@ def test_new_account_on_approved_waitlist_is_let_in(callback, monkeypatch):
     # pending, then promoted by the waitlist check.
     tables = _tables(
         monkeypatch, users_rows=[],
-        waitlist_rows=[{"email": EMAIL, "approved_at": APPROVED_AT}],
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT}],
     )
     assert callback() == "/auth/callback"
     assert _approved_update(tables)
@@ -122,7 +135,7 @@ def test_new_account_on_approved_waitlist_is_let_in(callback, monkeypatch):
 def test_waitlist_match_is_case_insensitive(callback, monkeypatch):
     tables = _tables(
         monkeypatch, users_rows=_pending_user(),
-        waitlist_rows=[{"email": "Student@BU.edu", "approved_at": APPROVED_AT}],
+        waitlist_rows=[{"id": "w1", "email": "Student@BU.edu", "approved_at": APPROVED_AT}],
     )
     assert callback() == "/auth/callback"
     assert _approved_update(tables)
@@ -131,10 +144,11 @@ def test_waitlist_match_is_case_insensitive(callback, monkeypatch):
 def test_unapproved_waitlist_entry_stays_pending(callback, monkeypatch):
     tables = _tables(
         monkeypatch, users_rows=_pending_user(),
-        waitlist_rows=[{"email": EMAIL, "approved_at": None}],
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": None}],
     )
     assert callback() == "/pending"
     assert not _approved_update(tables)
+    assert _joined_update(tables) is None  # pending isn't joined
 
 
 def test_not_on_waitlist_stays_pending(callback, monkeypatch):
@@ -148,7 +162,7 @@ def test_wildcard_lookalike_does_not_approve(callback, monkeypatch):
     # that only matches as a pattern. Only an exact address counts.
     tables = _tables(
         monkeypatch, users_rows=_pending_user(),
-        waitlist_rows=[{"email": "*@bu.edu", "approved_at": APPROVED_AT}],
+        waitlist_rows=[{"id": "w1", "email": "*@bu.edu", "approved_at": APPROVED_AT}],
     )
     assert callback() == "/pending"
     assert not _approved_update(tables)
@@ -163,20 +177,52 @@ def test_lookup_failure_fails_closed(callback, monkeypatch):
     assert not _approved_update(tables)
 
 
-def test_already_approved_user_skips_waitlist_lookup(callback, monkeypatch):
+def _approved_user():
+    return [{"id": "user_112233", "is_approved": True, "streak_count": 1}]
+
+
+def test_user_approved_elsewhere_is_still_marked_joined(callback, monkeypatch):
+    # Approved under Admin → Users, never on the waitlist: still a waitlist
+    # signup who got in.
     tables = _tables(
-        monkeypatch,
-        users_rows=[{"id": "user_112233", "is_approved": True, "streak_count": 1}],
+        monkeypatch, users_rows=_approved_user(),
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": None, "joined_at": None}],
     )
     assert callback() == "/auth/callback"
-    tables["newsletter_emails"].select.assert_not_called()
+    assert _joined_update(tables) is not None
+
+
+def test_already_joined_is_not_restamped(callback, monkeypatch):
+    tables = _tables(
+        monkeypatch, users_rows=_approved_user(),
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT,
+                        "joined_at": APPROVED_AT}],
+    )
+    assert callback() == "/auth/callback"
+    assert _joined_update(tables) is None
+
+
+def test_joined_stamp_failure_never_breaks_sign_in(callback, monkeypatch):
+    tables = _tables(
+        monkeypatch, users_rows=_approved_user(),
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT}],
+    )
+    tables["newsletter_emails"].update.side_effect = RuntimeError("postgrest down")
+    assert callback() == "/auth/callback"
+
+
+def test_case_twin_prefers_the_approved_row(monkeypatch):
+    _tables(monkeypatch, users_rows=[], waitlist_rows=[
+        {"id": "w1", "email": "Student@bu.edu", "approved_at": None},
+        {"id": "w2", "email": "student@bu.edu", "approved_at": APPROVED_AT},
+    ])
+    assert auth_module._waitlist_entry(EMAIL)["id"] == "w2"
 
 
 def test_lookup_escapes_like_metacharacters(monkeypatch):
     # `_` is LIKE's single-character wildcard; unescaped, a.b_c@bu.edu would
     # also match a.bXc@bu.edu at the DB.
     tables = _tables(monkeypatch, users_rows=[], waitlist_rows=[])
-    auth_module._waitlist_approved("  A.B_C@bu.edu ")
+    auth_module._waitlist_entry("  A.B_C@bu.edu ")
     filters = tables["newsletter_emails"].select.call_args.kwargs["filters"]
-    assert filters["approved_at"] == "not.is.null"
     assert filters["or"] == '(email.ilike."a.b\\\\_c@bu.edu")'
