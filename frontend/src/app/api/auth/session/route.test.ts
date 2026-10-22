@@ -60,3 +60,45 @@ describe('session route — CSRF / same-origin enforcement (#190)', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('session route — PR preview hosts', () => {
+  const PREVIEW = 'https://pr-742-frontend-staging.saplinglearn.workers.dev';
+
+  async function signIn(origin: string) {
+    const { POST } = await loadRoute({ SESSION_SECRET: SECRET, DEPLOY_ENV: 'staging' });
+    const { signSession } = await import('@/lib/sessionToken');
+    const req = new NextRequest(`${origin}/api/auth/session`, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json' },
+      body: JSON.stringify({ authToken: await signSession('user_1') }),
+    });
+    return POST(req);
+  }
+
+  it('sets a host-only session cookie on a preview host', async () => {
+    // A `.staging.saplinglearn.com` Domain from a workers.dev host is dropped
+    // by the browser, so the preview would never stay signed in.
+    const res = await signIn(PREVIEW);
+    expect(res.status).toBe(200);
+    const cookie = res.cookies.get('sapling_session');
+    expect(cookie?.value).toBeTruthy();
+    expect(cookie?.domain).toBeUndefined();
+  });
+
+  it('keeps the staging cookie domain on the staging host', async () => {
+    const res = await signIn('https://staging.saplinglearn.com');
+    expect(res.status).toBe(200);
+    expect(res.cookies.get('sapling_session')?.domain).toBe('.staging.saplinglearn.com');
+  });
+
+  it('clears the host-only cookie on a preview host', async () => {
+    const { DELETE } = await loadRoute({ SESSION_SECRET: SECRET, DEPLOY_ENV: 'staging' });
+    const res = await DELETE(new NextRequest(`${PREVIEW}/api/auth/session`, { method: 'DELETE' }));
+    expect(res.cookies.get('sapling_session')?.domain).toBeUndefined();
+  });
+
+  it('does not treat a lookalike suffix as inside the cookie domain', async () => {
+    const res = await signIn('https://evilstaging.saplinglearn.com');
+    expect(res.cookies.get('sapling_session')?.domain).toBeUndefined();
+  });
+});
