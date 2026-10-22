@@ -17,7 +17,7 @@ import secrets
 import time as _time
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -38,7 +38,7 @@ from config import (
     ALLOWED_EMAIL_DOMAINS,
 )
 from db.connection import like_literal, pg_quote_value, table
-from services import events_service
+from services import email_service, events_service
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
 from services.session_tokens import SESSION_COOKIE_NAME, mint_session
@@ -205,6 +205,28 @@ def _pending_token_email(token: str) -> str | None:
     """The sign-in email a pending token carries, or None if forged or expired."""
     claims = _pending_token_claims(token)
     return claims["email"] if claims else None
+
+
+def _claim_welcome(user_id: str) -> bool:
+    """Atomically claim this account's welcome email.
+
+    A conditional PATCH (`welcomed_at=is.null`) that returns the row only to
+    the ONE sign-in that flipped it, so two concurrent first sign-ins cannot
+    both send. Backfilled for every account approved before the email system
+    existed (migration *_email.sql), so existing students are never welcomed
+    late. Best-effort: a failure (including the column not existing yet during
+    a deploy) just means no welcome, never a broken sign-in.
+    """
+    from datetime import datetime, timezone
+    try:
+        rows = table("users").update(
+            {"welcomed_at": datetime.now(timezone.utc).isoformat()},
+            filters={"id": f"eq.{user_id}", "welcomed_at": "is.null"},
+        )
+    except Exception:
+        logger.warning("welcome claim failed for %r", user_id, exc_info=True)
+        return False
+    return bool(rows)
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -519,7 +541,12 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
 
 
 @router.get("/google/callback")
-def google_callback(request: Request, code: str = Query(...), state: str = Query(None)):
+def google_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    code: str = Query(...),
+    state: str = Query(None),
+):
     """Exchange auth code for tokens, validate @bu.edu, upsert user."""
     cookie_payload = _decode_oauth_cookie(request.cookies.get(OAUTH_STATE_COOKIE))
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
@@ -726,6 +753,16 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
 
     if not is_approved:
         return _not_approved(email, first_name)
+
+    # Welcome email, once per account, on the first sign-in that gets in. The
+    # claim happens here; the send runs after the redirect is returned.
+    if _claim_welcome(user_id):
+        email_service.queue_welcome(
+            background_tasks,
+            email=email,
+            user_id=user_id,
+            first_name=(user_info.get("given_name") or first_name or None),
+        )
 
     # First-login achievement (F7). The login-streak achievements ("First Steps"
     # and friends) were only ever evaluated at study-session end (learn.py), so a

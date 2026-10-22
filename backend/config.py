@@ -55,6 +55,16 @@ AUTH_SCOPES = [
 ]
 
 
+# Transactional + broadcast email over Resend (services/email_service.py).
+# RESEND_API_KEY unset/empty is the kill switch: every send is still recorded in
+# `email_sends` (status `skipped`) and logged at INFO, but nothing leaves the
+# process. Tests, E2E and local dev run without it and never touch the network.
+# email_service reads these off this module at call time, so a test can patch them.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip() or "Sapling <hello@saplinglearn.com>"
+EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
+
+
 STORAGE_BUCKET: str = "avatars"
 MAX_AVATAR_SIZE: int = 5 * 1024 * 1024  # 5 MB
 

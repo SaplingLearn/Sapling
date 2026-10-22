@@ -202,8 +202,14 @@ class TestExistingUserUnchanged:
         )
 
         assert response.status_code in (302, 307)
-        mocks["users"].update.assert_called_once()
-        assert mocks["users"].update.call_args.kwargs["filters"] == {"id": f"eq.{legacy_id}"}
+        # The welcome-email claim (a conditional `welcomed_at=is.null` PATCH,
+        # routes/auth.py::_claim_welcome) is a separate update; this test is
+        # about the auth-field update.
+        auth_updates = [
+            c for c in mocks["users"].update.call_args_list if "welcomed_at" not in c.args[0]
+        ]
+        assert len(auth_updates) == 1
+        assert auth_updates[0].kwargs["filters"] == {"id": f"eq.{legacy_id}"}
         mocks["users"].upsert.assert_not_called()
         mocks["users"].insert.assert_not_called()
 
