@@ -47,7 +47,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             never scroll away, and track the rail's width as it collapses
             because they ride this column's left edge. See .shell-corner. */}
         <div style={{ flex: 1, minWidth: 0, display: "flex", position: "relative" }}>
-          {/* Before <main> so main's stacking context paints over them. */}
           <span aria-hidden className="shell-corner shell-corner--top" />
           <span aria-hidden className="shell-corner shell-corner--bottom" />
           <main
@@ -60,12 +59,15 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
             // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
             // so this — not <body> — is what scrolls. `useScrollLock` targets it.
             data-scroll-container=""
+            // No z-index: DOM order already lifts <main> over the z-0
+            // backdrop canvas, and a stacking context here would trap every
+            // overlay inside it (graph full view, modals) below the
+            // .shell-corner pieces, which must sit above opaque screens.
             style={{
               flex: 1,
               overflowY: "auto",
               minWidth: 0,
               position: "relative",
-              zIndex: 1,
             }}
           >
             <NavFeatureGate>{children}</NavFeatureGate>
