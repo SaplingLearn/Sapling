@@ -41,7 +41,7 @@ documents.extracted_text
 document_notes_agent (NOTES_LIMITS, not WORKER_LIMITS)
         │  ComprehensiveNotes { sections: [NotesSection, ...] }
         │  NotesSection.body: str (prose + "- "/"1. " lines + $..$/$$..$$ spans)
-        │  NotesSection.table: TableBlock | None (structured, not parsed)
+        │  NotesSection.table_headers/table_rows: list[str] (flat, not parsed)
         ▼
 prosemirror_doc_from_sections()
         │  per section: heading node, then body_to_prosemirror_nodes(body),
@@ -75,15 +75,6 @@ has something coherent to reason about.
 **Backend (Pydantic, `agents/document_notes.py`):**
 
 ```python
-class TableBlock(BaseModel):
-    """A single table. Flat, not parsed from text — eliminates the single
-    highest-ambiguity part of letting an LLM emit tabular data (column
-    alignment, missing separator rows) by never asking it to express a
-    table as text in the first place."""
-    headers: list[str]
-    rows: list[list[str]]
-
-
 class NotesSection(BaseModel):
     heading: str
     heading_level: int
@@ -95,13 +86,22 @@ class NotesSection(BaseModel):
             "code blocks."
         ),
     )
-    table: TableBlock | None = Field(
-        default=None,
+    table_headers: list[str] = Field(
+        default_factory=list,
         description=(
-            "A structured table for this section, when the material is "
-            "naturally tabular (a comparison, a list of named facts). Give "
-            "the section a dedicated heading when it is primarily a table; "
-            "do not also restate the table's content as prose in body."
+            "Column headers for this section's table, when the material is "
+            "naturally tabular (a comparison, a list of named facts). Empty "
+            "list means this section has no table. Give the section a "
+            "dedicated heading when it is primarily a table; do not also "
+            "restate the table's content as prose in body."
+        ),
+    )
+    table_rows: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Each entry is one table row: its cells, in the same order as "
+            "table_headers, joined with a single tab character (\\t). Must "
+            "be empty when table_headers is empty."
         ),
     )
 
@@ -110,9 +110,21 @@ class ComprehensiveNotes(BaseModel):
     sections: list[NotesSection] = Field(min_length=1)
 ```
 
-Still flat — `table` is a sibling field on the existing section shape, not a
-new level of nesting, so the structured-output budget concern that kept
-`NotesSection` flat in the first place still holds.
+**Correction from the first draft of this spec:** the original design put a
+`table: TableBlock | None` sub-model on `NotesSection`. `agents/__init__.py`'s
+docstring states a hard, CI-enforced budget for every agent output
+schema — "no optional NESTED models (`Sub | None`)... one level of object
+nesting below the root (root → list[Item]) is the ceiling" — codified
+executably in `tests/test_agent_output_schemas.py` (`MAX_OBJECT_DEPTH = 2`).
+`ComprehensiveNotes → list[NotesSection]` is already at that ceiling; a
+`TableBlock | None` field would add a second level and fail that test (and,
+per the budget's own history, risk Gemini rejecting the schema outright —
+the exact failure `docs/attempts/2026-05-03-orchestrator-schema-complexity.md`
+documents). The corrected design — two flat `list[str]` fields, a table row
+encoded as a single tab-joined string — follows the *exact same pattern*
+`heading_level` already uses on this same model: encode structure through a
+flat scalar/list-of-scalars convention instead of real nesting. No sub-model,
+no added depth.
 
 **No new database columns or tables.** `summary_docs.content` stays the same
 JSONB column; it just holds a wider vocabulary of ProseMirror node types.
@@ -124,7 +136,7 @@ unencrypted alongside the existing encrypted one.
 ## 4. Backend
 
 **`agents/document_notes.py`:**
-- `TableBlock` + `NotesSection.table` as above.
+- `NotesSection.table_headers`/`table_rows` as above.
 - System prompt extended: use a table when comparing multiple items or
   listing structured facts; use `$...$`/`$$...$$` for any mathematical
   expression rather than describing it in prose; use list lines for
@@ -150,22 +162,30 @@ unencrypted alongside the existing encrypted one.
   a text node. No general markdown — no headings, links, emphasis, or HTML
   recognized inside `body` (those don't belong in body text at all; headings
   come from the section's own `heading`/`heading_level` fields).
-- New `table_to_prosemirror_node(table: TableBlock) -> dict`: direct
-  structural conversion, no parsing — `table`/`tableRow`/`tableCell`/
-  `tableHeader` nodes from `headers`/`rows`.
+- New `table_to_prosemirror_node(headers: list[str], rows: list[str]) -> dict`:
+  direct structural conversion, no parsing — splits each row string on `\t`
+  to get cells — `table`/`tableRow`/`tableCell`/`tableHeader` nodes from
+  `headers`/`rows`.
 - `prosemirror_doc_from_sections`: per section, after the heading node, call
   `body_to_prosemirror_nodes` then append `table_to_prosemirror_node` if
-  `section.table` is set.
+  `section.table_headers` is non-empty.
 - `plaintext_from_prosemirror`: extended to walk `table` nodes (render as
   tab-separated rows) and the new math node type (render its `latex`
   attribute, wrapped in `$...$` or `$$...$$` matching whether it was inline
   or block), in addition to the paragraph/heading walking it already does.
 - `create_suggestion`: after building `proposed_text` as today, also compute
-  `proposed_content = body_to_prosemirror_nodes(proposed_text)` (plus a table
-  node if the agent's structured output included one — `summary_edit_agent`'s
-  own output type gains the same optional `table: TableBlock | None` field
-  `NotesSection` has, for symmetry) and include it in the returned dict.
-  Never passed to `table("summary_doc_suggestions").insert(...)`.
+  `proposed_content = body_to_prosemirror_nodes(proposed_text)` and include it
+  in the returned dict. Never passed to
+  `table("summary_doc_suggestions").insert(...)`.
+  **`summary_edit_agent`'s output type does NOT gain a table field** —
+  `agents/summary_edit.py`'s `SummaryEdit` is explicitly documented as kept
+  to one field for the same schema-budget reason (its own docstring cites
+  the same `docs/attempts/2026-05-03-orchestrator-schema-complexity.md`
+  lesson). A suggestion can carry lists and inline math (both live inside
+  the `body_to_prosemirror_nodes` conversion of plain text) but not a
+  brand-new AI-proposed table in this sub-project — consistent with §8: no
+  toolbar exists yet to manually insert one either, so this isn't a user-
+  visible gap yet.
 - `get_summary_doc`: for each row in `pending_suggestions`, compute the same
   `proposed_content` after decryption, before returning — the Keep flow works
   identically whether the suggestion was just created or fetched on a later
@@ -236,9 +256,9 @@ from inserting `s.proposed_text` (a string) to inserting `s.proposed_content`
   never raises. An empty `rows` list still renders a table with just the
   header row.
 - Agent-side: `document_notes_agent` keeps its existing `retries=2`
-  output-validation budget — the new fields are additive and optional
-  (`table` defaults to `None`), so this doesn't change the agent's failure
-  modes, only what a successful output can contain.
+  output-validation budget — the new fields are additive, both defaulting to
+  an empty list, so this doesn't change the agent's failure modes, only what
+  a successful output can contain.
 
 ## 8. Explicitly out of scope (this sub-project)
 
@@ -260,12 +280,15 @@ from inserting `s.proposed_text` (a string) to inserting `s.proposed_content`
 
 ## 9. Key decisions (for future reference)
 
-- **Tables are a structured field, not parsed text.** The single highest-risk
-  part of "let the LLM write markdown" is column-aligned pipe tables — easy
-  for a model to get subtly wrong (missing separator row, inconsistent cell
-  counts) and hard for a parser to recover from gracefully. Making `table` a
-  flat, optional, directly-typed field sidesteps that risk entirely rather
-  than mitigating it with better parsing.
+- **Tables are structured fields, not parsed text — and not a sub-model
+  either.** The single highest-risk part of "let the LLM write markdown" is
+  column-aligned pipe tables — easy for a model to get subtly wrong (missing
+  separator row, inconsistent cell counts) and hard for a parser to recover
+  from gracefully. `table_headers`/`table_rows` as flat `list[str]` fields
+  sidesteps that risk entirely rather than mitigating it with better
+  parsing — and, per the §3 correction, stays flat rather than introducing a
+  `TableBlock` sub-model, which this codebase's own CI-enforced
+  structured-output budget (`tests/test_agent_output_schemas.py`) forbids.
 - **One converter, not two.** The frontend never parses the markdown-lite
   dialect itself. `proposed_content` is always server-computed, so the
   suggestion/Keep path and the initial-seed path share exactly one
