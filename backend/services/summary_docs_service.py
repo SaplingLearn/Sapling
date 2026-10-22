@@ -229,6 +229,44 @@ def prosemirror_doc_from_sections(sections: list[dict]) -> dict:
     return {"type": "doc", "content": content}
 
 
+def _inline_content_to_text(content: list[dict]) -> str:
+    """Concatenate a block node's inline children with no separator
+    (mirroring how ProseMirror itself renders marks as adjacent text
+    runs). Text nodes contribute their text verbatim; math nodes render
+    back to their LaTeX source wrapped in `$...$` (inline) or `$$...$$`
+    (block, per `attrs.block`) so the agent reading this text can
+    coherently reason about a formula it didn't just generate."""
+    parts = []
+    for child in content:
+        if child.get("type") == "text":
+            parts.append(child.get("text", ""))
+        elif child.get("type") == "math":
+            attrs = child.get("attrs") or {}
+            latex = attrs.get("latex", "")
+            parts.append(f"$${latex}$$" if attrs.get("block") else f"${latex}$")
+    return "".join(parts)
+
+
+def _table_node_to_text(node: dict) -> str:
+    """Render a `table` node (see `table_to_prosemirror_node`) back to
+    tab-separated rows, one row per line — table cells are
+    paragraph-wrapped (`tableCell`/`tableHeader` -> `paragraph` ->
+    inline content), so each cell's text is pulled through
+    `_inline_content_to_text` via its wrapping paragraph(s)."""
+    rows = []
+    for row in node.get("content") or []:
+        cells = []
+        for cell in row.get("content") or []:
+            cell_text = "".join(
+                _inline_content_to_text(p.get("content") or [])
+                for p in (cell.get("content") or [])
+                if p.get("type") == "paragraph"
+            )
+            cells.append(cell_text)
+        rows.append("\t".join(cells))
+    return "\n".join(rows)
+
+
 def plaintext_from_prosemirror(doc: dict, max_chars: int | None = None) -> str:
     """Walk a ProseMirror doc and concatenate its text nodes — paragraphs
     AND headings (comprehensive notes seed section headings via
@@ -237,18 +275,27 @@ def plaintext_from_prosemirror(doc: dict, max_chars: int | None = None) -> str:
     blank line, text nodes within a block concatenated with no separator
     (mirroring how ProseMirror itself renders marks as adjacent text runs).
     Used for search/preview text and as agent context, never for
-    re-rendering: formatting is intentionally lost."""
+    re-rendering: formatting is intentionally lost.
+
+    `table` nodes (from `table_to_prosemirror_node`) render as
+    tab-separated rows, and `math` nodes (inline or block, from
+    `body_to_prosemirror_nodes`) render back to their `$...$`/`$$...$$`
+    LaTeX source — both joined into the same blank-line-separated block
+    list as paragraphs/headings, so an "ask" prompt that feeds the
+    current document back to the agent (`create_suggestion`) can see and
+    reason about rich content it didn't just generate, not just have it
+    silently vanish."""
     paragraph_texts: list[str] = []
     for node in doc.get("content") or []:
-        if node.get("type") not in ("paragraph", "heading"):
-            continue
-        text = "".join(
-            child.get("text", "")
-            for child in (node.get("content") or [])
-            if child.get("type") == "text"
-        )
-        if text:
-            paragraph_texts.append(text)
+        node_type = node.get("type")
+        if node_type in ("paragraph", "heading"):
+            text = _inline_content_to_text(node.get("content") or [])
+            if text:
+                paragraph_texts.append(text)
+        elif node_type == "table":
+            text = _table_node_to_text(node)
+            if text:
+                paragraph_texts.append(text)
     joined = "\n\n".join(paragraph_texts)
     if max_chars is not None:
         return joined[:max_chars]

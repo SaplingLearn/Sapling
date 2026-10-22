@@ -224,6 +224,40 @@ class TestPlaintextFromProsemirror:
         doc = prosemirror_doc_from_text("A" * 500)
         assert len(plaintext_from_prosemirror(doc, max_chars=50)) == 50
 
+    def test_renders_a_table_node_back_to_tab_separated_text(self):
+        doc = {
+            "type": "doc",
+            "content": [
+                table_to_prosemirror_node(["Claim", "Description"], ["Cells\tLiving things are cells"]),
+            ],
+        }
+        text = plaintext_from_prosemirror(doc)
+        assert "Claim\tDescription" in text
+        assert "Cells\tLiving things are cells" in text
+
+    def test_renders_an_inline_math_node_back_to_dollar_wrapped_latex(self):
+        doc = {
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "The formula is "},
+                    {"type": "math", "attrs": {"latex": "F = ma", "block": False}},
+                ],
+            }],
+        }
+        assert plaintext_from_prosemirror(doc) == "The formula is $F = ma$"
+
+    def test_renders_a_block_math_node_back_to_double_dollar_wrapped_latex(self):
+        doc = {
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{"type": "math", "attrs": {"latex": "x^2", "block": True}}],
+            }],
+        }
+        assert plaintext_from_prosemirror(doc) == "$$x^2$$"
+
 
 class TestCreateSummaryDoc:
     def test_inserts_doc_source_and_initial_version(self):
