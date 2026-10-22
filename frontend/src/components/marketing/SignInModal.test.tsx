@@ -91,6 +91,15 @@ describe('#715 popup sign-in routing', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
+  it('starts sign-in with this origin as return_to so a PR preview gets the user back', () => {
+    render(<SignInModal open onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    const url = new URL(vi.mocked(window.open).mock.calls[0][0] as string, window.location.href);
+    expect(url.pathname).toBe('/api/auth/google');
+    expect(url.searchParams.get('return_to')).toBe(window.location.origin);
+    expect(url.searchParams.get('popup_id')).toBe(channels[0].name.replace('sapling_signin:', ''));
+  });
+
   it('does not ask when the account is already onboarded', async () => {
     const fetchMock = stubLocalSeed(200, { state: 'pending' });
     await signInThroughPopup(true);

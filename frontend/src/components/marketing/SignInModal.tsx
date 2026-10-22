@@ -143,7 +143,11 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
       typeof crypto !== "undefined" &&
       typeof crypto.randomUUID === "function";
 
-    const sameTabUrl = `${API_URL}/api/auth/google`;
+    // A PR preview's origin isn't the backend's FRONTEND_URL: the staging
+    // backend sends the hand-off back here when it's an allowlisted preview
+    // origin and ignores it everywhere else.
+    const returnTo = encodeURIComponent(window.location.origin);
+    const sameTabUrl = `${API_URL}/api/auth/google?return_to=${returnTo}`;
 
     if (!supportsPopup) {
       setWaiting(true);
@@ -152,7 +156,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
     }
 
     const popupId = crypto.randomUUID();
-    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}`;
+    const popupUrl = `${API_URL}/api/auth/google?popup_id=${encodeURIComponent(popupId)}&return_to=${returnTo}`;
 
     cleanupPopupListeners();
     const channel = new BroadcastChannel(`sapling_signin:${popupId}`);
