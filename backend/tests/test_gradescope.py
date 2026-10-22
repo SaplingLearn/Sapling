@@ -491,6 +491,34 @@ class TestAuthenticationValidation:
     def test_rejects_non_account_redirects(self, url):
         assert not gs._is_gradescope_url(url, account=True)
 
+    @pytest.mark.parametrize("url", [
+        "https://www.gradescope.com/",
+        "https://www.gradescope.com",
+        "https://gradescope.com/",
+    ])
+    def test_the_gradescope_root_counts_as_landed_off_login(self, url):
+        # A successful password POST or SAML callback can land on the root;
+        # /account verification (not this check) is what proves the login.
+        assert gs._is_gradescope_url(url)
+
+    def test_the_login_page_is_not_landed_off_login(self):
+        assert not gs._is_gradescope_url("https://www.gradescope.com/login")
+        assert not gs._is_gradescope_url("https://www.gradescope.com/login/")
+
+    def test_password_login_that_lands_on_the_root_is_accepted(self):
+        session = MagicMock()
+        session.get.side_effect = [
+            SimpleNamespace(text='<form action="/login"><input name="authenticity_token" value="csrf"></form>', raise_for_status=lambda: None),
+            SimpleNamespace(status_code=200, url="https://www.gradescope.com/account"),
+        ]
+        session.post.return_value = SimpleNamespace(
+            status_code=200, history=[SimpleNamespace(status_code=302)],
+            url="https://www.gradescope.com/", text="",
+        )
+        with patch.object(gs, "_new_session", return_value=session):
+            connection = gs.login("student@example.edu", "test-password")
+        assert connection.logged_in is True
+
     def test_password_redirect_to_error_page_is_not_a_login(self):
         session = MagicMock()
         session.get.side_effect = [

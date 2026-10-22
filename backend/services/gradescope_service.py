@@ -106,12 +106,16 @@ def _require_gradescopeapi() -> None:
 
 
 def _is_gradescope_url(url: str, *, account: bool = False) -> bool:
-    """Accept only HTTPS Gradescope pages, never a matching substring in an IdP URL."""
+    """Accept only HTTPS Gradescope pages, never a matching substring in an IdP URL.
+
+    The root counts as "off /login": a successful password POST or SAML
+    callback can land there, and the /account check is what proves the login.
+    """
     parsed = urlparse(url)
     valid = parsed.scheme == "https" and parsed.hostname in {"gradescope.com", "www.gradescope.com"}
     if account:
         return valid and parsed.path.rstrip("/") == "/account"
-    return valid and parsed.path.rstrip("/") not in {"", "/login"}
+    return valid and parsed.path.rstrip("/") != "/login"
 
 
 def _is_bu_login_url(url: str) -> bool:
