@@ -85,5 +85,6 @@ links in staging emails land on the Access login. Prod is unaffected.
 - `POST /api/newsletter/subscribe` is public and has no rate limit or bot
   check. Dedupe caps it at one confirmation per address, but adding Turnstile
   there would stop it being used to mail strangers.
-- Approving under Admin → Users sends nothing; that person gets the welcome
-  on their next sign-in.
+- Admin → Users can remove someone's access (they go back on the Allowlist as a
+  signup) but sends no email; approving them again on the Allowlist doesn't
+  re-send "you're in", since that's deduped per address.
