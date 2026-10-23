@@ -1119,10 +1119,10 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
   return fetchJSON<PaginatedUsers>(`/api/admin/users${suffix}`);
 };
 
-export const adminApproveUser = (userId: string) =>
-  fetchJSON<{ approved: boolean }>(`/api/admin/users/${userId}/approve`, { method: 'PATCH' });
-
-export const adminUnapproveUser = (userId: string) =>
+// Remove access: the account leaves Admin → Users and its email goes back on
+// the waitlist as a signup (Admin → Allowlist). Data is kept. The route keeps
+// its historical `/unapprove` path; 409 on your own account.
+export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
 
 // Admin — feedback (#520; decrypted server-side, admin-only)
