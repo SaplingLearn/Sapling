@@ -323,8 +323,8 @@ def test_template_images_load_from_the_asset_base(monkeypatch):
     monkeypatch.setattr(config, "FRONTEND_URL", "https://staging.example")
     monkeypatch.setattr(config, "EMAIL_ASSET_BASE_URL", "")
     _, html, _ = email_templates.waitlist_confirmation(unsubscribe_url="https://u.example")
-    assert 'src="https://staging.example/email/wordmark.png"' in html
+    assert 'src="https://staging.example/email/header.jpg"' in html
     monkeypatch.setattr(config, "EMAIL_ASSET_BASE_URL", "https://saplinglearn.com/")
     _, html, _ = email_templates.broadcast("Hi", "Body", unsubscribe_url="https://u.example")
-    assert 'src="https://saplinglearn.com/email/wordmark.png"' in html
+    assert 'src="https://saplinglearn.com/email/header.jpg"' in html
     assert "staging.example/email/" not in html

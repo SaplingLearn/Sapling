@@ -1,13 +1,14 @@
 """Email bodies. Pure functions returning `(subject, html, text)`.
 
-The look: a plain white card with the green wordmark at the top over a
-hairline, Aleo headlines and SUSE body text, everything left-aligned. The three lifecycle
+The look: a white card topped with the landing page's hero, frozen into an
+image (the pale ground, the point cloud and the wordmark), then Aleo headlines
+and SUSE body text, everything left-aligned. The three lifecycle
 emails carry a progress line (Signed up, Approved, Signed in) so a student can
 see where they are; broadcasts are the same card without it.
 
 Built for email clients, not browsers: nested tables, inline styles, `bgcolor`
 attributes for Outlook, and PNG/JPEG images only (Gmail won't render SVG). The
-two images (wordmark, knowledge-tree screenshot) are built by
+two images (the hero header, the knowledge-tree screenshot) are built by
 scripts/build_email_assets.py and served from
 {EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/. Aleo and SUSE load from Google
 Fonts where the client allows it (Apple Mail, iOS) and fall back to Georgia /
@@ -244,11 +245,10 @@ def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubsc
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_OUTER}" style="background:{_OUTER};">
 <tr><td align="center" style="padding:32px 12px 40px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;border-radius:12px;overflow:hidden;background:{_PAPER};border:1px solid {_RULE};">
-<tr><td class="px" bgcolor="{_PAPER}" style="background:{_PAPER};padding:30px 48px 24px 48px;">
-<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("wordmark.png"))}" width="96" height="26" alt="Sapling" style="display:block;width:96px;height:26px;border:0;"></a>
+<tr><td bgcolor="#F2F4F0" style="font-size:0;line-height:0;background:#F2F4F0;">
+<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("header.jpg"))}" width="600" alt="Sapling" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></a>
 </td></tr>
-{_rule()}
-{_spacer(36)}
+{_spacer(12)}
 {"".join(rows)}
 {_spacer(40)}
 </table>

@@ -30,15 +30,15 @@ prefetch GETs. A suppressed address gets no email of any kind.
 
 ## Design and images
 
-`services/email_templates.py` builds every email: the green wordmark over a
-hairline on a white card, Aleo headlines and SUSE body text, all
+`services/email_templates.py` builds every email: the landing page hero
+(pale ground, point cloud, wordmark) frozen into a header image over a white card, Aleo headlines and SUSE body text, all
 left-aligned. The three lifecycle emails show a Signed up / Approved / Signed in
 progress line; the "you're in" email adds a knowledge-tree screenshot.
 Broadcasts are the same card without the progress line. Aleo and SUSE load from
 Google Fonts where the client allows it (Apple Mail, iOS); Gmail and Outlook
 fall back to Georgia and the system sans.
 
-The two images are PNG/JPEG (Gmail won't show SVG) in `frontend/public/email/`,
+The two images are JPEGs (Gmail won't show SVG) in `frontend/public/email/`,
 built by `backend/scripts/build_email_assets.py` (needs `rsvg-convert` and
 ImageMagick). They load from `{EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/`,
 so they only work once the frontend serving them is deployed. Admin → Email
