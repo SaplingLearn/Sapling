@@ -7,14 +7,14 @@
 //     src/components/landing-v5/Hero.tsx (same palette, cluster centres,
 //     spread and link rule, at rest: no rotation, no mouse), thinned out;
 //   - the hero's legibility glow behind the wordmark;
-//   - the wordmark typeset exactly as the hero sets it: Aleo semibold,
-//     tracking-tight, brand forest, with LeafI's clipped "i" under the
-//     brand leaf;
+//   - the landing navbar's logo: the approved hand-drawn wordmark SVG,
+//     drawn the way src/components/SaplingWordmark.tsx draws it (an <img>),
+//     just larger;
 //   - a fade into the email's white card at the bottom.
 //
 // Email clients can't run canvas or render SVG/web fonts reliably, so a real
 // browser (Playwright's Chromium, already installed for the E2E lane) renders
-// it once into a JPEG. Re-run after changing the hero, the font or the leaf:
+// it once into a JPEG. Re-run after changing the hero or the wordmark:
 //
 //   cd frontend && node scripts/build-email-header.mjs
 //
@@ -34,7 +34,6 @@ const W = 600;
 const H = 220;
 const GROUND = "#F2F4F0";
 const CARD = "#ffffff";
-const FOREST = "#445D22";
 
 // Hero.tsx's background-node palette and cluster centres.
 const PALETTE = [
@@ -111,32 +110,26 @@ function cloudSvg() {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${links.join("")}${dots.join("")}</svg>`;
 }
 
+// The navbar shows it 132px wide; the email header shows it at this width.
+const MARK_W = 250;
+
 function page() {
-  const font = pathToFileURL(join(FRONTEND, "src", "app", "fonts", "Aleo-variable.woff2")).href;
-  const leaf = pathToFileURL(join(FRONTEND, "public", "design", "sapling", "sapling-leaf.svg")).href;
-  // The wordmark block mirrors Hero.tsx's <h1> and LeafI.tsx: Aleo 600,
-  // tracking-tight (-0.025em), brand forest; the "i" clipped at 25.5% under a
-  // 0.3em leaf at left 50%, top -0.02em, translateX(-38%).
+  const mark = pathToFileURL(join(FRONTEND, "public", "design", "sapling", "sapling-wordmark-approved.svg")).href;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
-@font-face { font-family: Aleo; src: url("${font}") format("woff2"); font-weight: 100 900; }
 html, body { margin: 0; padding: 0; }
 #h { position: relative; width: ${W}px; height: ${H}px; overflow: hidden; background: ${GROUND}; }
 #cloud { position: absolute; inset: 0; }
 #glow { position: absolute; inset: 0;
   background: radial-gradient(ellipse 34% 46% at 50% 47%, rgba(242,244,240,0.96) 0%, rgba(242,244,240,0.8) 45%, rgba(242,244,240,0.35) 75%, rgba(242,244,240,0) 100%); }
 #foot { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,0) 58%, ${CARD} 100%); }
-#mark { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-56%); text-align: center;
-  font-family: Aleo, Georgia, serif; font-weight: 600; letter-spacing: -0.025em; color: ${FOREST};
-  font-size: 76px; line-height: 1.1; white-space: nowrap; }
-.i { position: relative; display: inline-block; line-height: 1; }
-.i > span { display: inline-block; clip-path: polygon(-50% 25.5%, 150% 25.5%, 150% 150%, -50% 150%); }
-.i > img { position: absolute; left: 50%; top: -0.02em; width: 0.3em; height: auto; transform: translateX(-38%); }
+#mark { position: absolute; left: 50%; top: 47%; transform: translate(-50%, -50%);
+  display: block; width: ${MARK_W}px; height: auto; }
 </style></head><body>
 <div id="h">
   <div id="cloud">${cloudSvg()}</div>
   <div id="glow"></div>
   <div id="foot"></div>
-  <div id="mark">Sapl<span class="i"><span>i</span><img src="${leaf}" alt=""></span>ng</div>
+  <img id="mark" src="${mark}" alt="Sapling">
 </div>
 </body></html>`;
 }
@@ -151,9 +144,6 @@ try {
     await tab.goto(pathToFileURL(html).href);
     await tab.evaluate(() => document.fonts.ready);
     await tab.waitForFunction(() => [...document.images].every((img) => img.complete && img.naturalWidth > 0));
-    if (!(await tab.evaluate(() => document.fonts.check('600 76px Aleo')))) {
-      throw new Error("Aleo did not load; the wordmark would render in a fallback font");
-    }
     await tab.locator("#h").screenshot({ path: OUT, type: "jpeg", quality: 88 });
   } finally {
     await browser.close();
