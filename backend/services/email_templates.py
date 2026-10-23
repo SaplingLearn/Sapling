@@ -26,6 +26,7 @@ import re
 from html import escape
 
 import config
+from services import email_variables
 
 BRAND = "#445D22"     # brand forest: buttons, links, progress
 _OUTER = "#f1f2ed"    # the page around the card
@@ -40,7 +41,7 @@ _SERIF = "Aleo,Georgia,'Times New Roman',serif"
 _SANS = "SUSE,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
 _FONTS_CSS = "https://fonts.googleapis.com/css2?family=Aleo:wght@500;600&family=SUSE:wght@400;600&display=swap"
 
-_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_URL_RE = re.compile(r"https?://[^\s<>\"'\x00]+", re.IGNORECASE)
 _TRAILING_PUNCT = ".,;:!?)]}'\""
 
 #: The lifecycle, in order.
@@ -103,10 +104,10 @@ def _p(inner_html: str) -> str:
     )
 
 
-def _button(href: str, label: str) -> str:
+def _button(href: str, label: str, *, margin: str = "26px 0 0 0") -> str:
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        'style="margin:26px 0 0 0;"><tr>'
+        f'style="margin:{margin};"><tr>'
         f'<td bgcolor="{BRAND}" style="border-radius:8px;background:{BRAND};">'
         f'<a href="{_e(href)}" target="_blank" '
         f'style="display:inline-block;padding:14px 26px;font-family:{_SANS};font-size:16px;'
@@ -429,24 +430,50 @@ def _linkify_escaped(text: str) -> str:
     return "".join(out)
 
 
-def render_plain_text_body(body: str) -> str:
-    """Admin plain text → safe HTML paragraphs."""
+def render_plain_text_body(body: str, links: list[tuple[str, str]] | None = None) -> str:
+    """Admin plain text → safe HTML paragraphs.
+
+    `links` resolves the link tokens email_variables.fill_for_html left in
+    `body`: a paragraph that is nothing but one token becomes a button, a token
+    inside text becomes a link on its label. Both are escaped here."""
+    links = links or []
+
+    def link(m: re.Match) -> str:
+        url, label = links[int(m.group(1))]
+        return (
+            f'<a href="{_e(url)}" target="_blank" '
+            f'style="color:{BRAND};text-decoration:underline;font-weight:600;">{_e(label)}</a>'
+        )
+
     normalized = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     paragraphs = [p for p in re.split(r"\n\s*\n", normalized) if p.strip()]
-    return "".join(
-        _p("<br>".join(_linkify_escaped(line) for line in para.strip().split("\n")))
-        for para in paragraphs
-    )
+    out = []
+    for para in paragraphs:
+        alone = email_variables.LINK_TOKEN_RE.fullmatch(para.strip())
+        if alone:
+            url, label = links[int(alone.group(1))]
+            out.append(_button(url, label, margin="4px 0 20px 0"))
+            continue
+        html = "<br>".join(_linkify_escaped(line) for line in para.strip().split("\n"))
+        out.append(_p(email_variables.LINK_TOKEN_RE.sub(link, html)))
+    return "".join(out)
 
 
-def broadcast(subject: str, body: str, *, unsubscribe_url: str) -> tuple[str, str, str]:
-    clean_subject = " ".join((subject or "").split())
+def broadcast(
+    subject: str, body: str, *, unsubscribe_url: str, values: dict | None = None,
+) -> tuple[str, str, str]:
+    """`values` fills the personalization variables (services/email_variables)
+    for this recipient; link variables render as buttons or labelled links."""
+    values = values or {}
+    clean_subject = " ".join(email_variables.fill(subject, values).split())
+    html_body, links = email_variables.fill_for_html(body, values)
+    body = email_variables.fill(body, values)
     first_line = next((ln.strip() for ln in (body or "").splitlines() if ln.strip()), "")
     reason = "You're getting this because you signed up for Sapling."
     rows = [
         _row(_headline(clean_subject)),
         _spacer(22),
-        _row(render_plain_text_body(body)),
+        _row(render_plain_text_body(html_body, links)),
         _spacer(8),
         _row(_signoff("Thanks!")),
     ]

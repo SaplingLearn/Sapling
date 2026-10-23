@@ -396,6 +396,9 @@ export interface EmailVariable {
   /** Used when the recipient has no value and the admin gave none; may be "". */
   fallback: string;
   example: string;
+  /** Link variables only: the default label. Alone on its line the link
+   *  renders as a button with this label; `{{key|Label}}` overrides it. */
+  button?: string;
 }
 
 export interface EmailStatus {

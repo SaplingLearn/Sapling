@@ -141,8 +141,7 @@ def _values(address: str, names: dict[str, dict[str, str]]) -> dict[str, str]:
         "first_name": known.get("first_name", ""),
         "name": known.get("name", ""),
         "email": address,
-        "app_link": email_service.app_url(),
-        "signin_link": email_service.signin_url(),
+        **email_variables.link_values(),
     }
 
 
@@ -225,9 +224,7 @@ def preview_broadcast(body: EmailBroadcastPreviewBody, request: Request):
         address = _admin_address(get_session_user_id(request)) or ""
         values = _values(address, _names()) if address else {}
     subject, html, _ = email_templates.broadcast(
-        email_variables.fill(body.subject, values) or "(no subject)",
-        email_variables.fill(body.body, values),
-        unsubscribe_url="#unsubscribe",
+        body.subject or "(no subject)", body.body, unsubscribe_url="#unsubscribe", values=values,
     )
     return {
         "subject": subject,
@@ -247,9 +244,7 @@ def send_test_broadcast(body: EmailBroadcastTestBody, request: Request):
         raise HTTPException(status_code=400, detail="Your account has no email address to send a test to.")
     values = _values(to, _names() if _uses_variables(body.subject, body.body) else {})
     subject, html, text = email_templates.broadcast(
-        email_variables.fill(body.subject, values),
-        email_variables.fill(body.body, values),
-        unsubscribe_url=email_service.unsubscribe_url(to),
+        body.subject, body.body, unsubscribe_url=email_service.unsubscribe_url(to), values=values,
     )
     status = email_service.send_email(
         kind="broadcast_test",
@@ -326,9 +321,7 @@ def run_broadcast(broadcast_id: str, subject: str, body: str, recipients: list[s
             try:
                 values = _values(to, names)
                 subj, html, text = email_templates.broadcast(
-                    email_variables.fill(subject, values),
-                    email_variables.fill(body, values),
-                    unsubscribe_url=email_service.unsubscribe_url(to),
+                    subject, body, unsubscribe_url=email_service.unsubscribe_url(to), values=values,
                 )
                 status = email_service.send_email(
                     kind="broadcast",

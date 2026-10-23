@@ -286,7 +286,8 @@ export function EmailBroadcastsTab() {
             </label>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
               Plain text. Blank lines make paragraphs; links are clickable.
-              Variables like {token("first_name")} are filled in for each person.
+              Variables like {token("first_name")} are filled in for each person. Put{" "}
+              {token("signin_link")} on its own line for a button.
             </div>
             {variables.length > 0 && (
               <div
@@ -300,7 +301,13 @@ export function EmailBroadcastsTab() {
                     type="button"
                     className="chip"
                     data-testid={`email-variable-${v.key}`}
-                    title={v.fallback ? `${token(v.key)}\nIf unknown: ${v.fallback}` : token(v.key)}
+                    title={
+                      v.button
+                        ? `${token(v.key)}\nOn its own line it's a "${v.button}" button. {{${v.key}|Your label}} changes the label.`
+                        : v.fallback
+                          ? `${token(v.key)}\nIf unknown: ${v.fallback}`
+                          : token(v.key)
+                    }
                     onClick={() => insertVariable(v.key)}
                     style={{ cursor: "pointer", textTransform: "none" }}
                   >

@@ -55,10 +55,14 @@ Broadcast subjects and bodies can use variables, filled in per recipient:
 | `{{first_name}}` | the account's first name, or the first name a /pending waitlist join stored | `there` |
 | `{{name}}` | the account's full name (else the first name) | `there` |
 | `{{email}}` | the address it's sent to | |
-| `{{app_link}}` | `{FRONTEND_URL}/dashboard` | |
-| `{{signin_link}}` | `{FRONTEND_URL}` (its Sign in button starts Google OAuth) | |
+| `{{app_link}}` | `{FRONTEND_URL}/dashboard`, as an "Open Sapling" link | |
+| `{{signin_link}}` | `{FRONTEND_URL}` (its Sign in button starts Google OAuth), as a "Sign in to Sapling" link | |
 
-`{{first_name|friend}}` sets your own fallback. Landing-form waitlist signups
+`{{first_name|friend}}` sets your own fallback. For the two links the text
+after `|` is the label instead. A link alone on its line becomes a button like
+the ones in the other emails (`{{signin_link|Join the beta}}`); inside a
+sentence it becomes a link on that label (`You can {{app_link|open your
+dashboard}} any time.`). The plain-text part gets the URL. Landing-form waitlist signups
 gave only an email, so they get the fallback. An unknown variable (a typo like
 `{{frist_name}}`) is rejected before anything sends; the composer flags it
 from the preview. Preview and "Send test to me" fill in your own details.
