@@ -94,6 +94,7 @@ renders the element.
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
@@ -470,6 +471,21 @@ baselined backlog — every button/input in them is tagged.
 | `flag-explain-input-{key}` | "Check a student" input — name/email search, or a raw user id + Enter (`adminExplainFlag`) |
 | `flag-explain-user-{key}-{userId}` | one student search result there; clicking it runs the check |
 | `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override` |
+
+### `admin-user`
+
+Added with the waitlist-approval-at-sign-in change (PR #741). Admin → Users
+lists only approved accounts; the one per-row action is "Remove access",
+which confirms in an in-page `Dialog` before calling `adminRemoveUserAccess`
+(`PATCH /api/admin/users/{id}/unapprove`). Only these elements are tagged —
+`Admin.tsx` stays out of the lint `files` list (see Enforcement).
+
+| testid | element |
+| --- | --- |
+| `admin-users-summary` | the "N users" count line above the table |
+| `admin-user-remove-access-{userId}` | a row's "Remove access" button; opens the confirm dialog, never calls the API directly |
+| `admin-user-remove-body` | the confirm dialog's explanation (what removal does) |
+| `admin-user-remove-confirm` / `admin-user-remove-cancel` | the confirm dialog's buttons; confirm calls `adminRemoveUserAccess` then reloads the list |
 
 ### `profile`
 
