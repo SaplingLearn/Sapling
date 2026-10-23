@@ -28,6 +28,23 @@ headers (`List-Unsubscribe` / `List-Unsubscribe-Post`). The link is
 backend. GET shows a confirm page and POST suppresses, because mail scanners
 prefetch GETs. A suppressed address gets no email of any kind.
 
+## Design and images
+
+`services/email_templates.py` builds every email: a forest header with the
+wordmark, a growth illustration on the seam (seed for the waitlist, sprout on
+approval, sapling on first sign-in), a Signed up / Approved / Signed in track,
+and a Caveat sign-off. Broadcasts use the same header and footer without the
+illustration. Fonts are Aleo, SUSE and Caveat from Google Fonts where the
+client allows it (Apple Mail, iOS); Gmail and Outlook fall back to Georgia and
+the system sans.
+
+Images are PNG/JPEG (Gmail won't show SVG) in `frontend/public/email/`, built
+from the brand SVGs by `backend/scripts/build_email_assets.py` (needs
+`rsvg-convert` and ImageMagick). They load from
+`{EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/`, so they only work once the
+frontend serving them is deployed. Admin → Email previews the real
+server-rendered broadcast (`POST /api/admin/email/broadcasts/preview`).
+
 ## Hooking up Resend
 
 1. **Domain.** In Resend → Domains, add the sending domain (`saplinglearn.com`,
@@ -45,6 +62,9 @@ prefetch GETs. A suppressed address gets no email of any kind.
    - `EMAIL_FROM="Sapling <hello@saplinglearn.com>"` (the address must be on the
      verified domain)
    - `EMAIL_REPLY_TO=` (optional; where replies go)
+   - `EMAIL_ASSET_BASE_URL=https://saplinglearn.com` on **staging** only: its
+     frontend is behind Cloudflare Access, so recipients couldn't load images
+     from it. Prod leaves it unset (it defaults to `FRONTEND_URL`).
 5. **Migrations** (before deploying the code): `20261022062444_newsletter_joined.sql`
    and `20261022063145_email.sql`. The second backfills `users.welcomed_at` for
    every account that's already approved, so the deploy doesn't welcome

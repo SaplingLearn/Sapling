@@ -21,7 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 import config
 from db.connection import page_all, table
-from models import EmailBroadcastBody, EmailBroadcastTestBody
+from models import EmailBroadcastBody, EmailBroadcastPreviewBody, EmailBroadcastTestBody
 from services import email_service, email_templates
 from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin
@@ -148,6 +148,17 @@ def _admin_address(user_id: str) -> str | None:
         return None
     address = (decrypt_if_present(rows[0].get("email")) or "").strip()
     return address if "@" in address else None
+
+
+@router.post("/broadcasts/preview")
+def preview_broadcast(body: EmailBroadcastPreviewBody, request: Request):
+    """The broadcast's real HTML, rendered server-side for the compose preview.
+    Sends nothing and writes nothing; the unsubscribe link is a placeholder."""
+    require_admin(request)
+    subject, html, _ = email_templates.broadcast(
+        body.subject or "(no subject)", body.body, unsubscribe_url="#unsubscribe",
+    )
+    return {"subject": subject, "html": html}
 
 
 @router.post("/broadcasts/test")

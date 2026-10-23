@@ -349,6 +349,27 @@ def test_test_send_without_an_address_is_400(monkeypatch, sent):
     sent.assert_not_called()
 
 
+def test_preview_renders_the_real_email_and_sends_nothing(monkeypatch, sent):
+    factory, made = _factory()
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    r = client.post("/api/admin/email/broadcasts/preview",
+                    json={"subject": "Hello", "body": "Hi <b>all</b>"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["subject"] == "Hello"
+    assert "&lt;b&gt;all&lt;/b&gt;" in data["html"] and "<b>all</b>" not in data["html"]
+    assert "The Sapling team" in data["html"]
+    sent.assert_not_called()
+    assert made == {}  # no table touched
+
+
+def test_preview_accepts_a_blank_draft(monkeypatch, sent):
+    monkeypatch.setattr("routes.admin_email.table", _factory()[0])
+    r = client.post("/api/admin/email/broadcasts/preview", json={"subject": "", "body": ""})
+    assert r.status_code == 200
+    assert r.json()["subject"] == "(no subject)"
+
+
 @pytest.mark.parametrize("payload", [
     {"subject": "", "body": "x", "audience": "users_all"},
     {"subject": "   ", "body": "x", "audience": "users_all"},

@@ -639,6 +639,12 @@ class EmailBroadcastTestBody(BaseModel):
         return " ".join(v.split())
 
 
+class EmailBroadcastPreviewBody(BaseModel):
+    """A draft as it's being typed: blank is fine, it just previews empty."""
+    subject: str = Field(default="", max_length=200)
+    body: str = Field(default="", max_length=20000)
+
+
 class EmailBroadcastBody(EmailBroadcastTestBody):
     audience: Literal[
         "waitlist_all",
