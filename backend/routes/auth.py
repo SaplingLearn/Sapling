@@ -141,6 +141,51 @@ def _mark_waitlist_joined(entry_id: str, user_id: str) -> None:
         logger.warning("waitlist joined stamp failed", exc_info=True)
 
 
+# ── Unapproved sign-in → /pending ─────────────────────────────────────────────
+# An unapproved sign-in gets no session. The hand-off to /pending carries a
+# short-lived "pending token" instead, so that page can show whether the
+# account's email is on the waitlist and add it without the student retyping
+# it. It travels in the redirect URL, not a cookie, because the OAuth callback
+# runs on the API origin rather than the frontend's. It names only the account
+# id, and it's signed with a key derived from SESSION_SECRET, so it can never
+# verify as a `sapling_session` (auth_guard checks against the raw secret).
+_PENDING_TOKEN_TTL_SECONDS = 3600
+
+
+def _pending_token_key() -> str:
+    if not SESSION_SECRET:
+        return ""
+    return _hmac.new(SESSION_SECRET.encode(), b"sapling-pending-v1", hashlib.sha256).hexdigest()
+
+
+def _mint_pending_token(user_id: str) -> str:
+    key = _pending_token_key()
+    return mint_session(user_id, ttl=_PENDING_TOKEN_TTL_SECONDS, secret=key) if key else ""
+
+
+def _pending_token_user(token: str) -> str | None:
+    """The account id a pending token names, or None if forged or expired."""
+    key = _pending_token_key()
+    payload_b64, _, sig_b64 = (token or "").partition(".")
+    if not key or not payload_b64 or not sig_b64:
+        return None
+    expected = base64.urlsafe_b64encode(
+        _hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest()
+    ).decode().rstrip("=")
+    if not _hmac.compare_digest(sig_b64, expected):
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    exp, user_id = payload.get("exp"), payload.get("user_id")
+    if not isinstance(exp, int) or exp < int(_time.time()):
+        return None
+    return user_id if isinstance(user_id, str) and user_id else None
+
+
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
     """Test seam: write last_sign_in_at to keep the callback path testable in
     isolation without round-tripping through the OAuth flow."""
@@ -465,11 +510,13 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         _clean_return_to(cookie_payload.get("rt")) if cookie_payload else None
     ) or FRONTEND_URL
 
-    def _fail_redirect(error_code: str, fallback_path: str = "/auth") -> RedirectResponse:
+    def _fail_redirect(
+        error_code: str, fallback_path: str = "/auth", extra: dict | None = None,
+    ) -> RedirectResponse:
         # In popup mode, route failures through /auth/callback so the popup
         # can broadcast the error and self-close instead of stranding the opener.
         if popup_id:
-            params = urlencode({"error": error_code, "popup_id": popup_id})
+            params = urlencode({"error": error_code, "popup_id": popup_id, **(extra or {})})
             resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
         else:
             resp = RedirectResponse(f"{frontend_url}{fallback_path}?error={error_code}")
@@ -631,9 +678,13 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         _mark_waitlist_joined(waitlist["id"], user_id)
 
     if not is_approved:
+        pending_token = _mint_pending_token(user_id)
         if popup_id:
-            return _fail_redirect("not_approved")
-        resp = RedirectResponse(f"{frontend_url}/pending")
+            return _fail_redirect(
+                "not_approved", extra={"pending_token": pending_token} if pending_token else None,
+            )
+        query = f"?{urlencode({'t': pending_token})}" if pending_token else ""
+        resp = RedirectResponse(f"{frontend_url}/pending{query}")
         resp.set_cookie(
             key=OAUTH_STATE_COOKIE,
             value="",
@@ -711,6 +762,44 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
 
 
 # ── POST /api/auth/test-login ─────────────────────────────────────────────────
+
+
+class PendingTokenBody(BaseModel):
+    token: str = Field(min_length=1, max_length=2048)
+
+
+def _pending_email(token: str) -> str:
+    """The sign-in email of the account a pending token names; 401 otherwise."""
+    user_id = _pending_token_user(token)
+    rows = table("users").select(
+        "id,email", filters={"id": f"eq.{user_id}", "deleted_at": "is.null"},
+    ) if user_id else []
+    email = (decrypt_if_present(rows[0].get("email")) or "").strip() if rows else ""
+    if "@" not in email:
+        raise HTTPException(status_code=401, detail="Sign in again to continue.")
+    return email
+
+
+@router.post("/pending/status")
+def pending_status(body: PendingTokenBody):
+    """Whether an unapproved account's email is on the waitlist (/pending)."""
+    email = _pending_email(body.token)
+    return {"email": email, "on_waitlist": _waitlist_entry(email) is not None}
+
+
+@router.post("/pending/join")
+def pending_join(body: PendingTokenBody):
+    """Put an unapproved account's sign-in email on the waitlist. Idempotent."""
+    email = _pending_email(body.token)
+    if _waitlist_entry(email) is None:
+        try:
+            table("newsletter_emails").upsert({"email": email}, on_conflict="email")
+        except Exception:
+            logger.exception("waitlist join from /pending failed")
+            raise HTTPException(
+                status_code=500, detail="Could not join the waitlist. Please try again.",
+            )
+    return {"email": email, "on_waitlist": True}
 
 
 class MintTestSessionBody(BaseModel):

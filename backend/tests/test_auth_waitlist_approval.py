@@ -66,7 +66,7 @@ def callback(monkeypatch):
     monkeypatch.setattr(auth_module, "Flow", flow_cls, raising=False)
     monkeypatch.setattr(ach_module, "check_achievements", lambda *a, **k: None)
 
-    def _drive(*, email=EMAIL):
+    def _drive(*, email=EMAIL, popup_id=None, full=False):
         userinfo = MagicMock()
         userinfo.raise_for_status.return_value = None
         userinfo.json.return_value = {
@@ -76,7 +76,7 @@ def callback(monkeypatch):
         monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 
         cookie = auth_module._encode_oauth_cookie(
-            {"n": "n1", "cv": "verifier", "popup_id": None}
+            {"n": "n1", "cv": "verifier", "popup_id": popup_id}
         )
         state = auth_module._encode_state({"action": "signin", "n": "n1"})
         client = TestClient(_app)
@@ -85,7 +85,8 @@ def callback(monkeypatch):
             f"/api/auth/google/callback?code=c&state={state}", follow_redirects=False,
         )
         assert resp.status_code in (302, 307)
-        return urlparse(resp.headers["location"]).path
+        location = resp.headers["location"]
+        return location if full else urlparse(location).path
 
     return _drive
 
@@ -226,3 +227,113 @@ def test_lookup_escapes_like_metacharacters(monkeypatch):
     auth_module._waitlist_entry("  A.B_C@bu.edu ")
     filters = tables["newsletter_emails"].select.call_args.kwargs["filters"]
     assert filters["or"] == '(email.ilike."a.b\\\\_c@bu.edu")'
+
+
+# ── Unapproved sign-in → /pending, with a pending token ─────────────────────
+
+def _token_from(location: str, key: str) -> str:
+    from urllib.parse import parse_qs
+    return parse_qs(urlparse(location).query)[key][0]
+
+
+def test_unapproved_sign_in_hands_pending_a_token(callback, monkeypatch):
+    _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
+    location = callback(full=True)
+    assert urlparse(location).path == "/pending"
+    assert auth_module._pending_token_user(_token_from(location, "t")) == "user_112233"
+
+
+def test_unapproved_popup_sign_in_carries_the_token(callback, monkeypatch):
+    _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
+    location = callback(popup_id="p1", full=True)
+    assert urlparse(location).path == "/auth/callback"
+    assert _token_from(location, "error") == "not_approved"
+    assert auth_module._pending_token_user(_token_from(location, "pending_token")) == "user_112233"
+
+
+@pytest.fixture
+def pending(monkeypatch):
+    """A pending account whose decrypted email is EMAIL, and a client."""
+    monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
+    monkeypatch.setattr(auth_module, "decrypt_if_present", lambda v: v)
+
+    def _setup(*, waitlist_rows=None, users_rows=None):
+        tables = _tables(
+            monkeypatch,
+            users_rows=[{"id": "user_112233", "email": EMAIL}] if users_rows is None else users_rows,
+            waitlist_rows=waitlist_rows,
+        )
+        return tables, TestClient(_app), auth_module._mint_pending_token("user_112233")
+
+    return _setup
+
+
+def test_pending_token_is_not_a_session(pending):
+    # auth_guard and the frontend session BFF both verify HMAC(SESSION_SECRET,
+    # payload); conftest stubs _decode_session, so pin the property directly.
+    import base64
+    import hashlib
+    import hmac
+
+    _, _, token = pending()
+    payload, _, sig = token.partition(".")
+    session_sig = base64.urlsafe_b64encode(
+        hmac.new(b"test-secret-key", payload.encode(), hashlib.sha256).digest()
+    ).decode().rstrip("=")
+    assert sig != session_sig
+
+
+def test_pending_token_rejects_tampering_and_expiry(pending, monkeypatch):
+    _, _, token = pending()
+    payload, _, sig = token.partition(".")
+    assert auth_module._pending_token_user(f"{payload}.{sig[:-2]}xx") is None
+    # A real session token for the same account is not a pending token either.
+    assert auth_module._pending_token_user(
+        auth_module.mint_session("user_112233", secret="test-secret-key")
+    ) is None
+    monkeypatch.setattr(auth_module, "_PENDING_TOKEN_TTL_SECONDS", -1)
+    assert auth_module._pending_token_user(auth_module._mint_pending_token("user_112233")) is None
+
+
+def test_pending_status_not_on_waitlist(pending):
+    _, client, token = pending(waitlist_rows=[])
+    resp = client.post("/api/auth/pending/status", json={"token": token})
+    assert resp.status_code == 200
+    assert resp.json() == {"email": EMAIL, "on_waitlist": False}
+
+
+def test_pending_status_on_waitlist_is_case_insensitive(pending):
+    _, client, token = pending(waitlist_rows=[{"id": "w1", "email": "Student@BU.edu", "approved_at": None}])
+    assert client.post("/api/auth/pending/status", json={"token": token}).json()["on_waitlist"] is True
+
+
+def test_pending_status_bad_token_is_401(pending):
+    _, client, _ = pending()
+    assert client.post("/api/auth/pending/status", json={"token": "nope.nope"}).status_code == 401
+
+
+def test_pending_status_deleted_account_is_401(pending):
+    _, client, token = pending(users_rows=[])
+    assert client.post("/api/auth/pending/status", json={"token": token}).status_code == 401
+
+
+def test_pending_join_adds_the_sign_in_email(pending):
+    tables, client, token = pending(waitlist_rows=[])
+    resp = client.post("/api/auth/pending/join", json={"token": token})
+    assert resp.status_code == 200
+    assert resp.json() == {"email": EMAIL, "on_waitlist": True}
+    upsert = tables["newsletter_emails"].upsert.call_args
+    assert upsert.args[0] == {"email": EMAIL}
+    assert upsert.kwargs["on_conflict"] == "email"
+
+
+def test_pending_join_is_a_no_op_when_already_listed(pending):
+    tables, client, token = pending(waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": None}])
+    assert client.post("/api/auth/pending/join", json={"token": token}).status_code == 200
+    tables["newsletter_emails"].upsert.assert_not_called()
+
+
+def test_pending_join_bad_token_writes_nothing(pending):
+    tables, client, _ = pending(waitlist_rows=[])
+    assert client.post("/api/auth/pending/join", json={"token": "x.y"}).status_code == 401
+    tables["newsletter_emails"].upsert.assert_not_called()
