@@ -5,7 +5,7 @@ import type {
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   GpaReport,
   ExtractedSyllabusCategory,
-  AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast,
+  AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
   AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
@@ -1334,6 +1334,13 @@ export const adminEmailStatus = () =>
 
 export const adminEmailAudiences = () =>
   fetchJSON<{ audiences: EmailAudience[] }>('/api/admin/email/audiences');
+
+/** Renders the draft exactly as it would go out; sends and records nothing. */
+export const adminPreviewBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<EmailBroadcastPreview>('/api/admin/email/broadcasts/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 
 /** Sends the draft to the signed-in admin only. */
 export const adminSendTestBroadcast = (payload: { subject: string; body: string }) =>

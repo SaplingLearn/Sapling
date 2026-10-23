@@ -419,6 +419,12 @@ export interface EmailBroadcast {
   created_by: string | null;
 }
 
+/** POST /api/admin/email/broadcasts/preview: the real server-rendered email (a full HTML document). Sends nothing. */
+export interface EmailBroadcastPreview {
+  subject: string;
+  html: string;
+}
+
 export interface AchievementTrigger {
   id: string;
   achievement_id: string;

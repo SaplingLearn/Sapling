@@ -517,7 +517,9 @@ Admin broadcasts. The final send is gated by typing the recipient count (or
 | `email-subject` / `email-subject-count` | subject input and its 200-char counter |
 | `email-body` / `email-body-count` | plain-text body textarea and its 20000-char counter |
 | `email-audience-{key}` | one audience radio (`waitlist_all`/`waitlist_pending`/`waitlist_approved_not_joined`/`users_all`) |
-| `email-preview` / `email-preview-subject` | the rendered preview and its subject line |
+| `email-preview` / `email-preview-subject` | the preview pane and its subject line |
+| `email-preview-frame` | sandboxed iframe whose `srcdoc` is the server-rendered email from `POST /api/admin/email/broadcasts/preview` (debounced) |
+| `email-preview-error` | inline "Couldn't load the preview." when the preview request fails |
 | `email-send-test` | "Send test to me" |
 | `email-send` | "Send to N people"; opens the confirm dialog |
 | `email-send-confirm-input` | the typed-confirmation input |

@@ -8,13 +8,15 @@ import {
   adminEmailAudiences,
   adminEmailStatus,
   adminListBroadcasts,
+  adminPreviewBroadcast,
   adminSendBroadcast,
   adminSendTestBroadcast,
 } from "@/lib/api";
-import type { EmailAudience, EmailAudienceKey, EmailBroadcast, EmailStatus } from "@/lib/types";
+import type {
+  EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview, EmailStatus,
+} from "@/lib/types";
 
 import { fieldStyle, tdStyle, thStyle } from "./adminStyles";
-import { EmailBodyPreview } from "./emailPreview";
 import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
 
 /**
@@ -22,11 +24,19 @@ import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
  * to yourself, then send it to an audience behind a typed confirmation. The
  * send is accepted (202) and delivered in the background, so the history
  * table polls while any broadcast is still `sending`.
+ *
+ * The preview is the real email: the draft is debounced to
+ * `POST /email/broadcasts/preview`, and the server-rendered HTML document is
+ * shown in a sandboxed iframe (no scripts, no same-origin), so what the
+ * admin sees is exactly what goes out.
  */
 
 export const SUBJECT_MAX = 200;
 export const BODY_MAX = 20000;
 export const POLL_MS = 5000;
+export const PREVIEW_DEBOUNCE_MS = 350;
+/** Fixed: auto-sizing would need a same-origin frame. The frame scrolls past this. */
+const PREVIEW_HEIGHT = 720;
 
 const BROADCAST_CHIP: Record<EmailBroadcast["status"], string> = {
   sending: "chip chip--info",
@@ -53,6 +63,34 @@ export function EmailBroadcastsTab() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [confirmText, setConfirmText] = React.useState("");
   const confirmInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const [preview, setPreview] = React.useState<EmailBroadcastPreview | null>(null);
+  const [previewError, setPreviewError] = React.useState(false);
+  // Only the latest preview request may update the pane; bumped on every
+  // draft change (and on unmount) so an older, slower response is dropped.
+  const previewSeq = React.useRef(0);
+  const previewSubject = subject.trim();
+  const previewBody = body.trim();
+  React.useEffect(() => {
+    const seq = ++previewSeq.current;
+    const id = window.setTimeout(() => {
+      adminPreviewBroadcast({ subject: previewSubject, body: previewBody }).then(
+        (r) => {
+          if (seq !== previewSeq.current) return;
+          setPreview(r);
+          setPreviewError(false);
+        },
+        () => {
+          if (seq !== previewSeq.current) return;
+          setPreviewError(true); // keep the last good render on screen
+        },
+      );
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(id);
+      previewSeq.current += 1;
+    };
+  }, [previewSubject, previewBody]);
 
   React.useEffect(() => {
     let alive = true;
@@ -223,20 +261,45 @@ export function EmailBroadcastsTab() {
           )}
         </div>
 
-        <div className="card" style={{ padding: "var(--pad-lg)" }}>
+        <div className="card" style={{ padding: "var(--pad-lg)", minWidth: 0 }}>
           <div className="label-micro" style={{ marginBottom: 10 }}>Preview</div>
           <div
             data-testid="email-preview"
             style={{
-              border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 16,
+              border: "1px solid var(--border)", borderRadius: "var(--r-md)", overflow: "hidden",
               background: "var(--bg-subtle)", fontSize: 14,
             }}
           >
-            <div style={{ fontWeight: 600, marginBottom: 12, overflowWrap: "anywhere" }} data-testid="email-preview-subject">
+            <div
+              data-testid="email-preview-subject"
+              style={{ fontWeight: 600, padding: "12px 16px", borderBottom: "1px solid var(--border)", overflowWrap: "anywhere" }}
+            >
               {subject.trim() || <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(no subject)</span>}
             </div>
-            <EmailBodyPreview body={body} />
+            {preview ? (
+              <iframe
+                data-testid="email-preview-frame"
+                title="Email preview"
+                srcDoc={preview.html}
+                sandbox="allow-popups allow-popups-to-escape-sandbox"
+                referrerPolicy="no-referrer"
+                style={{ display: "block", width: "100%", height: PREVIEW_HEIGHT, border: 0, background: "#fff" }}
+              />
+            ) : (
+              <div style={{ padding: 16, fontSize: 13, color: "var(--text-muted)" }}>
+                {previewError ? (
+                  <span data-testid="email-preview-error">Couldn&apos;t load the preview.</span>
+                ) : (
+                  "Loading preview…"
+                )}
+              </div>
+            )}
           </div>
+          {preview && previewError && (
+            <div data-testid="email-preview-error" role="status" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+              Couldn&apos;t load the preview. Showing the last version.
+            </div>
+          )}
         </div>
       </div>
 

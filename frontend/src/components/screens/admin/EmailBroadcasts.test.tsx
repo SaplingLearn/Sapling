@@ -7,7 +7,9 @@
  *   - "Send to N people" stays disabled until subject + body + a non-empty
  *     audience are set;
  *   - the real send sits behind a typed confirmation (N or "SEND");
- *   - the preview escapes markup and linkifies URLs (React elements only);
+ *   - the preview is the server-rendered email: the draft is debounced to
+ *     `adminPreviewBroadcast`, its HTML lands in a sandboxed iframe's
+ *     srcdoc, stale responses are dropped, and a failure shows inline;
  *   - the not-configured banner follows `/email/status`;
  *   - history polls every 5s while a broadcast is `sending`, and stops once
  *     none are.
@@ -21,6 +23,7 @@ const api = vi.hoisted(() => ({
   adminListBroadcasts: vi.fn(),
   adminSendTestBroadcast: vi.fn(),
   adminSendBroadcast: vi.fn(),
+  adminPreviewBroadcast: vi.fn(),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -33,7 +36,7 @@ const toastSpies = vi.hoisted(() => ({
 }));
 vi.mock("@/components/ToastProvider", () => ({ useToast: () => toastSpies }));
 
-import { EmailBroadcastsTab, POLL_MS } from "./EmailBroadcasts";
+import { EmailBroadcastsTab, POLL_MS, PREVIEW_DEBOUNCE_MS } from "./EmailBroadcasts";
 
 const AUDIENCES = [
   { key: "waitlist_all", label: "Everyone on the waitlist", count: 12 },
@@ -47,6 +50,17 @@ const broadcast = (over: Record<string, unknown> = {}) => ({
   created_at: "2026-10-20T10:00:00Z", sent_at: "2026-10-20T10:01:00Z", created_by: "admin-1",
   ...over,
 });
+
+/** A promise the test resolves/rejects by hand, to control response order. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+const PREVIEW_WAIT = { timeout: PREVIEW_DEBOUNCE_MS * 6 };
+const frame = () => screen.getByTestId("email-preview-frame") as HTMLIFrameElement;
 
 const fill = (subject: string, body: string) => {
   fireEvent.change(screen.getByTestId("email-subject"), { target: { value: subject } });
@@ -65,6 +79,7 @@ describe("EmailBroadcastsTab", () => {
     api.adminEmailStatus.mockResolvedValue({ configured: true, from_address: "Sapling <hi@sapling.test>" });
     api.adminEmailAudiences.mockResolvedValue({ audiences: AUDIENCES });
     api.adminListBroadcasts.mockResolvedValue({ broadcasts: [] });
+    api.adminPreviewBroadcast.mockResolvedValue({ subject: "", html: "<html><body>blank</body></html>" });
   });
 
   it("renders each audience as a radio option with its count", async () => {
@@ -140,28 +155,76 @@ describe("EmailBroadcastsTab", () => {
     expect(toastSpies.success.mock.calls[0][0]).toContain("sent");
   });
 
-  it("escapes markup and linkifies URLs in the preview", async () => {
+  it("debounces the draft into a preview request and shows the HTML in a sandboxed iframe", async () => {
+    api.adminPreviewBroadcast.mockImplementation(async ({ subject, body }: { subject: string; body: string }) => ({
+      subject, html: `<html><body><h1>${subject}</h1><p>${body}</p></body></html>`,
+    }));
     render(<EmailBroadcastsTab />);
     await screen.findByTestId("email-body");
-    fill("Hi", "<script>alert(1)</script> <b>bold</b>\n\nVisit https://example.com/path?x=1. Thanks!\nsecond line");
+    expect(screen.getByTestId("email-preview").textContent).toContain("Loading preview");
 
-    const preview = screen.getByTestId("email-preview");
-    expect(preview.querySelector("script")).toBeNull();
-    expect(preview.querySelector("b")).toBeNull();
-    expect(preview.textContent).toContain("<script>alert(1)</script>");
+    fill("  News  ", "Hello there\n");
+    expect(screen.getByTestId("email-preview-subject").textContent).toBe("News");
+    // Not yet: the request waits out the debounce.
+    expect(api.adminPreviewBroadcast).not.toHaveBeenCalledWith({ subject: "News", body: "Hello there" });
 
-    const paras = preview.querySelectorAll("p");
-    expect(paras).toHaveLength(2);
-    const link = preview.querySelector("a")!;
-    expect(link.getAttribute("href")).toBe("https://example.com/path?x=1"); // trailing "." stripped
-    expect(link.getAttribute("rel")).toContain("noopener");
-    expect(paras[1].querySelectorAll("br")).toHaveLength(1);
-    expect(paras[1].textContent).toContain(". Thanks!");
+    await waitFor(
+      () => expect(api.adminPreviewBroadcast).toHaveBeenLastCalledWith({ subject: "News", body: "Hello there" }),
+      PREVIEW_WAIT,
+    );
+    await waitFor(() => expect(frame().getAttribute("srcdoc")).toContain("<h1>News</h1>"));
 
-    // A closing paren the URL opened stays; the sentence's own paren is trimmed.
-    fill("Hi", "(see https://en.wikipedia.org/wiki/Foo_(bar))");
-    expect(screen.getByTestId("email-preview").querySelector("a")!.getAttribute("href"))
-      .toBe("https://en.wikipedia.org/wiki/Foo_(bar)");
+    const f = frame();
+    expect(f.getAttribute("title")).toBe("Email preview");
+    expect(f.getAttribute("referrerpolicy")).toBe("no-referrer");
+    const sandbox = f.getAttribute("sandbox")!.split(/\s+/);
+    expect(sandbox).toEqual(expect.arrayContaining(["allow-popups", "allow-popups-to-escape-sandbox"]));
+    expect(sandbox).not.toContain("allow-scripts");
+    expect(sandbox).not.toContain("allow-same-origin");
+  });
+
+  it("ignores an out-of-order preview response and keeps the last HTML while loading", async () => {
+    render(<EmailBroadcastsTab />);
+    await waitFor(() => expect(frame().getAttribute("srcdoc")).toContain("blank"), PREVIEW_WAIT);
+
+    const first = deferred<{ subject: string; html: string }>();
+    const second = deferred<{ subject: string; html: string }>();
+    api.adminPreviewBroadcast.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    fill("One", "first");
+    await waitFor(
+      () => expect(api.adminPreviewBroadcast).toHaveBeenLastCalledWith({ subject: "One", body: "first" }),
+      PREVIEW_WAIT,
+    );
+    fill("Two", "second");
+    await waitFor(
+      () => expect(api.adminPreviewBroadcast).toHaveBeenLastCalledWith({ subject: "Two", body: "second" }),
+      PREVIEW_WAIT,
+    );
+    // Both still in flight: the previous render stays up (no flash).
+    expect(frame().getAttribute("srcdoc")).toContain("blank");
+
+    await act(async () => { second.resolve({ subject: "Two", html: "<p>second</p>" }); });
+    expect(frame().getAttribute("srcdoc")).toBe("<p>second</p>");
+    await act(async () => { first.resolve({ subject: "One", html: "<p>first</p>" }); });
+    expect(frame().getAttribute("srcdoc")).toBe("<p>second</p>");
+  });
+
+  it("shows an inline message when the preview fails, without breaking the form", async () => {
+    api.adminPreviewBroadcast.mockRejectedValue(new Error("500"));
+    render(<EmailBroadcastsTab />);
+    await screen.findByTestId("email-body");
+    expect((await screen.findByTestId("email-preview-error", {}, PREVIEW_WAIT)).textContent)
+      .toContain("Couldn't load the preview.");
+    expect(screen.queryByTestId("email-preview-frame")).toBeNull();
+    expect(toastSpies.error).not.toHaveBeenCalled();
+
+    // The compose form still works, and a later good preview clears the error.
+    api.adminPreviewBroadcast.mockResolvedValue({ subject: "Ok", html: "<p>ok</p>" });
+    fill("Ok", "fine");
+    expect((screen.getByTestId("email-send-test") as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() => expect(frame().getAttribute("srcdoc")).toBe("<p>ok</p>"), PREVIEW_WAIT);
+    expect(screen.queryByTestId("email-preview-error")).toBeNull();
   });
 
   it("shows the not-configured banner only when email isn't configured", async () => {
