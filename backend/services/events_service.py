@@ -333,7 +333,7 @@ def log_llm_usage(
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
                 cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-                requests=llm_pricing.request_count(usage),
+                requests=requests or llm_pricing.request_count(usage),
             ),
         }
         _enqueue("llm_usage", row)
