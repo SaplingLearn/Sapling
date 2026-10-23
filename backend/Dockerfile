@@ -30,6 +30,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch>=2.5,<3" \
     && pip install --no-cache-dir -r requirements.txt
 
+# BU SSO launches Chromium on the server; the Python wheel alone is insufficient.
+RUN python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 EXPOSE 5000

@@ -24,6 +24,7 @@ export function ConnectedAccounts() {
   const [status, setStatus] = React.useState<GradescopeStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [connectOpen, setConnectOpen] = React.useState(false);
+  const [reconnect, setReconnect] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
     if (!userId) return;
@@ -108,14 +109,15 @@ export function ConnectedAccounts() {
           domain="gradescope.com"
           loading={loading}
           status={status}
-          onConnect={() => setConnectOpen(true)}
-          onReconnect={() => setConnectOpen(true)}
+          onConnect={() => { setReconnect(false); setConnectOpen(true); }}
+          onReconnect={() => { setReconnect(true); setConnectOpen(true); }}
           onDisconnect={onDisconnect}
         />
       </main>
 
       <GradescopeSyncModal
         open={connectOpen}
+        reconnect={reconnect}
         userId={userId}
         onClose={() => {
           setConnectOpen(false);
@@ -213,7 +215,7 @@ function ProviderCard({
           {loading
             ? "Checking…"
             : connected
-              ? `Connected · ${modeLabel}`
+              ? `Credentials saved · ${modeLabel}`
               : "Not connected"}
         </div>
         <p
@@ -227,8 +229,8 @@ function ProviderCard({
           }}
         >
           Pulls assignments and grades from your enrolled courses. For SSO
-          (BU and other Shibboleth schools), pick the &ldquo;session cookies&rdquo;
-          option when connecting.
+          use BU SSO + Duo or paste session cookies. Credentials are verified
+          when you open the sync setup or pull grades.
         </p>
         {connected && status?.last_synced_at && (
           <div

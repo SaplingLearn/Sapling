@@ -19,7 +19,7 @@ import {
   syncGradescopeCourse,
   setCurveSettings,
 } from "@/lib/api";
-import { humanizeError } from "@/lib/errorMessage";
+import { humanizeError, statusOf } from "@/lib/errorMessage";
 import { applyCurveToAssignment, hasCurveData } from "@/components/Gradebook/curveUtils";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
@@ -276,24 +276,29 @@ export function GradebookCourseScreen({ courseId }: Props) {
     loadInitial();
   }, [loadInitial]);
 
+  // Without ?semester= the term is whatever the course load resolved. Asking
+  // before then would list every term's link, and that unscoped answer could
+  // land after the scoped one and mark this term as linked.
+  const courseLoaded = data !== null;
   const refreshGscope = React.useCallback(async () => {
     if (!userId) return;
+    if (!currentSemesterParam() && !courseLoaded) return;
     try {
       const status = await getGradescopeStatus(userId);
       if (!status.has_credentials) {
         setGscope({ ready: false, lastSyncedAt: null });
         return;
       }
-      const res = await listGradescopeLinks(userId);
+      const res = await listGradescopeLinks(userId, currentSemesterParam() ?? data?.semester);
       const myLink = res.links.find((l) => l.sapling_course_id === courseId);
       setGscope({
         ready: !!myLink,
-        lastSyncedAt: myLink?.last_synced_at ?? status.last_synced_at ?? null,
+        lastSyncedAt: myLink?.last_synced_at ?? null,
       });
     } catch {
       setGscope({ ready: false, lastSyncedAt: null });
     }
-  }, [userId, courseId]);
+  }, [userId, courseId, courseLoaded, data?.semester]);
 
   React.useEffect(() => {
     refreshGscope();
@@ -303,7 +308,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
     if (!userId) return;
     setGscopeBusy(true);
     try {
-      const res = await syncGradescopeCourse(userId, courseId);
+      const res = await syncGradescopeCourse(userId, courseId, currentSemesterParam() ?? data?.semester);
       const summary =
         res.failed > 0
           ? `Synced: ${res.inserted} added · ${res.updated} updated · ${res.failed} failed`
@@ -312,16 +317,16 @@ export function GradebookCourseScreen({ courseId }: Props) {
       else toast.success(summary);
       await Promise.all([refresh(), refreshGscope()]);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Sync failed";
+      const msg = humanizeError(err, "Sync failed");
       toast.error(msg);
-      if (/401|invalid|credentials|link/i.test(msg)) {
+      if (statusOf(err) === 401 || /invalid|credentials|link|expired/i.test(msg)) {
         setSyncOpen(true);
         await refreshGscope();
       }
     } finally {
       setGscopeBusy(false);
     }
-  }, [userId, courseId, refresh, refreshGscope, toast]);
+  }, [userId, courseId, data?.semester, refresh, refreshGscope, toast]);
 
   const onClickSyncButton = React.useCallback(() => {
     if (gscope.ready && !gscopeBusy) directSyncGradescope();
@@ -711,6 +716,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
             open={syncOpen}
             userId={userId}
             saplingCourseId={courseId}
+            semester={data.semester}
             saplingCourseLabel={`${data.course_code} · ${data.course_name}`}
             onClose={() => {
               setSyncOpen(false);
