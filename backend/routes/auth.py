@@ -163,17 +163,20 @@ def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _mint_pending_token(email: str) -> str:
+def _mint_pending_token(email: str, first_name: str = "") -> str:
     key = _pending_token_key()
     if not key:
         return ""
-    payload = json.dumps({"e": encrypt(email), "exp": int(_time.time()) + _PENDING_TOKEN_TTL_SECONDS})
+    claims = {"e": encrypt(email), "exp": int(_time.time()) + _PENDING_TOKEN_TTL_SECONDS}
+    if first_name:
+        claims["n"] = encrypt(first_name)
+    payload = json.dumps(claims)
     payload_b64 = _b64(payload.encode())
     return f"{payload_b64}.{_b64(_hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest())}"
 
 
-def _pending_token_email(token: str) -> str | None:
-    """The sign-in email a pending token carries, or None if forged or expired."""
+def _pending_token_claims(token: str) -> dict | None:
+    """{"email", "first_name"} from a pending token, or None if forged or expired."""
     key = _pending_token_key()
     payload_b64, _, sig_b64 = (token or "").partition(".")
     if not key or not payload_b64 or not sig_b64:
@@ -191,7 +194,17 @@ def _pending_token_email(token: str) -> str | None:
     if not isinstance(exp, int) or exp < int(_time.time()):
         return None
     email = (decrypt_if_present(payload.get("e")) or "").strip() if isinstance(payload.get("e"), str) else ""
-    return email if "@" in email else None
+    if "@" not in email:
+        return None
+    name = payload.get("n")
+    first_name = (decrypt_if_present(name) or "").strip() if isinstance(name, str) else ""
+    return {"email": email, "first_name": first_name}
+
+
+def _pending_token_email(token: str) -> str | None:
+    """The sign-in email a pending token carries, or None if forged or expired."""
+    claims = _pending_token_claims(token)
+    return claims["email"] if claims else None
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -539,8 +552,8 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         )
         return resp
 
-    def _not_approved(signin_email: str) -> RedirectResponse:
-        pending_token = _mint_pending_token(signin_email)
+    def _not_approved(signin_email: str, signin_first_name: str) -> RedirectResponse:
+        pending_token = _mint_pending_token(signin_email, signin_first_name)
         if popup_id:
             return _fail_redirect(
                 "not_approved", extra={"pending_token": pending_token} if pending_token else None,
@@ -623,7 +636,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
     waitlist = _waitlist_entry(email)
     waitlist_approved = bool(waitlist and waitlist.get("approved_at"))
     if not existing and not (_LOCAL_AUTO_APPROVE or waitlist_approved):
-        return _not_approved(email)
+        return _not_approved(email, first_name)
     if existing:
         user_id = existing[0]["id"]
         is_approved = existing[0]["is_approved"]
@@ -712,7 +725,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         _mark_waitlist_joined(waitlist["id"], user_id)
 
     if not is_approved:
-        return _not_approved(email)
+        return _not_approved(email, first_name)
 
     # First-login achievement (F7). The login-streak achievements ("First Steps"
     # and friends) were only ever evaluated at study-session end (learn.py), so a
@@ -786,33 +799,44 @@ class PendingTokenBody(BaseModel):
     token: str = Field(min_length=1, max_length=2048)
 
 
-def _pending_email(token: str) -> str:
-    """The sign-in email a pending token carries; 401 otherwise."""
-    email = _pending_token_email(token)
-    if not email:
+def _pending_claims(token: str) -> dict:
+    """The sign-in email (and first name) a pending token carries; 401 otherwise."""
+    claims = _pending_token_claims(token)
+    if not claims:
         raise HTTPException(status_code=401, detail="Sign in again to continue.")
-    return email
+    return claims
 
 
 @router.post("/pending/status")
 def pending_status(body: PendingTokenBody):
     """Whether an unapproved sign-in's email is on the waitlist (/pending)."""
-    email = _pending_email(body.token)
+    email = _pending_claims(body.token)["email"]
     return {"email": email, "on_waitlist": _waitlist_entry(email) is not None}
 
 
 @router.post("/pending/join")
 def pending_join(body: PendingTokenBody):
     """Put an unapproved sign-in's email on the waitlist. Idempotent."""
-    email = _pending_email(body.token)
-    if _waitlist_entry(email) is None:
-        try:
-            table("newsletter_emails").upsert({"email": email}, on_conflict="email")
-        except Exception:
-            logger.exception("waitlist join from /pending failed")
-            raise HTTPException(
-                status_code=500, detail="Could not join the waitlist. Please try again.",
+    claims = _pending_claims(body.token)
+    email, first_name = claims["email"], claims["first_name"]
+    entry = _waitlist_entry(email)
+    try:
+        if entry is None:
+            # The first name (from Google) lets the "you're in" email greet them.
+            table("newsletter_emails").upsert(
+                {"email": email, "first_name": encrypt(first_name) if first_name else None},
+                on_conflict="email",
             )
+        elif first_name:
+            table("newsletter_emails").update(
+                {"first_name": encrypt(first_name)},
+                filters={"id": f"eq.{entry['id']}", "first_name": "is.null"},
+            )
+    except Exception:
+        logger.exception("waitlist join from /pending failed")
+        raise HTTPException(
+            status_code=500, detail="Could not join the waitlist. Please try again.",
+        )
     return {"email": email, "on_waitlist": True}
 
 
