@@ -443,6 +443,14 @@ class TestJevBackend:
         # 10dp (the old 6dp stored 0.000013).
         assert row["cost_usd"] == 0.000013104
 
+    def test_a_jev_answer_reporting_no_tokens_warns(self, monkeypatch, sink, caplog):
+        """The #689 zero-token check covers this writer too: it bills through
+        events_service.log_llm_usage directly, not record_agent_usage."""
+        _use_jev(monkeypatch, _jev_transport({**JEV_OK, "usage": {}}))
+        with caplog.at_level("WARNING"):
+            _decide()
+        assert any("reported 0 tokens" in r.getMessage() for r in caplog.records)
+
     def test_base_url_and_model_are_configurable(self, monkeypatch):
         seen: list[httpx.Request] = []
         _use_jev(monkeypatch, _jev_transport(JEV_OK, seen=seen))

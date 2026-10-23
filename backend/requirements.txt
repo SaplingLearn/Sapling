@@ -23,7 +23,7 @@ psycopg[binary]>=3.2,<4
 # OCR pipeline (Docling = default, GOT-OCR 2.0 = optional GPU fallback)
 docling>=2.15,<3
 transformers>=4.46,<5
-torch>=2.5,<3  # install CPU wheel in CPU-only deployments: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.5,<3  # CPU-only deployments: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu (#700)
 
 openpyxl==3.1.5
 beautifulsoup4==4.15.0
@@ -60,6 +60,18 @@ ruff==0.15.18
 # requirements.lock pins 1.107.0, which is what CI installs; a local venv may
 # be older (the #707 work was run locally on 1.89.1). Both are above the floor.
 pydantic-ai-slim[google]>=1.11.1,<2
+# <0.1 (#689): genai-prices is pydantic-ai's usage extractor. From 0.1.0 it
+# returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
+# 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every
+# Gemini run reports 0 tokens, so llm_usage (cost rollups, AI budget caps)
+# records zeros. The Dockerfile now applies requirements.lock as constraints
+# (#694), which pins it, but the lock is compiled FROM this file: without the
+# cap a re-lock would pick 0.1.x up again. Lift it only together with a
+# pydantic-ai bump that accepts the new fields —
+# tests/test_agent_usage.py::test_real_gemini_response_* goes red under the
+# broken pairing, and events_service.log_llm_usage WARNs on any real call that
+# reports 0 tokens.
+genai-prices<0.1
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 
@@ -73,3 +85,8 @@ pydantic-evals>=0.0.5
 # Upper bound per #163: services/cache.py only uses the from_url/ping/get/set
 # surface, which is stable across majors, but a major bump shouldn't land silently.
 redis>=5.0,<9
+
+# Read by scripts/lock_constraints.py's `verify` step in the Dockerfile (#694)
+# and by tests/dependency_manifest.py. Listed explicitly so it never depends on
+# arriving transitively; requirements.lock pins the exact version.
+packaging>=24

@@ -32,6 +32,8 @@ goes through ``content=`` and lands only as a ``content_fp`` fingerprint.
 event_type                    category  payload keys
 ============================  ========  =====================================================
 error.4xx / error.5xx         error     path, method, status_code, duration_ms, route (template)
+                                        (an ANONYMOUS 404 that matched no route is not
+                                        recorded, #690)
 auth.login                    audit     method ("google" / "test_login")
 auth.permission_denied        audit     reason, route
 document.upload               usage     course_id, offering_id, char_count
@@ -257,6 +259,37 @@ def log_event(
         logger.exception("log_event failed; event dropped")
 
 
+def _warn_zero_token_usage(
+    usage: Any, requests: int | None, *, feature: str, task: str | None, model: str,
+) -> None:
+    """Make a real call that reports no tokens loud (#689).
+
+    A real model that made at least one request always bills tokens, so a
+    zero count means usage extraction broke below us (#689: a genai-prices
+    release pydantic-ai 1.x could not read, swallowed inside pydantic-ai).
+    The row still lands, at $0, and every cost rollup and AI budget cap
+    under-reads. Function mode reports zeros by design, so it stays quiet.
+    Lives here, on the one llm_usage write path, so every writer is covered.
+    """
+    from agents._providers import model_mode
+
+    if model_mode() != "real":
+        return
+    if requests is None:
+        raw = usage.get("requests") if isinstance(usage, dict) else getattr(usage, "requests", 0)
+        requests = int(raw or 0)
+    if requests and not llm_pricing.normalize_usage(usage)["total_tokens"]:
+        logger.warning(
+            "LLM call made %d model request(s) but reported 0 tokens "
+            "(task=%s feature=%s model=%s); llm_usage cost and AI budget caps "
+            "will under-read (#689)",
+            requests,
+            task,
+            feature,
+            model,
+        )
+
+
 def log_llm_usage(
     *,
     feature: str,
@@ -266,13 +299,21 @@ def log_llm_usage(
     provider: str = "gemini",
     user_id: str | None = None,
     request_id: str | None = None,
+    requests: int | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
-    (``cost_usd = NULL`` for unpriced models).
+    (``cost_usd = NULL`` for unpriced models). ``requests`` is how many model
+    calls the row bills; omitted, it is read off ``usage.requests`` (Pydantic
+    AI's RunUsage carries it). Writers whose usage shape has no such field
+    (the Jev decision row) pass it.
     """
+    try:
+        _warn_zero_token_usage(usage, requests, feature=feature, task=task, model=model)
+    except Exception:
+        logger.debug("log_llm_usage: zero-token check slipped", exc_info=True)
     if not _logging_enabled():
         return
     try:
