@@ -125,40 +125,54 @@ def _section_title(text: str) -> str:
 
 def _progress(current: int) -> str:
     """Signed up, Approved, Signed in. Stages up to `current` (0-based) are
-    filled; later ones are outlined. A real sequence, so the line earns its place."""
+    filled; later ones are outlined. A real sequence, so the line earns its place.
+
+    Three equal columns, each a dot over its centred label. The connecting
+    line is drawn as half-lines either side of each dot, so it runs dot to dot
+    without breaking and every label stays centred under its own dot."""
+    n = len(_STAGES)
+
+    def half(lit: bool | None) -> str:
+        if lit is None:  # outside the first or last dot: no line
+            return '<td width="50%" style="font-size:0;line-height:0;">&nbsp;</td>'
+        colour = BRAND if lit else _RULE
+        return (
+            '<td width="50%" valign="middle" style="font-size:0;line-height:0;">'
+            f'<div style="height:2px;line-height:2px;font-size:0;background:{colour};">&nbsp;</div></td>'
+        )
+
     dots: list[str] = []
     labels: list[str] = []
     for i, stage in enumerate(_STAGES):
         done = i <= current
-        if i:
-            line = BRAND if done else _RULE
-            dots.append(
-                '<td valign="middle" style="padding:0 6px;">'
-                f'<div style="height:2px;line-height:2px;font-size:0;background:{line};">&nbsp;</div></td>'
-            )
+        here = i == current
         fill = BRAND if done else _PAPER
         ring = BRAND if done else "#c9c4b6"
+        left = None if i == 0 else i <= current
+        right = None if i == n - 1 else i + 1 <= current
         dots.append(
-            '<td width="14" valign="middle" style="width:14px;">'
+            '<td width="33%" valign="middle" style="width:33.33%;">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+            + half(left)
+            + '<td width="14" style="width:14px;font-size:0;line-height:0;">'
             f'<div style="width:10px;height:10px;border-radius:7px;background:{fill};'
             f'border:2px solid {ring};font-size:0;line-height:0;">&nbsp;</div></td>'
+            + half(right)
+            + "</tr></table></td>"
         )
-        align = ("left", "center", "right")[i]
-        here = i == current
         labels.append(
-            f'<td width="33%" align="{align}" valign="top" style="padding-top:10px;font-family:{_SANS};'
-            f'font-size:13px;line-height:1.3;color:{_INK if here else (_BODY if done else _MUTED)};'
+            f'<td width="33%" align="center" valign="top" style="width:33.33%;padding-top:9px;'
+            f'font-family:{_SANS};font-size:13px;line-height:1.3;text-align:center;'
+            f'color:{_INK if here else (_BODY if done else _MUTED)};'
             f'font-weight:{600 if here else 400};">{_e(stage)}</td>'
         )
     return (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         f'bgcolor="{_TINT}" style="background:{_TINT};border-radius:10px;">'
-        '<tr><td style="padding:18px 22px 16px 22px;">'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        + "".join(dots)
-        + '</tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        + "".join(labels)
-        + "</tr></table></td></tr></table>"
+        '<tr><td style="padding:18px 8px 16px 8px;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        "<tr>" + "".join(dots) + "</tr><tr>" + "".join(labels) + "</tr>"
+        "</table></td></tr></table>"
     )
 
 
@@ -281,9 +295,9 @@ _WAITLIST_REASON = "You're getting this because you joined the Sapling waitlist 
 
 def waitlist_confirmation(*, unsubscribe_url: str) -> tuple[str, str, str]:
     subject = "You're on the Sapling waitlist"
-    heading = "You're on the list"
+    heading = "You're on the list!"
     lede = (
-        "Thanks for signing up. Sapling turns your course materials into a tutor, "
+        "Thanks for signing up! Sapling turns your course materials into a tutor, "
         "practice quizzes and a map of what you know, and we're opening it to "
         "students a few at a time."
     )
@@ -301,14 +315,14 @@ def waitlist_confirmation(*, unsubscribe_url: str) -> tuple[str, str, str]:
         _spacer(8),
         _rule(),
         _spacer(24),
-        _row(_signoff("See you soon,")),
+        _row(_signoff("See you soon!")),
     ]
     html = _layout(
         title=subject, preheader="We'll email you the moment your spot opens.",
         rows=rows, reason=_WAITLIST_REASON, unsubscribe_url=unsubscribe_url,
     )
     text = _text(
-        heading, lede, "What happens next\n" + _text_steps(steps), "See you soon,\nThe Sapling team",
+        heading, lede, "What happens next\n" + _text_steps(steps), "See you soon!\nThe Sapling team",
         unsubscribe_url=unsubscribe_url, reason=_WAITLIST_REASON,
     )
     return subject, html, text
@@ -316,9 +330,9 @@ def waitlist_confirmation(*, unsubscribe_url: str) -> tuple[str, str, str]:
 
 def waitlist_approved(*, signin_url: str, unsubscribe_url: str) -> tuple[str, str, str]:
     subject = "Your Sapling spot is ready"
-    heading = "Your spot is ready"
+    heading = "Your spot is ready!"
     lede = (
-        "You're off the waitlist. Sign in with your school Google account and "
+        "You're off the waitlist! Sign in with your school Google account and "
         "Sapling will walk you through setting up your courses."
     )
     steps = [
@@ -341,7 +355,7 @@ def waitlist_approved(*, signin_url: str, unsubscribe_url: str) -> tuple[str, st
         _spacer(32),
         _rule(),
         _spacer(24),
-        _row(_signoff("Happy studying,")),
+        _row(_signoff("Happy studying!")),
     ]
     html = _layout(
         title=subject, preheader="You're off the waitlist. Sign in to get started.",
@@ -349,7 +363,7 @@ def waitlist_approved(*, signin_url: str, unsubscribe_url: str) -> tuple[str, st
     )
     text = _text(
         heading, lede, f"Sign in to Sapling: {signin_url}",
-        "Your first ten minutes\n" + _text_steps(steps), "Happy studying,\nThe Sapling team",
+        "Your first ten minutes\n" + _text_steps(steps), "Happy studying!\nThe Sapling team",
         unsubscribe_url=unsubscribe_url, reason=_WAITLIST_REASON,
     )
     return subject, html, text
@@ -358,9 +372,9 @@ def waitlist_approved(*, signin_url: str, unsubscribe_url: str) -> tuple[str, st
 def welcome(first_name: str | None, *, app_url: str, unsubscribe_url: str) -> tuple[str, str, str]:
     name = " ".join((first_name or "").split())
     subject = "Welcome to Sapling"
-    heading = f"Welcome, {name}" if name else "Welcome to Sapling"
+    heading = f"Welcome, {name}!" if name else "Welcome to Sapling!"
     lede = (
-        "Your account is set up. Here's how students get the most out of their "
+        "Your account is set up! Here's how students get the most out of their "
         "first week with Sapling."
     )
     tips = [
@@ -386,7 +400,7 @@ def welcome(first_name: str | None, *, app_url: str, unsubscribe_url: str) -> tu
         _spacer(8),
         _rule(),
         _spacer(24),
-        _row(_signoff("Happy studying,")),
+        _row(_signoff("Happy studying!")),
     ]
     html = _layout(
         title=subject, preheader="How to get the most out of your first week.",
@@ -395,7 +409,7 @@ def welcome(first_name: str | None, *, app_url: str, unsubscribe_url: str) -> tu
     text = _text(
         heading, lede, f"Open Sapling: {app_url}",
         "Four things to try this week\n" + "\n".join(f"- {t}: {d}" for t, d in tips),
-        "Happy studying,\nThe Sapling team",
+        "Happy studying!\nThe Sapling team",
         unsubscribe_url=unsubscribe_url, reason=reason,
     )
     return subject, html, text
@@ -448,12 +462,12 @@ def broadcast(subject: str, body: str, *, unsubscribe_url: str) -> tuple[str, st
         _spacer(22),
         _row(render_plain_text_body(body)),
         _spacer(8),
-        _row(_signoff("Thanks,")),
+        _row(_signoff("Thanks!")),
     ]
     html = _layout(
         title=clean_subject, preheader=first_line[:140],
         rows=rows, reason=reason, unsubscribe_url=unsubscribe_url,
     )
     text = (body or "").replace("\r\n", "\n").strip()
-    text = f"{text}\n\nThanks,\nThe Sapling team\n\n--\n{reason}\nUnsubscribe: {unsubscribe_url}\n"
+    text = f"{text}\n\nThanks!\nThe Sapling team\n\n--\n{reason}\nUnsubscribe: {unsubscribe_url}\n"
     return clean_subject, html, text
