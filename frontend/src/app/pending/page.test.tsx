@@ -157,7 +157,7 @@ describe('#741 waitlist standing from the pending token', () => {
     render(<PendingPage />);
     const state = await screen.findByTestId('pending-not-on-waitlist');
     expect(screen.getByRole('heading').textContent).toBe("Your account isn't approved yet");
-    expect(state.textContent).toContain('nina@bu.edu');
+    expect(state.textContent).toContain('nina@bu.edu and we');
     expect(screen.getByTestId('pending-join').textContent).toBe('Join the waitlist');
     expect(screen.getByTestId('pending-signout').textContent).toBe('Use a different account');
   });
