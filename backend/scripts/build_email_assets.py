@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import math
 import random
-import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -71,7 +70,7 @@ def _cloud(rng: random.Random) -> str:
     # a little zoomed out so more of the cloud fits the wide, short strip.
     scale, cx, cy = 0.95, W / 2, H / 2
     pts = []
-    for _ in range(260):
+    for _ in range(130):
         ox, oy, oz = CLUSTERS[rng.randrange(len(CLUSTERS))]
         x = ox + (rng.random() - 0.5) * SPREAD
         y = oy + (rng.random() - 0.5) * SPREAD
@@ -98,18 +97,29 @@ def _cloud(rng: random.Random) -> str:
     return "".join(links) + "".join(dots)
 
 
-def _wordmark(*, width: float) -> str:
-    src = (PUBLIC / "design" / "sapling" / "sapling-wordmark-approved.svg").read_text()
-    src = re.sub(r"<\?xml[^>]*\?>", "", src)
-    height = width * 44.55 / 150
-    x, y = (W - width) / 2, (H - height) / 2 - 6
-    return re.sub(
-        r"<svg\b[^>]*?>",
-        f'<svg x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" height="{height:.1f}" '
-        'viewBox="0 0 150 44.55" overflow="visible">',
-        src,
-        count=1,
-    )
+WORDMARK_W = 360
+LETTER = "#445d22"  # the wordmark's letter stroke colour
+
+
+def _wordmark(tmp: Path) -> tuple[Path, int, int]:
+    """The wordmark as a PNG with its seams closed, and where it goes.
+
+    The SVG is traced as ~120 overlapping strokes; where two meet badly a
+    pinhole of background shows through (the "l" and the "p"). A small
+    morphological close on the alpha fills those without touching the real
+    counters (the bowls of a, p and g are far wider), and the filled pixels
+    take the letter colour underneath the original art."""
+    raw, mask, out = tmp / "wm-raw.png", tmp / "wm-mask.png", tmp / "wm.png"
+    _run("rsvg-convert", "-w", str(WORDMARK_W),
+         str(PUBLIC / "design" / "sapling" / "sapling-wordmark-approved.svg"), "-o", str(raw))
+    _run("magick", str(raw), "-alpha", "extract", "-morphology", "Close", "Disk:2", str(mask))
+    _run("magick", str(raw), "(", "+clone", "-fill", LETTER, "-colorize", "100", str(mask),
+         "-alpha", "off", "-compose", "CopyOpacity", "-composite", ")",
+         "+swap", "-compose", "Over", "-composite", str(out))
+    w, h = (int(v) for v in subprocess.run(
+        ["magick", "identify", "-format", "%w %h", str(out)], check=True, capture_output=True, text=True,
+    ).stdout.split())
+    return out, (W - w) // 2, (H - h) // 2 - 6
 
 
 def header(tmp: Path) -> None:
@@ -133,13 +143,14 @@ def header(tmp: Path) -> None:
         f"{_cloud(rng)}"
         f'<rect width="{W}" height="{H}" fill="url(#glow)"/>'
         f'<rect width="{W}" height="{H}" fill="url(#foot)"/>'
-        + _wordmark(width=360)
-        + "</svg>"
+        "</svg>"
     )
     src = tmp / "header.svg"
     src.write_text(svg)
     png = tmp / "header.png"
     _run("rsvg-convert", str(src), "-o", str(png))
+    wm, x, y = _wordmark(tmp)
+    _run("magick", str(png), str(wm), "-geometry", f"+{x}+{y}", "-compose", "Over", "-composite", str(png))
     # JPEG: the header is opaque and photographic enough that PNG costs 4x.
     _run("magick", str(png), "-strip", "-sampling-factor", "4:4:4", "-quality", "86", str(OUT / "header.jpg"))
 
