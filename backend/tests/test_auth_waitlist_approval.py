@@ -123,14 +123,14 @@ def test_waitlist_approved_email_skips_pending(callback, monkeypatch):
 
 
 def test_new_account_on_approved_waitlist_is_let_in(callback, monkeypatch):
-    # No users row yet: the google_id lookup misses and the account is created
-    # pending, then promoted by the waitlist check.
+    # No users row yet: the account is created already approved, because the
+    # waitlist said yes before anything was stored.
     tables = _tables(
         monkeypatch, users_rows=[],
         waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT}],
     )
     assert callback() == "/auth/callback"
-    assert _approved_update(tables)
+    assert tables["users"].upsert.call_args.args[0]["is_approved"] is True
 
 
 def test_waitlist_match_is_case_insensitive(callback, monkeypatch):
@@ -229,41 +229,75 @@ def test_lookup_escapes_like_metacharacters(monkeypatch):
     assert filters["or"] == '(email.ilike."a.b\\\\_c@bu.edu")'
 
 
-# ── Unapproved sign-in → /pending, with a pending token ─────────────────────
+# ── Unapproved sign-in: no account, a pending token instead ─────────────────
 
 def _token_from(location: str, key: str) -> str:
     from urllib.parse import parse_qs
     return parse_qs(urlparse(location).query)[key][0]
 
 
-def test_unapproved_sign_in_hands_pending_a_token(callback, monkeypatch):
-    _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
+def _nothing_stored(tables) -> bool:
+    users = tables.get("users")
+    return (
+        (users is None or (not users.upsert.called and not users.update.called))
+        and "user_profiles" not in tables
+        and "oauth_tokens" not in tables
+    )
+
+
+def test_unapproved_first_sign_in_stores_nothing(callback, monkeypatch):
+    tables = _tables(monkeypatch, users_rows=[], waitlist_rows=[])
     location = callback(full=True)
     assert urlparse(location).path == "/pending"
-    assert auth_module._pending_token_user(_token_from(location, "t")) == "user_112233"
+    assert _nothing_stored(tables)
+    assert auth_module._pending_token_email(_token_from(location, "t")) == EMAIL
+
+
+def test_unapproved_waitlist_entry_first_sign_in_stores_nothing(callback, monkeypatch):
+    tables = _tables(
+        monkeypatch, users_rows=[],
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": None}],
+    )
+    assert callback() == "/pending"
+    assert _nothing_stored(tables)
 
 
 def test_unapproved_popup_sign_in_carries_the_token(callback, monkeypatch):
-    _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
+    tables = _tables(monkeypatch, users_rows=[], waitlist_rows=[])
     location = callback(popup_id="p1", full=True)
     assert urlparse(location).path == "/auth/callback"
     assert _token_from(location, "error") == "not_approved"
-    assert auth_module._pending_token_user(_token_from(location, "pending_token")) == "user_112233"
+    assert auth_module._pending_token_email(_token_from(location, "pending_token")) == EMAIL
+    assert _nothing_stored(tables)
+
+
+def test_token_never_shows_the_email(callback, monkeypatch):
+    import base64
+
+    _tables(monkeypatch, users_rows=[], waitlist_rows=[])
+    token = _token_from(callback(full=True), "t")
+    payload = token.partition(".")[0]
+    decoded = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
+    assert EMAIL not in token and EMAIL not in decoded
+
+
+def test_existing_unapproved_account_goes_to_pending(callback, monkeypatch):
+    # e.g. access removed under Admin → Users: the row exists, nothing new is made.
+    tables = _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
+    location = callback(full=True)
+    assert urlparse(location).path == "/pending"
+    assert not tables["users"].upsert.called
+    assert auth_module._pending_token_email(_token_from(location, "t")) == EMAIL
 
 
 @pytest.fixture
 def pending(monkeypatch):
-    """A pending account whose decrypted email is EMAIL, and a client."""
+    """A client plus a pending token for EMAIL."""
     monkeypatch.setattr(auth_module, "SESSION_SECRET", "test-secret-key")
-    monkeypatch.setattr(auth_module, "decrypt_if_present", lambda v: v)
 
-    def _setup(*, waitlist_rows=None, users_rows=None):
-        tables = _tables(
-            monkeypatch,
-            users_rows=[{"id": "user_112233", "email": EMAIL}] if users_rows is None else users_rows,
-            waitlist_rows=waitlist_rows,
-        )
-        return tables, TestClient(_app), auth_module._mint_pending_token("user_112233")
+    def _setup(*, waitlist_rows=None):
+        tables = _tables(monkeypatch, users_rows=[], waitlist_rows=waitlist_rows)
+        return tables, TestClient(_app), auth_module._mint_pending_token(EMAIL)
 
     return _setup
 
@@ -286,20 +320,21 @@ def test_pending_token_is_not_a_session(pending):
 def test_pending_token_rejects_tampering_and_expiry(pending, monkeypatch):
     _, _, token = pending()
     payload, _, sig = token.partition(".")
-    assert auth_module._pending_token_user(f"{payload}.{sig[:-2]}xx") is None
-    # A real session token for the same account is not a pending token either.
-    assert auth_module._pending_token_user(
-        auth_module.mint_session("user_112233", secret="test-secret-key")
+    assert auth_module._pending_token_email(f"{payload}.{sig[:-2]}xx") is None
+    # A real session token is not a pending token either.
+    assert auth_module._pending_token_email(
+        auth_module.mint_session(EMAIL, secret="test-secret-key")
     ) is None
     monkeypatch.setattr(auth_module, "_PENDING_TOKEN_TTL_SECONDS", -1)
-    assert auth_module._pending_token_user(auth_module._mint_pending_token("user_112233")) is None
+    assert auth_module._pending_token_email(auth_module._mint_pending_token(EMAIL)) is None
 
 
 def test_pending_status_not_on_waitlist(pending):
-    _, client, token = pending(waitlist_rows=[])
+    tables, client, token = pending(waitlist_rows=[])
     resp = client.post("/api/auth/pending/status", json={"token": token})
     assert resp.status_code == 200
     assert resp.json() == {"email": EMAIL, "on_waitlist": False}
+    tables["users"].select.assert_not_called()  # there is no account to look up
 
 
 def test_pending_status_on_waitlist_is_case_insensitive(pending):
@@ -310,11 +345,6 @@ def test_pending_status_on_waitlist_is_case_insensitive(pending):
 def test_pending_status_bad_token_is_401(pending):
     _, client, _ = pending()
     assert client.post("/api/auth/pending/status", json={"token": "nope.nope"}).status_code == 401
-
-
-def test_pending_status_deleted_account_is_401(pending):
-    _, client, token = pending(users_rows=[])
-    assert client.post("/api/auth/pending/status", json={"token": token}).status_code == 401
 
 
 def test_pending_join_adds_the_sign_in_email(pending):

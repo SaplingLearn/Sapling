@@ -561,22 +561,37 @@ def list_users(
     return paginate_users(q=q, page=page, page_size=page_size)
 
 
-@router.patch("/users/{user_id}/approve")
-def approve_user(user_id: str, request: Request):
-    require_admin(request)
-    actor = get_session_user_id(request)
-    table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
-    log_admin_action(actor_id=actor, action="user.approve", target_type="user", target_id=user_id)
-    return {"approved": True}
+def _back_on_waitlist(email: str) -> None:
+    """Put `email` back on the waitlist as an unapproved signup, so a user whose
+    access was removed shows up in Admin → Allowlist (approving them there lets
+    them back in at their next sign-in). Best-effort: access is already gone."""
+    from routes.auth import _waitlist_entry
+
+    try:
+        entry = _waitlist_entry(email)
+        if entry:
+            table("newsletter_emails").update(
+                {"approved_at": None, "joined_at": None, "joined_user_id": None},
+                filters={"id": f"eq.{entry['id']}"},
+            )
+        else:
+            table("newsletter_emails").upsert({"email": email}, on_conflict="email")
+    except Exception:
+        logger.warning("could not put a removed user back on the waitlist", exc_info=True)
 
 
 @router.patch("/users/{user_id}/unapprove")
 def unapprove_user(user_id: str, request: Request):
+    """Remove a user's access. They leave Admin → Users and reappear in
+    Admin → Allowlist as a signup; their account and data are kept."""
     require_admin(request)
     actor = get_session_user_id(request)
     if user_id == actor:
-        raise HTTPException(status_code=409, detail="You cannot unapprove yourself.")
-    table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+        raise HTTPException(status_code=409, detail="You cannot remove your own access.")
+    rows = table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+    email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
+    if "@" in email:
+        _back_on_waitlist(email)
     log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)
     return {"unapproved": True}
 
@@ -717,10 +732,13 @@ def analytics_overview(request: Request):
     admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
 
     approved = sum(1 for u in users if u.get("is_approved"))
+    # Waiting on approval = waitlist signups not yet approved. Unapproved
+    # sign-ins don't create accounts, so `users` can't answer this.
+    waitlist = table("newsletter_emails").select("approved_at") or []
     totals = {
         "users": len(users),
         "approved": approved,
-        "pending": len(users) - approved,
+        "pending": sum(1 for w in waitlist if not w.get("approved_at")),
         "admins": admin_count,
     }
 
