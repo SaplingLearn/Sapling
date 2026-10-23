@@ -356,11 +356,12 @@ def queue_waitlist_confirmation(background_tasks, email: str) -> None:
         logger.warning("could not queue waitlist confirmation", exc_info=True)
 
 
-def queue_waitlist_approved(background_tasks, email: str) -> None:
+def queue_waitlist_approved(background_tasks, email: str, first_name: Optional[str] = None) -> None:
     from services import email_templates
 
     try:
         subject, html, text = email_templates.waitlist_approved(
+            first_name,
             signin_url=signin_url(),
             unsubscribe_url=unsubscribe_url(email),
         )

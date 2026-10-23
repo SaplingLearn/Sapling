@@ -670,9 +670,12 @@ def approve_allowlist(body: AllowlistEmailBody, request: Request, background_tas
         payload={"email": body.email},
     )
     # "You're in". Deduped per address in email_sends, so a revoke followed
-    # by a re-approve never sends it twice.
-    email_service.queue_waitlist_approved(background_tasks, body.email)
-    return {"email": rows[0] if rows else None}
+    # by a re-approve never sends it twice. The 🔒 first name is there only
+    # for someone who joined from /pending; it never leaves this function.
+    row = dict(rows[0]) if rows else None
+    first_name = decrypt_if_present(row.pop("first_name", None)) if row else None
+    email_service.queue_waitlist_approved(background_tasks, body.email, first_name)
+    return {"email": row}
 
 
 @router.post("/allowlist/approve-bulk")
@@ -692,25 +695,25 @@ def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background
     wanted = body.emails  # normalized: lowercased, stripped, deduped
 
     by_lower: dict[str, list[dict]] = {}
-    for r in _waitlist_rows("id,email,approved_at"):
+    for r in _waitlist_rows("id,email,approved_at,first_name"):
         key = (r.get("email") or "").strip().lower()
         if key:
             by_lower.setdefault(key, []).append(r)
 
     pending_ids: list[str] = []
     missing: list[str] = []
-    recipients: list[str] = []   # address to mail, one per requested email
+    recipients: list[tuple[str, str | None]] = []  # (address, 🔒 first name), one per email
     spellings: list[str] = []    # stored spellings, for the read-back
     for email in wanted:
         existing = by_lower.get(email)
         if existing:
             pending_ids.extend(r["id"] for r in existing if not r.get("approved_at"))
             spellings.extend(r["email"] for r in existing)
-            recipients.append(existing[0]["email"])
+            recipients.append((existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))))
         else:
             missing.append(email)
             spellings.append(email)
-            recipients.append(email)
+            recipients.append((email, None))
 
     for chunk in _chunks(pending_ids, 100):
         table("newsletter_emails").update(
@@ -730,8 +733,8 @@ def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background
         payload={"count": len(wanted), "emails": wanted},
     )
 
-    for address in recipients:
-        email_service.queue_waitlist_approved(background_tasks, address)
+    for address, first_name in recipients:
+        email_service.queue_waitlist_approved(background_tasks, address, first_name)
 
     rows: list[dict] = []
     seen_ids: set = set()

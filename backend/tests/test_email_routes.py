@@ -165,6 +165,35 @@ def test_single_approve_enqueues_youre_in(sent):
     assert kw["dedupe_key"] == f"waitlist_approved:{_h('a@b.co')}"
 
 
+def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(sent):
+    from services.encryption import encrypt
+    with patch("routes.admin.table") as t, \
+         patch("routes.admin.log_admin_action"):
+        t.return_value.upsert.return_value = [{"email": "a@bu.edu", "first_name": encrypt("Ada")}]
+        r = client.post("/api/admin/allowlist/approve", json={"email": "a@bu.edu"})
+    assert r.status_code == 200
+    assert r.json() == {"email": {"email": "a@bu.edu"}}  # no first_name, encrypted or not
+    kw = sent.call_args.kwargs
+    assert kw["subject"] == "Your Sapling spot is ready"
+    assert "Your spot is ready, Ada!" in kw["html"] and "Your spot is ready, Ada!" in kw["text"]
+
+
+def test_bulk_approve_greets_named_entries(monkeypatch, sent):
+    from services.encryption import encrypt
+    factory, _ = _factory()
+    factory("newsletter_emails").select_with_count.return_value = _paged([
+        {"id": "w1", "email": "ada@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
+        {"id": "w2", "email": "anon@bu.edu", "approved_at": None, "first_name": None},
+    ])
+    monkeypatch.setattr("routes.admin.table", factory)
+    with patch("routes.admin.log_admin_action"):
+        r = client.post("/api/admin/allowlist/approve-bulk", json={"emails": ["ada@bu.edu", "anon@bu.edu"]})
+    assert r.status_code == 200, r.text
+    by_to = {c.kwargs["to"]: c.kwargs["html"] for c in sent.call_args_list}
+    assert "Your spot is ready, Ada!" in by_to["ada@bu.edu"]
+    assert "Your spot is ready!" in by_to["anon@bu.edu"]
+
+
 # ── Bulk approve ────────────────────────────────────────────────────────────
 
 

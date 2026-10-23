@@ -328,9 +328,14 @@ def waitlist_confirmation(*, unsubscribe_url: str) -> tuple[str, str, str]:
     return subject, html, text
 
 
-def waitlist_approved(*, signin_url: str, unsubscribe_url: str) -> tuple[str, str, str]:
+def waitlist_approved(
+    first_name: str | None = None, *, signin_url: str, unsubscribe_url: str,
+) -> tuple[str, str, str]:
+    """`first_name` is known only for someone who joined from /pending after
+    trying to sign in; landing-form signups gave an email alone."""
+    name = " ".join((first_name or "").split())
     subject = "Your Sapling spot is ready"
-    heading = "Your spot is ready!"
+    heading = f"Your spot is ready, {name}!" if name else "Your spot is ready!"
     lede = (
         "You're off the waitlist! Sign in with your school Google account and "
         "Sapling will walk you through setting up your courses."
