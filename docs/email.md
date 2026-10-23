@@ -30,8 +30,8 @@ prefetch GETs. A suppressed address gets no email of any kind.
 
 ## Design and images
 
-`services/email_templates.py` builds every email: a forest header with the
-wordmark on a white card, Aleo headlines and SUSE body text, all
+`services/email_templates.py` builds every email: the green wordmark over a
+hairline on a white card, Aleo headlines and SUSE body text, all
 left-aligned. The three lifecycle emails show a Signed up / Approved / Signed in
 progress line; the "you're in" email adds a knowledge-tree screenshot.
 Broadcasts are the same card without the progress line. Aleo and SUSE load from
