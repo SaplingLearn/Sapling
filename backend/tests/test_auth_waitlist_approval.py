@@ -353,7 +353,7 @@ def test_pending_join_adds_the_sign_in_email(pending):
     assert resp.status_code == 200
     assert resp.json() == {"email": EMAIL, "on_waitlist": True}
     upsert = tables["newsletter_emails"].upsert.call_args
-    assert upsert.args[0] == {"email": EMAIL}
+    assert upsert.args[0] == {"email": EMAIL, "first_name": None}
     assert upsert.kwargs["on_conflict"] == "email"
 
 
@@ -366,4 +366,29 @@ def test_pending_join_is_a_no_op_when_already_listed(pending):
 def test_pending_join_bad_token_writes_nothing(pending):
     tables, client, _ = pending(waitlist_rows=[])
     assert client.post("/api/auth/pending/join", json={"token": "x.y"}).status_code == 401
+    tables["newsletter_emails"].upsert.assert_not_called()
+
+
+def test_pending_token_carries_the_first_name(callback, monkeypatch):
+    _tables(monkeypatch, users_rows=[], waitlist_rows=[])
+    claims = auth_module._pending_token_claims(_token_from(callback(full=True), "t"))
+    assert claims == {"email": EMAIL, "first_name": "Ada"}
+
+
+def test_pending_join_stores_the_first_name_encrypted(pending, monkeypatch):
+    from services.encryption import decrypt_if_present
+
+    tables, client, _ = pending(waitlist_rows=[])
+    token = auth_module._mint_pending_token(EMAIL, "Ada")
+    assert client.post("/api/auth/pending/join", json={"token": token}).status_code == 200
+    row = tables["newsletter_emails"].upsert.call_args.args[0]
+    assert row["first_name"] != "Ada" and decrypt_if_present(row["first_name"]) == "Ada"
+
+
+def test_pending_join_fills_a_missing_name_on_an_existing_entry(pending):
+    tables, client, _ = pending(waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": None}])
+    token = auth_module._mint_pending_token(EMAIL, "Ada")
+    assert client.post("/api/auth/pending/join", json={"token": token}).status_code == 200
+    update = tables["newsletter_emails"].update.call_args
+    assert update.kwargs["filters"] == {"id": "eq.w1", "first_name": "is.null"}
     tables["newsletter_emails"].upsert.assert_not_called()
