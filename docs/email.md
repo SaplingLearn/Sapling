@@ -31,19 +31,19 @@ prefetch GETs. A suppressed address gets no email of any kind.
 ## Design and images
 
 `services/email_templates.py` builds every email: a forest header with the
-wordmark, a growth illustration on the seam (seed for the waitlist, sprout on
-approval, sapling on first sign-in), a Signed up / Approved / Signed in track,
-and a Caveat sign-off. Broadcasts use the same header and footer without the
-illustration. Fonts are Aleo, SUSE and Caveat from Google Fonts where the
-client allows it (Apple Mail, iOS); Gmail and Outlook fall back to Georgia and
-the system sans.
+light wordmark over a white card, Aleo headlines and SUSE body text, all
+left-aligned. The three lifecycle emails show a Signed up / Approved / Signed in
+progress line; the "you're in" email adds a knowledge-tree screenshot.
+Broadcasts are the same card without the progress line. Aleo and SUSE load from
+Google Fonts where the client allows it (Apple Mail, iOS); Gmail and Outlook
+fall back to Georgia and the system sans.
 
-Images are PNG/JPEG (Gmail won't show SVG) in `frontend/public/email/`, built
-from the brand SVGs by `backend/scripts/build_email_assets.py` (needs
-`rsvg-convert` and ImageMagick). They load from
-`{EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/`, so they only work once the
-frontend serving them is deployed. Admin → Email previews the real
-server-rendered broadcast (`POST /api/admin/email/broadcasts/preview`).
+The two images are PNG/JPEG (Gmail won't show SVG) in `frontend/public/email/`,
+built by `backend/scripts/build_email_assets.py` (needs `rsvg-convert` and
+ImageMagick). They load from `{EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/`,
+so they only work once the frontend serving them is deployed. Admin → Email
+previews the real server-rendered broadcast
+(`POST /api/admin/email/broadcasts/preview`).
 
 ## Hooking up Resend
 
