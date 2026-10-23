@@ -1,7 +1,7 @@
 """Email bodies. Pure functions returning `(subject, html, text)`.
 
-The look: a forest header with the light wordmark over a paper card, Aleo
-headlines and SUSE body text, everything left-aligned. The three lifecycle
+The look: a plain white card with the green wordmark at the top over a
+hairline, Aleo headlines and SUSE body text, everything left-aligned. The three lifecycle
 emails carry a progress line (Signed up, Approved, Signed in) so a student can
 see where they are; broadcasts are the same card without it.
 
@@ -28,7 +28,6 @@ from html import escape
 import config
 
 BRAND = "#445D22"     # brand forest: buttons, links, progress
-_FOREST = "#293c0e"   # sap-800: the header band
 _OUTER = "#f1f2ed"    # the page around the card
 _PAPER = "#ffffff"
 _TINT = "#f4f7f0"     # sap-50-ish: progress and figure wells
@@ -245,10 +244,11 @@ def _layout(*, title: str, preheader: str, rows: list[str], reason: str, unsubsc
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_OUTER}" style="background:{_OUTER};">
 <tr><td align="center" style="padding:32px 12px 40px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;border-radius:12px;overflow:hidden;background:{_PAPER};border:1px solid {_RULE};">
-<tr><td class="px" bgcolor="{_FOREST}" style="background:{_FOREST};padding:26px 48px;">
-<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("wordmark-light.png"))}" width="96" height="26" alt="Sapling" style="display:block;width:96px;height:26px;border:0;"></a>
+<tr><td class="px" bgcolor="{_PAPER}" style="background:{_PAPER};padding:30px 48px 24px 48px;">
+<a href="{_e(site)}" target="_blank"><img src="{_e(_asset("wordmark.png"))}" width="96" height="26" alt="Sapling" style="display:block;width:96px;height:26px;border:0;"></a>
 </td></tr>
-{_spacer(40)}
+{_rule()}
+{_spacer(36)}
 {"".join(rows)}
 {_spacer(40)}
 </table>

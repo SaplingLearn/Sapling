@@ -1,6 +1,6 @@
 """Build the images the HTML emails reference (services/email_templates.py).
 
-Email clients (Gmail above all) don't render SVG, so the light wordmark is
+Email clients (Gmail above all) don't render SVG, so the wordmark is
 rasterised here, and the knowledge-tree screenshot is cropped from the
 gallery, into frontend/public/email/, which the frontend serves at
 {FRONTEND_URL}/email/. Re-run after changing either source:
@@ -27,8 +27,8 @@ def _run(*cmd: str) -> None:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     # 3x the 26px it's shown at, so it stays sharp on retina screens.
-    wordmark = OUT / "wordmark-light.png"
-    _run("rsvg-convert", "-h", "78", str(PUBLIC / "design" / "sapling" / "sapling-wordmark-light.svg"),
+    wordmark = OUT / "wordmark.png"
+    _run("rsvg-convert", "-h", "78", str(PUBLIC / "design" / "sapling" / "sapling-wordmark-approved.svg"),
          "-o", str(wordmark))
     _run("magick", str(wordmark), "-strip", str(wordmark))
     # The graph area of the knowledge-tree gallery shot, at 2x the 504px it's shown at.
