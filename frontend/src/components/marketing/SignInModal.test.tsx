@@ -10,7 +10,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 const replace = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }));
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace, push }) }));
 
 const setActiveUser = vi.fn();
 const confirmApproved = vi.fn();
@@ -19,6 +20,7 @@ vi.mock('@/context/UserContext', () => ({
 }));
 
 import SignInModal from './SignInModal';
+import { PENDING_TOKEN_KEY } from '@/lib/pendingToken';
 
 const channels: FakeChannel[] = [];
 class FakeChannel {
@@ -105,5 +107,46 @@ describe('#715 popup sign-in routing', () => {
     await signInThroughPopup(true);
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('#741 an unapproved popup sign-in goes to /pending', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    channels.length = 0;
+    sessionStorage.clear();
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    vi.spyOn(window, 'open').mockImplementation(
+      () => ({ closed: false, focus() {}, close() {} }) as unknown as Window,
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function deliver(data: Record<string, unknown>) {
+    const onClose = vi.fn();
+    render(<SignInModal open onClose={onClose} />);
+    fireEvent.click(screen.getByTestId('signin-google-button'));
+    channels[0].onmessage?.({ data: { type: 'sapling_signin', ...data } } as MessageEvent);
+    return onClose;
+  }
+
+  it('stashes the relayed token, closes the modal and routes to /pending', () => {
+    const onClose = deliver({ success: false, error: 'not_approved', pendingToken: 'pt-1' });
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBe('pt-1');
+    expect(onClose).toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith('/pending');
+    expect(screen.queryByTestId('signin-error')).toBeNull();
+  });
+
+  it('without a token keeps the pending-approval error in the modal', async () => {
+    const onClose = deliver({ success: false, error: 'not_approved' });
+    expect((await screen.findByTestId('signin-error')).textContent).toContain('pending approval');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
   });
 });

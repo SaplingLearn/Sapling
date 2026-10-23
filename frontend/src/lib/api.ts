@@ -166,6 +166,27 @@ export interface LocalSeedStatus {
 }
 export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/local-seed');
 
+/** An unapproved sign-in's waitlist standing, read with the short-lived
+ * pending token the backend hands back instead of a session (see
+ * `lib/pendingToken.ts`). Both calls 401 when the token is missing, invalid
+ * or expired. */
+export interface PendingStatus {
+  email: string;
+  on_waitlist: boolean;
+}
+export const getPendingStatus = (token: string) =>
+  fetchJSON<PendingStatus>('/api/auth/pending/status', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+/** Puts the pending account's sign-in email on the waitlist. Idempotent: an
+ * account already on it answers the same `on_waitlist: true`. */
+export const joinWaitlistFromPending = (token: string) =>
+  fetchJSON<PendingStatus>('/api/auth/pending/join', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+
 // Graph
 export const getGraph = (userId: string, semester?: string) =>
   fetchJSON<{ nodes: any[]; edges: any[]; stats: any }>(

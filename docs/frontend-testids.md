@@ -134,7 +134,15 @@ route:
 | testid | element |
 | --- | --- |
 | `pending-gate` | approval-gate page root |
-| `pending-signout` | "Sign out" |
+| `pending-signout` | "Sign out" / "Use a different account" (same control; the label depends on whether a pending token resolved) |
+| `pending-loading` | "Checking your account…" while the pending-token status is in flight |
+| `pending-not-on-waitlist` | state root: signed in, not approved, not on the waitlist yet |
+| `pending-join` | "Join the waitlist" (only in `pending-not-on-waitlist`) |
+| `pending-join-error` | inline error after a failed join (`role="alert"`) |
+| `pending-on-waitlist` | state root: signed in, not approved, already on the waitlist |
+| `pending-joined` | "You're on the waitlist" confirmation, only right after a join in this visit |
+| `pending-unknown` | state root: no usable pending token (missing, expired, network failure) |
+| `pending-home` | "Back to home" (only in `pending-unknown`) |
 | `onboarding-gate` | first-run onboarding page root |
 | `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
 | `onboarding-back` | "Back" (absent on step 0) |
