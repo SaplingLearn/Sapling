@@ -236,7 +236,8 @@ export default function PendingPage() {
             <div data-testid="pending-not-on-waitlist" style={stateStyle}>
               <p style={bodyText}>
                 Sapling is letting students in a few at a time. Join the waitlist as{' '}
-                <strong style={emailStyle}>{view.email}</strong> and we&apos;ll email you
+                <strong style={emailStyle}>{view.email}</strong>{' '}
+                and we&apos;ll email you
                 when your spot opens.
               </p>
               <button
