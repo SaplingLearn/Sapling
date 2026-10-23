@@ -516,6 +516,9 @@ Admin broadcasts. The final send is gated by typing the recipient count (or
 | `email-not-configured-banner` | shown on both the allowlist and email tabs when `GET /api/admin/email/status` says Resend isn't configured |
 | `email-subject` / `email-subject-count` | subject input and its 200-char counter |
 | `email-body` / `email-body-count` | plain-text body textarea and its 20000-char counter |
+| `email-variables` | the "Personalize:" chip row, one chip per `variables` entry from `GET /api/admin/email/status` (hidden when there are none) |
+| `email-variable-{key}` | one variable chip (`first_name`/`name`/`email`/`app_link`/`signin_link`); click inserts `{{key}}` at the caret of the last-focused field (subject or body; body by default) |
+| `email-unknown-variables` | inline warning listing the preview's `unknown_variables`; while shown, `email-send` and `email-send-test` are disabled |
 | `email-audience-{key}` | one audience radio (`waitlist_all`/`waitlist_pending`/`waitlist_approved_not_joined`/`users_all`) |
 | `email-preview` / `email-preview-subject` | the preview pane and its subject line |
 | `email-preview-frame` | sandboxed iframe whose `srcdoc` is the server-rendered email from `POST /api/admin/email/broadcasts/preview` (debounced) |

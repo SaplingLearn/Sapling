@@ -388,9 +388,21 @@ export interface AllowlistEmail {
 export type InviteStatus = "queued" | "sent" | "skipped" | "failed" | "suppressed";
 
 /** GET /api/admin/email/status. When `configured` is false, emails are recorded but not sent. */
+/** One personalization variable an admin can write in a broadcast as
+ *  `{{key}}` or `{{key|fallback}}` (backend services/email_variables.py). */
+export interface EmailVariable {
+  key: string;
+  label: string;
+  /** Used when the recipient has no value and the admin gave none; may be "". */
+  fallback: string;
+  example: string;
+}
+
 export interface EmailStatus {
   configured: boolean;
   from_address: string;
+  /** In display order. Optional so an older backend's response still types. */
+  variables?: EmailVariable[];
 }
 
 export type EmailAudienceKey =
@@ -421,8 +433,12 @@ export interface EmailBroadcast {
 
 /** POST /api/admin/email/broadcasts/preview: the real server-rendered email (a full HTML document). Sends nothing. */
 export interface EmailBroadcastPreview {
+  /** The subject with the calling admin's variable values filled in. */
   subject: string;
   html: string;
+  /** Variable names used in the draft that aren't real variables (left as
+   *  typed in the render; a send with any of them 422s). */
+  unknown_variables?: string[];
 }
 
 export interface AchievementTrigger {

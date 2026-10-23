@@ -12,6 +12,7 @@ import {
   adminSendBroadcast,
   adminSendTestBroadcast,
 } from "@/lib/api";
+import { extractErrorDetail } from "@/lib/errorMessage";
 import type {
   EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview, EmailStatus,
 } from "@/lib/types";
@@ -29,6 +30,14 @@ import { EmailNotConfiguredBanner } from "./EmailNotConfiguredBanner";
  * `POST /email/broadcasts/preview`, and the server-rendered HTML document is
  * shown in a sandboxed iframe (no scripts, no same-origin), so what the
  * admin sees is exactly what goes out.
+ *
+ * Personalization: the admin can write `{{key}}` / `{{key|fallback}}` in the
+ * subject or body. The "Personalize" chips (from `/email/status` `variables`)
+ * insert a variable at the caret of the last-focused field. The preview and
+ * the test send fill in the admin's own values; a real send fills in each
+ * recipient's. An unknown variable comes back on the preview as
+ * `unknown_variables`, and both sends stay disabled until it's fixed (the
+ * server 422s them anyway).
  */
 
 export const SUBJECT_MAX = 200;
@@ -48,6 +57,30 @@ function people(n: number) {
   return `${n} ${n === 1 ? "person" : "people"}`;
 }
 
+const token = (key: string) => `{{${key}}}`;
+
+/**
+ * What the server said about a failed send. A 422 from the unknown-variable
+ * check is a FastAPI validation error, `{detail: [{msg: "Value error, Unknown
+ * variable {{x}}. Use one of: …"}]}`; every msg is kept (subject and body can
+ * each fail) and Pydantic's "Value error, " prefix dropped. `humanizeError`
+ * would discard these (braces, length), but here the braces are the point.
+ */
+export function sendErrorText(err: unknown): string {
+  const body = (err as { body?: unknown } | null)?.body;
+  const detail = body !== null && typeof body === "object" ? (body as { detail?: unknown }).detail : undefined;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (d !== null && typeof d === "object" ? (d as { msg?: unknown }).msg : undefined))
+      .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+      .map((m) => m.trim().replace(/^Value error,\s*/i, ""));
+    if (msgs.length > 0) return [...new Set(msgs)].join(" ");
+  }
+  return extractErrorDetail(err).detail ?? String(err);
+}
+
+type ComposeField = "subject" | "body";
+
 export function EmailBroadcastsTab() {
   const toast = useToast();
   const [loading, setLoading] = React.useState(true);
@@ -65,6 +98,9 @@ export function EmailBroadcastsTab() {
   const confirmInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const [preview, setPreview] = React.useState<EmailBroadcastPreview | null>(null);
+  // The trimmed subject the shown preview was rendered for, so its filled-in
+  // subject is only used while it still matches the draft.
+  const [previewFor, setPreviewFor] = React.useState<string | null>(null);
   const [previewError, setPreviewError] = React.useState(false);
   // Only the latest preview request may update the pane; bumped on every
   // draft change (and on unmount) so an older, slower response is dropped.
@@ -78,6 +114,7 @@ export function EmailBroadcastsTab() {
         (r) => {
           if (seq !== previewSeq.current) return;
           setPreview(r);
+          setPreviewFor(previewSubject);
           setPreviewError(false);
         },
         () => {
@@ -91,6 +128,41 @@ export function EmailBroadcastsTab() {
       previewSeq.current += 1;
     };
   }, [previewSubject, previewBody]);
+
+  const subjectRef = React.useRef<HTMLInputElement | null>(null);
+  const bodyRef = React.useRef<HTMLTextAreaElement | null>(null);
+  // Where a Personalize chip inserts: the field focused last (body until then).
+  const lastField = React.useRef<ComposeField>("body");
+  // Set by insertVariable, applied once the new value has rendered.
+  const pendingCaret = React.useRef<{ field: ComposeField; pos: number } | null>(null);
+  React.useLayoutEffect(() => {
+    const p = pendingCaret.current;
+    if (!p) return;
+    pendingCaret.current = null;
+    const el = p.field === "subject" ? subjectRef.current : bodyRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(p.pos, p.pos);
+  }, [subject, body]);
+
+  const insertVariable = (key: string) => {
+    const field = lastField.current;
+    const el = field === "subject" ? subjectRef.current : bodyRef.current;
+    const value = field === "subject" ? subject : body;
+    const max = field === "subject" ? SUBJECT_MAX : BODY_MAX;
+    const text = token(key);
+    const start = Math.min(el?.selectionStart ?? value.length, value.length);
+    const end = Math.max(start, Math.min(el?.selectionEnd ?? start, value.length));
+    const next = value.slice(0, start) + text + value.slice(end);
+    if (next.length > max) {
+      toast.warn(`No room for ${text}: the ${field} is limited to ${max} characters.`);
+      el?.focus();
+      return;
+    }
+    pendingCaret.current = { field, pos: start + text.length };
+    if (field === "subject") setSubject(next);
+    else setBody(next);
+  };
 
   React.useEffect(() => {
     let alive = true;
@@ -124,7 +196,10 @@ export function EmailBroadcastsTab() {
   const selectedAudience = audiences.find((a) => a.key === audience) ?? null;
   const n = selectedAudience?.count ?? 0;
   const hasDraft = subject.trim().length > 0 && body.trim().length > 0;
-  const canSend = hasDraft && selectedAudience !== null && n > 0 && !sending;
+  const variables = status?.variables ?? [];
+  const unknownVars = preview?.unknown_variables ?? [];
+  const hasUnknown = unknownVars.length > 0;
+  const canSend = hasDraft && !hasUnknown && selectedAudience !== null && n > 0 && !sending;
   const notConfigured = status !== null && !status.configured;
   const confirmOk = confirmText.trim() === String(n) || confirmText.trim() === "SEND";
 
@@ -138,7 +213,7 @@ export function EmailBroadcastsTab() {
       if (r.status === "sent" || r.status === "queued") toast.success(msg);
       else toast.warn(msg);
     } catch (err) {
-      toast.error(`Test send failed: ${String(err)}`);
+      toast.error(`Test send failed: ${sendErrorText(err)}`);
     } finally {
       setTesting(false);
     }
@@ -160,7 +235,7 @@ export function EmailBroadcastsTab() {
       setBody("");
       setConfirmOpen(false);
     } catch (err) {
-      toast.error(`Send failed: ${String(err)}`);
+      toast.error(`Send failed: ${sendErrorText(err)}`);
     } finally {
       setSending(false);
     }
@@ -182,31 +257,72 @@ export function EmailBroadcastsTab() {
               <span className="label-micro" data-testid="email-subject-count">{subject.length}/{SUBJECT_MAX}</span>
             </span>
             <input
+              ref={subjectRef}
               data-testid="email-subject"
               value={subject}
               maxLength={SUBJECT_MAX}
+              onFocus={() => { lastField.current = "subject"; }}
               onChange={(e) => setSubject(e.target.value)}
               style={fieldStyle}
             />
           </label>
 
-          <label style={{ display: "block", marginBottom: 12 }}>
-            <span style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span className="label-micro">Body</span>
-              <span className="label-micro" data-testid="email-body-count">{body.length}/{BODY_MAX}</span>
-            </span>
-            <textarea
-              data-testid="email-body"
-              value={body}
-              maxLength={BODY_MAX}
-              rows={10}
-              onChange={(e) => setBody(e.target.value)}
-              style={{ ...fieldStyle, resize: "vertical", minHeight: 160 }}
-            />
-            <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <span className="label-micro">Body</span>
+                <span className="label-micro" data-testid="email-body-count">{body.length}/{BODY_MAX}</span>
+              </span>
+              <textarea
+                ref={bodyRef}
+                data-testid="email-body"
+                value={body}
+                maxLength={BODY_MAX}
+                rows={10}
+                onFocus={() => { lastField.current = "body"; }}
+                onChange={(e) => setBody(e.target.value)}
+                style={{ ...fieldStyle, resize: "vertical", minHeight: 160 }}
+              />
+            </label>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
               Plain text. Blank lines make paragraphs; links are clickable.
-            </span>
-          </label>
+              Variables like {token("first_name")} are filled in for each person.
+            </div>
+            {variables.length > 0 && (
+              <div
+                data-testid="email-variables"
+                style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}
+              >
+                <span className="label-micro">Personalize:</span>
+                {variables.map((v) => (
+                  <button
+                    key={v.key}
+                    type="button"
+                    className="chip"
+                    data-testid={`email-variable-${v.key}`}
+                    title={v.fallback ? `${token(v.key)}\nIf unknown: ${v.fallback}` : token(v.key)}
+                    onClick={() => insertVariable(v.key)}
+                    style={{ cursor: "pointer", textTransform: "none" }}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {hasUnknown && (
+              <div
+                data-testid="email-unknown-variables"
+                role="status"
+                style={{
+                  marginTop: 10, padding: "8px 10px", borderRadius: "var(--r-sm)", fontSize: 12,
+                  background: "var(--warn-soft)", color: "var(--warn)", overflowWrap: "anywhere",
+                }}
+              >
+                Unknown {unknownVars.length === 1 ? "variable" : "variables"} {unknownVars.map(token).join(", ")}.
+                {" "}Check the spelling, or pick one from Personalize. Sending is off until it&apos;s fixed.
+              </div>
+            )}
+          </div>
 
           <fieldset style={{ border: 0, padding: 0, margin: "0 0 16px" }}>
             <legend className="label-micro" style={{ marginBottom: 6 }}>Audience</legend>
@@ -239,7 +355,7 @@ export function EmailBroadcastsTab() {
               type="button"
               className="btn btn--ghost btn--sm"
               data-testid="email-send-test"
-              disabled={!hasDraft || testing}
+              disabled={!hasDraft || hasUnknown || testing}
               onClick={() => void sendTest()}
             >
               {testing ? "Sending test…" : "Send test to me"}
@@ -274,7 +390,9 @@ export function EmailBroadcastsTab() {
               data-testid="email-preview-subject"
               style={{ fontWeight: 600, padding: "12px 16px", borderBottom: "1px solid var(--border)", overflowWrap: "anywhere" }}
             >
-              {subject.trim() || <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(no subject)</span>}
+              {previewSubject
+                ? (preview && previewFor === previewSubject ? preview.subject : previewSubject)
+                : <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(no subject)</span>}
             </div>
             {preview ? (
               <iframe

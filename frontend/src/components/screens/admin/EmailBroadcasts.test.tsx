@@ -11,6 +11,11 @@
  *     `adminPreviewBroadcast`, its HTML lands in a sandboxed iframe's
  *     srcdoc, stale responses are dropped, and a failure shows inline;
  *   - the not-configured banner follows `/email/status`;
+ *   - the "Personalize" chips come from `/email/status` `variables` and insert
+ *     `{{key}}` at the caret of the last-focused field (body by default),
+ *     within the field's max length; the preview's filled-in subject shows;
+ *   - unknown variables on the preview show a warning and disable both sends;
+ *     a send's 422 validation message reaches the toast intact;
  *   - history polls every 5s while a broadcast is `sending`, and stops once
  *     none are.
  */
@@ -36,7 +41,7 @@ const toastSpies = vi.hoisted(() => ({
 }));
 vi.mock("@/components/ToastProvider", () => ({ useToast: () => toastSpies }));
 
-import { EmailBroadcastsTab, POLL_MS, PREVIEW_DEBOUNCE_MS } from "./EmailBroadcasts";
+import { EmailBroadcastsTab, POLL_MS, PREVIEW_DEBOUNCE_MS, SUBJECT_MAX } from "./EmailBroadcasts";
 
 const AUDIENCES = [
   { key: "waitlist_all", label: "Everyone on the waitlist", count: 12 },
@@ -58,6 +63,12 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+const VARIABLES = [
+  { key: "first_name", label: "First name", fallback: "there", example: "Ada" },
+  { key: "name", label: "Full name", fallback: "there", example: "Ada Lovelace" },
+  { key: "email", label: "Email address", fallback: "", example: "ada@bu.edu" },
+];
 
 const PREVIEW_WAIT = { timeout: PREVIEW_DEBOUNCE_MS * 6 };
 const frame = () => screen.getByTestId("email-preview-frame") as HTMLIFrameElement;
@@ -260,5 +271,142 @@ describe("EmailBroadcastsTab", () => {
 
     await act(async () => { vi.advanceTimersByTime(POLL_MS * 4); });
     expect(api.adminListBroadcasts).toHaveBeenCalledTimes(3);
+  });
+
+  describe("personalization variables", () => {
+    beforeEach(() => {
+      api.adminEmailStatus.mockResolvedValue({
+        configured: true, from_address: "Sapling <hi@sapling.test>", variables: VARIABLES,
+      });
+    });
+
+    const field = (id: string) => screen.getByTestId(id) as HTMLInputElement | HTMLTextAreaElement;
+    const caretAt = (el: HTMLInputElement | HTMLTextAreaElement, start: number, end = start) => {
+      act(() => { el.focus(); });
+      el.setSelectionRange(start, end);
+    };
+
+    it("renders one chip per server variable, with the token and fallback in its tooltip", async () => {
+      render(<EmailBroadcastsTab />);
+      const row = await screen.findByTestId("email-variables");
+      expect(row.textContent).toContain("Personalize:");
+      const chips = VARIABLES.map((v) => screen.getByTestId(`email-variable-${v.key}`));
+      expect(chips.map((c) => c.textContent)).toEqual(["First name", "Full name", "Email address"]);
+      const first = screen.getByTestId("email-variable-first_name");
+      expect(first.getAttribute("title")).toContain("{{first_name}}");
+      expect(first.getAttribute("title")).toContain("If unknown: there");
+      expect(screen.getByTestId("email-variable-email").getAttribute("title")).toBe("{{email}}");
+      expect(screen.getByText(/Variables like \{\{first_name\}\} are filled in for each person\./)).toBeTruthy();
+    });
+
+    it("hides the chip row when the server sends no variables", async () => {
+      api.adminEmailStatus.mockResolvedValue({ configured: true, from_address: "x@y.z" });
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-body");
+      expect(screen.queryByTestId("email-variables")).toBeNull();
+    });
+
+    it("inserts at the body caret by default, replacing a selection, and keeps the caret after it", async () => {
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-variables");
+      fireEvent.change(field("email-body"), { target: { value: "Hi XX, welcome" } });
+      // Never focused: the body is the target, at its caret.
+      const body = field("email-body");
+      body.setSelectionRange(3, 5); // "XX"
+      fireEvent.click(screen.getByTestId("email-variable-first_name"));
+      expect(body.value).toBe("Hi {{first_name}}, welcome");
+      expect(document.activeElement).toBe(body);
+      expect(body.selectionStart).toBe(3 + "{{first_name}}".length);
+      expect(body.selectionEnd).toBe(body.selectionStart);
+      expect(field("email-subject").value).toBe("");
+    });
+
+    it("inserts into the subject when the subject was focused last", async () => {
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-variables");
+      fireEvent.change(field("email-body"), { target: { value: "Body" } });
+      fireEvent.change(field("email-subject"), { target: { value: "Hello !" } });
+      caretAt(field("email-subject"), 6);
+      fireEvent.click(screen.getByTestId("email-variable-name"));
+      const subject = field("email-subject");
+      expect(subject.value).toBe("Hello {{name}}!");
+      expect(document.activeElement).toBe(subject);
+      expect(subject.selectionStart).toBe(6 + "{{name}}".length);
+      expect(field("email-body").value).toBe("Body");
+
+      // Focus moves back to the body: the next chip goes there.
+      caretAt(field("email-body"), 0);
+      fireEvent.click(screen.getByTestId("email-variable-email"));
+      expect(field("email-body").value).toBe("{{email}}Body");
+      expect(field("email-subject").value).toBe("Hello {{name}}!");
+    });
+
+    it("won't insert past the field's max length", async () => {
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-variables");
+      const full = "x".repeat(SUBJECT_MAX - 3);
+      fireEvent.change(field("email-subject"), { target: { value: full } });
+      caretAt(field("email-subject"), full.length);
+      fireEvent.click(screen.getByTestId("email-variable-first_name"));
+      expect(field("email-subject").value).toBe(full);
+      expect(toastSpies.warn).toHaveBeenCalledWith(expect.stringContaining("{{first_name}}"));
+    });
+
+    it("shows the preview's filled-in subject once it matches the draft", async () => {
+      api.adminPreviewBroadcast.mockImplementation(async ({ subject }: { subject: string }) => ({
+        subject: subject.replace("{{first_name}}", "Ada"), html: "<p>ok</p>", unknown_variables: [],
+      }));
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-body");
+      fill("Hi {{first_name}}", "Body");
+      expect(screen.getByTestId("email-preview-subject").textContent).toBe("Hi {{first_name}}");
+      await waitFor(
+        () => expect(screen.getByTestId("email-preview-subject").textContent).toBe("Hi Ada"),
+        PREVIEW_WAIT,
+      );
+    });
+
+    it("warns about unknown variables and disables both sends until the preview comes back clean", async () => {
+      api.adminPreviewBroadcast.mockImplementation(async ({ subject, body }: { subject: string; body: string }) => ({
+        subject, html: "<p>x</p>",
+        unknown_variables: [subject, body].join(" ").includes("frist_name") ? ["frist_name"] : [],
+      }));
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-audience-waitlist_all");
+      fireEvent.click(screen.getByTestId("email-audience-waitlist_all"));
+      fill("News", "Hi {{frist_name}},");
+
+      const warning = await screen.findByTestId("email-unknown-variables", {}, PREVIEW_WAIT);
+      expect(warning.textContent).toContain(
+        "Unknown variable {{frist_name}}. Check the spelling, or pick one from Personalize.",
+      );
+      expect((screen.getByTestId("email-send") as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByTestId("email-send-test") as HTMLButtonElement).disabled).toBe(true);
+
+      fill("News", "Hi {{first_name}},");
+      await waitFor(() => expect(screen.queryByTestId("email-unknown-variables")).toBeNull(), PREVIEW_WAIT);
+      expect((screen.getByTestId("email-send") as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByTestId("email-send-test") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("lists every unknown variable", async () => {
+      api.adminPreviewBroadcast.mockResolvedValue({ subject: "s", html: "<p>x</p>", unknown_variables: ["frist_name", "nmae"] });
+      render(<EmailBroadcastsTab />);
+      const warning = await screen.findByTestId("email-unknown-variables", {}, PREVIEW_WAIT);
+      expect(warning.textContent).toContain("Unknown variables {{frist_name}}, {{nmae}}.");
+    });
+
+    it("puts a send's 422 validation message in the toast, not the raw body", async () => {
+      const msg = "Unknown variable {{frist_name}}. Use one of: {{first_name}}, {{name}}.";
+      const body = { detail: [{ type: "value_error", loc: ["body", "body"], msg: `Value error, ${msg}` }] };
+      api.adminSendTestBroadcast.mockRejectedValue(
+        Object.assign(new Error(JSON.stringify(body)), { status: 422, body }),
+      );
+      render(<EmailBroadcastsTab />);
+      await screen.findByTestId("email-send-test");
+      fill("Subj", "Hi {{frist_name}}");
+      fireEvent.click(screen.getByTestId("email-send-test"));
+      await waitFor(() => expect(toastSpies.error).toHaveBeenCalledWith(`Test send failed: ${msg}`));
+    });
   });
 });
