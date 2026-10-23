@@ -22,10 +22,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 import config
 from db.connection import page_all, table
 from models import EmailBroadcastBody, EmailBroadcastPreviewBody, EmailBroadcastTestBody
-from services import email_service, email_templates
+from services import email_service, email_templates, email_variables
 from services.admin_audit import log_admin_action
 from services.auth_guard import get_session_user_id, require_admin
-from services.encryption import decrypt_if_present
+from services.encryption import decrypt, decrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,65 @@ def _user_addresses() -> dict[str, str]:
     return out
 
 
+def _plain(value) -> str:
+    """A 🔒 column's plaintext, or "" when it's empty or can't be decrypted.
+    Never the ciphertext: that must not end up in someone's greeting."""
+    if not isinstance(value, str) or not value:
+        return ""
+    try:
+        return " ".join(decrypt(value).split())
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _names() -> dict[str, dict[str, str]]:
+    """normalized address → {first_name, name}, for the broadcast variables.
+
+    An account's profile names first (first name falls back to the first word
+    of the full name), else the first name a waitlist entry carries (set when
+    someone joins from /pending). Landing-form signups have neither, so their
+    copy uses the variable's fallback."""
+    profiles = {
+        p["user_id"]: p
+        for p in page_all(table("user_profiles"), "user_id,first_name,name", order="user_id.asc")
+        if p.get("user_id")
+    }
+    out: dict[str, dict[str, str]] = {}
+    for u in page_all(table("users"), "id,email", filters={"deleted_at": "is.null"}, order="id.asc"):
+        address = _plain(u.get("email")).lower()
+        if "@" not in address:
+            continue
+        p = profiles.get(u["id"]) or {}
+        name = _plain(p.get("name"))
+        first = _plain(p.get("first_name")) or (name.split()[0] if name else "")
+        out.setdefault(address, {"first_name": first, "name": name})
+    for r in page_all(table("newsletter_emails"), "email,first_name", order="created_at.asc,id.asc"):
+        address = (r.get("email") or "").strip().lower()
+        first = _plain(r.get("first_name"))
+        if "@" not in address or not first:
+            continue
+        entry = out.setdefault(address, {"first_name": "", "name": ""})
+        entry["first_name"] = entry["first_name"] or first
+        entry["name"] = entry["name"] or first
+    return out
+
+
+def _values(address: str, names: dict[str, dict[str, str]]) -> dict[str, str]:
+    """One recipient's variable values."""
+    known = names.get(address.strip().lower()) or {}
+    return {
+        "first_name": known.get("first_name", ""),
+        "name": known.get("name", ""),
+        "email": address,
+        "app_link": email_service.app_url(),
+        "signin_link": email_service.signin_url(),
+    }
+
+
+def _uses_variables(*texts: str) -> bool:
+    return any("{{" in (t or "") for t in texts)
+
+
 def _by_hash(addresses: Iterable[str], suppressed: set[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for address in addresses:
@@ -127,7 +186,11 @@ def resolve_audiences(keys: Iterable[str]) -> dict[str, dict[str, str]]:
 @router.get("/status")
 def email_status(request: Request):
     require_admin(request)
-    return {"configured": email_service.is_configured(), "from_address": config.EMAIL_FROM}
+    return {
+        "configured": email_service.is_configured(),
+        "from_address": config.EMAIL_FROM,
+        "variables": email_variables.VARIABLES,
+    }
 
 
 @router.get("/audiences")
@@ -152,13 +215,25 @@ def _admin_address(user_id: str) -> str | None:
 
 @router.post("/broadcasts/preview")
 def preview_broadcast(body: EmailBroadcastPreviewBody, request: Request):
-    """The broadcast's real HTML, rendered server-side for the compose preview.
-    Sends nothing and writes nothing; the unsubscribe link is a placeholder."""
+    """The broadcast's real HTML, rendered server-side for the compose preview,
+    with the variables filled in as the calling admin. Sends nothing and writes
+    nothing; the unsubscribe link is a placeholder. Unknown variables are left
+    as typed and listed, so the composer can flag them before a send 422s."""
     require_admin(request)
+    values: dict[str, str] = {}
+    if _uses_variables(body.subject, body.body):
+        address = _admin_address(get_session_user_id(request)) or ""
+        values = _values(address, _names()) if address else {}
     subject, html, _ = email_templates.broadcast(
-        body.subject or "(no subject)", body.body, unsubscribe_url="#unsubscribe",
+        email_variables.fill(body.subject, values) or "(no subject)",
+        email_variables.fill(body.body, values),
+        unsubscribe_url="#unsubscribe",
     )
-    return {"subject": subject, "html": html}
+    return {
+        "subject": subject,
+        "html": html,
+        "unknown_variables": email_variables.unknown_variables(body.subject, body.body),
+    }
 
 
 @router.post("/broadcasts/test")
@@ -170,8 +245,11 @@ def send_test_broadcast(body: EmailBroadcastTestBody, request: Request):
     to = _admin_address(actor)
     if not to:
         raise HTTPException(status_code=400, detail="Your account has no email address to send a test to.")
+    values = _values(to, _names() if _uses_variables(body.subject, body.body) else {})
     subject, html, text = email_templates.broadcast(
-        body.subject, body.body, unsubscribe_url=email_service.unsubscribe_url(to),
+        email_variables.fill(body.subject, values),
+        email_variables.fill(body.body, values),
+        unsubscribe_url=email_service.unsubscribe_url(to),
     )
     status = email_service.send_email(
         kind="broadcast_test",
@@ -242,10 +320,15 @@ def run_broadcast(broadcast_id: str, subject: str, body: str, recipients: list[s
             logger.warning("broadcast progress write failed id=%s", broadcast_id, exc_info=True)
 
     try:
+        # Read once per run, and only when the text actually uses variables.
+        names = _names() if _uses_variables(subject, body) else {}
         for i, to in enumerate(recipients, start=1):
             try:
+                values = _values(to, names)
                 subj, html, text = email_templates.broadcast(
-                    subject, body, unsubscribe_url=email_service.unsubscribe_url(to),
+                    email_variables.fill(subject, values),
+                    email_variables.fill(body, values),
+                    unsubscribe_url=email_service.unsubscribe_url(to),
                 )
                 status = email_service.send_email(
                     kind="broadcast",

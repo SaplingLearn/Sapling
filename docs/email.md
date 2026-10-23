@@ -46,6 +46,25 @@ Chromium). It loads from `{EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/`, so it
 only shows once the frontend serving it is deployed. Admin → Email previews
 the real server-rendered broadcast (`POST /api/admin/email/broadcasts/preview`).
 
+## Personalizing broadcasts
+
+Broadcast subjects and bodies can use variables, filled in per recipient:
+
+| variable | value | if unknown |
+| --- | --- | --- |
+| `{{first_name}}` | the account's first name, or the first name a /pending waitlist join stored | `there` |
+| `{{name}}` | the account's full name (else the first name) | `there` |
+| `{{email}}` | the address it's sent to | |
+| `{{app_link}}` | `{FRONTEND_URL}/dashboard` | |
+| `{{signin_link}}` | `{FRONTEND_URL}` (its Sign in button starts Google OAuth) | |
+
+`{{first_name|friend}}` sets your own fallback. Landing-form waitlist signups
+gave only an email, so they get the fallback. An unknown variable (a typo like
+`{{frist_name}}`) is rejected before anything sends; the composer flags it
+from the preview. Preview and "Send test to me" fill in your own details.
+Values are inserted into the plain text before it's escaped, so a name can't
+inject markup. Defined in `backend/services/email_variables.py`.
+
 ## Hooking up Resend
 
 1. **Domain.** In Resend → Domains, add the sending domain (`saplinglearn.com`,

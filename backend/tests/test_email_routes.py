@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import config
 from main import app
+from routes import admin_email
 from services import email_service
 from services.encryption import encrypt
 
@@ -311,7 +312,9 @@ def test_allowlist_survives_a_status_read_error(monkeypatch):
 def test_status_reports_configuration(monkeypatch):
     monkeypatch.setattr(config, "EMAIL_FROM", "Sapling <hello@saplinglearn.com>")
     r = client.get("/api/admin/email/status")
-    assert r.json() == {"configured": False, "from_address": "Sapling <hello@saplinglearn.com>"}
+    body = r.json()
+    assert body["configured"] is False and body["from_address"] == "Sapling <hello@saplinglearn.com>"
+    assert [v["key"] for v in body["variables"]] == ["first_name", "name", "email", "app_link", "signin_link"]
     monkeypatch.setattr(config, "RESEND_API_KEY", "re_x")
     assert client.get("/api/admin/email/status").json()["configured"] is True
 
@@ -497,3 +500,95 @@ def test_list_broadcasts_newest_first(monkeypatch):
     assert b["id"] == "b2" and "body" not in b
     call = made["email_broadcasts"].select.call_args
     assert call.kwargs["order"] == "created_at.desc" and call.kwargs["limit"] == 50
+
+
+# ── Personalization variables ───────────────────────────────────────────────
+
+
+def _names_tables(monkeypatch):
+    from services.encryption import encrypt
+    factory, made = _factory()
+    factory("users").select_with_count.return_value = _paged([
+        {"id": "u1", "email": encrypt("ada@bu.edu")},
+        {"id": "u2", "email": encrypt("noname@bu.edu")},
+        {"id": "u3", "email": encrypt("admin@bu.edu")},
+    ])
+    factory("user_profiles").select_with_count.return_value = _paged([
+        {"user_id": "u1", "first_name": encrypt("Ada"), "name": encrypt("Ada Lovelace")},
+        {"user_id": "u2", "first_name": None, "name": "not-decryptable-ciphertext"},
+        {"user_id": "u3", "first_name": encrypt("Andres"), "name": encrypt("Andres Lopez")},
+    ])
+    factory("newsletter_emails").select_with_count.return_value = _paged([
+        {"email": "Grace@bu.edu", "first_name": encrypt("Grace")},
+        {"email": "anon@bu.edu", "first_name": None},
+    ])
+    factory("users").select.return_value = [{"email": encrypt("admin@bu.edu")}]
+    monkeypatch.setattr("routes.admin_email.table", factory)
+    return made
+
+
+def test_broadcast_fills_each_recipients_variables(monkeypatch, sent):
+    _names_tables(monkeypatch)
+    admin_email.run_broadcast(
+        "b1", "News for {{first_name}}", "Hi {{first_name}},\n\nYou are {{email}}. {{name|friend}}",
+        ["ada@bu.edu", "Grace@bu.edu", "anon@bu.edu", "noname@bu.edu"],
+    )
+    by_to = {c.kwargs["to"]: c.kwargs for c in sent.call_args_list}
+    assert by_to["ada@bu.edu"]["subject"] == "News for Ada"
+    assert "Hi Ada," in by_to["ada@bu.edu"]["text"] and "Ada Lovelace" in by_to["ada@bu.edu"]["text"]
+    assert "Hi Grace," in by_to["Grace@bu.edu"]["text"]            # waitlist first name
+    assert "Hi there," in by_to["anon@bu.edu"]["text"]             # built-in fallback
+    assert "friend" in by_to["anon@bu.edu"]["text"]                # admin's fallback
+    assert "You are anon@bu.edu." in by_to["anon@bu.edu"]["text"]
+    # An undecryptable name never leaks ciphertext into a greeting.
+    assert "Hi there," in by_to["noname@bu.edu"]["text"]
+    assert "not-decryptable" not in by_to["noname@bu.edu"]["html"]
+
+
+def test_broadcast_values_are_escaped_in_html(monkeypatch, sent):
+    from services.encryption import encrypt
+    made = _names_tables(monkeypatch)
+    made["user_profiles"].select_with_count.return_value = _paged([
+        {"user_id": "u1", "first_name": encrypt("<b>Ada</b>"), "name": None},
+    ])
+    admin_email.run_broadcast("b2", "Hi", "Hi {{first_name}}", ["ada@bu.edu"])
+    html = sent.call_args.kwargs["html"]
+    assert "<b>Ada</b>" not in html and "&lt;b&gt;Ada&lt;/b&gt;" in html
+
+
+def test_broadcast_without_variables_skips_the_name_lookup(monkeypatch, sent):
+    made = _names_tables(monkeypatch)
+    admin_email.run_broadcast("b3", "Hi", "Plain body", ["ada@bu.edu"])
+    made["user_profiles"].select_with_count.assert_not_called()
+
+
+@pytest.mark.parametrize("route", ["/api/admin/email/broadcasts/test", "/api/admin/email/broadcasts"])
+def test_unknown_variable_is_rejected(route, sent):
+    payload = {"subject": "Hi {{frist_name}}", "body": "x", "audience": "users_all"}
+    with patch("routes.admin_email.table") as t:
+        r = client.post(route, json=payload)
+    assert r.status_code == 422
+    assert "Unknown variable {{frist_name}}" in str(r.json()["detail"])
+    t.assert_not_called()
+    sent.assert_not_called()
+
+
+def test_preview_fills_the_admins_values_and_lists_unknown(monkeypatch, sent):
+    _names_tables(monkeypatch)
+    r = client.post("/api/admin/email/broadcasts/preview",
+                    json={"subject": "For {{first_name}}", "body": "Hi {{first_name}} {{oops}}"})
+    data = r.json()
+    assert data["subject"] == "For Andres"
+    assert "Hi Andres {{oops}}" in data["html"]
+    assert data["unknown_variables"] == ["oops"]
+    sent.assert_not_called()
+
+
+def test_test_send_uses_the_admins_values(monkeypatch, sent):
+    _names_tables(monkeypatch)
+    with patch("routes.admin_email.log_admin_action"):
+        r = client.post("/api/admin/email/broadcasts/test",
+                        json={"subject": "Hi {{first_name}}", "body": "Sent to {{email}}"})
+    assert r.status_code == 200
+    kw = sent.call_args.kwargs
+    assert kw["subject"] == "Hi Andres" and "Sent to admin@bu.edu" in kw["text"]

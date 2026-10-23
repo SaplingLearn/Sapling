@@ -638,6 +638,16 @@ class EmailBroadcastTestBody(BaseModel):
     def _one_line(cls, v: str) -> str:
         return " ".join(v.split())
 
+    @field_validator("subject", "body")
+    @classmethod
+    def _known_variables(cls, v: str) -> str:
+        # Never mail out literal {{braces}}: a typo'd variable is a 422.
+        from services.email_variables import unknown_variables, unknown_variables_message
+        unknown = unknown_variables(v)
+        if unknown:
+            raise ValueError(unknown_variables_message(unknown))
+        return v
+
 
 class EmailBroadcastPreviewBody(BaseModel):
     """A draft as it's being typed: blank is fine, it just previews empty."""
