@@ -354,20 +354,6 @@ class TestListUsersPaginated:
 
 # ── PATCH /api/admin/users/{id}/approve ────────────────────────────────────
 
-class TestApproveUser:
-    def test_approves_user(self):
-        with _mock_admin(), patch("routes.admin.table") as t, \
-             patch("routes.admin.get_session_user_id", return_value="admin1"), \
-             patch("routes.admin.log_admin_action") as audit:
-            t.return_value.update.return_value = [{}]
-            r = client.patch("/api/admin/users/u1/approve?user_id=admin1")
-
-        assert r.status_code == 200
-        assert r.json()["approved"] is True
-        audit.assert_called_once()
-        assert audit.call_args.kwargs["action"] == "user.approve"
-
-
 # ── GET /api/admin/roles ───────────────────────────────────────────────────
 
 class TestListRoles:
@@ -432,8 +418,55 @@ class TestUnapproveUser:
              patch("routes.admin.get_session_user_id", return_value="u1"):
             r = client.patch("/api/admin/users/u1/unapprove?user_id=u1")
         assert r.status_code == 409
-        assert "yourself" in r.json()["detail"].lower()
+        assert "your own access" in r.json()["detail"].lower()
         t.return_value.update.assert_not_called()
+
+    def test_removed_user_goes_back_on_the_waitlist(self):
+        from services.encryption import encrypt
+        tables: dict = {}
+
+        def by_name(name):
+            if name not in tables:
+                m = MagicMock()
+                m.select.return_value = []
+                m.update.return_value = [{"id": "u1", "email": encrypt("ada@bu.edu")}] if name == "users" else []
+                tables[name] = m
+            return tables[name]
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.auth.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.patch("/api/admin/users/u1/unapprove")
+        assert r.status_code == 200
+        assert tables["users"].update.call_args.args[0] == {"is_approved": False}
+        upsert = tables["newsletter_emails"].upsert.call_args
+        assert upsert.args[0] == {"email": "ada@bu.edu"}
+
+    def test_removed_user_already_listed_is_reset_to_signup(self):
+        from services.encryption import encrypt
+        tables: dict = {}
+
+        def by_name(name):
+            if name not in tables:
+                m = MagicMock()
+                m.select.return_value = (
+                    [{"id": "w9", "email": "Ada@bu.edu", "approved_at": "t", "joined_at": "t"}]
+                    if name == "newsletter_emails" else []
+                )
+                m.update.return_value = [{"id": "u1", "email": encrypt("ada@bu.edu")}] if name == "users" else []
+                tables[name] = m
+            return tables[name]
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.auth.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            client.patch("/api/admin/users/u1/unapprove")
+        update = tables["newsletter_emails"].update.call_args
+        assert update.args[0] == {"approved_at": None, "joined_at": None, "joined_user_id": None}
+        assert update.kwargs["filters"] == {"id": "eq.w9"}
+        tables["newsletter_emails"].upsert.assert_not_called()
 
 
 class TestAssignRoleIdempotent:
@@ -947,6 +980,9 @@ class TestAnalyticsOverview:
                 m.select.return_value = roles
             elif name == "user_roles":
                 m.select.return_value = user_roles
+            elif name == "newsletter_emails":
+                # Waiting on approval is counted off the waitlist, not users.
+                m.select.return_value = [{"approved_at": None}, {"approved_at": None}, {"approved_at": "t"}]
             else:
                 m.select.return_value = []
             return m
@@ -958,7 +994,7 @@ class TestAnalyticsOverview:
         body = r.json()
         assert body["totals"]["users"] == 3
         assert body["totals"]["approved"] == 2
-        assert body["totals"]["pending"] == 1
+        assert body["totals"]["pending"] == 2
         assert body["totals"]["admins"] == 3
         assert any(
             d["date"] == signup_day.isoformat() and d["count"] == 2

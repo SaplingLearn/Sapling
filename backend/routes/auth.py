@@ -142,13 +142,14 @@ def _mark_waitlist_joined(entry_id: str, user_id: str) -> None:
 
 
 # ── Unapproved sign-in → /pending ─────────────────────────────────────────────
-# An unapproved sign-in gets no session. The hand-off to /pending carries a
-# short-lived "pending token" instead, so that page can show whether the
-# account's email is on the waitlist and add it without the student retyping
-# it. It travels in the redirect URL, not a cookie, because the OAuth callback
-# runs on the API origin rather than the frontend's. It names only the account
-# id, and it's signed with a key derived from SESSION_SECRET, so it can never
-# verify as a `sapling_session` (auth_guard checks against the raw secret).
+# An unapproved sign-in gets no account and no session. The hand-off to /pending
+# carries a short-lived "pending token" instead, so that page can say whether the
+# email is on the waitlist and add it without the student retyping it. The token
+# holds the sign-in email encrypted with ENCRYPTION_KEY (so the URL never shows
+# it) and is signed with a key derived from SESSION_SECRET, so it can never
+# verify as a `sapling_session` (auth_guard checks against the raw secret). It
+# travels in the redirect URL, not a cookie, because the OAuth callback runs on
+# the API origin rather than the frontend's.
 _PENDING_TOKEN_TTL_SECONDS = 3600
 
 
@@ -158,20 +159,26 @@ def _pending_token_key() -> str:
     return _hmac.new(SESSION_SECRET.encode(), b"sapling-pending-v1", hashlib.sha256).hexdigest()
 
 
-def _mint_pending_token(user_id: str) -> str:
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _mint_pending_token(email: str) -> str:
     key = _pending_token_key()
-    return mint_session(user_id, ttl=_PENDING_TOKEN_TTL_SECONDS, secret=key) if key else ""
+    if not key:
+        return ""
+    payload = json.dumps({"e": encrypt(email), "exp": int(_time.time()) + _PENDING_TOKEN_TTL_SECONDS})
+    payload_b64 = _b64(payload.encode())
+    return f"{payload_b64}.{_b64(_hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest())}"
 
 
-def _pending_token_user(token: str) -> str | None:
-    """The account id a pending token names, or None if forged or expired."""
+def _pending_token_email(token: str) -> str | None:
+    """The sign-in email a pending token carries, or None if forged or expired."""
     key = _pending_token_key()
     payload_b64, _, sig_b64 = (token or "").partition(".")
     if not key or not payload_b64 or not sig_b64:
         return None
-    expected = base64.urlsafe_b64encode(
-        _hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest()
-    ).decode().rstrip("=")
+    expected = _b64(_hmac.new(key.encode(), payload_b64.encode(), hashlib.sha256).digest())
     if not _hmac.compare_digest(sig_b64, expected):
         return None
     try:
@@ -180,10 +187,11 @@ def _pending_token_user(token: str) -> str | None:
         return None
     if not isinstance(payload, dict):
         return None
-    exp, user_id = payload.get("exp"), payload.get("user_id")
+    exp = payload.get("exp")
     if not isinstance(exp, int) or exp < int(_time.time()):
         return None
-    return user_id if isinstance(user_id, str) and user_id else None
+    email = (decrypt_if_present(payload.get("e")) or "").strip() if isinstance(payload.get("e"), str) else ""
+    return email if "@" in email else None
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -531,6 +539,25 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         )
         return resp
 
+    def _not_approved(signin_email: str) -> RedirectResponse:
+        pending_token = _mint_pending_token(signin_email)
+        if popup_id:
+            return _fail_redirect(
+                "not_approved", extra={"pending_token": pending_token} if pending_token else None,
+            )
+        query = f"?{urlencode({'t': pending_token})}" if pending_token else ""
+        resp = RedirectResponse(f"{frontend_url}/pending{query}")
+        resp.set_cookie(
+            key=OAUTH_STATE_COOKIE,
+            value="",
+            max_age=0,
+            httponly=True,
+            secure=SECURE_COOKIES,
+            samesite="lax",
+            path="/",
+        )
+        return resp
+
     if not GOOGLE_AVAILABLE:
         return _fail_redirect("google_not_configured")
 
@@ -589,6 +616,14 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
 
     # Determine user_id: check if this Google ID already exists
     existing = table("users").select("id,is_approved", filters={"google_id": f"eq.{google_id}"})
+    # The waitlist decides whether someone new gets an account at all: an admin
+    # approving their email under Admin → Allowlist is the yes. Without it
+    # nothing is stored for them (no users row, profile or OAuth tokens), and
+    # /pending offers to put them on the waitlist instead.
+    waitlist = _waitlist_entry(email)
+    waitlist_approved = bool(waitlist and waitlist.get("approved_at"))
+    if not existing and not (_LOCAL_AUTO_APPROVE or waitlist_approved):
+        return _not_approved(email)
     if existing:
         user_id = existing[0]["id"]
         is_approved = existing[0]["is_approved"]
@@ -610,7 +645,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         # with random nonces; equality lookups by plaintext email cannot match.
         # New sign-ins for users without a google_id always create a fresh row.
         user_id = f"user_{google_id}"
-        is_approved = _LOCAL_AUTO_APPROVE
+        is_approved = True  # local dev, or approved on the waitlist (checked above)
         from datetime import datetime as _dt, timezone as _tz
         # Upsert, not insert (#285). `user_id` is deterministic, so a *stub* row
         # can already occupy this id: `graph_service.ensure_user_exists` inserts
@@ -662,12 +697,11 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         is_approved = True
         table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
 
-    # Waitlist pre-approval: an admin who approved this email on the waitlist
-    # already said yes, so a pending account (new, or one that hit /pending
-    # before the approval) is promoted here. One-way: revoking the waitlist
-    # entry later does not unapprove the account — use Admin → Users for that.
-    waitlist = _waitlist_entry(email)
-    if not is_approved and waitlist and waitlist.get("approved_at"):
+    # An existing account that isn't approved (its access was removed under
+    # Admin → Users, or it predates unapproved sign-ins no longer creating one)
+    # is let back in once its email is approved on the waitlist. One-way:
+    # revoking the waitlist entry later does not remove access; Admin → Users does.
+    if not is_approved and waitlist_approved:
         is_approved = True
         table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
         logger.info("user %s approved via waitlist at sign-in", user_id)
@@ -678,23 +712,7 @@ def google_callback(request: Request, code: str = Query(...), state: str = Query
         _mark_waitlist_joined(waitlist["id"], user_id)
 
     if not is_approved:
-        pending_token = _mint_pending_token(user_id)
-        if popup_id:
-            return _fail_redirect(
-                "not_approved", extra={"pending_token": pending_token} if pending_token else None,
-            )
-        query = f"?{urlencode({'t': pending_token})}" if pending_token else ""
-        resp = RedirectResponse(f"{frontend_url}/pending{query}")
-        resp.set_cookie(
-            key=OAUTH_STATE_COOKIE,
-            value="",
-            max_age=0,
-            httponly=True,
-            secure=SECURE_COOKIES,
-            samesite="lax",
-            path="/",
-        )
-        return resp
+        return _not_approved(email)
 
     # First-login achievement (F7). The login-streak achievements ("First Steps"
     # and friends) were only ever evaluated at study-session end (learn.py), so a
@@ -769,27 +787,23 @@ class PendingTokenBody(BaseModel):
 
 
 def _pending_email(token: str) -> str:
-    """The sign-in email of the account a pending token names; 401 otherwise."""
-    user_id = _pending_token_user(token)
-    rows = table("users").select(
-        "id,email", filters={"id": f"eq.{user_id}", "deleted_at": "is.null"},
-    ) if user_id else []
-    email = (decrypt_if_present(rows[0].get("email")) or "").strip() if rows else ""
-    if "@" not in email:
+    """The sign-in email a pending token carries; 401 otherwise."""
+    email = _pending_token_email(token)
+    if not email:
         raise HTTPException(status_code=401, detail="Sign in again to continue.")
     return email
 
 
 @router.post("/pending/status")
 def pending_status(body: PendingTokenBody):
-    """Whether an unapproved account's email is on the waitlist (/pending)."""
+    """Whether an unapproved sign-in's email is on the waitlist (/pending)."""
     email = _pending_email(body.token)
     return {"email": email, "on_waitlist": _waitlist_entry(email) is not None}
 
 
 @router.post("/pending/join")
 def pending_join(body: PendingTokenBody):
-    """Put an unapproved account's sign-in email on the waitlist. Idempotent."""
+    """Put an unapproved sign-in's email on the waitlist. Idempotent."""
     email = _pending_email(body.token)
     if _waitlist_entry(email) is None:
         try:
