@@ -7,10 +7,9 @@ emails carry a progress line (Signed up, Approved, Signed in) so a student can
 see where they are; broadcasts are the same card without it.
 
 Built for email clients, not browsers: nested tables, inline styles, `bgcolor`
-attributes for Outlook, and PNG/JPEG images only (Gmail won't render SVG). The
-two images (the hero header, the knowledge-tree screenshot) are built by
-scripts/build_email_assets.py and served from
-{EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/. Aleo and SUSE load from Google
+attributes for Outlook, and one JPEG (Gmail won't render SVG or run canvas):
+the hero header, rendered by frontend/scripts/build-email-header.mjs and
+served from {EMAIL_ASSET_BASE_URL or FRONTEND_URL}/email/. Aleo and SUSE load from Google
 Fonts where the client allows it (Apple Mail, iOS) and fall back to Georgia /
 system sans elsewhere (Gmail, Outlook).
 
@@ -214,18 +213,6 @@ def _points(items: list[tuple[str, str]]) -> str:
     )
 
 
-def _figure(src: str, alt: str, caption: str) -> str:
-    return (
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
-        '<tr><td style="font-size:0;line-height:0;">'
-        f'<img src="{_e(src)}" width="504" alt="{_e(alt)}" '
-        f'style="display:block;width:100%;max-width:504px;height:auto;border:1px solid {_RULE};'
-        'border-radius:8px;"></td></tr>'
-        f'<tr><td style="padding:10px 0 0 0;font-family:{_SANS};font-size:14px;'
-        f'line-height:1.5;color:{_MUTED};">{_e(caption)}</td></tr></table>'
-    )
-
-
 def _signoff(closing: str) -> str:
     return (
         f'<p style="margin:0;font-family:{_SANS};font-size:16px;line-height:1.6;color:{_BODY};">'
@@ -345,10 +332,6 @@ def waitlist_approved(
         ("Upload a syllabus or lecture notes.", "Sapling pulls out the concepts for the whole term."),
         ("Ask the tutor about what's coming up next.", "It works from your course materials."),
     ]
-    caption = (
-        "Your knowledge tree. Every course becomes a cluster of concepts that fills "
-        "in as you study, quiz and ask questions."
-    )
     rows = [
         _row(_headline(heading) + _lede(lede) + _button(signin_url, "Sign in to Sapling")),
         _spacer(32),
@@ -356,8 +339,6 @@ def waitlist_approved(
         _spacer(32),
         _row(_section_title("Your first ten minutes") + _steps(steps)),
         _spacer(8),
-        _row(_figure(_asset("tree-map.jpg"), "A Sapling knowledge tree with concepts grouped by course", caption)),
-        _spacer(32),
         _rule(),
         _spacer(24),
         _row(_signoff("Happy studying!")),

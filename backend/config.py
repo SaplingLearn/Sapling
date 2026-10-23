@@ -63,8 +63,8 @@ AUTH_SCOPES = [
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip() or "Sapling <hello@saplinglearn.com>"
 EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
-# Where the emails' images load from ({base}/email/*.png, built by
-# scripts/build_email_assets.py into frontend/public/email/). Defaults to
+# Where the emails' header image loads from ({base}/email/header.jpg, built by
+# frontend/scripts/build-email-header.mjs into frontend/public/email/). Defaults to
 # FRONTEND_URL; staging sets it to the public prod site, since its own
 # frontend sits behind Cloudflare Access and a recipient couldn't load them.
 EMAIL_ASSET_BASE_URL = os.getenv("EMAIL_ASSET_BASE_URL", "").strip()
