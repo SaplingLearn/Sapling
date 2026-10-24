@@ -15,6 +15,7 @@ import type {
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
+import { createStreamPacer } from '@/lib/streamPacer';
 
 export const API_URL = '';
 
@@ -382,6 +383,9 @@ export function shouldFallBackToJson(err: unknown): boolean {
 export interface StreamChatHandlers {
   onToken?: (delta: string) => void;
   onGraphUpdate?: (delta: GraphDelta) => void;
+  /** The tutor started a tool call (`step` = the tool's wire name, e.g.
+   *  `search_course_materials`) — what it is doing before any text. */
+  onProgress?: (step: string) => void;
   signal?: AbortSignal;
 }
 
@@ -390,36 +394,61 @@ const STREAM_IDLE_MS = 45_000;
 async function consumeChatStream(
   path: string,
   payload: Record<string, unknown>,
-  { onToken, onGraphUpdate, signal }: StreamChatHandlers,
+  { onToken, onGraphUpdate, onProgress, signal }: StreamChatHandlers,
 ): Promise<ChatResult> {
   const { streamSSE } = await import('./sse');
+  // Tokens go out through the pacer, so a reply the model sends in one burst
+  // still types out (lib/streamPacer.ts). It is drained before `done`
+  // resolves, because callers swap the streamed bubble for the final message
+  // then. Any other exit flushes it first, so a caller's partial-text
+  // handling (ADR 0020) sees every token that arrived.
+  const pacer = createStreamPacer(delta => onToken?.(delta));
   let result: ChatResult | null = null;
 
-  for await (const e of streamSSE<StreamEvent>(
-    `${API_URL}${path}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      credentials: 'include',
-      signal,
-    },
-    { idleTimeoutMs: STREAM_IDLE_MS },
-  )) {
-    const ev = e.data;
-    if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
-    else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
-    else if (ev.type === 'error') {
-      const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
-      // Only an explicit false clears the flag — absent/other values keep
-      // the default-true contract with older backends.
-      const retryable = ev.data?.retryable !== false;
-      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+  try {
+    for await (const e of streamSSE<StreamEvent>(
+      `${API_URL}${path}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include',
+        signal,
+      },
+      { idleTimeoutMs: STREAM_IDLE_MS },
+    )) {
+      const ev = e.data;
+      if (ev.type === 'token') pacer.push(String(ev.data?.delta ?? ''));
+      else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
+      else if (ev.type === 'progress') onProgress?.(ev.step);
+      else if (ev.type === 'error') {
+        const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+        // Only an explicit false clears the flag — absent/other values keep
+        // the default-true contract with older backends.
+        const retryable = ev.data?.retryable !== false;
+        throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+      }
+      else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
     }
-    else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+  } catch (err) {
+    pacer.flush();
+    throw err;
   }
 
-  if (!result) throw new Error('Chat stream ended without a done event.');
+  if (!result) {
+    pacer.flush();
+    throw new Error('Chat stream ended without a done event.');
+  }
+  // Stop pressed while a burst is still being revealed ends the reveal now
+  // and rejects like a mid-stream abort, so the caller's Stop path runs.
+  const onAbort = () => pacer.flush();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    await pacer.drain();
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+  signal?.throwIfAborted();
   return result;
 }
 
