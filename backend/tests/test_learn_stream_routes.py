@@ -207,9 +207,8 @@ class TestStartSessionStream:
         PENDING_SESSIONS.clear()
 
         fallback_agent = MagicMock()
-        fallback_agent.run = AsyncMock(
-            return_value=SimpleNamespace(output="Fallback greeting")
-        )
+        from tests.agent_run_fakes import run_result
+        fallback_agent.run = AsyncMock(return_value=run_result("Fallback greeting"))
         fallback_deps = SimpleNamespace(graph_updates=[], mastery_changes=[])
 
         with patch("routes.learn.stream_agent_turn", fake_stream), \

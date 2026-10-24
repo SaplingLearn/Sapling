@@ -106,6 +106,9 @@ jobs:
           # Dummy on purpose: the below-seam RAG embed path (#439) must not
           # be able to bill; its failures are swallowed by design.
           GEMINI_API_KEY: e2e-dummy-key-no-billing
+          # Same posture for the agents' provider: function mode never dials
+          # Claude, and a dummy guarantees a slip can't bill either.
+          ANTHROPIC_API_KEY: e2e-dummy-key-no-billing
           # #537: the quiz-generation guard keeps its sliding window in a
           # process-local dict, so ONE Playwright run shares a single
           # 8-per-300s budget across every spec and the quiz specs that run

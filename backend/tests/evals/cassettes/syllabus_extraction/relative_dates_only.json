@@ -1,25 +1,25 @@
 {
   "assignments": [
     {
-      "description": null,
+      "description": "Scheduled for Week 3.",
       "due_date": null,
       "title": "Quiz 1",
-      "weight_pct": 10.0
+      "weight_pct": null
     },
     {
-      "description": null,
+      "description": "Scheduled for Week 6.",
       "due_date": null,
       "title": "Quiz 2",
-      "weight_pct": 10.0
+      "weight_pct": null
     },
     {
-      "description": null,
+      "description": "Scheduled before Spring break.",
       "due_date": null,
       "title": "Midterm",
       "weight_pct": 30.0
     },
     {
-      "description": null,
+      "description": "Scheduled for end of term.",
       "due_date": null,
       "title": "Final",
       "weight_pct": 50.0

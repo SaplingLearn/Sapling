@@ -45,12 +45,12 @@ class TestGeminiTestAuth:
     def test_admin_reaches_handler(self):
         # Autouse bypass stubs require_admin to a no-op, so an admin-equivalent
         # request reaches the handler. Mock the probe agent so the test is hermetic.
-        probe = AsyncMock(return_value=SimpleNamespace(output="Gemini OK"))
+        probe = AsyncMock(return_value=SimpleNamespace(output="LLM OK"))
         with patch("agents.health.health_probe_agent.run", new=probe):
             r = client.get("/api/gemini-test")
 
         assert r.status_code == 200
-        assert r.json() == {"ok": True, "reply": "Gemini OK"}
+        assert r.json() == {"ok": True, "reply": "LLM OK"}
 
     def test_admin_probe_failure_returns_ok_false(self):
         # Autouse bypass reaches the handler; when the probe raises, the endpoint
