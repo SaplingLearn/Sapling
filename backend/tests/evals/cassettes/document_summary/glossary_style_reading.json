@@ -1,12 +1,12 @@
 {
-  "abstract": "This document is a brief glossary of basic statistics vocabulary. It defines three measures of central tendency, namely the mean as the arithmetic average, the median as the middle value when ordered, and the mode as the most frequent value. It also covers two measures of spread, variance as the average of squared deviations from the mean and standard deviation as the square root of the variance. It closes with the p-value, described as the probability of a result at least as extreme under the null hypothesis.",
-  "headline": "A short glossary defining six core statistics terms: mean, median, mode, variance, standard deviation, and p-value.",
+  "abstract": "This document provides a glossary of fundamental statistics terms. It defines key concepts including mean, median, mode, variance, standard deviation, and p-value. Each definition is concise and explains the core meaning of the statistical term.",
+  "headline": "Glossary of basic statistics terms and definitions.",
   "key_points": [
-    "The mean is the arithmetic average of a set of numbers.",
-    "The median is the middle value when the numbers are ordered.",
-    "The mode is the most frequently occurring value in a set.",
-    "Variance is the average of the squared deviations from the mean.",
-    "Standard deviation is the square root of the variance.",
-    "A p-value is the probability of a result at least as extreme as the observed one, assuming the null hypothesis is true."
+    "Mean is the arithmetic average of a dataset.",
+    "Median represents the middle value in an ordered dataset.",
+    "Mode identifies the most frequently occurring value in a dataset.",
+    "Variance measures the spread of data points around the mean.",
+    "Standard deviation is the square root of variance, indicating data dispersion.",
+    "A p-value quantifies the probability of observing extreme results under a null hypothesis."
   ]
 }

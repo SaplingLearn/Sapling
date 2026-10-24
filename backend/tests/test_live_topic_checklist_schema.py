@@ -1,4 +1,4 @@
-"""Opt-in LIVE test: the slot's real model actually serves the topic-checklist output schema.
+"""Opt-in LIVE test: Gemini actually serves the topic-checklist output schema.
 
 The hermetic suite (tests/test_topic_checklist_schema_states.py) pins that the
 schema carries no array-length bounds, but only the real model can say whether
@@ -8,12 +8,10 @@ schema produces a constraint that has too many states for serving") — this
 case is the one that would have caught it.
 
 It runs the REAL `topic_checklist_agent` (system prompt, `final_result` output
-output, reference validator) against the real `topic_checklist` model slot
-(Claude since ADR 0030 — whose strict JSON mode cannot express the bounds at
-all; a gemini-* override re-arms the original "too many states" risk) with a
-small fixture payload, so the call touches no database:
+tool, reference validator) against the real `topic_checklist` model slot with
+a small fixture payload, so the call touches no database:
 
-    RUN_LIVE_TOPIC_CHECKLIST=1 pytest tests/test_live_topic_checklist_schema.py
+    RUN_LIVE_TOPIC_CHECKLIST=1 GEMINI_API_KEY=... pytest tests/test_live_topic_checklist_schema.py
 
 Marked `live_llm` (documented opt-out of the hermetic transport guard,
 tests/conftest.py) and skipped otherwise. One billable run.
@@ -47,19 +45,18 @@ _PAYLOAD = {
 
 @pytest.mark.skipif(
     not _OPTED_IN,
-    reason="opt-in live test: set RUN_LIVE_TOPIC_CHECKLIST=1 (and the slot provider's key)",
+    reason="opt-in live test: set RUN_LIVE_TOPIC_CHECKLIST=1 (and GEMINI_API_KEY)",
 )
 def test_real_model_serves_the_topic_checklist_schema():
     # Opted in but unconfigured is a failure, never a silent skip: the run
     # was asked to check the live schema and must not report success unchecked.
-    from agents._providers import api_key_env_for_model, model_mode, model_name_for
-
-    key_var = api_key_env_for_model(model_name_for("topic_checklist"))
-    assert os.getenv(key_var), f"RUN_LIVE_TOPIC_CHECKLIST=1 needs {key_var}"
+    assert os.getenv("GEMINI_API_KEY"), "RUN_LIVE_TOPIC_CHECKLIST=1 needs GEMINI_API_KEY"
+    from agents._providers import model_mode, model_name_for
 
     # Checked BEFORE the billable run: under the function-mode seam the call
-    # would hit a stand-in handler and prove nothing about the real schema.
+    # would hit a stand-in handler and prove nothing about Gemini's schema.
     assert model_mode() == "real", "the live schema check needs SAPLING_MODEL_MODE unset (real mode)"
+    assert model_name_for("topic_checklist") == "gemini-2.5-flash"
     from agents.topic_checklist import MAX_TOPICS, topic_checklist_agent
     from services.topic_checklist_service import validate_evidence
 

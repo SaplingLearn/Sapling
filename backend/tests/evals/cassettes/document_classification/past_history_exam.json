@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.8,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "This is a blank final exam prompt with identification terms and an essay question, with no student answers or scores present. Blank assignment handouts count as course material under the shareability rules.}",
+  "rationale": "The document is a final examination with specific questions and a point distribution, characteristic of an assignment.",
   "shareability": "course_material"
 }

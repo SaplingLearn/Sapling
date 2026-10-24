@@ -1,12 +1,4 @@
 {
-  "text": "Before we dig in, I'll check whether your course materials cover this.\n\nYour course materials don't cover Roman history. They're about calculus, recursion, biology, and physics. So I'll answer from general knowledge and won't tie it to your course.\n\nHistorians rarely point to a single cause. Common threads include:\n- Political instability, such as frequent civil wars and rapid turnover of emperors\n- Economic strain from heavy taxation, inflation, and reliance on a costly army\n- Military pressure from migrating and invading groups\n- The split into Eastern and Western halves, with the West weaker\n\nWhich of these do you think would hurt an empire most, and why?",
-  "tool_calls": [
-    {
-      "args": {
-        "limit": 3,
-        "query": "fall of the Roman Empire"
-      },
-      "tool_name": "search_course_materials"
-    }
-  ]
+  "text": "That's a fascinating historical question. However, it seems like we're focused on topics like Calculus, Computer Science, and Biology in this course.\n\nTo get us started, would you like to tackle one of the concepts we're tracking, like the Chain Rule or Integrals?",
+  "tool_calls": []
 }

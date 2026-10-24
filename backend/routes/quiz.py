@@ -718,38 +718,39 @@ def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> l
 # model strings as Learn. None falls through to the agent's
 # task-default model from agents/_providers.py::model_for("quiz").
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "claude-haiku-5-5",
-    "smart": "claude-sonnet-5-5",
+    "fast": "gemini-2.5-flash-lite",
+    "smart": "gemini-2.5-pro",
 }
 
 
 def _resolve_model_pref(model_pref: str | None):
-    """Build a provider-model override for the per-request fast/smart
+    """Build a GoogleModel override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    `override_model` is imported lazily so that constructing a provider
-    (which reads its API key at call time) only happens when an override
-    is actually requested — not at module import. agents.quiz is already
-    in this route's import graph, so this isn't about import-path isolation; it's about deferring the
+    `google_model` is imported lazily so that constructing a
+    GoogleProvider (which reads GEMINI_API_KEY at call time) only
+    happens when an override is actually requested — not at module
+    import. agents.quiz is already in this route's import graph, so
+    this isn't about import-path isolation; it's about deferring the
     one runtime side-effect (the provider build) to the request that
     needs it.
     """
     if not model_pref:
         return None
-    from agents._providers import _model_mode, override_model
+    from agents._providers import _model_mode, google_model
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
-        # SAPLING_MODEL_MODE by constructing a live provider model. Same fix as
+        # SAPLING_MODEL_MODE by constructing a live GoogleModel. Same fix as
         # routes/learn.py (#392) — there the browser always sends a pref;
         # the quiz UI does not send one today, but any client that did would
-        # silently put a live provider back in the function-mode path. Fall
+        # silently put live Gemini back in the function-mode path. Fall
         # through to the agent's default model, which model_for("quiz")
         # already built for the active mode.
         return None
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return override_model(name, "quiz")
+    return google_model(name)
 
 
 class BuCodeLookup(NamedTuple):

@@ -1,7 +1,7 @@
 {
   "category": "study_guide",
-  "confidence": 0.95,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "Exam-prep document organized by topic with coverage list, practice questions, and an answer key, titled as a Midterm 1 study guide. It references the syllabus but does not itself define schedule or grading, and a generic study guide is course-produced material fine for any enrolled student.",
+  "rationale": "The document is explicitly labeled as a study guide and covers topics from chapters 1-5, aligning with course material. It includes practice questions and an answer key, typical features of a study guide.",
   "shareability": "course_material"
 }

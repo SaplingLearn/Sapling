@@ -7,7 +7,7 @@ call chain, e.g. _legacy_chat -> apply_graph_update -> update_course_context
 -> _generate_summary_with_gemini), it must never
 (a) blindly ``asyncio.run`` — that raises opaquely — nor (b) leak the
 coroutine it was handed (a "never awaited" warning). Cross-loop client safety
-itself lives in `_LoopSafeProviderMixin` (see test_loop_safe_google_model.py).
+itself lives in `_LoopSafeGoogleModel` (see test_loop_safe_google_model.py).
 """
 import asyncio
 import inspect

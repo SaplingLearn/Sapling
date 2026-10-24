@@ -361,13 +361,11 @@ def health():
 
 @app.get("/api/gemini-test")
 def gemini_test(request: Request):
-    """Admin-only LLM connectivity check. Shows a clear error if the API
-    key is missing/wrong. The path predates the Anthropic swap (ADR 0030); it
-    now probes the agents' provider (`HEALTH_PROBE_MODEL`, a Claude model) and
-    keeps its name for existing callers.
+    """Admin-only Gemini connectivity check. Shows a clear error if the API
+    key is missing/wrong.
 
     Gated behind `require_admin` (#198): every hit makes a real, billable
-    agent round-trip, so an unauthenticated caller could burn model quota at
+    agent round-trip, so an unauthenticated caller could burn Gemini quota at
     will and use the `{"ok": ...}` response as an oracle for whether the API
     key is configured. Only admins may trigger LLM spend here.
     """
@@ -379,7 +377,7 @@ def gemini_test(request: Request):
     try:
         result = record_agent_usage(
             run_agent_sync(
-                health_probe_agent.run('Reply with exactly the text: LLM OK')
+                health_probe_agent.run('Reply with exactly the text: Gemini OK')
             ),
             feature="health",
         )

@@ -2,8 +2,8 @@
   "chat_tutor": {
     "ExpositoryHasStructureEvaluator": 1.0,
     "GraphToolUsedEvaluator": 1.0,
-    "GroundedConceptEvaluator": 0.9375,
-    "MasteryUpdateEmittedEvaluator": 0.6875,
+    "GroundedConceptEvaluator": 1.0,
+    "MasteryUpdateEmittedEvaluator": 1.0,
     "NoToolMisuseEvaluator": 1.0,
     "NonEmptyEvaluator": 1.0,
     "SocraticEndsWithQuestionEvaluator": 1.0,
@@ -18,10 +18,10 @@
   "document_classification": {
     "CategoryEvaluator": 0.862069,
     "ShareabilityEvaluator": 1.0,
-    "SyllabusFlagEvaluator": 0.965517
+    "SyllabusFlagEvaluator": 0.896552
   },
   "document_summary": {
-    "AbstractLengthEvaluator": 1.0,
+    "AbstractLengthEvaluator": 0.933333,
     "HeadlineLengthEvaluator": 1.0,
     "KeyPointsCountEvaluator": 1.0,
     "NoMarkdownLeakEvaluator": 1.0

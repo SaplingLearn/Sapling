@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.95,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "Blank homework handout with numbered problems, a due date, and submission instructions; it contains questions only, no worked answers, so it is course material.",
+  "rationale": "The document is clearly an assignment, as indicated by the title \"Homework 4\" and the presence of specific problems to solve with a given due date.",
   "shareability": "course_material"
 }

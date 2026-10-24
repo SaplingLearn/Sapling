@@ -1,7 +1,7 @@
 {
   "category": "other",
-  "confidence": 0.9,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "A private to-do and study plan for finals week, containing personal reminders about a sick week and a doctor's note. It is not course material or graded work.",
+  "rationale": "The document includes personal plans for finals week, such as study schedules and reminders, and is explicitly marked as private.",
   "shareability": "personal_notes"
 }

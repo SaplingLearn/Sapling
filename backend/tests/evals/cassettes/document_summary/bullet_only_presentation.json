@@ -1,11 +1,12 @@
 {
-  "abstract": "This document is a five-slide outline of photosynthesis. Slide 1 introduces photosynthesis as an overview topic. Slide 2 covers the light reactions, naming the movement of electrons from PSII to PSI, the splitting of water, and electron transport. Slide 3 describes the Calvin cycle through carbon fixation, reduction, and regeneration of RuBP, and Slide 4 lists the net products as ATP, NADPH, and glucose. Slide 5 identifies light, CO2, and temperature as limiting factors, but the slides give only brief labels without detailed explanation.",
-  "headline": "Five-slide overview of photosynthesis covering light reactions, the Calvin cycle, net products, and limiting factors.",
+  "abstract": "This document provides a concise overview of photosynthesis, detailing the key stages of the light-dependent reactions, including Photosystems II and I, water splitting, and electron transport. It further explains the Calvin cycle, covering carbon fixation, reduction, and the regeneration of RuBP. The net products of photosynthesis, such as ATP, NADPH, and glucose, are identified, along with the primary limiting factors: light intensity, carbon dioxide concentration, and temperature.",
+  "headline": "Photosynthesis: An Overview of Light Reactions, Calvin Cycle, and Limiting Factors",
   "key_points": [
-    "The light reactions move electrons from PSII to PSI, with water splitting supplying electrons to the chain.",
-    "Electron transport during the light reactions is part of the light-dependent stage named on Slide 2.",
-    "The Calvin cycle proceeds through carbon fixation, reduction, and regeneration of RuBP.",
-    "Net products of photosynthesis listed in the document are ATP, NADPH, and glucose.",
-    "Light, CO2, and temperature are identified as limiting factors on Slide 5."
+    "Photosynthesis involves light-dependent reactions and the Calvin cycle.",
+    "The light reactions utilize water and light energy to produce ATP and NADPH.",
+    "The Calvin cycle uses ATP, NADPH, and CO2 to synthesize glucose.",
+    "Water splitting in the light reactions releases oxygen.",
+    "Key factors limiting photosynthesis include light, CO2, and temperature.",
+    "The process culminates in the production of glucose, ATP, and NADPH."
   ]
 }

@@ -1,10 +1,10 @@
 {
-  "abstract": "This is a student problem set for a linear algebra course with three problems. Problem 1 asks the student to diagonalize a 2x2 matrix and use the diagonalization to compute its 10th power in closed form. Problem 2 asks for a proof that every real symmetric matrix has an orthonormal eigenbasis. Problem 3 asks for the rank, nullity, and a basis for the column space of a given 4x5 matrix, with all work shown. The excerpt summarized here states only the problem prompts and does not include worked solutions or the specific matrices.",
-  "headline": "Problem Set 6 for Linear Algebra: diagonalizing a 2x2 matrix, proving real symmetric matrices have orthonormal eigenbases, and finding\u2026",
+  "abstract": "This document contains Problem Set 6 for a Linear Algebra course. It includes three problems: the first requires diagonalizing a 2x2 matrix and computing its 10th power, the second asks for a proof that every real symmetric matrix has an orthonormal eigenbasis, and the third involves finding the rank, nullity, and column space basis for a 4x5 matrix. All problems require showing detailed work.",
+  "headline": "Problem Set 6: Linear Algebra Problems on Diagonalization, Symmetric Matrices, and Matrix Properties",
   "key_points": [
-    "Problem 1 requires diagonalizing a 2x2 matrix and computing its 10th power in closed form.",
-    "Problem 2 requires proving that every real symmetric matrix has an orthonormal eigenbasis.",
-    "Problem 3 requires finding the rank, nullity, and a basis for the column space of a given 4x5 matrix.",
-    "The student is instructed to show all work for the computations."
+    "Problem 1: Diagonalize a 2x2 matrix and compute its 10th power.",
+    "Problem 2: Prove that real symmetric matrices possess an orthonormal eigenbasis.",
+    "Problem 3: Determine the rank, nullity, and column space basis for a 4x5 matrix.",
+    "The problem set covers key concepts in linear algebra including matrix diagonalization, properties of symmetric matrices, and fundamental subspaces."
   ]
 }

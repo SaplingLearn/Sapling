@@ -16,7 +16,7 @@ export const ABOUT_DIFFERENTIATORS = [
         'Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you\u2019ve clicked through.',
         'Three distinct teaching modes mean you\u2019re never locked into one way of learning.',
         'Study rooms let you learn alongside classmates and see how your mastery compares, anonymously and collaboratively.',
-        'Everything from syllabus tracking to exam study guides is powered by Claude, so the busywork of getting organized is handled for you.',
+        'Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.',
       ] as const;
 
 export const ABOUT_AWARDS = [

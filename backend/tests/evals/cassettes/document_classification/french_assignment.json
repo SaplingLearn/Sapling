@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.9,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document is a numbered homework handout (Devoir 4) with exercises and a due date, with no student answers filled in. As a blank assignment handout it is course material.",
+  "rationale": "The document contains a list of tasks and instructions for a student to complete, typical of an assignment. It specifies a due date and states \"Travail individuel,\" indicating it is a student assignment.",
   "shareability": "course_material"
 }

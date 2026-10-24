@@ -1,48 +1,45 @@
 {
   "questions": [
     {
-      "accepted_answers": [],
       "concept": "Newton's First Law",
-      "correct_answer": "It remains at rest or keeps moving at constant velocity",
+      "correct_answer": "Newton's First Law",
       "difficulty": "easy",
-      "explanation": "Newton's First Law (the law of inertia) states that an object keeps its state of rest or uniform straight-line motion unless a net external force changes that state.",
+      "explanation": "Newton's First Law of Motion, also known as the law of inertia, describes the behavior of objects at rest or in uniform motion.",
       "options": [
-        "It slows down steadily until it stops",
-        "It accelerates in the direction of its motion",
-        "It remains at rest or keeps moving at constant velocity",
-        "It gradually changes direction toward the nearest mass"
+        "Newton's First Law",
+        "Newton's Second Law",
+        "Newton's Third Law",
+        "Law of Conservation of Energy"
       ],
-      "question": "According to Newton's First Law of motion, what happens to an object that has no net external force acting on it?",
+      "question": "What is the principle that states an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force?",
       "type": "multiple_choice"
     },
     {
-      "accepted_answers": [],
       "concept": "Kinetic Energy",
-      "correct_answer": "\u00bdmv\u00b2",
+      "correct_answer": "Kinetic Energy",
       "difficulty": "easy",
-      "explanation": "Kinetic energy is the energy of motion and equals one half times the mass times the square of the speed, KE = \u00bdmv\u00b2. Because speed is squared, doubling the speed quadruples the kinetic energy.",
+      "explanation": "Kinetic energy is the energy of motion. It depends on the object's mass and velocity.",
       "options": [
-        "mv",
-        "mgh",
-        "\u00bdmv\u00b2",
-        "ma"
+        "Kinetic Energy",
+        "Potential Energy",
+        "Thermal Energy",
+        "Chemical Energy"
       ],
-      "question": "Which expression defines the kinetic energy of an object of mass m moving with speed v?",
+      "question": "What is the energy an object possesses due to its motion?",
       "type": "multiple_choice"
     },
     {
-      "accepted_answers": [],
       "concept": "Momentum",
-      "correct_answer": "The product of its mass and velocity",
+      "correct_answer": "Momentum",
       "difficulty": "easy",
-      "explanation": "Linear momentum is defined as p = mv, the product of an object's mass and its velocity. It is a vector quantity that points in the same direction as the velocity.",
+      "explanation": "Momentum is a vector quantity defined as mass in motion, calculated by multiplying an object's mass by its velocity (p = mv).",
       "options": [
-        "The product of its mass and velocity",
-        "The product of its mass and acceleration",
-        "The total energy it possesses due to its position",
-        "The force required to stop it in one second"
+        "Momentum",
+        "Force",
+        "Work",
+        "Power"
       ],
-      "question": "What is momentum of an object defined as in classical physics?",
+      "question": "What is the measure of the amount of motion an object has, calculated as the product of its mass and velocity?",
       "type": "multiple_choice"
     }
   ]

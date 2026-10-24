@@ -1,11 +1,4 @@
 {
-  "text": "Your lab handout describes recursion as a function that calls itself on a smaller subproblem until it reaches a base case. Here's a tiny example to look at:\n\n```python\ndef countdown(n):\n    if n == 0:\n        return \"done\"\n    return countdown(n - 1)\n```\n\nSuppose you call `countdown(3)`. What do you think happens, step by step? Which call returns first, and what does it return?",
-  "tool_calls": [
-    {
-      "args": {
-        "query": "recursion in Python"
-      },
-      "tool_name": "search_course_materials"
-    }
-  ]
+  "text": "Of course. In your own words, what do you think recursion is?",
+  "tool_calls": []
 }

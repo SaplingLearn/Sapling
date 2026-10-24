@@ -54,19 +54,9 @@ class TestEnablement:
             extract_page_with_gemini_vision(PNG)
 
     def test_raises_when_api_key_missing(self, monkeypatch):
-        """The key checked is the one the ocr_vision slot's provider needs —
-        Anthropic by default (ADR 0030)."""
         monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
-        monkeypatch.delenv("SAPLING_MODEL_OCR_VISION", raising=False)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        with pytest.raises(GeminiVisionUnavailableError, match="ANTHROPIC_API_KEY"):
-            extract_page_with_gemini_vision(PNG)
-
-    def test_raises_when_gemini_key_missing_on_a_gemini_slot(self, monkeypatch):
-        monkeypatch.setenv("GEMINI_VISION_OCR_ENABLED", "true")
-        monkeypatch.setenv("SAPLING_MODEL_OCR_VISION", "gemini-2.5-flash")
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        with pytest.raises(GeminiVisionUnavailableError, match="GEMINI_API_KEY"):
+        with pytest.raises(GeminiVisionUnavailableError):
             extract_page_with_gemini_vision(PNG)
 
 
@@ -80,7 +70,7 @@ class TestModelSelection:
 
     def test_defaults_to_the_task_default(self, monkeypatch):
         monkeypatch.delenv("SAPLING_MODEL_OCR_VISION", raising=False)
-        assert vision_model_name() == "claude-haiku-5-5"
+        assert vision_model_name() == "gemini-2.5-flash"
 
     def test_honors_the_adr_0008_env_override(self, monkeypatch):
         monkeypatch.setenv("SAPLING_MODEL_OCR_VISION", "gemini-2.5-pro")
@@ -92,7 +82,7 @@ class TestModelSelection:
         `model_for`; it is gone, so setting it must not change routing."""
         monkeypatch.delenv("SAPLING_MODEL_OCR_VISION", raising=False)
         monkeypatch.setenv("GEMINI_VISION_OCR_MODEL", "gemini-1.5-pro")
-        assert vision_model_name() == "claude-haiku-5-5"
+        assert vision_model_name() == "gemini-2.5-flash"
 
 
 class TestTranscription:

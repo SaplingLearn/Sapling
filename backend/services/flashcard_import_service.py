@@ -234,10 +234,8 @@ def _guess_content_type(filename: str) -> str:
 
 
 # Transient provider statuses the legacy call_gemini path retried on. 429 =
-# rate limit, 5xx = upstream/transport hiccups, 529 = Anthropic's
-# `overloaded_error` (the Anthropic SDK already retries these twice itself;
-# this is the route-level retry on top, same as it was for Gemini).
-_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504, 529})
+# rate limit, 5xx = upstream/transport hiccups.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
 # Mirror the old call_gemini(retries=1): one retry with a ~2s backoff.
 _AGENT_RETRIES = 1
 
@@ -260,7 +258,7 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
       surfaces a 502 instead of a misleading success with zero cards (#340).
     * Transient provider errors (HTTP 429/5xx) are retried once with a ~2s
       backoff, then re-raised.
-    * Every other failure — transport, a missing provider API key,
+    * Every other failure — transport, missing GEMINI_API_KEY,
       ``run_agent_sync`` misuse from a running event loop, etc. — propagates so
       the route surfaces a retryable 502 instead of a misleading 200 with zero
       cards.

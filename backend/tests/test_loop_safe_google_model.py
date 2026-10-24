@@ -29,13 +29,8 @@ sequential `asyncio.run` calls, with a deliberate await gap between
 the ORIGINAL (buggy) hand-off design — proving the test shape itself would
 have caught it — and then against the real, fixed `_LoopSafeGoogleModel`.
 
-ADR 0030 moved the mechanism into `_LoopSafeProviderMixin`, shared by
-`_LoopSafeGoogleModel` and `_LoopSafeAnthropicModel` (the Anthropic SDK's
-`AsyncAnthropic` wraps its own loop-affine httpx client the same way), so
-every behavioural test below runs against BOTH models via `make_model`.
-
 All tests here are hermetic: no actual `.request()`/network call, so no
-dependence on a real provider key and nothing for the autouse
+dependence on GEMINI_API_KEY being a real key and nothing for the autouse
 hermetic-LLM-guard fixture to intercept.
 """
 from __future__ import annotations
@@ -44,46 +39,27 @@ import asyncio
 import gc
 import threading
 
-import pytest
-
-from agents._providers import (
-    _LoopSafeAnthropicModel,
-    _LoopSafeGoogleModel,
-    _LoopSafeProviderMixin,
-    model_for,
-    provider_model,
-)
-
-
-@pytest.fixture(
-    params=[
-        pytest.param(lambda: _LoopSafeGoogleModel("gemini-2.5-flash-lite"), id="google"),
-        pytest.param(lambda: _LoopSafeAnthropicModel("claude-haiku-5-5"), id="anthropic"),
-    ]
-)
-def make_model(request):
-    return request.param
+from agents._providers import _LoopSafeGoogleModel, google_model, model_for
 
 
 def test_model_for_real_mode_returns_loop_safe_model(monkeypatch):
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     m = model_for("classifier")
-    assert isinstance(m, _LoopSafeProviderMixin)
-    assert isinstance(m, _LoopSafeAnthropicModel)
+    assert isinstance(m, _LoopSafeGoogleModel)
 
 
-def test_provider_model_returns_loop_safe_model_for_either_provider():
-    assert isinstance(provider_model("gemini-2.5-flash-lite"), _LoopSafeGoogleModel)
-    assert isinstance(provider_model("claude-haiku-5-5"), _LoopSafeAnthropicModel)
+def test_google_model_shim_returns_loop_safe_model():
+    m = google_model("gemini-2.5-flash-lite")
+    assert isinstance(m, _LoopSafeGoogleModel)
 
 
-def test_fresh_provider_per_new_event_loop(make_model):
+def test_fresh_provider_per_new_event_loop():
     """The core #354 regression: three SEPARATE, SEQUENTIAL asyncio.run()
     loops (exactly what `run_agent_sync` does per call, and what two
     independent test functions calling `asyncio.run()` do in the same
     process) must never share a provider — that sharing is what ties a
     client to a loop that is about to close."""
-    m = make_model()
+    m = _LoopSafeGoogleModel("gemini-2.5-flash-lite")
 
     seen = []
 
@@ -100,12 +76,12 @@ def test_fresh_provider_per_new_event_loop(make_model):
     assert seen[0] is not seen[2]
 
 
-def test_same_provider_reused_within_one_loop(make_model):
+def test_same_provider_reused_within_one_loop():
     """Within a single loop's lifetime (e.g. FastAPI's persistent per-process
     loop across many `await agent.run(...)` calls, or a multi-step agent run
     that calls the model more than once), the provider — and its connection
     pool — should be reused rather than rebuilt on every call."""
-    m = make_model()
+    m = _LoopSafeGoogleModel("gemini-2.5-flash-lite")
     seen = []
 
     async def _touch_twice():
@@ -117,12 +93,12 @@ def test_same_provider_reused_within_one_loop(make_model):
     assert seen[0] is seen[1]
 
 
-def test_client_property_resolves_per_loop_too(make_model):
+def test_client_property_resolves_per_loop_too():
     """The public `.client` property — what every inherited GoogleModel
     method (`request`, `count_tokens`, `request_stream`, `_generate_content`)
     actually reads — must show the same per-loop behavior as the private
     resolver: fresh across loops, stable within one."""
-    m = make_model()
+    m = _LoopSafeGoogleModel("gemini-2.5-flash-lite")
     clients_by_run = []
 
     async def _touch():
@@ -137,12 +113,12 @@ def test_client_property_resolves_per_loop_too(make_model):
     assert a1 is not b1, "different (sequential) loops must not share a client"
 
 
-def test_loop_cache_self_cleans_after_loop_is_collected(make_model):
+def test_loop_cache_self_cleans_after_loop_is_collected():
     """The per-loop cache is a WeakKeyDictionary keyed by the loop object
     itself, so a disposable `run_agent_sync`/`asyncio.run()` loop's entry
     must not linger forever — a long process making many such calls over its
     lifetime must not accumulate one provider per call."""
-    m = make_model()
+    m = _LoopSafeGoogleModel("gemini-2.5-flash-lite")
 
     async def _touch():
         m._provider_for_current_loop()
@@ -152,12 +128,12 @@ def test_loop_cache_self_cleans_after_loop_is_collected(make_model):
     assert len(m._loop_providers) == 0
 
 
-def test_no_running_loop_is_a_safe_fallback_to_the_template(make_model):
+def test_no_running_loop_is_a_safe_fallback_to_the_template():
     """Calling this outside any running loop (e.g. a test that inspects
     `.client` synchronously, like `test_hermetic_llm_guard.py`) must not
     raise — it falls back to the fixed template provider set at
     construction, since with no loop there is nothing to race."""
-    m = make_model()
+    m = _LoopSafeGoogleModel("gemini-2.5-flash-lite")
     assert m._provider_for_current_loop() is m._provider
     assert m.client is m._provider.client
 
@@ -248,13 +224,13 @@ class TestConcurrentAccessIsRaceFree:
             "regression back to it"
         )
 
-    def test_loop_safe_model_never_cross_wires_providers(self, make_model):
+    def test_loop_safe_google_model_never_cross_wires_providers(self):
         """The actual fix-round-1 regression test: same shape as above, but
         reading through the REAL `.client` property. Must be zero
         mismatches — `.client` resolves from `asyncio.get_running_loop()` at
         read time, so it can't be affected by what any other thread does to
         its OWN loop's cache entry."""
-        model = make_model()
+        model = _LoopSafeGoogleModel("gemini-2.5-flash-lite")
         mismatches = []
         mismatches_lock = threading.Lock()
 

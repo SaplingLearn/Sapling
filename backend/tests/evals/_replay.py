@@ -1,7 +1,7 @@
 """Record-and-replay layer for offline eval runs.
 
 Mode is selected by the SAPLING_EVAL_MODE env var:
-  - "record": run agents against their live model, write each response to a
+  - "record": run agents against live Gemini, write each response to a
     cassette file keyed by (dataset, case_name).
   - "replay" (default): load cassettes; if a case has no cassette, raise
     so CI fails loudly instead of silently skipping.
@@ -269,11 +269,7 @@ async def _run_with_retry(agent, case_input: str, deps):
 
 def _is_transient(exc: Exception) -> bool:
     status = getattr(exc, "status_code", None)
-    # 429/503 for both providers; 529 is Anthropic's `overloaded_error`.
-    if status in (429, 503, 529):
+    if status in (429, 503):
         return True
     text = str(exc).upper()
-    return (
-        "UNAVAILABLE" in text or "503" in text or "RESOURCE_EXHAUSTED" in text
-        or "OVERLOADED" in text
-    )
+    return "UNAVAILABLE" in text or "503" in text or "RESOURCE_EXHAUSTED" in text

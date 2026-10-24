@@ -1,7 +1,7 @@
 {
   "category": "syllabus",
-  "confidence": 0.97,
+  "confidence": 1.0,
   "is_syllabus": true,
-  "rationale": "Document lists course title, instructor, meeting schedule, grading breakdown across problem sets, midterm, and final project, and a late policy. These are the defining features of a syllabus.",
-  "shareability": "course_material"
+  "rationale": "The document explicitly states the course name, instructor, schedule, grading breakdown, and late policy, which are defining characteristics of a syllabus.",
+  "shareability": null
 }

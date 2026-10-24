@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import pytest
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 
@@ -61,17 +60,16 @@ def _deps() -> SaplingDeps:
 # ── Mode dispatch ─────────────────────────────────────────────────────────
 
 
-def test_default_mode_returns_the_real_provider_model(monkeypatch):
-    """No SAPLING_MODEL_MODE set → the slot's real provider model (Claude
-    since ADR 0030). This is the production default; the hermetic tests rely
-    on it staying unchanged."""
+def test_default_mode_returns_google_model(monkeypatch):
+    """No SAPLING_MODEL_MODE set → real GoogleModel. This is the production
+    default; the ~976 hermetic tests rely on it staying unchanged."""
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
-    assert isinstance(model_for("classifier"), AnthropicModel)
+    assert isinstance(model_for("classifier"), GoogleModel)
 
 
-def test_mode_real_explicit_returns_the_real_provider_model(monkeypatch):
+def test_mode_real_explicit_returns_google_model(monkeypatch):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    assert isinstance(model_for("quiz"), AnthropicModel)
+    assert isinstance(model_for("quiz"), GoogleModel)
 
 
 def test_mode_is_case_and_whitespace_insensitive(monkeypatch):
@@ -90,8 +88,7 @@ def test_mode_function_returns_function_model(monkeypatch):
 
 def test_real_mode_still_honors_per_task_env_override(monkeypatch):
     """SAPLING_MODEL_MODE must not clobber the existing per-task model
-    override (ADR 0008) — real mode still reads SAPLING_MODEL_<TASK>, and a
-    gemini-* override moves that one slot back to Google (ADR 0030)."""
+    override (ADR 0008) — real mode still reads SAPLING_MODEL_<TASK>."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
     monkeypatch.setenv("SAPLING_MODEL_QUIZ", "gemini-2.5-pro")
     m = model_for("quiz")

@@ -180,8 +180,8 @@ def test_thinking_part_never_produces_a_token():
     attributes a TextPart/TextPartDelta uses. Without gating on
     part_kind/part_delta_kind, reasoning content would stream into the
     student's chat bubble the moment thought summaries are enabled
-    (latent today only because no tutor setting requests a thinking
-    display). Text-shaped parts in the same run must still
+    (latent today only because _build_pro_model_settings doesn't set
+    include_thoughts). Text-shaped parts in the same run must still
     produce tokens normally."""
     async def run():
         agent = FakeAgent([
@@ -1045,42 +1045,3 @@ def test_continuation_is_not_attempted_when_nothing_was_written():
         assert events[-1].type == "done"
 
     asyncio.run(run())
-
-
-# ── ADR 0030: Claude writes text, calls a tool, then writes more ──────────
-
-
-def test_text_before_and_after_a_tool_call_is_all_persisted():
-    """Claude routinely explains, calls `update_mastery_tool`, then adds a
-    line. Both text parts streamed to the student, so both must be
-    persisted — `run_result.output` holds only the LAST one, and persisting
-    it silently dropped the explanation from the transcript."""
-    async def run():
-        agent = FakeAgent([
-            PartStartEvent("Big-O describes how cost grows with input size."),
-            FunctionToolCallEvent("update_mastery_tool"),
-            FunctionToolResultEvent(),
-            PartStartEvent("I've nudged your Big-O mastery."),
-            AgentRunResultEvent("I've nudged your Big-O mastery."),
-        ])
-        saved = {}
-        events = await collect(agent, make_deps(), lambda r, g, m: saved.update(reply=r) or {})
-        assert events[-1].type == "done"
-        assert saved["reply"] == (
-            "Big-O describes how cost grows with input size.\n\n"
-            "I've nudged your Big-O mastery."
-        )
-        streamed = "".join(e.data["delta"] for e in events if e.type == "token")
-        assert streamed == saved["reply"], "what streamed is what persists"
-
-    asyncio.run(run())
-
-
-def test_join_text_parts_adds_a_break_only_where_none_exists():
-    from services.chat_stream import join_text_parts
-
-    assert join_text_parts(["a.", "b."]) == "a.\n\nb."
-    assert join_text_parts(["a.\n", "b."]) == "a.\nb."
-    assert join_text_parts(["a.", "\nb."]) == "a.\nb."
-    assert join_text_parts(["", "a.", ""]) == "a."
-    assert join_text_parts(["only"]) == "only"
