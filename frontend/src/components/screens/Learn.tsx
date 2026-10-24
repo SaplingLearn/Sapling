@@ -6,7 +6,7 @@ import { ChevronLeft } from "lucide-react";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
-import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
+import { ChatPanel, tutorStepLabel, type ChatMsg } from "../chat/ChatPanel";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { SessionSummary } from "../chat/SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../chat/SharedContextToggle";
@@ -373,6 +373,11 @@ function LearnInner() {
   // not streaming, '' = stream open but no token yet, non-empty = live text.
   // Passed straight through to ChatPanel's `streamingText` prop.
   const [streamingText, setStreamingText] = useState<string | null>(null);
+  // What the tutor is doing before its first word ("Searching your course
+  // materials…"), from the stream's tool-call `progress` events. On a model
+  // that sends its post-tool reply in one burst (Sonnet 5.5, ADR 0030) this
+  // is the only feedback for several seconds. ChatPanel's `streamingStatus`.
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
@@ -585,6 +590,7 @@ function LearnInner() {
     setMessages([]);
     setStarting(true);
     setStreamingText("");
+    setStreamingStatus(null);
     // A stream may already be in flight (e.g. a graph-node click starting a
     // new session while a reply streams) — abort it first so two streams
     // never interleave writes into the same streamingText/messages state.
@@ -605,6 +611,10 @@ function LearnInner() {
             setStreamingText(prev => (prev ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onProgress: (step) => {
+            const label = tutorStepLabel(step);
+            if (label) setStreamingStatus(label);
+          },
           signal: controller.signal,
         });
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
@@ -636,6 +646,7 @@ function LearnInner() {
     } finally {
       setStarting(false);
       setStreamingText(null);
+      setStreamingStatus(null);
       if (streamAbort.current === controller) streamAbort.current = null;
     }
   };
@@ -748,6 +759,7 @@ function LearnInner() {
     setMessages(m => [...m, { id: msgId(), role: "user", content: userText }]);
     setSending(true);
     setStreamingText("");
+    setStreamingStatus(null);
     // A stream may already be in flight (e.g. a graph-node click starting a
     // new session while a reply streams) — abort it first so two streams
     // never interleave writes into the same streamingText/messages state.
@@ -782,6 +794,10 @@ function LearnInner() {
             setStreamingText(t => (t ?? "") + delta);
           },
           onGraphUpdate: applyGraphDelta,
+          onProgress: (step) => {
+            const label = tutorStepLabel(step);
+            if (label) setStreamingStatus(label);
+          },
           signal: controller.signal,
         });
       } catch (err) {
@@ -850,6 +866,7 @@ function LearnInner() {
       // a stuck-true `sending` would disable the composer permanently.
       if (streamAbort.current === controller) {
         setStreamingText(null);
+        setStreamingStatus(null);
         streamAbort.current = null;
       }
     }
@@ -1376,6 +1393,7 @@ function LearnInner() {
               onAction={handleAction}
               disabled={sending || starting}
               streamingText={streamingText}
+              streamingStatus={streamingStatus}
               onStop={() => streamAbort.current?.abort()}
               onRetry={handleRetry}
             />
@@ -1703,7 +1721,7 @@ function LearnInner() {
               border: "1px solid var(--border)",
               borderRight: "none",
               borderRadius: "10px 0 0 10px",
-              boxShadow: "-3px 0 8px rgba(19, 38, 16, 0.06)",
+              boxShadow: "-3px 0 8px rgba(25, 37, 11, 0.06)",
               color: railOpen ? "var(--brand-forest)" : "var(--text-muted)",
               zIndex: 20,
               transition: railDragging
@@ -1907,7 +1925,7 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
           // Keyed on the session id (a stable domain id per
           // docs/frontend-testids.md) — the E2E tutor journey (#392) resumes a
           // seeded `rich-sess-*` session to reach an active chat without the
-          // Gemini-backed start-session call.
+          // LLM-backed start-session call.
           data-testid={`tutor-session-resume-${s.id}`}
           onClick={() => onResume(s)}
           style={{

@@ -50,3 +50,19 @@ COOKIE_DOMAIN = ".staging.saplinglearn.com"
 
 [env.staging.observability]
 enabled = true
+
+# --- PR previews of frontend-staging (Worker Previews) ---
+# Previews do NOT inherit [env.staging.vars]; this block is what every new
+# Preview starts with, and `wrangler preview` treats this file as the source of
+# truth over the dashboard. The Workers Builds Preview command must therefore
+# be `npx wrangler preview --env staging` — without --env it targets the PROD
+# `frontend` worker. Previews talk to the staging backend, which sends the
+# OAuth hand-off back to an allowlisted *-frontend-staging.saplinglearn.workers.dev
+# origin (routes/auth.py `_clean_return_to`); the session route then sets a
+# host-only cookie there. SESSION_SECRET is a Preview secret (dashboard /
+# `wrangler secret`), never here, and must equal the staging backend's.
+[env.staging.previews.vars]
+DEPLOY_ENV = "staging"
+NEXT_PUBLIC_API_URL = "https://api.staging.saplinglearn.com"
+BACKEND_URL = "https://api.staging.saplinglearn.com"
+COOKIE_DOMAIN = ".staging.saplinglearn.com"

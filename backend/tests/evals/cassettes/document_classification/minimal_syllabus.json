@@ -1,7 +1,7 @@
 {
   "category": "syllabus",
-  "confidence": 1.0,
+  "confidence": 0.8,
   "is_syllabus": true,
-  "rationale": "The document explicitly states it is a course outline and includes a week-by-week schedule and mentions a final exam, which are hallmarks of a syllabus.",
+  "rationale": "Document lists weekly topics and a final exam date, which defines course schedule structure. It is a course outline with no answers or grades, so it is course-produced material.",
   "shareability": "course_material"
 }

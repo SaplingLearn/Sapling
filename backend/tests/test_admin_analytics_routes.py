@@ -73,6 +73,8 @@ class _FakeTable:
             return sval <= target
         if op == "like":
             return fnmatch.fnmatch(sval, target)
+        if op == "neq":
+            return value is not None and sval != target  # SQL: NULL <> x is not true
         raise AssertionError(f"unsupported op in test fake: {op}")
 
     def _filtered(self, filters):
@@ -131,6 +133,25 @@ def test_usage_summary_counts(seeded):
     assert "auth.login" not in by_type
 
 
+def test_usage_rollups_exclude_system_events(seeded):
+    """#672 review: decision.made is server-emitted (category "system"), one
+    per routed chat turn; counting it would double a student's activity."""
+    seeded["events"].append({
+        "event_type": "decision.made", "category": "system", "user_id": "u2",
+        "request_id": "r9", "payload": {}, "created_at": "2026-07-15T12:00:00+00:00",
+    })
+    seeded["events"].append({
+        "event_type": "decision.made", "category": "system", "user_id": "u-only-system",
+        "request_id": "r10", "payload": {}, "created_at": "2026-07-15T12:00:00+00:00",
+    })
+    body = client.get(f"{BASE}/usage/summary", params=RANGE).json()
+    assert body["total_events"] == 5 and body["distinct_active_users"] == 2
+    assert "decision.made" not in {row["event_type"] for row in body["by_event_type"]}
+    users = {u["user_id"]: u for u in client.get(f"{BASE}/usage/by-user", params=RANGE).json()["users"]}
+    assert "u-only-system" not in users
+    assert "system" not in users["u2"]["by_category"]
+
+
 # ── /usage/by-user ───────────────────────────────────────────────────────────
 
 
@@ -179,6 +200,27 @@ def test_llm_cost_group_by_user(seeded):
     rows = {row["key"]: row for row in r.json()["rows"]}
     assert rows["u1"]["cost_usd"] == pytest.approx(0.06)
     assert rows["u2"]["total_tokens"] == 120
+
+
+def test_llm_cost_keeps_sub_micro_dollar_jev_rows(seeded):
+    """#672 review: decision-seam rows cost fractions of a micro-dollar. The
+    rollups rounded to 6dp, so a Jev-only bucket displayed as $0 however many
+    calls it held; they now round at the column's 10dp (COST_SCALE)."""
+    jev = {"user_id": "u3", "feature": "tutor_router", "task": "decision",
+           "model": "jev-1.13.0", "provider": "typesafe", "prompt_tokens": 11,
+           "completion_tokens": 0, "total_tokens": 11, "cost_usd": 0.000000462,
+           "created_at": IN2}
+    seeded["llm_usage"].extend([dict(jev), dict(jev)])
+    r = client.get(f"{BASE}/llm/cost", params={**RANGE, "group_by": "feature"})
+    rows = {row["key"]: row for row in r.json()["rows"]}
+    assert rows["tutor_router"]["calls"] == 2
+    assert rows["tutor_router"]["cost_usd"] == pytest.approx(0.000000924, abs=1e-12)
+    by_user = client.get(f"{BASE}/usage/by-user", params=RANGE).json()
+    u3 = {u["user_id"]: u for u in by_user["users"]}["u3"]
+    assert u3["llm_cost_usd"] == pytest.approx(0.000000924, abs=1e-12)
+    series = client.get(f"{BASE}/llm/cost", params={**RANGE, "bucket": "day"}).json()["series"]
+    jul12 = next(p for p in series if p["date"].startswith("2026-07-12"))
+    assert jul12["cost_usd"] == pytest.approx(0.05 + 0.000000924, abs=1e-12)
 
 
 def test_llm_cost_rejects_bad_group_by(seeded):

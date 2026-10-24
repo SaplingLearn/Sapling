@@ -44,7 +44,8 @@ describe('streamChat', () => {
       onGraphUpdate: (d) => deltas.push(d),
     });
 
-    expect(tokens).toEqual(['Hel', 'lo']);
+    // The pacer may coalesce deltas; the text is what matters.
+    expect(tokens.join('')).toBe('Hello');
     expect(deltas).toHaveLength(1);
     expect(result.reply).toBe('Hello');
   });
@@ -130,6 +131,70 @@ describe('streamChat', () => {
     }
     expect(caught).toBeInstanceOf(ChatStreamError);
     expect((caught as InstanceType<typeof ChatStreamError>).retryable).toBe(false);
+  });
+
+  // ADR 0030: Sonnet 5.5 sends its post-tool reply in one burst right before
+  // `done`. The client reveals it progressively and must not resolve (the
+  // caller's cue to swap in the final message) until all of it is out.
+  const BURST = 'word '.repeat(80);
+  const burstThenDone = () =>
+    sseBody([
+      ev('progress', { type: 'progress', step: 'search_course_materials', message: 'Calling search_course_materials.' }),
+      ev('token', { type: 'token', step: 'reply', message: '', data: { delta: BURST } }),
+      ev('done', {
+        type: 'done', step: 'reply', message: '',
+        data: { reply: BURST, graph_update: {}, mastery_changes: [] },
+      }),
+    ]);
+
+  it('reports tool-call progress and reveals a burst in steps before resolving', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(burstThenDone(), { status: 200 }) as never);
+    const { streamChat } = await import('./api');
+    const tokens: string[] = [];
+    const steps: string[] = [];
+    const result = await streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, {
+      onToken: (t) => tokens.push(t),
+      onProgress: (s) => steps.push(s),
+    });
+    expect(steps).toEqual(['search_course_materials']);
+    expect(tokens.length).toBeGreaterThan(1);
+    expect(tokens.join('')).toBe(BURST);
+    expect(result.reply).toBe(BURST);
+  });
+
+  it('Stop pressed mid-reveal ends the reveal and rejects as an abort', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(burstThenDone(), { status: 200 }) as never);
+    const { streamChat } = await import('./api');
+    const controller = new AbortController();
+    const tokens: string[] = [];
+    const pending = streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, {
+      onToken: (t) => {
+        tokens.push(t);
+        if (tokens.length === 1) controller.abort();
+      },
+      signal: controller.signal,
+    });
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    // What had arrived is all out, for the caller's interrupted bubble.
+    expect(tokens.join('')).toBe(BURST);
+  });
+
+  it('flushes queued text before rejecting on a mid-stream error (ADR 0020 partial)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        sseBody([
+          ev('token', { type: 'token', step: 'reply', message: '', data: { delta: BURST } }),
+          ev('error', { type: 'error', step: 'reply', message: 'Interrupted.', data: { request_id: 'r1' } }),
+        ]),
+        { status: 200 },
+      ) as never,
+    );
+    const { streamChat } = await import('./api');
+    const tokens: string[] = [];
+    await expect(
+      streamChat('s1', 'u1', 'hi', 'socratic', true, undefined, { onToken: (t) => tokens.push(t) }),
+    ).rejects.toThrow(/interrupted/i);
+    expect(tokens.join('')).toBe(BURST);
   });
 
   it('defaults retryable to true when the error event carries no flag', async () => {

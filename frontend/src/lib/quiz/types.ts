@@ -25,6 +25,7 @@ export type FeedbackMode = "as-you-go" | "at-end";
 /** Persisted under `sapling_quiz_prefs`. `null` means "no stored preference —
  *  fall back to the config-derived default". */
 export interface QuizPrefs {
+  questionFormat?: string;
   count: number | null;
   difficulty: string | null;
   feedback: FeedbackMode;
@@ -37,7 +38,21 @@ export interface WireOption {
   text: string;
 }
 
+export type QuestionType = "multiple_choice" | "short_answer" | "numeric" | "symbolic";
+
+/** Answered by typing, graded on the server. Mirrors backend
+ *  `services/quiz_grading.py::WRITTEN_TYPES`; anything else (including a type
+ *  this client does not know) is answered by choosing an option, exactly as
+ *  the backend treats it. The ONE place this decision is made client-side. */
+export const WRITTEN_TYPES: ReadonlySet<string> = new Set(["short_answer", "numeric", "symbolic"]);
+
+export function isWrittenType(type: string | null | undefined): boolean {
+  return typeof type === "string" && WRITTEN_TYPES.has(type);
+}
+
 export interface WireQuestion {
+  material_context?: "course_material" | "catalog" | "general";
+  type?: QuestionType;
   id: number;
   question: string;
   options: WireOption[];
@@ -72,6 +87,8 @@ export interface GenerateResult {
 }
 
 export interface AnswerResult {
+  answer_text?: string;
+  correct_answer?: string | null;
   question_index: number;
   question_id: number;
   is_correct: boolean;
@@ -189,7 +206,8 @@ export interface AttemptDetail {
   questions: WireQuestion[];
   responses: {
     question_index: number;
-    selected_index: number;
+    selected_index: number | null;
+    answer_text?: string | null;
     is_correct: boolean;
     answered_at: string;
   }[];
@@ -235,10 +253,11 @@ export type QuizScope =
   | { kind: "missed"; conceptId: string; missedCount: number };
 
 export interface QuizItem {
+  answerText?: string;
   index: number;
   question: WireQuestion;
   selectedIndex: number | null;
-  verdict: { isCorrect: boolean; correctIndex: number; explanation: string } | null;
+  verdict: { isCorrect: boolean; correctIndex: number; explanation: string; correctAnswer?: string | null } | null;
   flagged: boolean;
 }
 
@@ -258,7 +277,7 @@ export interface QuizSession {
   intent: QuizIntent;
   scope: QuizScope;
   source: QuizSource;
-  config: { count: number; difficulty: string; feedback: FeedbackMode };
+  config: { count: number; difficulty: string; feedback: FeedbackMode; questionFormat?: string };
   conceptId: string;
   courseId: string | null;
   attemptId: string | null;

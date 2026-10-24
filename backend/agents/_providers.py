@@ -3,32 +3,39 @@
 Each agent has a task-specific default. Operators can override any model
 via env vars without touching code:
 
-    SAPLING_MODEL_CLASSIFIER=gemini-2.5-flash-lite
-    SAPLING_MODEL_SUMMARY=gemini-2.5-flash-lite
-    SAPLING_MODEL_CONCEPTS=gemini-2.5-flash
-    SAPLING_MODEL_SYLLABUS=gemini-2.5-flash
-    SAPLING_MODEL_QUIZ=gemini-2.5-flash-lite
-    SAPLING_MODEL_CHAT_TUTOR=gemini-2.5-pro
-    SAPLING_MODEL_OCR_VISION=gemini-2.5-flash
+    SAPLING_MODEL_CLASSIFIER=claude-haiku-5-5
+    SAPLING_MODEL_QUIZ=claude-haiku-5-5
+    SAPLING_MODEL_CHAT_TUTOR=claude-sonnet-5-5
+    SAPLING_MODEL_SYLLABUS=gemini-2.5-flash      # roll one slot back to Gemini
 
-Defaults are tuned per task: cheaper models for simpler classifications,
-flagship Flash for tasks where output quality drives downstream UX, and
-the Pro tier for the conversational tutor where reasoning depth matters.
+The provider is inferred from the model name (`claude-*` → Anthropic,
+`gemini-*` → Google; ADR 0030), so a slot moves between providers with an
+env flip and no code change. Defaults are tuned per task: Claude Haiku 5.5
+for every generation slot (it prices at or below the Gemini Flash/Flash-Lite
+tiers it replaced — the no-price-increase rule) with per-task `effort`, and
+Claude Sonnet 5.5 for the conversational tutor where reasoning depth matters.
+RAG embeddings are NOT an agent and stay on Gemini (`services/rag_service.py`):
+Anthropic has no embeddings API.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
 import os
 import threading
 import weakref
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 
-from config import GEMINI_API_KEY
+from config import ANTHROPIC_API_KEY, GEMINI_API_KEY
 
 if TYPE_CHECKING:  # keep pydantic-ai's function-model imports out of the prod path
     from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -44,61 +51,194 @@ AgentTask = Literal[
     "course_summary", "quiz_context",
     "concept_scan", "concept_describe",
     "ocr_vision",
+    "decision",
+    "topic_checklist",
 ]
 
 
 # Defaults are conservative. Bumping a model up costs more; the env var
-# escape hatch lets us A/B without redeploying.
+# escape hatch lets us A/B (or roll a slot back to a gemini-* model) without
+# redeploying.
+#
+# Gemini → Claude mapping (ADR 0030). Haiku 5.5 lists at $0.10/$0.50 per MTok
+# (prompts ≤100K tokens) against Flash-Lite's $0.10/$0.40 and Flash's
+# $0.30/$2.50, so every former Flash and Flash-Lite slot moves to Haiku and the
+# quality/cost dial is `effort` (see `_ANTHROPIC_EFFORT`) rather than a model
+# tier. The tutor keeps a step-up model, Sonnet 5.5, like it kept Pro.
 _DEFAULTS: dict[AgentTask, str] = {
-    "classifier": "gemini-2.5-flash-lite",
-    "summary": "gemini-2.5-flash-lite",
-    "concepts": "gemini-2.5-flash",
-    "syllabus": "gemini-2.5-flash",
-    # Quiz generation defaults to lite: it's a single-shot non-streaming
-    # call where the agent pulls structured graph data via tools, so the
-    # bulk of the value is in tool wiring, not raw model strength.
-    "quiz": "gemini-2.5-flash-lite",
-    # Chat tutor runs on Pro: it streams a multi-turn pedagogical
-    # conversation where reasoning depth and instruction following drive
-    # perceived quality. Matches main's tutor default after PR #73
-    # (`feat(learn): use gemini-2.5-pro for tutor chat`) and PR #74
-    # (`fix(learn): allow thinking on gemini-2.5-pro multiturn calls`).
-    "chat_tutor": "gemini-2.5-pro",
-    "note_summary": "gemini-2.5-flash-lite",
-    "note_concepts": "gemini-2.5-flash-lite",
-    "note_chat": "gemini-2.5-flash",
-    # Study guide is quality-sensitive multi-topic generation → full Flash.
-    "study_guide": "gemini-2.5-flash",
-    # Social summary is short-form prose → the cheaper lite tier is enough.
-    "social_summary": "gemini-2.5-flash-lite",
-    # Flashcard generation/cleanup/cloze — content quality matters → full Flash.
-    # Only the model *name* matches the legacy call_gemini flashcard path; the
-    # legacy sampling params (temperature=0.7, max_output_tokens=8192,
-    # thinking disabled) are pinned separately as model_settings on the agent
-    # in agents/flashcard.py so full parity with the old path is preserved.
-    "flashcard": "gemini-2.5-flash",
-    # Instructor class summary — a few paragraphs of analysis → full Flash.
-    "course_summary": "gemini-2.5-flash",
-    # Quiz-context notes are short structured extraction → the lite tier.
-    "quiz_context": "gemini-2.5-flash-lite",
-    # Scan-concepts extends an existing course concept set from a short
-    # context (existing concepts + optional doc summary) → the cheap lite
-    # tier, matching the MODEL_LITE the legacy path used.
-    "concept_scan": "gemini-2.5-flash-lite",
-    # One-sentence concept blurb for the knowledge-map rail — a tiny,
-    # short-output generation → the cheap lite tier.
-    "concept_describe": "gemini-2.5-flash-lite",
+    "topic_checklist": "claude-haiku-5-5",
+    "classifier": "claude-haiku-5-5",
+    "summary": "claude-haiku-5-5",
+    "concepts": "claude-haiku-5-5",
+    "syllabus": "claude-haiku-5-5",
+    # Quiz generation is a single-shot non-streaming call where the agent
+    # pulls structured graph data via tools, so the bulk of the value is in
+    # tool wiring, not raw model strength.
+    "quiz": "claude-haiku-5-5",
+    # Chat tutor runs on the step-up model: it streams a multi-turn
+    # pedagogical conversation where reasoning depth and instruction following
+    # drive perceived quality (the role gemini-2.5-pro held, PR #73/#74).
+    "chat_tutor": "claude-sonnet-5-5",
+    "note_summary": "claude-haiku-5-5",
+    "note_concepts": "claude-haiku-5-5",
+    "note_chat": "claude-haiku-5-5",
+    "study_guide": "claude-haiku-5-5",
+    "social_summary": "claude-haiku-5-5",
+    "flashcard": "claude-haiku-5-5",
+    "course_summary": "claude-haiku-5-5",
+    "quiz_context": "claude-haiku-5-5",
+    "concept_scan": "claude-haiku-5-5",
+    "concept_describe": "claude-haiku-5-5",
     # Page-image OCR (handwritten/scanned coursework). Must be a
-    # vision-capable model, and transcription accuracy on handwritten
-    # mathematics is exactly where the lite tier degrades → full Flash.
-    "ocr_vision": "gemini-2.5-flash",
+    # vision-capable model; every Claude model takes image input.
+    "ocr_vision": "claude-haiku-5-5",
+    # The typed decision seam's LLM backend (services/decisions.py, ADR 0027):
+    # a handful of yes/no / choice / ordered-scale judgments per call, short
+    # structured output, latency-sensitive. This is the `flash_lite` decision
+    # backend (the variant name predates the provider swap) and the fallback
+    # when Jev is unavailable.
+    "decision": "claude-haiku-5-5",
 }
 
 
 # The admin `/api/gemini-test` connectivity probe has no `_DEFAULTS` task of
 # its own; it just needs the cheapest round-trip. Pinned here so probe sites
 # (agents/health.py) can't drift from each other.
-HEALTH_PROBE_MODEL = "gemini-2.5-flash-lite"
+HEALTH_PROBE_MODEL = "claude-haiku-5-5"
+
+
+# ── Per-task request settings ────────────────────────────────────────────
+#
+# Attached to the Model instance (`Model(settings=...)`), so they are the
+# BOTTOM layer of pydantic-ai's merge: an agent's own `model_settings` and a
+# run-level `model_settings=` both override them. Keyed by provider because
+# the knobs don't translate — Gemini has a thinking *budget*, Claude 5.x has
+# only adaptive thinking steered by `effort` (a budget is a 400 there).
+
+# Claude requires `max_tokens` on every request and pydantic-ai defaults it to
+# 4096 — thinking tokens count against it, so a long structured output (a
+# study guide, a 10-question quiz) after a think would truncate mid-JSON.
+# 16K keeps every non-streaming call well under the SDK's 10-minute
+# non-streaming guard while leaving headroom.
+_ANTHROPIC_MAX_TOKENS = 16_000
+
+# `effort` is the Claude quality/cost dial. Haiku 5.5 defaults to `medium`;
+# the slots that ran on Flash-Lite (no thinking) drop to `low`, the slots that
+# ran on full Flash (dynamic thinking) keep `medium`. Measured live over the
+# eval datasets (2026-10-22, ADR 0030): quiz at `low` scored 1.0 on every
+# evaluator at 41% less than `medium`; the tutor at `low` matched `medium` on
+# every evaluator at 41% under gemini-2.5-pro's cost. Disabling thinking
+# outright is NOT a further saving worth having — it cut quiz question-count
+# and coverage scores and classifier shareability accuracy (the field that
+# gates sharing) for a few percent.
+_ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
+    "classifier": "low",
+    "summary": "low",
+    "quiz": "low",
+    "concepts": "medium",
+    "syllabus": "medium",
+    "topic_checklist": "medium",
+    "chat_tutor": "low",
+    "note_summary": "low",
+    "note_concepts": "low",
+    "note_chat": "medium",
+    "study_guide": "medium",
+    "social_summary": "low",
+    # Flashcards ran on Flash with thinking disabled for parity with the
+    # legacy call_gemini path; `low` is the nearest Claude setting.
+    "flashcard": "low",
+    "course_summary": "medium",
+    "quiz_context": "low",
+    "concept_scan": "low",
+    "concept_describe": "low",
+    "ocr_vision": "medium",
+    "decision": "low",
+}
+
+
+# Slots whose runs are TOOL LOOPS — several requests per run, each resending
+# the same system prompt + tool definitions + growing history — get automatic
+# prompt caching (top-level `cache_control`; the breakpoint follows the last
+# cacheable block). Measured live on the tutor: the second request of a turn
+# read ~99% of its input from cache at 0.1x the input rate. Single-shot
+# structured workers are left uncached: a 5-minute cache write costs 1.25x
+# and they rarely repeat a prefix in time to read it back.
+_ANTHROPIC_CACHED_TASKS: frozenset[AgentTask] = frozenset({"chat_tutor", "quiz", "note_chat"})
+
+
+def _anthropic_settings_for(task: AgentTask | None) -> AnthropicModelSettings:
+    settings = AnthropicModelSettings(max_tokens=_ANTHROPIC_MAX_TOKENS)
+    if task is not None and task in _ANTHROPIC_EFFORT:
+        settings["anthropic_effort"] = _ANTHROPIC_EFFORT[task]
+    if task in _ANTHROPIC_CACHED_TASKS:
+        settings["anthropic_cache"] = True
+    return settings
+
+
+def _google_settings_for(task: AgentTask | None) -> GoogleModelSettings | None:
+    """Gemini-only knobs that used to live on individual agents. Only reached
+    when a slot is pointed back at a gemini-* model."""
+    if task == "flashcard":
+        # Parity with the legacy call_gemini flashcard path: temperature 0.7,
+        # an 8192-token output cap, thinking disabled. (Claude 4.7+ rejects
+        # non-default sampling settings, and on Claude thinking counts
+        # against max_tokens, so none of this can sit on the agent anymore.)
+        from google.genai.types import ThinkingConfig
+
+        return GoogleModelSettings(
+            temperature=0.7,
+            max_tokens=8192,
+            google_thinking_config=ThinkingConfig(thinking_budget=0),
+        )
+    return None
+
+
+# ── Claude 5.x model profile ─────────────────────────────────────────────
+#
+# pydantic-ai picks request behaviour from a per-model-name profile, and the
+# pinned 1.x line (`requirements.txt` caps <2 over the run_stream_events
+# change) predates the Claude 5.x generation: for `claude-haiku-5-5` /
+# `claude-sonnet-5-5` / `claude-opus-5-5` it falls back to a legacy profile
+# that (a) sends a forced `tool_choice: any` for every structured output —
+# Opus 5.5 and Sonnet 5.5 reject forcing with a 400, and Haiku 5.5 thinks by
+# default, which also refuses forcing — (b) forwards `temperature`, which
+# Claude 4.7+ rejects, and (c) never enables native JSON output. The
+# overrides below are the 5.x facts pydantic-ai 2.x encodes for these names.
+_CLAUDE_5_PREFIXES = (
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+)
+
+
+def _anthropic_profile(model_name: str) -> AnthropicModelProfile:
+    profile = AnthropicModelProfile.from_profile(
+        AnthropicProvider.model_profile(model_name)
+    )
+    if model_name.startswith(_CLAUDE_5_PREFIXES):
+        profile = profile.update(
+            AnthropicModelProfile(
+                supports_json_schema_output=True,
+                anthropic_supports_adaptive_thinking=True,
+                anthropic_supports_effort=True,
+                anthropic_supports_xhigh_effort=True,
+                anthropic_disallows_budget_thinking=True,
+                anthropic_disallows_sampling_settings=True,
+                anthropic_supports_forced_tool_choice=False,
+            )
+        )
+    if profile.supports_json_schema_output:
+        # Structured output via `output_config.format` (constrained JSON)
+        # instead of pydantic-ai's default output TOOL: the output tool is
+        # what forces `tool_choice`, which thinking-on Claude models refuse.
+        # Set here, at the provider, so the agents keep a plain
+        # `output_type=Model` and a slot pointed back at Gemini keeps
+        # Gemini's own default (tool output — Gemini 2.5 can't combine native
+        # output with function tools, which the quiz agent has).
+        profile = replace(profile, default_structured_output_mode="native")
+    return profile
 
 
 def _new_provider() -> GoogleProvider:
@@ -109,10 +249,18 @@ def _new_provider() -> GoogleProvider:
     return GoogleProvider(api_key=GEMINI_API_KEY or "dummy-key-for-import")
 
 
+def _new_anthropic_provider() -> AnthropicProvider:
+    """A fresh `AnthropicProvider` — a fresh `AsyncAnthropic` client over its
+    OWN httpx pool (pydantic-ai's `create_async_http_client()`, not a cached
+    shared one), so the per-loop cache below gets a genuinely loop-private
+    connection pool. Same dummy-key-for-import rule as `_new_provider`."""
+    return AnthropicProvider(api_key=ANTHROPIC_API_KEY or "dummy-key-for-import")
+
+
 # ── #354 root-cause fix: loop-scoped provider, resolved at READ time ───────
 #
 # Every agent is built ONCE, at import time, from `Agent(model=model_for(task),
-# ...)` — so whatever `Model` instance `model_for`/`google_model` hand back is
+# ...)` — so whatever `Model` instance `model_for`/`provider_model` hand back is
 # shared across every later `.run()` call for that agent's whole process
 # lifetime, across every concurrent request. Until this fix, that model
 # wrapped ONE module-level `GoogleProvider` singleton, and `GoogleProvider.
@@ -195,25 +343,37 @@ def _new_provider() -> GoogleProvider:
 # benefit the old singleton gave it, since its cache entry is looked up (not
 # rebuilt) on every subsequent call. No call site — present or future — has
 # to know event loops (or threads) exist.
-class _LoopSafeGoogleModel(GoogleModel):
-    """A `GoogleModel` whose `.client` resolves the provider bound to the
-    CURRENTLY RUNNING event loop at every access, instead of caching one on
-    `self`. See the module-level comment above for why (#354/#436, and the
-    fix-round-1 correction to this class's first version, which cached a
-    shared `self._provider` pointer and raced under concurrent requests)."""
+#
+# PROVIDER SWAP (ADR 0030): the same loop affinity holds for the Anthropic SDK —
+# `AsyncAnthropic` wraps its own `httpx.AsyncClient` — so the mechanism lives
+# in `_LoopSafeProviderMixin` and both concrete models (`_LoopSafeGoogleModel`,
+# `_LoopSafeAnthropicModel`) inherit it. Each subclass names only how to build
+# a fresh provider; `AnthropicModel.client`, like `GoogleModel.client`, is a
+# plain read of `self._provider.client`, so the one property override covers
+# every inherited request path on both.
+class _LoopSafeProviderMixin:
+    """`.client` resolves the provider bound to the CURRENTLY RUNNING event
+    loop at every access, instead of caching one on `self`. See the
+    module-level comment above for why (#354/#436, and the fix-round-1
+    correction to this class's first version, which cached a shared
+    `self._provider` pointer and raced under concurrent requests).
 
-    def __init__(self, model_name: str) -> None:
-        # `provider=` here becomes a fixed TEMPLATE (see module comment) —
-        # constructed once, never reassigned, read only for loop-independent
-        # metadata. It must NEVER be read for `.client` — that's what the
-        # property override below is for.
-        super().__init__(model_name, provider=_new_provider())
-        self._loop_providers: "weakref.WeakKeyDictionary[Any, GoogleProvider]" = (
+    Mix in BEFORE the concrete pydantic-ai model so this `client` property
+    wins the MRO, and call `_init_loop_safety()` after the model's own
+    `__init__` (whose `provider=` becomes the fixed template)."""
+
+    _provider: Any
+
+    def _new_loop_provider(self) -> Any:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+    def _init_loop_safety(self) -> None:
+        self._loop_providers: "weakref.WeakKeyDictionary[Any, Any]" = (
             weakref.WeakKeyDictionary()
         )
         self._loop_providers_lock = threading.Lock()
 
-    def _provider_for_current_loop(self) -> GoogleProvider:
+    def _provider_for_current_loop(self) -> Any:
         """The provider bound to whichever event loop is running RIGHT NOW,
         creating one on first use. Deliberately never cached anywhere on
         `self` — every caller (`client`, `__aenter__`, `__aexit__`) calls
@@ -232,7 +392,7 @@ class _LoopSafeGoogleModel(GoogleModel):
         with self._loop_providers_lock:
             provider = self._loop_providers.get(loop)
             if provider is None:
-                provider = _new_provider()
+                provider = self._new_loop_provider()
                 self._loop_providers[loop] = provider
             return provider
 
@@ -250,6 +410,59 @@ class _LoopSafeGoogleModel(GoogleModel):
         await provider.__aexit__(exc_type, exc_val, exc_tb)
 
 
+class _LoopSafeGoogleModel(_LoopSafeProviderMixin, GoogleModel):
+    """A `GoogleModel` with a per-event-loop provider (see the mixin)."""
+
+    def __init__(self, model_name: str, *, settings: GoogleModelSettings | None = None) -> None:
+        # `provider=` here becomes a fixed TEMPLATE (see module comment) —
+        # constructed once, never reassigned, read only for loop-independent
+        # metadata. It must NEVER be read for `.client` — that's what the
+        # mixin's property override is for.
+        super().__init__(model_name, provider=_new_provider(), settings=settings)
+        self._init_loop_safety()
+
+    def _new_loop_provider(self) -> GoogleProvider:
+        # Module-level lookup at call time, so a test that patches
+        # `_providers._new_provider` after construction still takes effect.
+        return _new_provider()
+
+
+class _LoopSafeAnthropicModel(_LoopSafeProviderMixin, AnthropicModel):
+    """An `AnthropicModel` with a per-event-loop provider (see the mixin) and
+    the Claude 5.x profile from `_anthropic_profile`."""
+
+    def __init__(
+        self, model_name: str, *, settings: AnthropicModelSettings | None = None
+    ) -> None:
+        super().__init__(
+            model_name,
+            provider=_new_anthropic_provider(),
+            profile=_anthropic_profile(model_name),
+            settings=settings,
+        )
+        self._init_loop_safety()
+
+    def _new_loop_provider(self) -> AnthropicProvider:
+        return _new_anthropic_provider()
+
+    def prepare_request(self, model_settings, model_request_parameters):
+        # Resolve the 'auto' output mode to the profile default BEFORE
+        # AnthropicModel.prepare_request runs. pydantic-ai 1.107 only marks a
+        # native output schema strict (→ `additionalProperties: false`,
+        # unsupported constraints moved into descriptions) when the mode is
+        # ALREADY 'native' on entry; a profile-default 'native' is resolved
+        # later, in the base class, so the schema went out non-strict and
+        # Claude 400'd every structured call ("additionalProperties must be
+        # explicitly set to false"). Explicit `NativeOutput(...)` never hit
+        # this, which is why upstream only exercises it through our profile.
+        return super().prepare_request(
+            model_settings,
+            model_request_parameters.with_default_output_mode(
+                self.profile.default_structured_output_mode
+            ),
+        )
+
+
 # ── Test seam: SAPLING_MODEL_MODE (#391) ───────────────────────────────────
 #
 # `model_for` is the single construction point for every agent's model, so it
@@ -257,9 +470,9 @@ class _LoopSafeGoogleModel(GoogleModel):
 # whole agent objects (which leaves the real prompt/tool/output wiring
 # untested). Modes:
 #
-#   real     — GoogleModel. The production default; an unset/empty var is real,
-#              so nothing about the deployed path or the hermetic unit lane
-#              changes.
+#   real     — the slot's provider model (Anthropic or Google, by model name).
+#              The production default; an unset/empty var is real, so nothing
+#              about the deployed path or the hermetic unit lane changes.
 #   function — pydantic-ai FunctionModel, driven by a per-task handler a test
 #              registers via `register_function_handler`. Scripted tool calls
 #              run through the REAL tool registration, arg-schema validation,
@@ -268,8 +481,9 @@ class _LoopSafeGoogleModel(GoogleModel):
 #              but not yet built; raises rather than silently falling through.
 #
 # Why this sits ABOVE the transport guard (#379): a FunctionModel never builds a
-# `google.genai` request, so a function-mode run does not touch the patched
-# `BaseApiClient` and needs no hermetic-guard exemption. If a change ever makes
+# provider request, so a function-mode run touches neither patched transport
+# (google-genai's `BaseApiClient`, anthropic's `AsyncAPIClient`/`SyncAPIClient`)
+# and needs no hermetic-guard exemption. If a change ever makes
 # function mode reach the transport, `test_function_mode_rides_above_transport_
 # guard` fails — that is the design invariant, not an accident.
 
@@ -472,8 +686,38 @@ def _function_model_for(task: AgentTask) -> "Model":
     )
 
 
+ProviderName = Literal["anthropic", "google"]
+
+
+def _bare_model_name(name: str) -> str:
+    """Drop an optional `provider:` qualifier (`anthropic:claude-haiku-5-5`)."""
+    return name.rsplit(":", 1)[-1].strip()
+
+
+def provider_for_model(name: str) -> ProviderName:
+    """Which provider serves a model name: `claude-*` → anthropic,
+    `gemini-*` → google. Anything else is a config error and raises — a typo'd
+    SAPLING_MODEL_* must fail loudly, not silently route to some default."""
+    bare = _bare_model_name(name)
+    if bare.startswith("claude-"):
+        return "anthropic"
+    if bare.startswith("gemini-"):
+        return "google"
+    raise ValueError(
+        f"cannot infer the provider for model {name!r}: expected a 'claude-*' "
+        f"(Anthropic) or 'gemini-*' (Google) model name."
+    )
+
+
+def api_key_env_for_model(name: str) -> str:
+    """The env var holding the key `name`'s provider needs — for callers that
+    check a key is configured before a billable call (the OCR vision backend,
+    the offline benchmarks, the opt-in live tests). One rule, here."""
+    return "ANTHROPIC_API_KEY" if provider_for_model(name) == "anthropic" else "GEMINI_API_KEY"
+
+
 def model_name_for(task: AgentTask) -> str:
-    """The Gemini model *name* configured for a task, without building a Model.
+    """The model *name* configured for a task, without building a Model.
 
     The ADR-0008 resolution rule in one place: per-task
     SAPLING_MODEL_<TASK_UPPER> override first, else the per-task default.
@@ -488,19 +732,57 @@ def model_name_for(task: AgentTask) -> str:
     return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
 
 
+def provider_model(name: str, *, task: AgentTask | None = None) -> "Model":
+    """A real, loop-safe model for a bare model name, on the provider the name
+    implies, carrying `task`'s per-provider default settings when given.
+
+    Bypasses the per-task `_DEFAULTS`/env-override resolution `model_for`
+    does — it is the per-request override path (the tutor/quiz fast/smart
+    preference, the health probe) — and, like those callers always did,
+    does NOT consult SAPLING_MODEL_MODE: callers gate on `model_mode()`
+    first (#391/#392).
+    """
+    bare = _bare_model_name(name)
+    if provider_for_model(bare) == "anthropic":
+        return _LoopSafeAnthropicModel(bare, settings=_anthropic_settings_for(task))
+    return _LoopSafeGoogleModel(bare, settings=_google_settings_for(task))
+
+
+@functools.lru_cache(maxsize=16)
+def override_model(name: str, task: AgentTask) -> "Model":
+    """`provider_model(name, task=task)`, built once per process and shared.
+
+    For the per-request fast/smart override (routes/learn.py, routes/quiz.py):
+    the browser sends a pref on EVERY tutor turn, and a fresh model per
+    request meant fresh provider httpx pools (a TLS handshake per turn) that
+    were never closed. The import-time agents already share one model for the
+    process; this gives the override path the same lifetime. Safe to share for
+    the same reason they are: the loop-safe mixin resolves a per-event-loop
+    provider at every `.client` read, and nothing mutates a built Model.
+    Deterministic in (name, task) — the env read happens in the caller — and
+    `clear_override_model_cache()` is the invalidation hook (#98).
+    """
+    return provider_model(name, task=task)
+
+
+def clear_override_model_cache() -> None:
+    override_model.cache_clear()
+
+
 def model_for(task: AgentTask) -> "Model":
     """Return the configured model for a given pipeline task.
 
     Dispatches on SAPLING_MODEL_MODE (default 'real'). In real mode, reads the
     per-task SAPLING_MODEL_<TASK_UPPER> override first (ADR 0008), else the
-    per-task default, and returns a `_LoopSafeGoogleModel` (#354/#436 — see the
-    comment above that class) so the caller never has to think about which
-    event loop it ends up running on. In function mode, returns a FunctionModel
-    (see the seam notes above).
+    per-task default, and returns a loop-safe Anthropic or Google model
+    (#354/#436 — see `_LoopSafeProviderMixin`) for whichever provider that
+    name implies (ADR 0030), so the caller never has to think about which
+    event loop it ends up running on. In function mode, returns a
+    FunctionModel (see the seam notes above).
     """
     mode = _model_mode()
     if mode == "real":
-        return _LoopSafeGoogleModel(model_name_for(task))
+        return provider_model(model_name_for(task), task=task)
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":
@@ -512,13 +794,5 @@ def model_for(task: AgentTask) -> "Model":
     raise ValueError(
         f"unknown SAPLING_MODEL_MODE={mode!r}; expected one of 'real', "
         f"'function', 'cassette'. An unrecognized mode is a config error, not a "
-        f"silent fall-through to real (which would bill Gemini)."
+        f"silent fall-through to real (which would bill a live provider)."
     )
-
-
-# Back-compat shim for any caller still using google_model(name).
-def google_model(name: str) -> GoogleModel:
-    """Return a configured GoogleModel for a bare model name (bypassing the
-    per-task `_DEFAULTS`/env-override resolution `model_for` does), on the
-    same loop-safe basis as `model_for` (#354/#436)."""
-    return _LoopSafeGoogleModel(name)

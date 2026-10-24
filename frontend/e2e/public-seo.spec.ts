@@ -28,7 +28,7 @@ test("manifest.webmanifest carries the brand identity", async ({ request }) => {
   expect(res.status()).toBe(200);
   const manifest = await res.json();
   expect(manifest.name).toContain("Sapling");
-  expect(manifest.theme_color).toBe("#1B6C42");
+  expect(manifest.theme_color).toBe("#445D22");
 });
 
 test("careers slugs from the sitemap resolve; unknown slugs hard-404 (#187)", async ({
@@ -98,8 +98,8 @@ test("the landing page's copy is in the server-rendered HTML (#344)", async ({ r
   expect(html).toContain("Mastered");
   expect(html).toContain("Sign up for Beta Testing");
 
-  // the acts below the hero state what the product does
-  expect(html).toContain("Ingest");
+  // the acts below the hero state what the product does (the section eyebrows
+  // — "INGEST" and the rest — were dropped in #736; the headings carry it)
   expect(html).toContain("Drop in the whole");
   expect(html).toContain("Ready to");
 });

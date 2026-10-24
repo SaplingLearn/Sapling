@@ -29,11 +29,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).parent))  # for _replay sibling import
 
 from pydantic import BaseModel, Field
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from agents.chat_tutor import agent_for_mode
 from agents.deps import SaplingDeps
+from services.chat_stream import join_text_parts
 from _replay import MODE, cli_main, load_cassette, save_cassette
 from _retrieval_fixture import FixtureRetrieval, load_fixture
 
@@ -550,7 +552,15 @@ async def _run(case_input: ChatInput) -> ChatReply:
     deps = _make_deps()
     agent = agent_for_mode(mode)
     result = await agent.run(_assemble_message(user_message), deps=deps)
-    reply_text = result.output if isinstance(result.output, str) else str(result.output)
+    # Score what the route PERSISTS (every TextPart of the turn, joined like
+    # the stream renders them), not `result.output` — that is only the final
+    # model response, and Claude often explains BEFORE its mastery call and
+    # adds one line after it (ADR 0030).
+    reply_text = join_text_parts([
+        part.content
+        for msg in result.new_messages() if isinstance(msg, ModelResponse)
+        for part in msg.parts if isinstance(part, TextPart)
+    ])
     output = ChatReply(text=reply_text, tool_calls=_extract_tool_calls(result))
 
     if MODE == "record":

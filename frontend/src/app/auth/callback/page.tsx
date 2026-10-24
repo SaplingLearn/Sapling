@@ -4,6 +4,8 @@ import { Suspense, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { API_URL } from '@/lib/api';
+import { postSignInRoute } from '@/lib/localSeed';
+import { stashPendingToken } from '@/lib/pendingToken';
 
 function CallbackInner() {
   const searchParams = useSearchParams();
@@ -40,6 +42,17 @@ function CallbackInner() {
     };
 
     if (error === 'not_approved' || approvedParam === 'false') {
+      // The backend hands an unapproved sign-in a short-lived pending token
+      // (not a session) so /pending can show where they stand and let them
+      // join the waitlist. Popup mode passes it to the opener — the popup's
+      // sessionStorage dies with it; same-tab stashes it and goes there.
+      const pendingToken = searchParams.get('pending_token');
+      if (pendingToken) {
+        if (broadcast({ success: false, error: 'not_approved', pendingToken })) return;
+        stashPendingToken(pendingToken);
+        router.replace('/pending');
+        return;
+      }
       fail('not_approved');
       return;
     }
@@ -100,11 +113,10 @@ function CallbackInner() {
         profileConfirmed: meOk,
       })) return;
 
-      if (onboardingCompleted) {
-        router.replace('/dashboard');
-      } else {
-        router.replace('/onboarding');
-      }
+      // #715: a new account on a local backend waits for its sample data;
+      // anywhere else this is /onboarding, as before. (Popup mode returned
+      // above: the opener's SignInModal makes the same call.)
+      router.replace(await postSignInRoute(onboardingCompleted));
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

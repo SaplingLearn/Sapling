@@ -1,7 +1,7 @@
 {
   "category": "other",
-  "confidence": 1.0,
+  "confidence": 0.9,
   "is_syllabus": false,
-  "rationale": "The document is an essay submission with instructor comments and a grade, indicating it is a student's completed work.",
+  "rationale": "This is a graded student essay with a score, letter grade, rubric breakdown, and instructor feedback, so it is completed work rather than course material. It does not fit the standard categories, so it is classified as other.",
   "shareability": "completed_work"
 }

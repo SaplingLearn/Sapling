@@ -25,6 +25,8 @@ from pydantic import BaseModel, Field
 
 from db.connection import table
 from services.auth_guard import require_admin
+from services.events_service import SYSTEM_CATEGORY
+from services.llm_pricing import COST_SCALE
 
 logger = logging.getLogger("sapling.admin_analytics")
 
@@ -182,6 +184,12 @@ def _resolve_range(from_: str | None, to: str | None) -> tuple[str, str]:
     return from_iso, to_iso
 
 
+#: Usage rollups count what users DID. Server-emitted rows about their
+#: requests (category "system", e.g. decision.made per routed chat turn) are
+#: excluded, or every routed turn would count twice toward a user's activity.
+_NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
+
+
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
     extra_filters: dict | None = None,
@@ -269,7 +277,7 @@ def _cost_series(rows: list[dict]) -> list[CostDayPoint]:
         d["total_tokens"] += _as_int(r.get("total_tokens"))
         d["cost_usd"] += _as_float(r.get("cost_usd"))
     return [
-        CostDayPoint(date=k, calls=v["calls"], total_tokens=v["total_tokens"], cost_usd=round(v["cost_usd"], 6))
+        CostDayPoint(date=k, calls=v["calls"], total_tokens=v["total_tokens"], cost_usd=round(v["cost_usd"], COST_SCALE))
         for k, v in sorted(days.items())
     ]
 
@@ -289,7 +297,10 @@ def usage_summary(
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
-    rows, truncated = _scan_range("events", "event_type,user_id,created_at", from_iso, to_iso)
+    rows, truncated = _scan_range(
+        "events", "event_type,user_id,created_at", from_iso, to_iso,
+        extra_filters=_NOT_SYSTEM,
+    )
 
     by_type: dict[str, int] = defaultdict(int)
     users: set[str] = set()
@@ -327,6 +338,7 @@ def usage_by_user(
 
     event_rows, events_truncated = _scan_range(
         "events", "user_id,category,created_at", from_iso, to_iso,
+        extra_filters=_NOT_SYSTEM,
     )
     usage_rows, usage_truncated = _scan_range(
         "llm_usage", "user_id,cost_usd,total_tokens,created_at", from_iso, to_iso,
@@ -362,7 +374,7 @@ def usage_by_user(
             user_id=uid,
             event_count=a["event_count"],
             by_category=dict(a["by_category"]),
-            llm_cost_usd=round(a["llm_cost_usd"], 6),
+            llm_cost_usd=round(a["llm_cost_usd"], COST_SCALE),
             total_tokens=a["total_tokens"],
         )
         for uid, a in page
@@ -411,7 +423,7 @@ def llm_cost(
             CostRow(
                 key=k, calls=b["calls"],
                 prompt_tokens=b["prompt_tokens"], completion_tokens=b["completion_tokens"],
-                total_tokens=b["total_tokens"], cost_usd=round(b["cost_usd"], 6),
+                total_tokens=b["total_tokens"], cost_usd=round(b["cost_usd"], COST_SCALE),
             )
             for k, b in buckets.items()
         ),
@@ -422,7 +434,7 @@ def llm_cost(
         prompt_tokens=sum(c.prompt_tokens for c in cost_rows),
         completion_tokens=sum(c.completion_tokens for c in cost_rows),
         total_tokens=sum(c.total_tokens for c in cost_rows),
-        cost_usd=round(sum(c.cost_usd for c in cost_rows), 6),
+        cost_usd=round(sum(c.cost_usd for c in cost_rows), COST_SCALE),
     )
     return LLMCost(
         range=Range(from_=from_iso, to=to_iso), group_by=group_by,

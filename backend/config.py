@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Every agent slot defaults to Claude (ADR 0030); GEMINI_API_KEY stays required
+# for RAG embeddings, which have no Anthropic equivalent.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/api/calendar/callback")
@@ -55,6 +58,21 @@ AUTH_SCOPES = [
 ]
 
 
+# Transactional + broadcast email over Resend (services/email_service.py).
+# RESEND_API_KEY unset/empty is the kill switch: every send is still recorded in
+# `email_sends` (status `skipped`) and logged at INFO, but nothing leaves the
+# process. Tests, E2E and local dev run without it and never touch the network.
+# email_service reads these off this module at call time, so a test can patch them.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip() or "Sapling <hello@saplinglearn.com>"
+EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
+# Where the emails' header image loads from ({base}/email/header.jpg, built by
+# frontend/scripts/build-email-header.mjs into frontend/public/email/). Defaults to
+# FRONTEND_URL; staging sets it to the public prod site, since its own
+# frontend sits behind Cloudflare Access and a recipient couldn't load them.
+EMAIL_ASSET_BASE_URL = os.getenv("EMAIL_ASSET_BASE_URL", "").strip()
+
+
 STORAGE_BUCKET: str = "avatars"
 MAX_AVATAR_SIZE: int = 5 * 1024 * 1024  # 5 MB
 
@@ -64,7 +82,7 @@ def validate_config() -> None:
 
     Without this the app boots with empty secrets and fails opaquely later:
     a "" SUPABASE_URL builds a malformed REST URL on the first DB call, a
-    missing GEMINI_API_KEY surfaces only mid-request, and — worst — an empty
+    missing GEMINI_API_KEY / ANTHROPIC_API_KEY surfaces only mid-request, and — worst — an empty
     SESSION_SECRET silently disables HMAC signing and drops session/OAuth
     state into an unsigned in-memory fallback. Raise one clear error naming
     every missing key instead.
@@ -72,7 +90,7 @@ def validate_config() -> None:
     SESSION_SECRET is required outside local dev (IS_LOCAL) and must be a
     strong secret — a whitespace-only or short value would silently become a
     weak HMAC signing key. We require >= 32 bytes after stripping, matching the
-    frontend (lib/sessionToken.ts). The other three are always required
+    frontend (lib/sessionToken.ts). The other four are always required
     (CI/tests supply dummy values).
     """
     missing = []
@@ -82,6 +100,8 @@ def validate_config() -> None:
         missing.append("SUPABASE_SERVICE_KEY")
     if not GEMINI_API_KEY:
         missing.append("GEMINI_API_KEY")
+    if not ANTHROPIC_API_KEY:
+        missing.append("ANTHROPIC_API_KEY")
     if not IS_LOCAL and len((SESSION_SECRET or "").strip().encode("utf-8")) < 32:
         missing.append("SESSION_SECRET (must be set and >= 32 bytes)")
     if missing:

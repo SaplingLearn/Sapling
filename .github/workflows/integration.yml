@@ -64,8 +64,12 @@ jobs:
             supabase stop >/dev/null 2>&1 || true
             supabase start
           fi
-      - name: Install deps
-        run: pip install -r requirements.txt
+      # The hash-pinned lock, like ci.yml and e2e.yml (#694): requirements.txt
+      # floats every transitive dependency, so this lane could test versions
+      # no other lane (and not the image) runs. The lock leaves out the OCR
+      # stack; nothing here imports it (the extraction backends import lazily).
+      - name: Install deps from lockfile (excluding heavy OCR stack)
+        run: pip install --require-hashes -r requirements.lock
       # Ordering is intentional: db.migrate reads SUPABASE_DB_URL inline and
       # imports no encryption, so it runs before `cp .env.local.example .env`
       # (which is what seed_local_rich needs for SUPABASE_URL + ENCRYPTION_KEY).

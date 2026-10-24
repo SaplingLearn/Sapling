@@ -22,7 +22,7 @@ Design guarantees:
 Cost computation and token-field normalization live in
 ``services/llm_pricing.py``; this module just persists what it's given.
 
-Event taxonomy (issue #117) — the twelve event types the app emits, pinned in
+Event taxonomy (issue #117) — the event types the app emits, pinned in
 ``EVENT_TAXONOMY`` below. Payloads carry ids/counts/enums only: never raw
 text, titles, summaries, full URLs, or timestamps (``created_at`` is a DB
 default). Free-text that must be correlatable (chat messages, session topics)
@@ -32,6 +32,8 @@ goes through ``content=`` and lands only as a ``content_fp`` fingerprint.
 event_type                    category  payload keys
 ============================  ========  =====================================================
 error.4xx / error.5xx         error     path, method, status_code, duration_ms, route (template)
+                                        (an ANONYMOUS 404 that matched no route is not
+                                        recorded, #690)
 auth.login                    audit     method ("google" / "test_login")
 auth.permission_denied        audit     reason, route
 document.upload               usage     course_id, offering_id, char_count
@@ -66,6 +68,20 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 flag.changed                  audit     key, field, before, after
+decision.made                 system    feature, backend (who answered: jev | flash_lite |
+                                        function | none), requested, fallback_reason (an
+                                        enum-like reason, never a message), model, latency_ms,
+                                        floor, answers {key: value, raw ("<invalid>" for
+                                        an off-list answer), confidence, defaulted?},
+                                        optional shadow {backend, answers, agree {key:
+                                        bool|null} | null (null = shadow_same_as_served),
+                                        ...}, + caller extras. The tutor router adds
+                                        session_id, mode, history_messages, and the model
+                                        the turn ACTUALLY ran on: model_tier (fast | smart
+                                        | default — default whenever the pref was not
+                                        honoured), tutor_model (resolved model name) and
+                                        model_pref_requested (the raw request field).
+                                        ADR 0027 / #640 / #642.
 ============================  ========  =====================================================
 
 Note on the two ``rag.*`` error rows (#482): they are ``category="error"``, but
@@ -167,7 +183,21 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "rag.visibility_resync_failed",
     # #620: admin feature-flag change (audit).
     "flag.changed",
+    # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
+    # backend that actually served them, and (in shadow mode) the second
+    # backend's answers plus per-key agreement. category="system": the server
+    # emits it about a chat turn (the turn itself is chat.message_sent), so it
+    # must not count as the student's activity in the usage rollups. It is
+    # the dataset the routing-accuracy and Jev-agreement reviews are run over.
+    "decision.made",
 })
+
+#: Category for rows the SERVER emits about a request (e.g. decision.made, one
+#: per routed chat turn) rather than something the user did. Attributed to the
+#: user (user_id) so it joins to their turn, but routes/admin_analytics.py's
+#: usage rollups exclude it — it is not activity. The other categories are
+#: usage | audit | error (0035; the column has no CHECK constraint).
+SYSTEM_CATEGORY = "system"
 
 # Tunables (env-driven). Read at queue-construction time so tests can shrink
 # the queue via reset_for_tests(maxsize=...).
@@ -229,38 +259,81 @@ def log_event(
         logger.exception("log_event failed; event dropped")
 
 
+def _warn_zero_token_usage(
+    usage: Any, requests: int | None, *, feature: str, task: str | None, model: str,
+) -> None:
+    """Make a real call that reports no tokens loud (#689).
+
+    A real model that made at least one request always bills tokens, so a
+    zero count means usage extraction broke below us (#689: a genai-prices
+    release pydantic-ai 1.x could not read, swallowed inside pydantic-ai).
+    The row still lands, at $0, and every cost rollup and AI budget cap
+    under-reads. Function mode reports zeros by design, so it stays quiet.
+    Lives here, on the one llm_usage write path, so every writer is covered.
+    """
+    from agents._providers import model_mode
+
+    if model_mode() != "real":
+        return
+    if requests is None:
+        raw = usage.get("requests") if isinstance(usage, dict) else getattr(usage, "requests", 0)
+        requests = int(raw or 0)
+    if requests and not llm_pricing.normalize_usage(usage)["total_tokens"]:
+        logger.warning(
+            "LLM call made %d model request(s) but reported 0 tokens "
+            "(task=%s feature=%s model=%s); llm_usage cost and AI budget caps "
+            "will under-read (#689)",
+            requests,
+            task,
+            feature,
+            model,
+        )
+
+
 def log_llm_usage(
     *,
     feature: str,
     task: str | None,
     model: str,
     usage: Any,
-    provider: str = "gemini",
+    provider: str | None = None,
     user_id: str | None = None,
     request_id: str | None = None,
+    requests: int | None = None,
 ) -> None:
     """Enqueue a row for the ``llm_usage`` table. Never raises, never blocks.
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
-    (``cost_usd = NULL`` for unpriced models).
+    (``cost_usd = NULL`` for unpriced models). ``provider`` defaults to the
+    label the served ``model`` implies (``llm_pricing.usage_provider``).
+    ``requests`` is how many model calls the row bills; omitted, it is read
+    off ``usage.requests`` (Pydantic AI's RunUsage carries it). Writers whose
+    usage shape has no such field (the Jev decision row) pass it.
     """
+    try:
+        _warn_zero_token_usage(usage, requests, feature=feature, task=task, model=model)
+    except Exception:
+        logger.debug("log_llm_usage: zero-token check slipped", exc_info=True)
     if not _logging_enabled():
         return
     try:
         tokens = llm_pricing.normalize_usage(usage)
+        cache_read, cache_write = llm_pricing.cache_usage(usage)
         row = {
             "user_id": user_id,
             "request_id": request_id if request_id is not None else current_request_id(),
             "feature": feature,
             "task": task,
             "model": model,
-            "provider": provider,
+            "provider": provider or llm_pricing.usage_provider(model),
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                requests=requests or llm_pricing.request_count(usage),
             ),
         }
         _enqueue("llm_usage", row)

@@ -31,13 +31,17 @@ const PROTECTED = [
 const RESOLVED = resolveFrontendEnv(process.env as Record<string, string | undefined>)
 const API_URL = RESOLVED.apiUrl
 
-function googleAuthRedirect() {
+function googleAuthRedirect(request: NextRequest) {
   if (!API_URL) return null
-  return new URL('/api/auth/google', API_URL).toString()
+  const u = new URL('/api/auth/google', API_URL)
+  // Lets a PR preview get the user back after sign-in; the staging backend
+  // honours only allowlisted preview origins and ignores it everywhere else.
+  u.searchParams.set('return_to', request.nextUrl.origin)
+  return u.toString()
 }
 
 function redirectToSignin(request: NextRequest, errorCode?: string) {
-  const g = googleAuthRedirect()
+  const g = googleAuthRedirect(request)
   if (g && !errorCode) return NextResponse.redirect(g)
   const u = new URL('/', request.url)
   if (errorCode) u.searchParams.set('error', errorCode)

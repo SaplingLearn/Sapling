@@ -1,19 +1,11 @@
 {
-  "text": "Great question! A redox reaction is all about the transfer of electrons.\n\nThe name \"redox\" itself is a clue. What two processes are happening in a redox reaction?",
+  "text": "Your uploaded materials don't cover redox, so I'll teach this from general chemistry.\n\nStart with the basics. In a redox reaction, electrons move from one species to another. Take a simple example: $\\text{Zn} + \\text{Cu}^{2+} \\to \\text{Zn}^{2+} + \\text{Cu}$.\n\nWhich species loses electrons and which gains them, and how many electrons does each one move?",
   "tool_calls": [
     {
       "args": {
         "query": "balancing redox equations"
       },
       "tool_name": "search_course_materials"
-    },
-    {
-      "args": {
-        "concepts": [
-          "Redox Reactions"
-        ]
-      },
-      "tool_name": "apply_graph_update_tool"
     }
   ]
 }

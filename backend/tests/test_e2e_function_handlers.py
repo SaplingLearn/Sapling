@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 
 import pytest
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.anthropic import AnthropicModel
 
 import agents._providers as providers
 from agents._providers import clear_function_handlers, model_for
@@ -201,8 +201,8 @@ def test_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch):
     """Default lane unchanged: real mode keeps the per-request override."""
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     m = _resolve_model_pref("fast")
-    assert isinstance(m, GoogleModel)
-    assert m.model_name == "gemini-2.5-flash-lite"
+    assert isinstance(m, AnthropicModel)
+    assert m.model_name == "claude-haiku-5-5"
     assert _resolve_model_pref(None) is None
 
 
@@ -259,6 +259,18 @@ def test_quiz_handler_wire_labels_match_the_browser_spec(monkeypatch):
     assert labels == list(E2E_QUIZ_CORRECT_LABELS)
 
 
+@pytest.mark.parametrize("format", ["short_answer", "numeric", "symbolic", "mixed"])
+def test_quiz_handler_supports_written_format_browser_journeys(monkeypatch, format):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    with quiz_agent.override(model=model_for("quiz")):
+        result = quiz_agent.run_sync(f"\nquestion_format: {format}.\n", deps=_deps())
+    types = [q.type for q in result.output.questions]
+    assert types == (["short_answer", "numeric", "symbolic"] if format == "mixed" else [format] * 3)
+    for i, question in enumerate(result.output.questions):
+        assert _agent_question_to_wire(question, i + 1) is not None
+
+
 def test_quiz_resolve_model_pref_returns_none_in_function_mode(monkeypatch):
     """The quiz half of the same bypass fixed in routes/learn.py: a fast/smart
     pref must not produce a live GoogleModel override in any non-real mode.
@@ -273,8 +285,8 @@ def test_quiz_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch)
     """Default lane unchanged: real mode keeps the quiz per-request override."""
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     m = _resolve_quiz_model_pref("smart")
-    assert isinstance(m, GoogleModel)
-    assert m.model_name == "gemini-2.5-pro"
+    assert isinstance(m, AnthropicModel)
+    assert m.model_name == "claude-sonnet-5-5"
     assert _resolve_quiz_model_pref(None) is None
 
 
@@ -578,3 +590,128 @@ def test_env_module_import_sets_stream_pacing(monkeypatch):
     from agents._providers import function_stream_delay_ms
 
     assert function_stream_delay_ms() == 150
+
+
+# ── Typed decision seam / tutor router (#640, ADR 0027) ───────────────────
+#
+# Function mode turns the decision seam on automatically, and the tutor router
+# calls it on every chat turn — so the E2E module registers a `decision`
+# handler. Its answers must (a) validate against the real DecisionOutput
+# schema, (b) cover every router key, and (c) sit above the default floor so
+# the lane exercises the applied-answer path, not the defaults path.
+
+
+def _run_router_decision():
+    import asyncio
+
+    from agents.decision import decision_agent
+    from services import decisions, tutor_router
+
+    with decision_agent.override(model=model_for("decision")):
+        return asyncio.run(decisions.decide(
+            tutor_router.build_state("What is recursion?", []),
+            tutor_router.QUESTIONS, feature=tutor_router.FEATURE,
+            # What the router runs in function mode with the flag on.
+            backend=decisions.JEV,
+        ))
+
+
+def test_env_module_decision_handler_answers_every_router_key(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+
+    result = _run_router_decision()
+
+    from agents.function_handlers_e2e import E2E_DECISION_ANSWERS
+    from services import tutor_router
+
+    assert result.backend == "function"
+    assert {a["key"] for a in E2E_DECISION_ANSWERS} == {q.key for q in tutor_router.QUESTIONS}
+    assert not any(a.defaulted for a in result.answers.values()), result.answers
+    assert result.value("complexity") == "medium"
+    assert result.value("needs_retrieval") is True
+
+
+def test_showcase_module_decision_handler_answers_every_router_key(monkeypatch):
+    """The gallery lane runs function mode too, so its handlers module needs
+    the same registration (the #484 lesson: a second handlers module is the
+    one that gets missed)."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_showcase")
+    sys.modules.pop("agents.function_handlers_showcase", None)
+    try:
+        result = _run_router_decision()
+        showcase = sys.modules["agents.function_handlers_showcase"]
+    finally:
+        sys.modules.pop("agents.function_handlers_showcase", None)
+
+    assert result.backend == "function"
+    assert not any(a.defaulted for a in result.answers.values()), result.answers
+    # ONE list shared through the side-effect-free fixtures module, not a
+    # hand-copied literal that can drift from the E2E module's.
+    import inspect
+
+    from agents._decision_fixtures import DECISION_ANSWERS
+
+    assert "DECISION_ANSWERS" in inspect.getsource(showcase)
+    assert "needs_retrieval" not in inspect.getsource(showcase)
+    assert result.value("complexity") == next(
+        a["value"] for a in DECISION_ANSWERS if a["key"] == "complexity")
+
+
+def test_e2e_decision_answers_are_the_shared_fixture():
+    import ast
+    from pathlib import Path
+
+    from agents._decision_fixtures import DECISION_ANSWERS
+
+    src = Path(__file__).resolve().parents[1] / "agents" / "function_handlers_e2e.py"
+    tree = ast.parse(src.read_text())
+    (assign,) = [n for n in tree.body if isinstance(n, ast.Assign)
+                 and any(getattr(t, "id", None) == "E2E_DECISION_ANSWERS" for t in n.targets)]
+    assert isinstance(assign.value, ast.Name) and assign.value.id == "DECISION_ANSWERS", (
+        "E2E_DECISION_ANSWERS must alias the shared fixture, not copy it")
+    assert {a["key"] for a in DECISION_ANSWERS} == {
+        "needs_retrieval", "needs_rewrite", "complexity",
+        "is_graded_work_request", "injection_attempt",
+    }
+
+
+# ── Topic checklist (#716) ────────────────────────────────────────────────
+#
+# routes/topic_checklist.py's POST .../refresh runs topic_checklist_agent on
+# the request path (run_agent_sync inside the sync route), so it is
+# registered. frontend/e2e/topic-checklist.spec.ts asserts the "Recursion"
+# topic this handler emits; the handler cites source ids taken from the
+# request, so the agent's real reference validator (and the service's
+# validate_evidence) run on its output rather than being bypassed.
+
+
+def test_topic_checklist_handler_cites_request_evidence(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+    import json
+
+    from agents.topic_checklist import topic_checklist_agent
+    from services.topic_checklist_service import validate_evidence
+
+    payload = {
+        "course": {"code": "CS101", "name": "Intro to CS"},
+        "sources": [
+            {"id": "concept:n1", "label": "Tracked course concept", "text": "Recursion"},
+            {"id": "concept:n2", "label": "Tracked course concept", "text": "Variables and Types"},
+            {"id": "document:d1", "label": "notes.pdf", "text": "Unrelated text"},
+        ],
+        "assessments": [],
+        "existing_topic_names": [],
+    }
+    with topic_checklist_agent.override(model=model_for("topic_checklist")):
+        result = topic_checklist_agent.run_sync(json.dumps(payload), deps=payload)
+
+    topics = result.output.topics
+    assert [t.name for t in topics] == ["Recursion", "Variables and Types"]
+    assert [t.source_ids for t in topics] == [["concept:n1"], ["concept:n2"]]
+    validate_evidence(result.output, payload)
+    assert "topic_checklist" in providers._FUNCTION_HANDLERS

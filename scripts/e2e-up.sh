@@ -15,7 +15,7 @@
 # skip-if-done migrations/seeds. LOCAL ONLY — never touches staging/prod.
 #
 # First-time setup on a new machine (same as scripts/local-up.sh):
-#   cp backend/.env.local.example backend/.env       # then fill in GEMINI_API_KEY
+#   cp backend/.env.local.example backend/.env       # then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY
 #   python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
 #   cd frontend && npm ci
 #
@@ -172,7 +172,7 @@ echo "▶ Preflight…"
 command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
-  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
+  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY)"; exit 1; }
 # $VENV_PY is resolved in local-common.sh and accepts both the POSIX
 # (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
 [ -n "${VENV_PY:-}" ] \
@@ -196,6 +196,18 @@ grep -qE '^APP_ENV=(local|test)$' backend/.env \
 # they're absent instead of letting journeys silently hit live Gemini.
 if [ -z "${SAPLING_MODEL_MODE:-}" ] && ! grep -qE '^SAPLING_MODEL_MODE=' backend/.env; then
   echo "  ℹ SAPLING_MODEL_MODE is unset — agents will call the LIVE model; for deterministic E2E export SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e (what e2e.yml does)"
+fi
+# The deterministic lane exercises the typed decision seam (#640, ADR 0027).
+# The tutor router runs whatever the `decision_router` feature flag says
+# (ADR 0029) and the flag is off by default — no stored config on this stack —
+# so switch it on through its generic env override, respecting a value the
+# caller exported (`off` skips the seam). Under function mode an on variant
+# runs the scripted `function` backend; Gemini/Jev are never dialled. Function
+# mode is detected the same way as the check above: the shell first, then
+# backend/.env.
+MODEL_MODE="${SAPLING_MODEL_MODE:-$(grep -E '^SAPLING_MODEL_MODE=' backend/.env | tail -n1 | cut -d= -f2- | tr -d '\r')}"
+if [ "$MODEL_MODE" = "function" ]; then
+  export SAPLING_FLAG_DECISION_ROUTER="${SAPLING_FLAG_DECISION_ROUTER:-jev}"
 fi
 
 mkdir -p "$E2E_DIR"

@@ -9,9 +9,9 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Depends
 
-from db.connection import table
+from db.connection import page_all, pg_quote_value, table
 from models import (
     CreateRoleBody,
     AssignRoleBody,
@@ -24,9 +24,11 @@ from models import (
     LinkAchievementCosmeticBody,
     LinkRoleCosmeticBody,
     AllowlistEmailBody,
+    AllowlistBulkBody,
     AchievementIconBody,
     UpdateXpRuleBody,
 )
+from services import email_service
 from services.admin_audit import log_admin_action
 from services.auth_guard import require_admin, get_session_user_id
 from services.achievement_service import check_achievements, grant_linked_cosmetics
@@ -561,42 +563,100 @@ def list_users(
     return paginate_users(q=q, page=page, page_size=page_size)
 
 
-@router.patch("/users/{user_id}/approve")
-def approve_user(user_id: str, request: Request):
-    require_admin(request)
-    actor = get_session_user_id(request)
-    table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
-    log_admin_action(actor_id=actor, action="user.approve", target_type="user", target_id=user_id)
-    return {"approved": True}
+def _back_on_waitlist(email: str) -> None:
+    """Put `email` back on the waitlist as an unapproved signup, so a user whose
+    access was removed shows up in Admin → Allowlist (approving them there lets
+    them back in at their next sign-in). Best-effort: access is already gone."""
+    from routes.auth import _waitlist_entry
+
+    try:
+        entry = _waitlist_entry(email)
+        if entry:
+            table("newsletter_emails").update(
+                {"approved_at": None, "joined_at": None, "joined_user_id": None},
+                filters={"id": f"eq.{entry['id']}"},
+            )
+        else:
+            table("newsletter_emails").upsert({"email": email}, on_conflict="email")
+    except Exception:
+        logger.warning("could not put a removed user back on the waitlist", exc_info=True)
 
 
 @router.patch("/users/{user_id}/unapprove")
 def unapprove_user(user_id: str, request: Request):
+    """Remove a user's access. They leave Admin → Users and reappear in
+    Admin → Allowlist as a signup; their account and data are kept."""
     require_admin(request)
     actor = get_session_user_id(request)
     if user_id == actor:
-        raise HTTPException(status_code=409, detail="You cannot unapprove yourself.")
-    table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+        raise HTTPException(status_code=409, detail="You cannot remove your own access.")
+    rows = table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+    email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
+    if "@" in email:
+        _back_on_waitlist(email)
     log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)
     return {"unapproved": True}
 
 
 # ── Newsletter Allowlist ──────────────────────────────────────────────────────
 
+_ALLOWLIST_COLUMNS = "id,email,created_at,approved_at,joined_at,joined_user_id"
+#: dedupe keys are ~82 chars; 50 per `in.(…)` keeps each URL around 4 KB, well
+#: under the 8 KB request-line limits common in front of PostgREST.
+_IN_CHUNK = 50
+
+
+def _chunks(items: list, size: int = _IN_CHUNK):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def _send_statuses(dedupe_keys: list[str]) -> dict[str, str]:
+    """dedupe_key → email_sends.status for the keys that have a row.
+
+    Degrades to "no statuses" on a read error: the allowlist is still useful
+    without them, and a missing column/table must not 500 the admin page."""
+    statuses: dict[str, str] = {}
+    keys = sorted(set(k for k in dedupe_keys if k))
+    try:
+        for chunk in _chunks(keys):
+            rows = table("email_sends").select(
+                "dedupe_key,status",
+                filters={"dedupe_key": f"in.({','.join(chunk)})"},
+            )
+            for r in rows or []:
+                statuses[r.get("dedupe_key")] = r.get("status")
+    except Exception:  # noqa: BLE001
+        logger.warning("email_sends status read failed", exc_info=True)
+    return statuses
+
+
+def _with_invite_status(rows: list[dict]) -> list[dict]:
+    """Attach `invite_status`: the status of that address's "you're in" send."""
+    keyed = [
+        (r, email_service.waitlist_approved_key(r["email"])) if r.get("email") else (r, None)
+        for r in rows
+    ]
+    statuses = _send_statuses([k for _, k in keyed if k])
+    return [{**r, "invite_status": statuses.get(k) if k else None} for r, k in keyed]
+
+
+def _waitlist_rows(columns: str = _ALLOWLIST_COLUMNS) -> list[dict]:
+    # Paged: the waitlist can outgrow PostgREST's max_rows (1000), and a
+    # capped read answers 206 — a silent truncation.
+    return list(page_all(table("newsletter_emails"), columns, order="created_at.desc,id.desc"))
+
+
 @router.get("/allowlist")
 def list_allowlist(request: Request):
     # #130: the admin portal's adminListAllowlist() (frontend/src/lib/api.ts)
     # reads this list; approve/revoke existed without the GET.
     require_admin(request)
-    rows = table("newsletter_emails").select(
-        "id,email,created_at,approved_at",
-        order="created_at.desc",
-    )
-    return {"emails": rows or []}
+    return {"emails": _with_invite_status(_waitlist_rows())}
 
 
 @router.post("/allowlist/approve")
-def approve_allowlist(body: AllowlistEmailBody, request: Request):
+def approve_allowlist(body: AllowlistEmailBody, request: Request, background_tasks: BackgroundTasks):
     require_admin(request)
     actor = get_session_user_id(request)
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -609,7 +669,85 @@ def approve_allowlist(body: AllowlistEmailBody, request: Request):
         target_type="allowlist", target_id=body.email,
         payload={"email": body.email},
     )
-    return {"email": rows[0] if rows else None}
+    # "You're in". Deduped per address in email_sends, so a revoke followed
+    # by a re-approve never sends it twice. The 🔒 first name is there only
+    # for someone who joined from /pending; it never leaves this function.
+    row = dict(rows[0]) if rows else None
+    first_name = decrypt_if_present(row.pop("first_name", None)) if row else None
+    email_service.queue_waitlist_approved(background_tasks, body.email, first_name)
+    return {"email": row}
+
+
+@router.post("/allowlist/approve-bulk")
+def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background_tasks: BackgroundTasks):
+    """Approve up to 500 addresses at once.
+
+    Addresses already on the waitlist keep their stored spelling (the waitlist
+    keeps emails as typed, so a lowercased insert would create a case twin) and
+    an already-approved row keeps its original `approved_at`: only NULLs are
+    stamped, via a PATCH filtered on `approved_at=is.null`. New addresses are
+    inserted approved with ON CONFLICT DO NOTHING, so a concurrent signup is
+    never overwritten.
+    """
+    require_admin(request)
+    actor = get_session_user_id(request)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    wanted = body.emails  # normalized: lowercased, stripped, deduped
+
+    by_lower: dict[str, list[dict]] = {}
+    for r in _waitlist_rows("id,email,approved_at,first_name"):
+        key = (r.get("email") or "").strip().lower()
+        if key:
+            by_lower.setdefault(key, []).append(r)
+
+    pending_ids: list[str] = []
+    missing: list[str] = []
+    recipients: list[tuple[str, str | None]] = []  # (address, 🔒 first name), one per email
+    spellings: list[str] = []    # stored spellings, for the read-back
+    for email in wanted:
+        existing = by_lower.get(email)
+        if existing:
+            pending_ids.extend(r["id"] for r in existing if not r.get("approved_at"))
+            spellings.extend(r["email"] for r in existing)
+            recipients.append((existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))))
+        else:
+            missing.append(email)
+            spellings.append(email)
+            recipients.append((email, None))
+
+    for chunk in _chunks(pending_ids, 100):
+        table("newsletter_emails").update(
+            {"approved_at": now_iso},
+            filters={"id": f"in.({','.join(chunk)})", "approved_at": "is.null"},
+        )
+    if missing:
+        table("newsletter_emails").upsert(
+            [{"email": e, "approved_at": now_iso} for e in missing],
+            on_conflict="email",
+            ignore_duplicates=True,
+        )
+
+    log_admin_action(
+        actor_id=actor, action="allowlist.approve_bulk",
+        target_type="allowlist", target_id=None,
+        payload={"count": len(wanted), "emails": wanted},
+    )
+
+    for address, first_name in recipients:
+        email_service.queue_waitlist_approved(background_tasks, address, first_name)
+
+    rows: list[dict] = []
+    seen_ids: set = set()
+    for chunk in _chunks(sorted(set(spellings))):
+        quoted = ",".join(pg_quote_value(e) for e in chunk)
+        for r in table("newsletter_emails").select(
+            _ALLOWLIST_COLUMNS, filters={"email": f"in.({quoted})"},
+        ) or []:
+            if r.get("id") not in seen_ids:
+                seen_ids.add(r.get("id"))
+                rows.append(r)
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return {"approved": len(wanted), "emails": _with_invite_status(rows)}
 
 
 @router.post("/allowlist/revoke")
@@ -717,10 +855,13 @@ def analytics_overview(request: Request):
     admin_count = sum(c for rid, c in role_counter.items() if rid in admin_role_ids)
 
     approved = sum(1 for u in users if u.get("is_approved"))
+    # Waiting on approval = waitlist signups not yet approved. Unapproved
+    # sign-ins don't create accounts, so `users` can't answer this.
+    waitlist = table("newsletter_emails").select("approved_at") or []
     totals = {
         "users": len(users),
         "approved": approved,
-        "pending": len(users) - approved,
+        "pending": sum(1 for w in waitlist if not w.get("approved_at")),
         "admins": admin_count,
     }
 

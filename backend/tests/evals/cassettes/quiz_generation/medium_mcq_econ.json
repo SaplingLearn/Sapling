@@ -1,45 +1,48 @@
 {
   "questions": [
     {
+      "accepted_answers": [],
       "concept": "Marginal Cost",
-      "correct_answer": "The additional cost incurred by producing one more unit of a good.",
+      "correct_answer": "$40.00",
       "difficulty": "medium",
-      "explanation": "Marginal cost (MC) specifically refers to the change in total cost resulting from producing one additional unit. It's a key concept in understanding a firm's production decisions.",
+      "explanation": "Marginal cost is the change in total cost divided by the change in quantity: ($580 - $500) / (12 - 10) = $80 / 2 = $40. $48.33 is average total cost at 12 units, which is a common confusion with marginal cost.",
       "options": [
-        "The total cost of production.",
-        "The cost of all fixed inputs.",
-        "The additional cost incurred by producing one more unit of a good.",
-        "The average cost per unit produced."
+        "$40.00",
+        "$48.33",
+        "$58.00",
+        "$80.00"
       ],
-      "question": "A firm's marginal cost is the additional cost incurred by producing one more unit of a good.",
+      "question": "A firm's total cost rises from $500 to $580 when its output increases from 10 units to 12 units. What is the marginal cost per unit over this change?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Price Elasticity of Demand",
-      "correct_answer": "-2.0",
+      "correct_answer": "|E| = 0.4, inelastic",
       "difficulty": "medium",
-      "explanation": "Price elasticity of demand is calculated as the percentage change in quantity demanded divided by the percentage change in price. In this case, -10% / 5% = -2.0. A value greater than 1 (in absolute terms) indicates elastic demand.",
+      "explanation": "Elasticity is the percentage change in quantity demanded divided by the percentage change in price: 4% / 10% = 0.4. Since |E| is less than 1, demand is inelastic. Inverting the ratio (10/4 = 2.5) is a common error that produces the wrong classification.",
       "options": [
-        "0.5",
-        "2.0",
-        "-0.5",
-        "-2.0"
+        "|E| = 2.5, elastic",
+        "|E| = 1.0, unit elastic",
+        "|E| = 0.4, inelastic",
+        "|E| = 0.4, elastic"
       ],
-      "question": "If the quantity demanded of a product decreases by 10% when its price increases by 5%, what is the price elasticity of demand?",
+      "question": "When the price of a good rises by 10%, the quantity demanded falls by 4%. What is the absolute value of the price elasticity of demand, and how is demand classified?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Comparative Advantage",
-      "correct_answer": "With a lower opportunity cost.",
+      "correct_answer": "Country A, because its opportunity cost of cloth (0.5 wheat) is lower than Country B's",
       "difficulty": "medium",
-      "explanation": "Comparative advantage is determined by opportunity cost, not absolute cost. A country should specialize in producing goods where it has the lowest opportunity cost, even if it's not the most efficient producer in absolute terms.",
+      "explanation": "Comparative advantage depends on opportunity cost, not output levels. Country A gives up 5/10 = 0.5 wheat per unit of cloth, while Country B gives up 4/6 \u2248 0.67 wheat, so A has the lower opportunity cost. Absolute advantage (producing more) does not determine comparative advantage.",
       "options": [
-        "With fewer resources.",
-        "At a lower absolute cost.",
-        "With a lower opportunity cost.",
-        "More efficiently in terms of labor hours."
+        "Country A, because its opportunity cost of cloth (0.5 wheat) is lower than Country B's",
+        "Country A, because it can produce more cloth per day in absolute terms",
+        "Country B, because it gives up less wheat per unit of cloth",
+        "Neither country, because Country A has an absolute advantage in both goods"
       ],
-      "question": "A country has a comparative advantage in producing a good if it can produce that good at a lower opportunity cost than another country.",
+      "question": "In one day, Country A can produce 10 units of cloth or 5 units of wheat, and Country B can produce 6 units of cloth or 4 units of wheat. Which country has the comparative advantage in producing cloth?",
       "type": "multiple_choice"
     }
   ]

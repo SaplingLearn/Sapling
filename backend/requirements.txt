@@ -23,19 +23,11 @@ psycopg[binary]>=3.2,<4
 # OCR pipeline (Docling = default, GOT-OCR 2.0 = optional GPU fallback)
 docling>=2.15,<3
 transformers>=4.46,<5
-torch>=2.5,<3  # install CPU wheel in CPU-only deployments: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.5,<3  # CPU-only deployments: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu (#700)
 
 openpyxl==3.1.5
 beautifulsoup4==4.15.0
 python-Levenshtein==0.27.3
-
-# Gradescope sync (unofficial scraper-style client; logs in with user creds)
-gradescopeapi==1.8.0
-
-# Headless browser for BU SSO + Duo 2FA flow. Requires running
-# `playwright install chromium` after pip install — the binary lives
-# outside the wheel. Skipped on CF Workers deploys (browser-less env).
-playwright>=1.45,<2
 
 # Gradescope sync (unofficial scraper-style client; logs in with user creds)
 gradescopeapi==1.8.0
@@ -62,7 +54,32 @@ ruff==0.15.18
 # e2e CI lane went red on every push to main after #349 while the lock-pinned
 # lanes stayed green. Bump this ceiling only together with a chat_stream.py
 # migration and a fresh requirements.lock.
-pydantic-ai-slim[google]>=0.0.20,<2
+# >=1.11.1: the chat tutor declares its rules as `Agent(instructions=...)` and
+# the #646 continuation appends run-level `run(instructions=...)` (added in
+# 1.11.0); its tests read `AgentInfo.instructions` (added in 1.11.1).
+# >=1.107.0 + the `anthropic` extra: the Claude slots (ADR 0030) rely on the
+# 1.107 AnthropicModelProfile fields (`anthropic_supports_forced_tool_choice`,
+# `anthropic_disallows_sampling_settings`, native `output_config` structured
+# output) that `agents/_providers.py` sets for Claude 5.x model names. The
+# `google` extra stays: RAG embeddings remain on Gemini (Anthropic has no
+# embeddings API) and any slot can still be pointed back at a gemini-* model.
+pydantic-ai-slim[google,anthropic]>=1.107.0,<2
+# <1: pydantic-ai 1.107.x's AnthropicModel is written against the 0.x SDK
+# surface; 1.107.9 itself tightens its extra to `anthropic<1`. An unpinned
+# resolve jumps to the 2.x SDK.
+anthropic>=0.108.0,<1
+# <0.1 (#689): genai-prices is pydantic-ai's usage extractor. From 0.1.0 it
+# returns modality-split fields (e.g. `input_text_tokens`) that pydantic-ai
+# 1.x's RequestUsage rejects; pydantic-ai swallows the TypeError and every
+# Gemini run reports 0 tokens, so llm_usage (cost rollups, AI budget caps)
+# records zeros. The Dockerfile now applies requirements.lock as constraints
+# (#694), which pins it, but the lock is compiled FROM this file: without the
+# cap a re-lock would pick 0.1.x up again. Lift it only together with a
+# pydantic-ai bump that accepts the new fields —
+# tests/test_agent_usage.py::test_real_gemini_response_* goes red under the
+# broken pairing, and events_service.log_llm_usage WARNs on any real call that
+# reports 0 tokens.
+genai-prices<0.1
 logfire[fastapi]>=2.0
 sse-starlette>=2.0
 
@@ -76,3 +93,8 @@ pydantic-evals>=0.0.5
 # Upper bound per #163: services/cache.py only uses the from_url/ping/get/set
 # surface, which is stable across majors, but a major bump shouldn't land silently.
 redis>=5.0,<9
+
+# Read by scripts/lock_constraints.py's `verify` step in the Dockerfile (#694)
+# and by tests/dependency_manifest.py. Listed explicitly so it never depends on
+# arriving transitively; requirements.lock pins the exact version.
+packaging>=24

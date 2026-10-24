@@ -17,11 +17,12 @@
  * has one behaviour across every surface that reads the graph.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCourses, getGraph, type EnrolledCourse } from "@/lib/api";
 import { courseInTerm } from "@/lib/useActiveSemester";
 import type { GraphEdge, GraphNode } from "@/lib/types";
-import { abandonAttempt, describeConcept, getAttempt, listAttempts } from "./api";
+import { abandonAttempt, getAttempt, listAttempts } from "./api";
+import { cachedDescription, loadDescription } from "./conceptDescriptions";
 import { describeQuizError, type QuizError } from "./errors";
 import {
   alternativesOf,
@@ -87,6 +88,16 @@ export interface QuizHome {
    *  keeps compiling. Read `cardDescription` — it is right for a deep-linked
    *  card too, which this name implies it is not. */
   primaryDescription: string | null;
+  /**
+   * The card's description is being fetched and nothing is remembered for it
+   * yet. The card shows a placeholder rather than the built stand-in, so the
+   * student never sees one sentence replaced by another a moment later; the
+   * stand-in is only for a failed fetch.
+   */
+  cardDescriptionPending: boolean;
+  /** Warm the description of a concept the student is about to pick (a row's
+   *  hover or focus), so it is there when the card swaps to it. */
+  prefetchDescription(conceptId: string): void;
   refresh(): void;
   /** Close an unfinished attempt for good — the resume strip's Discard. */
   discard(attemptId: string): void;
@@ -162,11 +173,15 @@ const EMPTY_LOAD = {
  * @param semester the active semester label, or `null` while it is still
  *   hydrating from localStorage — nothing is fetched until it resolves. The
  *   empty string means "All semesters" and fetches unscoped (#360).
+ * @param picked  a concept the student chose from the home's topic list,
+ *   which the card then shows (and this hook describes) in place of the
+ *   entry's or the ranking's.
  */
 export function useQuizHome(
   userId: string,
   semester: string | null,
   entry?: EntryRequest,
+  picked?: string | null,
 ): QuizHome {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [resumable, setResumable] = useState<{ key: string; value: ResumableQuiz | null } | null>(
@@ -315,6 +330,11 @@ export function useQuizHome(
   // what Start generates on, and what the accent comes from), but a paragraph
   // about the first concept in a queue is text nothing renders.
   const card = useMemo<{ conceptId: string | null; describable: boolean }>(() => {
+    // A concept picked off the topic list outranks every entry: it is the
+    // student's latest, explicit choice.
+    if (picked && scopedNodes.some(n => n.id === picked)) {
+      return { conceptId: picked, describable: true };
+    }
     if (entry?.concept || entry?.topic) {
       const resolved = entrySelection(entry, scopedNodes, scopedCourses).conceptId;
       if (resolved) return { conceptId: resolved, describable: true };
@@ -328,46 +348,77 @@ export function useQuizHome(
     // An entry that resolved to nothing lands here too, so an unusable
     // `?course=` degrades to an ordinary primary card — description and all.
     return { conceptId: primary?.node.id ?? null, describable: true };
-  }, [entry, scopedNodes, scopedCourses, primary]);
+  }, [entry, scopedNodes, scopedCourses, primary, picked]);
   const cardConceptId = card.conceptId;
   const describable = card.describable;
 
-  // One LLM call per home visit, for the one card that shows a paragraph (R-8).
+  // One LLM call per concept, for the card that shows a paragraph (R-8), and
+  // remembered (`conceptDescriptions`: localStorage, and the backend's Redis
+  // cache across students) so a concept described once comes back instantly.
   // `graph_nodes` has no `description` column, so there is nothing stored to
-  // read; fetching this for every row on screen would multiply the cost by the
-  // length of the list, which is exactly why it is scoped to the card.
-  // Tagged with the concept it describes, so changing cards drops the old
-  // sentence without a synchronous reset in the effect body.
-  const [described, setDescribed] = useState<{ id: string; text: string } | null>(null);
+  // read; fetching for every row on screen would multiply the cost by the
+  // length of the list, which is why only the card fetches, plus a row the
+  // student is pointing at (`prefetchDescription`).
+  const [described, setDescribed] = useState<Record<string, string>>({});
+  const [failed, setFailed] = useState<Record<string, true>>({});
+  // Concepts whose hover prefetch failed: not retried on every hover. Kept
+  // apart from `failed`, which is the CARD's verdict — a prefetch failure must
+  // not stop a later pick from showing its placeholder while it retries.
+  const prefetchFailed = useRef<Set<string>>(new Set());
+  const labelFor = useCallback(
+    (node: GraphNode | null | undefined) =>
+      node?.course_id ? scopedCourses.find(c => c.course_id === node.course_id)?.course_code : undefined,
+    [scopedCourses],
+  );
   const cardNode = useMemo(
     () => scopedNodes.find(n => n.id === cardConceptId) ?? null,
     [scopedNodes, cardConceptId],
   );
   const cardName = cardNode?.concept_name ?? null;
-  const cardCourseLabel = cardNode?.course_id
-    ? scopedCourses.find(c => c.course_id === cardNode.course_id)?.course_code
-    : undefined;
+  const cardCourseLabel = labelFor(cardNode);
+  const remembered =
+    cardConceptId !== null
+      ? described[cardConceptId] ?? (cardName ? cachedDescription(userId, cardName, cardCourseLabel) : null)
+      : null;
 
   useEffect(() => {
-    if (!userId || !cardConceptId || !cardName || !describable) return;
+    if (!userId || !cardConceptId || !cardName || !describable || remembered) return;
     let cancelled = false;
-    describeConcept(userId, cardName, cardCourseLabel).then(
-      description => {
-        const text = description.trim();
-        if (!cancelled && text) setDescribed({ id: cardConceptId, text });
+    loadDescription(userId, cardName, cardCourseLabel).then(
+      text => {
+        if (!cancelled) setDescribed(d => ({ ...d, [cardConceptId]: text }));
       },
       () => {
         // The card renders the built fallback sentence instead. A missing
         // definition must never hold up the Start button.
+        if (!cancelled) setFailed(f => ({ ...f, [cardConceptId]: true }));
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [userId, cardConceptId, cardName, cardCourseLabel, describable]);
+  }, [userId, cardConceptId, cardName, cardCourseLabel, describable, remembered]);
 
-  const cardDescription =
-    describable && described?.id === cardConceptId ? described.text : null;
+  const cardDescription = describable && cardConceptId !== null ? remembered : null;
+  const cardDescriptionPending =
+    describable && cardConceptId !== null && !cardDescription && !failed[cardConceptId] && Boolean(userId);
+
+  const prefetchDescription = useCallback(
+    (conceptId: string) => {
+      const node = scopedNodes.find(n => n.id === conceptId);
+      // Already known either way: nothing to warm, and a failure is not retried
+      // on every hover (the card itself retries if the concept is picked).
+      if (!userId || !node || conceptId in described || prefetchFailed.current.has(conceptId)) return;
+      if (cachedDescription(userId, node.concept_name, labelFor(node))) return;
+      loadDescription(userId, node.concept_name, labelFor(node)).then(
+        text => setDescribed(d => (d[conceptId] === text ? d : { ...d, [conceptId]: text })),
+        () => {
+          prefetchFailed.current.add(conceptId);
+        },
+      );
+    },
+    [userId, scopedNodes, labelFor, described],
+  );
 
   return {
     status,
@@ -385,6 +436,8 @@ export function useQuizHome(
     cardConceptId,
     cardDescription,
     primaryDescription: cardDescription,
+    cardDescriptionPending,
+    prefetchDescription,
     refresh,
     discard,
   };

@@ -150,7 +150,7 @@ test("the gradebook adds no height beyond what its content needs, in both layout
       let bottom = m.top;
       for (const child of Array.from(main.children)) {
         const childStyle = getComputedStyle(child);
-        // AmbientOrbs is position:fixed — decorative, and out of flow.
+        // Fixed and absolute children are out of flow.
         if (childStyle.position === "fixed" || childStyle.position === "absolute") continue;
         // A trailing margin-bottom adds to the parent's height without
         // appearing in any child's bounding rect, so count it explicitly.

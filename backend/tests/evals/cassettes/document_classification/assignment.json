@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 1.0,
+  "confidence": 0.85,
   "is_syllabus": false,
-  "rationale": "The document contains a list of problems characteristic of a problem set or homework assignment.",
+  "rationale": "Titled 'Problem Set 3' with numbered proof prompts and a due date, and no worked answers or grades shown, so it is a blank handout. Blank assignment handouts are course material.",
   "shareability": "course_material"
 }

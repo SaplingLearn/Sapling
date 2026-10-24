@@ -1,59 +1,63 @@
 {
   "questions": [
     {
+      "accepted_answers": [],
       "concept": "Cell Membrane",
-      "correct_answer": "To regulate the passage of substances into and out of the cell",
+      "correct_answer": "Cell membrane",
       "difficulty": "easy",
-      "explanation": "The cell membrane acts as a selectively permeable barrier, controlling which molecules can enter or leave the cell.",
+      "explanation": "The cell membrane is a phospholipid bilayer with embedded proteins that controls which substances enter and leave the cell. The cell wall is found mainly in plants, fungi, and bacteria and is not the selective barrier of all cells.",
       "options": [
-        "To provide structural support to the cell",
-        "To regulate the passage of substances into and out of the cell",
-        "To synthesize proteins for the cell",
-        "To store genetic information"
+        "Cell membrane",
+        "Cell wall",
+        "Nucleus",
+        "Ribosome"
       ],
-      "question": "What is the primary function of the cell membrane?",
+      "question": "Which structure forms the basic selectively permeable barrier of a cell?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Photosynthesis",
-      "correct_answer": "Carbon Dioxide",
+      "correct_answer": "Glucose",
       "difficulty": "easy",
-      "explanation": "Plants use carbon dioxide from the air, water from the soil, and light energy to produce glucose (food) and oxygen during photosynthesis.",
+      "explanation": "Photosynthesis uses light energy to convert carbon dioxide and water into glucose, which stores chemical energy. Oxygen is also released, but it is a byproduct rather than the energy-storing product.",
       "options": [
+        "Glucose",
         "Oxygen",
-        "Nitrogen",
-        "Carbon Dioxide",
-        "Hydrogen"
+        "Carbon dioxide",
+        "Water"
       ],
-      "question": "What gas do plants primarily take in from the atmosphere for photosynthesis?",
+      "question": "What is the main product of photosynthesis that stores chemical energy for the plant?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Mitosis",
-      "correct_answer": "Two genetically identical daughter cells",
+      "correct_answer": "Anaphase",
       "difficulty": "easy",
-      "explanation": "Mitosis produces two daughter cells that are exact genetic copies of the parent cell, crucial for growth and repair.",
+      "explanation": "In anaphase, the sister chromatids are pulled apart by the spindle fibers and move to opposite ends of the cell. In metaphase the chromosomes line up at the center, so separation has not yet begun.",
       "options": [
-        "Four genetically identical daughter cells",
-        "Two genetically identical daughter cells",
-        "Four genetically different daughter cells",
-        "Two genetically different daughter cells"
+        "Anaphase",
+        "Prophase",
+        "Metaphase",
+        "Telophase"
       ],
-      "question": "Mitosis is a type of cell division that results in:",
+      "question": "During which phase of mitosis do the sister chromatids separate and move toward opposite poles of the cell?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Diffusion",
-      "correct_answer": "High concentration to an area of low concentration",
+      "correct_answer": "From higher concentration to lower concentration",
       "difficulty": "easy",
-      "explanation": "Diffusion is a passive process where molecules spread out from a region where they are more concentrated to a region where they are less concentrated.",
+      "explanation": "Diffusion moves molecules down their concentration gradient, from where they are more concentrated to where they are less concentrated, without requiring energy input.",
       "options": [
-        "High concentration to an area of low concentration",
-        "Low concentration to an area of high concentration",
-        "High temperature to an area of low temperature",
-        "Low pressure to an area of high pressure"
+        "From higher concentration to lower concentration",
+        "From lower concentration to higher concentration",
+        "Only from outside a cell to inside a cell",
+        "Only when energy is supplied by ATP"
       ],
-      "question": "Diffusion is the movement of molecules from an area of:",
+      "question": "Diffusion is the movement of molecules from which region to which region?",
       "type": "multiple_choice"
     }
   ]

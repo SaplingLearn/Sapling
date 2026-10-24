@@ -1,73 +1,73 @@
 {
   "concepts": [
     {
-      "description": "Explores the behavior of functions as input approaches a certain value, forming the foundational understanding of continuity and the basis for calculus.",
+      "description": "Limits describe the value a function approaches near a point, and continuity means a function's limit at a point equals its value there. These ideas are the foundation for everything else in the course.",
       "importance": 1.0,
       "name": "Limits and Continuity"
     },
     {
-      "description": "Introduces the concept of instantaneous rate of change and slope of a tangent line, along with systematic rules for computing derivatives of various functions.",
-      "importance": 0.98,
-      "name": "Derivatives and Rules of Differentiation"
-    },
-    {
-      "description": "Establishes the crucial connection between differentiation and integration, providing a method for evaluating definite integrals using antiderivatives.",
-      "importance": 0.97,
-      "name": "The Fundamental Theorem of Calculus"
-    },
-    {
-      "description": "Covers various methods for finding antiderivatives and evaluating integrals, including substitution, integration by parts, trigonometric substitution, and partial fractions.",
+      "description": "The derivative measures the instantaneous rate of change of a function, computed with rules such as the power, product, quotient, and chain rules. It is the core computational tool of the course.",
       "importance": 0.95,
-      "name": "Techniques of Integration"
+      "name": "Derivatives and Differentiation Rules"
     },
     {
-      "description": "Utilizes definite integrals to calculate areas between curves and volumes of solids of revolution using methods like disk, washer, and shell.",
-      "importance": 0.93,
-      "name": "Applications of Integration to Area and Volume"
-    },
-    {
-      "description": "Applies derivatives to analyze the properties of functions, such as intervals of increase/decrease, concavity, and local extrema, to accurately sketch their graphs.",
-      "importance": 0.92,
-      "name": "Curve Sketching"
-    },
-    {
-      "description": "Uses calculus to find the maximum or minimum values of a function, often applied to solve real-world problems involving quantities like area, volume, or cost.",
-      "importance": 0.91,
-      "name": "Optimization"
-    },
-    {
-      "description": "Involves finding the rate at which one quantity is changing based on the known rates of other related quantities, often in dynamic physical scenarios.",
+      "description": "The Fundamental Theorem of Calculus links differentiation and integration, showing that integrals can be evaluated using antiderivatives. It unifies the two main halves of the course.",
       "importance": 0.9,
-      "name": "Related Rates"
+      "name": "Fundamental Theorem of Calculus"
     },
     {
-      "description": "A technique for differentiating functions that are not explicitly defined in terms of one variable, often used for equations involving mixed variables.",
-      "importance": 0.89,
-      "name": "Implicit Differentiation"
-    },
-    {
-      "description": "States that for a continuous and differentiable function on a closed interval, there is at least one point where the instantaneous rate of change equals the average rate of change.",
-      "importance": 0.88,
-      "name": "Mean Value Theorem"
-    },
-    {
-      "description": "A method used to evaluate indeterminate forms of limits by taking the derivatives of the numerator and denominator.",
-      "importance": 0.87,
-      "name": "L'Hopital's Rule"
-    },
-    {
-      "description": "Approximates the area under a curve by dividing it into a series of rectangles, leading to the formal definition of the definite integral.",
-      "importance": 0.85,
+      "description": "Riemann sums approximate the area under a curve by summing rectangles, and taking the limit gives the definite integral. This is the conceptual definition of integration.",
+      "importance": 0.8,
       "name": "Riemann Sums"
     },
     {
-      "description": "Introduces simple differential equations and methods for solving them, providing a foundation for understanding models of change.",
-      "importance": 0.83,
+      "description": "Methods such as substitution, integration by parts, and partial fractions are used to find antiderivatives that are not immediately obvious. These techniques make the Fundamental Theorem usable in practice.",
+      "importance": 0.75,
+      "name": "Techniques of Integration"
+    },
+    {
+      "description": "Definite integrals are used to compute areas between curves and volumes of solids, such as by disk, washer, or shell methods. These applications show how integration models real geometric quantities.",
+      "importance": 0.7,
+      "name": "Applications of Integration to Area and Volume"
+    },
+    {
+      "description": "Implicit differentiation finds derivatives of relations where y is not explicitly solved in terms of x. It extends differentiation to curves defined by equations.",
+      "importance": 0.65,
+      "name": "Implicit Differentiation"
+    },
+    {
+      "description": "Optimization uses derivatives to find maximum and minimum values of a function on an interval or in a practical setting. It is a major application of the derivative.",
+      "importance": 0.65,
+      "name": "Optimization"
+    },
+    {
+      "description": "Related rates problems use implicit differentiation with respect to time to relate the rates of change of connected quantities. They apply differentiation to changing physical situations.",
+      "importance": 0.6,
+      "name": "Related Rates"
+    },
+    {
+      "description": "Curve sketching uses first and second derivatives to identify increasing and decreasing intervals, concavity, and extrema, producing an accurate graph of a function.",
+      "importance": 0.55,
+      "name": "Curve Sketching"
+    },
+    {
+      "description": "The Mean Value Theorem guarantees a point where the instantaneous rate of change equals the average rate of change over an interval. It is a key theoretical result behind many derivative-based arguments.",
+      "importance": 0.5,
+      "name": "Mean Value Theorem"
+    },
+    {
+      "description": "L'Hopital's Rule evaluates limits of indeterminate forms such as 0/0 or infinity/infinity by differentiating numerator and denominator. It extends the reach of limit techniques.",
+      "importance": 0.45,
+      "name": "L'Hopital's Rule"
+    },
+    {
+      "description": "Differential equations relate a function to its derivatives, and basic methods such as separation of variables solve simple cases. They model growth, decay, and other change processes.",
+      "importance": 0.4,
       "name": "Differential Equations Basics"
     },
     {
-      "description": "Explores ordered lists of numbers and the sums of these lists, including concepts like convergence and divergence, which are typically covered at the end of Calculus I or in Calculus II.",
-      "importance": 0.8,
+      "description": "Sequences are ordered lists of numbers, and series are sums of their terms, studied through convergence tests. Series such as power series extend calculus to infinite processes.",
+      "importance": 0.4,
       "name": "Sequences and Series"
     }
   ]

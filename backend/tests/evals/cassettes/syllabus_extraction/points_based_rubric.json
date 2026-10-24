@@ -1,19 +1,19 @@
 {
   "assignments": [
     {
-      "description": null,
+      "description": "Graded reading responses worth 40 points total.",
       "due_date": null,
       "title": "Reading responses",
       "weight_pct": null
     },
     {
-      "description": null,
+      "description": "Midterm essay worth 60 points.",
       "due_date": null,
       "title": "Midterm essay",
       "weight_pct": null
     },
     {
-      "description": null,
+      "description": "Final essay worth 100 points.",
       "due_date": null,
       "title": "Final essay",
       "weight_pct": null
