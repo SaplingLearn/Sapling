@@ -186,7 +186,8 @@ def test_success_without_return_to_uses_frontend_url(drive_callback):
 
 def test_pending_user_lands_on_preview_pending(drive_callback):
     location = drive_callback({"rt": PREVIEW}, approved=False)
-    assert location == f"{PREVIEW}/pending"
+    # The query is the pending token /pending uses to offer the waitlist.
+    assert location.split("?", 1)[0] == f"{PREVIEW}/pending"
 
 
 def test_failure_redirect_goes_to_preview(drive_callback):

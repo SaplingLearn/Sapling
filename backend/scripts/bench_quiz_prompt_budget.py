@@ -5,11 +5,9 @@ correctly, to verify it rather than inherit it — `llm_usage.prompt_tokens`
 already records the truth per call, and a section-level breakdown is what
 turns that number into a decision about what to trim.
 
-This measures the SECTIONS. It counts tokens with the quiz model's own
-`count_tokens` endpoint (no generation, so it is cheap and deterministic —
-Anthropic's `messages/count_tokens` for the default Claude slot, Gemini's for
-a slot pointed back at a gemini-* model) over the real strings the route and
-agent assemble:
+This measures the SECTIONS. It counts tokens with Gemini's `count_tokens`
+endpoint (no generation, so it is cheap and deterministic) over the real
+strings the route and agent assemble:
 
   * `agents/quiz.py::_SYSTEM_PROMPT` — imported, not copied. A structural
     copy (the approach `bench_quiz_question_cap.py` takes, because it needs
@@ -27,8 +25,7 @@ agent assemble:
     range, so `k` can be priced rather than guessed;
   * E6's recently-asked block at RECENT_QUESTION_LIMIT stems.
 
-Run from backend/ with the quiz provider's key (ANTHROPIC_API_KEY by
-default) in .env:
+Run from backend/ with GEMINI_API_KEY in .env:
 
     venv/bin/python -m scripts.bench_quiz_prompt_budget
 
@@ -36,12 +33,11 @@ Offline benchmark: outside the request path, and never imported BY
 application code (same rule as scripts/_raw_gemini.py). It reads
 application constants; nothing reads it.
 
-It counts through the agent seam — `model_for("quiz").count_tokens(...)`, the
-same loop-safe pydantic-ai Model the quiz agent runs on — so it needs no raw
-provider client (it held one of the sanctioned raw-`genai.Client` sites until
-ADR 0030 moved the quiz slot to Claude). It keeps the seam's two invariants:
-the model comes from the quiz slot — never a literal, or the benchmark prices
-a tier the quiz no longer runs on — and it is resolved lazily behind a
+`count_tokens` is not reachable through a pydantic-ai agent, so this is one
+of the sanctioned raw-`genai.Client` sites (CLAUDE.md). It therefore holds
+the same two invariants the seam requires: the model name comes from
+`model_name_for("quiz")` — never a literal, or the benchmark prices a tier
+the quiz no longer runs on — and the client is built lazily behind a
 `model_mode()` gate (#439), so a non-real mode fails loudly instead of
 counting tokens against a transport that isn't there.
 
@@ -51,9 +47,7 @@ docs/quiz-prompt-budget.md.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import statistics
 import sys
 
@@ -61,16 +55,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from pydantic_ai.messages import ModelRequest, UserPromptPart  # noqa: E402
-from pydantic_ai.models import Model, ModelRequestParameters  # noqa: E402
+from google import genai  # noqa: E402
+from google.genai import types as genai_types  # noqa: E402
 
-from agents._providers import (  # noqa: E402
-    api_key_env_for_model,
-    model_for,
-    model_mode,
-    model_name_for,
-)
+from agents._providers import model_mode, model_name_for  # noqa: E402
 from agents.quiz import _SYSTEM_PROMPT  # noqa: E402
+from config import GEMINI_API_KEY  # noqa: E402
 from services.exam_proximity import exam_prompt_line  # noqa: E402
 from services.quiz_config import QUIZ_MAX_QUESTIONS  # noqa: E402
 from services.quiz_repetition import RECENT_QUESTION_LIMIT  # noqa: E402
@@ -85,51 +75,52 @@ from services.quiz_signals import prompt_block as signal_prompt_block  # noqa: E
 # avoids for the prompt itself.
 MODEL = model_name_for("quiz")
 
-_model: Model | None = None
+_client: genai.Client | None = None
 
 
-def _get_model() -> Model:
-    """The quiz slot's real Model, resolved lazily behind the #439 gate.
+def _get_client() -> genai.Client:
+    """The raw `count_tokens` client, built lazily behind the #439 gate.
 
-    In function/cassette mode there is no transport to count against, and a
-    keyless run cannot count tokens at all; both fail loudly HERE rather than
-    producing numbers nobody should trust, or dying later inside
-    `count_tokens` on an opaque auth error. (No dummy-key fallback: this is an
-    offline CLI whose only job is calling count_tokens.)
+    Nothing below the `agents/_providers.py` seam may construct a
+    `google.genai.Client` without a `model_mode()` gate (CLAUDE.md, #439), and
+    this script is below it: it needs `count_tokens`, which is not reachable
+    through a pydantic-ai agent. So it takes the same shape
+    `services/rag_service.py` does — lazy, real-mode only — instead of
+    building a live client at import time. In function/cassette mode there is
+    no transport to count against, and a keyless run cannot count tokens at
+    all; both fail loudly HERE rather than producing numbers nobody should
+    trust, or dying later inside `count_tokens` on an opaque auth error.
     """
-    global _model
+    global _client
     if model_mode() != "real":
         raise SystemExit(
             f"bench_quiz_prompt_budget: SAPLING_MODEL_MODE={model_mode()!r} — "
-            "token counting needs the real provider transport. Unset the var "
+            "token counting needs the real Gemini transport. Unset the var "
             "(or set it to 'real') and re-run."
         )
-    key_var = api_key_env_for_model(MODEL)
-    if not os.getenv(key_var):
+    if not GEMINI_API_KEY:
+        # No dummy-key fallback: rag_service needs one because it is imported
+        # on the request path and must not explode at import. This is an
+        # offline CLI whose only job is calling count_tokens, so a keyless
+        # run has nothing to do but fail — and it should say why.
         raise SystemExit(
-            f"bench_quiz_prompt_budget: {key_var} is not set — count_tokens "
-            f"is a live API call for {MODEL}. Export a real key and re-run."
+            "bench_quiz_prompt_budget: GEMINI_API_KEY is not set — "
+            "count_tokens is a live API call. Export a real key and re-run."
         )
-    if _model is None:
-        _model = model_for("quiz")
-    return _model
+    if _client is None:
+        _client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options=genai_types.HttpOptions(timeout=60_000),
+        )
+    return _client
 
 
 def count(text: str) -> int:
-    """Exact prompt tokens for `text` as one user message on the quiz's model.
-
-    Anthropic counts a whole Messages request, so each figure carries the same
-    few tokens of message framing; section DIFFERENCES are exact."""
+    """Exact prompt tokens for `text` on the quiz's model tier."""
     if not text:
         return 0
-    usage = asyncio.run(
-        _get_model().count_tokens(
-            [ModelRequest(parts=[UserPromptPart(content=text)])],
-            None,
-            ModelRequestParameters(),
-        )
-    )
-    return int(usage.input_tokens)
+    resp = _get_client().models.count_tokens(model=MODEL, contents=text)
+    return int(resp.total_tokens)
 
 
 # ── Representative section content ──────────────────────────────────────────
@@ -274,7 +265,9 @@ def signals_line() -> str:
 
 
 def main() -> int:
-    _get_model()  # fail fast (mode / key) before printing a header
+    if not GEMINI_API_KEY:
+        print("GEMINI_API_KEY is not set — this benchmark needs a live key.")
+        return 2
 
     print(f"Quiz prompt budget — {MODEL}\n" + "=" * 62)
 

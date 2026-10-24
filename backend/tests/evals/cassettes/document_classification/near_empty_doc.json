@@ -1,7 +1,7 @@
 {
   "category": "lecture_notes",
-  "confidence": 0.5,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "Document is titled 'Lecture 1 notes' but contains only a placeholder page with no content, so the classification is uncertain. Shareability defaults to the more private bucket because the origin and ownership of the notes cannot be determined.",
+  "rationale": "The document is explicitly titled \"Lecture 1 notes\" and contains no information to suggest otherwise.",
   "shareability": "personal_notes"
 }

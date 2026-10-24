@@ -377,6 +377,71 @@ export interface AllowlistEmail {
   email: string;
   created_at: string;
   approved_at: string | null;
+  /** Set at the first approved sign-in with this email (routes/auth.py). */
+  joined_at: string | null;
+  joined_user_id: string | null;
+  /** Delivery state of the "you're in" email to this address; null = never sent. */
+  invite_status: InviteStatus | null;
+}
+
+/** "skipped" = Resend not configured; "suppressed" = the address unsubscribed. */
+export type InviteStatus = "queued" | "sent" | "skipped" | "failed" | "suppressed";
+
+/** GET /api/admin/email/status. When `configured` is false, emails are recorded but not sent. */
+/** One personalization variable an admin can write in a broadcast as
+ *  `{{key}}` or `{{key|fallback}}` (backend services/email_variables.py). */
+export interface EmailVariable {
+  key: string;
+  label: string;
+  /** Used when the recipient has no value and the admin gave none; may be "". */
+  fallback: string;
+  example: string;
+  /** Link variables only: the default label. Alone on its line the link
+   *  renders as a button with this label; `{{key|Label}}` overrides it. */
+  button?: string;
+}
+
+export interface EmailStatus {
+  configured: boolean;
+  from_address: string;
+  /** In display order. Optional so an older backend's response still types. */
+  variables?: EmailVariable[];
+}
+
+export type EmailAudienceKey =
+  | "waitlist_all"
+  | "waitlist_pending"
+  | "waitlist_approved_not_joined"
+  | "users_all";
+
+export interface EmailAudience {
+  key: EmailAudienceKey;
+  label: string;
+  count: number;
+}
+
+export interface EmailBroadcast {
+  id: string;
+  subject: string;
+  audience: string;
+  status: "sending" | "sent" | "failed";
+  recipient_count: number;
+  sent_count: number;
+  skipped_count: number;
+  failed_count: number;
+  created_at: string;
+  sent_at: string | null;
+  created_by: string | null;
+}
+
+/** POST /api/admin/email/broadcasts/preview: the real server-rendered email (a full HTML document). Sends nothing. */
+export interface EmailBroadcastPreview {
+  /** The subject with the calling admin's variable values filled in. */
+  subject: string;
+  html: string;
+  /** Variable names used in the draft that aren't real variables (left as
+   *  typed in the render; a send with any of them 422s). */
+  unknown_variables?: string[];
 }
 
 export interface AchievementTrigger {

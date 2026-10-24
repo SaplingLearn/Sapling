@@ -1,48 +1,45 @@
 {
   "questions": [
     {
-      "accepted_answers": [],
       "concept": "Recursion",
-      "correct_answer": "O(2^n)",
+      "correct_answer": "If n == 0, return 1",
       "difficulty": "medium",
-      "explanation": "Each call spawns two more calls, and the call tree roughly grows by a factor of about 1.618 per level, so the work is exponential. Memoization or bottom-up DP reduces it to O(n) by reusing subproblem results.",
+      "explanation": "The factorial of 0 is defined as 1. This is the simplest case that stops the recursion.",
       "options": [
-        "O(n)",
-        "O(n^2)",
-        "O(2^n)",
-        "O(n log n)"
+        "If n < 0, return -1",
+        "If n == 0, return 1",
+        "If n == 1, return 1",
+        "If n > 1, return n * factorial(n-1)"
       ],
-      "question": "Naive recursive Fibonacci, where fib(n) = fib(n-1) + fib(n-2) with no memoization, has which asymptotic running time in n?",
+      "question": "What is the base case for a recursive function that calculates the factorial of a non-negative integer?",
       "type": "multiple_choice"
     },
     {
-      "accepted_answers": [],
       "concept": "Dynamic Programming",
-      "correct_answer": "4",
+      "correct_answer": "An optimal solution to a problem contains optimal solutions to its subproblems",
       "difficulty": "medium",
-      "explanation": "A longest common subsequence such as \"BCBA\" appears in both strings in order, and no common subsequence of length 5 exists. A standard LCS DP table over prefixes gives this length of 4.",
+      "explanation": "The principle of optimality states that an optimal solution to a problem must be composed of optimal solutions to its subproblems.",
       "options": [
-        "3",
-        "4",
-        "5",
-        "6"
+        "An optimal solution to a problem contains optimal solutions to its subproblems",
+        "The problem can be broken down into overlapping subproblems",
+        "The solution can be built up from smaller subproblems",
+        "All subproblems must be independent of each other"
       ],
-      "question": "What is the length of the longest common subsequence of the strings \"ABCBDAB\" and \"BDCABA\"?",
+      "question": "In dynamic programming, what is the principle of optimality?",
       "type": "multiple_choice"
     },
     {
-      "accepted_answers": [],
       "concept": "Graph Traversal",
-      "correct_answer": "BFS finds a path with the fewest edges from the start vertex to every reachable vertex, while DFS does not guarantee this.",
+      "correct_answer": "Finding the shortest path in an unweighted graph",
       "difficulty": "medium",
-      "explanation": "BFS expands vertices in layers using a FIFO queue, so the first time it reaches a vertex it has used the fewest edges. DFS uses a stack or recursion and can reach vertices via long, non-shortest paths.",
+      "explanation": "BFS explores the graph layer by layer, guaranteeing that the first time it reaches a node, it does so via the shortest path from the source in an unweighted graph.",
       "options": [
-        "BFS finds a path with the fewest edges from the start vertex to every reachable vertex, while DFS does not guarantee this.",
-        "DFS always finds the shortest path first because it goes deepest.",
-        "BFS uses a stack, so it explores as deep as possible before backtracking.",
-        "Both BFS and DFS always return shortest paths, even on weighted graphs."
+        "Finding the shortest path in an unweighted graph",
+        "Finding the shortest path in a weighted graph",
+        "Detecting cycles in a directed graph",
+        "Topological sorting"
       ],
-      "question": "Which statement about breadth-first search (BFS) and depth-first search (DFS) on an unweighted graph is correct?",
+      "question": "Which of the following is a common application of Breadth-First Search (BFS) in graph traversal?",
       "type": "multiple_choice"
     }
   ]

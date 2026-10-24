@@ -1,25 +1,25 @@
 {
   "assignments": [
     {
-      "description": "Written response to assigned reading.",
+      "description": null,
       "due_date": "2026-03-05",
       "title": "Reading response 1",
-      "weight_pct": 20.0
+      "weight_pct": null
     },
     {
-      "description": "Peer review of classmate work.",
+      "description": null,
       "due_date": "2026-03-05",
       "title": "Peer review",
-      "weight_pct": 10.0
+      "weight_pct": null
     },
     {
       "description": null,
       "due_date": "2026-04-02",
       "title": "Essay 1",
-      "weight_pct": 70.0
+      "weight_pct": null
     }
   ],
-  "course_title": "ENG 305 \u2014 Spring 2026",
+  "course_title": "ENG 305",
   "grading_categories": [
     {
       "name": "Responses",

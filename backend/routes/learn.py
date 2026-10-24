@@ -22,7 +22,7 @@ from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id
-from services.chat_stream import join_text_parts, merge_graph_updates, stream_agent_turn
+from services.chat_stream import merge_graph_updates, stream_agent_turn
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present
 from services.profiles import get_display_name
 from services.graph_service import get_graph
@@ -54,40 +54,34 @@ MODE_DISPLAY_NAMES = {
 
 # Per-request agent-model override map. Mirrors `routes.quiz._PREF_MODEL_NAMES`
 # verbatim — the chat tutor and quiz routes share the same fast/smart toggle
-# so a user choosing "smart" in either UI pulls the same step-up model.
-# None falls through to model_for("chat_tutor") (default `claude-sonnet-5-5`).
+# so a user choosing "smart" in either UI pulls the same Pro tier model.
+# None falls through to model_for("chat_tutor") (default `gemini-2.5-pro`).
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "claude-haiku-5-5",
-    "smart": "claude-sonnet-5-5",
+    "fast": "gemini-2.5-flash-lite",
+    "smart": "gemini-2.5-pro",
 }
 
-# Cap Pro's thinking budget on a deep (non-"fast") tutor turn served by a
-# Gemini model — only reachable when the chat_tutor slot or a pref is pointed
-# back at a gemini-* model (ADR 0030). Dynamic thinking (-1) on multi-turn
-# pedagogy can spend 10s+ before any tokens stream; 2048 tokens is enough to
-# plan a multi-step explanation without burning latency the student can feel.
-# Claude turns need no run-level setting: their depth is the slot's model-level
-# `effort` (agents/_providers._ANTHROPIC_EFFORT). `medium` bought no
-# measurable tutor quality over `low` on Sonnet 5.5 at ~2x the cost, so
-# "smart" differs from "fast" by MODEL (Sonnet vs Haiku), not effort.
+# Cap Pro's thinking budget for chat tutor turns. Dynamic thinking (-1) on
+# multi-turn pedagogy can spend 10s+ in the thinking phase before any tokens
+# stream; 2048 tokens is enough for the agent to plan a multi-step
+# explanation without burning latency the student can feel.
 _PRO_THINKING_BUDGET = 2048
 
 
 def _resolve_model_pref(model_pref: str | None):
-    """Build a provider-model override for the per-request fast/smart
+    """Build a GoogleModel override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    Lazy-imports `override_model` so that constructing a provider (which
-    reads its API key at call time) only happens when an override is
-    actually requested — not at module import; built once per process
-    thereafter.
+    Lazy-imports `google_model` so that constructing a GoogleProvider
+    (which reads `GEMINI_API_KEY` at call time) only happens when an
+    override is actually requested — not at module import.
     """
     if not model_pref:
         return None
-    from agents._providers import _model_mode, override_model
+    from agents._providers import _model_mode, google_model
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
-        # SAPLING_MODEL_MODE by constructing a live provider model — the browser
+        # SAPLING_MODEL_MODE by constructing a live GoogleModel — the browser
         # always sends a model_pref (ModelToggle defaults to "fast"), so
         # without this the E2E function-mode lane would silently dial Gemini
         # on every tutor turn. Fall through to the agent's default model,
@@ -96,7 +90,7 @@ def _resolve_model_pref(model_pref: str | None):
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return override_model(name, "chat_tutor")
+    return google_model(name)
 
 
 def _ran_on(result, agent, run_kwargs: dict, model_pref: str | None) -> tuple[str, str | None]:
@@ -155,21 +149,17 @@ def _observe_persisted_turn(
         logger.debug("could not schedule the tutor router", exc_info=True)
 
 
-def _build_deep_turn_model_settings(model):
-    """Run-level settings for a deep (non-"fast") tutor turn served by
-    `model` — the model the run will ACTUALLY use (the pref override, else
-    the agent's own), so this can't disagree with `_resolve_model_pref`.
+def _build_pro_model_settings():
+    """Return a GoogleModelSettings capping Pro's thinking budget.
 
-    Only a Gemini model gets any: the capped Pro thinking budget. A Claude
-    model's depth is already its slot's model-level `effort`, and the
-    function-mode seam's FunctionModel takes neither — both return None.
+    Apply this whenever the effective chat-tutor model is Pro (explicit
+    "smart" pref OR no pref → agent default). Don't apply to Flash-Lite
+    runs — Lite doesn't think, and passing thinking_config there would be
+    wasted at best.
 
-    Imported lazily so provider SDK types stay off the import path.
+    Imported lazily for the same reason as `google_model` — keeps the
+    GoogleProvider construction off the import path.
     """
-    from pydantic_ai.models.google import GoogleModel
-
-    if not isinstance(model, GoogleModel):
-        return None
     from google.genai.types import ThinkingConfig
     from pydantic_ai.models.google import GoogleModelSettings
     return GoogleModelSettings(
@@ -191,11 +181,10 @@ def _new_run_text(result) -> str:
 
     `new_messages()` excludes the history that was passed in, so joining the
     TextParts of its model responses is exactly "what this turn said" — the
-    non-streaming twin of the streamed reply in `services/chat_stream.py`,
-    joined the same way (`join_text_parts`: a paragraph break between a
-    Claude explanation and the line it adds after a tool call). ThinkingParts
-    and ToolCallParts are not output text and are skipped: a turn that only
-    thought and called tools produced no reply.
+    non-streaming twin of the `joined.strip()` narrowing in
+    `services/chat_stream.py`. ThinkingParts and ToolCallParts are not
+    output text and are skipped: a turn that only thought and called tools
+    produced no reply.
     """
     parts: list[str] = []
     for msg in result.new_messages():
@@ -204,7 +193,7 @@ def _new_run_text(result) -> str:
         for part in msg.parts:
             if isinstance(part, TextPart):
                 parts.append(part.content or "")
-    return join_text_parts(parts)
+    return "".join(parts)
 
 
 #: The user turn that triggers the continuation (#646). Deliberately minimal:
@@ -751,14 +740,12 @@ async def _start_session_agent(
             feature="chat_tutor", task="chat_tutor", user_id=body.user_id,
             request_id=request_id,
         )
-        # str — chat_tutor agents return plain Markdown. Read every text
-        # part this turn wrote (`_new_run_text`), not `.output`: `.output` is
-        # only the FINAL model response, so a Claude turn that explains,
-        # calls a tool, then adds a line would persist just that line (ADR
-        # 0030). (The stale-history hazard doesn't apply here — this call
-        # passes `message_history=[]` — but the same reader keeps all three
-        # non-streamed paths and the stream persisting identical text.)
-        reply = _new_run_text(result)
+        # str — chat_tutor agents return plain Markdown. Safe to read
+        # `.output` directly here (no `_new_run_text` narrowing): this call
+        # passes `message_history=[]` above, so there is no prior assistant
+        # message for a textless response to resolve back to — the stale-read
+        # hazard needs history in the run's message list.
+        reply = result.output
         if not reply.strip():
             # Same textless shape as the chat turns (#646), and this is the
             # LAST rung on the opener path: a streamed /start-session/stream
@@ -916,15 +903,11 @@ def _prepare_chat_run(
     if model_override is not None:
         run_kwargs["model"] = model_override
 
-    # Capped thinking on every step-up-model run (explicit "smart" OR no-pref
-    # falling through to the agent default) — a Gemini-only setting, so on the
-    # default Claude slots this adds nothing. Explicit "fast" never gets it.
+    # Cap thinking budget on every Pro run (explicit "smart" OR no-pref
+    # falling through to the agent default). Skip the cap for explicit
+    # "fast" (Lite has no thinking).
     if model_pref != "fast":
-        deep = _build_deep_turn_model_settings(
-            model_override if model_override is not None else getattr(agent, "model", None)
-        )
-        if deep is not None:
-            run_kwargs["model_settings"] = deep
+        run_kwargs["model_settings"] = _build_pro_model_settings()
 
     return agent, user_message, run_kwargs, deps
 
@@ -987,11 +970,9 @@ async def _chat_via_agent(
         # This matters here more than anywhere: `_chat_turn_json` is both the
         # POST /api/learn/chat route AND the streamed route's Rung-1
         # fallback, which is exactly where the streaming fix now sends
-        # textless turns. And `.output` is only the FINAL model response even
-        # when this run did write text: a Claude turn that explains, calls a
-        # tool, then adds a line would persist just that line (ADR 0030) — so
-        # the reply is always this run's own joined text.
-        reply = _new_run_text(result)
+        # textless turns.
+        new_text = _new_run_text(result)
+        reply = result.output if new_text.strip() else new_text
 
         if not reply.strip():
             # #153 / ADR-0023 follow-up: gemini-2.5-pro occasionally follows an
@@ -1685,9 +1666,9 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     # History-bearing run (`_load_message_history` above), so `.output` alone
     # would hand back the previous turn's assistant message when this turn's
     # model response carries no text part — and `save_message` below would
-    # persist that duplicate — and is only the FINAL model response anyway,
-    # dropping text written before a tool call (ADR 0030). See `_new_run_text`.
-    reply = _new_run_text(result)
+    # persist that duplicate. See `_new_run_text`.
+    new_text = _new_run_text(result)
+    reply = result.output if new_text.strip() else new_text
     if not reply.strip():
         # #153: degenerate whitespace-only output, or a turn that ended after
         # tool calls with no text at all. Finish the turn if the model will

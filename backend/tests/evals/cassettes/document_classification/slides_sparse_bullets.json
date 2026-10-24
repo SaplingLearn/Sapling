@@ -1,7 +1,7 @@
 {
   "category": "slides",
-  "confidence": 0.93,
+  "confidence": 0.9,
   "is_syllabus": false,
-  "rationale": "Deck-style sparse bullet points across numbered slides on photosynthesis topics. Presentation slides are course-produced material, so they are shareable with enrolled students.",
+  "rationale": "The document consists of presentation slides with bullet points summarizing topics, which is characteristic of slides.",
   "shareability": "course_material"
 }

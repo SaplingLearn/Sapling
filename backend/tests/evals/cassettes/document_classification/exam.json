@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.8,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "Titled as a midterm examination with numbered questions and point values, which fits an assignment handout; it contains only questions, no answers, so it is a blank course document.",
+  "rationale": "The document contains questions with point values, typical of an exam or assignment.",
   "shareability": "course_material"
 }

@@ -6,7 +6,7 @@ the fallback branch; test_learn_stream_routes.py: the route wiring). What it
 structurally cannot prove is the two provider-shaped facts Rung 1 depends on:
 
   1. a real pre-token agent failure (here: a nonexistent model name, which the
-     provider API rejects before any text) surfaces as an exception
+     Google API rejects before any text) surfaces as an exception
      `stream_agent_turn` catches — across whatever exception wrapping the
      INSTALLED pydantic-ai does (the 1.x → 2.x drift in exactly this seam broke
      every main e2e run once, #459);
@@ -18,8 +18,8 @@ structurally cannot prove is the two provider-shaped facts Rung 1 depends on:
 
 Both rungs now ride the same Pydantic AI provider stack (the gemini_service
 seam is gone from learn.py), so what this lane really exercises is the live
-provider (Anthropic since ADR 0030) erroring on one model while serving
-another within one process. Costs one real Claude call. Skipped unless RUN_LIVE_STREAM_RUNGS=1
+Google provider erroring on one model while serving another within one
+process. Costs one real Gemini call. Skipped unless RUN_LIVE_STREAM_RUNGS=1
 and a real key is set (same opt-in posture as test_vision_ocr_live.py).
 """
 from __future__ import annotations
@@ -38,8 +38,8 @@ _PLACEHOLDER_KEYS = {"", "dummy-key-for-import", "dummy-not-used-in-tests", "tes
 def _requires_live_rungs():
     if os.getenv("RUN_LIVE_STREAM_RUNGS") != "1":
         pytest.skip("billable live-model lane is opt-in (RUN_LIVE_STREAM_RUNGS=1)")
-    if (os.getenv("ANTHROPIC_API_KEY") or "").strip() in _PLACEHOLDER_KEYS:
-        pytest.skip("needs a real ANTHROPIC_API_KEY — this test makes live model calls")
+    if (os.getenv("GEMINI_API_KEY") or "").strip() in _PLACEHOLDER_KEYS:
+        pytest.skip("needs a real GEMINI_API_KEY — this test makes live model calls")
 
 
 def test_rung1_real_agent_failure_degrades_to_live_fast_tier_agent(monkeypatch):
@@ -47,11 +47,11 @@ def test_rung1_real_agent_failure_degrades_to_live_fast_tier_agent(monkeypatch):
 
     from pydantic_ai import Agent
 
-    from agents._providers import model_for, provider_model
+    from agents._providers import google_model, model_for
     from services.chat_stream import stream_agent_turn
 
     # A model name the API cannot serve → the agent fails before any token.
-    monkeypatch.setenv("SAPLING_MODEL_CHAT_TUTOR", "claude-model-that-does-not-exist")
+    monkeypatch.setenv("SAPLING_MODEL_CHAT_TUTOR", "gemini-model-that-does-not-exist")
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)  # real mode
 
     agent = Agent(model=model_for("chat_tutor"))
@@ -66,7 +66,7 @@ def test_rung1_real_agent_failure_degrades_to_live_fast_tier_agent(monkeypatch):
         # The D2 shape: a GOOD fast-tier model via a plain Agent.run(), the
         # same second chance _chat_turn_json(model_pref="fast") takes live.
         good_agent = Agent(
-            model=provider_model("claude-haiku-5-5"),
+            model=google_model("gemini-2.5-flash-lite"),
             system_prompt=(
                 "You are a terse test assistant. Answer in one short sentence."
             ),

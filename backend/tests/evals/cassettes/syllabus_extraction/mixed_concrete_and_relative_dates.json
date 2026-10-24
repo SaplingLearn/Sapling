@@ -1,25 +1,25 @@
 {
   "assignments": [
     {
-      "description": "Lab report due in the course schedule.",
+      "description": null,
       "due_date": "2026-09-12",
       "title": "Lab Report 1",
-      "weight_pct": 30.0
+      "weight_pct": null
     },
     {
-      "description": "Lab report due in Week 8.",
+      "description": null,
       "due_date": null,
       "title": "Lab Report 2",
-      "weight_pct": 30.0
+      "weight_pct": null
     },
     {
-      "description": "Midterm exam.",
+      "description": null,
       "due_date": "2026-10-17",
       "title": "Midterm",
       "weight_pct": 30.0
     },
     {
-      "description": "Final exam scheduled for the last week of class.",
+      "description": null,
       "due_date": null,
       "title": "Final",
       "weight_pct": 40.0

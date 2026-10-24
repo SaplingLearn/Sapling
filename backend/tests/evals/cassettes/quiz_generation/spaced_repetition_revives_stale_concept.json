@@ -1,48 +1,45 @@
 {
   "questions": [
     {
-      "accepted_answers": [],
-      "concept": "Photosynthesis",
-      "correct_answer": "Thylakoid membranes",
-      "difficulty": "medium",
-      "explanation": "The light-dependent reactions occur in the thylakoid membranes of the chloroplast, where photosystems absorb light, water is split, and ATP and NADPH are produced. The stroma is where the Calvin cycle (light-independent reactions) occurs.",
-      "options": [
-        "Thylakoid membranes",
-        "Stroma",
-        "Inner mitochondrial membrane",
-        "Cytosol"
-      ],
-      "question": "In the light-dependent reactions of photosynthesis, where do the processes that capture light energy and split water take place?",
-      "type": "multiple_choice"
-    },
-    {
-      "accepted_answers": [],
-      "concept": "Mitosis",
-      "correct_answer": "Two genetically identical diploid daughter cells",
-      "difficulty": "medium",
-      "explanation": "Mitosis divides one nucleus into two genetically identical nuclei, so each daughter cell keeps the parent's diploid chromosome number. Four haploid, genetically distinct cells describe meiosis, not mitosis.",
-      "options": [
-        "Two genetically identical diploid daughter cells",
-        "Four genetically distinct haploid cells",
-        "Two genetically distinct haploid daughter cells",
-        "Two genetically identical cells with half the chromosome number"
-      ],
-      "question": "What is the main result of mitosis in a typical somatic cell?",
-      "type": "multiple_choice"
-    },
-    {
-      "accepted_answers": [],
       "concept": "Cell Membrane",
-      "correct_answer": "They dissolve in the hydrophobic interior of the phospholipid bilayer",
+      "correct_answer": "To regulate the passage of substances into and out of the cell",
       "difficulty": "medium",
-      "explanation": "The fatty acid tails of the phospholipid bilayer form a hydrophobic core, and small nonpolar molecules can dissolve into it and diffuse across down their concentration gradient. Aquaporins are specifically for water, and active transport is not needed for this passive process.",
+      "explanation": "The cell membrane acts as a selective barrier, controlling which molecules can enter or leave the cell, thus maintaining the cell's internal environment.",
       "options": [
-        "They dissolve in the hydrophobic interior of the phospholipid bilayer",
-        "They are actively pumped by ATP-driven transporters",
-        "They pass through aquaporin channels designed for them",
-        "They bind to specific membrane receptor proteins"
+        "To provide structural support to the cell",
+        "To regulate the passage of substances into and out of the cell",
+        "To synthesize proteins",
+        "To generate energy for the cell"
       ],
-      "question": "Why can small nonpolar molecules such as oxygen diffuse directly across the cell membrane without a transport protein?",
+      "question": "What is the primary function of the cell membrane?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Cell Membrane",
+      "correct_answer": "Active transport",
+      "difficulty": "medium",
+      "explanation": "Active transport requires energy to move molecules across the cell membrane from an area of lower concentration to an area of higher concentration.",
+      "options": [
+        "Simple diffusion",
+        "Facilitated diffusion",
+        "Osmosis",
+        "Active transport"
+      ],
+      "question": "Which of the following processes involves the movement of molecules against their concentration gradient?",
+      "type": "multiple_choice"
+    },
+    {
+      "concept": "Photosynthesis",
+      "correct_answer": "To capture light energy from the sun",
+      "difficulty": "medium",
+      "explanation": "Chlorophyll, the pigment that gives plants their green color, is essential for absorbing light energy, which powers the process of photosynthesis.",
+      "options": [
+        "To absorb water from the soil",
+        "To capture light energy from the sun",
+        "To release carbon dioxide into the atmosphere",
+        "To break down glucose for energy"
+      ],
+      "question": "What is the main role of chlorophyll in photosynthesis?",
       "type": "multiple_choice"
     }
   ]

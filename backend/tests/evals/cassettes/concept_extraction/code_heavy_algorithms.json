@@ -1,63 +1,63 @@
 {
   "concepts": [
     {
-      "description": "An algorithm design strategy that splits a problem into smaller independent subproblems, solves them recursively, and combines their results. Merge sort and quicksort are presented as its main examples.",
+      "description": "An algorithmic paradigm that solves complex problems by breaking them into simpler overlapping subproblems and storing the results to avoid redundant computations, often implemented bottom-up or with memoization.",
+      "importance": 0.95,
+      "name": "Dynamic Programming"
+    },
+    {
+      "description": "An algorithmic design paradigm that recursively breaks down a problem into two or more subproblems of the same or related type, until these become simple enough to be solved directly, and then combines their solutions to get a solution to the original problem.",
       "importance": 0.9,
       "name": "Divide-and-Conquer"
     },
     {
-      "description": "A method for solving recurrence relations of the form T(n) = aT(n/b) + f(n) to obtain asymptotic bounds. It is used to analyze the running time of divide-and-conquer algorithms.",
+      "description": "An algorithmic paradigm that makes locally optimal choices at each stage with the hope of finding a global optimum, often suitable for optimization problems where a globally optimal solution can be found by making a sequence of locally optimal choices.",
       "importance": 0.85,
+      "name": "Greedy Algorithms"
+    },
+    {
+      "description": "A formula used to analyze the running time of recursive algorithms that follow a divide-and-conquer pattern, providing a solution for recurrence relations of the form T(n) = aT(n/b) + f(n).",
+      "importance": 0.8,
       "name": "Master Theorem"
     },
     {
-      "description": "A technique where a function solves a problem by calling itself on smaller subproblems until reaching a base case. In this lecture it serves as the foundation for divide-and-conquer methods.",
-      "importance": 0.8,
+      "description": "A programming technique where a function calls itself directly or indirectly to solve a problem, often used in algorithms that naturally break down into smaller instances of the same problem.",
+      "importance": 0.75,
       "name": "Recursion"
     },
     {
-      "description": "A divide-and-conquer sorting algorithm that recursively splits an array in half, sorts each half, and merges the sorted halves in linear time, giving O(n log n) worst-case performance.",
-      "importance": 0.75,
-      "name": "Merge Sort"
-    },
-    {
-      "description": "A divide-and-conquer sorting algorithm that partitions an array around a pivot element and recursively sorts the partitions. It is typically fast in practice but its worst case depends on pivot choice.",
-      "importance": 0.75,
-      "name": "Quicksort"
-    },
-    {
-      "description": "A top-down optimization technique that caches the results of recursive calls so each subproblem is computed only once. It converts exponential recursive solutions into polynomial-time ones.",
+      "description": "An optimization technique used primarily with recursive algorithms, where the results of expensive function calls are stored and returned when the same inputs occur again, avoiding redundant computations.",
       "importance": 0.7,
       "name": "Memoization"
     },
     {
-      "description": "An approach that fills a table of subproblem solutions iteratively, starting from the smallest subproblems, to avoid recursion overhead. It is the iterative counterpart of memoization.",
-      "importance": 0.7,
-      "name": "Bottom-Up Dynamic Programming"
-    },
-    {
-      "description": "Algorithms that make locally optimal choices at each step, aiming for a globally optimal solution. The lecture discusses when this strategy provably works.",
-      "importance": 0.7,
-      "name": "Greedy Algorithms"
-    },
-    {
-      "description": "An abstract combinatorial structure that characterizes when a greedy algorithm yields an optimal solution. It formalizes independence systems in which greedy selection is guaranteed to succeed.",
+      "description": "A theoretical structure used to prove the correctness and optimality of certain greedy algorithms, providing a formal basis for understanding when a greedy approach will yield the best possible solution.",
       "importance": 0.65,
       "name": "Matroid Framework"
     },
     {
-      "description": "A classic dynamic programming problem that finds the longest sequence appearing in the same relative order in two strings. It is a standard example of the DP table technique.",
+      "description": "A stable sorting algorithm that exemplifies the divide-and-conquer paradigm by dividing an unsorted list into n sublists, each containing one element, and then repeatedly merging sublists to produce new sorted sublists until there is only one sorted list remaining.",
       "importance": 0.6,
+      "name": "Merge Sort"
+    },
+    {
+      "description": "An efficient, in-place sorting algorithm that uses a divide-and-conquer strategy, selecting a 'pivot' element from the array and partitioning the other elements into two sub-arrays according to whether they are less than or greater than the pivot.",
+      "importance": 0.55,
+      "name": "Quicksort"
+    },
+    {
+      "description": "A classic problem in dynamic programming that involves finding the longest subsequence common to two sequences, often used to illustrate the core principles of dynamic programming table construction.",
+      "importance": 0.5,
       "name": "Longest Common Subsequence"
     },
     {
-      "description": "A classic dynamic programming problem that selects items with given weights and values to maximize total value under a capacity constraint. It illustrates DP over choices and capacities.",
-      "importance": 0.6,
+      "description": "A classic optimization problem in dynamic programming where a set of items, each with a weight and a value, must be packed into a knapsack of limited capacity, aiming to maximize the total value of packed items.",
+      "importance": 0.45,
       "name": "Knapsack Problem"
     },
     {
-      "description": "A classic dynamic programming problem that computes the minimum number of insertions, deletions, and substitutions needed to transform one string into another.",
-      "importance": 0.6,
+      "description": "A classic dynamic programming problem that calculates the minimum number of single-character edits (insertions, deletions, or substitutions) required to change one word into the other, also known as Levenshtein distance.",
+      "importance": 0.4,
       "name": "Edit Distance"
     }
   ]

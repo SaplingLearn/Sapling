@@ -5,7 +5,8 @@ import type {
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   GpaReport,
   ExtractedSyllabusCategory,
-  AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
+  AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -165,6 +166,27 @@ export interface LocalSeedStatus {
   error?: string;
 }
 export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/local-seed');
+
+/** An unapproved sign-in's waitlist standing, read with the short-lived
+ * pending token the backend hands back instead of a session (see
+ * `lib/pendingToken.ts`). Both calls 401 when the token is missing, invalid
+ * or expired. */
+export interface PendingStatus {
+  email: string;
+  on_waitlist: boolean;
+}
+export const getPendingStatus = (token: string) =>
+  fetchJSON<PendingStatus>('/api/auth/pending/status', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+/** Puts the pending account's sign-in email on the waitlist. Idempotent: an
+ * account already on it answers the same `on_waitlist: true`. */
+export const joinWaitlistFromPending = (token: string) =>
+  fetchJSON<PendingStatus>('/api/auth/pending/join', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
 
 // Graph
 export const getGraph = (userId: string, semester?: string) =>
@@ -1094,10 +1116,10 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
   return fetchJSON<PaginatedUsers>(`/api/admin/users${suffix}`);
 };
 
-export const adminApproveUser = (userId: string) =>
-  fetchJSON<{ approved: boolean }>(`/api/admin/users/${userId}/approve`, { method: 'PATCH' });
-
-export const adminUnapproveUser = (userId: string) =>
+// Remove access: the account leaves Admin → Users and its email goes back on
+// the waitlist as a signup (Admin → Allowlist). Data is kept. The route keeps
+// its historical `/unapprove` path; 409 on your own account.
+export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
 
 // Admin — feedback (#520; decrypted server-side, admin-only)
@@ -1294,6 +1316,45 @@ export const adminRevokeAllowlist = (email: string) =>
     method: 'POST',
     body: JSON.stringify({ email }),
   });
+
+/** Approve 1..500 addresses at once; each gets the "you're in" email server-side. */
+export const adminApproveAllowlistBulk = (emails: string[]) =>
+  fetchJSON<{ approved: number; emails: AllowlistEmail[] }>('/api/admin/allowlist/approve-bulk', {
+    method: 'POST',
+    body: JSON.stringify({ emails }),
+  });
+
+// Admin — email (Resend)
+export const adminEmailStatus = () =>
+  fetchJSON<EmailStatus>('/api/admin/email/status');
+
+export const adminEmailAudiences = () =>
+  fetchJSON<{ audiences: EmailAudience[] }>('/api/admin/email/audiences');
+
+/** Renders the draft exactly as it would go out; sends and records nothing. */
+export const adminPreviewBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<EmailBroadcastPreview>('/api/admin/email/broadcasts/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** Sends the draft to the signed-in admin only. */
+export const adminSendTestBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<{ status: string; to: string }>('/api/admin/email/broadcasts/test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** 202: the broadcast row comes back as `sending`; delivery continues in the background. */
+export const adminSendBroadcast = (payload: { subject: string; body: string; audience: EmailAudienceKey }) =>
+  fetchJSON<{ broadcast: EmailBroadcast }>('/api/admin/email/broadcasts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** Newest first. */
+export const adminListBroadcasts = () =>
+  fetchJSON<{ broadcasts: EmailBroadcast[] }>('/api/admin/email/broadcasts');
 
 // Admin — audit
 export const adminAuditLog = (params?: {

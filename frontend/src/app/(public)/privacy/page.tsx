@@ -129,7 +129,7 @@ const sections = [
     title: "4. How We Share Your Information",
     body: "We do not sell your personal data. We share information only in the following limited circumstances:",
     highlights: [
-      { label: "Service providers:", text: "We use Supabase (database), Anthropic's Claude (AI processing), Google Gemini (indexing your uploaded course materials for search), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
+      { label: "Service providers:", text: "We use Supabase (database), Google Gemini (AI processing), and similar infrastructure providers. These providers process data on our behalf under their own privacy policies." },
       { label: "Study rooms:", text: "Your display name, avatar, and knowledge graph data are visible to other members of study rooms you join. Class-wide data shared with other users is anonymized." },
       { label: "Legal requirements:", text: "We may disclose information if required by law or to protect the rights and safety of our users." },
     ],
@@ -208,7 +208,7 @@ export default function PrivacyPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: October 22, 2026</span>
+              <span style={META}>Last updated: May 3, 2026</span>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>

@@ -29,6 +29,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }));
 
 import CallbackPage from './page';
+import { PENDING_TOKEN_KEY } from '@/lib/pendingToken';
 
 function stubFetch(
   me: () => Partial<Response> | Promise<Partial<Response>>,
@@ -165,5 +166,50 @@ describe('#715 a new local account waits for its sample data', () => {
     expect(posted[0]).toMatchObject({ success: true, onboardingCompleted: false });
     expect(replace).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/api/auth/local-seed'))).toBe(false);
+  });
+});
+
+describe('#741 an unapproved sign-in hands its pending token to /pending', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('popup mode relays the token to the opener instead of routing', async () => {
+    search = 'error=not_approved&popup_id=p1&pending_token=pt-1';
+    const posted: unknown[] = [];
+    class FakeChannel {
+      constructor(public name: string) {}
+      postMessage(m: unknown) { posted.push(m); }
+      close() {}
+    }
+    vi.stubGlobal('BroadcastChannel', FakeChannel);
+    vi.spyOn(window, 'close').mockImplementation(() => {});
+    render(<CallbackPage />);
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toEqual({
+      type: 'sapling_signin', success: false, error: 'not_approved', pendingToken: 'pt-1',
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('same-tab stashes the token and goes to /pending', async () => {
+    search = 'error=not_approved&pending_token=pt-2';
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/pending'));
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBe('pt-2');
+    expect(setActiveUser).not.toHaveBeenCalled();
+  });
+
+  it('without a token keeps the old landing-page error', async () => {
+    search = 'error=not_approved';
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=not_approved'));
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
   });
 });

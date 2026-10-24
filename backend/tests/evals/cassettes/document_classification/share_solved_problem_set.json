@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 0.93,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "This is a math problem set containing the student's own written solutions ('My solution', 'My answer') to course problems, so it shows this student's attempted answers rather than a blank handout.",
+  "rationale": "The document is clearly an assignment submission, containing problems and student-written solutions/answers.",
   "shareability": "completed_work"
 }

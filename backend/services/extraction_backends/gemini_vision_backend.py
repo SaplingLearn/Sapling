@@ -35,7 +35,7 @@ from pydantic_ai import BinaryContent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 from agents import WORKER_LIMITS
-from agents._providers import api_key_env_for_model, model_name_for
+from agents._providers import model_name_for
 from agents._run import run_agent_sync
 from agents.ocr_vision import (
     BLANK_PAGE_SENTINEL,
@@ -109,11 +109,8 @@ def extract_page_with_gemini_vision(image_bytes: bytes) -> str:
     """
     if not _enabled():
         raise GeminiVisionUnavailableError("GEMINI_VISION_OCR_ENABLED is not true")
-    # The key the ocr_vision slot's provider needs (the module and env-var
-    # names predate the Anthropic swap, ADR 0030; the slot defaults to Claude).
-    key_var = api_key_env_for_model(vision_model_name())
-    if not os.getenv(key_var):
-        raise GeminiVisionUnavailableError(f"{key_var} is not set")
+    if not os.getenv("GEMINI_API_KEY"):
+        raise GeminiVisionUnavailableError("GEMINI_API_KEY is not set")
 
     try:
         # #118: one usage row per transcribed page — this per-page loop is the

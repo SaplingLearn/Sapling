@@ -1,9 +1,9 @@
 {
-  "abstract": "The uploaded document consists solely of the phrase 'page intentionally left blank'. It contains no substantive text, topics, data, or arguments that could be summarized. It is likely a blank filler page from a larger document, such as a printed thesis or report.",
-  "headline": "Document contains only a placeholder note stating that the page was intentionally left blank, with no substantive content.",
+  "abstract": "The document provided was intentionally left blank and contains no content to summarize.",
+  "headline": "Document is Blank",
   "key_points": [
-    "The document contains only the phrase 'page intentionally left blank'.",
-    "No substantive content, examples, or findings are present.",
-    "It may be a filler page extracted from a larger source document."
+    "The document is blank.",
+    "There is no information to extract.",
+    "No summary can be created."
   ]
 }

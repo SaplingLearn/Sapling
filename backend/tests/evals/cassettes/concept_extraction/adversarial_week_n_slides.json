@@ -1,39 +1,39 @@
 {
   "concepts": [
     {
-      "description": "A framework for using sample data to evaluate claims about a population parameter, introduced in Week 5.",
-      "importance": 0.9,
-      "name": "Hypothesis Testing"
+      "description": "This concept covers the foundational principles of statistics, defining its scope, purpose, and basic terminology.",
+      "importance": 1.0,
+      "name": "Introduction to Statistics"
     },
     {
-      "description": "How samples are drawn from populations and the theorem stating that sample means approximate a normal distribution as sample size grows, covered in Week 4.",
-      "importance": 0.85,
-      "name": "Sampling and the Central Limit Theorem"
-    },
-    {
-      "description": "Ranges of plausible values for a population parameter, built from sample data, covered in Week 6.",
-      "importance": 0.85,
-      "name": "Confidence Intervals"
-    },
-    {
-      "description": "A method for modeling the relationship between a dependent variable and one or more predictors by fitting a line, covered in Week 7.",
-      "importance": 0.85,
-      "name": "Linear Regression"
-    },
-    {
-      "description": "Methods for summarizing and describing the main features of a dataset, covered in Week 2 of the course.",
-      "importance": 0.8,
+      "description": "This concept focuses on methods for summarizing and organizing data, including measures of central tendency, variability, and data visualization.",
+      "importance": 0.95,
       "name": "Descriptive Statistics"
     },
     {
-      "description": "Mathematical functions describing the likelihood of possible outcomes of a random variable, studied in Week 3.",
-      "importance": 0.8,
+      "description": "This concept introduces various probability distributions, explaining how to model the likelihood of different outcomes for random variables.",
+      "importance": 0.9,
       "name": "Probability Distributions"
     },
     {
-      "description": "The foundational overview of statistics as a discipline for collecting, analyzing, and interpreting data, introduced in Week 1.",
-      "importance": 0.5,
-      "name": "Introduction to Statistics"
+      "description": "This concept explores different sampling techniques and the fundamental Central Limit Theorem, which is crucial for making inferences about populations from samples.",
+      "importance": 0.88,
+      "name": "Sampling and the Central Limit Theorem"
+    },
+    {
+      "description": "This concept covers the methodology for testing claims or hypotheses about population parameters using sample data.",
+      "importance": 0.85,
+      "name": "Hypothesis Testing"
+    },
+    {
+      "description": "This concept explains how to construct and interpret confidence intervals, providing a range of plausible values for an unknown population parameter.",
+      "importance": 0.82,
+      "name": "Confidence Intervals"
+    },
+    {
+      "description": "This concept introduces the basics of linear regression, a statistical method used to model the linear relationship between a dependent variable and one or more independent variables.",
+      "importance": 0.8,
+      "name": "Linear Regression"
     }
   ]
 }

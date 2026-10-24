@@ -1,7 +1,7 @@
 {
   "category": "reading",
-  "confidence": 0.95,
+  "confidence": 1.0,
   "is_syllabus": false,
-  "rationale": "The document is a published research paper (Vaswani et al., NeurIPS 2017) with abstract and numbered sections, which fits assigned reading. It is public course-appropriate material, not student work or notes.",
+  "rationale": "The document is a research paper with an abstract and introduction, clearly indicating it is a reading material.",
   "shareability": "course_material"
 }

@@ -1,20 +1,13 @@
 {
-  "text": "Your summary is correct. Mitosis does duplicate the DNA first. It then produces two genetically identical daughter cells, each with the same chromosome number as the parent. That's the core idea.\n\nYour explanation is missing a few things:\n- **The mechanism.** You skipped the stages: prophase, metaphase, anaphase and telophase. Cytokinesis, the physical split of the cytoplasm, is the last step.\n- **Where the copying happens.** DNA replication happens during S phase of interphase, before mitosis begins. Mitosis itself is the division of the already-copied DNA.\n- **How the copies are held.** After replication, each chromosome is two sister chromatids joined at the centromere.\n\nMy search of your uploaded materials found nothing on mitosis. I can't check this against your course's own wording, so compare it with your notes.\n\nWhich phase of mitosis separates the sister chromatids, and what pulls them apart?",
+  "text": "That's a great start! You've correctly described the \"what\" and the \"why\" of mitosis: creating two identical cells.\n\nMy question for you is: what are the specific stages the cell goes through to make sure each new daughter cell gets a perfect copy of the DNA?",
   "tool_calls": [
-    {
-      "args": {
-        "query": "mitosis phases"
-      },
-      "tool_name": "search_course_materials"
-    },
     {
       "args": {
         "updates": [
           {
             "concept_name": "Mitosis",
-            "event_type": "interaction",
-            "mastery_delta": 0.05,
-            "reason": "correct high-level teach-back, missing phases"
+            "mastery_delta": 0.1,
+            "reason": "Correctly explained the high-level outcome."
           }
         ]
       },

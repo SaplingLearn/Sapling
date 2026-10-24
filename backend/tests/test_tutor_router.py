@@ -74,7 +74,7 @@ def _model(answers, *, delay=0.0, calls=None):
 def _observe(**overrides):
     kwargs = dict(user_id="u1", session_id="s1", message="Why does my proof fail?",
                   history=[], mode="socratic", model_pref_requested=None,
-                  model_tier="fast", tutor_model="claude-haiku-5-5",
+                  model_tier="fast", tutor_model="gemini-2.5-flash-lite",
                   request_id="req-9")
     kwargs.update(overrides)
     return tutor_router.observe_tutor_turn(**kwargs)
@@ -259,7 +259,7 @@ def test_routed_turn_is_fire_and_forget_and_emits_one_event(monkeypatch, sink):
     assert p["feature"] == "tutor_router"
     assert (p["session_id"], p["mode"]) == ("s1", "socratic")
     assert (p["model_pref_requested"], p["model_tier"], p["tutor_model"]) == (
-        None, "fast", "claude-haiku-5-5")
+        None, "fast", "gemini-2.5-flash-lite")
     assert p["history_messages"] == 0
     assert set(p["answers"]) == {q.key for q in tutor_router.QUESTIONS}
     assert event["user_id"] == "u1" and event["request_id"] == "req-9"
@@ -525,7 +525,7 @@ def test_successful_stream_is_one_decision_with_the_served_model(router_on, sink
     assert r.status_code == 200
     (kw,) = spy.calls
     assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
-        "smart", "smart", "claude-sonnet-5-5")
+        "smart", "smart", "gemini-2.5-pro")
     spy.replay()
     (event,) = _decision_events(sink)
     assert event["payload"]["model_tier"] == "smart"
@@ -544,7 +544,7 @@ def test_streamed_turn_usage_row_carries_the_request_id(router_on):
     from services.agent_events import SaplingEvent
 
     async def fake_stream(**kwargs):
-        kwargs["on_usage"](_served_by("streamed", "claude-sonnet-5-5"))
+        kwargs["on_usage"](_served_by("streamed", "gemini-2.5-pro"))
         extra = kwargs["on_complete"]("streamed", {}, [])
         yield SaplingEvent(type="done", step="reply", message="Complete.", data=extra)
 
@@ -575,7 +575,7 @@ def test_streamed_continuation_usage_row_carries_the_request_id(router_on, path)
     from services.agent_events import SaplingEvent
 
     async def fake_stream(**kwargs):
-        await kwargs["continuation"](_served_by("", "claude-sonnet-5-5"))
+        await kwargs["continuation"](_served_by("", "gemini-2.5-pro"))
         yield SaplingEvent(type="error", step="reply", message="stop.", data={})
 
     agent = MagicMock()
@@ -624,12 +624,12 @@ def test_stream_rung1_fallback_is_one_decision_on_the_fast_tier(router_on):
     assert "fallback reply" in r.text
     (kw,) = spy.calls
     assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
-        "smart", "fast", "claude-haiku-5-5")
+        "smart", "fast", "gemini-2.5-flash-lite")
 
 
 def test_json_chat_without_a_pref_logs_the_default_model(router_on):
     agent = MagicMock()
-    agent.run = AsyncMock(return_value=_served_by("reply", "claude-sonnet-5-5"))
+    agent.run = AsyncMock(return_value=_served_by("reply", "gemini-2.5-pro"))
     spy = _RouterSpy()
     with (
         patch("routes.learn.table", side_effect=_table_factory),
@@ -640,7 +640,7 @@ def test_json_chat_without_a_pref_logs_the_default_model(router_on):
     assert r.status_code == 200
     (kw,) = spy.calls
     assert (kw["model_pref_requested"], kw["model_tier"], kw["tutor_model"]) == (
-        None, "default", "claude-sonnet-5-5")
+        None, "default", "gemini-2.5-pro")
 
 
 def test_failed_json_turn_routes_nothing(router_on):
@@ -765,7 +765,7 @@ def test_chat_via_agent_returns_the_label_out_of_band(monkeypatch):
     from routes import learn
 
     agent = MagicMock()
-    agent.run = AsyncMock(return_value=_served_by("reply", "claude-sonnet-5-5"))
+    agent.run = AsyncMock(return_value=_served_by("reply", "gemini-2.5-pro"))
     with patch("routes.learn.agent_for_mode", return_value=agent):
         response, ran_on = asyncio.run(learn._chat_via_agent(
             user_id="u1", session_id="s1", course_id="", mode="socratic",
@@ -773,7 +773,7 @@ def test_chat_via_agent_returns_the_label_out_of_band(monkeypatch):
             request_id="r1", model_pref=None,
         ))
     assert set(response) == {"reply", "graph_update", "mastery_changes"}
-    assert ran_on == ("default", "claude-sonnet-5-5")
+    assert ran_on == ("default", "gemini-2.5-pro")
 
 
 def test_stream_labels_the_model_its_run_reports(router_on):
@@ -873,7 +873,7 @@ def test_enabled_router_leaves_the_turn_byte_identical(monkeypatch, sink):
     # The fast pref's model override is rebuilt per turn, so compare by name:
     # the router's "hard" must not have escalated the tier.
     assert call_on.kwargs["model"].model_name == call_off.kwargs["model"].model_name
-    assert call_on.kwargs["model"].model_name == "claude-haiku-5-5"
+    assert call_on.kwargs["model"].model_name == "gemini-2.5-flash-lite"
     assert call_on.kwargs["message_history"] == call_off.kwargs["message_history"]
     # And the router really does decide those disruptive answers for this
     # turn (so "nothing changed" is not just "nothing ran").

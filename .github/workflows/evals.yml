@@ -42,7 +42,6 @@ jobs:
         env:
           SAPLING_EVAL_MODE: replay
           GEMINI_API_KEY: dummy-not-used-in-replay
-          ANTHROPIC_API_KEY: dummy-not-used-in-replay
           # 64 hex chars; only needed if any import path requires it.
           ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
         run: |

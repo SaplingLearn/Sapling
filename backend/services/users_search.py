@@ -21,6 +21,9 @@ _MAX_PAGE_SIZE = 200
 
 # After migration 0024 the display `name` lives on user_profiles, not users.
 _USERS_COLS = "id,email,is_approved,created_at,last_sign_in_at"
+# Admin → Users lists the people who have access. Everyone waiting on approval
+# lives in Admin → Allowlist (the waitlist), so the two pages never overlap.
+_APPROVED = {"is_approved": "eq.true"}
 
 # base64(12-byte nonce || ciphertext || 16-byte GCM tag): the shortest blob
 # services/encryption.py can write. A decrypted email/name never looks like one.
@@ -81,6 +84,7 @@ def paginate_users(
     if not q:
         rows, total = table("users").select_with_count(
             columns=_USERS_COLS,
+            filters=_APPROVED,
             order="created_at.desc",
             limit=page_size,
             offset=offset,
@@ -95,7 +99,7 @@ def paginate_users(
     # Search path: name moved to user_profiles, so PostgREST can't filter it
     # (AEAD nonces aren't searchable anyway). Decrypt emails + resolve every
     # name, then filter and paginate in Python. Admin-scale, behind require_admin.
-    all_rows = table("users").select(columns=_USERS_COLS, order="created_at.desc")
+    all_rows = table("users").select(columns=_USERS_COLS, filters=_APPROVED, order="created_at.desc")
     for u in all_rows:
         u["email"] = decrypt_if_present(u.get("email"))
     _attach_names(all_rows)

@@ -15,12 +15,10 @@ about fetching it.
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from agents._bounded import clip_list
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -28,7 +26,7 @@ from agents.deps import SaplingDeps
 class NewConcepts(BaseModel):
     """Typed output: new concept names to add to the course graph."""
 
-    concepts: Annotated[list[str], clip_list(15, "concept_scan.concepts")] = Field(
+    concepts: list[str] = Field(
         default_factory=list,
         max_length=15,
         description=(

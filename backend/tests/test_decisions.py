@@ -290,9 +290,7 @@ class TestFlashLiteBackend:
         assert len(usage) == 1
         assert usage[0]["task"] == "decision"
         assert usage[0]["feature"] == "test"
-        # The provider label follows the served model (ADR 0030): this lane
-        # runs the decision agent in function mode.
-        assert usage[0]["provider"] == "function"
+        assert usage[0]["provider"] == "gemini"
 
     def test_one_out_of_range_confidence_does_not_sink_the_output(self):
         """#672 review: ge/le on the schema made a single 1.02 fail validation
@@ -864,7 +862,7 @@ class TestShadowAndEvent:
         assert shadow["backend"] == "flash_lite"
         assert shadow["agree"] == {"urgent": True, "team": False, "mood": None}
         # Both backends' tokens are billed — the shadow costs real money.
-        assert {r["provider"] for r in _usage_rows(sink)} == {"typesafe", "function"}
+        assert {r["provider"] for r in _usage_rows(sink)} == {"typesafe", "gemini"}
 
     def test_primary_degraded_onto_the_shadow_backend_is_not_compared(
         self, monkeypatch, sink,
@@ -885,7 +883,7 @@ class TestShadowAndEvent:
         shadow = event["payload"]["shadow"]
         assert shadow["fallback_reason"] == "shadow_same_as_served"
         assert shadow["agree"] is None
-        assert [r["provider"] for r in _usage_rows(sink)] == ["function"]
+        assert [r["provider"] for r in _usage_rows(sink)] == ["gemini"]
 
     def test_an_off_list_shadow_answer_disagrees(self, monkeypatch, sink):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))

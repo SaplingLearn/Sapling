@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated
 import unicodedata
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-from agents._bounded import clip_prose
 from agents._providers import model_for
 
 # Array caps, enforced by OUR validation after the call, never by the schema
@@ -60,9 +58,7 @@ def _without_refs_to(topic, clipped: set[str]):
 
 class ChecklistTopic(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    description: Annotated[str, clip_prose(500, "topic.description")] = Field(
-        min_length=1, max_length=500
-    )
+    description: str = Field(min_length=1, max_length=500)
     parent: str = Field(default="", max_length=120)
     prerequisites: list[str] = Field(default_factory=list)
     source_ids: list[str]

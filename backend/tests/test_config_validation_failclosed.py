@@ -18,7 +18,6 @@ def _set_required(monkeypatch, **overrides):
         "SUPABASE_URL": "https://x.supabase.co",
         "SUPABASE_SERVICE_KEY": "service-key",
         "GEMINI_API_KEY": "gemini-key",
-        "ANTHROPIC_API_KEY": "anthropic-key",
         "SESSION_SECRET": "x" * 40,  # >= 32 bytes (strong)
         "IS_LOCAL": False,
     }
@@ -38,17 +37,13 @@ class TestValidateConfig:
             SUPABASE_URL="",
             SUPABASE_SERVICE_KEY="",
             GEMINI_API_KEY="",
-            ANTHROPIC_API_KEY="",
             SESSION_SECRET="",
             IS_LOCAL=False,
         )
         with pytest.raises(RuntimeError) as exc:
             config.validate_config()
         msg = str(exc.value)
-        for key in (
-            "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "GEMINI_API_KEY",
-            "ANTHROPIC_API_KEY", "SESSION_SECRET",
-        ):
+        for key in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "GEMINI_API_KEY", "SESSION_SECRET"):
             assert key in msg
 
     def test_session_secret_required_outside_local(self, monkeypatch):

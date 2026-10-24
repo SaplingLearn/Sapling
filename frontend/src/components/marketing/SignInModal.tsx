@@ -6,6 +6,7 @@ import { useScrollLock } from "@/lib/useScrollLock";
 import { HeroCard } from "@/components/marketing/HeroCard";
 import { SaplingWordmark } from "@/components/SaplingWordmark";
 import { postSignInRoute } from "@/lib/localSeed";
+import { stashPendingToken } from "@/lib/pendingToken";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const POPUP_TIMEOUT_MS = 3 * 60 * 1000;
@@ -166,6 +167,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         type?: string; success?: boolean; error?: string;
         userId?: string; name?: string; avatar?: string;
         onboardingCompleted?: boolean; profileConfirmed?: boolean;
+        pendingToken?: string;
       } | null;
       if (!data || data.type !== "sapling_signin") return;
       cleanupPopupListeners();
@@ -181,6 +183,14 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
         // on the hold screen; anywhere else this is /onboarding, as before.
         void postSignInRoute(!!data.onboardingCompleted).then(route => router.replace(route));
         onClose();
+      } else if (data.error === "not_approved" && data.pendingToken) {
+        // An unapproved account: /pending shows where it stands (on the
+        // waitlist or not) and lets it join, using the short-lived pending
+        // token the callback relayed. Without a token (older backend) the
+        // generic not_approved copy below still applies.
+        stashPendingToken(data.pendingToken);
+        onClose();
+        router.push("/pending");
       } else {
         setLocalError(data.error || "signin_failed");
       }

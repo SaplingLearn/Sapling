@@ -9,12 +9,11 @@ typed Pydantic model so downstream code branches on .category and
 from __future__ import annotations
 
 import hashlib
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from agents._bounded import clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -76,7 +75,7 @@ class DocumentClassification(BaseModel):
             "private bucket when a document could be read either way."
         ),
     )
-    rationale: Annotated[str, clip_prose(400, "classifier.rationale")] = Field(
+    rationale: str = Field(
         max_length=400,
         description=(
             "One or two sentences explaining the classification. Helps "

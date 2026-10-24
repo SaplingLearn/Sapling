@@ -113,6 +113,10 @@ const eslintConfig = [
       // Admin "Feature flags" tab (#620). New file, no baselined backlog.
       "src/components/screens/admin/FeatureFlags.tsx",
       "src/components/screens/admin/FlagPanel.tsx",
+      // Admin "Allowlist" + "Email" tabs (waitlist bulk approve, Resend broadcasts).
+      // New files, no baselined backlog.
+      "src/components/screens/admin/AllowlistTab.tsx",
+      "src/components/screens/admin/EmailBroadcasts.tsx",
     ],
     rules: {
       "no-restricted-syntax": [

@@ -1,26 +1,18 @@
 {
-  "text": "That's correct, and it's the core idea. A recursive function calls itself.\n\nYour definition is missing two things that your course handout (recursion-lab.pdf) treats as essential:\n\n- **A smaller subproblem.** Each call should work on a simpler version of the problem. If it doesn't, it never gets closer to finishing.\n- **A base case.** This is a non-recursive branch that stops the process. Without it, the calls never end and the call stack overflows.\n\nFor example, a factorial function has a recursive step, `n * factorial(n-1)`. It also needs a stopping rule so the calls can end.\n\nSuppose you wrote `factorial(n)` with only the recursive step and no base case. What would happen when you called `factorial(3)`, and why?",
+  "text": "That's the right idea! A recursive function does call itself.\n\nWhat's missing is that the function needs a way to *stop* calling itself. Otherwise, it runs forever. This stopping condition is called the \"base case\".\n\nSo, a complete definition would be: recursion is when a function calls itself until it hits a base case.\n\nHere's a question: what happens if you write a recursive function but forget to include a base case?",
   "tool_calls": [
-    {
-      "args": {
-        "query": "recursion base case recursive call"
-      },
-      "tool_name": "search_course_materials"
-    },
     {
       "args": {
         "updates": [
           {
             "concept_name": "Recursion",
-            "event_type": "interaction",
-            "mastery_delta": 0.05,
-            "reason": "correct but incomplete definition"
+            "mastery_delta": 0.1,
+            "reason": "Partially correct definition."
           },
           {
             "concept_name": "Base Case",
-            "event_type": "interaction",
             "mastery_delta": -0.05,
-            "reason": "omitted base case from explanation"
+            "reason": "Forgot base case in definition."
           }
         ]
       },

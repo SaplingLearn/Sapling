@@ -1,19 +1,19 @@
 {
   "assignments": [
     {
-      "description": "First course quiz, part of the Quizzes grading category.",
+      "description": null,
       "due_date": "2026-02-01",
       "title": "Quiz 1",
       "weight_pct": null
     },
     {
-      "description": "Midterm exam.",
+      "description": null,
       "due_date": "2026-03-14",
       "title": "Midterm",
       "weight_pct": 30.0
     },
     {
-      "description": "Final exam.",
+      "description": null,
       "due_date": "2026-05-07",
       "title": "Final",
       "weight_pct": 50.0

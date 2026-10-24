@@ -1,34 +1,44 @@
 {
   "concepts": [
     {
-      "description": "The interaction of supply and demand curves determines the equilibrium price and quantity in a competitive market. This framework is the foundation of the document's analysis.",
-      "importance": 0.95,
+      "description": "These fundamental forces interact to set the market price and quantity in a competitive market.",
+      "importance": 1.0,
       "name": "Supply and Demand"
     },
     {
-      "description": "The price and quantity at which supply equals demand, where neither buyers nor sellers have an incentive to change their behavior in a competitive market.",
-      "importance": 0.85,
+      "description": "The specific price and quantity at which the amount producers are willing to supply equals the amount consumers are willing to buy, determined by the interaction of supply and demand.",
+      "importance": 0.95,
       "name": "Equilibrium Price and Quantity"
     },
     {
-      "description": "A measure of how responsive the quantity demanded is to a change in price. It indicates how sensitive consumers are to price changes.",
-      "importance": 0.75,
+      "description": "The reduction in total surplus (consumer and producer surplus) that results from a market distortion, such as a government intervention that prevents the market from reaching its efficient equilibrium.",
+      "importance": 0.95,
+      "name": "Deadweight Loss"
+    },
+    {
+      "description": "A measure indicating how much the quantity demanded of a good responds to a change in its price.",
+      "importance": 0.9,
       "name": "Price Elasticity of Demand"
     },
     {
-      "description": "Measures of economic welfare: consumer surplus is the benefit buyers receive above what they pay, and producer surplus is the amount sellers receive above their minimum acceptable price.",
-      "importance": 0.7,
-      "name": "Consumer and Producer Surplus"
+      "description": "Policies such as price floors, price ceilings, and taxes implemented by governments that can affect market outcomes.",
+      "importance": 0.9,
+      "name": "Government Interventions"
     },
     {
-      "description": "Policies such as price floors, price ceilings, and taxes that alter market outcomes. The document notes these matter when they bind, meaning when they actually change the equilibrium.",
-      "importance": 0.65,
-      "name": "Government Interventions in Markets"
+      "description": "The difference between the maximum price consumers are willing to pay for a good and the actual market price they pay, representing a measure of consumer welfare.",
+      "importance": 0.85,
+      "name": "Consumer Surplus"
     },
     {
-      "description": "The loss of total surplus that occurs when a market intervention or distortion prevents mutually beneficial transactions from taking place.",
-      "importance": 0.6,
-      "name": "Deadweight Loss"
+      "description": "The difference between the price producers receive for a good and the minimum price they would have been willing to accept, representing a measure of producer welfare.",
+      "importance": 0.85,
+      "name": "Producer Surplus"
+    },
+    {
+      "description": "A market structure where numerous buyers and sellers interact, and no single participant can influence the market price, allowing supply and demand to freely determine equilibrium.",
+      "importance": 0.8,
+      "name": "Competitive Market"
     }
   ]
 }

@@ -33,6 +33,8 @@ class TestPaginateUsers:
         assert result["users"][0]["name"] == "Decrypted Name"
         assert result["users"][0]["email"] == "d:enc2"
         users_tbl.select_with_count.assert_called_once()
+        # Admin → Users lists people with access; the waiting live in Allowlist.
+        assert users_tbl.select_with_count.call_args.kwargs["filters"] == {"is_approved": "eq.true"}
 
     def test_query_filters_after_decrypt(self):
         rows = [
@@ -58,6 +60,7 @@ class TestPaginateUsers:
             t.side_effect = by_name
 
             result = paginate_users(q="alice", page=1, page_size=10)
+        assert users_tbl.select.call_args.kwargs["filters"] == {"is_approved": "eq.true"}
 
         # Matches on the user_profiles-sourced name.
         assert result["total"] == 1
