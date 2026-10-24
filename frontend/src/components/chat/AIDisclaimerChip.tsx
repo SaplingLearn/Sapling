@@ -66,7 +66,7 @@ export function AIDisclaimerChip() {
               AI powered learning
             </div>
             <p style={{ margin: "0 0 8px" }}>
-              Sapling uses Google Gemini to tutor, quiz, and track your progress.
+              Sapling uses Anthropic&apos;s Claude to tutor, quiz, and track your progress.
               Responses may not always be accurate — verify with your course materials.
             </p>
             <div style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>

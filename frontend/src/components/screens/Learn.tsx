@@ -1907,7 +1907,7 @@ function SessionRow({ s, onResume, onDelete, onRename }: {
           // Keyed on the session id (a stable domain id per
           // docs/frontend-testids.md) — the E2E tutor journey (#392) resumes a
           // seeded `rich-sess-*` session to reach an active chat without the
-          // Gemini-backed start-session call.
+          // LLM-backed start-session call.
           data-testid={`tutor-session-resume-${s.id}`}
           onClick={() => onResume(s)}
           style={{

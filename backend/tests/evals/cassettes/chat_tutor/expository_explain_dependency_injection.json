@@ -1,25 +1,11 @@
 {
-  "text": "Of course. Let's break down Dependency Injection.\n\n### Overview\n\n**Dependency Injection (DI)** is a design pattern where an object is given its dependencies from an outside source, rather than creating them itself. This leads to more flexible, testable, and reusable code.\n\nThe core principle behind DI is **Inversion of Control (IoC)**. Instead of your object controlling the creation of its dependencies, that control is inverted and given to an external framework or container.\n\n### Detailed Explanation\n\nImagine you're building a `Car` object. A car needs an `Engine` to function.\n\n**Without DI**, the `Car` class would be responsible for creating its own `Engine` instance.\n\n```java\n// Without Dependency Injection\nclass Car {\n    private Engine engine;\n\n    public Car() {\n        // The Car creates its own dependency.\n        // This makes it tightly coupled to the GasEngine.\n        this.engine = new GasEngine();\n    }\n\n    public void start() {\n        this.engine.start();\n    }\n}\n```\n\nThe problem here is that the `Car` is **tightly coupled** to the `GasEngine`. What if you want to create a `Car` with an `ElectricEngine`? You'd have to modify the `Car` class itself.\n\n**With DI**, you \"inject\" the `Engine` into the `Car` when you create it.\n\n```java\n// With Dependency Injection (via the constructor)\nclass Car {\n    private Engine engine;\n\n    // The dependency (the engine) is passed in.\n    public Car(Engine engine) {\n        this.engine = engine;\n    }\n\n    public void start() {\n        this.engine.start();\n    }\n}\n\n// Now, the creator of the Car decides which engine to use.\nEngine gasEngine = new GasEngine();\nCar myGasCar = new Car(gasEngine);\n\nEngine electricEngine = new ElectricEngine();\nCar myElectricCar = new Car(electricEngine);\n```\n\n### Why is this better?\n\n1.  **Decoupling:** The `Car` class doesn't need to know about `GasEngine` or `ElectricEngine`. It only needs to know that it has an `Engine` that can `start()`.\n2.  **Testability:** When you're testing the `Car`, you can inject a \"mock\" or \"fake\" engine to simulate different scenarios without needing a real, complex engine object.\n3.  **Flexibility:** You can easily swap dependencies. If a new `HydrogenEngine` is created tomorrow, you can use it with your `Car` class without changing a single line of its code.\n\nThis pattern is fundamental to many modern software frameworks (like Spring for Java or Angular for TypeScript) which manage the process of creating and injecting these dependencies for you.",
+  "text": "Your course materials don't cover dependency injection, so I'll explain it in general terms.\n\n## Overview\n**Dependency injection (DI)** means a piece of code receives the things it depends on from the outside. It doesn't create them itself. A \"dependency\" is any object the code needs, such as a database connection, an API client, or a clock.\n\n## Explanation\nWithout DI, a class builds its own dependencies:\n\n```python\nclass OrderService:\n    def __init__(self):\n        self.db = PostgresDatabase()   # hard-wired\n```\n\nThis causes three problems:\n- **Tight coupling:** `OrderService` is stuck with Postgres.\n- **Hard to test:** you can't swap in a fake database.\n- **Hidden requirements:** nothing in the signature tells you what the class needs.\n\nWith DI, the dependency is passed in:\n\n```python\nclass OrderService:\n    def __init__(self, db):\n        self.db = db                   # injected\n```\n\nThe three common forms are:\n1. **Constructor injection:** pass dependencies to `__init__`. This is the most common form.\n2. **Setter injection:** assign them after the object is created.\n3. **Parameter injection:** pass them into a single function call.\n\nThe idea behind DI is **inversion of control**. The caller or a central \"composition root\" decides which concrete implementation to use. The class only relies on an interface, meaning \"something with `save()` and `get()`\".\n\nDI frameworks (Spring, FastAPI's `Depends`, and others) automate the wiring. The pattern itself needs no framework.\n\n## Example\n```python\nclass FakeDB:\n    def __init__(self): self.rows = []\n    def save(self, row): self.rows.append(row)\n\nclass OrderService:\n    def __init__(self, db): self.db = db\n    def place(self, order): self.db.save(order)\n\n# Production\nservice = OrderService(PostgresDatabase())\n\n# Test, with no real database needed\nfake = FakeDB()\nOrderService(fake).place({\"id\": 1})\nassert fake.rows == [{\"id\": 1}]\n```\n\nThe same `OrderService` code runs against a real database in production and a fake one in tests. That flexibility is the main benefit of DI.\n\n**Connection to your course:** DI looks a bit like **Closures**, which are still unexplored in your graph. A closure can also capture a dependency, for example `def make_handler(db): return lambda x: db.save(x)`. I can cover closures next if you'd like.",
   "tool_calls": [
     {
       "args": {
-        "concepts": [
-          "Dependency Injection"
-        ]
+        "query": "dependency injection"
       },
-      "tool_name": "apply_graph_update_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Dependency Injection",
-            "mastery_delta": 0.05,
-            "reason": "Asked for definition."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
+      "tool_name": "search_course_materials"
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 1.0,
+  "confidence": 0.93,
   "is_syllabus": false,
-  "rationale": "The document is a problem set with explicitly stated problems, indicating it is an assignment.",
+  "rationale": "A LaTeX problem set with numbered group theory problems and no worked solutions or grades, so it is a blank assignment handout. Blank handouts are course material, not completed work.",
   "shareability": "course_material"
 }

@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 1.0,
+  "confidence": 0.95,
   "is_syllabus": false,
-  "rationale": "The document describes a programming project for a course, including its requirements, deliverables, grading policy, and due date.",
+  "rationale": "Project specification with deliverables, starter code references, and grading breakdown, with no student answers present. This is a blank assignment handout, so it is course material, though it does state a due date and grading weights.",
   "shareability": "course_material"
 }

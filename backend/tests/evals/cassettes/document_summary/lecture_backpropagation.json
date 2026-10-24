@@ -1,11 +1,10 @@
 {
-  "abstract": "This lecture covers the backpropagation algorithm, a fundamental method for training neural networks. The process begins with a forward pass to calculate the loss based on inputs and weights. Backpropagation then utilizes the chain rule to compute the partial derivatives of this loss with respect to each model parameter. Gradients are computed layer by layer, with each layer's gradient depending on the previous layer's activations and the gradient from the subsequent layer. Finally, these gradients are used in a gradient-descent step to update the model's weights.",
-  "headline": "Backpropagation: Calculating Gradients for Model Training",
+  "abstract": "This lecture introduces backpropagation as a method for training neural networks. The forward pass computes a loss L from the inputs and current weights. Backpropagation then applies the chain rule layer by layer to compute partial derivatives of L with respect to every parameter. The gradient at each layer depends on the activations from the previous layer and the upstream gradient from the next layer. Finally, a gradient-descent step uses these gradients to update the weights.",
+  "headline": "Lecture 7 on backpropagation: using the chain rule layer by layer to compute loss gradients with respect to parameters, then updating\u2026",
   "key_points": [
-    "Backpropagation uses the chain rule to compute gradients of the loss function with respect to model parameters.",
-    "The forward pass calculates the loss from inputs and weights.",
-    "Gradients are computed layer by layer, using activations from the previous layer and gradients from the next.",
-    "Gradient descent is applied to update weights using the computed gradients.",
-    "Backpropagation is essential for training neural network models."
+    "The forward pass computes the loss L from the inputs and the current weights.",
+    "Backpropagation applies the chain rule layer by layer to obtain partial derivatives of L with respect to every parameter.",
+    "The gradient at layer k depends on activations from layer k-1 and the upstream gradient from layer k+1.",
+    "Weights are updated by taking a gradient-descent step using the computed gradients."
   ]
 }

@@ -1,29 +1,44 @@
 {
   "concepts": [
     {
-      "description": "This concept involves proving the Law of Cosines, a fundamental geometric theorem relating the lengths of the sides of a triangle to the cosine of one of its angles, by utilizing the properties of the dot product of vectors.",
-      "importance": 0.95,
+      "description": "The inequality |<u,v>| \u2264 ||u||\u00b7||v|| for vectors in an inner product space, used in Problem 5 to derive the triangle inequality.",
+      "importance": 0.85,
+      "name": "Cauchy-Schwarz Inequality"
+    },
+    {
+      "description": "The inner product of two vectors, a\u00b7b = \u03a3 a\u1d62b\u1d62, which underpins the proofs in Problems 1 and 3 and links to the geometry of angles and lengths.",
+      "importance": 0.8,
+      "name": "Dot Product"
+    },
+    {
+      "description": "The relation c\u00b2 = a\u00b2 + b\u00b2 \u2212 2ab\u00b7cos(\u03b8) relating the sides of a triangle to one of its angles, proved in Problem 1 using vectors and the dot product.",
+      "importance": 0.75,
       "name": "Law of Cosines"
     },
     {
-      "description": "This concept focuses on deriving the angle-addition formula for the sine function, sin(a+b), which expresses the sine of a sum of two angles in terms of the sines and cosines of the individual angles.",
-      "importance": 0.95,
-      "name": "Angle-Addition Identity for Sine"
+      "description": "The fact that ||u + v|| \u2264 ||u|| + ||v||, which Problem 5 proves by applying the Cauchy-Schwarz inequality.",
+      "importance": 0.7,
+      "name": "Triangle Inequality"
     },
     {
-      "description": "This concept explores the property of orthogonal matrices, demonstrating how they preserve the Euclidean inner product, meaning the dot product of two vectors remains unchanged after transformation by an orthogonal matrix.",
-      "importance": 0.95,
-      "name": "Orthogonal Matrices and Inner Product Preservation"
+      "description": "A square matrix Q with Q\u1d40Q = I, whose preservation of the Euclidean inner product is shown in Problem 3.",
+      "importance": 0.65,
+      "name": "Orthogonal Matrix"
     },
     {
-      "description": "This concept involves proving the anti-commutative property of the cross product, which states that changing the order of the vectors in a cross product reverses the direction of the resulting vector.",
-      "importance": 0.95,
-      "name": "Anti-Commutativity of the Cross Product"
+      "description": "The formula sin(a+b) = sin a\u00b7cos b + cos a\u00b7sin b, derived in Problem 2.",
+      "importance": 0.5,
+      "name": "Trigonometric Angle-Addition Identity"
     },
     {
-      "description": "This concept demonstrates how the Cauchy-Schwarz inequality, a fundamental inequality in linear algebra, can be used to prove the triangle inequality, which states that the sum of the lengths of any two sides of a triangle must be greater than or equal to the length of the third side.",
-      "importance": 0.95,
-      "name": "Triangle Inequality and Cauchy-Schwarz"
+      "description": "A binary operation on vectors in three-dimensional space whose anti-commutativity is examined in Problem 4.",
+      "importance": 0.45,
+      "name": "Cross Product"
+    },
+    {
+      "description": "The property that swapping the operands changes only the sign, a\u00d7b = \u2212(b\u00d7a), which Problem 4 proves for the cross product.",
+      "importance": 0.4,
+      "name": "Anti-Commutativity"
     }
   ]
 }

@@ -15,8 +15,8 @@ Modes are selected by `SAPLING_EVAL_MODE`:
 | Mode | Network | Use |
 |------|---------|-----|
 | `replay` (default) | none | CI + local checks. Loads frozen model outputs from `cassettes/`; a missing cassette fails loudly. |
-| `record` | live Gemini | Capture/refresh cassettes. Writes `cassettes/<dataset>/<case>.json`. |
-| `live` | live Gemini | One-off experimentation, no recording. |
+| `record` | live model | Capture/refresh cassettes. Writes `cassettes/<dataset>/<case>.json`. |
+| `live` | live model | One-off experimentation, no recording. |
 
 Because replay is deterministic (the model output is frozen in the cassette), a
 task's aggregate score only moves when an **evaluator**, an **expected output**,
@@ -36,8 +36,11 @@ Exit code is non-zero on a regression or a missing cassette.
 
 ## Refreshing after a prompt/model change
 
-Recording hits live Gemini, so it needs `GEMINI_API_KEY` set (in `.env`).
-Transient 503s are retried automatically.
+Recording hits each agent's live model — Claude since ADR 0030 — so it needs
+`ANTHROPIC_API_KEY` set (in `.env`; `GEMINI_API_KEY` too if a slot is pointed
+back at a `gemini-*` model). Transient 429/503/529s are retried automatically.
+The cassettes and `baselines.json` were re-recorded on Claude on 2026-10-22;
+the Gemini-era recordings are in git history at the commit before that.
 
 ```bash
 cd backend

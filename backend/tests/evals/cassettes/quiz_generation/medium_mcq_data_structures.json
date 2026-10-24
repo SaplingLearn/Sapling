@@ -1,45 +1,48 @@
 {
   "questions": [
     {
+      "accepted_answers": [],
       "concept": "Hash Tables",
-      "correct_answer": "Hash Table",
+      "correct_answer": "O(1) on average, since the expected chain length is the load factor n/8, which stays constant when n is fixed relative to the table size",
       "difficulty": "medium",
-      "explanation": "Hash tables use a hash function to map keys to indices, allowing for average O(1) operations. However, collisions can lead to O(n) worst-case performance.",
+      "explanation": "With uniform hashing, the expected chain length equals the load factor \u03b1 = n/m, so lookups take O(1 + \u03b1) on average. The worst case is O(n) when many keys collide, so claiming O(1) worst case is a common mistake.",
       "options": [
-        "Binary Search Tree",
-        "Hash Table",
-        "Array",
-        "Linked List"
+        "O(1) in the worst case, because every key hashes to its own bucket",
+        "O(n) in every case, because the chains must be scanned from the head",
+        "O(1) on average, since the expected chain length is the load factor n/8, which stays constant when n is fixed relative to the table size",
+        "O(log n), because the chains are kept sorted like a balanced tree"
       ],
-      "question": "Which data structure provides average O(1) time complexity for insertion, deletion, and retrieval, but can degrade to O(n) in the worst case?",
+      "question": "A hash table uses separate chaining with a fixed array of 8 buckets. Which statement best describes the expected cost of a successful lookup when the table holds n keys and the hash function spreads them uniformly?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Binary Search Trees",
-      "correct_answer": "Efficient searching with an average time complexity of O(log n)",
+      "correct_answer": "20, 30, 40, 50, 60, 70, 80",
       "difficulty": "medium",
-      "explanation": "Binary Search Trees allow for efficient searching, insertion, and deletion with an average time complexity of O(log n). The worst-case scenario for a BST can be O(n) if the tree becomes unbalanced.",
+      "explanation": "An in-order traversal of a binary search tree visits the left subtree, the node, then the right subtree, which yields the keys in sorted ascending order. The other options reflect pre-order, post-order, or reversed traversals.",
       "options": [
-        "Constant time insertion",
-        "Guaranteed O(log n) search time in all cases",
-        "Efficient searching with an average time complexity of O(log n)",
-        "Unlimited storage capacity"
+        "50, 30, 20, 40, 70, 60, 80",
+        "20, 30, 40, 50, 60, 70, 80",
+        "20, 40, 30, 60, 80, 70, 50",
+        "80, 70, 60, 50, 40, 30, 20"
       ],
-      "question": "What is the primary advantage of a Binary Search Tree over a simple unsorted list?",
+      "question": "Consider a binary search tree built by inserting the keys 50, 30, 70, 20, 40, 60, 80 in that order. What is the in-order traversal of this tree?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Big-O Analysis",
-      "correct_answer": "The algorithm's execution time grows quadratically with the input size.",
+      "correct_answer": "O(n^2)",
       "difficulty": "medium",
-      "explanation": "Big-O notation describes the upper bound of an algorithm's time or space complexity. O(n^2) means the execution time increases with the square of the input size, indicating a significant performance degradation for large inputs.",
+      "explanation": "Big-O keeps only the dominant term and drops constant coefficients, so 3n^2 + 10n + 500 is O(n^2). Writing O(3n^2) or O(n^2 + n) keeps constants or lower-order terms that Big-O is designed to ignore.",
       "options": [
-        "The algorithm will always perform a fixed number of operations regardless of input size.",
-        "The algorithm's execution time grows quadratically with the input size.",
-        "The algorithm's execution time grows linearly with the input size.",
-        "The algorithm's execution time decreases as the input size grows."
+        "O(n)",
+        "O(n^2)",
+        "O(n^2 + n)",
+        "O(3n^2)"
       ],
-      "question": "If a sorting algorithm's performance is described as O(n^2) in the worst case, what does this imply about its efficiency as the input size (n) grows?",
+      "question": "An algorithm performs about 3n^2 + 10n + 500 basic operations on an input of size n. Which expression is its asymptotic bound in Big-O notation?",
       "type": "multiple_choice"
     }
   ]
