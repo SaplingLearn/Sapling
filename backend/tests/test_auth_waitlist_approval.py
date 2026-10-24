@@ -392,3 +392,79 @@ def test_pending_join_fills_a_missing_name_on_an_existing_entry(pending):
     update = tables["newsletter_emails"].update.call_args
     assert update.kwargs["filters"] == {"id": "eq.w1", "first_name": "is.null"}
     tables["newsletter_emails"].upsert.assert_not_called()
+
+
+# ── Welcome email (once per account) ────────────────────────────────────────
+
+
+@pytest.fixture
+def welcome_sends(monkeypatch):
+    from services import email_service
+    rec = MagicMock(name="send_email", return_value="skipped")
+    monkeypatch.setattr(email_service, "send_email", rec)
+    return rec
+
+
+def _welcome_claim(tables, *, returns):
+    """users.update returns `returns` for the welcomed_at claim, [] otherwise."""
+    def _update(data, filters=None, **_kw):
+        return returns if "welcomed_at" in data else []
+    tables["users"].update.side_effect = _update
+
+
+def _welcome_claims(tables):
+    return [c for c in tables["users"].update.call_args_list if "welcomed_at" in c.args[0]]
+
+
+def test_first_approved_sign_in_sends_welcome_once(callback, monkeypatch, welcome_sends):
+    tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+    _welcome_claim(tables, returns=[{"id": "user_112233"}])
+    assert callback() == "/auth/callback"
+    (claim,) = _welcome_claims(tables)
+    # Conditional: only the sign-in that flips NULL gets the row back.
+    assert claim.kwargs["filters"] == {"id": "eq.user_112233", "welcomed_at": "is.null"}
+    welcome_sends.assert_called_once()
+    kw = welcome_sends.call_args.kwargs
+    assert kw["kind"] == "welcome"
+    assert kw["dedupe_key"] == "welcome:user_112233"
+    assert kw["to"] == EMAIL
+    assert "Ada" in kw["html"]
+
+
+def test_already_welcomed_user_gets_no_welcome(callback, monkeypatch, welcome_sends):
+    # welcomed_at already set (incl. the deploy backfill): the claim matches no row.
+    tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+    _welcome_claim(tables, returns=[])
+    assert callback() == "/auth/callback"
+    assert len(_welcome_claims(tables)) == 1
+    welcome_sends.assert_not_called()
+
+
+def test_pending_user_is_not_welcomed(callback, monkeypatch, welcome_sends):
+    tables = _tables(monkeypatch, users_rows=_pending_user(), waitlist_rows=[])
+    _welcome_claim(tables, returns=[{"id": "user_112233"}])
+    assert callback() == "/pending"
+    assert _welcome_claims(tables) == []
+    welcome_sends.assert_not_called()
+
+
+def test_waitlist_approved_new_account_is_welcomed(callback, monkeypatch, welcome_sends):
+    tables = _tables(
+        monkeypatch, users_rows=[],
+        waitlist_rows=[{"id": "w1", "email": EMAIL, "approved_at": APPROVED_AT}],
+    )
+    _welcome_claim(tables, returns=[{"id": "user_112233"}])
+    assert callback() == "/auth/callback"
+    welcome_sends.assert_called_once()
+
+
+def test_welcome_claim_failure_never_breaks_sign_in(callback, monkeypatch, welcome_sends):
+    tables = _tables(monkeypatch, users_rows=_approved_user(), waitlist_rows=[])
+
+    def _update(data, filters=None, **_kw):
+        if "welcomed_at" in data:
+            raise RuntimeError("column users.welcomed_at does not exist")
+        return []
+    tables["users"].update.side_effect = _update
+    assert callback() == "/auth/callback"
+    welcome_sends.assert_not_called()

@@ -96,6 +96,8 @@ renders the element.
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
+| Admin allowlist | `allowlist` | `frontend/src/components/screens/admin/AllowlistTab.tsx` (the `allowlist` tab: waitlist with status filters, row selection + bulk approve behind a confirm dialog, per-row "you're in" invite status) |
+| Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
@@ -438,8 +440,8 @@ entered the lint block new, so there is no baselined backlog.
 
 Added with the #620 feature-flags admin UI (ADR 0029). `admin-tab-{tab}` is
 on every button in `Admin.tsx`'s tab bar (one per `Tab` value — `users`,
-`allowlist`, `roles`, `flags`, `achievements`, `cosmetics`, `analytics`,
-`audit`, `feedback`); Task 8's E2E journey opens the flags tab via
+`allowlist`, `email`, `roles`, `flags`, `achievements`, `cosmetics`,
+`analytics`, `audit`, `feedback`); Task 8's E2E journey opens the flags tab via
 `admin-tab-flags`. The tab's own content is `admin/FeatureFlags.tsx` (the
 list) and `admin/FlagPanel.tsx` (the right-hand panel), both new files with no
 baselined backlog — every button/input in them is tagged.
@@ -486,6 +488,50 @@ which confirms in an in-page `Dialog` before calling `adminRemoveUserAccess`
 | `admin-user-remove-access-{userId}` | a row's "Remove access" button; opens the confirm dialog, never calls the API directly |
 | `admin-user-remove-body` | the confirm dialog's explanation (what removal does) |
 | `admin-user-remove-confirm` / `admin-user-remove-cancel` | the confirm dialog's buttons; confirm calls `adminRemoveUserAccess` then reloads the list |
+
+### `allowlist`
+
+The waitlist (`newsletter_emails`). Only signup rows (not approved, not
+joined) are selectable; selection survives filter changes, and the confirm
+dialog lists every selected address.
+
+| testid | element |
+| --- | --- |
+| `allowlist-search` | email search input |
+| `allowlist-add-input` / `allowlist-add` | add-an-address input and its "Allowlist" button (approves + sends the invite) |
+| `allowlist-filter-{all\|signup\|approved\|joined}` | status filter chips (with counts) |
+| `allowlist-select-all` | header checkbox: selects every selectable row under the current filter |
+| `allowlist-select-{email}` | a signup row's checkbox |
+| `allowlist-row-{email}` | a table row |
+| `allowlist-invite-{email}` | the row's "you're in" email status chip (`invite_status`) |
+| `allowlist-toggle-{email}` | the row's Approve / Revoke button |
+| `allowlist-bulk-approve` | "Approve selected (N)"; opens the confirm dialog |
+| `allowlist-bulk-confirm-text` | the confirm dialog's summary (count, and the not-configured caveat) |
+| `allowlist-bulk-confirm` / `allowlist-bulk-cancel` | the confirm dialog buttons; confirm calls `adminApproveAllowlistBulk` |
+
+### `email`
+
+Admin broadcasts. The final send is gated by typing the recipient count (or
+`SEND`) in the confirm dialog.
+
+| testid | element |
+| --- | --- |
+| `email-not-configured-banner` | shown on both the allowlist and email tabs when `GET /api/admin/email/status` says Resend isn't configured |
+| `email-subject` / `email-subject-count` | subject input and its 200-char counter |
+| `email-body` / `email-body-count` | plain-text body textarea and its 20000-char counter |
+| `email-variables` | the "Personalize:" chip row, one chip per `variables` entry from `GET /api/admin/email/status` (hidden when there are none) |
+| `email-variable-{key}` | one variable chip (`first_name`/`name`/`email`/`app_link`/`signin_link`); click inserts `{{key}}` at the caret of the last-focused field (subject or body; body by default) |
+| `email-unknown-variables` | inline warning listing the preview's `unknown_variables`; while shown, `email-send` and `email-send-test` are disabled |
+| `email-audience-{key}` | one audience radio (`waitlist_all`/`waitlist_pending`/`waitlist_approved_not_joined`/`users_all`) |
+| `email-preview` / `email-preview-subject` | the preview pane and its subject line |
+| `email-preview-frame` | sandboxed iframe whose `srcdoc` is the server-rendered email from `POST /api/admin/email/broadcasts/preview` (debounced) |
+| `email-preview-error` | inline "Couldn't load the preview." when the preview request fails |
+| `email-send-test` | "Send test to me" |
+| `email-send` | "Send to N people"; opens the confirm dialog |
+| `email-send-confirm-input` | the typed-confirmation input |
+| `email-send-confirm` / `email-send-cancel` | the confirm dialog buttons; confirm calls `adminSendBroadcast` |
+| `email-history` | the history table |
+| `email-history-row-{id}` / `email-history-status-{id}` | one broadcast row and its status chip |
 
 ### `profile`
 

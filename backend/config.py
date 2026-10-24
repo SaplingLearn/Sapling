@@ -58,6 +58,21 @@ AUTH_SCOPES = [
 ]
 
 
+# Transactional + broadcast email over Resend (services/email_service.py).
+# RESEND_API_KEY unset/empty is the kill switch: every send is still recorded in
+# `email_sends` (status `skipped`) and logged at INFO, but nothing leaves the
+# process. Tests, E2E and local dev run without it and never touch the network.
+# email_service reads these off this module at call time, so a test can patch them.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip() or "Sapling <hello@saplinglearn.com>"
+EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
+# Where the emails' header image loads from ({base}/email/header.jpg, built by
+# frontend/scripts/build-email-header.mjs into frontend/public/email/). Defaults to
+# FRONTEND_URL; staging sets it to the public prod site, since its own
+# frontend sits behind Cloudflare Access and a recipient couldn't load them.
+EMAIL_ASSET_BASE_URL = os.getenv("EMAIL_ASSET_BASE_URL", "").strip()
+
+
 STORAGE_BUCKET: str = "avatars"
 MAX_AVATAR_SIZE: int = 5 * 1024 * 1024  # 5 MB
 

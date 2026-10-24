@@ -5,7 +5,8 @@ import type {
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   GpaReport,
   ExtractedSyllabusCategory,
-  AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
+  AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -1315,6 +1316,45 @@ export const adminRevokeAllowlist = (email: string) =>
     method: 'POST',
     body: JSON.stringify({ email }),
   });
+
+/** Approve 1..500 addresses at once; each gets the "you're in" email server-side. */
+export const adminApproveAllowlistBulk = (emails: string[]) =>
+  fetchJSON<{ approved: number; emails: AllowlistEmail[] }>('/api/admin/allowlist/approve-bulk', {
+    method: 'POST',
+    body: JSON.stringify({ emails }),
+  });
+
+// Admin — email (Resend)
+export const adminEmailStatus = () =>
+  fetchJSON<EmailStatus>('/api/admin/email/status');
+
+export const adminEmailAudiences = () =>
+  fetchJSON<{ audiences: EmailAudience[] }>('/api/admin/email/audiences');
+
+/** Renders the draft exactly as it would go out; sends and records nothing. */
+export const adminPreviewBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<EmailBroadcastPreview>('/api/admin/email/broadcasts/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** Sends the draft to the signed-in admin only. */
+export const adminSendTestBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<{ status: string; to: string }>('/api/admin/email/broadcasts/test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** 202: the broadcast row comes back as `sending`; delivery continues in the background. */
+export const adminSendBroadcast = (payload: { subject: string; body: string; audience: EmailAudienceKey }) =>
+  fetchJSON<{ broadcast: EmailBroadcast }>('/api/admin/email/broadcasts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** Newest first. */
+export const adminListBroadcasts = () =>
+  fetchJSON<{ broadcasts: EmailBroadcast[] }>('/api/admin/email/broadcasts');
 
 // Admin — audit
 export const adminAuditLog = (params?: {

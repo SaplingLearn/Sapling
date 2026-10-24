@@ -808,22 +808,25 @@ class TestListAllowlist:
              "approved_at": "2026-05-03T00:00:00Z"},
         ]
         with _mock_admin(), patch("routes.admin.table") as t:
-            t.return_value.select.return_value = rows
+            # Paged read (db.connection.page_all) — the waitlist can pass max_rows.
+            t.return_value.select_with_count.return_value = (rows, len(rows))
+            t.return_value.select.return_value = []  # no email_sends yet
             r = client.get("/api/admin/allowlist")
         assert r.status_code == 200
-        assert r.json() == {"emails": rows}
-        t.assert_called_once_with("newsletter_emails")
-        call = t.return_value.select.call_args
+        # invite_status is null until a "you're in" send exists for the row.
+        assert r.json() == {"emails": [{**row, "invite_status": None} for row in rows]}
+        assert t.call_args_list[0].args == ("newsletter_emails",)
+        call = t.return_value.select_with_count.call_args
         columns = call.args[0] if call.args else call.kwargs["columns"]
         # Shape matches the frontend AllowlistEmail type (types.ts).
         assert {c.strip() for c in columns.split(",")} == {
             "id", "email", "created_at", "approved_at", "joined_at", "joined_user_id",
         }
-        assert call.kwargs.get("order") == "created_at.desc"
+        assert call.kwargs.get("order", "").startswith("created_at.desc")
 
     def test_empty_table_returns_empty_list(self):
         with _mock_admin(), patch("routes.admin.table") as t:
-            t.return_value.select.return_value = []
+            t.return_value.select_with_count.return_value = ([], 0)
             r = client.get("/api/admin/allowlist")
         assert r.status_code == 200
         assert r.json() == {"emails": []}

@@ -318,6 +318,31 @@ def _hermetic_supabase_client(request, monkeypatch):
     monkeypatch.setattr(dbconn, "_client", fake_client)
 
 
+class UnstubbedEmailEgress(RuntimeError):
+    """Raised by `_hermetic_email_transport` when a test reaches Resend."""
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_email_transport(monkeypatch):
+    """No test may send real email. A developer's .env can carry a real
+    RESEND_API_KEY (config.py load_dotenv()s it), so force the kill switch on
+    and cut the Resend client: a test that wants the send path patches both
+    back explicitly (see tests/test_email_service.py)."""
+    import config
+    from services import email_service
+
+    def _blocked(*_args, **_kwargs):
+        raise UnstubbedEmailEgress(
+            "unstubbed email egress: patch services.email_service._client"
+        )
+
+    fake = MagicMock(name="hermetic_resend_client")
+    fake.post.side_effect = _blocked
+    monkeypatch.setattr(config, "RESEND_API_KEY", "")
+    monkeypatch.setattr(email_service, "_client", fake)
+    monkeypatch.setattr(email_service, "_sleep", lambda _s: None)
+
+
 class UnstubbedLLMEgress(RuntimeError):
     """Raised by `_hermetic_llm_transport` when a test reaches the LLM network."""
 

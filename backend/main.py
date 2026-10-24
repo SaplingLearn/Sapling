@@ -29,6 +29,8 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_email import router as admin_email_router
+from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
@@ -321,7 +323,11 @@ app.include_router(flags_router,       prefix="/api/flags")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")
+app.include_router(admin_email_router, prefix="/api/admin/email")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
+# Public, no session: the unsubscribe page linked from every email (and the
+# RFC 8058 one-click POST). Token-authenticated; see routes/email.py.
+app.include_router(email_router,       prefix="/api/email")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
