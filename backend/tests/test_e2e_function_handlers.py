@@ -17,7 +17,7 @@ from __future__ import annotations
 import sys
 
 import pytest
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.anthropic import AnthropicModel
 
 import agents._providers as providers
 from agents._providers import clear_function_handlers, model_for
@@ -201,8 +201,8 @@ def test_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch):
     """Default lane unchanged: real mode keeps the per-request override."""
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     m = _resolve_model_pref("fast")
-    assert isinstance(m, GoogleModel)
-    assert m.model_name == "gemini-2.5-flash-lite"
+    assert isinstance(m, AnthropicModel)
+    assert m.model_name == "claude-haiku-5-5"
     assert _resolve_model_pref(None) is None
 
 
@@ -285,8 +285,8 @@ def test_quiz_resolve_model_pref_still_builds_override_in_real_mode(monkeypatch)
     """Default lane unchanged: real mode keeps the quiz per-request override."""
     monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
     m = _resolve_quiz_model_pref("smart")
-    assert isinstance(m, GoogleModel)
-    assert m.model_name == "gemini-2.5-pro"
+    assert isinstance(m, AnthropicModel)
+    assert m.model_name == "claude-sonnet-5-5"
     assert _resolve_quiz_model_pref(None) is None
 
 

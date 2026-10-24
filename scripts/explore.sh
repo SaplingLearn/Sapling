@@ -404,6 +404,9 @@ do_up() {
   # operator's actual shell — so there is nothing of the operator's to
   # preserve by deferring to `${GEMINI_API_KEY:-...}` here.
   export GEMINI_API_KEY=e2e-dummy-key-no-billing
+  # Same for the agents' provider (ADR 0030): function mode never dials Claude;
+  # the dummy makes sure a slip in this local-only harness can't bill either.
+  export ANTHROPIC_API_KEY=e2e-dummy-key-no-billing
   # SEED_RICH defaults to 1 in e2e-up.sh, but an ambient SEED_RICH=0 in the
   # operator's shell would silently defeat it — this harness requires the
   # rich dataset (mint_storage_state below dies late otherwise).

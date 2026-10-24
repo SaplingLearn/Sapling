@@ -1297,7 +1297,7 @@ class TestQuizModelPref:
         })
 
     def test_smart_pref_overrides_agent_model(self):
-        """model_pref='smart' → agent.run is called with model=GoogleModel('gemini-2.5-pro')."""
+        """model_pref='smart' → agent.run is called with model=AnthropicModel('claude-sonnet-5-5')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -1308,10 +1308,10 @@ class TestQuizModelPref:
         assert run_mock.call_count == 1
         kwargs = run_mock.call_args.kwargs
         assert "model" in kwargs, "smart pref must pass an explicit model override"
-        assert kwargs["model"].model_name == "gemini-2.5-pro"
+        assert kwargs["model"].model_name == "claude-sonnet-5-5"
 
     def test_fast_pref_overrides_agent_model(self):
-        """model_pref='fast' → agent.run is called with model=GoogleModel('gemini-2.5-flash-lite')."""
+        """model_pref='fast' → agent.run is called with model=AnthropicModel('claude-haiku-5-5')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -1321,7 +1321,7 @@ class TestQuizModelPref:
         assert r.status_code == 200
         kwargs = run_mock.call_args.kwargs
         assert "model" in kwargs
-        assert kwargs["model"].model_name == "gemini-2.5-flash-lite"
+        assert kwargs["model"].model_name == "claude-haiku-5-5"
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO model kwarg, falls back to model_for('quiz')."""

@@ -64,13 +64,16 @@ def _clear_rate_limit_state():
 def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
+    from agents._providers import clear_override_model_cache
     from services import academics, course_context_service, feature_flags, growth
+    clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
     yield
+    clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
@@ -365,6 +368,14 @@ _GENAI_EGRESS_METHODS = (
 # worse than no guard at all — fail loudly instead.
 _GENAI_REQUIRED_METHODS = ("request", "async_request")
 
+# The Anthropic SDK's equivalent chokepoint (ADR 0030 — every agent slot
+# defaults to Claude). Every Messages call, streamed or not, goes through
+# `SyncAPIClient.request` / `AsyncAPIClient.request` in anthropic._base_client;
+# the agents only ever build `AsyncAnthropic` (via pydantic-ai's
+# AnthropicProvider, one per event loop), but both are patched so a stray sync
+# client is caught too. Class-level for the same reason as google-genai's.
+_ANTHROPIC_EGRESS_CLASSES = ("SyncAPIClient", "AsyncAPIClient")
+
 
 @pytest.fixture(autouse=True)
 def _hermetic_llm_transport(request, monkeypatch):
@@ -376,7 +387,8 @@ def _hermetic_llm_transport(request, monkeypatch):
     dummy one, dev machines have a real one) turns a unit test into a real,
     billable network call — silently, since a passing test looks identical
     either way. Rather than stub agent logic, we cut the wire underneath it:
-    the google-genai transport class raises instead of dialling out, so an
+    the google-genai and anthropic transport classes raise instead of
+    dialling out, so an
     unstubbed call path fails with a pointed error naming the escape hatch.
 
     The opt-in lanes are the exceptions: `e2e_staging` and `integration` talk to
@@ -389,15 +401,17 @@ def _hermetic_llm_transport(request, monkeypatch):
         or request.node.get_closest_marker("live_llm")
     ):
         return
+    from anthropic import _base_client as anthropic_base_client
     from google.genai import _api_client as genai_api_client
 
     def _blocked(*_args, **_kwargs):
         raise UnstubbedLLMEgress(
-            "unstubbed LLM egress: this test reached the google-genai transport "
-            "(google.genai._api_client.BaseApiClient) and would have made a real, "
-            "billable model call. Patch the service/agent seam the code path uses "
-            "(e.g. <agent>.run, services.rag_service._client), or mark the "
-            "test @pytest.mark.live_llm if the live call is intentional."
+            "unstubbed LLM egress: this test reached an LLM provider transport "
+            "(google.genai._api_client.BaseApiClient or "
+            "anthropic._base_client.*APIClient.request) and would have made a "
+            "real, billable model call. Patch the service/agent seam the code "
+            "path uses (e.g. <agent>.run, services.rag_service._client), or "
+            "mark the test @pytest.mark.live_llm if the live call is intentional."
         )
 
     # Lets tests assert the guard is installed without invoking it.
@@ -417,6 +431,17 @@ def _hermetic_llm_transport(request, monkeypatch):
             "moved its transport seam. Update _GENAI_EGRESS_METHODS in "
             "tests/conftest.py; do not leave the suite unguarded."
         )
+
+    for cls_name in _ANTHROPIC_EGRESS_CLASSES:
+        cls = getattr(anthropic_base_client, cls_name, None)
+        if cls is None or not hasattr(cls, "request"):  # pragma: no cover
+            raise RuntimeError(
+                f"hermetic LLM guard could not patch anthropic._base_client."
+                f"{cls_name}.request — the installed anthropic SDK moved its "
+                "transport seam. Update _ANTHROPIC_EGRESS_CLASSES in "
+                "tests/conftest.py; do not leave the suite unguarded."
+            )
+        monkeypatch.setattr(cls, "request", _blocked)
 
 
 @pytest.fixture(autouse=True)

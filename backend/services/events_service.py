@@ -296,7 +296,7 @@ def log_llm_usage(
     task: str | None,
     model: str,
     usage: Any,
-    provider: str = "gemini",
+    provider: str | None = None,
     user_id: str | None = None,
     request_id: str | None = None,
     requests: int | None = None,
@@ -305,10 +305,11 @@ def log_llm_usage(
 
     ``usage`` is any Pydantic AI / Gemini usage object (or dict); it is
     normalized here and the cost computed from ``llm_pricing.MODEL_PRICING``
-    (``cost_usd = NULL`` for unpriced models). ``requests`` is how many model
-    calls the row bills; omitted, it is read off ``usage.requests`` (Pydantic
-    AI's RunUsage carries it). Writers whose usage shape has no such field
-    (the Jev decision row) pass it.
+    (``cost_usd = NULL`` for unpriced models). ``provider`` defaults to the
+    label the served ``model`` implies (``llm_pricing.usage_provider``).
+    ``requests`` is how many model calls the row bills; omitted, it is read
+    off ``usage.requests`` (Pydantic AI's RunUsage carries it). Writers whose
+    usage shape has no such field (the Jev decision row) pass it.
     """
     try:
         _warn_zero_token_usage(usage, requests, feature=feature, task=task, model=model)
@@ -318,18 +319,21 @@ def log_llm_usage(
         return
     try:
         tokens = llm_pricing.normalize_usage(usage)
+        cache_read, cache_write = llm_pricing.cache_usage(usage)
         row = {
             "user_id": user_id,
             "request_id": request_id if request_id is not None else current_request_id(),
             "feature": feature,
             "task": task,
             "model": model,
-            "provider": provider,
+            "provider": provider or llm_pricing.usage_provider(model),
             "prompt_tokens": tokens["prompt_tokens"],
             "completion_tokens": tokens["completion_tokens"],
             "total_tokens": tokens["total_tokens"],
             "cost_usd": llm_pricing.cost_usd(
                 model, tokens["prompt_tokens"], tokens["completion_tokens"],
+                cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+                requests=requests or llm_pricing.request_count(usage),
             ),
         }
         _enqueue("llm_usage", row)

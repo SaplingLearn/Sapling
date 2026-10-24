@@ -173,7 +173,7 @@ def _prepare(user_message="What is the chain rule?", course_id="c1", **overrides
         message_history=[],
         use_shared_context=True,
         request_id="r1",
-        model_pref="fast",  # skip _build_pro_model_settings
+        model_pref="fast",  # skip _build_deep_turn_model_settings
     )
     kwargs.update(overrides)
     return _prepare_chat_run(**kwargs)
