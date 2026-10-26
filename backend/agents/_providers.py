@@ -26,9 +26,11 @@ import importlib
 import os
 import threading
 import weakref
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -257,6 +259,38 @@ def _new_anthropic_provider() -> AnthropicProvider:
     return AnthropicProvider(api_key=ANTHROPIC_API_KEY or "dummy-key-for-import")
 
 
+def _require_anthropic_key(model_name: str) -> None:
+    """Fail a Claude request before it leaves the process when no key is set.
+
+    APP_ENV=local boots without ANTHROPIC_API_KEY (`config.validate_config`),
+    and the dummy key above would otherwise send every request to Anthropic
+    only to come back as a 401 whose cause sits in the response body of a long
+    traceback. `ModelAPIError` is the family a real 401 raises
+    (`ModelHTTPError` subclasses it), so every route's existing handling is
+    unchanged; only the message now names the fix. Reads the module global at
+    call time so tests can patch it."""
+    if not ANTHROPIC_API_KEY:
+        raise ModelAPIError(
+            model_name,
+            "ANTHROPIC_API_KEY is not set, so Claude cannot be called. Set it "
+            "in backend/.env and restart the backend (APP_ENV=local boots "
+            "without it, but every Claude-backed feature needs it).",
+        )
+
+
+def anthropic_key_missing() -> bool:
+    """True when a real-mode slot would call Claude with no key configured.
+
+    For the startup warning in `main._lifespan`. Function mode never reaches a
+    provider, and a deployment that points every slot back at Gemini needs no
+    Anthropic key, so neither counts as missing."""
+    if ANTHROPIC_API_KEY or _model_mode() != "real":
+        return False
+    return any(
+        provider_for_model(model_name_for(task)) == "anthropic" for task in _DEFAULTS
+    )
+
+
 # ── #354 root-cause fix: loop-scoped provider, resolved at READ time ───────
 #
 # Every agent is built ONCE, at import time, from `Agent(model=model_for(task),
@@ -444,6 +478,23 @@ class _LoopSafeAnthropicModel(_LoopSafeProviderMixin, AnthropicModel):
 
     def _new_loop_provider(self) -> AnthropicProvider:
         return _new_anthropic_provider()
+
+    # The key guard rides the two request paths (`.run` and the SSE tutor's
+    # streamed run). This is not the loop-safety story above, which still
+    # needs no `request` override; see `_require_anthropic_key`.
+    async def request(self, messages, model_settings, model_request_parameters):
+        _require_anthropic_key(self.model_name)
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self, messages, model_settings, model_request_parameters, run_context=None
+    ):
+        _require_anthropic_key(self.model_name)
+        async with super().request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as response:
+            yield response
 
     def prepare_request(self, model_settings, model_request_parameters):
         # Resolve the 'auto' output mode to the profile default BEFORE

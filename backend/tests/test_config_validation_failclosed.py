@@ -61,6 +61,15 @@ class TestValidateConfig:
         _set_required(monkeypatch, SESSION_SECRET="", IS_LOCAL=True)
         config.validate_config()  # no raise — relaxed for local dev
 
+    def test_anthropic_key_optional_in_local(self, monkeypatch):
+        _set_required(monkeypatch, ANTHROPIC_API_KEY="", IS_LOCAL=True)
+        config.validate_config()
+
+    def test_anthropic_key_required_outside_local(self, monkeypatch):
+        _set_required(monkeypatch, ANTHROPIC_API_KEY="", IS_LOCAL=False)
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            config.validate_config()
+
     def test_weak_session_secret_rejected_outside_local(self, monkeypatch):
         # Present-but-weak must NOT pass: whitespace-only and a too-short secret
         # would become a weak HMAC key. >= 32 bytes is required (matches FE).
