@@ -28,6 +28,7 @@ from agents._providers import (
     _ANTHROPIC_MAX_TOKENS,
     _DEFAULTS,
     _anthropic_profile,
+    anthropic_key_missing,
     model_for,
     provider_for_model,
     provider_model,
@@ -249,6 +250,53 @@ def test_the_seam_uses_a_dummy_key_when_unset(monkeypatch):
     monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
     provider = _providers._new_anthropic_provider()
     assert provider.client.api_key == "dummy-key-for-import"
+
+
+def test_a_blank_key_fails_before_the_request_leaves(monkeypatch, captured_create):
+    """APP_ENV=local boots without a key. A Claude call then names the missing
+    env var instead of sending the dummy key off for a 401 (`captured_create`
+    raising `_Sent` here would mean the request reached the SDK)."""
+    from pydantic_ai.exceptions import ModelAPIError
+
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
+    agent = Agent(provider_model("claude-haiku-5-5", task="classifier"), output_type=str)
+    with pytest.raises(ModelAPIError, match="ANTHROPIC_API_KEY is not set"):
+        asyncio.run(agent.run("hi"))
+
+
+def test_a_blank_key_fails_a_streamed_run_too(monkeypatch, captured_create):
+    """The SSE tutor streams, which goes through `request_stream`."""
+    from pydantic_ai.exceptions import ModelAPIError
+
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
+    agent = Agent(provider_model("claude-sonnet-5-5", task="chat_tutor"), output_type=str)
+
+    async def _go():
+        async with agent.run_stream("hi") as result:
+            await result.get_output()
+
+    with pytest.raises(ModelAPIError, match="ANTHROPIC_API_KEY is not set"):
+        asyncio.run(_go())
+
+
+def test_anthropic_key_missing_only_when_a_real_claude_slot_has_no_key(monkeypatch):
+    monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
+    assert anthropic_key_missing() is True
+
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "sk-ant-test")
+    assert anthropic_key_missing() is False
+
+    # Function mode never reaches a provider.
+    monkeypatch.setattr(_providers, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert anthropic_key_missing() is False
+
+    # Every slot rolled back to Gemini needs no Anthropic key.
+    monkeypatch.delenv("SAPLING_MODEL_MODE")
+    for task in _DEFAULTS:
+        monkeypatch.setenv(f"SAPLING_MODEL_{task.upper()}", "gemini-2.5-flash")
+    assert anthropic_key_missing() is False
 
 
 # ── Local bounds (Claude can't enforce maxLength/maxItems at decode) ─────
