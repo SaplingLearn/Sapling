@@ -355,9 +355,9 @@ class ChecklistGeneration:
     error: BaseException | None = None
 
 
-async def _generate(payload: dict, user_id: str, reservation: checklist_budget.Reservation, *, agent=None) -> ChecklistGeneration:
+async def _generate(payload: dict, user_id: str, reservation: checklist_budget.Reservation, *, agent=None, approved_model=checklist_budget.MODEL) -> ChecklistGeneration:
     usage = RunUsage()
-    dispatches = ChecklistDispatches(reservation=reservation)
+    dispatches = ChecklistDispatches(reservation=reservation, approved_model=approved_model)
     try:
         result = await asyncio.wait_for((agent or topic_checklist_agent).run(
             json.dumps(payload), deps=payload, usage=usage, usage_limits=CHECKLIST_LIMITS,
@@ -387,7 +387,7 @@ def _finish_generation(generation: ChecklistGeneration, payload: dict, *, publis
         try:
             receipt = prepare_checklist_usage_receipt(
                 operation_id=tracker.reservation.operation_id,
-                user_id=tracker.reservation.user_id, approved_model=checklist_budget.MODEL,
+                user_id=tracker.reservation.user_id, approved_model=getattr(tracker, "approved_model", checklist_budget.MODEL),
                 responses=tuple(tracker.responses), dispatched_requests=tracker.dispatched,
                 usage=generation.usage,
                 # A semantic/validation failure does not erase complete bills.

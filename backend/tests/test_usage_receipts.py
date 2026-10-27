@@ -364,3 +364,18 @@ def test_pricing_failure_returns_unavailable_without_leaking_failure_text(monkey
     monkeypatch.setattr(llm_pricing, "cost_usd", fail)
     with pytest.raises(UsageReceiptUnavailable, match="^Usage pricing is unavailable$"):
         prepare()
+
+
+def test_anthropic_native_usage_receipt_is_priced_without_cache_or_duplicate_queue():
+    responses = (response(model="claude-haiku-5-5-20261001", provider="anthropic", usage=RequestUsage(
+        input_tokens=1000, output_tokens=500, details={"input_tokens": 1000, "output_tokens": 500},
+    )),)
+    row = prepare_responses(responses, approved_model="claude-haiku-5-5").to_row()
+    assert row["provider"] == "anthropic"
+    assert row["model"] == "claude-haiku-5-5"
+    assert row["cost_usd"] == .00035
+    assert row["cached_tokens"] == 0
+    with pytest.raises(UsageReceiptUnavailable):
+        prepare_responses((response(model="claude-haiku-5-5", provider="anthropic", usage=RequestUsage(
+            input_tokens=1000, output_tokens=500, cache_read_tokens=100,
+        )),), approved_model="claude-haiku-5-5")

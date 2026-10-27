@@ -2,13 +2,17 @@
 
 ## Student flow
 
-Open **Study → Study Plans** (`/study?mode=plan`) and choose a course. The feature
-also remains available from **Knowledge map → course → Study plan**. The UI uses
-PR #728's cream/sage surface and shared heading and typography.
-For retaken courses, select the intended semester. Choose **New assessment** or
+Open **Study → Study Guide** (`/study?mode=guide`) and choose a course.
+The old `/study?mode=plan` URL opens the same combined workspace. The feature
+also remains available from **Knowledge map → course → Study guide**.
+The UI keeps PR #728's cream/sage surface and shared typography.
+All enrolled courses are shown as active; there is no semester selector or global
+semester filtering in this feature. Ownership remains enrollment-scoped internally,
+with the backend resolving the current or most recent owned enrollment. Choose **New assessment** or
 **Create a study plan**, enter a quiz/exam name and date, then describe its
 coverage and/or select assignments and library documents from that enrollment.
-Choose study days, a start date, and daily available minutes. Dates use the
+Choose study days and a start date. Sapling recommends daily study time from the
+topics, remaining dates, and concept progress; students do not enter hours. Dates use the
 browser's IANA timezone, stored with the plan.
 
 Neither an existing assignment nor a date extracted from a document is required.
@@ -37,7 +41,10 @@ concept names where possible. An unmatched topic remains unassessed, rather than
 receiving an invented score. This is concept progress, not an exam-readiness score.
 Mastery is cumulative across the abstract course, as in the knowledge map.
 
-Session checkboxes record study activity only. They never update graph mastery.
+Topic checklist checkboxes and daily-session checkboxes share the same study
+activity: checking a topic finishes its initial study session (or review for an
+already-mastered topic). They never update graph mastery. The checklist separately
+shows topics studied and topics mastered.
 Plan topics, including added topics, can be edited or removed. Saving topic edits
 rebuilds unfinished sessions and retains completed sessions for retained topics.
 Renaming a topic can change its graph match. Material selection/coverage is fixed
@@ -45,7 +52,10 @@ after creation; create a new assessment plan for different source coverage.
 
 ## Scheduling
 
-Scheduling is deterministic, without another model call. It prioritizes weak and
+Scheduling is deterministic, without another model call. Automatic estimates
+use 25-minute focus blocks and distribute work across available days. Suggested
+daily time is capped at 120 minutes; unrealistic deadlines produce coverage
+warnings rather than an unlimited workload. It prioritizes weak and
 important concepts, visits prerequisites before dependents, allocates first
 coverage before repeat review, and reviews already mastered topics. Sessions use
 25-minute estimates (or the daily limit if smaller). Review repeats occur on a
@@ -92,8 +102,7 @@ POST body example:
   "coverage": "Cell structure and membranes",
   "document_ids": [],
   "assignment_ids": [],
-  "study_days": [0, 1, 2, 3, 4],
-  "minutes_per_day": 60
+  "study_days": [0, 1, 2, 3, 4]
 }
 ```
 
@@ -115,15 +124,79 @@ It checks ownership, reads the saved encrypted content, and never generates or w
 The new guide overview and study points are stored inside the existing encrypted
 assessment-plan payload; no additional schema change is needed for unification.
 
+## Local testing without resetting your database
+
+The October 26 environment check confirmed this machine's backend and frontend
+point to local Supabase, with matching session secrets. The feature's 31 pending
+local migrations were applied using the existing runner, including the encrypted
+assessment-plan table. No database reset, hosted migration, or environment-file
+change was performed.
+
+Keep Docker Desktop and the existing local Supabase stack running. Restart your
+backend and frontend after switching to `feature/unified-assessment-guide`:
+
+```powershell
+# Terminal 1, from repository root
+cd backend
+.\venv\Scripts\python.exe -X utf8 main.py
+
+# Terminal 2, from repository root
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:3000/study?mode=guide` and sign in normally. Choose any enrolled course. Create an assessment, manually enter a future
+date, and attach documents/assignments and/or describe its coverage. The date does
+not need to exist in the material. Check the overview and study points alongside
+the schedule, finish a session and reload, edit a topic, and move/replan sessions.
+Then choose **New assessment**: the previous name, date and sources must be cleared.
+
+For a repeatable **no-paid-AI**, real-storage check (from `backend/`):
+
+```powershell
+.\venv\Scripts\python.exe -X utf8 -m scripts.smoke_assessment_guide
+```
+
+This uses the existing rich seed account/course, creates an undated temporary
+document and assessment through the real service/routes, checks encrypted storage
+through an independent SQL connection, and deletes only its own temporary rows.
+It checks guide content, scheduling, persistence, unchanged mastery, stale-edit
+rejection, rescheduling, semester isolation and deletion. It refuses non-loopback
+database/API URLs or non-local/test environments. It does not reset or reseed your
+database. `--user-id`, `--course-id` and `--semester` can name another existing local
+enrollment. No separately running frontend/backend is needed for this smoke check.
+
+Real guide generation uses the `assessment_guide` Anthropic slot, matching the
+current implementation's loop-safe Claude native-output profile. It requires
+`ANTHROPIC_API_KEY` on the backend; a missing key returns a clear error before any
+generation reservation. No key was added or edited here.
+
+To test the UI without a model key, start the backend from a fresh PowerShell
+terminal using the existing deterministic handler seam:
+
+```powershell
+cd C:\Users\luke6\sapling\backend
+$env:SAPLING_MODEL_MODE = 'function'
+$env:SAPLING_FUNCTION_HANDLERS = 'agents.function_handlers_e2e'
+.\venv\Scripts\python.exe -X utf8 main.py
+```
+
+Keep the local database running and start the frontend normally in another
+terminal. These are **sample responses**, not live AI. Use the seeded CS course
+with coverage such as `Recursion and Variables and Types` for this deterministic
+handler. The standalone smoke check above exercises this flow automatically.
+Use a fresh backend terminal without those mode overrides when a real Anthropic
+key becomes available. No live Anthropic generation has been verified here.
+
 ## Deployment
 
-When running against a hosted database, a local frontend/backend still writes to
-that hosted project. Do not use the live project to trial a branch's migrations.
-The October 21 read-only check found 34 pending migrations on the configured live
-project, including the FSRS flashcard fields, learner state, check items and this
-feature's table. These explain flashcard/review errors; Docker is unrelated.
-Use a separate development/staging Supabase project and its environment settings
-to apply and test the pending schema. No hosted migration was applied here.
+The migration must be reviewed and applied through the normal staging/promotion
+workflow before deploying the backend. No hosted migration has been applied here.
+Keep actual `.env` files out of the PR. This branch retains its PR #728 baseline.
+Assessment guides use Anthropic token counting and receipts. The append-only
+`20261027012000_assessment_anthropic_receipts.sql` migration extends settlement
+to the pinned Haiku slot while preserving existing Gemini course-checklist
+receipts and conservative reservation limits. It was applied only locally.
 
 Missing tables/columns/functions now produce a safe 503 with migration guidance.
 The Study view displays the error and offers retry, rather than reporting an
@@ -174,23 +247,43 @@ Manual checks:
 5. Try an unrealistic deadline/time budget and confirm an explicit coverage warning.
 6. Open the same plan in two windows, edit one, then edit the other. Confirm the
    stale edit is rejected and refreshing loads the saved version.
-7. Switch course/semester; neither plans nor selectable materials should leak
-   between enrollments. Check the stacked schedule/checklist on a narrow screen.
+7. Select another course; neither plans nor selectable materials should leak
+   between courses. Changing the global semester must not hide study-guide courses. Check the stacked schedule/checklist on a narrow screen.
 
-### Implementation validation (October 21, 2026)
+### Implementation validation (October 26, 2026 — latest follow-up)
 
-- Baseline: PR #728 head `a4c99e7c`. Environment files and unrelated local skill
-  changes were preserved. Nothing was pushed or applied to hosted databases.
-- Full frontend unit suite: 1,791 passed, 2 skipped. Obsolete tests for the removed
-  second guide-creation flow were replaced with unified-flow and saved-history tests.
-- Frontend typecheck and production build passed; lint passed with 19 existing warnings.
-- Backend regression selections: 248 passed, including the combined-agent evidence test. These exercise scheduling, manual dates, undated sources,
-  access control, encrypted payloads, concurrency, budgets and existing checklist behavior.
-- Backend lint passed. Scoped `.gitattributes` preserves canonical graph SVG LF bytes.
-- The memory-only browser preview uses the real plan service/routes with fixed sample
-  generation and external requests blocked. Verified guide overview/study points,
-  manual dates, schedule bounds, completion/reload and no external requests. Its data
-  lasts until the preview process stops; this is not real-storage validation.
-- The new migration was not applied. Real-storage integration and full-app Playwright
-  tests still require a disposable database. The live project's missing migrations
-  prevent claiming a verified production deployment.
+- Creation conflicts no longer masquerade as stale edits; the draft's old Gemini
+  generation path was replaced for this feature with Anthropic, and missing-key
+  failures occur before reserving capacity.
+- The guide is now an interactive topic checklist with synchronized daily focus
+  sessions, automatic study-time recommendations, and explicit Library attachments.
+- Anthropic native SDK serialization/counting and receipts are tested using only
+  an in-process mock. SQL settlement and replay were tested inside a rolled-back
+  local transaction. No live Anthropic call was made.
+
+
+- Real local Supabase smoke passed with an undated document, a manually entered
+  date, guide content, encrypted SQL storage, persistence, unchanged mastery,
+  rescheduling, stale-write rejection, semester isolation and deletion.
+- Real browser → Next.js → FastAPI → local Supabase check passed: guide creation,
+  overview/study points and schedule, completion/reload, topic editing and mobile
+  overflow check. Model output was deterministic; no paid AI calls were made.
+- The new-assessment form regression was reproduced before fixing it and passes
+  after clearing reused form state. Local sign-in defaults preserve the backend
+  fix without weakening shared-deployment defaults.
+- The existing reset-based integration suite remains opt-in; it was not run against
+  the developer's populated database. Use the non-destructive smoke above instead.
+- Regression checks: 1,792 frontend tests passed (2 skipped), 353 backend tests
+  passed, typecheck and production build passed, and lint passed with the existing
+  frontend warnings.
+- No shared database changes, environment-file edits, commits or pushes were made.
+
+
+### Final course-selection adjustment
+
+All enrolled courses are treated as active in the study guide. The global semester
+filter cannot hide its courses, and both the standalone guide and graph-embedded
+panel omit semester controls. Saved-guide history is filtered by course only.
+The backend still resolves an owned enrollment automatically; no stored records
+or enrollment relationships were rewritten. Eighteen targeted frontend tests,
+including the global-filter regression, passed after this change.

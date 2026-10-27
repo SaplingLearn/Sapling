@@ -6,6 +6,7 @@ from learning.params import PROBE_PLAN_READS_PER_MIN
 
 load_dotenv()
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -35,12 +36,13 @@ LOCAL_APP_ENVS = frozenset({"local", "development", "dev", "test"})  # every oth
 IS_LOCAL = APP_ENV in LOCAL_APP_ENVS
 
 # Sign-in email-domain allowlist. Comma-separated; empty value = allow any domain.
-# Default preserves prod's @bu.edu-only behavior. Staging can widen this (e.g.
+# Local dev defaults to any domain; shared deployments remain @bu.edu-only.
+# Explicit values override either default. Staging can widen this (e.g.
 # "bu.edu,saplinglearn.com") or set it empty to allow any Google account — safe
 # on staging because Cloudflare Access already gates who reaches the app at all.
 ALLOWED_EMAIL_DOMAINS = [
     d.strip().lstrip("@").lower()
-    for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "bu.edu").split(",")
+    for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "" if APP_ENV == "local" else "bu.edu").split(",")
     if d.strip()
 ]
 
@@ -147,7 +149,8 @@ def validate_config() -> None:
         missing.append("SUPABASE_URL")
     if not SUPABASE_SERVICE_KEY:
         missing.append("SUPABASE_SERVICE_KEY")
-    if not GEMINI_API_KEY:
+    offline_local = IS_LOCAL and os.getenv("SAPLING_MODEL_MODE", "").strip().lower() == "function"
+    if not GEMINI_API_KEY and not offline_local:
         missing.append("GEMINI_API_KEY")
     if not IS_LOCAL and len((SESSION_SECRET or "").strip().encode("utf-8")) < 32:
         missing.append("SESSION_SECRET (must be set and >= 32 bytes)")

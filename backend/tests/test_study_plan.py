@@ -294,3 +294,16 @@ def test_invalid_inputs(changes):
     data = request().model_dump()
     with pytest.raises(ValidationError):
         svc.PlanCreate.model_validate({**data, **changes})
+
+
+def test_automatic_time_spreads_daily_focus_and_recomputes_after_date_edit(state):
+    plan = svc.create_plan("u", "course", request())
+    assert plan["automatic_time"] is True
+    assert plan["minutes_per_day"] == 25
+    study = [s for s in plan["sessions"] if s["kind"] == "study"]
+    assert len({s["scheduled_date"] for s in study}) == len(study)
+    settings = request().model_dump(mode="json")
+    settings["assessment_date"] = "2026-10-22"
+    changed = svc.update_plan("u", "course", UUID(plan["id"]), svc.PlanUpdate(version=1, settings=settings))
+    assert changed["automatic_time"] is True
+    assert changed["minutes_per_day"] > plan["minutes_per_day"]

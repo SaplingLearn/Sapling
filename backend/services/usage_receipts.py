@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
+import re
 import json
 from uuid import UUID, NAMESPACE_URL, uuid5
 
@@ -53,14 +54,16 @@ def _model(value: object) -> str:
     name = _label(value, "model")
     if ":" in name:
         provider, name = name.split(":", 1)
-        if provider != "google-gla":
+        if provider not in {"google-gla", "anthropic"} or (provider == "anthropic") != name.startswith("claude-"):
             raise UsageReceiptUnavailable("Unsupported receipt provider")
+    if re.fullmatch(r"claude-haiku-5-5(?:-[0-9]{8})?", name):
+        return "claude-haiku-5-5"
     if not name.startswith("gemini-") or ":" in name:
         raise UsageReceiptUnavailable("Unsupported receipt model")
     return name
 
 
-def _text_counts(usage, *, aggregate: bool = False) -> tuple[int, int, int, int]:
+def _text_counts(usage, *, aggregate: bool = False, anthropic: bool = False) -> tuple[int, int, int, int]:
     prompt, completion = _count(usage.input_tokens), _count(usage.output_tokens)
     # Every complete structured checklist response has nonempty output and
     # nonempty instructions. Zero counters cannot certify an extracted bill.
@@ -80,6 +83,16 @@ def _text_counts(usage, *, aggregate: bool = False) -> tuple[int, int, int, int]
     details = usage.details
     if not isinstance(details, dict):
         raise UsageReceiptUnavailable("Usage details are unavailable")
+    if anthropic:
+        allowed = {"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"}
+        if usage.cache_read_tokens or any(_count(value) != 0 for key, value in details.items() if key not in allowed):
+            raise UsageReceiptUnavailable("Unsupported Anthropic usage component")
+        if details.get("cache_creation_input_tokens", 0) or details.get("cache_read_input_tokens", 0):
+            raise UsageReceiptUnavailable("Assessment guides do not authorize prompt caching")
+        for key, count in (("input_tokens", prompt), ("output_tokens", completion)):
+            if key in details and _count(details[key]) != count:
+                raise UsageReceiptUnavailable("Anthropic counters disagree")
+        return prompt, completion, 0, 0
     text_details = {"text_prompt_tokens", "text_candidates_tokens", "text_cache_tokens"}
     for key, value in details.items():
         if (
@@ -154,16 +167,18 @@ def prepare_checklist_usage_receipt(
         or _count(dispatched_requests) != requests
     ):
         raise UsageReceiptUnavailable("Every dispatched request needs a measured response")
+    anthropic = canonical == "claude-haiku-5-5"
+    providers = {"anthropic"} if anthropic else {"google", "google-gla"}
     if any(
         not isinstance(r, ModelResponse)
         or r.state != "complete"
-        or r.provider_name not in {"google", "google-gla"}
+        or r.provider_name not in providers
         or _model(r.model_name) != canonical
         for r in responses
     ):
         raise UsageReceiptUnavailable("An aggregate receipt requires complete same-model responses")
-    measured = [_text_counts(r.usage) for r in responses]
-    prompt, completion, cached, thinking = _text_counts(usage, aggregate=True)
+    measured = [_text_counts(r.usage, anthropic=anthropic) for r in responses]
+    prompt, completion, cached, thinking = _text_counts(usage, aggregate=True, anthropic=anthropic)
     if tuple(sum(values) for values in zip(*measured, strict=True)) != (
         prompt,
         completion,
@@ -189,7 +204,7 @@ def prepare_checklist_usage_receipt(
             feature="topic_checklist",
             task="topic_checklist",
             model=canonical,
-            provider="gemini",
+            provider="anthropic" if anthropic else "gemini",
             usage=usage,
             user_id=user_id,
             request_id=request_id,

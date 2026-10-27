@@ -32,6 +32,7 @@ logger = logging.getLogger("sapling.llm_pricing")
 # ``cost_usd = NULL``. Update this map (not the call sites) when prices change
 # or a new model ships.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-haiku-5-5": (0.0001, 0.0005),
     "gemini-2.5-pro": (0.00125, 0.010),
     "gemini-2.5-flash": (0.0003, 0.0025),
     "gemini-2.5-flash-lite": (0.0001, 0.0004),

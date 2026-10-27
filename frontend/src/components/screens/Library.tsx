@@ -860,11 +860,11 @@ export function DetailPanel({
             <Link href={`/learn?course=${encodeURIComponent(doc.course_id)}`} className={styles.link} data-testid="library-detail-ask-clov">
               Ask Clov about {courseLabel}
             </Link>
+            {" "}opens Clov for this course. Clov draws on your course materials, but won&apos;t open this file by itself.
             <br />
             <Link href={`/study?mode=guide&course=${encodeURIComponent(doc.course_id)}&document=${encodeURIComponent(doc.id)}`} className={styles.link} data-testid="library-detail-study-plan">
               Prepare for a quiz or exam with this material
             </Link>
-            {" "}opens Clov for this course. Clov draws on your course materials, but won&apos;t open this file by itself.
           </p>
         )}
       </section>

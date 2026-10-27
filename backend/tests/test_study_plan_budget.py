@@ -8,6 +8,11 @@ from fastapi import HTTPException
 from services import study_plan_service as svc
 
 
+@pytest.fixture(autouse=True)
+def nonbillable_mode(monkeypatch):
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+
+
 def test_plan_generation_uses_budgeted_dispatch_without_replacing_course_outline(monkeypatch):
     reservation = object()
     generation = SimpleNamespace(outline=object())
@@ -93,3 +98,45 @@ def test_combined_agent_retries_unsupported_evidence_and_returns_guide_points():
     assert len(calls) == 2
     assert result.output.overview == "Review functions before recursion."
     assert result.output.topics[0].study_points == ["Explain how inputs map to outputs."]
+
+
+def test_guide_wire_schema_avoids_provider_state_explosion_but_validates_locally():
+    import json
+    from pydantic import ValidationError
+    from agents.assessment_guide import AssessmentGuide
+
+    schema = json.dumps(AssessmentGuide.model_json_schema())
+    for constraint in ("maxLength", "minLength", "maxItems", "minItems", "minimum", "maximum"):
+        assert constraint not in schema
+    with pytest.raises(ValidationError):
+        AssessmentGuide.model_validate({"overview": "x" * 1201, "topics": []})
+    with pytest.raises(ValidationError):
+        AssessmentGuide.model_validate({"overview": "Valid overview", "topics": [{
+            "name": "Recursion", "description": "Base cases", "importance": .9,
+            "source_ids": ["notes"], "study_points": ["x" * 501],
+        }]})
+
+
+def test_missing_anthropic_key_stops_before_reserving_or_dispatching(monkeypatch):
+    admit = Mock()
+    monkeypatch.setattr(svc, "model_mode", lambda: "real")
+    monkeypatch.setattr(svc.config, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(svc.checklist_budget, "admit", admit)
+    with pytest.raises(HTTPException) as error:
+        svc.generate_topics({"sources": []}, "u", "enrollment")
+    assert error.value.status_code == 503
+    assert "Anthropic API key" in error.value.detail
+    admit.assert_not_called()
+
+
+def test_assessment_slot_uses_current_anthropic_native_profile_without_network(monkeypatch):
+    from agents import _providers
+    from pydantic_ai.models.anthropic import AnthropicModel
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+    monkeypatch.delenv("SAPLING_MODEL_ASSESSMENT_GUIDE", raising=False)
+    model = _providers.model_for("assessment_guide")
+    assert isinstance(model, AnthropicModel)
+    assert model.model_name == "claude-haiku-5-5"
+    assert model.profile.default_structured_output_mode == "native"
+    assert model.settings["max_tokens"] == 8192
+    assert model.client.max_retries == 0

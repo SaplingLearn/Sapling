@@ -56,6 +56,11 @@ class TestValidateConfig:
         _set_required(monkeypatch, SESSION_SECRET="", IS_LOCAL=True)
         config.validate_config()  # no raise — relaxed for local dev
 
+    def test_local_function_mode_needs_no_model_key(self, monkeypatch):
+        _set_required(monkeypatch, GEMINI_API_KEY="", IS_LOCAL=True)
+        monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+        config.validate_config()
+
     def test_weak_session_secret_rejected_outside_local(self, monkeypatch):
         # Present-but-weak must NOT pass: whitespace-only and a too-short secret
         # would become a weak HMAC key. >= 32 bytes is required (matches FE).

@@ -6,6 +6,7 @@ is derived on every read from the same course graph used by the knowledge map.
 from __future__ import annotations
 
 import logging
+import math
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -16,6 +17,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
+import config
+from agents._providers import model_mode, model_name_for
 from agents._run import run_agent_sync
 from agents.topic_checklist import normalized_name
 from agents.assessment_guide import assessment_guide_agent
@@ -43,7 +46,7 @@ class PlanCreate(StrictModel):
     document_ids: list[str] = Field(default_factory=list, max_length=20)
     assignment_ids: list[str] = Field(default_factory=list, max_length=20)
     study_days: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
-    minutes_per_day: int = Field(default=60, ge=15, le=480, strict=True)
+    minutes_per_day: int | None = Field(default=None, ge=15, le=480, strict=True)
 
     @field_validator("document_ids", "assignment_ids")
     @classmethod
@@ -173,6 +176,22 @@ def _validate_topics(topics: list[dict], source_ids: set[str]) -> None:
             visit(key, set())
 
 
+def recommended_daily_minutes(content: dict, nodes: list[dict], today: date) -> int:
+    """Estimate from topic workload and remaining days; never claim learning speed."""
+    start = max(date.fromisoformat(content["start_date"]), today)
+    end = date.fromisoformat(content["assessment_date"])
+    days = sum((start + timedelta(days=i)).weekday() in content["study_days"]
+               for i in range(max(0, (end - start).days)))
+    completed = {(s["topic_id"], s["kind"]) for s in content.get("sessions", []) if s["completed"]}
+    units = 0
+    for topic in _progress(content["topics"], nodes):
+        kinds = ["review"] if topic["checked"] else ["study", "review"]
+        units += sum((topic["id"], kind) not in completed for kind in kinds)
+    # 25-minute focus sessions, capped at two hours rather than inventing
+    # unlimited availability. Coverage warnings expose unrealistic deadlines.
+    return min(120, max(25, 25 * ((units + max(days, 1) - 1) // max(days, 1))))
+
+
 def build_schedule(content: dict, nodes: list[dict], today: date) -> tuple[list[dict], list[str]]:
     """Respect availability/capacity; explicitly report any unscheduled work.
 
@@ -204,6 +223,8 @@ def build_schedule(content: dict, nodes: list[dict], today: date) -> tuple[list[
     completed = {(s["topic_id"], s["kind"]): date.fromisoformat(s["scheduled_date"]) for s in sessions}
 
     def place(topic, kind, candidates):
+        if content.get("automatic_time"):
+            candidates = sorted(candidates, key=lambda d: used[d.isoformat()])
         for day in candidates:
             key = day.isoformat()
             if used[key] + duration <= content["minutes_per_day"]:
@@ -313,10 +334,25 @@ def generate_topics(payload: dict, user_id: str, enrollment_id: str):
     An assessment outline has narrower coverage than the course checklist. Settle
     the model receipt normally, but save its topics only in the assessment plan.
     """
+    if model_mode() == "real":
+        if not config.ANTHROPIC_API_KEY:
+            raise HTTPException(503, "Study guide generation requires an Anthropic API key on the backend. You can run the local no-key smoke test while that key is unavailable." if config.IS_LOCAL else "Study guide generation is temporarily unavailable. Please try again later.")
+        if model_name_for("assessment_guide") != "claude-haiku-5-5":
+            raise HTTPException(503, "The configured study guide model needs an approved usage policy.")
+    # The existing .07644 hold exceeds Haiku's .017288 maximum for this envelope.
+    from services.llm_pricing import cost_usd
+    maximum_cost = cost_usd("claude-haiku-5-5", 50000, 3 * 8192)
+    if not isinstance(maximum_cost, (int, float)) or not math.isfinite(maximum_cost) or not 0 < maximum_cost <= float(checklist_budget.HOLD_USD):
+        raise HTTPException(503, "Study guide usage policy needs an update.")
     digest = hashlib.sha256(json.dumps({"purpose": "assessment-plan", "operation": str(uuid4()),
                                        "payload": payload}, sort_keys=True).encode()).hexdigest()
     with checklist._generation_slot(user_id):
-        reservation = checklist_budget.admit(user_id, enrollment_id, digest)
+        try:
+            reservation = checklist_budget.admit(user_id, enrollment_id, digest)
+        except HTTPException as error:
+            if error.status_code == 409:
+                raise HTTPException(409, "An earlier study guide request is still in progress or awaiting confirmation. Wait two minutes before trying again. Your assessment details have been kept.", headers=error.headers) from None
+            raise
         if reservation is None:
             raise HTTPException(409, "Please retry creating this assessment plan.")
         try:
@@ -329,7 +365,7 @@ def generate_topics(payload: dict, user_id: str, enrollment_id: str):
         except BaseException:
             checklist_budget.reconcile(reservation, no_dispatch=True)
             raise
-        generation = run_agent_sync(checklist._generate(payload, user_id, reservation, agent=assessment_guide_agent))
+        generation = run_agent_sync(checklist._generate(payload, user_id, reservation, agent=assessment_guide_agent, approved_model="claude-haiku-5-5"))
         checklist._finish_generation(generation, payload, publish=False)
         return generation.outline
 
@@ -364,7 +400,9 @@ def create_plan(user_id: str, course_id: str, data: PlanCreate, semester: str | 
     content = {**data.model_dump(mode="json"), "topics": topics,
                "guide_overview": getattr(outline, "overview", ""),
                "sources": [{"id": s["id"], "label": s["label"]} for s in payload["sources"]],
-               "source_warnings": warnings}
+               "source_warnings": warnings, "automatic_time": data.minutes_per_day is None}
+    if content["automatic_time"]:
+        content["minutes_per_day"] = recommended_daily_minutes(content, nodes, today)
     content["sessions"], scheduling_warnings = build_schedule(content, nodes, today)
     content["warnings"] = warnings + scheduling_warnings
     now = datetime.now(timezone.utc).isoformat()
@@ -393,6 +431,7 @@ def update_plan(user_id: str, course_id: str, plan_id: UUID, data: PlanUpdate, s
         if data.settings.assessment_date <= _today(data.settings.timezone):
             raise HTTPException(422, "Choose an assessment date after today.")
         content.update(settings)
+        content["automatic_time"] = data.settings.minutes_per_day is None
     if data.title is not None:
         content["title"] = data.title
     if data.topics is not None:
@@ -418,6 +457,8 @@ def update_plan(user_id: str, course_id: str, plan_id: UUID, data: PlanUpdate, s
         if data.session.completed is not None:
             session["completed"] = data.session.completed
     if data.regenerate or data.topics is not None or data.settings is not None:
+        if content.get("automatic_time"):
+            content["minutes_per_day"] = recommended_daily_minutes(content, nodes, _today(content["timezone"]))
         content["sessions"], warnings = build_schedule(content, nodes, _today(content["timezone"]))
         content["warnings"] = content["source_warnings"] + warnings
     content["sessions"].sort(key=lambda s: (s["scheduled_date"], s["kind"] == "review"))

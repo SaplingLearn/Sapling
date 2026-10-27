@@ -94,9 +94,8 @@ export function Study() {
       .catch(err => console.error("study courses load failed", err));
   }, [userReady, userId]);
 
-  // Scope the study surfaces to the active semester's courses (course pickers,
-  // guide/flashcard generation). Study has no graph fetch of its own, so this
-  // client-side filter is all the scoping it needs.
+  // Flashcards retain their existing semester behavior. The assessment guide
+  // treats all enrolled courses as active and always receives the full list.
   const scopedCourses = React.useMemo(
     () => (activeSemester ? courses.filter(c => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
@@ -114,7 +113,7 @@ export function Study() {
       <div className="fa26-study-header"><span>Study from your course material</span><StudyNavigation active={mode} onSelect={setMode} /></div>
       <StudyModePanel mode={mode}>
         {mode === "guide" ? (
-          <StudyPlans courses={scopedCourses} semester={activeSemester} semesterReady={semesterHydrated} initialCourseId={planCourseId} initialDocumentId={searchParams.get("document") || ""} />
+          <StudyPlans courses={courses} initialCourseId={planCourseId} initialDocumentId={searchParams.get("document") || ""} />
         ) : (
           <FlashcardsMode
             courses={scopedCourses}

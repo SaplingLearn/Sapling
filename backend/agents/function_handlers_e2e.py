@@ -776,3 +776,5 @@ def _topic_checklist_handler(messages, info) -> ModelResponse:
 
 
 register_function_handler("topic_checklist", _topic_checklist_handler)
+
+register_function_handler("assessment_guide", _topic_checklist_handler)

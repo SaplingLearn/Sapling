@@ -22,6 +22,10 @@ the Pro tier for the conversational tutor where reasoning depth matters.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+from pydantic_ai.providers.anthropic import AnthropicProvider
 import asyncio
 import importlib
 import os
@@ -32,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-from config import GEMINI_API_KEY
+from config import ANTHROPIC_API_KEY, GEMINI_API_KEY
 
 if TYPE_CHECKING:  # keep pydantic-ai's function-model imports out of the prod path
     from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -41,6 +45,7 @@ if TYPE_CHECKING:  # keep pydantic-ai's function-model imports out of the prod p
 
 
 AgentTask = Literal[
+    "assessment_guide",
     "classifier", "summary", "concepts", "syllabus", "quiz", "chat_tutor",
     "note_summary", "note_concepts", "note_chat",
     "study_guide", "social_summary",
@@ -65,6 +70,7 @@ AgentTask = Literal[
 # Defaults are conservative. Bumping a model up costs more; the env var
 # escape hatch lets us A/B without redeploying.
 _DEFAULTS: dict[AgentTask, str] = {
+    "assessment_guide": "claude-haiku-5-5",
     "topic_checklist": "gemini-2.5-flash",
     "classifier": "gemini-2.5-flash-lite",
     "summary": "gemini-2.5-flash-lite",
@@ -524,6 +530,140 @@ def model_name_for(task: AgentTask) -> str:
     return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
 
 
+# Same loop-affine Anthropic construction/profile as the current implementation.
+_CLAUDE_5_PREFIXES = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-5", "claude-fable-5", "claude-mythos-5")
+
+def _anthropic_profile(model_name: str) -> AnthropicModelProfile:
+    profile = AnthropicModelProfile.from_profile(
+        AnthropicProvider.model_profile(model_name)
+    )
+    if model_name.startswith(_CLAUDE_5_PREFIXES):
+        profile = profile.update(
+            AnthropicModelProfile(
+                supports_json_schema_output=True,
+                anthropic_supports_adaptive_thinking=True,
+                anthropic_supports_effort=True,
+                anthropic_supports_xhigh_effort=True,
+                anthropic_disallows_budget_thinking=True,
+                anthropic_disallows_sampling_settings=True,
+                anthropic_supports_forced_tool_choice=False,
+            )
+        )
+    if profile.supports_json_schema_output:
+        # Structured output via `output_config.format` (constrained JSON)
+        # instead of pydantic-ai's default output TOOL: the output tool is
+        # what forces `tool_choice`, which thinking-on Claude models refuse.
+        # Set here, at the provider, so the agents keep a plain
+        # `output_type=Model` and a slot pointed back at Gemini keeps
+        # Gemini's own default (tool output — Gemini 2.5 can't combine native
+        # output with function tools, which the quiz agent has).
+        profile = replace(profile, default_structured_output_mode="native")
+    return profile
+
+def _new_anthropic_provider() -> AnthropicProvider:
+    """A fresh `AnthropicProvider` — a fresh `AsyncAnthropic` client over its
+    OWN httpx pool (pydantic-ai's `create_async_http_client()`, not a cached
+    shared one), so the per-loop cache below gets a genuinely loop-private
+    connection pool. Same dummy-key-for-import rule as `_new_provider`."""
+    from anthropic import AsyncAnthropic
+    # Dispatch accounting observes each attempt; do not hide retries in the SDK.
+    return AnthropicProvider(anthropic_client=AsyncAnthropic(
+        api_key=ANTHROPIC_API_KEY or "dummy-key-for-import", max_retries=0,
+    ))
+
+class _LoopSafeProviderMixin:
+    """`.client` resolves the provider bound to the CURRENTLY RUNNING event
+    loop at every access, instead of caching one on `self`. See the
+    module-level comment above for why (#354/#436, and the fix-round-1
+    correction to this class's first version, which cached a shared
+    `self._provider` pointer and raced under concurrent requests).
+
+    Mix in BEFORE the concrete pydantic-ai model so this `client` property
+    wins the MRO, and call `_init_loop_safety()` after the model's own
+    `__init__` (whose `provider=` becomes the fixed template)."""
+
+    _provider: Any
+
+    def _new_loop_provider(self) -> Any:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+    def _init_loop_safety(self) -> None:
+        self._loop_providers: "weakref.WeakKeyDictionary[Any, Any]" = (
+            weakref.WeakKeyDictionary()
+        )
+        self._loop_providers_lock = threading.Lock()
+
+    def _provider_for_current_loop(self) -> Any:
+        """The provider bound to whichever event loop is running RIGHT NOW,
+        creating one on first use. Deliberately never cached anywhere on
+        `self` — every caller (`client`, `__aenter__`, `__aexit__`) calls
+        this at the exact point of use, so the result can never go stale by
+        the time it's read. Caching it into an instance attribute between
+        "resolve" and "use" is exactly the fix-round-1 bug this replaces."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — a plain sync caller inspecting `.client`
+            # outside any asyncio context (e.g. a test). Nothing can race
+            # this: with no loop, there is no concurrent request in flight
+            # to collide with. The fixed template is a safe, deterministic
+            # fallback.
+            return self._provider
+        with self._loop_providers_lock:
+            provider = self._loop_providers.get(loop)
+            if provider is None:
+                provider = self._new_loop_provider()
+                self._loop_providers[loop] = provider
+            return provider
+
+    @property
+    def client(self):
+        return self._provider_for_current_loop().client
+
+    async def __aenter__(self):
+        provider = self._provider_for_current_loop()
+        await provider.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        provider = self._provider_for_current_loop()
+        await provider.__aexit__(exc_type, exc_val, exc_tb)
+
+class _LoopSafeAnthropicModel(_LoopSafeProviderMixin, AnthropicModel):
+    """An `AnthropicModel` with a per-event-loop provider (see the mixin) and
+    the Claude 5.x profile from `_anthropic_profile`."""
+
+    def __init__(
+        self, model_name: str, *, settings: AnthropicModelSettings | None = None
+    ) -> None:
+        super().__init__(
+            model_name,
+            provider=_new_anthropic_provider(),
+            profile=_anthropic_profile(model_name),
+            settings=settings,
+        )
+        self._init_loop_safety()
+
+    def _new_loop_provider(self) -> AnthropicProvider:
+        return _new_anthropic_provider()
+
+    def prepare_request(self, model_settings, model_request_parameters):
+        # Resolve the 'auto' output mode to the profile default BEFORE
+        # AnthropicModel.prepare_request runs. pydantic-ai 1.107 only marks a
+        # native output schema strict (→ `additionalProperties: false`,
+        # unsupported constraints moved into descriptions) when the mode is
+        # ALREADY 'native' on entry; a profile-default 'native' is resolved
+        # later, in the base class, so the schema went out non-strict and
+        # Claude 400'd every structured call ("additionalProperties must be
+        # explicitly set to false"). Explicit `NativeOutput(...)` never hit
+        # this, which is why upstream only exercises it through our profile.
+        return super().prepare_request(
+            model_settings,
+            model_request_parameters.with_default_output_mode(
+                self.profile.default_structured_output_mode
+            ),
+        )
+
 def model_for(task: AgentTask) -> "Model":
     """Return the configured model for a given pipeline task.
 
@@ -536,7 +676,12 @@ def model_for(task: AgentTask) -> "Model":
     """
     mode = _model_mode()
     if mode == "real":
-        return _LoopSafeGoogleModel(model_name_for(task))
+        name = model_name_for(task)
+        if name.startswith("claude-"):
+            return _LoopSafeAnthropicModel(name, settings=AnthropicModelSettings(max_tokens=8192, anthropic_effort="medium"))
+        if task == "assessment_guide":
+            raise ValueError("Assessment guides require the configured Anthropic model.")
+        return _LoopSafeGoogleModel(name)
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":

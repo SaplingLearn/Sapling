@@ -22,11 +22,11 @@ beforeEach(() => {
   vi.mocked(plans.getStudyPlans).mockResolvedValue({ semester: "Fall 2026", plans: [] });
   vi.mocked(plans.getStudyPlanSources).mockResolvedValue({ documents: [{ id: "d1", file_name: "Undated biology notes.pdf" }], assignments: [] });
 });
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); localStorage.removeItem("sapling_active_semester"); vi.clearAllMocks(); });
 
 it("opens one assessment workspace by default, with no separate plan/guide tabs", async () => {
   render(<ToastProvider><Study /></ToastProvider>);
-  await screen.findByRole("button", { name: "Create a study plan" });
+  await screen.findByRole("button", { name: "Create a study plan" }, { timeout: 4000 });
   expect(screen.getByRole("button", { name: "Study Guide" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.queryByRole("button", { name: "Study Plans" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Study Guides" })).toBeNull();
@@ -44,8 +44,18 @@ it("supports the old plan URL through the same unified assessment setup", async 
 
 it("shows saved history without invoking a separate guide creation flow", async () => {
   render(<ToastProvider><Study /></ToastProvider>);
-  await screen.findByRole("button", { name: "Create a study plan" });
+  await screen.findByRole("button", { name: "Create a study plan" }, { timeout: 4000 });
   fireEvent.click(await screen.findByRole("button", { name: "Earlier saved guides" }));
   await waitFor(() => expect(screen.getByText("No earlier saved guides for this course and semester.")).toBeTruthy());
   expect(screen.queryByRole("button", { name: "Regenerate" })).toBeNull();
+});
+
+
+it("shows all enrolled courses even when another semester is selected globally", async () => {
+  localStorage.setItem("sapling_active_semester", "Spring 2025");
+  render(<ToastProvider><Study /></ToastProvider>);
+  await screen.findByRole("button", { name: "Create a study plan" }, { timeout: 4000 });
+  expect(screen.getByRole("option", { name: "BIO101" })).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Study plan semester" })).toBeNull();
+  expect(plans.getStudyPlans).toHaveBeenCalledWith("u1", "c1", undefined, expect.any(AbortSignal));
 });

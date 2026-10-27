@@ -420,6 +420,19 @@ def _hermetic_llm_transport(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_anthropic_transport(request, monkeypatch):
+    if any(request.node.get_closest_marker(marker) for marker in ("integration", "e2e_staging", "live_llm")):
+        return
+    from anthropic._base_client import AsyncAPIClient, SyncAPIClient
+
+    def refuse(*args, **kwargs):
+        raise UnstubbedLLMEgress("unstubbed Anthropic egress: use a local model/transport or the explicit live_llm lane")
+
+    monkeypatch.setattr(AsyncAPIClient, "request", refuse)
+    monkeypatch.setattr(SyncAPIClient, "request", refuse)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_jev_transport(request, monkeypatch):
     """The `_hermetic_llm_transport` guarantee for Jev (PKG-15): no test reaches
     api.typesafe.ai. Every agents/_jev.py client is built on its

@@ -1,10 +1,11 @@
 """Opt-in real PostgREST/SQL checks for encrypted plans and enrollment cascades."""
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
+from agents.topic_checklist_model import wrap_topic_checklist_model
 from agents.assessment_guide import assessment_guide_agent
 from services.encryption import decrypt_json
 from tests.integration.conftest import USER_ACTIVE, _client_for
@@ -22,8 +23,8 @@ def test_plan_storage_conflicts_live_mastery_and_enrollment_cascade(db_conn, see
     client = _client_for(USER_ACTIVE)
     path = f"/api/topic-checklist/{USER_ACTIVE}/courses/rich-course-cs101/plans"
     params = {"semester": "Spring 2026"}
-    today = date.today()
-    with assessment_guide_agent.override(model=FunctionModel(handler)):
+    today = datetime.now(timezone.utc).date()
+    with assessment_guide_agent.override(model=wrap_topic_checklist_model(FunctionModel(handler))):
         response = client.post(path, params=params, json={
             "title": "Recursion midterm", "coverage": "Recursion", "start_date": today.isoformat(),
             "assessment_date": (today + timedelta(days=10)).isoformat(), "timezone": "UTC",

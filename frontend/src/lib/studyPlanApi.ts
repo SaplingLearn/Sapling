@@ -30,10 +30,12 @@ export interface PlanInput {
   document_ids: string[];
   assignment_ids: string[];
   study_days: number[];
-  minutes_per_day: number;
+  minutes_per_day?: number;
 }
 
 export interface StudyPlan extends PlanInput {
+  minutes_per_day: number;
+  automatic_time?: boolean;
   guide_overview?: string;
   id: string;
   version: number;

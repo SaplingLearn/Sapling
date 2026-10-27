@@ -19,6 +19,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters, check_allow_model_requests
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -38,6 +39,12 @@ class _ChecklistInputCounter(WrapperModel):
             # has no native tokenizer. This is never a real-provider fallback;
             # its returned response usage still meets the ordinary run limits.
             return RequestUsage(input_tokens=0)
+        if isinstance(model, AnthropicModel):
+            # Anthropic's native counter includes system, tools and JSON output.
+            counted = await model.count_tokens(messages, model_settings, model_request_parameters)
+            if type(counted.input_tokens) is not int or counted.input_tokens <= 0:
+                raise UnexpectedModelBehavior("Anthropic token counter returned no valid token count.")
+            return counted
         if not isinstance(model, GoogleModel) or model.system not in {"google", "google-gla"}:
             raise UserError("Checklist input counting requires the Gemini Developer API model.")
 

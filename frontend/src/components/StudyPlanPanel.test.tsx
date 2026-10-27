@@ -40,17 +40,18 @@ describe("Assessment study plan", () => {
     open();
     await screen.findByText("0 of 1 mastered");
     expect(screen.getByText("Connect cell structure to its function before reviewing transport.")).toBeTruthy();
-    expect(screen.getByText("Explain the role of each organelle.")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Your study schedule" })).toBeTruthy();
+    expect(screen.getAllByText("Explain the role of each organelle.")).not.toHaveLength(0);
+    expect(screen.getByRole("heading", { name: "Your daily focus" })).toBeTruthy();
     expect(api.getStudyPlans).toHaveBeenCalledWith("u", "c", "Fall 2026", expect.any(AbortSignal));
     expect(screen.getByRole("progressbar", { name: "Cells mastery" })).toHaveAttribute("value", "0.5");
     const completed = fixture();
     completed.version = 2;
     completed.sessions[0].completed = true;
     vi.mocked(api.updateStudyPlan).mockResolvedValue(completed);
-    fireEvent.click(screen.getByRole("checkbox"));
-    await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked());
+    fireEvent.click(screen.getByTestId("study-plan-session-session"));
+    await waitFor(() => expect(screen.getByTestId("study-plan-session-session")).toBeChecked());
     expect(screen.getByText("0 of 1 mastered")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Studied: Cells" })).toBeChecked();
     expect(api.updateStudyPlan).toHaveBeenCalledWith("u", "c", expect.objectContaining({ version: 1 }),
       { session: { id: "session", completed: true } }, "Fall 2026", expect.any(AbortSignal));
   });
@@ -66,9 +67,14 @@ describe("Assessment study plan", () => {
     fireEvent.click(screen.getByLabelText("Lecture.pdf"));
     fireEvent.click(screen.getByRole("button", { name: "Generate study plan" }));
     await screen.findByText("0 of 1 mastered");
+    expect(screen.queryByLabelText("Minutes per study day")).toBeNull();
     expect(api.createStudyPlan).toHaveBeenCalledWith("u", "c", expect.objectContaining({
       title: "Biology midterm", assessment_date: "2027-01-30", document_ids: ["doc"],
     }), undefined, expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole("button", { name: "New assessment" }));
+    expect(screen.getByLabelText("Assessment name")).toHaveValue("");
+    expect(screen.getByLabelText("Assessment date")).toHaveValue("");
+    expect(screen.getByLabelText("Lecture.pdf")).not.toBeChecked();
   });
 
   it("allows an undated exam and undated material with a manually entered date", async () => {
@@ -114,14 +120,27 @@ describe("Assessment study plan", () => {
     expect(vi.mocked(api.updateStudyPlan).mock.calls[1][3]).toEqual({ session: { id: "session", scheduled_date: "2027-01-23" } });
   });
 
+  it("shows a generation conflict rather than claiming a new plan was edited", async () => {
+    vi.mocked(api.getStudyPlans).mockResolvedValue({ semester: "Fall 2026", plans: [] });
+    vi.mocked(api.createStudyPlan).mockRejectedValue(new ApiError(JSON.stringify({detail: "An earlier generation is still in progress. Try again shortly."}), 409));
+    render(<StudyPlanPanel userId="u" courseId="c" expanded />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create a study plan" }));
+    fireEvent.change(screen.getByLabelText("Assessment name"), { target: { value: "Midterm" } });
+    fireEvent.change(screen.getByLabelText("Assessment date"), { target: { value: "2027-01-30" } });
+    fireEvent.change(screen.getByLabelText("What does it cover?"), { target: { value: "Cells" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate study plan" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("An earlier generation is still in progress");
+    expect(screen.queryByText(/changed in another window/)).toBeNull();
+  });
+
   it("retains the current plan when a stale write fails and offers a refresh", async () => {
     vi.mocked(api.updateStudyPlan).mockRejectedValue(new ApiError("conflict", 409));
     render(<StudyPlanPanel userId="u" courseId="c" />);
     open();
     await screen.findByText("0 of 1 mastered");
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByTestId("study-plan-session-session"));
     await screen.findByRole("alert");
-    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    expect(screen.getByTestId("study-plan-session-session")).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Refresh progress" }));
     await waitFor(() => expect(api.getStudyPlans).toHaveBeenCalledTimes(2));
   });

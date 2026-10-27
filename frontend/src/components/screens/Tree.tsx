@@ -570,7 +570,7 @@ export function Tree() {
       </div>
 
       {courseFilter !== "all" && userId && (
-        <StudyPlanPanel key={`${userId}:${courseFilter}:${activeSemester}`} userId={userId} courseId={courseFilter} semester={activeSemester || undefined} semesters={courses.find((course) => course.course_id === courseFilter)?.terms} />
+        <StudyPlanPanel key={`${userId}:${courseFilter}`} userId={userId} courseId={courseFilter} />
       )}
 
       {/* The graph row absorbs whatever `<main>` has left after the TopBar and

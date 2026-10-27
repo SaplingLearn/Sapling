@@ -2,6 +2,7 @@
 
 import React, { useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
+import { extractErrorDetail } from "@/lib/errorMessage";
 import {
   createStudyPlan, deleteStudyPlan, getStudyPlans, getStudyPlanSources, updateStudyPlan,
   type PlanChanges, type PlanInput, type PlanSources, type PlanTopic, type StudyPlan,
@@ -27,12 +28,15 @@ function offsetDate(value: string, days: number) {
 function initialInput(): PlanInput {
   return { title: "", assessment_type: "exam", assessment_date: "", start_date: localDate(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", coverage: "",
-    document_ids: [], assignment_ids: [], study_days: [0, 1, 2, 3, 4, 5, 6], minutes_per_day: 60 };
+    document_ids: [], assignment_ids: [], study_days: [0, 1, 2, 3, 4, 5, 6] };
 }
 
-function message(error: unknown) {
+function message(error: unknown, creating = false) {
   if (error instanceof ApiError) {
-    if (error.status === 409) return "This plan changed in another window. Refresh progress, then try again.";
+    if (error.status === 409 && !creating) return "This plan changed in another window. Refresh progress, then try again.";
+    const detail = extractErrorDetail(error).detail;
+    if (detail) return detail;
+    if (error.status === 409) return "An earlier guide generation is still in progress. Wait a moment, then try again.";
     if (error.status === 429) return "Please wait a moment before generating another plan.";
     const body = error.body as { detail?: unknown } | undefined;
     if (typeof body?.detail === "string") return body.detail;
@@ -40,19 +44,22 @@ function message(error: unknown) {
   return "Could not save or load your study plan. Please try again.";
 }
 
+function topicSession(plan: StudyPlan, topicId: string) {
+  return plan.sessions.find((session) => session.topic_id === topicId && session.kind === "study")
+    || plan.sessions.find((session) => session.topic_id === topicId);
+}
+
 function editableTopics(plan: StudyPlan): PlanTopic[] {
   return plan.topics.map(({ id, name, description, parent_id, prerequisite_ids, source_ids, importance, study_points }) =>
     ({ id, name, description, parent_id, prerequisite_ids, source_ids, importance, study_points }));
 }
 
-export function StudyPlanPanel({ userId, courseId, semester, semesters = [], expanded = false, initialDocumentId = "" }: {
-  userId: string; courseId: string; semester?: string; semesters?: string[]; expanded?: boolean; initialDocumentId?: string;
+export function StudyPlanPanel({ userId, courseId, semester, expanded = false, initialDocumentId = "" }: {
+  userId: string; courseId: string; semester?: string; expanded?: boolean; initialDocumentId?: string;
 }) {
   const contentId = useId();
   const [open, setOpen] = useState(expanded);
-  const [selectedSemester, setSelectedSemester] = useState("");
-  const scopedSemester = semester || selectedSemester || undefined;
-  const [term, setTerm] = useState("");
+  const scopedSemester = semester;
   const [plans, setPlans] = useState<StudyPlan[]>([]);
   const [sources, setSources] = useState<PlanSources>({ documents: [], assignments: [] });
   const [input, setInput] = useState<PlanInput>(initialInput);
@@ -90,7 +97,6 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
     ]).then(([result, available]) => {
       if (abort.signal.aborted || generation.current !== version) return;
       setPlans(result.plans);
-      setTerm(result.semester);
       setSources(available);
       setSelected((previous) => result.plans.some((p) => p.id === previous) ? previous : result.plans[0]?.id || "");
       setLoaded(true);
@@ -141,7 +147,7 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
     } catch (err) {
       if (!abort.signal.aborted && generation.current === version) {
         if (rollback) setPlans((previous) => previous.map((p) => p.id === rollback.id ? rollback : p));
-        setError(message(err));
+        setError(message(err, creating));
       }
     } finally {
       if (!abort.signal.aborted && generation.current === version) setBusy(false);
@@ -161,6 +167,13 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
     }
     void mutate((signal) => updateStudyPlan(userId, courseId, plan, changes, scopedSemester, signal), changes.session ? plan : undefined);
   };
+  const beginAssessment = () => {
+    setInput(initialInput());
+    setCreating(true);
+    setDraft(null);
+    setSettings(null);
+    setError("");
+  };
   const chooseSource = (field: "document_ids" | "assignment_ids", id: string, checked: boolean) => {
     setInput((previous) => ({ ...previous, [field]: checked ? [...previous[field], id] : previous[field].filter((v) => v !== id) }));
   };
@@ -172,22 +185,15 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
     {open && <div ref={content} id={contentId} className={styles.content} aria-busy={busy}>
       <div className={styles.toolbar}>
         {!expanded && <PageHeading title="Prepare for your next assessment" level={2} description="Plan your study time. Watch your topic progress grow as you practice." />}
-        {!semester && semesters.length > 1 && <label>Semester
-          <select value={selectedSemester} onChange={(e) => setSelectedSemester(e.target.value)} aria-label="Study plan semester">
-            <option value="">Current or most recent</option>
-            {semesters.map((value) => <option key={value}>{value}</option>)}
-          </select>
-        </label>}
-        {term && <small>{term}</small>}
         <button className="btn btn--sm" disabled={busy} onClick={() => setReload((n) => n + 1)}>Refresh progress</button>
-        {loaded && <button className="btn btn--sm" disabled={busy} onClick={() => { setCreating(true); setDraft(null); }}>New assessment</button>}
+        {loaded && <button className="btn btn--sm" disabled={busy} onClick={beginAssessment}>New assessment</button>}
       </div>
       {busy && <p role="status">{creating ? "Building your plan…" : "Updating study plan…"}</p>}
       {error && <p role="alert" className={styles.error}>{error}</p>}
       {loaded && !plans.length && !creating && <div className={styles.empty}>
         <h3>What are you preparing for?</h3>
         <p>Add a quiz or exam and choose the materials it covers. Sapling will suggest topics and a schedule before the assessment.</p>
-        <button data-testid="study-plan-create" className="btn btn--sm" disabled={busy} onClick={() => setCreating(true)}>Create a study plan</button>
+        <button data-testid="study-plan-create" className="btn btn--sm" disabled={busy} onClick={beginAssessment}>Create a study plan</button>
       </div>}
       {creating && <form className={styles.setup} onSubmit={(e) => {
         e.preventDefault();
@@ -195,7 +201,7 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
       }}>
         <fieldset disabled={busy}>
           <legend>Assessment details</legend>
-          <p className={styles.hint}>Your materials do not need a date. Enter your quiz or exam date below, then attach any relevant documents or assignments.</p>
+          <p className={styles.hint}>Enter your quiz or exam date, then attach relevant files from your Library, including study guides and assignments. Sapling turns those topics into one checklist with a daily study focus.</p>
           <label>Existing quiz or exam (optional)<select data-testid="study-plan-existing-assessment" defaultValue="" onChange={(e) => {
             const assessment = sources.assignments.find((a) => a.id === e.target.value);
             if (!assessment) return;
@@ -210,16 +216,16 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
             <label>Type<select value={input.assessment_type} onChange={(e) => setInput({ ...input, assessment_type: e.target.value as "quiz" | "exam" })}><option value="exam">Exam</option><option value="quiz">Quiz</option></select></label>
             <label>Start studying<input type="date" required min={localDate()} value={input.start_date} onChange={(e) => setInput({ ...input, start_date: e.target.value })} /></label>
             <label>Assessment date<input data-testid="study-plan-exam-date" type="date" required min={offsetDate(input.start_date, 1)} value={input.assessment_date} onChange={(e) => setInput({ ...input, assessment_date: e.target.value })} /></label>
-            <label>Minutes per study day<input type="number" required min={15} max={480} value={input.minutes_per_day} onChange={(e) => setInput({ ...input, minutes_per_day: Number(e.target.value) })} /></label>
           </div>
           <label>What does it cover?<textarea data-testid="study-plan-coverage" maxLength={4000} value={input.coverage} onChange={(e) => setInput({ ...input, coverage: e.target.value })} placeholder="Chapters 3–5: cell structure, membranes and transport" /></label>
-          <p className={styles.hint}>Describe the coverage, select materials below, or use both. Topics are suggested from this context.</p>
+          <p className={styles.hint}>Describe the coverage, attach Library files below, or use both. Sapling recommends daily focus topics and study time from your topic checklist and assessment date.</p>
         </fieldset>
         <fieldset disabled={busy}><legend>Available study days</legend><div className={styles.days}>
           {DAYS.map((day, index) => <label key={day}><input type="checkbox" checked={input.study_days.includes(index)} onChange={(e) => setInput({ ...input, study_days: e.target.checked ? [...input.study_days, index] : input.study_days.filter((d) => d !== index) })} />{day}</label>)}
         </div><small>Dates use {input.timezone}. The assessment day is reserved for the assessment.</small></fieldset>
-        <fieldset disabled={busy}><legend>Relevant library materials</legend>
-          {!sources.documents.length && <p>No documents in this course yet. You can describe coverage above.</p>}
+        <fieldset disabled={busy}><legend>Attach files from your Library</legend>
+          <p className={styles.hint}>Select existing study guides, assignment files, lecture notes, slides, or readings from your Library. Sapling uses these files to identify your assessment topics. Files do not need dates.</p>
+          {!sources.documents.length && <p>No Library files in this course and semester. <a href="/library">Add files in the Library</a>, then return here, or describe coverage above.</p>}
           <div className={styles.sourceList}>{sources.documents.map((doc) => <label key={doc.id}><input type="checkbox" checked={input.document_ids.includes(doc.id)} onChange={(e) => chooseSource("document_ids", doc.id, e.target.checked)} />{doc.file_name}</label>)}</div>
         </fieldset>
         <fieldset disabled={busy}><legend>Related assignments</legend>
@@ -248,7 +254,7 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
             title: plan.title, assessment_type: plan.assessment_type, assessment_date: plan.assessment_date,
             start_date: plan.start_date, timezone: plan.timezone, coverage: plan.coverage,
             document_ids: plan.document_ids, assignment_ids: plan.assignment_ids,
-            study_days: plan.study_days, minutes_per_day: plan.minutes_per_day,
+            study_days: plan.study_days,
           })}>{settings ? "Cancel timing changes" : "Edit dates and availability"}</button>
           <button className="btn btn--sm" disabled={busy} onClick={() => save({ regenerate: true })}>Replan unfinished work</button>
           <details><summary>Manage plan</summary><button className="btn btn--sm" disabled={busy} onClick={() => {
@@ -261,7 +267,6 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
               <label>Assessment name<input required maxLength={120} value={settings.title} onChange={(e) => setSettings({ ...settings, title: e.target.value })} /></label>
               <label>Start studying<input type="date" required value={settings.start_date} onChange={(e) => setSettings({ ...settings, start_date: e.target.value })} /></label>
               <label>Assessment date<input type="date" required min={offsetDate(localDate(), 1)} value={settings.assessment_date} onChange={(e) => setSettings({ ...settings, assessment_date: e.target.value })} /></label>
-              <label>Minutes per study day<input type="number" required min={15} max={480} value={settings.minutes_per_day} onChange={(e) => setSettings({ ...settings, minutes_per_day: Number(e.target.value) })} /></label>
             </div>
             <div className={styles.days}>{DAYS.map((day, index) => <label key={day}><input type="checkbox" checked={settings.study_days.includes(index)} onChange={(e) => setSettings({ ...settings, study_days: e.target.checked ? [...settings.study_days, index] : settings.study_days.filter((d) => d !== index) })} />{day}</label>)}</div>
             <p className={styles.hint}>Saving rebuilds unfinished sessions and keeps completed sessions.</p>
@@ -272,8 +277,8 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
         {plan.guide_overview && <section aria-label="Study guide overview"><h3>Your assessment guide</h3><p>{plan.guide_overview}</p></section>}
         <div className={styles.layout}>
           <section aria-label="Study schedule">
-            <h3>Your study schedule</h3>
-            <p className={styles.hint}>{plan.minutes_per_day} minutes per day · {plan.study_days.map((d) => DAYS[d]).join(", ")} · {plan.timezone}</p>
+            <h3>Your daily focus</h3>
+            <p className={styles.hint}>Suggested daily study time: about {plan.minutes_per_day} minutes · {plan.study_days.map((d) => DAYS[d]).join(", ")} · {plan.timezone}</p>
             <p className={styles.hint}>Session times are estimates. Finishing a session does not change topic mastery.</p>
             {!plan.sessions.length && <p>No sessions fit in the remaining study days. Review the coverage and availability.</p>}
             {[...new Set(plan.sessions.map((s) => s.scheduled_date))].map((day) => <div className={styles.day} key={day}>
@@ -284,6 +289,7 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
                   <label><input data-testid={`study-plan-session-${session.id}`} type="checkbox" disabled={busy} checked={session.completed} onChange={(e) => save({ session: { id: session.id, completed: e.target.checked } })} />
                     <span>{session.kind === "review" ? "Review" : "Study"}: {topic?.name}<small>{session.minutes} min{session.completed ? " · Session finished" : ""}</small></span>
                   </label>
+                  {!!topic?.study_points?.length && <ul aria-label={`Daily focus: ${topic.name}`}>{topic.study_points.map((point, index) => <li key={index}>{point}</li>)}</ul>}
                   <label className={styles.move}>Move session<input aria-label={`Move ${session.kind}: ${topic?.name}`} type="date" disabled={busy} min={localDate() > plan.start_date ? localDate() : plan.start_date} max={offsetDate(plan.assessment_date, -1)} value={session.scheduled_date} onChange={(e) => {
                     if (e.target.value) save({ session: { id: session.id, scheduled_date: e.target.value } });
                   }} /></label>
@@ -292,10 +298,12 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
             </div>)}
           </section>
           <section aria-label="Assessment topic checklist">
-            <h3>Topics and study guide</h3>
+            <h3>Your topic checklist</h3>
+            <p>Check off a topic after its first study session. This also updates that session in your daily focus.</p>
+            <p>{plan.topics.filter((topic) => topicSession(plan, topic.id)?.completed).length} of {plan.topics.length} topics studied</p>
             <p>{plan.mastered_count} of {plan.topics.length} mastered</p>
             <progress aria-label="Topics mastered" max={plan.topics.length} value={plan.mastered_count} />
-            <p className={styles.hint}>Progress updates from your course practice and quiz results. Topics without evidence stay unassessed.</p>
+            <p className={styles.hint}>This guide is your checklist. Check off daily study sessions as you finish them; topic mastery updates from course practice and quiz results. Topics without evidence stay unassessed.</p>
             <div className={styles.actions}>
               <label>Show topics<select value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">All topics</option>{Object.entries(LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <button className="btn btn--sm" disabled={busy} onClick={() => setDraft(draft ? null : editableTopics(plan))}>{draft ? "Cancel editing" : "Edit topics"}</button>
@@ -317,7 +325,16 @@ export function StudyPlanPanel({ userId, courseId, semester, semesters = [], exp
                 if (!topics.length) return null;
                 return <details key={parentId || "root"} open className={styles.group}><summary>{parentId ? plan.topics.find((t) => t.id === parentId)?.name : "Core topics"}</summary>
                   <ul>{topics.map((topic) => <li key={topic.id} data-testid={`study-plan-topic-${topic.id}`}>
-                    <div className={styles.topicHeading}><span aria-label={`${topic.name}: ${LABELS[topic.status]}`}>{topic.checked ? "✓" : "○"}</span><strong>{topic.name}</strong><small>{LABELS[topic.status]}</small></div>
+                    <div className={styles.topicHeading}>
+                      <label><input type="checkbox" aria-label={`Studied: ${topic.name}`}
+                        disabled={busy || !plan.sessions.some((session) => session.topic_id === topic.id)}
+                        checked={topicSession(plan, topic.id)?.completed || false}
+                        onChange={(e) => {
+                          const session = topicSession(plan, topic.id);
+                          if (session) save({ session: { id: session.id, completed: e.target.checked } });
+                        }} /><strong>{topic.name}</strong></label>
+                      <small>{LABELS[topic.status]}</small>
+                    </div>
                     {topic.mastery_score !== null && <progress aria-label={`${topic.name} mastery`} max={1} value={topic.mastery_score} />}
                     <p>{topic.description}</p>
                     {!!topic.study_points?.length && <ul aria-label={`What to study: ${topic.name}`} style={{ listStyle: "disc", paddingLeft: 20, marginBottom: 12 }}>
