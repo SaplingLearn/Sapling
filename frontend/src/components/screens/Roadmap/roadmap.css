@@ -1,0 +1,510 @@
+/* Study roadmap (spec §4).
+ *
+ * Two columns: the accordion acts, the sidebar scans. Below the breakpoint
+ * the sidebar moves ABOVE the accordion rather than below it — the ring is
+ * the orienting number, and burying it under twenty topic rows on a phone
+ * would make the page open on a wall of text.
+ *
+ * No colour is defined here for mastery. Every mastery hue and opacity comes
+ * from lib/graph/nodeStyle at render time, so this file cannot drift from
+ * what /tree draws.
+ */
+
+.roadmap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 24px;
+  padding: 20px 24px 64px;
+  align-items: start;
+}
+
+.roadmap--error {
+  color: var(--text-dim);
+}
+
+.roadmap__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.roadmap__side {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface, transparent);
+}
+
+/* ── Readiness ring ─────────────────────────────────────────────────── */
+
+.roadmap-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.roadmap-ring__svg {
+  width: 120px;
+  height: 120px;
+}
+
+.roadmap-ring__pct {
+  font-size: 26px;
+  font-weight: 650;
+  fill: var(--text);
+}
+
+.roadmap-ring__label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.roadmap-ring__when {
+  display: block;
+  color: var(--text-muted);
+}
+
+.roadmap-ring__why {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.roadmap__stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0;
+  text-align: center;
+}
+
+.roadmap__stats dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.roadmap__stats dd {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* ── Skill breakdown (sidebar) ──────────────────────────────────────── */
+
+.roadmap-breakdown__heading,
+.roadmap__exams h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.roadmap-breakdown__list,
+.roadmap__exams ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roadmap-breakdown__button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 4px 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.roadmap-breakdown__button:hover,
+.roadmap-breakdown__button--active {
+  background: var(--border);
+}
+
+.roadmap-breakdown__name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roadmap-breakdown__count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.roadmap-breakdown__bar,
+.roadmap-topic__segs {
+  display: flex;
+  gap: 2px;
+  grid-column: 1 / -1;
+}
+
+.roadmap-breakdown__seg,
+.roadmap-topic__seg {
+  flex: 1 1 0;
+  min-width: 4px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+/* Staleness is a TEXTURE, never a hue — a hue would be mistaken for a
+ * mastery level, which is the one thing this marker must not be. */
+.roadmap-breakdown__seg--stale,
+.roadmap-topic__seg--stale {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.65) 0 2px,
+    transparent 2px 4px
+  );
+}
+
+/* ── Topic accordion ────────────────────────────────────────────────── */
+
+.roadmap-topics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.roadmap-topic {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.roadmap-topic--start {
+  border-color: var(--accent);
+}
+
+.roadmap-topic__startflag {
+  margin: 0;
+  padding: 4px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.roadmap-topic__header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.roadmap-topic__chevron {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.roadmap-topic__name {
+  font-size: 15px;
+  font-weight: 560;
+}
+
+.roadmap-topic__count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.roadmap-topic__segs {
+  grid-column: 2 / -1;
+  max-width: 180px;
+}
+
+.roadmap-topic__cycle {
+  margin: 0;
+  padding: 0 14px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.roadmap-topic__subs {
+  list-style: none;
+  margin: 0;
+  padding: 0 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Subtopic row ───────────────────────────────────────────────────── */
+
+.roadmap-sub {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--border);
+}
+
+.roadmap-sub__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.roadmap-sub__glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.roadmap-sub__name {
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roadmap-sub__stale {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px dashed currentColor;
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.roadmap-sub__body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.roadmap-sub__bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.roadmap-sub__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.roadmap-sub__actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* ── Empty / unstructured states ────────────────────────────────────── */
+
+.roadmap__empty,
+.roadmap__organise {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 20px;
+}
+
+.roadmap__organise {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.roadmap__empty h2,
+.roadmap__organise h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.roadmap__empty p,
+.roadmap__organise p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  max-width: 48ch;
+}
+
+.roadmap__unfiled-head {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* ── Exams ──────────────────────────────────────────────────────────── */
+
+.roadmap__exam {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.roadmap__exam:hover {
+  background: var(--border);
+}
+
+.roadmap__exam--active {
+  border-color: var(--accent);
+}
+
+.roadmap__exam-when {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.roadmap__exams-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── "Why this number?" panel ───────────────────────────────────────── */
+
+.roadmap-why {
+  margin: 0 24px 48px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow-x: auto;
+}
+
+.roadmap-why__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.roadmap-why__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.roadmap-why__when {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.roadmap-why__formula {
+  margin: 8px 0 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+  max-width: 70ch;
+}
+
+.roadmap-why__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.roadmap-why__table th,
+.roadmap-why__table td {
+  padding: 6px 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+}
+
+.roadmap-why__table thead th,
+.roadmap-why__table tbody th {
+  text-align: left;
+  font-weight: 500;
+}
+
+.roadmap-why__table thead th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.roadmap-why__table tfoot td,
+.roadmap-why__table tfoot th {
+  border-bottom: 0;
+}
+
+.roadmap-why__stale {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* The accessible-only text each mastery mark carries. Mastery is encoded
+ * three ways — hue, opacity, glyph — and spoken here, so no single channel
+ * is load-bearing. */
+.roadmap .sr-only,
+.roadmap-why .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 900px) {
+  .roadmap {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px 14px 48px;
+  }
+
+  /* Ring first on narrow screens — see the note at the top of this file. */
+  .roadmap__side {
+    position: static;
+    order: -1;
+  }
+
+  .roadmap-sub__body {
+    flex-wrap: wrap;
+  }
+
+  .roadmap-sub__bar {
+    flex-basis: 100%;
+  }
+}

@@ -141,6 +141,45 @@ export function opacityFor(tier: string): number {
   return TIER_OPACITY[tier as MasteryTier] ?? 0.6;
 }
 
+/**
+ * A REDUNDANT, non-colour encoding of the same tier (roadmap spec §3.8).
+ *
+ * The tree can lean on `TIER_OPACITY` alone because its marks are large and
+ * spatially separated. The roadmap draws the same scale at segment size in a
+ * sidebar, where a 0.55-vs-0.78 opacity difference is not reliably legible —
+ * and is invisible in greyscale or to a reader with colour vision deficiency.
+ * A glyph carries the tier through both.
+ *
+ * Deliberately lives here rather than in the roadmap's own components: the
+ * glyph and the opacity are two views of ONE scale, and splitting them across
+ * modules is how they drift apart.
+ */
+export const TIER_GLYPH: Record<MasteryTier, string> = {
+  mastered: "●",
+  learning: "◐",
+  struggling: "◔",
+  unexplored: "○",
+};
+
+/** Tier → glyph, tolerant of wire strings the same way `opacityFor` is. */
+export function glyphFor(tier: string): string {
+  if (tier === "subject_root") return TIER_GLYPH.mastered;
+  return TIER_GLYPH[tier as MasteryTier] ?? TIER_GLYPH.unexplored;
+}
+
+/**
+ * The accessible name for one subtopic's state — what a screen reader says
+ * where a sighted reader sees colour + glyph.
+ *
+ * Staleness is spoken, not just hatched, because "mastered" and "mastered but
+ * needs review" are different instructions to the student and the difference
+ * must not be carried by a visual texture alone.
+ */
+export function masteryLabel(tier: string, isStale: boolean): string {
+  const base = tier === "unexplored" ? "not started" : tier;
+  return isStale ? `${base}, needs review` : base;
+}
+
 /** Edge stroke width from its 0..1 strength → 0.5 … 1.7. The backend's
  *  hub-spoke edges ship a fixed 0.7 (graph_service.py), i.e. 1.34. */
 export function edgeWidthFor(strength: number): number {

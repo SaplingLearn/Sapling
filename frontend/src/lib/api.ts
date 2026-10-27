@@ -1824,3 +1824,93 @@ export const adminUploadAchievementIcon = (
       method: 'POST',
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
+
+// ── Study roadmap ───────────────────────────────────────────────────────────
+//
+// Every number here is computed server-side by `services/roadmap.py`. The
+// client renders them and never recomputes: a second implementation of the
+// readiness formula would be a second chance to disagree with the "why?"
+// panel that claims to explain it.
+
+export interface RoadmapSubtopic {
+  node_id: string;
+  concept_name: string;
+  mastery: number;
+  tier: 'mastered' | 'learning' | 'struggling' | 'unexplored';
+  /** 1.0 → 0.6. Always 1.0 when no exam is selected (spec §3.7). */
+  freshness: number;
+  is_stale: boolean;
+  weight: number;
+  contribution: number;
+  color: string | null;
+  times_studied: number;
+  last_studied_at: string | null;
+  /** Caught in a prerequisite cycle — ordering here is arbitrary, not wrong. */
+  in_cycle: boolean;
+}
+
+export interface RoadmapTopicSummary {
+  total: number;
+  mastered: number;
+  stale: number;
+  started: number;
+  readiness: number;
+}
+
+export interface RoadmapTopic {
+  id: string;
+  concept_name: string;
+  color: string | null;
+  in_cycle: boolean;
+  subtopics: RoadmapSubtopic[];
+  summary: RoadmapTopicSummary;
+}
+
+export interface RoadmapExam {
+  id: string;
+  title: string;
+  due_date: string;
+}
+
+export interface RoadmapResponse {
+  course_id: string;
+  topics: RoadmapTopic[];
+  unfiled: RoadmapSubtopic[];
+  exams: RoadmapExam[];
+  selected_exam: RoadmapExam | null;
+  start_here_topic_id: string | null;
+  readiness: number;
+  summary: RoadmapTopicSummary;
+  /** Concepts exist but nothing has grouped them — the flat-list state (§3.16). */
+  needs_structure: boolean;
+}
+
+export interface RoadmapFactor {
+  topic_id: string | null;
+  concept_name: string;
+  mastered: number;
+  total: number;
+  stale: number;
+  freshness: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface RoadmapReadiness {
+  course_id: string;
+  exam: RoadmapExam | null;
+  factors: RoadmapFactor[];
+  readiness: number;
+}
+
+export const getRoadmap = (userId: string, courseId: string, examId?: string) =>
+  fetchJSON<RoadmapResponse>(
+    `/api/roadmap/${encodeURIComponent(courseId)}?user_id=${encodeURIComponent(userId)}` +
+      (examId ? `&exam_id=${encodeURIComponent(examId)}` : ''),
+  );
+
+export const getRoadmapReadiness = (userId: string, courseId: string, examId?: string) =>
+  fetchJSON<RoadmapReadiness>(
+    `/api/roadmap/${encodeURIComponent(courseId)}/readiness?user_id=${encodeURIComponent(userId)}` +
+      (examId ? `&exam_id=${encodeURIComponent(examId)}` : ''),
+  );

@@ -295,6 +295,19 @@ export function Tree() {
   // takes an abstract `course` and proposes within it. The root carries that id
   // directly (`graph_service.py` synthesizes `subject_root__{course_id}` with
   // `course_id` set); the id is only unpicked as a belt-and-braces fallback.
+  // §3.14: a course node opens its study roadmap; a concept node keeps the
+  // detail panel. The two behave differently on one canvas, which is why the
+  // course mark needs a visual affordance saying so (tracked with the
+  // roadmap work, not solved here).
+  const onNodeActivate = (n: GraphNode) => {
+    if (n.is_subject_root) {
+      const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
+      router.push(`/roadmap/${encodeURIComponent(courseId)}`);
+      return;
+    }
+    setSelected(n);
+  };
+
   const onQuiz = (n: GraphNode) => {
     if (n.is_subject_root) {
       const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
@@ -577,7 +590,7 @@ export function Tree() {
               width={size.w}
               height={size.h}
               highlightId={suggestId || selected?.id}
-              onNodeClick={(n) => setSelected(n)}
+              onNodeClick={onNodeActivate}
             />
           )}
         </div>
@@ -632,7 +645,7 @@ export function Tree() {
             nodes={filteredNodes}
             edges={filteredEdges}
             highlightId={suggestId || selected?.id}
-            onNodeClick={(n) => { setSelected(n); setFullscreen(false); }}
+            onNodeClick={(n) => { onNodeActivate(n); setFullscreen(false); }}
           />
         </div>
       )}
