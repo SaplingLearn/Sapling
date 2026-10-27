@@ -71,7 +71,17 @@ A concept with no `part_of` relationship in either direction is **unfiled**. The
 page always renders an "Unfiled concepts" group at the bottom, collapsed when
 empty, so no concept can ever become invisible.
 
-A topic with no children renders as a topic containing exactly itself.
+**There is no such thing as a childless topic.** An earlier draft said one would
+"render as a topic containing itself"; implementing §3.1 showed that to be
+unreachable. In a pure `part_of` model, a node with no children has no `part_of`
+edges at all, which makes it indistinguishable from an unfiled concept — because
+it *is* one. Such nodes render in the Unfiled group, and the way out is to file
+them under a topic, not to promote them.
+
+A node that is both a parent and someone else's child is treated as a **topic**:
+it owns children, which is what the page needs to render, and its own parent
+link is ignored rather than nesting a third level. The layout is two deep by
+design (§4).
 
 ### 3.2 Order is computed, not stored
 
