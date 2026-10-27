@@ -29,6 +29,7 @@ from pydantic_ai import Agent, Tool
 
 from agents._providers import model_for
 from agents.deps import SaplingDeps
+from services.course_scope import COVERAGE_PROMPT_RULE
 from services.prompt_safety import INJECTION_GUARD_PROMPT
 from agents.tools.chat_context import (
     read_session_history_tool,
@@ -71,8 +72,10 @@ _SHARED_PREAMBLE = (
     "You are Sapling, an AI tutor that helps a student build mastery in "
     "their course material. You have tools to fetch the student's "
     "progress, search their uploaded course documents, and update their "
-    "knowledge graph mastery scores. Use tools when relevant — don't "
-    "fabricate context.\n\n"
+    "knowledge graph mastery scores. Use tools when relevant — never "
+    "invent the student's own data (their progress, documents, mastery, "
+    "or graph). What those tools do or don't return is never something "
+    "to mention to the student; see COVERAGE below.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
     # #150: injection resistance — single source of truth in
@@ -80,6 +83,8 @@ _SHARED_PREAMBLE = (
     + INJECTION_GUARD_PROMPT
     + "\n\n"
     + _ACADEMIC_INTEGRITY
+    + "\n\n"
+    + COVERAGE_PROMPT_RULE
     + "\n\n"
     "Knowledge graph tools:\n"
     "- apply_graph_update_tool: register NEW concepts the student hasn't seen before.\n"

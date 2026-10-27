@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 import json
@@ -22,6 +23,12 @@ from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeS
 from services.agent_events import SSE_CACHE_CONTROL, sapling_event_to_sse
 from services.auth_guard import require_self, get_session_user_id
 from services.chat_stream import merge_graph_updates, stream_agent_turn
+from services.course_scope import (
+    Coverage,
+    UNKNOWN_COVERAGE,
+    assess_coverage,
+    concept_names_from_graph_block,
+)
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present
 from services.profiles import get_display_name
 from services.graph_service import get_graph
@@ -290,6 +297,84 @@ def _get_session_offering_id(session_id: str) -> str:
     return ""
 
 
+def _get_session_topic(session_id: str) -> str:
+    """The session's chosen topic, or "". Best-effort.
+
+    Feeds the course-scope assessment: the topic the student named when they
+    opened the session is in scope by construction, so follow-ups about it
+    must not read as novel. Kept a separate (PK-indexed, plaintext) read
+    rather than widened onto `_get_session_offering_id` because that helper
+    is patched by name across the test suite.
+    """
+    if not session_id:
+        return ""
+    try:
+        rows = table("sessions").select(
+            "topic", filters={"id": f"eq.{session_id}"}, limit=1,
+        ) or []
+    except Exception:
+        logger.warning("session topic read failed; scope assessed without it", exc_info=True)
+        return ""
+    return (rows[0].get("topic") or "") if rows else ""
+
+
+# Strong refs to in-flight relearn tasks. asyncio only holds weak references
+# to running tasks, so without this a scope relearn can be garbage-collected
+# mid-flight and silently never happen.
+_RELEARN_TASKS: set = set()
+
+
+def _spawn_scope_relearn(
+    *,
+    user_id: str,
+    course_id: str,
+    question: str,
+    coverage: Coverage,
+    topic: str | None,
+    request_id: str | None,
+) -> None:
+    """Fire-and-forget: grow the course's known scope from an off-scope
+    question (ADR-less, see services/course_scope.py).
+
+    Post-response by construction — it runs an agent, and the student's reply
+    has already been served (or is already streaming). Only an established
+    `new` verdict schedules anything; `unknown` never does. Exceptions are
+    logged by the done-callback rather than vanishing the way a bare
+    `create_task` lets them, mirroring `routes/documents.py::_spawn_post_roll`.
+    """
+    if not coverage.is_new or not course_id or not user_id:
+        return
+    try:
+        from services.course_scope_relearn import relearn_course_scope
+
+        task = asyncio.create_task(
+            relearn_course_scope(
+                user_id=user_id,
+                course_id=course_id,
+                question=question,
+                coverage=coverage,
+                topic=topic,
+                request_id=request_id,
+            ),
+            name="course-scope-relearn",
+        )
+        _RELEARN_TASKS.add(task)
+        task.add_done_callback(_on_relearn_done)
+    except RuntimeError:
+        # No running loop (sync caller / test harness). The scope simply does
+        # not grow this turn; the student's reply is unaffected either way.
+        logger.debug("no event loop for course-scope relearn; skipping")
+
+
+def _on_relearn_done(task: "asyncio.Task") -> None:
+    _RELEARN_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("course-scope relearn failed: %s", exc, exc_info=exc)
+
+
 def _get_course_info(course_id: str) -> dict:
     """Get course info (code and name) for a course_id."""
     if not course_id:
@@ -542,7 +627,7 @@ async def _start_session_agent(
         "Begin the session with a warm greeting and your first question or explanation."
     )
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps, _coverage = _prepare_chat_run(
         user_id=body.user_id,
         session_id=session_id,
         course_id=course_id,
@@ -648,12 +733,21 @@ def _prepare_chat_run(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    topic: str | None = None,
 ) -> tuple:
-    """Build (agent, assembled_message, run_kwargs, deps) for a chat turn.
+    """Build (agent, assembled_message, run_kwargs, deps, coverage) for a turn.
 
     Shared verbatim by the JSON path (`_chat_via_agent`) and the streaming
-    route so prompt assembly never forks. Extracted from `_chat_via_agent`;
-    behavior is unchanged.
+    route so prompt assembly never forks. Extracted from `_chat_via_agent`.
+
+    `coverage` is the deterministic course-scope verdict on this question,
+    computed from the blocks assembled right here and NOTHING else — no
+    extra I/O, and no influence on the prompt. The model is explicitly
+    forbidden (COVERAGE_PROMPT_RULE) from narrating what retrieval found,
+    so the verdict exists purely to drive the client's "New" chip and the
+    background scope relearn. Keeping it out of the prompt is the point:
+    the tutor's answer must be identical whether or not we happen to have
+    indexed the topic.
     """
     agent = agent_for_mode(mode)
 
@@ -669,6 +763,11 @@ def _prepare_chat_run(
 
     bu_code = _get_course_info(course_id).get("course_code") if course_id else None
     context_blocks: list[str] = []
+    # Scope inputs, captured as they are built so the coverage verdict below
+    # sees exactly the material the model saw — not a second, drifting read.
+    catalog_text = ""
+    rag_chunks: list[dict] = []
+    graph_block = ""
     if bu_code:
         # Always inject the course catalog (prerequisites, description, credits)
         # so the agent can answer factual questions about the course without
@@ -700,6 +799,19 @@ def _prepare_chat_run(
         if graph_block:
             context_blocks.append(graph_block)
 
+    # Assess BEFORE the context blocks are folded into `user_message` — the
+    # question the student actually asked is what we are judging, not the
+    # catalog text we prefixed onto it (which would match itself and make
+    # every turn read as covered).
+    coverage = assess_coverage(
+        user_message,
+        course_id=course_id or None,
+        catalog_text=catalog_text,
+        rag_chunks=rag_chunks,
+        concept_names=concept_names_from_graph_block(graph_block),
+        topic=topic,
+    )
+
     if context_blocks:
         user_message = "\n\n".join(context_blocks) + "\n\n[STUDENT QUESTION]\n" + user_message
 
@@ -728,7 +840,7 @@ def _prepare_chat_run(
     if model_pref != "fast":
         run_kwargs["model_settings"] = _build_pro_model_settings()
 
-    return agent, user_message, run_kwargs, deps
+    return agent, user_message, run_kwargs, deps, coverage
 
 
 async def _chat_via_agent(
@@ -742,6 +854,7 @@ async def _chat_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    topic: str | None = None,
 ) -> dict:
     """Run chat_tutor_agent and return the wire response shape.
 
@@ -760,7 +873,7 @@ async def _chat_via_agent(
     need this guard rail. Keeping the constraint in-band rather than
     branching the agent surface keeps the agent definition stable.
     """
-    agent, user_message, run_kwargs, deps = _prepare_chat_run(
+    agent, user_message, run_kwargs, deps, coverage = _prepare_chat_run(
         user_id=user_id,
         session_id=session_id,
         course_id=course_id,
@@ -770,6 +883,7 @@ async def _chat_via_agent(
         use_shared_context=use_shared_context,
         request_id=request_id,
         model_pref=model_pref,
+        topic=topic,
     )
 
     try:
@@ -843,6 +957,11 @@ async def _chat_via_agent(
         # Real before/after deltas accumulated by update_mastery_tool.
         # Empty when no mastery moved this turn.
         "mastery_changes": deps.mastery_changes,
+        # The course-scope verdict (services/course_scope.py). "new" drives
+        # the client's quiet chip; "unknown" means we could not tell and the
+        # client shows nothing. Never a disclaimer, never in the reply text.
+        "topic_status": coverage.status,
+        "_coverage": coverage,
     }
 
 
@@ -880,6 +999,7 @@ async def _chat_turn_json(
     # message_history we hand the agent contains only the conversation
     # state up to (but not including) the current turn.
     message_history = _load_message_history(body.session_id)
+    topic = _get_session_topic(body.session_id)
 
     response = await _chat_via_agent(
         user_id=body.user_id,
@@ -891,7 +1011,13 @@ async def _chat_turn_json(
         use_shared_context=body.use_shared_context,
         request_id=request_id,
         model_pref=model_pref if model_pref is not None else body.model_pref,
+        topic=topic,
     )
+    # The Coverage object is internal plumbing; only its `status` goes on the
+    # wire. Popped here (rather than never added) so this function — which is
+    # also the stream's Rung-1 fallback, whose result becomes the `done`
+    # event payload — has the verdict to schedule the relearn from.
+    coverage = response.pop("_coverage", UNKNOWN_COVERAGE)
 
     # Encryption happens inside save_message (`encrypt_if_present`).
     save_message(body.session_id, "user", body.message)
@@ -909,6 +1035,17 @@ async def _chat_turn_json(
         request_id=request_id,
         payload={"mode": body.mode, "session_id": body.session_id},
         content=body.message,
+    )
+
+    # Post-response: grow the course's known scope so this question is in
+    # scope next time. Never affects the reply the student just received.
+    _spawn_scope_relearn(
+        user_id=body.user_id,
+        course_id=course_id,
+        question=body.message,
+        coverage=coverage,
+        topic=topic,
+        request_id=request_id,
     )
 
     return response
@@ -947,8 +1084,9 @@ async def chat_stream(body: ChatBody, request: Request):
     # Load prior turns BEFORE the new user row is written, so history is
     # conversation state up to (not including) this turn.
     message_history = _load_message_history(body.session_id)
+    topic = _get_session_topic(body.session_id)
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps, coverage = _prepare_chat_run(
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,
@@ -958,6 +1096,7 @@ async def chat_stream(body: ChatBody, request: Request):
         use_shared_context=body.use_shared_context,
         request_id=request_id,
         model_pref=body.model_pref,
+        topic=topic,
     )
     # No extra model override here: _prepare_chat_run already applied the
     # seam-aware fast/smart preference (_resolve_model_pref), and the agent's
@@ -983,7 +1122,20 @@ async def chat_stream(body: ChatBody, request: Request):
             payload={"mode": body.mode, "session_id": body.session_id},
             content=body.message,
         )
-        return {}
+        # Post-response scope growth, scheduled only once the turn actually
+        # completed — a disconnect mid-generation runs neither this hook nor
+        # the relearn, matching the "persists nothing" contract above.
+        _spawn_scope_relearn(
+            user_id=body.user_id,
+            course_id=course_id,
+            question=body.message,
+            coverage=coverage,
+            topic=topic,
+            request_id=request_id,
+        )
+        # Merged into the `done` event's data by stream_agent_turn. The
+        # client renders it as a quiet chip; the reply text never mentions it.
+        return {"topic_status": coverage.status}
 
     async def _fallback() -> dict:
         # Rung 1 only (agent failed before any token, no writes landed —
@@ -1058,7 +1210,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
         "Begin the session with a warm greeting and your first question or explanation."
     )
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    agent, assembled, run_kwargs, deps, _coverage = _prepare_chat_run(
         user_id=body.user_id,
         session_id=session_id,
         course_id=course_id,
@@ -1422,7 +1574,10 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
     course_id = offering_course_id(offering_id) if offering_id else ""
     message_history = _load_message_history(body.session_id)
 
-    agent, assembled, run_kwargs, deps = _prepare_chat_run(
+    # No coverage assessment on actions: `action_message` is our own
+    # synthetic "[ACTION: …]" string, not a question the student asked, so
+    # judging it against the course's scope would label our own prompt.
+    agent, assembled, run_kwargs, deps, _coverage = _prepare_chat_run(
         user_id=body.user_id,
         session_id=body.session_id,
         course_id=course_id,

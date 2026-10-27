@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from main import app
+from services.course_scope import UNKNOWN_COVERAGE
 
 client = TestClient(app)
 
@@ -42,7 +43,7 @@ class TestChatStream:
         saved = []
         with patch("routes.learn.stream_agent_turn", fake_stream), \
              patch("routes.learn._prepare_chat_run",
-                   return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
+                   return_value=(MagicMock(), "msg", {}, MagicMock(), UNKNOWN_COVERAGE)) as prep, \
              patch("routes.learn._consume_pending"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
@@ -95,7 +96,7 @@ class TestChatStream:
         })
         with patch("routes.learn.stream_agent_turn", fake_stream), \
              patch("routes.learn._prepare_chat_run",
-                   return_value=(MagicMock(), "msg", {}, MagicMock())), \
+                   return_value=(MagicMock(), "msg", {}, MagicMock(), UNKNOWN_COVERAGE)), \
              patch("routes.learn._chat_turn_json", turn), \
              patch("routes.learn._consume_pending"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
@@ -150,7 +151,7 @@ class TestStartSessionStream:
 
         with patch("routes.learn.stream_agent_turn", fake_stream), \
              patch("routes.learn._prepare_chat_run",
-                   return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
+                   return_value=(MagicMock(), "msg", {}, MagicMock(), UNKNOWN_COVERAGE)) as prep, \
              patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
              patch("routes.learn.resolve_offering", return_value="off-1"), \
              patch("routes.learn.get_graph", return_value={"nodes": []}), \
@@ -211,7 +212,7 @@ class TestStartSessionStream:
 
         with patch("routes.learn.stream_agent_turn", fake_stream), \
              patch("routes.learn._prepare_chat_run",
-                   return_value=(fallback_agent, "msg", {}, fallback_deps)) as prep, \
+                   return_value=(fallback_agent, "msg", {}, fallback_deps, UNKNOWN_COVERAGE)) as prep, \
              patch("routes.learn._get_course_id_for_topic", return_value="c1"), \
              patch("routes.learn.resolve_offering", return_value="off-1"), \
              patch("routes.learn.get_graph", return_value={"nodes": []}), \
@@ -268,7 +269,7 @@ class TestSseCompressionOptOut:
 
         with patch("routes.learn.stream_agent_turn", fake_stream), \
              patch("routes.learn._prepare_chat_run",
-                   return_value=(MagicMock(), "msg", {}, MagicMock())), \
+                   return_value=(MagicMock(), "msg", {}, MagicMock(), UNKNOWN_COVERAGE)), \
              patch("routes.learn._consume_pending"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
@@ -287,7 +288,7 @@ class TestSseCompressionOptOut:
 
         with patch("routes.learn.stream_agent_turn", fake_stream), \
              patch("routes.learn._prepare_chat_run",
-                   return_value=(MagicMock(), "msg", {}, MagicMock())), \
+                   return_value=(MagicMock(), "msg", {}, MagicMock(), UNKNOWN_COVERAGE)), \
              patch("routes.learn._get_course_id_for_topic", return_value=""), \
              patch("routes.learn.resolve_offering", return_value=""):
             r = client.post("/api/learn/start-session/stream", json={

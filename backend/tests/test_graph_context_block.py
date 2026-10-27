@@ -191,7 +191,7 @@ def test_prepare_chat_run_orders_catalog_rag_graph_then_question():
         ) as gb,
         patch("routes.learn._resolve_model_pref", return_value=None),
     ):
-        agent, assembled, run_kwargs, deps = _prepare()
+        agent, assembled, run_kwargs, deps, _coverage = _prepare()
 
     gb.assert_called_once_with("u1", "c1", "What is the chain rule?")
     i_cat = assembled.index("CATALOG-TEXT")
@@ -208,7 +208,7 @@ def test_prepare_chat_run_omits_graph_block_when_empty():
         patch("services.graph_context.build_graph_context_block", return_value=""),
         patch("routes.learn._resolve_model_pref", return_value=None),
     ):
-        agent, assembled, run_kwargs, deps = _prepare()
+        agent, assembled, run_kwargs, deps, _coverage = _prepare()
     assert "GRAPH CONTEXT" not in assembled
     assert assembled == "What is the chain rule?"
 
@@ -229,7 +229,7 @@ def test_prepare_chat_run_uses_tutor_limits():
         patch("services.graph_context.build_graph_context_block", return_value=""),
         patch("routes.learn._resolve_model_pref", return_value=None),
     ):
-        _agent, _assembled, run_kwargs, _deps = _prepare(course_id="")
+        _agent, _assembled, run_kwargs, _deps, _coverage = _prepare(course_id="")
     assert run_kwargs["usage_limits"] is TUTOR_LIMITS
 
 

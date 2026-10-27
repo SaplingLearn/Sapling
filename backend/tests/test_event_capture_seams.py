@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 from main import app
 from services import events_service
 from tests.agent_run_fakes import run_result
+from services.course_scope import UNKNOWN_COVERAGE
 
 client = TestClient(app)
 
@@ -1020,7 +1021,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
         patch("routes.learn.stream_agent_turn", fake_stream),
         patch(
             "routes.learn._prepare_chat_run",
-            return_value=(MagicMock(), "msg", {}, MagicMock()),
+            return_value=(MagicMock(), "msg", {}, MagicMock(), UNKNOWN_COVERAGE),
         ),
         patch("routes.learn._consume_pending"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),

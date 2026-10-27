@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from tests.agent_run_fakes import run_result, textless_run_result
+from services.course_scope import UNKNOWN_COVERAGE
 
 client = TestClient(app)
 
@@ -1045,7 +1046,7 @@ class TestFallbackWriteStateStamp:
 
         with (
             patch("routes.learn._prepare_chat_run",
-                  return_value=(agent, "msg", {}, deps)),
+                  return_value=(agent, "msg", {}, deps, UNKNOWN_COVERAGE)),
             patch("routes.learn.record_agent_usage", side_effect=lambda r, **k: r),
         ):
             import routes.learn as learn_routes
@@ -1075,7 +1076,7 @@ class TestFallbackWriteStateStamp:
 
         with (
             patch("routes.learn._prepare_chat_run",
-                  return_value=(agent, "msg", {}, deps)),
+                  return_value=(agent, "msg", {}, deps, UNKNOWN_COVERAGE)),
             patch("routes.learn.record_agent_usage", side_effect=lambda r, **k: r),
         ):
             import routes.learn as learn_routes

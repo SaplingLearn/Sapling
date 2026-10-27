@@ -23,6 +23,7 @@ from agents.deps import SaplingDeps
 from agents.tools.chat_context import search_course_materials_tool
 from agents.tools.graph import apply_graph_update_tool
 from agents.tools.note_context import read_active_note_tool
+from services.course_scope import COVERAGE_PROMPT_RULE
 from services.prompt_safety import INJECTION_GUARD_PROMPT
 
 
@@ -36,6 +37,11 @@ _PROMPT = (
     "this course.\n\n"
     # #150: this agent's tools return student-authored note/document text.
     + INJECTION_GUARD_PROMPT
+    + "\n\n"
+    # Same non-narration rule the chat tutor carries: this agent reaches
+    # `search_course_materials` too, so an empty result here produced the
+    # identical "nothing in your materials about that" disclaimer.
+    + COVERAGE_PROMPT_RULE
     + "\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Keep replies short — "
