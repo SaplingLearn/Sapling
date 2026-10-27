@@ -179,6 +179,7 @@ route:
 | `tutor-topic-picker` | the entry screen's topic dropdown trigger (`screens/Learn.tsx::TopicPicker`) — opens the concept/custom-topic search |
 | `tutor-topic-search` | the search input inside the open topic dropdown; Enter picks the first match, or the typed text as a custom topic |
 | `tutor-start` | the entry screen's "Start learning" button — dispatches the streamed session opener (#151a greeting journey) |
+| `tutor-new-topic` | the top bar's quiet "New" chip (`chat/NewTopicChip.tsx`) — shown when the last turn's `topic_status` was `new`, i.e. the question fell outside what the backend knows of the course (`services/course_scope.py`). Per-turn: an in-scope turn clears it. Never shown for `unknown`, and never accompanied by any disclaimer in the reply — the chip replaced the tutor narrating "I don't have anything from your syllabus about that" |
 
 ### `quiz`
 

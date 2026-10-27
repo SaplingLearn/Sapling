@@ -292,12 +292,21 @@ export interface GraphDelta {
   mastery_changes: MasteryChange[];
 }
 
+/** The backend's course-scope verdict for a turn (services/course_scope.py).
+ *  'new' = the question's topic is outside what we know of the course;
+ *  'covered' = it isn't; 'unknown' = the backend could not tell (no course,
+ *  or the assessment failed) and the UI must show nothing — asserting
+ *  novelty we never established is the failure this whole feature replaced. */
+export type TopicStatus = 'covered' | 'new' | 'unknown';
+
 export interface ChatResult {
   reply: string;
   graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
+  /** Absent on older backends — treat as 'unknown'. */
+  topic_status?: TopicStatus;
 }
 
 interface StreamEvent {

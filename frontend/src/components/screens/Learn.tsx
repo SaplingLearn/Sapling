@@ -7,6 +7,7 @@ import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { CustomSelect } from "../CustomSelect";
 import { ChatPanel, type ChatMsg } from "../chat/ChatPanel";
+import { NewTopicChip } from "../chat/NewTopicChip";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { SessionSummary } from "../chat/SessionSummary";
 import { SharedContextToggle, useSharedContext } from "../chat/SharedContextToggle";
@@ -42,6 +43,7 @@ import {
   type SessionSummaryData,
   type EnrolledCourse,
   type ChatResult,
+  type TopicStatus,
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
@@ -93,6 +95,23 @@ function tierForScore(score: number): GraphNode["mastery_tier"] {
 }
 
 const normalizeConceptName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+// The per-turn chip contract in one place (exported for
+// Learn.topicStatus.test.ts, like the graph-delta helpers below).
+//
+// Two rules live here. A backend that predates `topic_status` — or one that
+// could not assess the turn — reads as "unknown", which renders nothing:
+// the chip must never assert a novelty the server did not establish, since
+// asserting coverage nobody checked is the bug this whole feature replaced.
+// And the tooltip's question text is cleared on anything but `new`, so a
+// later in-scope turn can't leave the previous question's words behind.
+export function nextTopicChipState(
+  res: Pick<ChatResult, "topic_status">,
+  userText: string,
+): { status: TopicStatus; text: string } {
+  const status = res.topic_status ?? "unknown";
+  return { status, text: status === "new" ? userText : "" };
+}
 
 // Shared, defensive identity extraction for a single raw graph_update node
 // entry: matched by `id`/`node_id` when present (future-proofing against a
@@ -374,6 +393,16 @@ function LearnInner() {
   // Passed straight through to ChatPanel's `streamingText` prop.
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
+  // The backend's course-scope verdict for the LAST completed turn
+  // (services/course_scope.py). Per-turn and self-clearing: the chip appears
+  // after an off-scope question and goes away on the next in-scope one, so
+  // it reads as a note about this question rather than a standing warning
+  // about the session. Only 'new' renders — 'unknown' means the backend
+  // could not tell, and a chip there would assert novelty nobody
+  // established. The reply text itself never mentions any of this.
+  const [topicStatus, setTopicStatus] = useState<TopicStatus>("unknown");
+  // The question that earned a 'new' verdict, for the chip's tooltip.
+  const [newTopicText, setNewTopicText] = useState<string>("");
 
   const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -833,6 +862,13 @@ function LearnInner() {
       // re-opening the original session shows the turn (PR #461 review).
       if (sessionIdRef.current === turnSessionId) {
         setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+        // Per-turn, self-clearing: an in-scope question wipes the chip the
+        // previous one raised. Guarded by the same session check as the
+        // bubble — a late reply from a session the user already left must
+        // not relabel the session they are now in.
+        const next = nextTopicChipState(res, userText);
+        setTopicStatus(next.status);
+        setNewTopicText(next.text);
       }
     } catch (err) {
       // The Rung-3 JSON fallback itself failed — the ladder is exhausted.
@@ -872,6 +908,17 @@ function LearnInner() {
   // changes and when the component unmounts.
   useEffect(() => {
     return () => streamAbort.current?.abort();
+  }, [sessionId]);
+
+  // The chip describes the last question asked in THIS session, so clear it
+  // whenever the active session changes — start, resume, end, back-to-learn.
+  // One effect rather than a line in each of those five handlers: a reset
+  // that has to be remembered at every call site is one that eventually
+  // isn't, and a stale "New" on a resumed session is a claim about a
+  // question the student never asked here.
+  useEffect(() => {
+    setTopicStatus("unknown");
+    setNewTopicText("");
   }, [sessionId]);
 
   const handleAction = async (action: "hint" | "confused" | "skip") => {
@@ -1337,6 +1384,11 @@ function LearnInner() {
               subtitle={`${cardCourse?.course_code ? `${cardCourse.course_code} · ` : ""}${MODES.find(m => m.id === mode)?.name ?? mode} Tutor · ${messages.length} Messages`}
               actions={
                 <>
+                  {/* The whole user-facing surface of the course-scope
+                      signal — see NewTopicChip. The tutor's reply says
+                      nothing about coverage; this quiet chip is the only
+                      place a student learns the topic was new. */}
+                  {topicStatus === "new" && <NewTopicChip topic={newTopicText} />}
                   <SharedContextToggle enabled={sharedCtx} onChange={setSharedCtx} />
                   <button
                     className={endConfirm.armed ? "btn btn--danger btn--sm" : "btn btn--sm"}
