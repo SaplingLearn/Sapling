@@ -245,17 +245,34 @@ def order_roadmap(hierarchy: dict[str, Any], edges: list[dict]) -> dict[str, Any
     return {"topics": out_topics, "unfiled": unfiled, "cycle_node_ids": cycles}
 
 
-def start_here_id(ordered_topics: list[dict]) -> str | None:
-    """The first topic in order that is not fully mastered (§3.2).
+def start_here(
+    ordered_topics: list[dict], unfiled: list[dict] | None = None
+) -> dict[str, Any]:
+    """Where the student should begin (§3.2).
 
-    None when every topic is mastered — the page shows a finished state rather
-    than pointing at something already done.
+    Returns ``{"topic_id": str | None, "unfiled": bool}``.
+
+    `unfiled` is NOT optional in spirit, only in signature. Omitting it asks
+    "which TOPIC should I start with", and a caller that forgets to pass the
+    course's ungrouped concepts gets a confident "nothing to do" the moment
+    its one topic is mastered — which is exactly the bug this signature
+    replaced. Readiness already counts unfiled concepts, so leaving them out
+    here made the two numbers describe different courses: 35% ready, nothing
+    to start.
+
+    `unfiled: True` means every topic is done but ungrouped concepts remain,
+    so the page points at the Unfiled group instead of showing a finished
+    state. Both false/None means genuinely nothing left.
     """
     for topic in ordered_topics:
         subs = topic["subtopics"] or [topic["node"]]
         if not all(is_mastered(s.get("mastery_score") or 0.0) for s in subs):
-            return topic["node"]["id"]
-    return None
+            return {"topic_id": topic["node"]["id"], "unfiled": False}
+
+    remaining = [
+        n for n in (unfiled or []) if not is_mastered(n.get("mastery_score") or 0.0)
+    ]
+    return {"topic_id": None, "unfiled": bool(remaining)}
 
 
 # ── Freshness ───────────────────────────────────────────────────────────────

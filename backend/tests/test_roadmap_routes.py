@@ -146,7 +146,27 @@ class TestPayloadShape:
             edges=[edge("s1", "t1")],
         ))
 
-        assert r.json()["start_here_topic_id"] == "t1"
+        data = r.json()
+        assert data["start_here_topic_id"] == "t1"
+        assert data["start_here_unfiled"] is False
+
+    def test_start_here_falls_back_to_unfiled_work(self):
+        """Regression, found against the live seed: one mastered topic plus
+        untouched unfiled concepts must not report "nothing to start" while
+        readiness is well under 100%."""
+        r = _get(_factory(
+            nodes=[
+                node("t1", "Topic"),
+                node("s1", "Sub", mastery=0.9),
+                node("x1", "Untouched", mastery=0.0),
+            ],
+            edges=[edge("s1", "t1")],
+        ))
+
+        data = r.json()
+        assert data["start_here_topic_id"] is None
+        assert data["start_here_unfiled"] is True
+        assert data["readiness"] < 1.0
 
 
 class TestScoping:

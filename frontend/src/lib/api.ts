@@ -1879,6 +1879,9 @@ export interface RoadmapResponse {
   exams: RoadmapExam[];
   selected_exam: RoadmapExam | null;
   start_here_topic_id: string | null;
+  /** No topic is unfinished, but ungrouped concepts still are — point at
+   *  the Unfiled group rather than implying the course is done. */
+  start_here_unfiled: boolean;
   readiness: number;
   summary: RoadmapTopicSummary;
   /** Concepts exist but nothing has grouped them — the flat-list state (§3.16). */

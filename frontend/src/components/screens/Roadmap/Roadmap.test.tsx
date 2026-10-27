@@ -78,6 +78,7 @@ function payload(overrides: Partial<RoadmapResponse> = {}): RoadmapResponse {
     exams: [],
     selected_exam: null,
     start_here_topic_id: "t1",
+    start_here_unfiled: false,
     readiness: 0.63,
     summary: { total: 1, mastered: 1, stale: 0, started: 1, readiness: 0.63 },
     needs_structure: false,
@@ -176,6 +177,19 @@ describe("RoadmapScreen", () => {
 
     expect(await screen.findByTestId("roadmap-empty")).toBeInTheDocument();
     expect(screen.queryByText(/Organise into topics/)).not.toBeInTheDocument();
+  });
+
+  it("points at the unfiled group when every topic is done but concepts remain", async () => {
+    getRoadmap.mockResolvedValue(payload({
+      unfiled: [sub({ node_id: "x1", concept_name: "Untouched", mastery: 0, tier: "unexplored" })],
+      start_here_topic_id: null,
+      start_here_unfiled: true,
+    }));
+
+    render(<RoadmapScreen courseId="course1" />);
+
+    const unfiled = await screen.findByTestId("roadmap-unfiled");
+    expect(within(unfiled).getByTestId("roadmap-start-here")).toBeInTheDocument();
   });
 
   it("keeps unfiled concepts visible alongside grouped topics", async () => {
