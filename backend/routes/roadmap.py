@@ -27,7 +27,7 @@ from services.roadmap import (
     build_hierarchy,
     order_roadmap,
     readiness,
-    start_here_id,
+    start_here,
     subtopic_readiness,
     topic_summary,
 )
@@ -168,6 +168,19 @@ def _selected_exam(exams: list[dict], exam_id: str | None) -> dict | None:
     return next((e for e in exams if e["due_date"] >= today), None)
 
 
+def _start_here_payload(ordered: dict) -> dict:
+    """Flatten `start_here` into the two wire keys the page reads.
+
+    Unfiled concepts are passed in deliberately — see the note in
+    `services/roadmap.start_here`.
+    """
+    where = start_here(ordered["topics"], ordered["unfiled"])
+    return {
+        "start_here_topic_id": where["topic_id"],
+        "start_here_unfiled": where["unfiled"],
+    }
+
+
 @router.get("/{course_id}")
 def get_roadmap(course_id: str, user_id: str, request: Request, exam_id: str | None = None):
     """The whole roadmap for one course.
@@ -242,7 +255,7 @@ def get_roadmap(course_id: str, user_id: str, request: Request, exam_id: str | N
         "unfiled": unfiled_rows,
         "exams": exams,
         "selected_exam": selected,
-        "start_here_topic_id": start_here_id(ordered["topics"]),
+        **_start_here_payload(ordered),
         "readiness": readiness(all_rows),
         "summary": topic_summary(all_rows),
         # The page renders a flat list plus an "Organise" action in this

@@ -18,7 +18,7 @@ from services.roadmap import (
     freshness,
     order_roadmap,
     readiness,
-    start_here_id,
+    start_here,
     subtopic_readiness,
     topic_summary,
     topological_order,
@@ -220,19 +220,42 @@ class TestStartHere:
             {"node": node("t1", "Done"), "subtopics": [node("s1", "S", mastery=0.9)]},
             {"node": node("t2", "Next"), "subtopics": [node("s2", "S", mastery=0.2)]},
         ]
-        assert start_here_id(topics) == "t2"
+        assert start_here(topics) == {"topic_id": "t2", "unfiled": False}
 
-    def test_none_when_everything_is_mastered(self):
+    def test_nothing_left_when_everything_is_mastered(self):
         topics = [{"node": node("t1", "Done"), "subtopics": [node("s1", "S", mastery=0.8)]}]
-        assert start_here_id(topics) is None
+        assert start_here(topics, []) == {"topic_id": None, "unfiled": False}
+
+    def test_points_at_unfiled_when_topics_are_done_but_concepts_remain(self):
+        """Caught live, not by a unit test: the seeded MATH210 course has one
+        mastered topic and two untouched unfiled concepts, and the old
+        topics-only rule reported "nothing to start" at 35% readiness.
+        Readiness counts unfiled, so this must too or the two numbers
+        describe different courses."""
+        topics = [{"node": node("t1", "Done"), "subtopics": [node("s1", "S", mastery=0.9)]}]
+        unfiled = [node("x1", "Untouched", mastery=0.0)]
+
+        assert start_here(topics, unfiled) == {"topic_id": None, "unfiled": True}
+
+    def test_mastered_unfiled_concepts_do_not_count_as_work_left(self):
+        topics = [{"node": node("t1", "Done"), "subtopics": [node("s1", "S", mastery=0.9)]}]
+        unfiled = [node("x1", "Also done", mastery=0.95)]
+
+        assert start_here(topics, unfiled) == {"topic_id": None, "unfiled": False}
+
+    def test_a_topic_outranks_unfiled_work(self):
+        topics = [{"node": node("t1", "Todo"), "subtopics": [node("s1", "S", mastery=0.1)]}]
+        unfiled = [node("x1", "Also todo", mastery=0.0)]
+
+        assert start_here(topics, unfiled) == {"topic_id": "t1", "unfiled": False}
 
     def test_childless_topic_is_judged_on_itself(self):
         """`build_hierarchy` cannot produce this shape (a node with no
-        `part_of` children is unfiled, not a topic), but `start_here_id` is
+        `part_of` children is unfiled, not a topic), but `start_here` is
         called on caller-assembled lists too — so it must not divide by an
         empty subtopic list."""
         topics = [{"node": node("t1", "Lonely", mastery=0.1), "subtopics": []}]
-        assert start_here_id(topics) == "t1"
+        assert start_here(topics)["topic_id"] == "t1"
 
 
 # ── Freshness (§3.7) ────────────────────────────────────────────────────────

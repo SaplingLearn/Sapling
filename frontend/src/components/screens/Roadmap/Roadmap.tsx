@@ -168,6 +168,13 @@ export function RoadmapScreen({ courseId }: { courseId: string }) {
               so hiding them would make the ring unexplainable. */}
           {!data.needs_structure && data.unfiled.length > 0 && (
             <section className="roadmap__unfiled" data-testid="roadmap-unfiled">
+              {/* Every topic is done but these are not. Saying nothing here
+                  would read as "course complete" at well under 100%. */}
+              {data.start_here_unfiled && (
+                <p className="roadmap-topic__startflag" data-testid="roadmap-start-here">
+                  Start here
+                </p>
+              )}
               <h2 className="roadmap__unfiled-head">
                 Unfiled concepts ({data.unfiled.length})
               </h2>
