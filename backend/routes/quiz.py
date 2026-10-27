@@ -40,7 +40,13 @@ from services.request_limits import check_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
-from services.graph_service import apply_graph_update
+from services.graph_service import _normalize_concept, apply_graph_update
+from services.quiz_attribution import (
+    group_responses,
+    log_attribution,
+    resolve_node_id,
+    unattributed_count,
+)
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.academics import course_offering_ids
 from services.exam_proximity import days_until_next_exam, exam_prompt_line
@@ -56,7 +62,7 @@ from services.quiz_reserve import (
     missed_question_hashes,
     recover_questions,
 )
-from services.tool_signals import Expect, report_empty_result_async
+from services.tool_signals import Expect, report_empty_result, report_empty_result_async
 from services import prompt_dimensions
 from services.rag_service import retrieve_chunks_detailed, format_rag_context
 from services.gamification_service import me_snapshot
@@ -2110,6 +2116,124 @@ def get_attempt(attempt_id: str, request: Request):
     }
 
 
+def _attribute_question(attempt: dict, question: dict) -> str | None:
+    """Which graph node did this question test? (roadmap §3.13)
+
+    Costs two small reads on the answer path — the attempt's node (for its
+    course) and that course's node names. Both are bounded by one course's
+    concept count, and the path runs once per question answered, not per
+    keystroke. The alternative, resolving every response at submit, would
+    need N UPDATEs instead.
+
+    Never raises. Attribution is an enrichment: a student answering a
+    question must not get a 500 because their graph is in an odd state.
+    A failure degrades to the attempt's launched-from node, which is
+    exactly the pre-§3.13 behaviour.
+    """
+    launched_from = attempt.get("concept_node_id")
+    concept_name = (question or {}).get("concept_tested")
+    if not concept_name:
+        return launched_from
+
+    try:
+        node_rows = table("graph_nodes").select(
+            "course_id",
+            filters={
+                "id": f"eq.{launched_from}",
+                "user_id": f"eq.{attempt['user_id']}",
+            },
+        )
+        course_id = (node_rows[0] or {}).get("course_id") if node_rows else None
+        if not course_id:
+            # A node with no course can't scope a name lookup — matching
+            # across the student's whole graph would let a same-named
+            # concept from another course take the credit.
+            return launched_from
+
+        course_nodes = table("graph_nodes").select(
+            "id,concept_name",
+            filters={
+                "user_id": f"eq.{attempt['user_id']}",
+                "course_id": f"eq.{course_id}",
+            },
+        ) or []
+    except Exception:
+        logger.warning(
+            "quiz attribution: lookup failed for attempt %s — falling back to "
+            "the attempt's concept", attempt.get("id"), exc_info=True,
+        )
+        return launched_from
+
+    node_id, matched = resolve_node_id(
+        concept_name, course_nodes, fallback_node_id=launched_from,
+    )
+    if not matched:
+        # #529's lesson: an unexplained empty result is indistinguishable
+        # from "nothing to find". Say which it is. Deliberately logs no
+        # concept NAME — that is student content (see the rule at the
+        # `_KEYLESS_QUESTION_KEYS` site above).
+        report_empty_result(
+            "quiz_attribution.resolve_concept_node",
+            user_id=attempt.get("user_id"),
+            count=0,
+            expect=Expect.HAS_GRAPH,
+            feature="roadmap",
+            # The probe would ask "does this student have a graph at all?",
+            # which is not the question. We already hold the course's nodes:
+            # if there ARE nodes and the name still matched none of them,
+            # that is the discrepancy worth reporting.
+            plausible=bool(course_nodes),
+            scope={"course_id": f"eq.{course_id}"},
+            payload={"attempt_id": attempt.get("id"), "course_id": course_id},
+        )
+    return node_id
+
+
+def _nodes_for_mastery(
+    user_id: str,
+    grouped: dict[str, dict[str, int]],
+    *,
+    launched_from: dict,
+    node_id: str,
+) -> dict[str, dict]:
+    """concept_name + mastery_score for every node a submit will pay.
+
+    OWNER-SCOPED, like the single-node read it generalises: a response row
+    could name a node belonging to someone else only through a bug, but
+    filtering on `user_id` means such a bug cannot become an IDOR that
+    writes mastery into a stranger's graph.
+
+    The launched-from node is already in hand, so it is seeded rather than
+    re-read; a single-concept quiz therefore costs no extra query at all,
+    which is the overwhelmingly common case.
+    """
+    seeded = {node_id: launched_from}
+    missing = [nid for nid in grouped if nid not in seeded]
+    if not missing:
+        return seeded
+
+    try:
+        rows = table("graph_nodes").select(
+            "id,concept_name,mastery_score",
+            filters={
+                "id": f"in.({','.join(missing)})",
+                "user_id": f"eq.{user_id}",
+            },
+        ) or []
+    except Exception:
+        # Degrade to the launched-from node rather than failing a submit
+        # the student has already earned.
+        logger.warning(
+            "quiz: per-node mastery read failed for %d node(s); paying only "
+            "the attempt's concept", len(missing), exc_info=True,
+        )
+        return seeded
+
+    for r in rows:
+        seeded[r["id"]] = r
+    return seeded
+
+
 @router.post("/attempts/{attempt_id}/answer")
 def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request):
     """#541 C1: grade one question server-side and record the response.
@@ -2177,6 +2301,12 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             "is_correct": _is_correct(body.selected_index),
             "time_ms": body.time_ms,
             "confidence": body.confidence,
+            # Roadmap §3.13: attribute THIS question to the concept it
+            # actually tested, resolved once here and persisted. Resolving
+            # at read time would rot — a later rename or merge re-points a
+            # stored id but cannot fix a name captured in a row it never
+            # touches.
+            "concept_node_id": _attribute_question(attempt, question),
         }
         # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
         # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
@@ -2462,7 +2592,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index",
+        # concept_node_id (roadmap §3.13) rides along so mastery can be paid
+        # per concept rather than all into the attempt's launched-from node.
+        "question_index,selected_index,concept_node_id",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -2475,6 +2607,9 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # and a contradicted payload answer stored despite losing to the
     # recorded response.
     graded_answers: list[dict] = []
+    #: Per-question {concept_node_id, concept_tested, is_correct} — the input
+    #: to §3.13's per-node mastery grouping, built in the loop below.
+    attributed: list[dict] = []
     score = 0
     for q_index, q in enumerate(questions):
         qid = str(q["id"])
@@ -2509,6 +2644,16 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "correct_answer": correct_label,
             "explanation": q.get("explanation", ""),
         })
+        # Roadmap §3.13: carry each question's attribution alongside its
+        # result. `concept_node_id` is already resolved for anything
+        # answered through /answer; a question answered only in the submit
+        # payload has no response row, so its name is resolved below once
+        # the course is known.
+        attributed.append({
+            "concept_node_id": (recorded or {}).get("concept_node_id"),
+            "concept_tested": q.get("concept_tested"),
+            "is_correct": is_correct,
+        })
 
     total = len(questions)
 
@@ -2535,19 +2680,68 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     mastery_score_after = mastery_after(mastery_before, score=score, total=total)
     mastery_delta = mastery_score_after - mastery_before
 
-    # E7: the categorical reading of the attempt, namespaced by producer.
+    # ── Per-node attribution (roadmap §3.13) ────────────────────────────
+    #
+    # Questions answered through /answer already carry their node. Anything
+    # answered only in the submit payload is resolved here, once, against
+    # the same course scope — so the all-at-the-end client keeps working
+    # and still pays the right concepts.
+    course_id = node.get("course_id")
+    course_nodes = []
+    if course_id and any(not a["concept_node_id"] for a in attributed):
+        try:
+            course_nodes = table("graph_nodes").select(
+                "id,concept_name",
+                filters={
+                    "user_id": f"eq.{user_id}",
+                    "course_id": f"eq.{course_id}",
+                },
+            ) or []
+        except Exception:
+            # Attribution is enrichment. A lookup failure must not fail a
+            # submit the student has already earned — fall back below.
+            logger.warning(
+                "quiz: attribution lookup failed on submit attempt=%s",
+                body.quiz_id, exc_info=True,
+            )
+    for item in attributed:
+        if item["concept_node_id"]:
+            continue
+        item["concept_node_id"] = resolve_node_id(
+            item["concept_tested"], course_nodes, fallback_node_id=concept_node_id,
+        )[0]
+
+    # Group by node. The fallback keeps a quiz whose questions resolved to
+    # nothing behaving exactly as it did before §3.13 — all credit to the
+    # launched-from concept — rather than silently paying nobody.
+    grouped = group_responses(attributed, fallback_node_id=concept_node_id)
+    log_attribution(
+        attempt_id=body.quiz_id,
+        grouped=grouped,
+        unattributed=unattributed_count(attributed),
+    )
+
+    # Mastery per node, same model, same seam: each node is scored on the
+    # questions that actually tested it.
+    #
+    # E7: the categorical reading, namespaced by producer.
     # `node_mastery_events.event_type` has two independent writers and no
     # CHECK constraint — this route and the tutor's `update_mastery_tool`
     # (tutor_interaction / tutor_correction / tutor_quiz) — so an unprefixed
     # "quiz" or "correct" would leave the column carrying two disjoint
     # vocabularies with no way to tell which producer wrote a given row.
-    score_ratio = score / total if total > 0 else 0.0
-    if score_ratio >= 0.7:
-        event_type = "quiz_correct"
-    elif score_ratio >= 0.4:
-        event_type = "quiz_partial"
-    else:
-        event_type = "quiz_confusion"
+    #
+    # NOTE (§3.13 step 4): with one question on a node the ratio is only ever
+    # 0 or 1, so `quiz_partial` no longer occurs for single-question nodes.
+    # That is the honest reading of the evidence, but anything aggregating
+    # event_type should expect the shifted distribution.
+    def _event_type(correct: int, asked: int) -> str:
+        ratio = correct / asked if asked > 0 else 0.0
+        if ratio >= 0.7:
+            return "quiz_correct"
+        if ratio >= 0.4:
+            return "quiz_partial"
+        return "quiz_confusion"
 
     # Route the mastery write through the sanctioned graph path. The graph
     # keys on the ABSTRACT course id; apply_graph_update looks the node up by
@@ -2555,19 +2749,33 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # bumps times_studied/last_studied_at, records the event (now in
     # node_mastery_events), and updates the streak. We don't touch graph_nodes
     # or node_mastery_events directly — that's the graph slice's territory.
+    #
+    # ONE call, N entries (§3.13 step 3). The re-submit guard above, the
+    # streak bump inside apply_graph_update, and the achievement checks it
+    # triggers are all per-CALL — looping this per node would fire them
+    # once per concept and double-count every one.
+    graph_rows = _nodes_for_mastery(user_id, grouped, launched_from=node, node_id=concept_node_id)
+    updated_nodes = []
+    for node_id, tally in grouped.items():
+        row = graph_rows.get(node_id)
+        if not row:
+            # A node that vanished between answering and submitting. Skip
+            # rather than guess: apply_graph_update resolves by name, and a
+            # name we can no longer read could match the wrong row.
+            continue
+        before = row.get("mastery_score") or 0.0
+        after = mastery_after(before, score=tally["correct"], total=tally["total"])
+        updated_nodes.append({
+            "concept_name": row["concept_name"],
+            "mastery_delta": after - before,
+            "reason": f"Quiz: {tally['correct']}/{tally['total']} correct",
+            "event_type": _event_type(tally["correct"], tally["total"]),
+        })
+
     applied = apply_graph_update(
         user_id,
-        {
-            "updated_nodes": [
-                {
-                    "concept_name": node["concept_name"],
-                    "mastery_delta": mastery_delta,
-                    "reason": f"Quiz: {score}/{total} correct",
-                    "event_type": event_type,
-                }
-            ]
-        },
-        course_id=node.get("course_id"),
+        {"updated_nodes": updated_nodes},
+        course_id=course_id,
     )
     # #542 D1 (review): persist what the GRAPH actually wrote, not what we
     # predicted. apply_graph_update owns the write — it resolves the node by
@@ -2575,14 +2783,26 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # before/after is the only value that can't disagree with graph_nodes.
     # Falls back to the local computation if the call returned nothing
     # recognisable (it degrades rather than raising).
+    #
+    # quiz_attempts.mastery_before/after stay the LAUNCHED-FROM node's pair
+    # (§3.13 step 5): they are a single pair and cannot represent N nodes.
+    # The per-node numbers live in node_mastery_events, which is already the
+    # auditable record. So we match the change for this attempt's own
+    # concept rather than taking whichever came back first.
+    launched_from_name = _normalize_concept(node["concept_name"])
     for change in applied or []:
-        if isinstance(change, dict) and change.get("after") is not None:
-            mastery_before = change.get("before", mastery_before)
-            # NB: mastery_after is the imported model function (#543 E1);
-            # the value lives in mastery_score_after.
-            mastery_score_after = change["after"]
-            mastery_delta = mastery_score_after - mastery_before
-            break
+        if not isinstance(change, dict) or change.get("after") is None:
+            continue
+        # apply_graph_update reports the name under "concept" (graph_service
+        # :835), not "concept_name".
+        if _normalize_concept(change.get("concept") or "") != launched_from_name:
+            continue
+        mastery_before = change.get("before", mastery_before)
+        # NB: mastery_after is the imported model function (#543 E1);
+        # the value lives in mastery_score_after.
+        mastery_score_after = change["after"]
+        mastery_delta = mastery_score_after - mastery_before
+        break
 
     table("quiz_attempts").update(
         {
