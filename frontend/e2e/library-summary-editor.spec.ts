@@ -80,8 +80,13 @@ test("highlight, ask, keep, and restore an earlier version of a summary doc", as
   await page.getByRole("button", { name: "History" }).click();
   await expect(page.getByText("AI edit kept")).toBeVisible();
   await expect(page.getByText("Created")).toBeVisible();
-  const restoreButtons = page.getByRole("button", { name: "Bring this back" });
-  await restoreButtons.last().click(); // oldest entry = "Created" = the original text
+  // The button reads "Bring this back", but each one carries an aria-label
+  // ("Restore version from <date>") so screen-reader users can tell the
+  // repeated buttons apart — and an aria-label REPLACES the visible text as
+  // the accessible name getByRole matches on. Locate by that name, not the
+  // label the eye sees, or this never resolves.
+  const restoreButtons = page.getByRole("button", { name: /^Restore version from / });
+  await restoreButtons.last().click(); // list is created_at.desc, so last = oldest = "Created"
   await expect(editable).not.toContainText(SCRIPTED_SUMMARY_EDIT);
 
   // ── Sources tab lists the primary document with no remove control ─────
