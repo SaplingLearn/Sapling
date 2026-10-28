@@ -36,13 +36,35 @@ class TestStorageUpload:
 class TestStorageDelete:
     def test_deletes_the_object(self):
         fake_client = MagicMock()
-        fake_client.delete.return_value.raise_for_status.return_value = None
+        fake_client.request.return_value.raise_for_status.return_value = None
         with patch.object(dbconn, "_client", fake_client):
             storage_delete("document-originals", "doc1/notes.pdf")
 
-        fake_client.delete.assert_called_once_with(
-            f"{dbconn.SUPABASE_URL}/storage/v1/object/document-originals/doc1/notes.pdf"
-        )
+        fake_client.request.assert_called_once()
+        args, kwargs = fake_client.request.call_args
+        assert args[0] == "DELETE"
+        assert args[1] == f"{dbconn.SUPABASE_URL}/storage/v1/object/document-originals/doc1/notes.pdf"
+
+    def test_sends_a_body_so_storage_does_not_reject_the_delete(self):
+        """The regression guard for a bug a mock could not see.
+
+        `_client` sets `Content-Type: application/json` on every request, and
+        Storage's Fastify layer rejects a bodiless request carrying that header
+        ("Body cannot be empty when content-type is set to 'application/json'").
+        So a plain `_client.delete(url)` 400s for every object that exists, and
+        since the only caller swallows the error best-effort, each deleted
+        document silently leaked its original file. The previous version of
+        this test asserted that exact bodiless call, which is how a fully
+        mocked suite stayed green against a call shape the real server always
+        refused — only the live e2e logscan oracle caught it.
+        """
+        fake_client = MagicMock()
+        fake_client.request.return_value.raise_for_status.return_value = None
+        with patch.object(dbconn, "_client", fake_client):
+            storage_delete("document-originals", "doc1/notes.pdf")
+
+        _, kwargs = fake_client.request.call_args
+        assert kwargs.get("json") == {}, "DELETE must carry a body, or Storage 400s it"
 
 
 class TestStorageCreateSignedUrl:

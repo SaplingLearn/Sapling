@@ -260,8 +260,19 @@ def storage_upload(bucket: str, path: str, data: bytes, content_type: str) -> No
 
 def storage_delete(bucket: str, path: str) -> None:
     """Delete one object from a Storage bucket. Raises on failure — same
-    best-effort-at-the-caller convention as storage_upload."""
-    r = _client.delete(f"{STORAGE_URL}/object/{bucket}/{path}")
+    best-effort-at-the-caller convention as storage_upload.
+
+    The empty JSON body is load-bearing, not decoration. `_client` carries
+    `Content-Type: application/json` on every request (_HEADERS), and a
+    bodiless DELETE then trips Storage's Fastify guard — "Body cannot be
+    empty when content-type is set to 'application/json'" — so a plain
+    `_client.delete(...)` 400s for EVERY object, including ones that exist
+    and were just uploaded successfully. Because the only caller wraps this
+    best-effort, that failure is invisible: the delete looks like it worked
+    while every original file leaks into the bucket forever. `storage_upload`
+    dodges it by overriding Content-Type per call; this sends a body instead.
+    """
+    r = _client.request("DELETE", f"{STORAGE_URL}/object/{bucket}/{path}", json={})
     r.raise_for_status()
 
 
