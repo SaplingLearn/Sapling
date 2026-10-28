@@ -135,6 +135,10 @@ export function TopicAccordion({
             <button
               type="button"
               className="roadmap-topic__header"
+              // Own testid: once a topic expands, its subtopics' Learn/Quiz
+              // buttons are also buttons inside `roadmap-topics`, so a
+              // role-based locator would match them too.
+              data-testid="roadmap-topic-header"
               aria-expanded={isOpen}
               onClick={() => onToggle(topic.id)}
             >
