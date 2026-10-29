@@ -53,6 +53,8 @@ AgentTask = Literal[
     "ocr_vision",
     "decision",
     "topic_checklist",
+    "summary_edit",
+    "document_notes",
 ]
 
 
@@ -98,6 +100,12 @@ _DEFAULTS: dict[AgentTask, str] = {
     # backend (the variant name predates the provider swap) and the fallback
     # when Jev is unavailable.
     "decision": "claude-haiku-5-5",
+    # Summary-doc "ask" edits — targeted prose rewrites the student reads
+    # immediately, same quality bar as study_guide.
+    "summary_edit": "claude-haiku-5-5",
+    # Comprehensive study notes — the long-form content students actually
+    # study from, same quality bar as study_guide.
+    "document_notes": "claude-haiku-5-5",
 }
 
 
@@ -153,6 +161,11 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     "concept_describe": "low",
     "ocr_vision": "medium",
     "decision": "low",
+    # Both ran on full Flash with dynamic thinking, so by the rule above they
+    # keep `medium`: a summary-doc rewrite and a comprehensive notes pass are
+    # the long-form content a student reads and studies from directly.
+    "summary_edit": "medium",
+    "document_notes": "medium",
 }
 
 

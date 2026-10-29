@@ -219,6 +219,38 @@ E2E_DOC_CONCEPTS = [
     ("Learning Rate", "Step-size hyperparameter governing each descent update.", 0.7),
 ]
 
+# The comprehensive notes that seed the document's summary_docs row (Library
+# summary editor). Asserted (as a substring, within the first
+# _PREVIEW_MAX_CHARS of the rendered preview) by frontend/e2e/upload.spec.ts
+# via SCRIPTED_ABSTRACT_PREVIEW_SNIPPET — keep that literal in sync with the
+# opening of the first section's body below.
+E2E_DOC_NOTES_SECTIONS = [
+    {
+        "heading": "Gradient Descent",
+        "heading_level": 2,
+        "body": (
+            "These notes introduce gradient descent as an iterative "
+            "optimization procedure. They define the loss surface, derive "
+            "the parameter update rule, and work through why subtracting "
+            "the gradient (scaled by the learning rate) moves the "
+            "parameters toward lower loss on every step. This is "
+            "deterministic fixture content for the E2E upload journey, "
+            "not a model-generated summary."
+        ),
+    },
+    {
+        "heading": "Learning Rate",
+        "heading_level": 2,
+        "body": (
+            "The learning rate is the step-size hyperparameter that scales "
+            "every gradient update. Too large a learning rate overshoots "
+            "the minimum and can diverge; too small converges reliably but "
+            "slowly. These notes walk through both failure modes as "
+            "deterministic fixture content for the E2E upload journey."
+        ),
+    },
+]
+
 
 def _structured_output(args: dict) -> FunctionModelHandler:
     """Handler emitting `args` through the agent's registered output tool, so
@@ -249,6 +281,10 @@ register_function_handler(
         "abstract": E2E_DOC_ABSTRACT,
         "key_points": E2E_DOC_KEY_POINTS,
     }),
+)
+register_function_handler(
+    "document_notes",
+    _structured_output({"sections": E2E_DOC_NOTES_SECTIONS}),
 )
 register_function_handler(
     "concepts",
@@ -364,6 +400,28 @@ register_function_handler(
     "note_concepts", _structured_output({"concepts": E2E_NOTE_CONCEPTS})
 )
 register_function_handler("note_chat", _note_chat_handler)
+
+
+# ── Library summary-doc editor "Ask" flow (Task 11) ────────────────────────
+#
+# services/summary_docs_service.py::create_suggestion drives summary_edit_agent
+# (tool-less, structured `SummaryEdit` output — a single `proposed_text`
+# field, see agents/summary_edit.py) directly via run_agent_sync, request-path
+# (awaited inline by the route that calls create_suggestion), so registering
+# it is correct — the same reasoning as concept_describe/concept_scan above.
+# Without a handler, function mode's dispatch would raise
+# UnregisteredHandlerError and the "Ask" flow would 500 in the browser lane.
+
+# SummaryEdit.proposed_text — asserted verbatim once a browser journey for
+# this flow exists. Keep in sync with any future spec that reads it.
+E2E_SUMMARY_EDIT_PROPOSAL = (
+    "This is the deterministic scripted rewrite for the E2E summary-edit "
+    "journey."
+)
+
+register_function_handler(
+    "summary_edit", _structured_output({"proposed_text": E2E_SUMMARY_EDIT_PROPOSAL})
+)
 
 
 # ── Typed decision seam / tutor router (#640, ADR 0027) ─────────────────────

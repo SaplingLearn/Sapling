@@ -571,6 +571,7 @@ def _doc_result(category="lecture_notes"):
     from agents.classifier import DocumentClassification
     from agents.concept_extraction import Concept, ConceptList
     from agents.document import DocumentProcessingResult
+    from agents.document_notes import ComprehensiveNotes, NotesSection
     from agents.summary import Summary
 
     return DocumentProcessingResult(
@@ -581,6 +582,9 @@ def _doc_result(category="lecture_notes"):
             headline="h", abstract="SECRET-SUMMARY-ABSTRACT",
             key_points=["k1", "k2", "k3"],
         ),
+        notes=ComprehensiveNotes(sections=[
+            NotesSection(heading="h", heading_level=2, body="notes."),
+        ]),
         concepts=ConceptList(
             concepts=[Concept(name="C", description="d", importance=0.5)],
         ),

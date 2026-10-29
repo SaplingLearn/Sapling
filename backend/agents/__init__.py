@@ -57,6 +57,21 @@ WORKER_LIMITS = UsageLimits(
     total_tokens_limit=50_000,
 )
 
+# Comprehensive study notes (#document_notes) are deliberately long-form —
+# the whole point is "not a summary" — so they cannot share WORKER_LIMITS'
+# 50k-token budget with one-paragraph tasks (classification, the card-
+# preview summary): Gemini 2.5 Flash's own single-response output ceiling
+# is 65,536 tokens, LARGER than that entire shared budget, meaning any real
+# lecture-length source could have its input alone consume most of it,
+# silently truncating output regardless of how thorough the prompt asks for
+# it to be. 300k comfortably covers a long source's input plus genuinely
+# thorough output while staying well short of unbounded cost/latency.
+NOTES_LIMITS = UsageLimits(
+    request_limit=3,
+    tool_calls_limit=0,
+    total_tokens_limit=300_000,
+)
+
 ORCHESTRATOR_LIMITS = UsageLimits(
     request_limit=8,
     tool_calls_limit=10,
@@ -112,6 +127,7 @@ CONTINUATION_LIMITS = UsageLimits(
 
 __all__ = [
     "WORKER_LIMITS",
+    "NOTES_LIMITS",
     "ORCHESTRATOR_LIMITS",
     "TUTOR_LIMITS",
     "CONTINUATION_LIMITS",

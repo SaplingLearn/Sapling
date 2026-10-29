@@ -10,6 +10,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 # Feature flag — when true, the streaming /upload route runs OCR off the
 # request critical path via asyncio.to_thread, so the SSE stream opens
@@ -29,12 +30,20 @@ from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException,
 from sse_starlette.sse import EventSourceResponse
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 
-from db.connection import table
+from db.connection import storage_create_signed_url, storage_delete, storage_upload, table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from services.auth_guard import get_session_user_id, require_self
-from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
+from services.encryption import decrypt_if_present, encrypt_if_present, encrypt_json, decrypt_json
 from services.extraction_service import extract_text_from_file
+from services.summary_docs_service import (
+    attach_summary_previews,
+    create_summary_doc,
+    prosemirror_doc_from_sections,
+    delete_summary_docs_for_document,
+    plaintext_for_primary_document,
+    plaintext_from_prosemirror,
+)
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
 from services.course_context_service import update_course_context
@@ -47,6 +56,7 @@ from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
+from agents.document_notes import document_notes_agent
 from agents.concept_extraction import concept_extraction_agent
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
@@ -63,6 +73,12 @@ router = APIRouter()
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+
+# Source reference viewer (docs/superpowers/specs/2026-10-14-source-reference-viewer-design.md):
+# the bucket the original upload is persisted to, provisioned by migration
+# 20261014090000_document_originals.sql.
+ORIGINAL_DOCUMENTS_BUCKET = "document-originals"
+
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -237,7 +253,7 @@ def list_documents(user_id: str, request: Request):
     require_self(user_id, request)
     _validate_user(user_id)
     docs = table("documents").select(
-        "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+        "id,user_id,offering_id,file_name,category,concept_notes,created_at,processed_at",
         filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         order="created_at.desc",
     ) or []
@@ -247,7 +263,6 @@ def list_documents(user_id: str, request: Request):
     # list_sessions offering_to_course pattern), not once per row.
     offering_to_course: dict[str, str | None] = {}
     for d in docs:
-        d["summary"] = decrypt_if_present(d.get("summary"))
         notes_raw = d.get("concept_notes")
         if isinstance(notes_raw, str):
             try:
@@ -266,6 +281,7 @@ def list_documents(user_id: str, request: Request):
         if off_id and off_id not in offering_to_course:
             offering_to_course[off_id] = offering_course_id(off_id)
         d["course_id"] = offering_to_course.get(off_id)
+    attach_summary_previews(docs)
     return {"documents": docs}
 
 
@@ -279,18 +295,49 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
     # Ensure the document belongs to the requesting user (and isn't already
     # soft-deleted)
     docs = table("documents").select(
-        "id",
+        "id,original_storage_path",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
     if not docs:
         raise HTTPException(status_code=404, detail="Document not found.")
+    original_storage_path = docs[0].get("original_storage_path")
     # Soft delete (0025): stamp deleted_at; reads filter it out. The
     # enrollments.syllabus_doc_id FK (ON DELETE SET NULL) stays intact.
     table("documents").update(
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
+    # Spec "Delete-together behavior": the summary doc this document
+    # seeded goes away with it. A hard delete (not the soft-delete the
+    # `documents` row above just got) so the table's own ON DELETE CASCADE
+    # foreign keys clean up its sources/versions/suggestions in one
+    # statement (services/summary_docs_service.py::delete_summary_docs_for_document).
+    # Best-effort: the documents row above is already soft-deleted (the
+    # user-facing action already succeeded), so a failure here must not
+    # 500 an otherwise-successful delete — same posture as create_summary_doc
+    # (Task 14) for a secondary effect after a committed primary write. The
+    # only cost of a swallowed failure is a rare, recoverable orphaned
+    # summary_docs row pointing at a now-invisible document.
+    try:
+        delete_summary_docs_for_document(document_id)
+    except Exception:
+        logger.exception(
+            "delete_summary_docs_for_document failed for document %s (best-effort)",
+            document_id,
+        )
+    # Source reference viewer (Task 5): the stored original is cleaned up
+    # the same best-effort way — the soft-delete above already succeeded
+    # (the user-facing action is done), so a Storage hiccup here is a rare,
+    # recoverable orphaned object, never a reason to fail the delete.
+    if original_storage_path:
+        try:
+            storage_delete(ORIGINAL_DOCUMENTS_BUCKET, original_storage_path)
+        except Exception:
+            logger.exception(
+                "storage_delete failed for document %s's original file (best-effort)",
+                document_id,
+            )
     return {"deleted": True}
 
 
@@ -360,7 +407,7 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     """
     try:
         rows = table("documents").select(
-            "id,user_id,offering_id,file_name,category,summary,concept_notes,created_at,processed_at",
+            "id,user_id,offering_id,file_name,category,concept_notes,created_at,processed_at",
             filters={
                 "user_id": f"eq.{user_id}",
                 "request_id": f"eq.{request_id}",
@@ -376,13 +423,13 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     if not isinstance(first, dict):
         return None
     row = dict(first)
-    row["summary"] = decrypt_if_present(row.get("summary"))
     notes_raw = row.get("concept_notes")
     if isinstance(notes_raw, str):
         try:
             row["concept_notes"] = decrypt_json(notes_raw)
         except Exception:
             row["concept_notes"] = []
+    attach_summary_previews([row])
     return row
 
 
@@ -458,14 +505,24 @@ def _persist_document(
     course_id: str | None = None,
     char_count: int | None = None,
     extracted_text: str | None = None,
+    file_bytes: bytes | None = None,
+    content_type: str | None = None,
 ) -> tuple[str, dict]:
     """Insert a documents row from an orchestrator result.
 
     Shared by both upload_document_sync and the streaming upload_document.
     The document keys on the OFFERING (0025), not the abstract course.
-    summary + concept_notes are encrypted at the insert boundary; the
-    returned row carries the plaintext shape so callers can pass it
-    straight back to the client without an extra decrypt step.
+    concept_notes is encrypted at the insert boundary; the returned row
+    carries the plaintext shape so callers can pass it straight back to the
+    client without an extra decrypt step. The orchestrator's summary abstract
+    no longer lands on ``documents.summary`` (library-summary-editor cutover,
+    task 14) — it seeds a new `summary_docs` row via
+    `services.summary_docs_service.create_summary_doc` instead, and the
+    returned row carries that doc's id/preview as ``summary_doc_id`` /
+    ``summary_preview``. That call is best-effort: the ``documents`` row is
+    already committed by the time it runs, so any exception is logged and
+    swallowed rather than 500ing an otherwise-successful upload, and
+    ``summary_doc_id``/``summary_preview`` come back ``None`` instead.
     ``request_id`` (when provided) is stored verbatim for idempotent
     replay detection. ``course_id``/``char_count`` only feed the
     document.processed observability event (#117); they are not persisted
@@ -476,6 +533,14 @@ def _persist_document(
     recovery path depend on the thing that failed: a document whose indexer
     never ran had nothing for a re-drive to work from. It is stripped from the
     returned row — `/upload/sync` hands that row to the client verbatim.
+
+    ``file_bytes``/``content_type`` (when provided) persist the original
+    upload to Storage (source reference viewer, Task 3) — best-effort, same
+    posture as ``create_summary_doc`` above: the ``documents`` row is
+    already committed by the time this runs, so a Storage failure is
+    logged and swallowed rather than 500ing an otherwise-successful upload,
+    and ``original_storage_path`` comes back ``None`` instead.
+
     Returns (document_id, full_row).
     """
     now = datetime.now(timezone.utc).isoformat()
@@ -483,7 +548,6 @@ def _persist_document(
         {"name": c.name, "description": c.description}
         for c in result.concepts.concepts
     ]
-    summary = result.summary.abstract or None
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -503,7 +567,6 @@ def _persist_document(
         "extracted_text": encrypt_if_present(extracted_text),
         "index_status": "pending",
         "index_attempts": 0,
-        "summary": encrypt_if_present(summary),
         "concept_notes": encrypt_json(concept_notes) if concept_notes is not None else None,
         "created_at": now,
         "processed_at": now,
@@ -544,7 +607,55 @@ def _persist_document(
         raise RuntimeError("documents insert kept naming absent columns")
     full_row = dict(inserted[0] if inserted else row)
     full_row.pop("extracted_text", None)
-    full_row["summary"] = summary
+    # Best-effort: the documents row above already landed, so a failure here
+    # (transient DB error, a migration not yet applied, an encryption failure)
+    # must not 500 an otherwise-successful upload. summary_doc_id/preview stay
+    # None — recoverable later via a manual re-drive — rather than raising.
+    try:
+        notes_content = prosemirror_doc_from_sections(
+            [s.model_dump() for s in result.notes.sections]
+        )
+        summary_doc = create_summary_doc(
+            user_id=user_id, primary_document_id=full_row["id"], content=notes_content,
+        )
+        full_row["summary_doc_id"] = summary_doc["id"]
+        full_row["summary_preview"] = plaintext_from_prosemirror(summary_doc["content"], max_chars=220)
+        # A freshly created summary doc always has exactly one source (the
+        # document that just seeded it) — matches attach_summary_previews'
+        # field set (Task 15) so list/replay/fresh-upload responses carry
+        # the same shape.
+        full_row["summary_source_count"] = 1
+    except Exception:
+        logger.exception(
+            "create_summary_doc failed for document %s (best-effort)",
+            full_row["id"],
+        )
+        full_row["summary_doc_id"] = None
+        full_row["summary_preview"] = None
+        full_row["summary_source_count"] = 0
+    # Best-effort, same posture as create_summary_doc above: the documents
+    # row already landed, so a Storage failure (bucket not provisioned,
+    # transient network error) must not 500 an otherwise-successful upload.
+    if file_bytes is not None:
+        storage_path = f"{full_row['id']}/{quote(filename, safe='')}"
+        try:
+            storage_upload(
+                ORIGINAL_DOCUMENTS_BUCKET, storage_path, file_bytes,
+                content_type or "application/octet-stream",
+            )
+            table("documents").update(
+                {"original_storage_path": storage_path},
+                filters={"id": f"eq.{full_row['id']}"},
+            )
+            full_row["original_storage_path"] = storage_path
+        except Exception:
+            logger.exception(
+                "original-file storage upload failed for document %s (best-effort)",
+                full_row["id"],
+            )
+            full_row["original_storage_path"] = None
+    else:
+        full_row["original_storage_path"] = None
     full_row["concept_notes"] = concept_notes
     # The documents row above is the single shared insert point for both
     # upload_document_sync and the streaming upload_document (see docstring);
@@ -758,6 +869,7 @@ async def upload_document_sync(
         filename=filename, result=result, request_id=request_id,
         course_id=course_id, char_count=len(extracted_text),
         extracted_text=extracted_text,
+        file_bytes=file_bytes, content_type=file.content_type,
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
@@ -965,6 +1077,9 @@ async def upload_document(
             summary_task = summary_agent.run(
                 extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
             )
+            notes_task = document_notes_agent.run(
+                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+            )
             concepts_task = concept_extraction_agent.run(
                 extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
             )
@@ -972,19 +1087,24 @@ async def upload_document(
                 syllabus_task = syllabus_extraction_agent.run(
                     extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
                 )
-                summary_r, concepts_r, syllabus_r = await asyncio.gather(
-                    summary_task, concepts_task, syllabus_task,
+                summary_r, notes_r, concepts_r, syllabus_r = await asyncio.gather(
+                    summary_task, notes_task, concepts_task, syllabus_task,
                 )
                 record_agent_usage(syllabus_r, feature="document", task="syllabus")
                 summary = summary_r.output
+                notes = notes_r.output
                 concepts = concepts_r.output
                 syllabus = syllabus_r.output
             else:
-                summary_r, concepts_r = await asyncio.gather(summary_task, concepts_task)
+                summary_r, notes_r, concepts_r = await asyncio.gather(
+                    summary_task, notes_task, concepts_task,
+                )
                 summary = summary_r.output
+                notes = notes_r.output
                 concepts = concepts_r.output
                 syllabus = None
             record_agent_usage(summary_r, feature="document", task="summary")
+            record_agent_usage(notes_r, feature="document", task="document_notes")
             record_agent_usage(concepts_r, feature="document", task="concepts")
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="extracted",
@@ -1008,6 +1128,7 @@ async def upload_document(
             final_output = DocumentProcessingResult(
                 classification=classification,
                 summary=summary,
+                notes=notes,
                 concepts=concepts,
                 syllabus=syllabus,
                 graph_updated=graph_updated,
@@ -1086,6 +1207,7 @@ async def upload_document(
                 course_id=course_id,
                 char_count=len(extracted_text) if extracted_text is not None else None,
                 extracted_text=extracted_text,
+                file_bytes=file_bytes, content_type=file.content_type,
             )
 
             # BackgroundTasks runs after response close — useless for SSE since
@@ -1234,6 +1356,44 @@ def _scan_concepts_for_course(
     }
 
 
+@router.get("/doc/{document_id}/original-url")
+def get_original_url(document_id: str, request: Request, user_id: str):
+    """A short-lived signed URL for the document's original uploaded file
+    (source reference viewer). 404 when the document doesn't exist, isn't
+    the caller's, or has no stored original — the last case covers every
+    document uploaded before this shipped (Task 3), which is a hard,
+    non-backfillable gap, not a transient failure."""
+    require_self(user_id, request)
+    _validate_user(user_id)
+    rows = table("documents").select(
+        "id,original_storage_path,file_name",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not rows or not rows[0].get("original_storage_path"):
+        raise HTTPException(status_code=404, detail="No original file is available for this document.")
+    url = storage_create_signed_url(ORIGINAL_DOCUMENTS_BUCKET, rows[0]["original_storage_path"])
+    return {"url": url}
+
+
+@router.get("/doc/{document_id}/extracted-text")
+def get_extracted_text(document_id: str, request: Request, user_id: str):
+    """The document's OCR'd plaintext, for SourceTextViewer's DOCX/PPTX
+    fallback (source reference viewer, Task 9) — these formats have no
+    rasterization pipeline (design doc §8), so a read-only text view of
+    what's already stored is the v1 substitute for a rendered page."""
+    require_self(user_id, request)
+    _validate_user(user_id)
+    rows = table("documents").select(
+        "id,extracted_text",
+        filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+        limit=1,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {"text": decrypt_if_present(rows[0].get("extracted_text")) or ""}
+
+
 @router.post("/doc/{document_id}/scan-concepts")
 def scan_document_concepts(document_id: str, request: Request, body: dict = Body(...)):
     """Extend the course's concept graph using one document's stored
@@ -1245,7 +1405,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     _validate_user(user_id)
 
     rows = table("documents").select(
-        "id,user_id,offering_id,file_name,summary,concept_notes",
+        "id,user_id,offering_id,file_name,concept_notes",
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}", "deleted_at": "is.null"},
         limit=1,
     )
@@ -1258,7 +1418,7 @@ def scan_document_concepts(document_id: str, request: Request, body: dict = Body
     if not course_id:
         raise HTTPException(status_code=400, detail="Document is not associated with a course.")
 
-    doc_summary = decrypt_if_present(doc.get("summary"))
+    doc_summary = plaintext_for_primary_document(document_id)
     notes_raw = doc.get("concept_notes")
     if isinstance(notes_raw, str):
         try:

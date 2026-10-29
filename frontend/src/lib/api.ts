@@ -13,6 +13,7 @@ import type {
   UsageSummaryData, UsageByUserData, LlmCostData, ErrorsPageData,
   PublicRoom,
   GamificationMe, LeaderboardRow, ActivityData, Friend,
+  SummaryDoc, SummaryDocCore, SummaryDocSuggestion, SummaryDocVersion, AskReference,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
 import { createStreamPacer } from '@/lib/streamPacer';
@@ -856,6 +857,106 @@ export const scanDocumentConcepts = (documentId: string, userId: string) =>
 
 export const scanCourseConcepts = (courseId: string, userId: string) =>
   fetchJSON<ScanConceptsResponse>(`/api/documents/course/${courseId}/scan-concepts`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+// Summary docs (editable library summaries)
+
+export const getSummaryDoc = (summaryDocId: string, userId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}?user_id=${encodeURIComponent(userId)}`);
+
+export const updateSummaryDocContent = (summaryDocId: string, userId: string, content: Record<string, unknown>) =>
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId, content }),
+  });
+
+export const addSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
+  fetchJSON<SummaryDoc>(`/api/summary-docs/${summaryDocId}/sources`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, document_id: documentId }),
+  });
+
+export const removeSummaryDocSource = (summaryDocId: string, userId: string, documentId: string) =>
+  fetchJSON<SummaryDoc>(
+    `/api/summary-docs/${summaryDocId}/sources/${documentId}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  );
+
+// Signed URL to the stored original file for a document (backend/routes
+// `GET /doc/{id}/original-url`, Task 4) — used by the source reference
+// viewer to render the PDF a summary excerpt was circled from.
+export const getOriginalDocumentUrl = (documentId: string, userId: string) =>
+  fetchJSON<{ url: string }>(
+    `/api/documents/doc/${documentId}/original-url?user_id=${encodeURIComponent(userId)}`,
+  );
+
+// Decrypted extracted text for a document (backend/routes/documents.py
+// `GET /doc/{id}/extracted-text`, Task 9) — used by the source reference
+// viewer for non-PDF (DOCX/PPTX) sources, which render as plain text rather
+// than a page-by-page PDF canvas.
+export const getDocumentExtractedText = (documentId: string, userId: string) =>
+  fetchJSON<{ text: string }>(
+    `/api/documents/doc/${documentId}/extracted-text?user_id=${encodeURIComponent(userId)}`,
+  );
+
+// Base64-encodes a Blob (the circled-reference screenshot) for JSON transport —
+// fetch's body can't carry raw binary alongside the rest of the ask payload.
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+export const askSummaryDocAgent = async (
+  summaryDocId: string,
+  userId: string,
+  body: {
+    instruction: string;
+    anchor_from?: number | null;
+    anchor_to?: number | null;
+    original_text?: string | null;
+    allow_surrounding_edits?: boolean;
+    // A circled-reference excerpt from the original source document — either
+    // the selected text or a cropped screenshot. Threaded through to
+    // `reference_text`/`reference_image_base64` on the backend's `/ask` body.
+    reference?: AskReference | null;
+  },
+) => {
+  const { reference, ...rest } = body;
+  const reference_text = reference?.kind === 'text' ? reference.text : null;
+  const reference_image_base64 =
+    reference?.kind === 'image' ? await blobToBase64(reference.blob) : null;
+  return fetchJSON<SummaryDocSuggestion>(`/api/summary-docs/${summaryDocId}/ask`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, ...rest, reference_text, reference_image_base64 }),
+  });
+};
+
+export const keepSummaryDocSuggestion = (
+  summaryDocId: string, userId: string, suggestionId: string, content: Record<string, unknown>,
+) =>
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/keep`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, content }),
+  });
+
+export const undoSummaryDocSuggestion = (summaryDocId: string, userId: string, suggestionId: string) =>
+  fetchJSON<{ undone: boolean }>(`/api/summary-docs/${summaryDocId}/suggestions/${suggestionId}/undo`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+
+export const listSummaryDocVersions = (summaryDocId: string, userId: string) =>
+  fetchJSON<{ versions: SummaryDocVersion[] }>(
+    `/api/summary-docs/${summaryDocId}/versions?user_id=${encodeURIComponent(userId)}`,
+  );
+
+export const restoreSummaryDocVersion = (summaryDocId: string, userId: string, versionId: string) =>
+  fetchJSON<SummaryDocCore>(`/api/summary-docs/${summaryDocId}/versions/${versionId}/restore`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });

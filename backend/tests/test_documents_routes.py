@@ -191,6 +191,35 @@ class TestListDocuments:
         assert body["d-good"]["concept_notes"] == [{"name": "Concept A", "description": "d"}]
         assert body["d-bad"]["concept_notes"] == []
 
+    def test_attaches_summary_preview_fields_and_drops_summary_column(self):
+        docs = [
+            {"id": "d1", "user_id": "u1", "offering_id": "off-1", "file_name": "a.pdf", "category": "other"},
+        ]
+
+        def fake_attach(doc_list):
+            for d in doc_list:
+                d["summary_doc_id"] = "sd-1"
+                d["summary_preview"] = "Preview text."
+                d["summary_source_count"] = 1
+
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.attach_summary_previews", side_effect=fake_attach) as mock_attach,
+        ):
+            t.return_value.select.return_value = docs
+            r = client.get("/api/documents/user/u1")
+
+        assert r.status_code == 200
+        body = r.json()["documents"][0]
+        assert body["summary_doc_id"] == "sd-1"
+        assert body["summary_preview"] == "Preview text."
+        assert "summary" not in body
+        mock_attach.assert_called_once()
+        # The documents SELECT itself must stop naming the retired column.
+        select_cols = t.return_value.select.call_args[0][0]
+        assert "summary" not in select_cols.split(",")
+
 # ── DELETE /api/documents/doc/{document_id} ──────────────────────────────────
 
 class TestDeleteDocument:
@@ -232,6 +261,81 @@ class TestDeleteDocument:
             r = client.delete("/api/documents/doc/d1?user_id=u1")
 
         assert r.status_code == 404
+
+    def test_delete_cascades_to_the_summary_doc(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document") as mock_delete_sd,
+        ):
+            t.return_value.select.return_value = [{"id": "doc1"}]
+            r = client.delete("/api/documents/doc/doc1?user_id=u1")
+
+        assert r.status_code == 200
+        mock_delete_sd.assert_called_once_with("doc1")
+
+    def test_delete_still_succeeds_when_summary_cascade_raises(self):
+        """The documents row above is already soft-deleted — the user-facing
+        delete already succeeded — so a failure in the best-effort summary-doc
+        cascade must not turn that success into a 500 (code review)."""
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch(
+                "routes.documents.delete_summary_docs_for_document",
+                side_effect=RuntimeError("db hiccup"),
+            ),
+        ):
+            t.return_value.select.return_value = [{"id": "doc1"}]
+            r = client.delete("/api/documents/doc/doc1?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"deleted": True}
+
+
+class TestDeleteDocumentRemovesOriginal:
+    def test_deletes_the_stored_original_best_effort(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document"),
+            patch("routes.documents.storage_delete") as mock_delete,
+        ):
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": "doc-1/notes.pdf"},
+            ]
+            r = client.delete("/api/documents/doc/doc-1?user_id=u1")
+
+        assert r.status_code == 200
+        mock_delete.assert_called_once_with("document-originals", "doc-1/notes.pdf")
+
+    def test_skips_storage_delete_when_no_original_was_stored(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document"),
+            patch("routes.documents.storage_delete") as mock_delete,
+        ):
+            t.return_value.select.return_value = [{"id": "doc-1", "original_storage_path": None}]
+            r = client.delete("/api/documents/doc/doc-1?user_id=u1")
+
+        assert r.status_code == 200
+        mock_delete.assert_not_called()
+
+    def test_storage_delete_failure_does_not_500_an_already_completed_delete(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.delete_summary_docs_for_document"),
+            patch("routes.documents.storage_delete", side_effect=RuntimeError("network blip")),
+        ):
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": "doc-1/notes.pdf"},
+            ]
+            r = client.delete("/api/documents/doc/doc-1?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"deleted": True}
 
 
 # ── PATCH /api/documents/doc/{document_id} ───────────────────────────────────
@@ -330,6 +434,9 @@ class TestUploadValidation:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("pdf text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -346,6 +453,9 @@ class TestUploadValidation:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("docx text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -362,6 +472,9 @@ class TestUploadValidation:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("pptx text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [row]
@@ -404,6 +517,7 @@ def _make_orchestrator_result(
     """Build a DocumentProcessingResult with sensible defaults for tests."""
     from agents.classifier import DocumentClassification
     from agents.summary import Summary
+    from agents.document_notes import ComprehensiveNotes, NotesSection
     from agents.concept_extraction import Concept, ConceptList
     from agents.syllabus_extraction import (
         SyllabusAssignment, SyllabusAssignments, GradingCategory,
@@ -419,6 +533,9 @@ def _make_orchestrator_result(
         abstract=summary_abstract,
         key_points=["a", "b", "c"],
     )
+    notes = ComprehensiveNotes(sections=[
+        NotesSection(heading="Test section", heading_level=2, body=summary_abstract),
+    ])
     concepts = ConceptList(concepts=[
         Concept(name=n, description="d", importance=0.5)
         for n in (concept_names or ["Concept A"])
@@ -438,6 +555,7 @@ def _make_orchestrator_result(
     return DocumentProcessingResult(
         classification=classification,
         summary=summary,
+        notes=notes,
         concepts=concepts,
         syllabus=syllabus,
         graph_updated=graph_updated,
@@ -466,6 +584,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
             patch("routes.documents.index_document") as idx,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [
@@ -487,6 +608,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [row]
             r = _make_upload(filename="notes.pdf")
@@ -497,7 +621,8 @@ class TestUploadDocumentOrchestrator:
         assert body["categories"] == []  # non-syllabus → empty grading buckets
 
     def test_persists_summary_plaintext_in_response(self):
-        """Response carries plaintext summary even though insert encrypts."""
+        """Response carries the summary doc's seeded preview, not the old
+        documents.summary field (removed in the library-summary-editor cutover)."""
         result = _make_orchestrator_result(
             summary_abstract="Plain English summary.",
         )
@@ -506,11 +631,17 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub",
+                "content": {"type": "doc", "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Plain English summary."}]},
+                ]},
+            }),
         ):
             t.return_value.insert.return_value = []
             r = _make_upload()
         assert r.status_code == 200
-        assert r.json()["summary"] == "Plain English summary."
+        assert r.json()["summary_preview"] == "Plain English summary."
 
     def test_persisted_row_contains_user_and_offering(self):
         """The documents row keys on the OFFERING (0025). The upload form
@@ -524,6 +655,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("t")),
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = []
@@ -553,6 +687,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "s1"}]
             r = _make_upload(filename="syllabus.pdf")
@@ -584,6 +721,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "s_pts"}]
             r = _make_upload(filename="syllabus.pdf")
@@ -609,6 +749,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.save_assignments_to_db") as mock_save,
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "s2"}]
             r = _make_upload(filename="syllabus.pdf", course_id="c-7")
@@ -636,6 +779,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "a1"}]
             r = _make_upload(filename="pset.pdf", course_id="c-9")
@@ -660,6 +806,9 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "a2"}]
             r = _make_upload(filename="pset.pdf")
@@ -677,11 +826,138 @@ class TestUploadDocumentOrchestrator:
             patch("routes.documents.process_document", return_value=result),
             patch("routes.documents.apply_graph_update") as mock_apply,
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "l1"}]
             r = _make_upload()
         assert r.status_code == 200
         mock_apply.assert_not_called()
+
+
+class TestUploadCreatesSummaryDoc:
+    def test_persist_document_creates_a_summary_doc_and_stops_writing_documents_summary(self):
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        summary_doc = {
+            "id": "sd-1", "owner_user_id": "u1", "primary_document_id": "doc-1",
+            "content": {"type": "doc", "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Plain English summary."}]},
+            ]},
+            "created_at": "t0", "updated_at": "t0",
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value=summary_doc) as mock_create,
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+
+        assert r.status_code == 200
+        body = r.json()
+        # documents.summary is no longer written — the insert row the mocked
+        # `table("documents").insert(...)` was called with must not carry it.
+        insert_call_kwargs = t.return_value.insert.call_args[0][0]
+        assert "summary" not in insert_call_kwargs
+        # The response carries the new summary-doc fields instead of `summary`.
+        assert body["summary_doc_id"] == "sd-1"
+        assert body["summary_preview"] == "Plain English summary."
+        assert body["summary_source_count"] == 1
+        assert "summary" not in body
+        # The seed content now comes from the comprehensive-notes sections
+        # (not the short summary abstract) — assert on shape/text rather
+        # than the old seed_text= call, which no longer applies.
+        from services.summary_docs_service import plaintext_from_prosemirror
+
+        mock_create.assert_called_once()
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs["user_id"] == "u1"
+        assert create_kwargs["primary_document_id"] == "doc-1"
+        assert "seed_text" not in create_kwargs
+        assert "Plain English summary." in plaintext_from_prosemirror(create_kwargs["content"])
+
+    def test_create_summary_doc_failure_does_not_500_an_already_persisted_upload(self):
+        """The documents row above is already committed by the time
+        create_summary_doc runs — a failure there (transient DB error,
+        encryption failure, migration not yet applied) must degrade to a
+        documentless-but-successful upload, not a 500 that discards a row
+        that already landed (code review fix)."""
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", side_effect=RuntimeError("db hiccup")),
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["summary_doc_id"] is None
+        assert body["summary_preview"] is None
+        assert body["summary_source_count"] == 0
+
+    def test_persist_document_stores_the_original_file_best_effort(self):
+        """Source reference viewer (Task 3): the raw upload is persisted to
+        Storage, best-effort, keyed on the fresh document id."""
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-1", "content": {"type": "doc", "content": []},
+            }),
+            patch("routes.documents.storage_upload") as mock_upload,
+        ):
+            t.return_value.insert.return_value = [row]
+            t.return_value.update.return_value = [row]
+            r = _make_upload(filename="notes.pdf", content=b"%PDF-1.4 sample content for testing")
+
+        assert r.status_code == 200
+        mock_upload.assert_called_once_with(
+            "document-originals", "doc-1/notes.pdf",
+            b"%PDF-1.4 sample content for testing", "application/pdf",
+        )
+        # The documents row got its storage path patched in.
+        update_calls = t.return_value.update.call_args_list
+        assert any(
+            call.args[0].get("original_storage_path") == "doc-1/notes.pdf"
+            for call in update_calls
+        )
+        assert r.json()["original_storage_path"] == "doc-1/notes.pdf"
+
+    def test_storage_upload_failure_does_not_500_an_already_persisted_upload(self):
+        """Mirrors test_create_summary_doc_failure_does_not_500_... — a
+        Storage failure (bucket not provisioned, transient network error)
+        must degrade to original_storage_path=None, not discard an
+        already-committed documents row."""
+        result = _make_orchestrator_result(summary_abstract="Plain English summary.")
+        row = {"id": "doc-1", "file_name": "notes.pdf", "category": "lecture_notes"}
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            patch("routes.documents.process_document", return_value=result),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-1", "content": {"type": "doc", "content": []},
+            }),
+            patch("routes.documents.storage_upload", side_effect=RuntimeError("bucket missing")),
+        ):
+            t.return_value.insert.return_value = [row]
+            r = _make_upload(filename="notes.pdf")
+
+        assert r.status_code == 200
+        assert r.json()["original_storage_path"] is None
 
 
 # ── POST /api/documents/upload/sync — agent-failure → HTTP status (#151b) ───
@@ -762,6 +1038,7 @@ class TestUploadDocumentStreaming:
         """Build a context-manager stack patching every agent the route calls."""
         from agents.classifier import DocumentClassification
         from agents.summary import Summary
+        from agents.document_notes import ComprehensiveNotes, NotesSection
         from agents.concept_extraction import Concept, ConceptList
         from agents.syllabus_extraction import SyllabusAssignments
 
@@ -773,6 +1050,9 @@ class TestUploadDocumentStreaming:
             headline="h", abstract="abstract.",
             key_points=["a", "b", "c"],
         )
+        notes = ComprehensiveNotes(sections=[
+            NotesSection(heading="h", heading_level=2, body="notes."),
+        ])
         concepts = ConceptList(concepts=[
             Concept(name="Backprop", description="d", importance=0.9),
         ])
@@ -783,12 +1063,14 @@ class TestUploadDocumentStreaming:
 
         cls_run = AsyncMock(return_value=SimpleNamespace(output=cls))
         sum_run = AsyncMock(return_value=SimpleNamespace(output=summary))
+        notes_run = AsyncMock(return_value=SimpleNamespace(output=notes))
         cpt_run = AsyncMock(return_value=SimpleNamespace(output=concepts))
         syl_run = AsyncMock(return_value=SimpleNamespace(output=syllabus))
 
         return (
             patch("routes.documents.classifier_agent.run", cls_run),
             patch("routes.documents.summary_agent.run", sum_run),
+            patch("routes.documents.document_notes_agent.run", notes_run),
             patch("routes.documents.concept_extraction_agent.run", cpt_run),
             patch("routes.documents.syllabus_extraction_agent.run", syl_run),
             patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
@@ -798,13 +1080,16 @@ class TestUploadDocumentStreaming:
         """status:start → progress:classify → progress:classified →
         progress:extract → progress:extracted → progress:graph_update →
         progress:graph_updated → result:finalize → status:done with document_id."""
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "stream-1"}]
             with client.stream(
@@ -838,13 +1123,16 @@ class TestUploadDocumentStreaming:
         lets the sweeper re-drive the identical work later (#482)."""
         from routes import documents
 
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll") as spawn,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.insert.return_value = [{"id": "stream-1"}]
             with client.stream(
@@ -860,11 +1148,11 @@ class TestUploadDocumentStreaming:
 
     def test_includes_syllabus_event_when_is_syllabus(self):
         """progress:extract message mentions syllabus when classifier flags it."""
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
@@ -903,7 +1191,7 @@ class TestUploadDocumentStreaming:
         the legacy fallback (which would crash on extracted_text=None).
         It should yield a clean error+done pair and stop.
         """
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.OCR_ASYNC_ENABLED", True),
@@ -911,7 +1199,7 @@ class TestUploadDocumentStreaming:
                 "routes.documents.extract_text_from_file",
                 side_effect=RuntimeError("scanned PDF too noisy"),
             ),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -949,12 +1237,12 @@ class TestUploadDocumentStreaming:
         answers by inventing one. Streaming counterpart of
         TestEmptyExtractionGuard.
         """
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.OCR_ASYNC_ENABLED", True),
             patch("routes.documents.extract_text_from_file", return_value=""),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -1033,11 +1321,11 @@ class TestUploadDocumentStreaming:
         processed. Contract: exactly ONE result event, then the same terminal
         error+done tail the pre-result failure branches use.
         """
-        cls_p, sum_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
             patch(
                 "routes.documents._persist_document",
                 side_effect=RuntimeError("documents insert blew up"),
@@ -1307,6 +1595,9 @@ class TestEmptyExtractionGuard:
                 return_value=_make_orchestrator_result(category="other"),
             ),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d50", "file_name": "notes.pdf"}]
@@ -1366,9 +1657,99 @@ class TestEmptyExtractionGuard:
             ),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             t.return_value.select.return_value = []
             t.return_value.insert.return_value = [{"id": "d9", "file_name": "notes.pdf"}]
             r = _make_upload()
 
         assert r.status_code == 200
+
+
+# ── POST /api/documents/doc/{document_id}/scan-concepts ─────────────────────
+
+class TestScanDocumentConcepts:
+    def test_scan_reads_summary_doc_plaintext_not_documents_summary(self):
+        doc_row = {
+            "id": "doc1", "user_id": "u1", "offering_id": "off-1",
+            "file_name": "notes.pdf", "concept_notes": None,
+        }
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.offering_course_id", return_value="course-1"),
+            patch("routes.documents.plaintext_for_primary_document", return_value="Intro to sorting.") as mock_plain,
+            patch("routes.documents._scan_concepts_for_course", return_value={"concepts": [], "added": 0, "existing": 0}) as mock_scan,
+        ):
+            t.return_value.select.return_value = [doc_row]
+            r = client.post("/api/documents/doc/doc1/scan-concepts", json={"user_id": "u1"})
+
+        assert r.status_code == 200
+        mock_plain.assert_called_once_with("doc1")
+        assert mock_scan.call_args.kwargs["doc_summary"] == "Intro to sorting."
+
+
+# ── GET /api/documents/doc/{document_id}/original-url ──────────────────────
+
+class TestGetOriginalUrl:
+    def test_returns_a_signed_url(self):
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.table") as t,
+            patch("routes.documents.storage_create_signed_url", return_value="https://signed.example/x") as mock_sign,
+        ):
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": "doc-1/notes.pdf", "file_name": "notes.pdf"},
+            ]
+            r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"url": "https://signed.example/x"}
+        mock_sign.assert_called_once_with("document-originals", "doc-1/notes.pdf")
+
+    def test_404_when_document_not_found(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
+        assert r.status_code == 404
+
+    def test_404_when_no_original_was_ever_stored(self):
+        """Pre-existing documents (uploaded before this shipped) have
+        original_storage_path = None — the hard, non-backfillable gap the
+        spec calls out."""
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "original_storage_path": None, "file_name": "notes.pdf"},
+            ]
+            r = client.get("/api/documents/doc/doc-1/original-url?user_id=u1")
+        assert r.status_code == 404
+
+
+# ── GET /api/documents/doc/{document_id}/extracted-text ────────────────────
+
+class TestGetExtractedText:
+    def test_returns_the_decrypted_text(self):
+        from services.encryption import encrypt_if_present
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = [
+                {"id": "doc-1", "extracted_text": encrypt_if_present("Mitosis has four phases.")},
+            ]
+            r = client.get("/api/documents/doc/doc-1/extracted-text?user_id=u1")
+
+        assert r.status_code == 200
+        assert r.json() == {"text": "Mitosis has four phases."}
+
+    def test_404_when_document_not_found(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = []
+            r = client.get("/api/documents/doc/doc-1/extracted-text?user_id=u1")
+        assert r.status_code == 404
+
+    def test_returns_empty_text_when_none_was_ever_extracted(self):
+        with _mock_validate_user(), patch("routes.documents.table") as t:
+            t.return_value.select.return_value = [{"id": "doc-1", "extracted_text": None}]
+            r = client.get("/api/documents/doc/doc-1/extracted-text?user_id=u1")
+        assert r.status_code == 200
+        assert r.json() == {"text": ""}

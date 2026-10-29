@@ -31,6 +31,7 @@ from agents.note_concepts import note_concepts_agent
 from agents.note_summary import note_summary_agent
 from agents.quiz import quiz_agent
 from agents.summary import summary_agent
+from agents.summary_edit import summary_edit_agent
 from routes.learn import _resolve_model_pref
 from routes.quiz import (
     _agent_question_to_wire,
@@ -497,6 +498,36 @@ def test_env_module_registers_note_chat_handler_on_dispatch(monkeypatch):
 
     assert result.output == E2E_NOTE_CHAT_REPLY
     assert "note_chat" in providers._FUNCTION_HANDLERS
+
+
+# ── Library summary-doc editor "Ask" flow (Task 11) ───────────────────────
+#
+# services/summary_docs_service.py::create_suggestion drives summary_edit_agent
+# directly via run_agent_sync (request-path, awaited inline by the route that
+# calls create_suggestion). Before Task 11 this module didn't register
+# summary_edit, so function mode's dispatch would raise
+# UnregisteredHandlerError and the "Ask" flow would 500 in the browser lane.
+
+
+def test_env_module_registers_summary_edit_handler_on_dispatch(monkeypatch):
+    """summary_edit has a structured output (SummaryEdit.proposed_text): a
+    real agent run gets the module's fixed rewrite through the REAL output
+    tool, with no handler registered by the test itself."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv(
+        "SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e"
+    )
+
+    with summary_edit_agent.override(model=model_for("summary_edit")):
+        result = summary_edit_agent.run_sync(
+            "Instruction: shorten this.\n\nCurrent text:\nSome long text.",
+            deps=_deps(),
+        )
+
+    from agents.function_handlers_e2e import E2E_SUMMARY_EDIT_PROPOSAL
+
+    assert result.output.proposed_text == E2E_SUMMARY_EDIT_PROPOSAL
+    assert "summary_edit" in providers._FUNCTION_HANDLERS
 
 
 # ── #149 guard: the e2e tutor handler stays tool-free ─────────────────────
