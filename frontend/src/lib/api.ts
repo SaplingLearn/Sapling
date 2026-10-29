@@ -5,7 +5,8 @@ import type {
   GradebookSummary, GradebookCourse, GradeCategory, GradedAssignment, LetterScaleTier,
   GpaReport,
   ExtractedSyllabusCategory,
-  AllowlistEmail, AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
+  AllowlistEmail, EmailStatus, EmailAudience, EmailAudienceKey, EmailBroadcast, EmailBroadcastPreview,
+  AchievementTrigger, AdminAuditEntry, AnalyticsOverview, PaginatedUsers,
   Note, LinkedConcept,
   GraphUpdate, MasteryChange,
   AnalyticsBucket, LlmCostGroupBy,
@@ -15,6 +16,7 @@ import type {
   SummaryDoc, SummaryDocCore, SummaryDocSuggestion, SummaryDocVersion, AskReference,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
+import { createStreamPacer } from '@/lib/streamPacer';
 
 export const API_URL = '';
 
@@ -135,10 +137,6 @@ export const subscribeToNewsletter = (email: string) =>
     body: JSON.stringify({ email }),
   });
 
-// Users
-export const getUsers = () =>
-  fetchJSON<{ users: { id: string; name: string; room_id: string | null }[] }>('/api/users');
-
 // Auth
 export interface MeResponse {
   user_id: string;
@@ -161,6 +159,36 @@ export interface MeResponse {
 // this same endpoint off the same cookie, though via a bare `fetch` rather
 // than this `fetchJSON` wrapper.
 export const getMe = () => fetchJSON<MeResponse>('/api/auth/me');
+
+/** #715: the signed-in account's local sample-data seed (backend
+ * routes/auth.py::local_seed_status). 404 everywhere but a local backend. */
+export type LocalSeedState = 'pending' | 'seeding' | 'ready' | 'failed';
+export interface LocalSeedStatus {
+  state: LocalSeedState;
+  error?: string;
+}
+export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/local-seed');
+
+/** An unapproved sign-in's waitlist standing, read with the short-lived
+ * pending token the backend hands back instead of a session (see
+ * `lib/pendingToken.ts`). Both calls 401 when the token is missing, invalid
+ * or expired. */
+export interface PendingStatus {
+  email: string;
+  on_waitlist: boolean;
+}
+export const getPendingStatus = (token: string) =>
+  fetchJSON<PendingStatus>('/api/auth/pending/status', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+/** Puts the pending account's sign-in email on the waitlist. Idempotent: an
+ * account already on it answers the same `on_waitlist: true`. */
+export const joinWaitlistFromPending = (token: string) =>
+  fetchJSON<PendingStatus>('/api/auth/pending/join', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
 
 // Graph
 export const getGraph = (userId: string, semester?: string) =>
@@ -356,6 +384,9 @@ export function shouldFallBackToJson(err: unknown): boolean {
 export interface StreamChatHandlers {
   onToken?: (delta: string) => void;
   onGraphUpdate?: (delta: GraphDelta) => void;
+  /** The tutor started a tool call (`step` = the tool's wire name, e.g.
+   *  `search_course_materials`) — what it is doing before any text. */
+  onProgress?: (step: string) => void;
   signal?: AbortSignal;
 }
 
@@ -364,36 +395,61 @@ const STREAM_IDLE_MS = 45_000;
 async function consumeChatStream(
   path: string,
   payload: Record<string, unknown>,
-  { onToken, onGraphUpdate, signal }: StreamChatHandlers,
+  { onToken, onGraphUpdate, onProgress, signal }: StreamChatHandlers,
 ): Promise<ChatResult> {
   const { streamSSE } = await import('./sse');
+  // Tokens go out through the pacer, so a reply the model sends in one burst
+  // still types out (lib/streamPacer.ts). It is drained before `done`
+  // resolves, because callers swap the streamed bubble for the final message
+  // then. Any other exit flushes it first, so a caller's partial-text
+  // handling (ADR 0020) sees every token that arrived.
+  const pacer = createStreamPacer(delta => onToken?.(delta));
   let result: ChatResult | null = null;
 
-  for await (const e of streamSSE<StreamEvent>(
-    `${API_URL}${path}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      credentials: 'include',
-      signal,
-    },
-    { idleTimeoutMs: STREAM_IDLE_MS },
-  )) {
-    const ev = e.data;
-    if (ev.type === 'token') onToken?.(String(ev.data?.delta ?? ''));
-    else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
-    else if (ev.type === 'error') {
-      const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
-      // Only an explicit false clears the flag — absent/other values keep
-      // the default-true contract with older backends.
-      const retryable = ev.data?.retryable !== false;
-      throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+  try {
+    for await (const e of streamSSE<StreamEvent>(
+      `${API_URL}${path}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include',
+        signal,
+      },
+      { idleTimeoutMs: STREAM_IDLE_MS },
+    )) {
+      const ev = e.data;
+      if (ev.type === 'token') pacer.push(String(ev.data?.delta ?? ''));
+      else if (ev.type === 'graph_update') onGraphUpdate?.(ev.data as unknown as GraphDelta);
+      else if (ev.type === 'progress') onProgress?.(ev.step);
+      else if (ev.type === 'error') {
+        const requestId = typeof ev.data?.request_id === 'string' ? ev.data.request_id : undefined;
+        // Only an explicit false clears the flag — absent/other values keep
+        // the default-true contract with older backends.
+        const retryable = ev.data?.retryable !== false;
+        throw new ChatStreamError(ev.message || 'The tutor was interrupted.', requestId, retryable);
+      }
+      else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
     }
-    else if (ev.type === 'done') result = ev.data as unknown as ChatResult;
+  } catch (err) {
+    pacer.flush();
+    throw err;
   }
 
-  if (!result) throw new Error('Chat stream ended without a done event.');
+  if (!result) {
+    pacer.flush();
+    throw new Error('Chat stream ended without a done event.');
+  }
+  // Stop pressed while a burst is still being revealed ends the reveal now
+  // and rejects like a mid-stream abort, so the caller's Stop path runs.
+  const onAbort = () => pacer.flush();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    await pacer.drain();
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+  signal?.throwIfAborted();
   return result;
 }
 
@@ -522,7 +578,7 @@ export interface Assignment {
   id: string;
   user_id: string;
   title: string;
-  due_date: string;
+  due_date: string | null;
   assignment_type?: string;
   notes?: string;
   google_event_id?: string;
@@ -1190,10 +1246,10 @@ export const adminFetchUsers = (params?: { q?: string; page?: number; page_size?
   return fetchJSON<PaginatedUsers>(`/api/admin/users${suffix}`);
 };
 
-export const adminApproveUser = (userId: string) =>
-  fetchJSON<{ approved: boolean }>(`/api/admin/users/${userId}/approve`, { method: 'PATCH' });
-
-export const adminUnapproveUser = (userId: string) =>
+// Remove access: the account leaves Admin → Users and its email goes back on
+// the waitlist as a signup (Admin → Allowlist). Data is kept. The route keeps
+// its historical `/unapprove` path; 409 on your own account.
+export const adminRemoveUserAccess = (userId: string) =>
   fetchJSON<{ unapproved: boolean }>(`/api/admin/users/${userId}/unapprove`, { method: 'PATCH' });
 
 // Admin — feedback (#520; decrypted server-side, admin-only)
@@ -1239,6 +1295,46 @@ export const adminCreateRole = (payload: {
 
 export const adminDeleteRole = (roleId: string) =>
   fetchJSON<{ deleted: boolean }>(`/api/admin/roles/${encodeURIComponent(roleId)}`, { method: 'DELETE' });
+
+// Admin — feature flags (#620, ADR 0029)
+export type AdminFlagTarget = { target_type: 'user' | 'role'; target_id: string; label: string; variant: string };
+export type AdminFlag = {
+  key: string; description: string; variants: string[]; client_visible: boolean;
+  default_variant: string; rollout_percent: number; rollout_variant: string | null;
+  updated_at: string | null; updated_by: string | null; updated_by_name: string | null;
+  targets: AdminFlagTarget[];
+};
+
+export const adminListFlags = () => fetchJSON<{ flags: AdminFlag[] }>('/api/admin/flags');
+
+export const adminUpdateFlag = (
+  key: string,
+  body: { default_variant?: string; rollout_percent?: number; rollout_variant?: string | null },
+) =>
+  fetchJSON<{ flag: AdminFlag }>(`/api/admin/flags/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+
+export const adminUpsertFlagTarget = (
+  key: string,
+  body: { target_type: 'user' | 'role'; target_id: string; variant: string },
+) =>
+  fetchJSON<{ flag: AdminFlag }>(`/api/admin/flags/${encodeURIComponent(key)}/targets`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+
+export const adminDeleteFlagTarget = (key: string, type: 'user' | 'role', id: string) =>
+  fetchJSON<{ flag: AdminFlag }>(
+    `/api/admin/flags/${encodeURIComponent(key)}/targets/${type}/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+
+export const adminExplainFlag = (key: string, userId: string) =>
+  fetchJSON<{ variant: string; step: string; detail: string }>(
+    `/api/admin/flags/${encodeURIComponent(key)}/explain?user_id=${encodeURIComponent(userId)}`,
+  );
 
 export const adminListRoleCosmetics = (roleId: string) =>
   fetchJSON<{ links: { role_id: string; cosmetic_id: string }[] }>(
@@ -1350,6 +1446,45 @@ export const adminRevokeAllowlist = (email: string) =>
     method: 'POST',
     body: JSON.stringify({ email }),
   });
+
+/** Approve 1..500 addresses at once; each gets the "you're in" email server-side. */
+export const adminApproveAllowlistBulk = (emails: string[]) =>
+  fetchJSON<{ approved: number; emails: AllowlistEmail[] }>('/api/admin/allowlist/approve-bulk', {
+    method: 'POST',
+    body: JSON.stringify({ emails }),
+  });
+
+// Admin — email (Resend)
+export const adminEmailStatus = () =>
+  fetchJSON<EmailStatus>('/api/admin/email/status');
+
+export const adminEmailAudiences = () =>
+  fetchJSON<{ audiences: EmailAudience[] }>('/api/admin/email/audiences');
+
+/** Renders the draft exactly as it would go out; sends and records nothing. */
+export const adminPreviewBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<EmailBroadcastPreview>('/api/admin/email/broadcasts/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** Sends the draft to the signed-in admin only. */
+export const adminSendTestBroadcast = (payload: { subject: string; body: string }) =>
+  fetchJSON<{ status: string; to: string }>('/api/admin/email/broadcasts/test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** 202: the broadcast row comes back as `sending`; delivery continues in the background. */
+export const adminSendBroadcast = (payload: { subject: string; body: string; audience: EmailAudienceKey }) =>
+  fetchJSON<{ broadcast: EmailBroadcast }>('/api/admin/email/broadcasts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+/** Newest first. */
+export const adminListBroadcasts = () =>
+  fetchJSON<{ broadcasts: EmailBroadcast[] }>('/api/admin/email/broadcasts');
 
 // Admin — audit
 export const adminAuditLog = (params?: {
@@ -1736,15 +1871,16 @@ export const listGradescopeCourses = (userId: string) =>
     `/api/gradescope/courses?user_id=${encodeURIComponent(userId)}`,
   );
 
-export const listGradescopeLinks = (userId: string) =>
+export const listGradescopeLinks = (userId: string, semester?: string) =>
   fetchJSON<{ links: GradescopeLink[] }>(
-    `/api/gradescope/links?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradescope/links?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
   );
 
 export const linkGradescopeCourse = (
   userId: string,
   saplingCourseId: string,
   gradescopeCourseId: string,
+  semester?: string,
 ) =>
   fetchJSON<{ link: GradescopeLink | null }>(`/api/gradescope/link`, {
     method: 'POST',
@@ -1752,18 +1888,19 @@ export const linkGradescopeCourse = (
       user_id: userId,
       sapling_course_id: saplingCourseId,
       gradescope_course_id: gradescopeCourseId,
+      ...(semester ? { semester } : {}),
     }),
   });
 
-export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string) =>
+export const unlinkGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
   fetchJSON<{ ok: true }>(
-    `/api/gradescope/link/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradescope/link/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
     { method: 'DELETE' },
   );
 
-export const syncGradescopeCourse = (userId: string, saplingCourseId: string) =>
+export const syncGradescopeCourse = (userId: string, saplingCourseId: string, semester?: string) =>
   fetchJSON<GradescopeSyncResult>(
-    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}`,
+    `/api/gradescope/sync/${encodeURIComponent(saplingCourseId)}?user_id=${encodeURIComponent(userId)}${semester ? `&semester=${encodeURIComponent(semester)}` : ''}`,
     { method: 'POST' },
   );
 

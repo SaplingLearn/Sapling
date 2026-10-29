@@ -28,6 +28,7 @@ import type {
   WireQuestion,
 } from "./types";
 import type { QuizError } from "./errors";
+import { isWrittenType } from "./types";
 
 /** What a "start this quiz" affordance has to say: the target and its framing. */
 export interface StartRequest {
@@ -53,6 +54,7 @@ export type QuizEvent =
   | { type: "GENERATED"; result: GenerateResult }
   | { type: "GENERATE_FAILED"; error: QuizError }
   | { type: "SELECT"; index: number }
+  | { type: "WRITE"; text: string }
   | { type: "SUBMIT_ANSWER" }
   | { type: "ANSWER_RECORDED"; result: AnswerResult }
   | { type: "ANSWER_FAILED"; error: QuizError }
@@ -116,7 +118,8 @@ export function defaultConfigFor(config: QuizConfig | null, prefs: QuizPrefs): S
     ?? (difficulties.includes(PRE_CONFIG_DIFFICULTY)
       ? PRE_CONFIG_DIFFICULTY
       : difficulties[0] ?? PRE_CONFIG_DIFFICULTY);
-  return { count, difficulty, feedback: prefs.feedback ?? DEFAULT_FEEDBACK };
+  return { count, difficulty, feedback: prefs.feedback ?? DEFAULT_FEEDBACK,
+    ...(prefs.questionFormat && config?.question_types.includes(prefs.questionFormat) ? { questionFormat: prefs.questionFormat } : {}) };
 }
 
 function scopeForEntry(entry: EntryRequest): QuizScope {
@@ -165,7 +168,7 @@ export function queueOf(scope: QuizScope): string[] {
 }
 
 export function firstUnansweredIndex(items: QuizItem[]): number {
-  return items.findIndex(i => i.selectedIndex === null);
+  return items.findIndex(i => !i.verdict && (isWrittenType(i.question.type) || i.selectedIndex === null));
 }
 
 export function isLastItem(session: QuizSession, index = session.cursor): boolean {
@@ -176,7 +179,8 @@ export function isLastItem(session: QuizSession, index = session.cursor): boolea
 export function canSubmitAnswer(session: QuizSession): boolean {
   if (session.phase !== "active") return false;
   const item = session.items[session.cursor];
-  return item !== undefined && item.selectedIndex !== null;
+  return item !== undefined && (isWrittenType(item.question.type)
+    ? Boolean(item.answerText?.trim()) : item.selectedIndex !== null);
 }
 
 /** Leaving for another screen. False for every phase where an attempt is live —
@@ -329,6 +333,13 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
       return { ...session, phase: "error", error: event.error };
     }
 
+    case "WRITE": {
+      if (session.phase !== "active") return session;
+      const item = session.items[session.cursor];
+      if (!item || item.verdict || !isWrittenType(item.question.type)) return session;
+      return withItem(session, session.cursor, { answerText: event.text.slice(0, 2000) });
+    }
+
     case "SELECT": {
       if (session.phase !== "active") return session;
       if (!session.items[session.cursor]) return session;
@@ -357,9 +368,11 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
       // `recorded: false` is an idempotent replay or a lost race — the answer
       // still stands, so it advances exactly like a fresh record (invariant 6).
       const scored = withItem(session, index, {
+        ...(event.result.answer_text !== undefined ? { answerText: event.result.answer_text } : {}),
         verdict: {
           isCorrect: event.result.is_correct,
           correctIndex: event.result.correct_index,
+          correctAnswer: event.result.correct_answer,
           explanation: event.result.explanation,
         },
       });
@@ -381,7 +394,7 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
     case "FINISH": {
       if (session.phase !== "active" && session.phase !== "answered") return session;
       if (session.items.length === 0) return session;
-      if (session.items.some(i => i.selectedIndex === null)) return session;
+      if (session.items.some(i => i.selectedIndex === null && !i.verdict)) return session;
       return { ...session, phase: "submitting" };
     }
 
@@ -534,6 +547,7 @@ function resumeFrom(
   const selectedByIndex = new Map(
     (detail.responses ?? []).map(r => [r.question_index, r.selected_index]),
   );
+  const responsesByIndex = new Map((detail.responses ?? []).map(r => [r.question_index, r]));
 
   const items: QuizItem[] = (detail.questions ?? []).map((question, index) => {
     const previous = storedById.get(question.id);
@@ -542,7 +556,11 @@ function resumeFrom(
       index,
       question,
       selectedIndex: selected ?? previous?.selectedIndex ?? null,
-      verdict: selected === undefined ? null : previous?.verdict ?? null,
+      answerText: responsesByIndex.get(index)?.answer_text ?? previous?.answerText,
+      verdict: selected === undefined ? null : previous?.verdict ?? (
+        isWrittenType(question.type) && responsesByIndex.has(index)
+          ? { isCorrect: responsesByIndex.get(index)!.is_correct, correctIndex: -1, explanation: "" }
+          : null),
       flagged: previous?.flagged ?? false,
     };
   });

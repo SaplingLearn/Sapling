@@ -1,7 +1,7 @@
 {
   "category": "syllabus",
-  "confidence": 0.9,
+  "confidence": 0.85,
   "is_syllabus": true,
-  "rationale": "The document contains course information including required textbook, assessments, and a schedule of topics by module and week, which are all hallmarks of a syllabus.",
+  "rationale": "Document lists course assessments (lab reports, quizzes, final) and a weekly module schedule for BIO 201, which matches syllabus content. It is a departmental course-information chapter produced for the course, so it is course material.",
   "shareability": "course_material"
 }

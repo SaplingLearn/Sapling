@@ -63,7 +63,7 @@ export default function NewsPage() {
           <Link
             href="/#newsletter"
             className="cp-navlink"
-            style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#1B6C42', paddingBottom: 4, borderBottom: '1px solid rgba(27,108,66,0.35)' }}
+            style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest)', paddingBottom: 4, borderBottom: '1px solid rgba(68,93,34,0.35)' }}
           >
             Subscribe →
           </Link>
@@ -84,7 +84,7 @@ export default function NewsPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search posts"
             aria-label="Search posts"
-            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 14, color: '#1a1814' }}
+            style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 14, color: '#1a1814' }}
           />
           {query && (
             <button
@@ -106,7 +106,7 @@ export default function NewsPage() {
               type="button"
               aria-haspopup="listbox"
               aria-expanded={menuOpen}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, fontWeight: 500, color: '#1a1814', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13.5, fontWeight: 500, color: '#1a1814', cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               {activeLabel}
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6f6857" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transition: 'transform 220ms', transform: menuOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -131,11 +131,11 @@ export default function NewsPage() {
                   role="option"
                   aria-selected={f.key === filter}
                   className="cp-menuitem"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, color: f.key === filter ? '#1a1814' : '#6f6857', fontWeight: f.key === filter ? 600 : 500, cursor: 'pointer' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 8, border: 'none', background: 'transparent', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13.5, color: f.key === filter ? '#1a1814' : '#6f6857', fontWeight: f.key === filter ? 600 : 500, cursor: 'pointer' }}
                 >
                   {f.label}
                   {f.key === filter && (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1B6C42" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#445D22" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                   )}
@@ -156,7 +156,7 @@ export default function NewsPage() {
             <button
               onClick={() => { setQuery(''); setFilter('all'); }}
               type="button"
-              style={{ marginTop: 10, padding: '11px 20px', borderRadius: 8, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3', fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", fontSize: 13.5, color: '#1a1814', cursor: 'pointer' }}
+              style={{ marginTop: 10, padding: '11px 20px', borderRadius: 8, border: '1px solid rgba(42,39,31,0.16)', background: '#faf8f3', fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", fontSize: 13.5, color: '#1a1814', cursor: 'pointer' }}
             >
               Clear filters
             </button>
@@ -177,12 +177,12 @@ export default function NewsPage() {
               <div style={{ padding: '20px 22px 24px', display: 'flex', flexDirection: 'column', gap: 11 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 12, lineHeight: 1 }}>
                   <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.06em', color: '#6f6857' }}>{p.date}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>{p.tag}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>{p.tag}</span>
                 </span>
                 <h2 style={{ margin: 0, fontFamily: DISPLAY, fontWeight: 500, fontSize: 21, lineHeight: 1.24, letterSpacing: '-0.015em', color: '#1a1814' }}>{p.title}</h2>
                 <p style={{ margin: 0, fontFamily: SERIF, fontSize: 14.5, lineHeight: 1.62, color: '#3f3b31' }}>{p.excerpt}</p>
                 <span style={{ marginTop: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, lineHeight: 1 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: '#1B6C42' }}>Read article →</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1, color: 'var(--brand-forest)' }}>Read article →</span>
                   <span style={{ fontFamily: MONO, fontSize: 10, lineHeight: 1, letterSpacing: '0.14em', color: '#6f6857' }}>{p.time}</span>
                 </span>
               </div>
@@ -192,14 +192,14 @@ export default function NewsPage() {
 
         <div style={{ marginTop: 52, borderRadius: 18, background: '#faf8f3', border: '1px solid rgba(42,39,31,0.10)', padding: 'clamp(26px,4vw,40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div style={{ maxWidth: '46ch' }}>
-            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#2D8F5C' }}>
+            <span style={{ display: 'block', fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--brand-forest-bright)' }}>
               The Sapling Journal
             </span>
             <p style={{ margin: '10px 0 0', fontFamily: SERIF, fontSize: 15.5, lineHeight: 1.65, color: '#3f3b31' }}>
               One letter a month, written by the four of us. First issue lands with the beta.
             </p>
           </div>
-          <Link href="/#newsletter" className="cp-cta" style={{ background: '#1B6C42', color: '#fff', borderRadius: 8, padding: '13px 24px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <Link href="/#newsletter" className="cp-cta" style={{ background: 'var(--brand-forest)', color: '#fff', borderRadius: 8, padding: '13px 24px', fontSize: 14.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
             Get the Journal
           </Link>
         </div>

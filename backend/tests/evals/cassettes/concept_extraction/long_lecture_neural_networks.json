@@ -1,79 +1,49 @@
 {
   "concepts": [
     {
-      "description": "An introductory lecture covering fundamental concepts and techniques essential for understanding and building neural networks.",
-      "importance": 1.0,
-      "name": "Neural Networks Foundations"
+      "description": "Networks in which information flows in one direction from input through hidden layers to output, forming the basic architecture covered in the lecture.",
+      "importance": 0.9,
+      "name": "Feedforward Neural Networks"
     },
     {
-      "description": "An algorithm that efficiently computes the gradients of the loss function with respect to the weights of the network, essential for training neural networks via gradient descent. It applies the chain rule layerwise.",
-      "importance": 0.95,
+      "description": "An application of the chain rule that propagates error gradients backward through the network layer by layer to update weights.",
+      "importance": 0.9,
       "name": "Backpropagation"
     },
     {
-      "description": "A type of artificial neural network where connections between nodes do not form a cycle, moving information only in one direction from input to output layers.",
-      "importance": 0.9,
-      "name": "Feedforward Networks"
-    },
-    {
-      "description": "An optimization algorithm used to train neural networks by updating model parameters using the gradient of the loss function calculated on small random subsets of the training data.",
-      "importance": 0.9,
-      "name": "Stochastic Gradient Descent with Mini-batches"
-    },
-    {
-      "description": "A technique that normalizes the inputs to layers in a neural network by re-centering and re-scaling them, which helps stabilize and speed up the training process and mitigate vanishing/exploding gradients.",
-      "importance": 0.9,
-      "name": "Batch Normalization"
-    },
-    {
-      "description": "Non-linear functions applied to the output of neurons in a neural network, enabling the model to learn complex patterns and introduce non-linearity.",
-      "importance": 0.85,
+      "description": "Nonlinear functions such as ReLU, sigmoid, and tanh applied to neuron outputs so the network can model nonlinear relationships.",
+      "importance": 0.8,
       "name": "Activation Functions"
     },
     {
-      "description": "A widely used loss function for classification tasks that measures the performance of a classification model whose output is a probability value between 0 and 1.",
-      "importance": 0.85,
+      "description": "An optimization method that updates weights using gradients estimated from mini-batches of training data rather than the full dataset.",
+      "importance": 0.8,
+      "name": "Stochastic Gradient Descent"
+    },
+    {
+      "description": "A loss function paired with softmax outputs that measures the divergence between predicted class probabilities and true labels for classification.",
+      "importance": 0.7,
       "name": "Cross-Entropy Loss"
     },
     {
-      "description": "Problems encountered during training deep neural networks where gradients either become extremely small, halting learning, or extremely large, causing unstable updates.",
-      "importance": 0.85,
-      "name": "Vanishing and Exploding Gradients"
-    },
-    {
-      "description": "An activation function used in the output layer of a neural network for multi-class classification, converting a vector of arbitrary real values into a probability distribution.",
-      "importance": 0.8,
+      "description": "An output layer function that converts raw scores into a probability distribution over classes for classification tasks.",
+      "importance": 0.6,
       "name": "Softmax Output"
     },
     {
-      "description": "Methods used to prevent overfitting in neural networks by adding a penalty to the loss function, thereby improving the model's generalization performance on unseen data.",
-      "importance": 0.8,
+      "description": "Methods such as L2 weight decay and dropout that reduce overfitting by constraining model complexity or randomly deactivating units during training.",
+      "importance": 0.6,
       "name": "Regularization Techniques"
     },
     {
-      "description": "A popular activation function that outputs the input directly if it is positive, otherwise it outputs zero, effectively introducing non-linearity.",
-      "importance": 0.75,
-      "name": "ReLU (Rectified Linear Unit)"
+      "description": "Training problems in deep networks where gradients shrink or grow exponentially across layers, hindering effective learning.",
+      "importance": 0.6,
+      "name": "Vanishing and Exploding Gradients"
     },
     {
-      "description": "A regularization technique that adds a penalty proportional to the square of the magnitude of weights to the loss function, encouraging smaller weights and preventing overfitting.",
-      "importance": 0.75,
-      "name": "L2 Weight Decay"
-    },
-    {
-      "description": "A regularization technique that randomly deactivates a fraction of neurons during training, preventing complex co-adaptations on the training data and improving generalization.",
-      "importance": 0.75,
-      "name": "Dropout"
-    },
-    {
-      "description": "An activation function that squashes input values to a range between 0 and 1, often used in the output layer for binary classification.",
-      "importance": 0.7,
-      "name": "Sigmoid Function"
-    },
-    {
-      "description": "An activation function similar to sigmoid but squashes input values to a range between -1 and 1, often leading to faster convergence than sigmoid.",
-      "importance": 0.7,
-      "name": "Tanh (Hyperbolic Tangent) Function"
+      "description": "A technique that normalizes layer inputs over each mini-batch, which stabilizes and speeds up optimization.",
+      "importance": 0.5,
+      "name": "Batch Normalization"
     }
   ]
 }

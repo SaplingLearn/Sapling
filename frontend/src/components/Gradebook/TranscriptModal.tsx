@@ -130,7 +130,7 @@ function TranscriptBody({ report }: { report: GpaReport }) {
         <span
           data-testid="gradebook-transcript-gpa"
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: 32,
             lineHeight: 1,
@@ -155,7 +155,7 @@ function TranscriptBody({ report }: { report: GpaReport }) {
           >
             <span
               style={{
-                fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+                fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
                 fontWeight: 500,
                 fontSize: 16,
                 color: "var(--text)",
@@ -205,7 +205,7 @@ function TranscriptBody({ report }: { report: GpaReport }) {
                     <span
                       style={{
                         fontFamily:
-                          "var(--font-display), 'Playfair Display', Georgia, serif",
+                          "var(--font-display), 'Aleo', Georgia, serif",
                         fontWeight: 500,
                         fontSize: 15,
                         color: percentColor(c.percent),

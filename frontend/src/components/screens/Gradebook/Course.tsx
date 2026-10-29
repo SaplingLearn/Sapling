@@ -19,14 +19,13 @@ import {
   syncGradescopeCourse,
   setCurveSettings,
 } from "@/lib/api";
-import { humanizeError } from "@/lib/errorMessage";
+import { humanizeError, statusOf } from "@/lib/errorMessage";
 import { applyCurveToAssignment, hasCurveData } from "@/components/Gradebook/curveUtils";
 import { EditWeightsModal } from "@/components/Gradebook/EditWeightsModal";
 import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
 import { LetterScaleEditor } from "@/components/Gradebook/LetterScaleEditor";
 import { GradescopeSyncModal } from "@/components/Gradebook/GradescopeSyncModal";
-import { AmbientOrbs } from "@/components/Gradebook/AmbientOrbs";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
 import { GradePredictorPanel } from "@/components/Gradebook/GradePredictorPanel";
@@ -277,24 +276,29 @@ export function GradebookCourseScreen({ courseId }: Props) {
     loadInitial();
   }, [loadInitial]);
 
+  // Without ?semester= the term is whatever the course load resolved. Asking
+  // before then would list every term's link, and that unscoped answer could
+  // land after the scoped one and mark this term as linked.
+  const courseLoaded = data !== null;
   const refreshGscope = React.useCallback(async () => {
     if (!userId) return;
+    if (!currentSemesterParam() && !courseLoaded) return;
     try {
       const status = await getGradescopeStatus(userId);
       if (!status.has_credentials) {
         setGscope({ ready: false, lastSyncedAt: null });
         return;
       }
-      const res = await listGradescopeLinks(userId);
+      const res = await listGradescopeLinks(userId, currentSemesterParam() ?? data?.semester);
       const myLink = res.links.find((l) => l.sapling_course_id === courseId);
       setGscope({
         ready: !!myLink,
-        lastSyncedAt: myLink?.last_synced_at ?? status.last_synced_at ?? null,
+        lastSyncedAt: myLink?.last_synced_at ?? null,
       });
     } catch {
       setGscope({ ready: false, lastSyncedAt: null });
     }
-  }, [userId, courseId]);
+  }, [userId, courseId, courseLoaded, data?.semester]);
 
   React.useEffect(() => {
     refreshGscope();
@@ -304,7 +308,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
     if (!userId) return;
     setGscopeBusy(true);
     try {
-      const res = await syncGradescopeCourse(userId, courseId);
+      const res = await syncGradescopeCourse(userId, courseId, currentSemesterParam() ?? data?.semester);
       const summary =
         res.failed > 0
           ? `Synced: ${res.inserted} added · ${res.updated} updated · ${res.failed} failed`
@@ -313,16 +317,16 @@ export function GradebookCourseScreen({ courseId }: Props) {
       else toast.success(summary);
       await Promise.all([refresh(), refreshGscope()]);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Sync failed";
+      const msg = humanizeError(err, "Sync failed");
       toast.error(msg);
-      if (/401|invalid|credentials|link/i.test(msg)) {
+      if (statusOf(err) === 401 || /invalid|credentials|link|expired/i.test(msg)) {
         setSyncOpen(true);
         await refreshGscope();
       }
     } finally {
       setGscopeBusy(false);
     }
-  }, [userId, courseId, refresh, refreshGscope, toast]);
+  }, [userId, courseId, data?.semester, refresh, refreshGscope, toast]);
 
   const onClickSyncButton = React.useCallback(() => {
     if (gscope.ready && !gscopeBusy) directSyncGradescope();
@@ -517,7 +521,6 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   return (
     <FullHeightScreen>
-      <AmbientOrbs />
       <TopBar
         breadcrumb={
           <Link href="/gradebook" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
@@ -713,6 +716,7 @@ export function GradebookCourseScreen({ courseId }: Props) {
             open={syncOpen}
             userId={userId}
             saplingCourseId={courseId}
+            semester={data.semester}
             saplingCourseLabel={`${data.course_code} · ${data.course_name}`}
             onClose={() => {
               setSyncOpen(false);
@@ -781,7 +785,7 @@ function Masthead({ data }: { data: GradebookCourse }) {
         </div>
         <h1
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: "clamp(26px, 3vw, 38px)",
             lineHeight: 1.08,
@@ -805,7 +809,7 @@ function Masthead({ data }: { data: GradebookCourse }) {
       >
         <span
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: 42,
             lineHeight: 1,
@@ -919,7 +923,7 @@ function GradeCompositionBar({
         <SectionHead label="Composition" onEdit={onEditWeights} />
         <div
           style={{
-            fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+            fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
             color: "var(--text-dim)",
             fontSize: 15,
             lineHeight: 1.55,
@@ -1185,7 +1189,7 @@ function GradeCompositionBar({
             >
               <div
                 style={{
-                  fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+                  fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
                   fontSize: 12,
                   color: "var(--text)",
                   overflow: "hidden",
@@ -1354,7 +1358,7 @@ function CompositionStatus({
     <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
       <span
         style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
           fontWeight: 500,
           fontSize: 20,
           lineHeight: 1,
@@ -1367,7 +1371,7 @@ function CompositionStatus({
       {currentTier && (
         <span
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontSize: 14,
             color: "var(--text-dim)",
             fontWeight: 400,
@@ -1499,7 +1503,7 @@ function CompositionTooltip({ tip }: { tip: TipState }) {
     >
       <div
         style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
           fontSize: 14,
           fontWeight: 500,
           marginBottom: 6,

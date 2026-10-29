@@ -2,10 +2,9 @@
 import pytest
 from unittest.mock import patch
 
-from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.anthropic import AnthropicModel
 from fastapi.testclient import TestClient
 
 from agents._providers import model_for
@@ -14,19 +13,22 @@ import routes.documents as documents
 from main import app
 
 
-def test_model_for_concept_scan_defaults_to_flash_lite():
+def test_model_for_concept_scan_defaults_to_haiku():
     m = model_for("concept_scan")
-    assert isinstance(m, GoogleModel)
-    assert m.model_name == "gemini-2.5-flash-lite"
+    assert isinstance(m, AnthropicModel)
+    assert m.model_name == "claude-haiku-5-5"
 
 
 def test_new_concepts_allows_empty_list():
     assert NewConcepts(concepts=[]).concepts == []
 
 
-def test_new_concepts_rejects_more_than_15():
-    with pytest.raises(ValidationError):
-        NewConcepts(concepts=[f"Concept {i}" for i in range(16)])
+def test_new_concepts_clips_more_than_15():
+    """The 15 cap still holds, but a surplus is dropped (first 15, model
+    order) instead of failing the run: Claude's strict JSON mode cannot
+    enforce maxItems at decode time the way Gemini did (ADR 0030)."""
+    out = NewConcepts(concepts=[f"Concept {i}" for i in range(16)])
+    assert out.concepts == [f"Concept {i}" for i in range(15)]
 
 
 def test_concept_scan_agent_is_configured():

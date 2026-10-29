@@ -24,15 +24,21 @@ logging.basicConfig(
 
 from routes import graph, learn, quiz, calendar, social, extract, auth, documents, flashcards, study_guide, feedback, careers, onboarding, gradebook, gradescope, notes, academics, gamification, summary_docs
 from routes.profile import router as profile_router
+from routes.admin_flags import router as admin_flags_router
+from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_email import router as admin_email_router
+from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
+from routes.topic_checklist import router as topic_checklist_router
 from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
 from services.request_context import RequestIDMiddleware, current_request_id
+from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -40,6 +46,11 @@ from services.storage_service import (
 )
 from services.durable import init_dbos, shutdown_dbos
 from services.index_sweeper import start_sweeper, stop_sweeper
+from services.local_seed_watcher import (
+    start_watcher as start_local_seed_watcher,
+    stop_watcher as stop_local_seed_watcher,
+)
+from services import typesafe_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -92,6 +103,10 @@ async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
+    # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
+    # and writes the real environment can never decrypt.
+    verify_encryption_key()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -116,8 +131,23 @@ async def _lifespan(_app: FastAPI):
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    # #715: on a developer's LOCAL stack only, copy the rich sample dataset
+    # onto each Google account that signs in. Not started anywhere else.
+    start_local_seed_watcher()
+    # #672: the decision seam's backends moved from env vars to the
+    # decision_router flag; say so if a deployment still sets the old ones.
+    from services import decisions
+    decisions.warn_removed_env()
     yield
+    await stop_local_seed_watcher()
     await stop_sweeper()
+    # Let in-flight tutor-router decisions finish first: each one emits a
+    # decision.made row through the Jev client and the events worker closed
+    # below (bounded by the router's own backstop).
+    from services import tutor_router
+    await tutor_router.drain_inflight()
+    # The decision seam's pooled Jev client (#642) for this loop.
+    await typesafe_client.aclose_clients()
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
@@ -272,6 +302,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 app.include_router(graph.router,       prefix="/api/graph")
+app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
 app.include_router(quiz.router,        prefix="/api/quiz")
 app.include_router(calendar.router,    prefix="/api/calendar")
@@ -286,10 +317,18 @@ app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
 app.include_router(profile_router,     prefix="/api/profile")
+# Mounted BEFORE admin_router so its specific /flags paths win over any
+# generic admin_router route that could otherwise shadow them.
+app.include_router(admin_flags_router, prefix="/api/admin/flags")
+app.include_router(flags_router,       prefix="/api/flags")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")
+app.include_router(admin_email_router, prefix="/api/admin/email")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
+# Public, no session: the unsubscribe page linked from every email (and the
+# RFC 8058 one-click POST). Token-authenticated; see routes/email.py.
+app.include_router(email_router,       prefix="/api/email")
 app.include_router(gradebook.router,   prefix="/api/gradebook")
 app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes")
@@ -321,43 +360,15 @@ def health():
     }
 
 
-@app.get("/api/users")
-def list_users(request: Request):
-    """List users with decrypted display names.
-
-    The display name now lives on `user_profiles` (migration 0024 moved it out of
-    `users`); it is 🔒 encrypted there. Resolve it via services.profiles, which
-    decrypts. `users.room_id` was likewise renamed to `current_room_id` by 0024 —
-    select the new column but keep the legacy `room_id` response key.
-
-    Requires an authenticated session: this returns decrypted legal names,
-    so an unauthenticated caller must never reach the roster (401).
-    """
-    from services.auth_guard import get_session_user_id
-    get_session_user_id(request)  # 401 if unauthenticated
-    from db.connection import table
-    from services.profiles import get_display_names
-    rows = table("users").select("id,current_room_id")
-    names = get_display_names([r.get("id") for r in rows if r.get("id")])
-    users = [
-        {
-            "id": r.get("id"),
-            "name": names.get(r.get("id"), ""),
-            "room_id": r.get("current_room_id"),
-        }
-        for r in rows
-    ]
-    users.sort(key=lambda u: (u["name"] or "").lower())
-    return {"users": users}
-
-
 @app.get("/api/gemini-test")
 def gemini_test(request: Request):
-    """Admin-only Gemini connectivity check. Shows a clear error if the API
-    key is missing/wrong.
+    """Admin-only LLM connectivity check. Shows a clear error if the API
+    key is missing/wrong. The path predates the Anthropic swap (ADR 0030); it
+    now probes the agents' provider (`HEALTH_PROBE_MODEL`, a Claude model) and
+    keeps its name for existing callers.
 
     Gated behind `require_admin` (#198): every hit makes a real, billable
-    agent round-trip, so an unauthenticated caller could burn Gemini quota at
+    agent round-trip, so an unauthenticated caller could burn model quota at
     will and use the `{"ok": ...}` response as an oracle for whether the API
     key is configured. Only admins may trigger LLM spend here.
     """
@@ -369,7 +380,7 @@ def gemini_test(request: Request):
     try:
         result = record_agent_usage(
             run_agent_sync(
-                health_probe_agent.run('Reply with exactly the text: Gemini OK')
+                health_probe_agent.run('Reply with exactly the text: LLM OK')
             ),
             feature="health",
         )

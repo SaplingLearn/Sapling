@@ -44,6 +44,7 @@ class TestChatStream:
              patch("routes.learn._prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())) as prep, \
              patch("routes.learn._consume_pending"), \
+             patch("routes.learn.require_session_owner"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
              patch("routes.learn._load_message_history", return_value=history_sentinel), \
@@ -98,6 +99,7 @@ class TestChatStream:
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
              patch("routes.learn._chat_turn_json", turn), \
              patch("routes.learn._consume_pending"), \
+             patch("routes.learn.require_session_owner"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
              patch("routes.learn._load_message_history", return_value=[]):
@@ -126,6 +128,7 @@ class TestChatStream:
         with patch("routes.learn.require_self",
                    side_effect=HTTPException(status_code=403, detail="forbidden")) as guard, \
              patch("routes.learn._consume_pending"), \
+             patch("routes.learn.require_session_owner"), \
              patch("routes.learn._prepare_chat_run") as prep:
             r = client.post("/api/learn/chat/stream", json={
                 "session_id": "s1", "user_id": "someone-else",
@@ -204,9 +207,8 @@ class TestStartSessionStream:
         PENDING_SESSIONS.clear()
 
         fallback_agent = MagicMock()
-        fallback_agent.run = AsyncMock(
-            return_value=SimpleNamespace(output="Fallback greeting")
-        )
+        from tests.agent_run_fakes import run_result
+        fallback_agent.run = AsyncMock(return_value=run_result("Fallback greeting"))
         fallback_deps = SimpleNamespace(graph_updates=[], mastery_changes=[])
 
         with patch("routes.learn.stream_agent_turn", fake_stream), \
@@ -270,6 +272,7 @@ class TestSseCompressionOptOut:
              patch("routes.learn._prepare_chat_run",
                    return_value=(MagicMock(), "msg", {}, MagicMock())), \
              patch("routes.learn._consume_pending"), \
+             patch("routes.learn.require_session_owner"), \
              patch("routes.learn._get_session_offering_id", return_value="off-1"), \
              patch("routes.learn.offering_course_id", return_value="c1"), \
              patch("routes.learn._load_message_history", return_value=[]):

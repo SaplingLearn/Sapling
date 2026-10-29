@@ -16,7 +16,7 @@ export const ABOUT_DIFFERENTIATORS = [
         'Your knowledge graph is yours. It updates in real time based on your actual performance, not just what you\u2019ve clicked through.',
         'Three distinct teaching modes mean you\u2019re never locked into one way of learning.',
         'Study rooms let you learn alongside classmates and see how your mastery compares, anonymously and collaboratively.',
-        'Everything from syllabus tracking to exam study guides is powered by Gemini, so the busywork of getting organized is handled for you.',
+        'Everything from syllabus tracking to exam study guides is powered by Claude, so the busywork of getting organized is handled for you.',
       ] as const;
 
 export const ABOUT_AWARDS = [
@@ -145,7 +145,7 @@ export const NEWS_FILTERS = [
 /** Wiki's own tier swatches. Warmer than the landing's XTIER — these sit on
  *  the paper palette, not the dark act ground, so they are deliberately
  *  distinct values rather than a shared token. */
-const TIER = { mastered: '#3a7d4e', learning: '#c89b5e', struggling: '#b25855', unexplored: '#9a9a9a' };
+const TIER = { mastered: '#5a7834', learning: '#c89b5e', struggling: '#b25855', unexplored: '#9a9a9a' };
 
 /** Grouped, because a flat rail of sixteen entries is a wall. The groups
  *  mirror how the product is organised: learn, capture, the semester, the

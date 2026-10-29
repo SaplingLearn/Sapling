@@ -208,6 +208,14 @@ Setup verified from a fresh clone by: Jack He, 10/6/2026
 
 **Gradescope**
 
+The backend runs on Railway; the frontend uses the existing Cloudflare
+same-origin `/api` proxy. `backend/Dockerfile` installs Chromium and its Linux
+dependencies for BU SSO. The browser runs on the backend, never in the frontend
+worker. Saved credentials are verified when opening Gradescope setup; expired
+sessions prompt reconnection. Course linking, link listing, unlinking, and sync
+accept an optional `semester` term label so retakes import into the selected
+gradebook. Failed imports do not advance the last-successful-sync timestamp.
+
 - `POST` `/api/gradescope/credentials` — Test a Gradescope login, then save encrypted email/password credentials
 - `POST` `/api/gradescope/credentials/bu-sso` — Live BU SSO sign-in via headless Chromium (WebLogin + Duo), storing session cookies
 - `DELETE` `/api/gradescope/credentials` — Remove stored credentials
@@ -349,6 +357,7 @@ Copy the `.env.example` files (see Local Setup). Never commit real `.env` files.
 | `SAPLING_MODEL_CLASSIFIER` | — | Override classifier-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_SUMMARY` | — | Override summary-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_CONCEPTS` | — | Override concept-extraction-agent model (default `gemini-2.5-flash`) |
+| `SAPLING_MODEL_TOPIC_CHECKLIST` | — | Override Topic Checklist generation model (default `gemini-2.5-flash`) |
 | `SAPLING_MODEL_SYLLABUS` | — | Override syllabus-extraction-agent model (default `gemini-2.5-flash`) |
 | `SAPLING_MODEL_QUIZ` | — | Override quiz-generation-agent model (default `gemini-2.5-flash-lite`) |
 | `SAPLING_MODEL_CHAT_TUTOR` | — | Override chat-tutor-agent model (default `gemini-2.5-pro`) |

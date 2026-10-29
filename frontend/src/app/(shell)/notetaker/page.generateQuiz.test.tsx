@@ -6,8 +6,8 @@
  * screen's Done/Cancel/Leave always landed on the hardcoded `/learn` (R5 §C),
  * because nothing on the notetaker side carried a source or a way back to a
  * specific note. Now the button builds its href through
- * `lib/quiz/source.ts::buildQuizHref` (`quizHrefForNote`, exported at the
- * bottom of `page.tsx`), and the page itself understands `?note=<id>` as the
+ * `lib/quiz/noteHref.ts::quizHrefForNote` and the shared quiz URL builder,
+ * and the page itself understands `?note=<id>` as the
  * arrival half of that round trip.
  *
  * Renders the real page (mirrors `page.testmode.test.tsx`'s mocking strategy)
@@ -59,7 +59,8 @@ vi.mock("@/lib/api", () => ({
   getGraph: vi.fn(),
 }));
 
-import NotetakerPage, { quizHrefForNote } from "./page";
+import NotetakerPage from "./page";
+import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import {
   listNotes,
   listNoteConcepts,

@@ -15,7 +15,7 @@ import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
-import { ChatPanel, type ChatMsg } from "./ChatPanel";
+import { ChatPanel, tutorStepLabel, type ChatMsg } from "./ChatPanel";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 // MarkdownChat is lazy-loaded via next/dynamic (heavy markdown stack); render
@@ -97,5 +97,55 @@ describe("ChatPanel interrupted-turn treatment (ADR 0020)", () => {
     render(<ChatPanel messages={[interruptedMsg()]} onSend={noop} />);
     expect(screen.getByTestId("tutor-interrupted")).toBeTruthy();
     expect(screen.queryByTestId("tutor-retry")).toBeNull();
+  });
+});
+
+describe("ChatPanel streaming status (ADR 0030)", () => {
+  it("shows what the tutor is doing in place of Thinking… before the first word", () => {
+    render(
+      <ChatPanel
+        messages={[]}
+        onSend={noop}
+        streamingText=""
+        streamingStatus="Searching your course materials…"
+      />,
+    );
+    expect(screen.getByText("Searching your course materials…")).toBeTruthy();
+    expect(screen.queryByText("Thinking…")).toBeNull();
+  });
+
+  it("falls back to Thinking… with no status, and hides the status once text arrives", () => {
+    const { rerender } = render(<ChatPanel messages={[]} onSend={noop} streamingText="" />);
+    expect(screen.getByText("Thinking…")).toBeTruthy();
+    rerender(
+      <ChatPanel
+        messages={[]}
+        onSend={noop}
+        streamingText="The chain rule says"
+        streamingStatus="Searching your course materials…"
+      />,
+    );
+    expect(screen.getByText("The chain rule says")).toBeTruthy();
+    expect(screen.queryByText("Searching your course materials…")).toBeNull();
+  });
+});
+
+describe("tutorStepLabel", () => {
+  it("names every tool the tutor registers (agents/chat_tutor.py)", () => {
+    for (const step of [
+      "search_course_materials",
+      "read_session_history_tool",
+      "read_user_progress_tool",
+      "apply_graph_update_tool",
+      "update_mastery_tool",
+      "read_graph_neighborhood",
+      "read_concepts_for_user",
+    ]) {
+      expect(tutorStepLabel(step)).toMatch(/…$/);
+    }
+  });
+
+  it("returns null for a step it does not know, so Thinking… stays", () => {
+    expect(tutorStepLabel("final_result")).toBeNull();
   });
 });

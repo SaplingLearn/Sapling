@@ -15,11 +15,35 @@ const MarkdownChat = dynamic(
 );
 
 export type ChatRole = "user" | "assistant";
+
+/** What a tutor tool call means to the student, keyed by the tool's wire
+ *  name (the stream's `progress` step; agents/chat_tutor.py registers them).
+ *  null for a step with nothing worth saying, so "Thinking…" stays. */
+export function tutorStepLabel(step: string): string | null {
+  switch (step) {
+    case "search_course_materials":
+      return "Searching your course materials…";
+    case "read_graph_neighborhood":
+    case "read_concepts_for_user":
+    case "read_user_progress_tool":
+      return "Checking your progress…";
+    case "read_session_history_tool":
+      return "Reviewing this conversation…";
+    case "update_mastery_tool":
+    case "apply_graph_update_tool":
+      return "Updating your knowledge graph…";
+    default:
+      return null;
+  }
+}
 export interface ChatMsg {
   id: string;
   role: ChatRole;
   content: string;
   loading?: boolean;
+  /** Replaces the "Thinking…" placeholder while `loading` — what the tutor
+   *  is doing before its first word (see `tutorStepLabel`). */
+  loadingLabel?: string;
   /** ADR 0020: the turn was stopped or failed mid-stream. The partial text
    *  stays in `content` (possibly empty when stopped pre-token); the bubble
    *  renders an "Interrupted" marker and — when `retryText` is set — a Retry
@@ -45,6 +69,9 @@ interface ChatPanelProps {
    *  Rendered as a live bubble below the settled messages, then replaced by
    *  the real message once the `done` event lands. */
   streamingText?: string | null;
+  /** What the tutor is doing while `streamingText` is still empty, e.g.
+   *  "Searching your course materials…"; null/undefined = "Thinking…". */
+  streamingStatus?: string | null;
   /** Abort the in-flight turn. Shown only while streaming. */
   onStop?: () => void;
   /** Re-dispatch an interrupted turn (ADR 0020). Receives the interrupted
@@ -62,6 +89,7 @@ export function ChatPanel({
   draftSeed,
   draftSeedKey,
   streamingText,
+  streamingStatus,
   onStop,
   onRetry,
 }: ChatPanelProps) {
@@ -107,7 +135,13 @@ export function ChatPanel({
           // aria-live region on the bubble itself.
           <Message
             key="streaming"
-            m={{ id: "streaming", role: "assistant", content: streamingText, loading: streamingText === "" }}
+            m={{
+              id: "streaming",
+              role: "assistant",
+              content: streamingText,
+              loading: streamingText === "",
+              loadingLabel: streamingStatus ?? undefined,
+            }}
           />
         )}
       </div>
@@ -302,7 +336,7 @@ const Message = React.memo(function Message({
         }}
       >
         {m.loading ? (
-          <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>Thinking…</span>
+          <span style={{ opacity: 0.6, fontFamily: "var(--font-sans)" }}>{m.loadingLabel || "Thinking…"}</span>
         ) : isUser ? (
           <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
         ) : (

@@ -12,10 +12,12 @@ so the model has nothing to fetch — it only writes from what it knows.
 from __future__ import annotations
 
 import hashlib
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
+from agents._bounded import clip_prose
 from agents._providers import model_for
 from agents.deps import SaplingDeps
 
@@ -23,7 +25,7 @@ from agents.deps import SaplingDeps
 class ConceptDescription(BaseModel):
     """Typed output: a single short description sentence."""
 
-    description: str = Field(
+    description: Annotated[str, clip_prose(400, "concept_describe.description")] = Field(
         # Generous guard, not a display target: the prompt governs length
         # (~12-28 words). 240 was tight enough that a valid 28-word sentence
         # with long technical terms could overflow it → schema-validation
@@ -49,6 +51,9 @@ _SYSTEM_PROMPT = (
     "given course."
 )
 _PROMPT_HASH = hashlib.sha256(_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+# Public alias, so a cache of this agent's output can key on the prompt that
+# wrote it (routes/graph.py's description cache).
+PROMPT_VERSION = _PROMPT_HASH
 
 
 concept_describe_agent = Agent[SaplingDeps, ConceptDescription](

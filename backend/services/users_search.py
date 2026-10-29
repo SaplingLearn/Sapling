@@ -8,6 +8,8 @@ not directly searchable. This is acceptable at admin scale and lives behind
 require_admin.
 """
 
+import base64
+import binascii
 from typing import Optional
 
 from db.connection import table
@@ -19,6 +21,13 @@ _MAX_PAGE_SIZE = 200
 
 # After migration 0024 the display `name` lives on user_profiles, not users.
 _USERS_COLS = "id,email,is_approved,created_at,last_sign_in_at"
+# Admin → Users lists the people who have access. Everyone waiting on approval
+# lives in Admin → Allowlist (the waitlist), so the two pages never overlap.
+_APPROVED = {"is_approved": "eq.true"}
+
+# base64(12-byte nonce || ciphertext || 16-byte GCM tag): the shortest blob
+# services/encryption.py can write. A decrypted email/name never looks like one.
+_MIN_CIPHERTEXT_BYTES = 12 + 16
 
 
 def _attach_roles(users: list[dict]) -> None:
@@ -28,6 +37,32 @@ def _attach_roles(users: list[dict]) -> None:
             filters={"user_id": f"eq.{user['id']}"},
         )
         user["roles"] = [r["roles"] for r in (rows or []) if r.get("roles")]
+
+
+def _still_encrypted(value: Optional[str]) -> bool:
+    """Whether a value that already went through decrypt_if_present is still
+    ciphertext: it fails soft, so a row sealed under a different ENCRYPTION_KEY
+    comes back as the raw blob rather than raising."""
+    if not value:
+        return False
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return len(raw) >= _MIN_CIPHERTEXT_BYTES
+
+
+def _mark_undecryptable(users: list[dict]) -> None:
+    """Blank ciphertext this key can't open and flag the row, so the admin list
+    shows "unreadable" instead of rendering the blob as a name/email."""
+    for user in users:
+        bad_email = _still_encrypted(user.get("email"))
+        bad_name = _still_encrypted(user.get("name"))
+        if bad_email:
+            user["email"] = None
+        if bad_name:
+            user["name"] = ""
+        user["undecryptable"] = bad_email or bad_name
 
 
 def _attach_names(users: list[dict]) -> None:
@@ -49,6 +84,7 @@ def paginate_users(
     if not q:
         rows, total = table("users").select_with_count(
             columns=_USERS_COLS,
+            filters=_APPROVED,
             order="created_at.desc",
             limit=page_size,
             offset=offset,
@@ -56,16 +92,18 @@ def paginate_users(
         for u in rows:
             u["email"] = decrypt_if_present(u.get("email"))
         _attach_names(rows)
+        _mark_undecryptable(rows)
         _attach_roles(rows)
         return {"users": rows, "total": total, "page": page, "page_size": page_size}
 
     # Search path: name moved to user_profiles, so PostgREST can't filter it
     # (AEAD nonces aren't searchable anyway). Decrypt emails + resolve every
     # name, then filter and paginate in Python. Admin-scale, behind require_admin.
-    all_rows = table("users").select(columns=_USERS_COLS, order="created_at.desc")
+    all_rows = table("users").select(columns=_USERS_COLS, filters=_APPROVED, order="created_at.desc")
     for u in all_rows:
         u["email"] = decrypt_if_present(u.get("email"))
     _attach_names(all_rows)
+    _mark_undecryptable(all_rows)
     needle = q.lower()
     filtered = [
         u for u in all_rows

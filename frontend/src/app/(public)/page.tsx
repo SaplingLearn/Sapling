@@ -75,8 +75,8 @@ export default function LandingPage() {
       ref={rootRef}
       className="landing-dc landing-v5"
       style={{
-        fontFamily: "var(--font-dm-sans), 'DM Sans', system-ui, sans-serif", color: '#12201A', fontSize: 14,
-        lineHeight: 1.6, backgroundColor: '#f0f4f2',
+        fontFamily: "var(--font-suse), 'SUSE', system-ui, sans-serif", color: '#191F13', fontSize: 14,
+        lineHeight: 1.6, backgroundColor: '#f2f4f0',
         backgroundImage:
           'radial-gradient(ellipse 100% 60% at 50% -10%, rgba(255,255,255,0.55) 0%, transparent 50%), radial-gradient(ellipse 80% 50% at 100% 40%, rgba(255,255,255,0.2) 0%, transparent 45%)',
         minHeight: '100vh', overflowX: 'clip',
@@ -129,9 +129,9 @@ export default function LandingPage() {
       />
 
       {/* ═══ Descent band ═══
-          Opaque, and exact-colour at both edges: it starts on the flat #F0F4F2
+          Opaque, and exact-colour at both edges: it starts on the flat #F2F4F0
           the hero's legibility band converges to, and ends on the act stage's
-          #DCE7DF edge tint. Solid-to-solid joins are the only seams that stay
+          #E0E6DB edge tint. Solid-to-solid joins are the only seams that stay
           invisible — the grounds either side carry washes no flat colour can
           match. */}
       <div
@@ -139,7 +139,7 @@ export default function LandingPage() {
         style={{
           position: 'relative', height: '38vh',
           background:
-            'linear-gradient(180deg, #F0F4F2 0%, #EDF2EF 35%, #E5EEE8 70%, #DCE7DF 100%)',
+            'linear-gradient(180deg, #F2F4F0 0%, #EFF1ED 35%, #E9EDE4 70%, #E0E6DB 100%)',
         }}
       />
 

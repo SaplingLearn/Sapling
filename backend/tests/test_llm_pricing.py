@@ -113,10 +113,26 @@ def test_cost_for_known_model():
     assert cost == pytest.approx(0.0028)
 
 
-def test_cost_for_known_model_rounds_to_six_dp():
+def test_cost_keeps_sub_micro_dollar_precision():
+    # (0.0001 + 0.0004)/1000 = 0.0000005 — below the old 6dp column's step,
+    # which rounded it to 0.000001 (double the real cost). 10dp keeps it.
     cost = llm_pricing.cost_usd("gemini-2.5-flash-lite", 1, 1)
-    # (0.0001 + 0.0004)/1000 = 0.0000005 -> quantized to 6dp = 0.000001 (half-up)
-    assert cost == pytest.approx(0.000001)
+    assert cost == 0.0000005
+
+
+def test_cost_rounds_half_up_at_ten_dp():
+    # 1 Jev token = 0.000000042 exactly; 3 flash-lite input tokens =
+    # 0.0000003 — both exact at 10dp. A value past the 10th digit rounds.
+    assert llm_pricing.cost_usd("jev-1.13.0", 1, 0) == 0.000000042
+    assert llm_pricing.COST_SCALE == 10
+
+
+def test_a_653_token_jev_call_is_priced_exactly_not_rounded_away():
+    """#672 review: at the old 6dp scale this stored 0.000027 (1.6% low) and
+    any call under 12 tokens stored $0 — a billed call recorded as free."""
+    assert llm_pricing.cost_usd("jev-1.13.0", 653, 20) == 0.000027426
+    assert llm_pricing.cost_usd("jev-1.13.0", 11, 0) == 0.000000462
+    assert llm_pricing.cost_usd("jev-1.13.0", 11, 0) > 0
 
 
 def test_cost_for_unknown_model_returns_none_and_warns_once(caplog):
@@ -148,3 +164,146 @@ def test_cost_for_function_mode_model_is_none_and_silent(caplog):
         assert llm_pricing.cost_usd("function:quiz", 100, 100) is None
     assert not caplog.records, "function:* models must not warn"
     assert "function:chat_tutor" not in llm_pricing._warned_models
+
+
+def test_every_default_task_model_is_priced():
+    """A configured model missing from MODEL_PRICING records `cost_usd = NULL`
+    for every call on it — the per-task rollups in /api/admin/analytics then
+    under-count spend with only a one-time warning to show for it. Covers the
+    per-task `_DEFAULTS`, the health probe, and the tutor/quiz fast/smart maps
+    (which bypass `_DEFAULTS`). It checks CONFIGURED names only: a served
+    `model_version` that differs from the configured id is not covered here."""
+    from agents._providers import HEALTH_PROBE_MODEL, _DEFAULTS
+    from routes.learn import _PREF_MODEL_NAMES as learn_prefs
+    from routes.quiz import _PREF_MODEL_NAMES as quiz_prefs
+
+    configured = {
+        *_DEFAULTS.values(), HEALTH_PROBE_MODEL, *learn_prefs.values(), *quiz_prefs.values(),
+    }
+    unpriced = sorted(m for m in configured if m not in llm_pricing.MODEL_PRICING)
+    assert not unpriced, f"default models with no MODEL_PRICING entry: {unpriced}"
+
+
+def test_gemini_31_flash_lite_cost():
+    # gemini-3.1-flash-lite: $0.25 in / $1.50 out per 1M tokens.
+    assert llm_pricing.cost_usd("gemini-3.1-flash-lite", 1000, 1000) == pytest.approx(0.00175)
+
+
+def test_any_served_jev_version_is_priced_at_the_family_rate():
+    """#672 review: Jev reports the versioned id that SERVED — a new build
+    (or whatever `jev-latest` resolves to) must not NULL-cost every call."""
+    for served in ("jev-1.14.0", "jev-2.0.0-rc1", "typesafe:jev-1.14.0"):
+        assert llm_pricing.cost_usd(served, 653, 20) == 0.000027426, served
+    # An exact entry still wins over the family (and gemini is untouched).
+    llm_pricing.MODEL_PRICING["jev-9.9.9"] = (0.001, 0.0)
+    try:
+        assert llm_pricing.cost_usd("jev-9.9.9", 1000, 0) == 0.001
+    finally:
+        del llm_pricing.MODEL_PRICING["jev-9.9.9"]
+    llm_pricing._warned_models.discard("jevish-model")
+    assert llm_pricing.cost_usd("jevish-model", 100, 0) is None
+
+
+# ── Anthropic (ADR 0030) ─────────────────────────────────────────────────
+
+
+def test_claude_haiku_cost():
+    # claude-haiku-5-5: $0.10 in / $0.50 out per 1M tokens (prompt ≤100K).
+    assert llm_pricing.cost_usd("claude-haiku-5-5", 1000, 1000) == pytest.approx(0.0006)
+
+
+def test_claude_sonnet_cost():
+    # claude-sonnet-5-5: $2 in / $10 out per 1M tokens.
+    assert llm_pricing.cost_usd("claude-sonnet-5-5", 1000, 1000) == pytest.approx(0.012)
+
+
+def test_claude_haiku_long_prompt_switches_rate_card():
+    """Haiku 5.5 bills a >100K-token prompt at $0.50/$2.50, not $0.10/$0.50:
+    pricing a long document run at the short card would under-count it 5x."""
+    at_threshold = llm_pricing.cost_usd("claude-haiku-5-5", 100_000, 1000)
+    assert at_threshold == pytest.approx(100_000 * 0.0001 / 1000 + 1000 * 0.0005 / 1000)
+    over = llm_pricing.cost_usd("claude-haiku-5-5", 100_001, 1000)
+    assert over == pytest.approx(100_001 * 0.0005 / 1000 + 1000 * 0.0025 / 1000)
+
+
+def test_long_prompt_card_is_per_request_not_per_run():
+    """Anthropic applies the >100K card per REQUEST. A five-request tool loop
+    of ~25K prompts sums to 125K but never crossed the threshold — pricing it
+    on the sum billed the quiz/tutor loops at 5x."""
+    loop = llm_pricing.cost_usd("claude-haiku-5-5", 125_000, 2000, requests=5)
+    assert loop == pytest.approx(125_000 * 0.0001 / 1000 + 2000 * 0.0005 / 1000)
+    single = llm_pricing.cost_usd("claude-haiku-5-5", 125_000, 2000, requests=1)
+    assert single == pytest.approx(125_000 * 0.0005 / 1000 + 2000 * 0.0025 / 1000)
+
+
+def test_request_count_reads_run_usage():
+    from pydantic_ai.usage import RunUsage
+
+    assert llm_pricing.request_count(RunUsage(requests=4)) == 4
+    assert llm_pricing.request_count({"prompt_tokens": 3}) == 1
+    assert llm_pricing.request_count(None) == 1
+
+
+def test_provider_qualified_claude_name_is_priced():
+    assert llm_pricing.cost_usd("anthropic:claude-haiku-5-5", 1000, 0) == (
+        llm_pricing.cost_usd("claude-haiku-5-5", 1000, 0)
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "label"),
+    [
+        ("claude-haiku-5-5", "anthropic"),
+        ("anthropic:claude-sonnet-5-5", "anthropic"),
+        ("gemini-2.5-flash", "gemini"),
+        ("google-gla:gemini-2.5-pro", "gemini"),
+        ("jev-1.13.0", "typesafe"),
+        ("function:quiz", "function"),
+        ("mystery-model", "unknown"),
+        ("", "unknown"),
+    ],
+)
+def test_usage_provider_label_follows_the_served_model(model, label):
+    """Every agent row used to be hard-labelled 'gemini'; the label now
+    follows the model so a slot moved between providers stays honest."""
+    assert llm_pricing.usage_provider(model) == label
+
+
+def test_claude_cache_reads_and_writes_are_repriced():
+    """pydantic-ai's input_tokens INCLUDES cache reads/writes; Anthropic bills
+    reads at 0.1x and 5-minute writes at 1.25x of the input rate."""
+    # 3393 in = 6 uncached + 1659 read + 1728 written (a live tutor turn).
+    cost = llm_pricing.cost_usd(
+        "claude-sonnet-5-5", 3393, 174, cache_read_tokens=1659, cache_write_tokens=1728,
+    )
+    expected = (6 * 0.002 + 1659 * 0.002 * 0.1 + 1728 * 0.002 * 1.25 + 174 * 0.010) / 1000
+    assert cost == pytest.approx(expected)
+
+
+def test_gemini_cache_tokens_keep_the_full_input_rate():
+    assert llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0, cache_read_tokens=800) == (
+        llm_pricing.cost_usd("gemini-2.5-flash", 1000, 0)
+    )
+
+
+def test_cache_usage_reads_run_usage_only():
+    """RunUsage.input_tokens INCLUDES cache tokens, which cost_usd relies on;
+    a raw Anthropic Usage excludes them, so its field names are ignored
+    rather than mispriced."""
+    from pydantic_ai.usage import RunUsage
+
+    assert llm_pricing.cache_usage(RunUsage(input_tokens=10, cache_read_tokens=4, cache_write_tokens=3)) == (4, 3)
+    assert llm_pricing.cache_usage({"cache_read_input_tokens": 7, "cache_creation_input_tokens": 2}) == (0, 0)
+    assert llm_pricing.cache_usage(None) == (0, 0)
+
+
+def test_snapshot_suffixed_claude_ids_are_priced_at_the_family_rate():
+    """A dated snapshot id in the response's `model` must not NULL-cost every
+    call (the `jev-` family entry's reason, applied to Claude)."""
+    assert llm_pricing.cost_usd("claude-haiku-5-5-20261001", 1000, 1000) == (
+        llm_pricing.cost_usd("claude-haiku-5-5", 1000, 1000)
+    )
+    assert llm_pricing.cost_usd("claude-haiku-5-5-20261001", 100_001, 0) == (
+        llm_pricing.cost_usd("claude-haiku-5-5", 100_001, 0)
+    )
+    assert llm_pricing.cost_usd("claude-sonnet-5-5-20261001", 10, 10) is not None

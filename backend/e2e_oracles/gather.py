@@ -172,19 +172,18 @@ def run_counts(args: argparse.Namespace) -> tuple[list[Finding], int]:
 # (table, pk_col, column) manifest — hardcoded, so identifiers never come from
 # user input; every value is read via a parameterized `%s`, never interpolated.
 #
-# This lists the ENCRYPTED columns only. Absences are therefore claims, and one
-# is worth stating outright because it looks like an oversight: `quiz_responses`
-# (#541 C2) is deliberately not here. Every column on that table —
+# This lists the ENCRYPTED columns only. Absences are therefore claims. On
+# `quiz_responses` (#541 C2) only `answer_text` is listed: it carries the
+# student's written answer (short-answer/numeric/algebra formats,
+# 20261018010000_quiz_written_responses.sql), so it is encrypted like
+# `quiz_attempts.answers_json`. Every other column on that table —
 # `selected_index`, `is_correct`, `time_ms`, `confidence`, `question_index` —
 # is a plaintext behavioural scalar, the same category as `quiz_attempts.score`
 # and `.total`, which #521 also left plaintext on purpose so analytics can
-# aggregate without a decrypt. The table holds no free text, so there is
-# nothing on it for this oracle to check. A future column carrying student
-# prose (a per-question "why did you pick that?") would need encrypting AND a
-# row here; that is the trigger to revisit, not the table's mere existence.
-# Full rationale in the migration header:
+# aggregate without a decrypt. Full rationale in the migration header:
 # db/migrations/20260812214402_quiz_responses.sql.
 _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
+    ("topic_checklists", "enrollment_id", "content"),
     ("users", "id", "email"),
     ("user_profiles", "user_id", "name"),
     ("user_profiles", "user_id", "first_name"),
@@ -207,6 +206,7 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("issue_reports", "id", "description"),
     ("quiz_attempts", "id", "questions_json"),
     ("quiz_attempts", "id", "answers_json"),
+    ("quiz_responses", "id", "answer_text"),
     ("quiz_context", "id", "context_json"),
     ("flashcards", "id", "front"),
     ("flashcards", "id", "back"),
@@ -248,6 +248,18 @@ def run_ciphertext(args: argparse.Namespace) -> tuple[list[Finding], int]:
 # db/migrations/{0001_baseline_schema,0021_gradebook,0023_graph_integrity,
 # 0025_study_integrity}.sql and db/seed_local_rich.py's _SUMMARY_ORDER.
 _ORPHAN_CHECKS: tuple[tuple[str, str], ...] = (
+    (
+        "topic_checklists->enrollments",
+        "SELECT tc.enrollment_id AS id FROM topic_checklists tc "
+        "LEFT JOIN enrollments e ON e.id = tc.enrollment_id "
+        "WHERE e.id IS NULL LIMIT 20",
+    ),
+    (
+        "topic_checklist_progress->topic_checklists",
+        "SELECT p.enrollment_id || ':' || p.topic_key AS id FROM topic_checklist_progress p "
+        "LEFT JOIN topic_checklists tc ON tc.enrollment_id = p.enrollment_id "
+        "WHERE tc.enrollment_id IS NULL LIMIT 20",
+    ),
     (
         "graph_edges->graph_nodes",
         "SELECT ge.id AS id FROM graph_edges ge "
@@ -389,3 +401,34 @@ def run_ragstore(args: argparse.Namespace) -> tuple[list[Finding], int]:
             )
 
     return findings, 0
+
+
+def flag_findings(flags: list[dict], targets: list[dict]) -> list[Finding]:
+    """#620: every stored variant must be one of its registry flag's variants."""
+    from services.feature_flags import REGISTRY
+
+    out: list[Finding] = []
+    for f in flags:
+        fd = REGISTRY.get(f["key"])
+        for field in ("default_variant", "rollout_variant"):
+            v = f.get(field)
+            if fd and v is not None and v not in fd.variants:
+                out.append(Finding("flags", f"{f['key']}.{field}={v!r} is not a registered variant",
+                                   {"key": f["key"], "field": field, "value": v}))
+    for t in targets:
+        fd = REGISTRY.get(t["flag_key"])
+        if fd and t["variant"] not in fd.variants:
+            out.append(Finding("flags", f"{t['flag_key']} rule {t['target_type']}:{t['target_id']} "
+                                        f"has unregistered variant {t['variant']!r}",
+                               {"key": t["flag_key"], "target": f"{t['target_type']}:{t['target_id']}",
+                                "value": t["variant"]}))
+    return out
+
+
+def run_flags(args: argparse.Namespace) -> tuple[list[Finding], int]:
+    """`flags`: no stored flag variant falls outside the registry (#620)."""
+    conn = _db_conn()
+    flags = conn.execute("select key, default_variant, rollout_variant from feature_flags").fetchall()
+    targets = conn.execute(
+        "select flag_key, target_type, target_id, variant from feature_flag_targets").fetchall()
+    return flag_findings([dict(r) for r in flags], [dict(r) for r in targets]), 0

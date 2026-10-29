@@ -8,16 +8,19 @@ read_session_history_tool, read_user_progress_tool,
 apply_graph_update_tool, update_mastery_tool.
 
 Modes (Socratic, Expository, TeachBack) are gated by selecting different
-system prompts at construction time. The route picks the right agent
+prompts at construction time (passed as `instructions=`, so they are sent
+on every turn — see `_build_agent`). The route picks the right agent
 instance per request based on body.mode.
 
-Per-call thinking budget: the Pro thinking cap is applied at the route
-layer (`routes.learn._build_pro_model_settings`), not on the agent
-itself, because the same agent instance also serves Lite runs (via the
-"fast" model_pref override) where thinking_config is wasted at best.
-Direct callers of `chat_tutor_agent.run(...)` that bypass the route
-will get unbounded Pro thinking — pin a `model_settings=` kwarg there
-if that matters.
+Per-call thinking depth: on Claude it is the slot's model-level `effort`
+(agents/_providers._ANTHROPIC_EFFORT, `low` per the ADR 0030 cost A/B); a
+deep turn served by a Gemini model (rollback) gets the capped Pro thinking
+budget at the route layer (`routes.learn._build_deep_turn_model_settings`),
+not on the agent itself, because the same agent instance also serves "fast"
+runs where a thinking config is wasted at best.
+Direct callers of `chat_tutor_agent.run(...)` that bypass the route get
+that model-level default — pin a `model_settings=` kwarg there if that
+matters.
 """
 
 from __future__ import annotations
@@ -45,7 +48,10 @@ from agents.tools.graph_read import (
 TutorMode = Literal["socratic", "expository", "teachback"]
 
 
-# ── System prompts (one per mode) ──────────────────────────────────────────
+# ── Instructions (one per mode) ────────────────────────────────────────────
+#
+# Passed to the agent as `instructions=`, never `system_prompt=` — see
+# `_build_agent` for why that kwarg must not be "tidied" back.
 
 # #150: academic-integrity parity with the legacy prompt
 # (prompts/preamble.txt) — held out of #149 for this issue. Compact form
@@ -73,6 +79,13 @@ _SHARED_PREAMBLE = (
     "progress, search their uploaded course documents, and update their "
     "knowledge graph mastery scores. Use tools when relevant — don't "
     "fabricate context.\n\n"
+    # ADR 0030: Claude reads "when relevant" narrowly and answers course
+    # questions from general knowledge; Gemini searched by default. Name the
+    # trigger so retrieval-grounded answers don't depend on the model's taste.
+    "Course materials: when the student asks about a topic from their "
+    "course, call search_course_materials before you explain, so you teach "
+    "with their course's notation, terms, and examples. Skip it only for "
+    "small talk or a follow-up this conversation has already covered.\n\n"
     "Tone: warm, concise, no filler. Use math/code blocks where helpful "
     "(LaTeX `$x^2$`, ```mermaid```, ```plot```). Don't over-explain.\n\n"
     # #150: injection resistance — single source of truth in
@@ -105,7 +118,9 @@ _SOCRATIC_PROMPT = _SHARED_PREAMBLE + (
     "not lectures. Each turn: ask one focused question that reveals what "
     "they already know or where they're confused. Avoid giving the answer "
     "directly; provide hints only after they've made an attempt. End "
-    "every response with a question."
+    "every response with a question: the final sentence must be that "
+    "question, ending in '?', with nothing after it — no offer, no "
+    "sign-off."
 )
 
 _EXPOSITORY_PROMPT = _SHARED_PREAMBLE + (
@@ -120,7 +135,8 @@ _TEACHBACK_PROMPT = _SHARED_PREAMBLE + (
     "their explanation, then identify what's correct, what's missing, "
     "and any specific misconceptions. Praise accuracy where it exists. "
     "End with one targeted question that probes the weakest spot in "
-    "their understanding."
+    "their understanding: the final sentence must be that question, "
+    "ending in '?', with nothing after it."
 )
 
 _PROMPTS: dict[TutorMode, str] = {
@@ -144,8 +160,8 @@ _PROMPT_HASHES: dict[TutorMode, str] = {
 # the frontend renders via MarkdownChat. No structured output here; that
 # is reserved for routes that grade or extract.
 
-# All seven tools are registered on every mode. The system prompt steers
-# WHEN to call them; the surface stays uniform so a Pro-tier model can
+# All seven tools are registered on every mode. The mode's instructions
+# steer WHEN to call them; the surface stays uniform so a Pro-tier model can
 # decide for itself which lookups are worth the round trip.
 
 
@@ -172,7 +188,15 @@ def _build_agent(mode: TutorMode) -> Agent[SaplingDeps, str]:
         model=model_for("chat_tutor"),
         deps_type=SaplingDeps,
         output_type=str,
-        system_prompt=_PROMPTS[mode],
+        # `instructions=`, NOT `system_prompt=`: pydantic-ai sends a
+        # system_prompt only when message_history is empty, and every tutor
+        # turn after the opener runs with history rebuilt from `messages`
+        # rows (routes.learn._load_message_history), which carries no
+        # SystemPromptPart. With system_prompt those turns ran without the
+        # mode rules, academic integrity, the injection guard and the tool
+        # guidance. Instructions are re-sent on every model request.
+        # Pinned by tests/test_chat_tutor_prompt_every_turn.py.
+        instructions=_PROMPTS[mode],
         metadata={
             "prompt_version": _PROMPT_HASHES[mode],
             "agent": "chat_tutor",

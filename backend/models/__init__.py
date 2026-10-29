@@ -1,5 +1,6 @@
+import re
 from typing import Optional, Union, List, Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
 
@@ -46,6 +47,7 @@ class ActionBody(BaseModel):
 # ── Quiz ──────────────────────────────────────────────────────────────────────
 
 class GenerateQuizBody(BaseModel):
+    question_format: Literal["multiple_choice", "short_answer", "numeric", "symbolic", "mixed"] = "multiple_choice"
     user_id: str = "user_andres"
     concept_node_id: str
     # Bounds come from services/quiz_config.py — the same constants
@@ -127,10 +129,19 @@ class AnswerQuestionBody(BaseModel):
     would then lock in). The response echoes both either way."""
 
     question_index: int = Field(ge=0)
-    selected_index: int = Field(ge=0)
+    selected_index: Optional[int] = Field(default=None, ge=0)
+    answer_text: Optional[str] = Field(default=None, min_length=1, max_length=2000)
     question_id: Optional[int] = None
     time_ms: Optional[int] = Field(default=None, ge=0)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def one_answer(self):
+        if (self.selected_index is None) == (self.answer_text is None):
+            raise ValueError("Supply either an answer choice or a written answer.")
+        if self.answer_text is not None and not self.answer_text.strip():
+            raise ValueError("The answer must not be blank.")
+        return self
 
 
 class AnswerItem(BaseModel):
@@ -572,3 +583,82 @@ class SyllabusApplyBody(BaseModel):
 
 class AllowlistEmailBody(BaseModel):
     email: str
+
+
+# One address, no spaces, a dot in the domain. Deliberately loose (the waitlist
+# signup already validated with EmailStr); it only has to stop pasted junk.
+_EMAIL_SHAPE = re.compile(r"^[^@\s,;<>()\"]+@[^@\s,;<>()\"]+\.[^@\s,;<>()\"]+$")
+ALLOWLIST_BULK_MAX = 500
+
+
+class AllowlistBulkBody(BaseModel):
+    """POST /api/admin/allowlist/approve-bulk. Lowercased, stripped, deduped
+    (first occurrence wins), 1..500 addresses."""
+    emails: list[str] = Field(min_length=1, max_length=ALLOWLIST_BULK_MAX)
+
+    @field_validator("emails")
+    @classmethod
+    def _normalize(cls, v: list[str]) -> list[str]:
+        seen: dict[str, None] = {}
+        bad: list[str] = []
+        for raw in v:
+            email = (raw or "").strip().lower()
+            if not email or len(email) > 254 or not _EMAIL_SHAPE.match(email):
+                bad.append(raw)
+                continue
+            seen.setdefault(email, None)
+        if bad:
+            raise ValueError(f"invalid email address(es): {', '.join(map(str, bad[:5]))}")
+        if not seen:
+            raise ValueError("at least one email is required")
+        return list(seen)
+
+
+EMAIL_AUDIENCES = (
+    "waitlist_all",
+    "waitlist_pending",
+    "waitlist_approved_not_joined",
+    "users_all",
+)
+
+
+class EmailBroadcastTestBody(BaseModel):
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("subject", "body")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be blank")
+        return v
+
+    @field_validator("subject")
+    @classmethod
+    def _one_line(cls, v: str) -> str:
+        return " ".join(v.split())
+
+    @field_validator("subject", "body")
+    @classmethod
+    def _known_variables(cls, v: str) -> str:
+        # Never mail out literal {{braces}}: a typo'd variable is a 422.
+        from services.email_variables import unknown_variables, unknown_variables_message
+        unknown = unknown_variables(v)
+        if unknown:
+            raise ValueError(unknown_variables_message(unknown))
+        return v
+
+
+class EmailBroadcastPreviewBody(BaseModel):
+    """A draft as it's being typed: blank is fine, it just previews empty."""
+    subject: str = Field(default="", max_length=200)
+    body: str = Field(default="", max_length=20000)
+
+
+class EmailBroadcastBody(EmailBroadcastTestBody):
+    audience: Literal[
+        "waitlist_all",
+        "waitlist_pending",
+        "waitlist_approved_not_joined",
+        "users_all",
+    ]

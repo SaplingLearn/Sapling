@@ -3,6 +3,7 @@ import React from 'react';
 import localFont from 'next/font/local';
 import { resolveSiteUrl } from '@/lib/deployGuard';
 import { UserProvider } from '@/context/UserContext';
+import { FlagsProvider } from '@/context/FlagsContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './globals.css';
@@ -17,59 +18,45 @@ import './globals.css';
  * that layout looked right and only the letterforms were wrong. The warning
  * for it sits in the dev log, which nobody reads while the page renders.
  *
- * The woff2 files in ./fonts are the latin subset Google serves for exactly
- * the weights and styles declared below, committed so the build never needs
- * the network to be typeset correctly. Spectral is static per weight;
- * the other three are variable, one file spanning their whole range.
+ * The type is the approved Pen set from the redesign (#728): Aleo for
+ * headings and long-form, SUSE for UI, IBM Plex Mono for numerals and code.
+ * Each woff2 in ./fonts is a lossless conversion of the official
+ * google/fonts binary (ttf SHA-256 62b6cb49… Aleo, 9b4c074d… Aleo Italic,
+ * 16bda691… SUSE, 6a3412f0… / a9b4c49b… / d3c38e55… / ac27abd6… Plex Mono
+ * 400/500/600/700), committed so the build never needs the network to be
+ * typeset correctly. Aleo and SUSE are variable, one file spanning their
+ * whole range; Plex Mono is static per weight.
  *
- * All four are SIL Open Font License 1.1, which permits redistribution.
+ * All three are SIL Open Font License 1.1 (the text sits beside each family
+ * in ./fonts), which permits redistribution.
  */
-const spectral = localFont({
+const aleo = localFont({
   src: [
-    { path: './fonts/Spectral-200.woff2', weight: '200', style: 'normal' },
-    { path: './fonts/Spectral-300.woff2', weight: '300', style: 'normal' },
-    { path: './fonts/Spectral-400.woff2', weight: '400', style: 'normal' },
-    { path: './fonts/Spectral-500.woff2', weight: '500', style: 'normal' },
-    { path: './fonts/Spectral-600.woff2', weight: '600', style: 'normal' },
-    { path: './fonts/Spectral-700.woff2', weight: '700', style: 'normal' },
-    { path: './fonts/Spectral-800.woff2', weight: '800', style: 'normal' },
-    { path: './fonts/Spectral-200-italic.woff2', weight: '200', style: 'italic' },
-    { path: './fonts/Spectral-300-italic.woff2', weight: '300', style: 'italic' },
-    { path: './fonts/Spectral-400-italic.woff2', weight: '400', style: 'italic' },
-    { path: './fonts/Spectral-500-italic.woff2', weight: '500', style: 'italic' },
-    { path: './fonts/Spectral-600-italic.woff2', weight: '600', style: 'italic' },
-    { path: './fonts/Spectral-700-italic.woff2', weight: '700', style: 'italic' },
-    { path: './fonts/Spectral-800-italic.woff2', weight: '800', style: 'italic' },
+    { path: './fonts/Aleo-variable.woff2', weight: '100 900', style: 'normal' },
+    { path: './fonts/Aleo-variable-italic.woff2', weight: '100 900', style: 'italic' },
   ],
-  variable: '--font-spectral',
+  variable: '--font-aleo',
   display: 'swap',
   fallback: ['Georgia', 'serif'],
   adjustFontFallback: 'Times New Roman',
 });
 
-const dmSans = localFont({
-  src: './fonts/DM_Sans-variable.woff2',
-  weight: '100 1000',
-  variable: '--font-dm-sans',
+const suse = localFont({
+  src: './fonts/SUSE-variable.woff2',
+  weight: '100 900',
+  variable: '--font-suse',
   display: 'swap',
   fallback: ['system-ui', 'sans-serif'],
 });
 
-const playfairDisplay = localFont({
+const plexMono = localFont({
   src: [
-    { path: './fonts/Playfair_Display-variable.woff2', weight: '400 900', style: 'normal' },
-    { path: './fonts/Playfair_Display-variable-italic.woff2', weight: '400 900', style: 'italic' },
+    { path: './fonts/IBM_Plex_Mono-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/IBM_Plex_Mono-500.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/IBM_Plex_Mono-600.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/IBM_Plex_Mono-700.woff2', weight: '700', style: 'normal' },
   ],
-  variable: '--font-playfair',
-  display: 'swap',
-  fallback: ['Georgia', 'serif'],
-  adjustFontFallback: 'Times New Roman',
-});
-
-const jetbrainsMono = localFont({
-  src: './fonts/JetBrains_Mono-variable.woff2',
-  weight: '100 800',
-  variable: '--font-jetbrains',
+  variable: '--font-plex-mono',
   display: 'swap',
   fallback: ['ui-monospace', 'monospace'],
 });
@@ -134,12 +121,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-accent="sage"
       data-density="compact"
-      className={`${spectral.variable} ${dmSans.variable} ${playfairDisplay.variable} ${jetbrainsMono.variable} ${caveat.variable}`}
+      className={`${aleo.variable} ${suse.variable} ${plexMono.variable} ${caveat.variable}`}
     >
       <body>
         <ErrorBoundary>
           <ToastProvider>
-            <UserProvider>{children}</UserProvider>
+            <UserProvider>
+              <FlagsProvider>{children}</FlagsProvider>
+            </UserProvider>
           </ToastProvider>
         </ErrorBoundary>
       </body>

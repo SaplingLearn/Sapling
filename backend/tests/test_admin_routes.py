@@ -354,20 +354,6 @@ class TestListUsersPaginated:
 
 # ── PATCH /api/admin/users/{id}/approve ────────────────────────────────────
 
-class TestApproveUser:
-    def test_approves_user(self):
-        with _mock_admin(), patch("routes.admin.table") as t, \
-             patch("routes.admin.get_session_user_id", return_value="admin1"), \
-             patch("routes.admin.log_admin_action") as audit:
-            t.return_value.update.return_value = [{}]
-            r = client.patch("/api/admin/users/u1/approve?user_id=admin1")
-
-        assert r.status_code == 200
-        assert r.json()["approved"] is True
-        audit.assert_called_once()
-        assert audit.call_args.kwargs["action"] == "user.approve"
-
-
 # ── GET /api/admin/roles ───────────────────────────────────────────────────
 
 class TestListRoles:
@@ -432,8 +418,55 @@ class TestUnapproveUser:
              patch("routes.admin.get_session_user_id", return_value="u1"):
             r = client.patch("/api/admin/users/u1/unapprove?user_id=u1")
         assert r.status_code == 409
-        assert "yourself" in r.json()["detail"].lower()
+        assert "your own access" in r.json()["detail"].lower()
         t.return_value.update.assert_not_called()
+
+    def test_removed_user_goes_back_on_the_waitlist(self):
+        from services.encryption import encrypt
+        tables: dict = {}
+
+        def by_name(name):
+            if name not in tables:
+                m = MagicMock()
+                m.select.return_value = []
+                m.update.return_value = [{"id": "u1", "email": encrypt("ada@bu.edu")}] if name == "users" else []
+                tables[name] = m
+            return tables[name]
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.auth.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.patch("/api/admin/users/u1/unapprove")
+        assert r.status_code == 200
+        assert tables["users"].update.call_args.args[0] == {"is_approved": False}
+        upsert = tables["newsletter_emails"].upsert.call_args
+        assert upsert.args[0] == {"email": "ada@bu.edu"}
+
+    def test_removed_user_already_listed_is_reset_to_signup(self):
+        from services.encryption import encrypt
+        tables: dict = {}
+
+        def by_name(name):
+            if name not in tables:
+                m = MagicMock()
+                m.select.return_value = (
+                    [{"id": "w9", "email": "Ada@bu.edu", "approved_at": "t", "joined_at": "t"}]
+                    if name == "newsletter_emails" else []
+                )
+                m.update.return_value = [{"id": "u1", "email": encrypt("ada@bu.edu")}] if name == "users" else []
+                tables[name] = m
+            return tables[name]
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.auth.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            client.patch("/api/admin/users/u1/unapprove")
+        update = tables["newsletter_emails"].update.call_args
+        assert update.args[0] == {"approved_at": None, "joined_at": None, "joined_user_id": None}
+        assert update.kwargs["filters"] == {"id": "eq.w9"}
+        tables["newsletter_emails"].upsert.assert_not_called()
 
 
 class TestAssignRoleIdempotent:
@@ -775,22 +808,25 @@ class TestListAllowlist:
              "approved_at": "2026-05-03T00:00:00Z"},
         ]
         with _mock_admin(), patch("routes.admin.table") as t:
-            t.return_value.select.return_value = rows
+            # Paged read (db.connection.page_all) — the waitlist can pass max_rows.
+            t.return_value.select_with_count.return_value = (rows, len(rows))
+            t.return_value.select.return_value = []  # no email_sends yet
             r = client.get("/api/admin/allowlist")
         assert r.status_code == 200
-        assert r.json() == {"emails": rows}
-        t.assert_called_once_with("newsletter_emails")
-        call = t.return_value.select.call_args
+        # invite_status is null until a "you're in" send exists for the row.
+        assert r.json() == {"emails": [{**row, "invite_status": None} for row in rows]}
+        assert t.call_args_list[0].args == ("newsletter_emails",)
+        call = t.return_value.select_with_count.call_args
         columns = call.args[0] if call.args else call.kwargs["columns"]
         # Shape matches the frontend AllowlistEmail type (types.ts).
         assert {c.strip() for c in columns.split(",")} == {
-            "id", "email", "created_at", "approved_at",
+            "id", "email", "created_at", "approved_at", "joined_at", "joined_user_id",
         }
-        assert call.kwargs.get("order") == "created_at.desc"
+        assert call.kwargs.get("order", "").startswith("created_at.desc")
 
     def test_empty_table_returns_empty_list(self):
         with _mock_admin(), patch("routes.admin.table") as t:
-            t.return_value.select.return_value = []
+            t.return_value.select_with_count.return_value = ([], 0)
             r = client.get("/api/admin/allowlist")
         assert r.status_code == 200
         assert r.json() == {"emails": []}
@@ -947,6 +983,9 @@ class TestAnalyticsOverview:
                 m.select.return_value = roles
             elif name == "user_roles":
                 m.select.return_value = user_roles
+            elif name == "newsletter_emails":
+                # Waiting on approval is counted off the waitlist, not users.
+                m.select.return_value = [{"approved_at": None}, {"approved_at": None}, {"approved_at": "t"}]
             else:
                 m.select.return_value = []
             return m
@@ -958,7 +997,7 @@ class TestAnalyticsOverview:
         body = r.json()
         assert body["totals"]["users"] == 3
         assert body["totals"]["approved"] == 2
-        assert body["totals"]["pending"] == 1
+        assert body["totals"]["pending"] == 2
         assert body["totals"]["admins"] == 3
         assert any(
             d["date"] == signup_day.isoformat() and d["count"] == 2
@@ -966,3 +1005,102 @@ class TestAnalyticsOverview:
         )
         assert body["role_counts"][0]["slug"] == "admin"
         assert body["role_counts"][0]["count"] == 3
+
+
+# ── #620: role mutations keep the feature-flag caches honest ───────────────
+
+class TestRoleMutationsClearFlagCaches:
+    """A role rule resolves through the per-user roles cache (priority
+    included) and the flag snapshot; every role mutation that can change a
+    resolution must drop what it invalidates."""
+
+    @staticmethod
+    def _prime_roles(*user_ids):
+        from services import feature_flags as ff
+        with ff._lock:
+            for uid in user_ids:
+                ff._roles[uid] = (float("inf"), (("r1", 10),))
+        return ff
+
+    def test_assign_clears_only_that_users_roles(self):
+        ff = self._prime_roles("u1", "u2")
+        with _mock_admin(), patch("routes.admin.table"), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.post("/api/admin/roles/assign", json={"user_id": "u1", "role_id": "r1"})
+        assert r.status_code == 200
+        assert "u1" not in ff._roles and "u2" in ff._roles
+
+    def test_revoke_clears_only_that_users_roles(self):
+        ff = self._prime_roles("u1", "u2")
+        with _mock_admin(), patch("routes.admin.table"), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.request("DELETE", "/api/admin/roles/revoke",
+                               json={"user_id": "u1", "role_id": "r1"})
+        assert r.status_code == 200
+        assert "u1" not in ff._roles and "u2" in ff._roles
+
+    def test_update_clears_every_users_roles(self):
+        """display_priority rides in each user's cached role tuple."""
+        ff = self._prime_roles("u1", "u2")
+        with _mock_admin(), patch("routes.admin.table"), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.patch("/api/admin/roles/r1", json={"display_priority": 90})
+        assert r.status_code == 200
+        assert not ff._roles
+
+    def test_delete_removes_the_roles_flag_rules_and_clears_caches(self):
+        ff = self._prime_roles("u1", "u2")
+        handles: dict[str, MagicMock] = {}
+
+        def by_name(name):
+            m = handles.setdefault(name, MagicMock())
+            if name == "roles":
+                m.select.return_value = [{"id": "r1", "slug": "beta"}]
+            elif name == "feature_flag_targets":
+                m.delete.return_value = [
+                    {"flag_key": "hide_quiz", "target_type": "role",
+                     "target_id": "r1", "variant": "on"},
+                    {"flag_key": "hide_tree", "target_type": "role",
+                     "target_id": "r1", "variant": "off"},
+                ]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"), \
+             patch("routes.admin.log_admin_action") as role_audit, \
+             patch("routes.admin_flags.log_admin_action") as flag_audit, \
+             patch("routes.admin_flags.log_event") as flag_event, \
+             patch("routes.admin.clear_feature_flags_cache") as clear_snapshot:
+            r = client.delete("/api/admin/roles/r1")
+        assert r.status_code == 200
+        handles["feature_flag_targets"].delete.assert_called_once_with(
+            filters={"target_type": "eq.role", "target_id": "eq.r1"})
+        assert role_audit.call_args.kwargs["action"] == "role.delete"
+        audited = [(c.kwargs["target_id"], c.kwargs["payload"]) for c in flag_audit.call_args_list]
+        assert audited == [
+            ("hide_quiz", {"key": "hide_quiz", "field": "role:r1",
+                               "before": "on", "after": None}),
+            ("hide_tree", {"key": "hide_tree", "field": "role:r1",
+                                   "before": "off", "after": None}),
+        ]
+        assert all(c.kwargs["action"] == "flag.update" for c in flag_audit.call_args_list)
+        assert flag_event.call_count == 2
+        assert clear_snapshot.called
+        assert not ff._roles
+
+    def test_admin_role_delete_refusal_touches_no_rules(self):
+        handles: dict[str, MagicMock] = {}
+
+        def by_name(name):
+            m = handles.setdefault(name, MagicMock())
+            m.select.return_value = [{"id": "rA", "slug": "admin"}]
+            return m
+
+        with _mock_admin(), patch("routes.admin.table", side_effect=by_name), \
+             patch("routes.admin.get_session_user_id", return_value="admin1"):
+            r = client.delete("/api/admin/roles/rA")
+        assert r.status_code == 409
+        assert "feature_flag_targets" not in handles

@@ -6,9 +6,39 @@ goes through ``db.connection.table()``.
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
+from urllib.parse import urlparse
 
 from db.connection import table  # module-level so tests can monkeypatch it
+
+#: Same set as routes/auth.py TEST_AUTH_ENVS: e2e-up.sh accepts APP_ENV=test.
+LOCAL_APP_ENVS = frozenset({"local", "test"})
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def local_app_env() -> bool:
+    """APP_ENV names the developer's machine or the test harness, nothing else."""
+    return os.getenv("APP_ENV", "").strip().lower() in LOCAL_APP_ENVS
+
+
+def local_supabase_url() -> bool:
+    """SUPABASE_URL's host is exactly a loopback address (no substring match)."""
+    try:
+        parsed = urlparse((os.getenv("SUPABASE_URL") or "").strip())
+        return parsed.scheme in {"http", "https"} and parsed.hostname in _LOOPBACK_HOSTS
+    except ValueError:
+        return False
+
+
+def is_local_backend() -> bool:
+    """The one check for "this process writes to a developer's local stack".
+
+    Read live off the environment on every call, never captured at import, so
+    the seed CLI, the owner-seed watcher and its status route agree, and a
+    test can flip it. Staging and production fail both halves.
+    """
+    return local_app_env() and local_supabase_url()
 
 counts: dict[str, dict[str, int]] = defaultdict(lambda: {"created": 0, "skipped": 0})
 
@@ -42,6 +72,15 @@ def insert_if_absent(table_name: str, row_id: str, row: dict) -> None:
         record(table_name, created=False)
         return
     table(table_name).insert({"id": row_id, **row})
+    record(table_name, created=True)
+
+
+def insert_by_keys(table_name: str, row: dict, keys: str) -> None:
+    """Insert a row with a composite or non-id primary key without overwriting it."""
+    if exists_by(table_name, {key: row[key] for key in keys.split(",")}):
+        record(table_name, created=False)
+        return
+    table(table_name).insert(row)
     record(table_name, created=True)
 
 

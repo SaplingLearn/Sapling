@@ -1,10 +1,10 @@
 # Sapling Backend Architecture
 
-The backend ingests student documents, runs Gemini-powered classification, summarization, and assignment/concept extraction, and serves a knowledge-graph-backed tutor and quiz engine to the React frontend.
+The backend ingests student documents, runs Claude-powered classification, summarization, and assignment/concept extraction, and serves a knowledge-graph-backed tutor and quiz engine to the React frontend.
 
 ## High-level shape
 
-A single FastAPI app (`backend/main.py:87`) mounts every router under `/api/<name>`. Supabase is both the datastore and the source of user identity — accessed exclusively through a thin PostgREST wrapper (`backend/db/connection.py:102`) using a service-role key. All LLM work runs as Pydantic AI agents under `backend/agents/` (Gemini via `pydantic-ai-slim[google]`; per-task model slots and the `SAPLING_MODEL_MODE` test seam in `agents/_providers.py`) — the legacy raw-call seam (`services/gemini_service.py`) was deleted in #151 (ADR 0024). The React app in `frontend/` is the only consumer of these endpoints; there is no public/third-party API surface.
+A single FastAPI app (`backend/main.py:87`) mounts every router under `/api/<name>`. Supabase is both the datastore and the source of user identity — accessed exclusively through a thin PostgREST wrapper (`backend/db/connection.py:102`) using a service-role key. All LLM work runs as Pydantic AI agents under `backend/agents/` (Anthropic Claude via `pydantic-ai-slim[anthropic]` since ADR 0030, with any slot able to point back at Gemini; per-task model slots and the `SAPLING_MODEL_MODE` test seam in `agents/_providers.py`). Gemini remains the RAG embedding provider — the legacy raw-call seam (`services/gemini_service.py`) was deleted in #151 (ADR 0024). The React app in `frontend/` is the only consumer of these endpoints; there is no public/third-party API surface.
 
 ## Request paths
 
@@ -16,7 +16,7 @@ A single FastAPI app (`backend/main.py:87`) mounts every router under `/api/<nam
 
 ## LLM seam (current)
 
-Every LLM call is a Pydantic AI agent under `backend/agents/`; there is no other sanctioned LLM seam (the legacy `services/gemini_service.py` raw-call helper was deleted in #151 — ADR 0024). `agents/_providers.py` is the single chokepoint: per-task model slots (`model_for(task)`, overridable via `SAPLING_MODEL_<TASK>` env vars), loop-safe Google providers, and the `SAPLING_MODEL_MODE` seam (ADR 0019) that swaps every agent onto deterministic FunctionModel handlers for tests and the E2E lanes — code below that seam must never construct a raw `google.genai.Client` without a `model_mode()` gate (#439; `services/rag_service.py` holds the one gated embedding client). Usage/cost capture rides `agents/usage.py::record_agent_usage` on every run (#118), and the eval harness (ADR 0021) replays six committed cassette datasets against the agents' real prompts and schemas. When an agent fails, routes degrade honestly — mapped 413/502s, terminal SSE errors, or best-effort empty results — never a second prompt stack (the rung ladder is specified in ADR 0024). Outside that gated embedding client, the only raw `google-genai` caller is `scripts/_raw_gemini.py`, an offline benchmark baseline that never runs in the request path; its docstring forbids importing it from application code.
+Every LLM call is a Pydantic AI agent under `backend/agents/`; there is no other sanctioned LLM seam (the legacy `services/gemini_service.py` raw-call helper was deleted in #151 — ADR 0024). `agents/_providers.py` is the single chokepoint: per-task model slots (`model_for(task)`, overridable via `SAPLING_MODEL_<TASK>` env vars; the provider is inferred from the model name, ADR 0030), loop-safe Anthropic and Google providers (`_LoopSafeProviderMixin`), the Claude 5.x model profile, and the `SAPLING_MODEL_MODE` seam (ADR 0019) that swaps every agent onto deterministic FunctionModel handlers for tests and the E2E lanes — code below that seam must never construct a raw `google.genai.Client` without a `model_mode()` gate (#439; `services/rag_service.py` holds the one gated embedding client). Usage/cost capture rides `agents/usage.py::record_agent_usage` on every run (#118), and the eval harness (ADR 0021) replays six committed cassette datasets against the agents' real prompts and schemas. When an agent fails, routes degrade honestly — mapped 413/502s, terminal SSE errors, or best-effort empty results — never a second prompt stack (the rung ladder is specified in ADR 0024). Outside that gated embedding client, the only raw `google-genai` caller is `scripts/_raw_gemini.py`, an offline benchmark baseline that never runs in the request path; its docstring forbids importing it from application code.
 
 ## Data layer
 
@@ -30,13 +30,38 @@ Identity is likewise split: `users` is slimmed to account state, with a 1:1 `use
 
 ## Background work
 
-Almost everything currently runs inline on the request path. The one true background task is in `backend/routes/quiz.py:483`, where FastAPI `background_tasks.add_task(_update_context, ...)` defers the post-quiz context regeneration. `backend/services/course_context_service.py:109` `update_course_context` is called inline from `apply_graph_update` and from course add/delete, but its expensive Gemini summary is hash-gated — it only re-runs `_generate_summary_with_gemini` when the stats hash changes. It resolves the touched course to an `offering_id` and upserts into `offering_concept_stats` / `offering_summary`. Achievement checks (`check_achievements`) are also inline and wrapped in best-effort `try/except`.
+Almost everything currently runs inline on the request path. The one true background task is in `backend/routes/quiz.py:483`, where FastAPI `background_tasks.add_task(_update_context, ...)` defers the post-quiz context regeneration. `backend/services/course_context_service.py:109` `update_course_context` is called inline from `apply_graph_update` and from course add/delete, but its expensive LLM summary is hash-gated — it only re-runs `_generate_summary_with_gemini` when the stats hash changes. It resolves the touched course to an `offering_id` and upserts into `offering_concept_stats` / `offering_summary`. Achievement checks (`check_achievements`) are also inline and wrapped in best-effort `try/except`.
+
+## Feature flags
+
+Flags are declared in code and configured in the DB (#620, ADR 0029):
+`backend/services/feature_flags.py::REGISTRY` is the only place a flag's key,
+variants and client-visibility are defined; its *configuration* — default
+variant, percentage rollout, per-user/role rules — lives in
+`feature_flags`/`feature_flag_targets` and is edited from `/admin`
+(`routes/admin_flags.py`). Resolution is first-match-wins: a
+`SAPLING_FLAG_<KEY>` env override, then fail-closed (unregistered flag,
+invalid value, or an unreadable store), then a per-user rule, a per-role
+rule, a stable percentage rollout, and finally the stored default —
+anything that goes wrong resolves to `variants[0]` ("off"), never an
+exception the caller has to handle. Backend code reads flags through
+`flag_variant`/`flag_on`/`require_flag`; the frontend calls `useFlag(key)`
+against the client-visible subset served at `GET /api/flags`. Reads are
+served from a 30 s per-process snapshot cache that every admin write clears
+on its own process (other replicas catch up within the TTL;
+`FEATURE_FLAGS_SNAPSHOT_TTL_S` / `FEATURE_FLAGS_ROLES_TTL_S` tune it, and the
+E2E stack sets both to 0). The flags today are one `hide_<feature>` per
+main-nav destination (all but Dashboard): `on` drops it from both nav skins
+(`frontend/src/lib/navFeatures.ts`) and `NavFeatureGate` redirects its routes
+to `/dashboard`; `off`, the fail-closed answer, leaves it visible. The admin API itself is the one place that does NOT fail closed on a
+DB error — it raises, so a broken flag store shows up as an error rather
+than a deceptively healthy "off".
 
 ## Known sharp edges
 
 - `upload_document`'s worker agents run in parallel, but text extraction still runs before the stream opens by default (`OCR_ASYNC_ENABLED` moves it onto a thread inside the SSE context — ADR 0010's lightweight variant), so wall-clock ≈ extraction time + classifier + max(worker) time on the request path.
 - `apply_graph_update` (`backend/services/graph_service.py:461`) is called from three routers with different shapes: `backend/routes/documents.py` passes `{"new_nodes": [...]}` only, `backend/routes/learn.py` passes the full `{new_nodes, updated_nodes, new_edges, recommended_next}` parsed out of the tutor's `<graph_update>` tag, and quiz scoring (`backend/routes/quiz.py`, the `submit_quiz` path) now routes its mastery delta through it too — it no longer writes `graph_nodes` directly, instead appending a `node_mastery_events` row via `apply_graph_update`.
-- Agent failures no longer degrade to a second pipeline anywhere: a Gemini blip surfaces to the client as a retryable error (502 / terminal SSE / empty scan) rather than being papered over. The one deliberate second chance left is the streamed tutor's Rung-1 non-streaming fast-tier re-run, guarded so it never re-applies landed tool writes (ADR 0024).
+- Agent failures no longer degrade to a second pipeline anywhere: a provider blip surfaces to the client as a retryable error (502 / terminal SSE / empty scan) rather than being papered over. The one deliberate second chance left is the streamed tutor's Rung-1 non-streaming fast-tier re-run, guarded so it never re-applies landed tool writes (ADR 0024).
 - `apply_graph_update` lazy-imports `services.course_context_service` to avoid a circular import; that import path also swallows exceptions so a failing aggregation will not surface to the caller.
 - `course_context_service.update_course_context` resolves the course to an offering and writes to `offering_concept_stats` and `offering_summary` synchronously inside the request — a chat turn that touches several courses incurs that aggregation cost serially before returning.
 - Document-upload concept population only runs for `category in ("syllabus", "assignment")`; lecture notes, slides, readings, and study guides do NOT auto-populate the graph from upload — that path is the separate `/scan-concepts` endpoints (`backend/routes/documents.py:1106`, `:1149`).

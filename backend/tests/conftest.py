@@ -64,14 +64,47 @@ def _clear_rate_limit_state():
 def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
-    from services import academics, course_context_service, growth
+    from agents._providers import clear_override_model_cache
+    from services import academics, course_context_service, feature_flags, growth
+    clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
+    feature_flags.clear_feature_flags_cache()
+    feature_flags.clear_user_roles_cache()
     yield
+    clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
+    feature_flags.clear_feature_flags_cache()
+    feature_flags.clear_user_roles_cache()
+
+
+@pytest.fixture(autouse=True)
+def _tutor_session_reads_follow_learn_table(monkeypatch):
+    """The tutor-session ownership read moved from routes/learn.py to
+    services/tutor_sessions.py so flashcards/feedback could share it. Dozens
+    of learn tests drive the whole route through ONE `patch("routes.learn.
+    table", side_effect=factory)`; this keeps the ownership read on that same
+    factory by resolving `routes.learn.table` at call time. A test of a
+    non-learn route that needs a different answer patches
+    `services.tutor_sessions.table` itself, which overrides this."""
+    import routes.learn as learn_routes
+    from services import tutor_sessions
+
+    monkeypatch.setattr(tutor_sessions, "table", lambda name: learn_routes.table(name))
+
+
+@pytest.fixture(autouse=True)
+def _reset_ocr_fallback_warning():
+    """Forget extraction_service's once-per-process "Docling not installed"
+    warning around every test, so which test runs first can't decide whether
+    a later test sees it."""
+    from services import extraction_service
+    extraction_service.reset_docling_fallback_state()
+    yield
+    extraction_service.reset_docling_fallback_state()
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +174,7 @@ _GENERATE_TOP_LEVEL_KEYS = frozenset({
 _GENERATE_OPTIONAL_TOP_LEVEL_KEYS = frozenset({"source"})
 #: The keyless projection's per-question and per-option shapes (#546).
 _KEYLESS_QUESTION_KEYS = frozenset({
+    "type", "material_context",
     "id", "question", "concept_tested", "difficulty", "options",
 })
 _KEYLESS_OPTION_KEYS = frozenset({"label", "text"})
@@ -284,6 +318,31 @@ def _hermetic_supabase_client(request, monkeypatch):
     monkeypatch.setattr(dbconn, "_client", fake_client)
 
 
+class UnstubbedEmailEgress(RuntimeError):
+    """Raised by `_hermetic_email_transport` when a test reaches Resend."""
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_email_transport(monkeypatch):
+    """No test may send real email. A developer's .env can carry a real
+    RESEND_API_KEY (config.py load_dotenv()s it), so force the kill switch on
+    and cut the Resend client: a test that wants the send path patches both
+    back explicitly (see tests/test_email_service.py)."""
+    import config
+    from services import email_service
+
+    def _blocked(*_args, **_kwargs):
+        raise UnstubbedEmailEgress(
+            "unstubbed email egress: patch services.email_service._client"
+        )
+
+    fake = MagicMock(name="hermetic_resend_client")
+    fake.post.side_effect = _blocked
+    monkeypatch.setattr(config, "RESEND_API_KEY", "")
+    monkeypatch.setattr(email_service, "_client", fake)
+    monkeypatch.setattr(email_service, "_sleep", lambda _s: None)
+
+
 class UnstubbedLLMEgress(RuntimeError):
     """Raised by `_hermetic_llm_transport` when a test reaches the LLM network."""
 
@@ -309,6 +368,14 @@ _GENAI_EGRESS_METHODS = (
 # worse than no guard at all — fail loudly instead.
 _GENAI_REQUIRED_METHODS = ("request", "async_request")
 
+# The Anthropic SDK's equivalent chokepoint (ADR 0030 — every agent slot
+# defaults to Claude). Every Messages call, streamed or not, goes through
+# `SyncAPIClient.request` / `AsyncAPIClient.request` in anthropic._base_client;
+# the agents only ever build `AsyncAnthropic` (via pydantic-ai's
+# AnthropicProvider, one per event loop), but both are patched so a stray sync
+# client is caught too. Class-level for the same reason as google-genai's.
+_ANTHROPIC_EGRESS_CLASSES = ("SyncAPIClient", "AsyncAPIClient")
+
 
 @pytest.fixture(autouse=True)
 def _hermetic_llm_transport(request, monkeypatch):
@@ -320,7 +387,8 @@ def _hermetic_llm_transport(request, monkeypatch):
     dummy one, dev machines have a real one) turns a unit test into a real,
     billable network call — silently, since a passing test looks identical
     either way. Rather than stub agent logic, we cut the wire underneath it:
-    the google-genai transport class raises instead of dialling out, so an
+    the google-genai and anthropic transport classes raise instead of
+    dialling out, so an
     unstubbed call path fails with a pointed error naming the escape hatch.
 
     The opt-in lanes are the exceptions: `e2e_staging` and `integration` talk to
@@ -333,15 +401,17 @@ def _hermetic_llm_transport(request, monkeypatch):
         or request.node.get_closest_marker("live_llm")
     ):
         return
+    from anthropic import _base_client as anthropic_base_client
     from google.genai import _api_client as genai_api_client
 
     def _blocked(*_args, **_kwargs):
         raise UnstubbedLLMEgress(
-            "unstubbed LLM egress: this test reached the google-genai transport "
-            "(google.genai._api_client.BaseApiClient) and would have made a real, "
-            "billable model call. Patch the service/agent seam the code path uses "
-            "(e.g. <agent>.run, services.rag_service._client), or mark the "
-            "test @pytest.mark.live_llm if the live call is intentional."
+            "unstubbed LLM egress: this test reached an LLM provider transport "
+            "(google.genai._api_client.BaseApiClient or "
+            "anthropic._base_client.*APIClient.request) and would have made a "
+            "real, billable model call. Patch the service/agent seam the code "
+            "path uses (e.g. <agent>.run, services.rag_service._client), or "
+            "mark the test @pytest.mark.live_llm if the live call is intentional."
         )
 
     # Lets tests assert the guard is installed without invoking it.
@@ -361,6 +431,17 @@ def _hermetic_llm_transport(request, monkeypatch):
             "moved its transport seam. Update _GENAI_EGRESS_METHODS in "
             "tests/conftest.py; do not leave the suite unguarded."
         )
+
+    for cls_name in _ANTHROPIC_EGRESS_CLASSES:
+        cls = getattr(anthropic_base_client, cls_name, None)
+        if cls is None or not hasattr(cls, "request"):  # pragma: no cover
+            raise RuntimeError(
+                f"hermetic LLM guard could not patch anthropic._base_client."
+                f"{cls_name}.request — the installed anthropic SDK moved its "
+                "transport seam. Update _ANTHROPIC_EGRESS_CLASSES in "
+                "tests/conftest.py; do not leave the suite unguarded."
+            )
+        monkeypatch.setattr(cls, "request", _blocked)
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 {
   "category": "assignment",
-  "confidence": 1.0,
+  "confidence": 0.95,
   "is_syllabus": false,
-  "rationale": "The document contains numbered problems and refers to a due date and late policy, indicating it is an assignment.",
+  "rationale": "Numbered problem set with a due date and instructions to show work, with no student answers or grades present, so it is a blank assignment handout. It references the syllabus but does not define course structure itself.",
   "shareability": "course_material"
 }
