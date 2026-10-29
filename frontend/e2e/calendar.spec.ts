@@ -22,6 +22,21 @@ import { expect, test } from "./support/fixtures";
 
 const TITLE = "Undated participation";
 
+test("month navigation visits February from the last day of January", async ({ page }) => {
+  await page.addInitScript(() => {
+    globalThis.__SAPLING_TEST_NOW__ = Date.UTC(2026, 0, 31, 17);
+  });
+  await page.goto("/calendar");
+  await expect(page.getByText("Mon", { exact: true })).toBeVisible();
+  await expect(page.getByText(/January 2026 ·/)).toBeVisible();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByText(/February 2026 ·/)).toBeVisible();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByText(/March 2026 ·/)).toBeVisible();
+  await page.getByRole("button", { name: "Prev", exact: true }).click();
+  await expect(page.getByText(/February 2026 ·/)).toBeVisible();
+});
+
 test("an assignment with no due date does not crash the calendar", async ({ page }) => {
   await page.goto("/gradebook");
   await page.getByRole("button", { name: "Spring 2026", exact: true }).click();

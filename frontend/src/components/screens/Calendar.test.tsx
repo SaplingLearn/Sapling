@@ -40,9 +40,13 @@ vi.mock("framer-motion", () => ({
   useReducedMotion: () => false,
 }));
 
+const navigation = vi.hoisted(() => ({
+  router: { replace: vi.fn(), push: vi.fn() },
+  params: new URLSearchParams(),
+}));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(""),
+  useRouter: () => navigation.router,
+  useSearchParams: () => navigation.params,
 }));
 
 vi.mock("@/context/UserContext", () => ({
@@ -107,11 +111,61 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Calendar } from "./Calendar";
-import { exportToGoogleCalendar, getAllAssignments, getCalendarStatus, updateAssignment } from "@/lib/api";
+import { exportToGoogleCalendar, getAllAssignments, getCalendarStatus, syncCalendar, updateAssignment } from "@/lib/api";
+import * as clock from "@/lib/testMode";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  navigation.params = new URLSearchParams();
+});
+
+describe("Calendar — Google connection feedback", () => {
+  it("exports all only once while pending and explains the one-time export", async () => {
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true }).mockResolvedValueOnce({ connected: true });
+    let finish!: (value: { synced_count: number }) => void;
+    vi.mocked(syncCalendar).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    render(<Calendar />);
+    await screen.findByText("Mon");
+    expect(screen.getByText(/Later edits and deletions/)).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Export all to Google" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(syncCalendar).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    finish({ synced_count: 2 });
+    await waitFor(() => expect(toastSpies.success).toHaveBeenCalledWith("Exported 2 new events to Google."));
+    await waitFor(() => expect(getAllAssignments).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export all to Google" })).toBeEnabled());
+  });
+
+  it.each(["access_denied", "google_not_configured", "missing_code", "invalid_state", "oauth_exchange_failed", "unexpected", "__proto__", "toString"])(
+    "explains OAuth failure %s and clears the callback parameter", async (error) => {
+      navigation.params = new URLSearchParams(`calendar_error=${error}&view=table`);
+      render(<Calendar />);
+      await screen.findByText("Mon");
+      expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining("Google Calendar"));
+      expect(toastSpies.error).toHaveBeenCalledTimes(1);
+      expect(navigation.router.replace).toHaveBeenCalledWith("/calendar?view=table");
+      expect(screen.getByRole("button", { name: "Connect Google" })).toBeInTheDocument();
+    },
+  );
+});
+
+describe("Calendar — month navigation", () => {
+  it.each([
+    [2026, 0, 31, "Next", "February 2026"],
+    [2026, 2, 31, "Prev", "February 2026"],
+    [2024, 0, 31, "Next", "February 2024"],
+    [2026, 11, 31, "Next", "January 2027"],
+  ])("moves one month from %i/%i/%i", async (year, month, day, button, expected) => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(year, month, day, 12).getTime());
+    render(<Calendar />);
+    await screen.findByText("Mon");
+    fireEvent.click(screen.getByRole("button", { name: button }));
+    expect(screen.getByTestId("subtitle")).toHaveTextContent(expected);
+  });
 });
 
 const clickView = (label: string) =>
@@ -318,6 +372,23 @@ describe("Calendar — undated assignments", () => {
 
     await waitFor(() => expect(updateAssignment).toHaveBeenCalledTimes(1));
     expect(vi.mocked(updateAssignment).mock.calls[0][2]).toMatchObject({ due_date: null });
+  });
+
+  it("keeps the enrollment course read-only when editing an assignment", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({ assignments: [{
+      id: "a-1", title: "Essay", course_id: "c-1", course_code: "ENG101", due_date: null,
+    }] } as never);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Essay");
+    fireEvent.click(screen.getByTitle("Edit"));
+    expect(screen.getByText("ENG101")).toBeInTheDocument();
+    // Only assignment type remains selectable; the course is enrollment-owned.
+    expect(screen.getAllByTestId("custom-select")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateAssignment).toHaveBeenCalled());
+    expect(vi.mocked(updateAssignment).mock.calls[0][2]).not.toHaveProperty("course_id");
+    expect(vi.mocked(updateAssignment).mock.calls[0][2]).not.toHaveProperty("notes");
   });
 
   it("clears an existing due date and reloads the row as undated", async () => {
