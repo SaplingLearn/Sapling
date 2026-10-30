@@ -86,6 +86,28 @@ export function learnHrefForNode(
   return `/learn?${p.toString()}`;
 }
 
+// Spec §3.14: activating a COURSE node opens that course's study roadmap,
+// never the tutor. Lifted out of Tree so every canvas answers the same way —
+// the dashboard's graph kept sending course nodes to `learnHrefForNode`, which
+// is a course-scoped tutor session (#319), so the same node meant two
+// different things depending on which screen drew it.
+//
+// Returns null for a concept node, because the screens legitimately disagree
+// about THAT half: Tree opens its detail panel, the dashboard goes to the
+// tutor. Only the course answer is shared, so a caller must still say what a
+// concept click does.
+//
+// The id is unpicked only as a fallback: `graph_service.py` synthesizes
+// `subject_root__{course_id}` WITH `course_id` set, so the field is the
+// primary source.
+export function roadmapHrefForNode(
+  n: Pick<GraphNode, "id" | "course_id" | "is_subject_root">,
+): string | null {
+  if (!n.is_subject_root) return null;
+  const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
+  return `/roadmap/${encodeURIComponent(courseId)}`;
+}
+
 // Adapter from the backend `ApiNode` shape to the frontend `GraphNode`
 // shape consumed by `KnowledgeGraph`. Hoisted here from Tree/Learn/
 // Dashboard so the three screens share a single source of truth.

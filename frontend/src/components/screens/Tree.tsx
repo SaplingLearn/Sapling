@@ -16,7 +16,7 @@ import { getGraph, getCourses, getSessions, addGraphNode, deleteGraphNode, type 
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { apiToGraphNode, learnHrefForNode, roadmapHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { listAttempts } from "@/lib/quiz/api";
 import { relativeStudied } from "@/lib/quiz/relativeTime";
@@ -301,9 +301,9 @@ export function Tree() {
   // course mark needs a visual affordance saying so (tracked with the
   // roadmap work, not solved here).
   const onNodeActivate = (n: GraphNode) => {
-    if (n.is_subject_root) {
-      const courseId = n.course_id || n.id.replace(/^subject_root__/, "");
-      router.push(`/roadmap/${encodeURIComponent(courseId)}`);
+    const roadmap = roadmapHrefForNode(n);
+    if (roadmap) {
+      router.push(roadmap);
       return;
     }
     setSelected(n);

@@ -147,3 +147,28 @@ test("A subtopic offers Learn and Quiz, and Quiz reaches the quiz flow", async (
   await row.getByRole("button", { name: "Quiz" }).click();
   await expect(page).toHaveURL(/\/quiz\?/);
 });
+
+/**
+ * The dashboard's graph answers a course node the same way Tree's does.
+ *
+ * Found by hand, not by this suite: the §3.14 routing shipped in Tree only,
+ * so the dashboard's canvas kept sending course nodes to `learnHrefForNode`
+ * — a course-scoped tutor session (#319). Nothing failed, because both
+ * destinations are real screens; the same node simply meant two different
+ * things depending on which page drew it.
+ *
+ * Driven through the a11y list for the same reason the journey above is: the
+ * canvas marks are simulation-positioned and a real click races them.
+ */
+test("A course node on the DASHBOARD opens the roadmap, not the tutor", async ({ page }) => {
+  await page.goto(`${FRONTEND_URL}/dashboard`);
+
+  const courseNode = page
+    .locator(`[data-testid="graph-node-item"][data-node-id="subject_root__${COURSE_ID}"]`)
+    .getByTestId("graph-node-activate");
+  await expect(courseNode).toHaveCount(1);
+  await courseNode.dispatchEvent("click");
+
+  await expect(page).toHaveURL(new RegExp(`/roadmap/${COURSE_ID}$`));
+  await expect(page.getByTestId("roadmap")).toBeVisible();
+});

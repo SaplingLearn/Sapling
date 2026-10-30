@@ -23,7 +23,7 @@ import {
   type Assignment,
 } from "@/lib/api";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
-import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
+import { apiToGraphNode, learnHrefForNode, roadmapHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { dueSet } from "@/lib/quiz/proposals";
@@ -452,7 +452,9 @@ export function Dashboard() {
           width={size.w}
           height={size.h}
           highlightId={suggestNode?.id}
-          onNodeClick={(n) => router.push(learnHrefForNode(n))}
+          // §3.14: a course node opens its study roadmap; a concept node
+          // still seeds a tutor session. Same rule as Tree's canvas.
+          onNodeClick={(n) => router.push(roadmapHrefForNode(n) ?? learnHrefForNode(n))}
         />
         {/* Courses key — sidebar layout only. Top-nav layout uses the
             full My Courses panel in the left column instead. */}
@@ -1063,7 +1065,7 @@ export function Dashboard() {
             highlightId={suggestNode?.id}
             onNodeClick={(n) => {
               setFullscreen(false);
-              router.push(learnHrefForNode(n));
+              router.push(roadmapHrefForNode(n) ?? learnHrefForNode(n));
             }}
           />
         </div>
