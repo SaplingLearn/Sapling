@@ -326,7 +326,8 @@ def _encode_state(data: dict) -> str:
 def _decode_state(state: str) -> dict:
     try:
         payload = base64.urlsafe_b64decode(state.encode()).decode()
-        return json.loads(payload)
+        decoded = json.loads(payload)
+        return decoded if isinstance(decoded, dict) else {}
     except Exception:
         return {}
 
@@ -544,10 +545,16 @@ def google_login(popup_id: str = Query(None), return_to: str = Query(None)):
 def google_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    code: str = Query(...),
+    code: str | None = Query(None),
     state: str = Query(None),
+    error: str | None = Query(None),
 ):
     """Exchange auth code for tokens, validate @bu.edu, upsert user."""
+    if (_decode_state(state) if state else {}).get("action") == "calendar":
+        # Dispatch only: calendar_callback still validates its own signed cookie,
+        # nonce, PKCE verifier, and initiating user before it writes any tokens.
+        from routes.calendar import calendar_callback
+        return calendar_callback(request, code=code, state=state, error=error)
     cookie_payload = _decode_oauth_cookie(request.cookies.get(OAUTH_STATE_COOKIE))
     code_verifier = cookie_payload.get("cv") if cookie_payload else None
     popup_id = _clean_popup_id(cookie_payload.get("popup_id")) if cookie_payload else None
@@ -598,6 +605,10 @@ def google_callback(
         )
         return resp
 
+    if error:
+        return _fail_redirect("access_denied")
+    if not code:
+        return _fail_redirect("missing_code")
     if not GOOGLE_AVAILABLE:
         return _fail_redirect("google_not_configured")
 
