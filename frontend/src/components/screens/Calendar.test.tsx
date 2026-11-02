@@ -25,7 +25,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 
 const EM_DASH = "—"; // WeekView's empty-day filler
 
@@ -40,9 +40,13 @@ vi.mock("framer-motion", () => ({
   useReducedMotion: () => false,
 }));
 
+const navigation = vi.hoisted(() => ({
+  router: { replace: vi.fn(), push: vi.fn() },
+  params: new URLSearchParams(),
+}));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(""),
+  useRouter: () => navigation.router,
+  useSearchParams: () => navigation.params,
 }));
 
 vi.mock("@/context/UserContext", () => ({
@@ -98,24 +102,177 @@ vi.mock("@/lib/api", () => ({
   getCourses: vi.fn(() => Promise.resolve({ courses: [] })),
   getCalendarStatus: vi.fn(() => Promise.resolve({ connected: false })),
   disconnectCalendar: vi.fn(),
+  connectCalendarEvents: vi.fn(() => Promise.resolve({ events_enabled: true })),
   syncCalendar: vi.fn(),
   calendarAuthUrl: vi.fn(() => "#"),
   updateAssignment: vi.fn(),
   deleteAssignment: vi.fn(),
-  importGoogleEvents: vi.fn(),
+  importGoogleEvents: vi.fn(() => Promise.resolve({ events: [], count: 0 })),
   exportToGoogleCalendar: vi.fn(),
 }));
 
 import { Calendar } from "./Calendar";
-import { exportToGoogleCalendar, getAllAssignments, getCalendarStatus, updateAssignment } from "@/lib/api";
+import { connectCalendarEvents, disconnectCalendar, exportToGoogleCalendar, getAllAssignments, getCalendarStatus, importGoogleEvents, syncCalendar, updateAssignment, type GoogleEvent } from "@/lib/api";
+import * as clock from "@/lib/testMode";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  navigation.params = new URLSearchParams();
+});
+
+describe("Calendar — Google connection feedback", () => {
+  it("exports all only once while pending and explains the one-time export", async () => {
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true }).mockResolvedValueOnce({ connected: true });
+    let finish!: (value: { synced_count: number }) => void;
+    vi.mocked(syncCalendar).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    render(<Calendar />);
+    await screen.findByText("Mon");
+    expect(screen.getByText(/Later edits and deletions/)).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Export all to Google" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(syncCalendar).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    finish({ synced_count: 2 });
+    await waitFor(() => expect(toastSpies.success).toHaveBeenCalledWith("Exported 2 new events to Google."));
+    await waitFor(() => expect(getAllAssignments).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export all to Google" })).toBeEnabled());
+  });
+
+  it.each(["access_denied", "google_not_configured", "missing_code", "invalid_state", "oauth_exchange_failed", "unexpected", "__proto__", "toString"])(
+    "explains OAuth failure %s and clears the callback parameter", async (error) => {
+      navigation.params = new URLSearchParams(`calendar_error=${error}&view=table`);
+      render(<Calendar />);
+      await screen.findByText("Mon");
+      expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining("Google Calendar"));
+      expect(toastSpies.error).toHaveBeenCalledTimes(1);
+      expect(navigation.router.replace).toHaveBeenCalledWith("/calendar?view=table");
+      expect(screen.getByRole("button", { name: "Connect Google" })).toBeInTheDocument();
+    },
+  );
+});
+
+describe("Calendar — month navigation", () => {
+  it.each([
+    [2026, 0, 31, "Next", "February 2026"],
+    [2026, 2, 31, "Prev", "February 2026"],
+    [2024, 0, 31, "Next", "February 2024"],
+    [2026, 11, 31, "Next", "January 2027"],
+  ])("moves one month from %i/%i/%i", async (year, month, day, button, expected) => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(year, month, day, 12).getTime());
+    render(<Calendar />);
+    await screen.findByText("Mon");
+    fireEvent.click(screen.getByRole("button", { name: button }));
+    expect(screen.getByTestId("subtitle")).toHaveTextContent(expected);
+  });
 });
 
 const clickView = (label: string) =>
   fireEvent.click(screen.getByRole("button", { name: label }));
+
+describe("Calendar — linked Google events", () => {
+  const event: GoogleEvent = {
+    google_event_id: "g1", calendar_id: "primary-id", primary_calendar: true,
+    title: "Office hours", start_date: "2026-11-02", end_date: "2026-11-03", all_day: true,
+  };
+
+  it("disconnects only events and reconnects without leaving Sapling or losing exports", async () => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(2026, 10, 2, 12).getTime());
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true, events_enabled: true });
+    vi.mocked(importGoogleEvents)
+      .mockResolvedValueOnce({ events: [event], count: 1 })
+      .mockResolvedValueOnce({ events: [event], count: 1 });
+    render(<Calendar />);
+    await screen.findByText("Office hours");
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect events" }));
+    await screen.findByRole("button", { name: "Reconnect events" });
+    expect(disconnectCalendar).toHaveBeenCalledWith("u1");
+    expect(screen.queryByText("Office hours")).toBeNull();
+    expect(screen.getByRole("button", { name: "Export all to Google" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Google" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect events" }));
+    expect(await screen.findAllByText("Office hours")).toHaveLength(1);
+    expect(connectCalendarEvents).toHaveBeenCalledWith("u1");
+  });
+
+  it("keeps events disabled when the saved account preference is off", async () => {
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true, events_enabled: false });
+    render(<Calendar />);
+    await screen.findByRole("button", { name: "Reconnect events" });
+    expect(importGoogleEvents).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older background status response undo event disconnection", async () => {
+    let finishStatus!: (value: { connected: boolean; events_enabled: boolean }) => void;
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true, events_enabled: true })
+      .mockReturnValueOnce(new Promise(resolve => { finishStatus = resolve; }));
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({ assignments: [{ id: "a1", user_id: "u1", title: "Essay", due_date: null }] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Essay");
+    fireEvent.click(screen.getByTitle("Delete"));
+    await waitFor(() => expect(getCalendarStatus).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect events" }));
+    await screen.findByRole("button", { name: "Reconnect events" });
+    await act(async () => { finishStatus({ connected: true, events_enabled: true }); });
+    expect(screen.getByRole("button", { name: "Reconnect events" })).toBeInTheDocument();
+  });
+
+  it("loads connected events into the calendar and replaces them on refresh without duplicates", async () => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(2026, 10, 2, 12).getTime());
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true });
+    vi.mocked(importGoogleEvents)
+      .mockResolvedValueOnce({ events: [event, event], count: 2 })
+      .mockResolvedValueOnce({ events: [{ ...event, title: "Updated office hours" }], count: 1 });
+    render(<Calendar />);
+    expect(await screen.findAllByText("Office hours")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Google events" }));
+    expect(await screen.findAllByText("Updated office hours")).toHaveLength(1);
+    expect(screen.queryByText("Office hours")).toBeNull();
+  });
+
+  it("does not repeat the Google copy of an exported Sapling assignment", async () => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(2026, 10, 2, 12).getTime());
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true });
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({ assignments: [{
+      id: "a1", user_id: "u1", title: "Office hours", due_date: "2026-11-02", google_event_id: "g1",
+    }] });
+    vi.mocked(importGoogleEvents).mockResolvedValueOnce({ events: [event], count: 1 });
+    render(<Calendar />);
+    await screen.findByText("0 Google events linked for this view.");
+    expect(screen.getAllByText("Office hours")).toHaveLength(1);
+  });
+
+  it("ignores a late response for a month the user has left", async () => {
+    vi.spyOn(clock, "now").mockReturnValue(new Date(2026, 10, 2, 12).getTime());
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true });
+    let finish!: (value: { events: GoogleEvent[]; count: number }) => void;
+    vi.mocked(importGoogleEvents)
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValueOnce({ events: [{ ...event, title: "December meeting", start_date: "2026-12-02", end_date: "2026-12-03" }], count: 1 });
+    render(<Calendar />);
+    await waitFor(() => expect(importGoogleEvents).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("December meeting");
+    finish({ events: [event], count: 1 });
+    await waitFor(() => expect(screen.queryByText("Office hours")).toBeNull());
+    expect(screen.getByText("December meeting")).toBeInTheDocument();
+  });
+
+  it("shows a recoverable import error while keeping the assignment calendar usable", async () => {
+    vi.mocked(getCalendarStatus).mockResolvedValueOnce({ connected: true });
+    vi.mocked(importGoogleEvents).mockRejectedValueOnce(new Error("Network unavailable"));
+    render(<Calendar />);
+    const retry = await screen.findByRole("button", { name: "Retry Google events" });
+    expect(screen.getByRole("button", { name: "Reauthorize Google" })).toBeInTheDocument();
+    expect(screen.getByText("Mon")).toBeInTheDocument();
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry Google events" })).toBeNull());
+  });
+});
 
 describe("Calendar — loading", () => {
   it("shows the skeleton before data loads, then the month grid", async () => {
@@ -318,6 +475,23 @@ describe("Calendar — undated assignments", () => {
 
     await waitFor(() => expect(updateAssignment).toHaveBeenCalledTimes(1));
     expect(vi.mocked(updateAssignment).mock.calls[0][2]).toMatchObject({ due_date: null });
+  });
+
+  it("keeps the enrollment course read-only when editing an assignment", async () => {
+    vi.mocked(getAllAssignments).mockResolvedValueOnce({ assignments: [{
+      id: "a-1", title: "Essay", course_id: "c-1", course_code: "ENG101", due_date: null,
+    }] } as never);
+    render(<Calendar />);
+    clickView("Table");
+    await screen.findByText("Essay");
+    fireEvent.click(screen.getByTitle("Edit"));
+    expect(screen.getByText("ENG101")).toBeInTheDocument();
+    // Only assignment type remains selectable; the course is enrollment-owned.
+    expect(screen.getAllByTestId("custom-select")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateAssignment).toHaveBeenCalled());
+    expect(vi.mocked(updateAssignment).mock.calls[0][2]).not.toHaveProperty("course_id");
+    expect(vi.mocked(updateAssignment).mock.calls[0][2]).not.toHaveProperty("notes");
   });
 
   it("clears an existing due date and reloads the row as undated", async () => {

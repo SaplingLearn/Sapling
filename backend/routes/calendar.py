@@ -12,13 +12,13 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi import Request as FastAPIRequest
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from config import (
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT_URI,
-    GOOGLE_SCOPES,
+    GOOGLE_AUTH_REDIRECT_URI,
+    AUTH_SCOPES,
     FRONTEND_URL,
     SECURE_COOKIES,
 )
@@ -94,11 +94,11 @@ def _get_refreshed_credentials(token_row: dict) -> "Credentials":
     return creds
 
 
-def _require_google_creds(user_id: str) -> "Credentials":
+def _require_google_creds(user_id: str, *, require_events_enabled: bool = False) -> "Credentials":
     if not GOOGLE_AVAILABLE or not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google Calendar not configured")
     token_rows = table("oauth_tokens").select(
-        "user_id,access_token,refresh_token,expires_at",
+        "user_id,access_token,refresh_token,expires_at,calendar_events_enabled",
         filters={"user_id": f"eq.{user_id}"},
     )
     if not token_rows:
@@ -106,6 +106,8 @@ def _require_google_creds(user_id: str) -> "Credentials":
             status_code=401,
             detail="Not connected to Google Calendar. Visit /api/calendar/auth-url?user_id=<id> to connect.",
         )
+    if require_events_enabled and not token_rows[0].get("calendar_events_enabled", True):
+        raise HTTPException(409, "Google events are disconnected. Reconnect events in Calendar.")
     return _get_refreshed_credentials(token_rows[0])
 
 
@@ -166,22 +168,16 @@ def _read_assignments(user_id, *, due_gte=None, limit=None):
 
 
 # ── Google Calendar OAuth connect ─────────────────────────────────────────────
-# The dedicated calendar consent flow (auth-url → Google → callback). It grants
-# only GOOGLE_SCOPES (calendar) and lands the tokens in `oauth_tokens`. It was
-# dropped in the SQLite→Supabase migration (#61) even though config.GOOGLE_SCOPES
-# / GOOGLE_REDIRECT_URI and the frontend "Connect Google" button still target it.
+# Calendar consent uses the registered sign-in callback. Signed state dispatches
+# back here, retaining the initiating user's identity and independent CSRF cookie.
 
 CALENDAR_OAUTH_STATE_COOKIE = "sapling_calendar_oauth_state"
 _CALENDAR_OAUTH_COOKIE_MAX_AGE = 600
 
 
 def _calendar_client_config() -> dict:
-    """Sign-in client config, re-pointed at the calendar redirect URI. The
-    consent flow and the token exchange must use the SAME redirect_uri or Google
-    rejects the code, so both routes go through this."""
-    cfg = _google_client_config()
-    cfg["web"]["redirect_uris"] = [GOOGLE_REDIRECT_URI]
-    return cfg
+    """Reuse the registered sign-in callback; signed state routes the response."""
+    return _google_client_config()
 
 
 @router.get("/auth-url")
@@ -200,12 +196,11 @@ def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
     code_verifier, code_challenge = _generate_pkce_pair()
     nonce = secrets.token_urlsafe(32)
 
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=GOOGLE_SCOPES)
-    flow.redirect_uri = GOOGLE_REDIRECT_URI
+    flow = Flow.from_client_config(_calendar_client_config(), scopes=AUTH_SCOPES)
+    flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
     auth_url, _ = flow.authorization_url(
         prompt="consent",             # force a refresh_token even on re-consent
         access_type="offline",        # so long-lived sync survives token expiry
-        include_granted_scopes="true",
         state=_encode_state({"action": "calendar", "n": nonce}),
         code_challenge=code_challenge,
         code_challenge_method="S256",
@@ -271,8 +266,8 @@ def calendar_callback(
     ):
         return _finish("calendar_error=invalid_state")
 
-    flow = Flow.from_client_config(_calendar_client_config(), scopes=GOOGLE_SCOPES)
-    flow.redirect_uri = GOOGLE_REDIRECT_URI
+    flow = Flow.from_client_config(_calendar_client_config(), scopes=AUTH_SCOPES)
+    flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
     try:
         flow.fetch_token(code=code, code_verifier=cookie_payload.get("cv"))
     except Exception:
@@ -284,6 +279,7 @@ def calendar_callback(
             "user_id": user_id,
             "access_token": encrypt(creds.token),
             "refresh_token": encrypt_if_present(creds.refresh_token),
+            "calendar_events_enabled": True,
             # expires_at is TIMESTAMPTZ (0024): None, not "", when absent.
             "expires_at": creds.expiry.isoformat() if creds.expiry else None,
         },
@@ -427,64 +423,109 @@ def suggest_study_blocks(body: StudyBlockBody, request: FastAPIRequest):
 def calendar_status(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
     rows = table("oauth_tokens").select(
-        "access_token,expires_at",
+        "access_token,expires_at,calendar_events_enabled",
         filters={"user_id": f"eq.{user_id}"},
     )
     if not rows or not rows[0].get("access_token"):
         return {"connected": False}
-    return {"connected": True, "expires_at": rows[0]["expires_at"]}
+    return {"connected": True, "expires_at": rows[0]["expires_at"],
+            "events_enabled": rows[0].get("calendar_events_enabled", True)}
 
 
 @router.delete("/disconnect/{user_id}")
 def disconnect(user_id: str, request: FastAPIRequest):
     require_self(user_id, request)
-    table("oauth_tokens").delete({"user_id": f"eq.{user_id}"})
+    table("oauth_tokens").update(
+        {"calendar_events_enabled": False}, filters={"user_id": f"eq.{user_id}"},
+    )
     return {"disconnected": True}
 
 
+@router.post("/connect/{user_id}")
+def connect_events(user_id: str, request: FastAPIRequest):
+    require_self(user_id, request)
+    rows = table("oauth_tokens").select("access_token", filters={"user_id": f"eq.{user_id}"})
+    if not rows or not rows[0].get("access_token"):
+        raise HTTPException(401, "Connect Google Calendar first")
+    table("oauth_tokens").update(
+        {"calendar_events_enabled": True}, filters={"user_id": f"eq.{user_id}"},
+    )
+    return {"events_enabled": True}
+
+
 # ── Google Calendar import ────────────────────────────────────────────────────
+
+def _google_pages(resource, **params):
+    """Yield all pages, including empty pages that carry a continuation token."""
+    while True:
+        page = resource.list(**params).execute()
+        yield from page.get("items", [])
+        token = page.get("nextPageToken")
+        if not token:
+            return
+        params["pageToken"] = token
+
 
 @router.get("/import/{user_id}")
 def import_from_google(
     user_id: str,
     request: FastAPIRequest,
-    max_results: int = Query(50, ge=1, le=250),
-    days_ahead: int = Query(30, ge=1, le=365),
+    max_results: int = Query(250, ge=1, le=2500),
+    days_ahead: int = Query(60, ge=1, le=365),
+    time_min: datetime | None = Query(None),
+    time_max: datetime | None = Query(None),
 ):
     require_self(user_id, request)
-    creds = _require_google_creds(user_id)
-    service = build("calendar", "v3", credentials=creds)
-    now = datetime.now(timezone.utc)
-    result = (
-        service.events()
-        .list(
-            calendarId="primary",
-            timeMin=now.isoformat(),
-            timeMax=(now + timedelta(days=days_ahead)).isoformat(),
-            maxResults=max_results,
-            singleEvents=True,
-            orderBy="startTime",
-        )
-        .execute()
+    if (time_min is None) != (time_max is None):
+        raise HTTPException(400, "Provide both time_min and time_max")
+    start_at = time_min or datetime.now(timezone.utc)
+    end_at = time_max or (start_at + timedelta(days=days_ahead))
+    if start_at.tzinfo is None or end_at.tzinfo is None:
+        raise HTTPException(400, "Calendar range must include timezone offsets")
+    if end_at <= start_at or end_at - start_at > timedelta(days=366):
+        raise HTTPException(400, "Calendar range must be positive and at most 366 days")
+    creds = _require_google_creds(user_id, require_events_enabled=True)
+    events = {}
+    try:
+        service = build("calendar", "v3", credentials=creds)
+        calendars = {
+            c["id"]: c for c in _google_pages(
+                service.calendarList(), minAccessRole="reader", showHidden=True, maxResults=250,
+            ) if c.get("id") and not c.get("deleted")
+        }
+        for calendar_id, calendar in calendars.items():
+            for item in _google_pages(
+                service.events(), calendarId=calendar_id,
+                timeMin=start_at.isoformat(), timeMax=end_at.isoformat(),
+                maxResults=max_results, singleEvents=True, orderBy="startTime", showDeleted=False,
+            ):
+                if not item.get("id") or item.get("status") == "cancelled":
+                    continue
+                start = item.get("start", {})
+                end = item.get("end", {})
+                if not (start.get("date") or start.get("dateTime")):
+                    continue
+                events[(calendar_id, item["id"])] = {
+                    "google_event_id": item["id"],
+                    "calendar_id": calendar_id,
+                    "calendar_name": calendar.get("summaryOverride") or calendar.get("summary", "Google Calendar"),
+                    "primary_calendar": bool(calendar.get("primary")),
+                    "title": item.get("summary") or "(No title)",
+                    "description": item.get("description", ""),
+                    "start_date": start.get("date") or start.get("dateTime", "")[:10],
+                    "end_date": end.get("date") or end.get("dateTime", "")[:10],
+                    "start_datetime": start.get("dateTime"),
+                    "end_datetime": end.get("dateTime"),
+                    "all_day": "date" in start,
+                    "html_link": item.get("htmlLink"),
+                    "location": item.get("location", ""),
+                }
+    except Exception as exc:
+        raise HTTPException(502, "Couldn't load Google Calendar events. Refresh or reconnect Google Calendar.") from exc
+    return JSONResponse(
+        {"events": list(events.values()), "count": len(events)},
+        headers={"Cache-Control": "private, no-store"},
     )
-
-    events = []
-    for item in result.get("items", []):
-        start = item.get("start", {})
-        end = item.get("end", {})
-        events.append({
-            "google_event_id": item.get("id"),
-            "title": item.get("summary", "(No title)"),
-            "description": item.get("description", ""),
-            "start_date": start.get("date") or start.get("dateTime", "")[:10],
-            "end_date": end.get("date") or end.get("dateTime", "")[:10],
-            "start_datetime": start.get("dateTime"),
-            "end_datetime": end.get("dateTime"),
-            "all_day": "date" in start,
-            "html_link": item.get("htmlLink"),
-            "location": item.get("location", ""),
-        })
-    return {"events": events, "count": len(events)}
 
 
 # ── Sync (push all unsynced assignments to Google) ────────────────────────────

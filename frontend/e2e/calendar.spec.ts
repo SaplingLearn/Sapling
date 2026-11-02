@@ -22,6 +22,63 @@ import { expect, test } from "./support/fixtures";
 
 const TITLE = "Undated participation";
 
+test("linked Google events appear in the calendar without duplicates after refreshing", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-03-11T12:00:00Z") });
+  await page.addInitScript(() => {
+    globalThis.__SAPLING_TEST_NOW__ = Date.UTC(2026, 2, 11, 12);
+  });
+  let eventsEnabled = true;
+  await page.route("**/api/calendar/status/**", route => route.fulfill({ json: { connected: true, events_enabled: eventsEnabled } }));
+  await page.route("**/api/calendar/disconnect/**", route => {
+    eventsEnabled = false;
+    return route.fulfill({ json: { disconnected: true } });
+  });
+  await page.route("**/api/calendar/connect/**", route => {
+    eventsEnabled = true;
+    return route.fulfill({ json: { events_enabled: true } });
+  });
+  let title = "Google office hours";
+  await page.route("**/api/calendar/import/**", route => {
+    const event = { google_event_id: "g1", calendar_id: "c1", primary_calendar: true,
+      title, all_day: true, start_date: "2026-03-11", end_date: "2026-03-12" };
+    return route.fulfill({ json: { events: [event, event], count: 2 } });
+  });
+  await page.goto("/calendar");
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page.getByText(title, { exact: true })).toHaveCount(1);
+  title = "Updated Google office hours";
+  await page.getByRole("button", { name: "Refresh Google events" }).click();
+  await expect(page.getByText(title, { exact: true })).toHaveCount(1);
+  await expect(page.getByText("Google office hours", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Day", exact: true }).click();
+  await expect(page.getByText(title, { exact: true })).toHaveCount(1);
+  await page.getByRole("button", { name: "Disconnect events", exact: true }).click();
+  await expect(page.getByText(title, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Export all to Google" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Reconnect events", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Reconnect events", exact: true }).click();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page.getByText(title, { exact: true })).toHaveCount(1);
+});
+
+test("month navigation visits February from the last day of January", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-31T17:00:00Z") });
+  await page.addInitScript(() => {
+    globalThis.__SAPLING_TEST_NOW__ = Date.UTC(2026, 0, 31, 17);
+  });
+  await page.goto("/calendar");
+  await expect(page.getByText("Mon", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(page.getByText(/^January 2026 ·/)).toBeVisible();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByText(/^February 2026 ·/)).toBeVisible();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByText(/^March 2026 ·/)).toBeVisible();
+  await page.getByRole("button", { name: "Prev", exact: true }).click();
+  await expect(page.getByText(/^February 2026 ·/)).toBeVisible();
+});
+
 test("an assignment with no due date does not crash the calendar", async ({ page }) => {
   await page.goto("/gradebook");
   await page.getByRole("button", { name: "Spring 2026", exact: true }).click();
