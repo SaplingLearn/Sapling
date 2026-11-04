@@ -28,7 +28,10 @@ through this module, and every send goes through ONE path:
 
 The request path does no consent work and no I/O, so no event-loop thread
 ever waits on the database, and a cold consent cache DELAYS an event on the
-worker instead of dropping it.
+worker instead of dropping it. A FAILED consent lookup (timeout, PostgREST
+error) is different: it fails closed, caching DENIED for
+``analytics_consent._FAILURE_TTL_S``, so that user's events in that window are
+dropped, not delayed — privacy over completeness, deliberately.
 
 Uses:
 
@@ -278,6 +281,13 @@ def _queue_max_from_env(env: Mapping[str, str] | None = None) -> int:
 _queue: "queue.Queue[_Item]" = queue.Queue(maxsize=_queue_max_from_env())
 _queue_lock = threading.Lock()
 _dropped = 0
+# flush_queue's progress counters: items accepted vs items finished (sent,
+# dropped by the worker, or evicted as oldest). A flush waits for the
+# finished count to reach the accepted count AT CALL TIME, never for the
+# queue to be empty — on a busy replica it never is.
+_progress = threading.Condition()
+_accepted_total = 0
+_finished_total = 0
 _worker: threading.Thread | None = None
 _worker_lock = threading.Lock()
 
@@ -285,17 +295,19 @@ _worker_lock = threading.Lock()
 def _enqueue(item: _Item) -> None:
     """Non-blocking put; when full, drop the OLDEST item (the newest events
     are the ones anyone is looking at). Warns once, then every 1000th."""
-    global _dropped
+    global _dropped, _accepted_total
     _ensure_worker()
     with _queue_lock:
         while True:
             try:
                 _queue.put_nowait(item)
+                with _progress:
+                    _accepted_total += 1
                 return
             except queue.Full:
                 try:
                     _queue.get_nowait()
-                    _queue.task_done()
+                    _mark_finished()
                 except queue.Empty:  # pragma: no cover - drained meanwhile
                     continue
                 _dropped += 1
@@ -325,7 +337,15 @@ def _work() -> None:
         except Exception:  # pragma: no cover - _deliver guards itself
             logger.debug("PostHog worker slipped; item dropped", exc_info=True)
         finally:
-            _queue.task_done()
+            _mark_finished()
+
+
+def _mark_finished() -> None:
+    global _finished_total
+    _queue.task_done()
+    with _progress:
+        _finished_total += 1
+        _progress.notify_all()
 
 
 _SKIP = object()
@@ -389,15 +409,20 @@ def _deliver(item: _Item) -> None:
 
 
 def flush_queue(timeout_seconds: float = 10.0) -> bool:
-    """Block until every item enqueued so far has been delivered or dropped
-    by the worker, or the timeout passes. Returns whether it drained."""
+    """Block until every item enqueued BEFORE this call has been delivered or
+    dropped, or the timeout passes. Returns whether they all finished.
+
+    Items enqueued after the call are not waited for: on a busy replica the
+    queue is never empty, and waiting for that would make every account
+    deletion (and shutdown) burn its whole timeout."""
     deadline = time.monotonic() + timeout_seconds
-    with _queue.all_tasks_done:
-        while _queue.unfinished_tasks:
+    with _progress:
+        target = _accepted_total
+        while _finished_total < target:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
-            _queue.all_tasks_done.wait(remaining)
+            _progress.wait(remaining)
     return True
 
 
@@ -707,7 +732,7 @@ def _exception_list(summary: list[dict]) -> list[dict]:
     from posthog.exception_utils import handle_in_app
 
     values: list[dict] = []
-    for exc in summary:
+    for i, exc in enumerate(summary):
         frames = []
         for f in exc["frames"]:
             path, lineno = f["path"], f["lineno"]
@@ -725,8 +750,15 @@ def _exception_list(summary: list[dict]) -> list[dict]:
                 "context_line": lines[idx].rstrip("\n") if 0 <= idx < len(lines) else None,
                 "post_context": [ln.rstrip("\n") for ln in lines[idx + 1:idx + 1 + _CONTEXT_LINES]],
             })
+        # The only caller is the 500 handler: the exception escaped every
+        # route, so it is UNHANDLED. Chain links (outermost first) carry the
+        # SDK's exception_id/parent_id so a `raise X from Y` groups as one.
+        mechanism: dict[str, Any] = {"type": "generic" if i == 0 else "chained",
+                                     "handled": False, "exception_id": i}
+        if i > 0:
+            mechanism["parent_id"] = i - 1
         values.append({
-            "mechanism": {"type": "generic", "handled": True},
+            "mechanism": mechanism,
             "module": exc["module"],
             "type": exc["type"],
             "value": _REDACTED,

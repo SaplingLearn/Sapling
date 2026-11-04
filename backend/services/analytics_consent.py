@@ -131,8 +131,9 @@ def _lookup(user_id: str) -> Consent:
         "id,deleted_at,user_settings(analytics_opt_out)",
         filters={"id": f"eq.{user_id}"},
         limit=1,
-        # Fail fast: the worker serves every queued item, and a slow read
-        # only delays them (a timeout is a DENIED, like any other failure).
+        # Fail fast: the worker serves every queued item. A timeout is a
+        # DENIED like any other failure, cached for _FAILURE_TTL_S — that
+        # user's events in the window are DROPPED (fail closed, by design).
         timeout=_LOOKUP_TIMEOUT_S,
     )
     if not rows:

@@ -402,6 +402,19 @@ class TestFlashcardEvents:
         }]
         assert SECRET not in json.dumps(rows)
 
+    def test_zero_cards_is_not_a_generation(self, sink):
+        """#677 re-review: a generation that yields no cards must not count."""
+        from main import app
+
+        with patch("routes.flashcards.check_rate_limit", return_value=None), \
+             patch("routes.flashcards.gemini_generate_cards", return_value=[]):
+            r = TestClient(app).post("/api/flashcards/import/generate", json={
+                "user_id": USER_ID, "source": "paste", "text": "notes", "count": 2,
+            })
+        assert r.status_code == 200
+        events_service.flush_now()
+        assert not [x for x in sink if x["event_type"] == "flashcard.generated"]
+
     def test_rate_emits_flashcard_reviewed(self, sink):
         from main import app
 
@@ -470,6 +483,23 @@ class TestExceptionCapture:
         assert exc_list[0]["value"] == "[redacted]"
         frames = exc_list[0]["stacktrace"]["frames"]
         assert frames and all("vars" not in f for f in frames)
+
+    def test_500s_are_unhandled_and_chains_are_linked(self):
+        """#677 re-review: the 500 handler is the only caller, so the
+        exception escaped every route — UNHANDLED — and a `raise X from Y`
+        carries the SDK's chain ids so PostHog groups it as one issue."""
+        try:
+            try:
+                raise KeyError("inner")
+            except KeyError as inner:
+                raise ValueError("outer") from inner
+        except ValueError as exc:
+            values = posthog_client._exception_list(posthog_client._exception_summary(exc))
+        assert [v["type"] for v in values] == ["ValueError", "KeyError"]
+        assert values[0]["mechanism"] == {"type": "generic", "handled": False, "exception_id": 0}
+        assert values[1]["mechanism"] == {
+            "type": "chained", "handled": False, "exception_id": 1, "parent_id": 0,
+        }
 
     def test_scrub_strips_vars_even_if_present(self):
         msg = {"properties": {"$exception_list": [{
@@ -1047,6 +1077,9 @@ class TestApiHost:
         ("https://us.i.posthog.com", "https://us.posthog.com"),
         ("https://eu.i.posthog.com/", "https://eu.posthog.com"),
         ("https://US.I.POSTHOG.COM", "https://us.posthog.com"),
+        # The app hosts accept ingestion too; they map to themselves.
+        ("https://us.posthog.com", "https://us.posthog.com"),
+        ("https://eu.posthog.com/", "https://eu.posthog.com"),
         ("https://ph.example.com", None),
         ("https://evil.i.posthog.com.attacker.net", None),
         ("http://us.i.posthog.com", None),
@@ -1547,6 +1580,41 @@ class TestPrivacySignalDrops:
         assert posthog_client._queue.unfinished_tasks == 0
 
 
+class TestFlushIsBoundedToTheCall:
+    """#677 re-review: flush waits for items enqueued BEFORE the call, not for
+    an empty queue (which a busy replica never has)."""
+
+    def test_later_items_do_not_hold_the_flush(self, fake_client, monkeypatch):
+        import queue as queue_mod
+        import threading
+
+        q: queue_mod.Queue = queue_mod.Queue()
+        monkeypatch.setattr(posthog_client, "_queue", q)
+        monkeypatch.setattr(posthog_client, "_ensure_worker", lambda: None)  # we drain
+        monkeypatch.setattr(posthog_client, "_accepted_total", 0)
+        monkeypatch.setattr(posthog_client, "_finished_total", 0)
+
+        def emit(name):
+            posthog_client.mirror_event(
+                name, category="usage", user_id=USER_ID, request_id=None, payload={},
+            )
+
+        emit("before")
+        result: list[bool] = []
+        flusher = threading.Thread(
+            target=lambda: result.append(posthog_client.flush_queue(timeout_seconds=3)),
+        )
+        flusher.start()
+        emit("after")  # arrives while the flush waits; must not be waited on
+        assert q.get_nowait().name == "before"
+        posthog_client._mark_finished()
+        flusher.join(timeout=2)
+        assert result == [True]
+        assert q.qsize() == 1  # "after" is still queued, and the flush returned
+        q.get_nowait()
+        posthog_client._mark_finished()
+
+
 class TestBoundedQueue:
     """The queue is bounded and drops the OLDEST item when full."""
 
@@ -1557,6 +1625,10 @@ class TestBoundedQueue:
         monkeypatch.setattr(posthog_client, "_queue", small)
         monkeypatch.setattr(posthog_client, "_ensure_worker", lambda: None)  # nobody drains
         monkeypatch.setattr(posthog_client, "_dropped", 0)
+        # The flush counters are module-global: restore them, since this
+        # test drains `small` by hand.
+        monkeypatch.setattr(posthog_client, "_accepted_total", 0)
+        monkeypatch.setattr(posthog_client, "_finished_total", 0)
         with caplog.at_level(logging.WARNING, "sapling.posthog"):
             for i in range(5):
                 posthog_client.mirror_event(
