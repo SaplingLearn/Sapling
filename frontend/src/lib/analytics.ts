@@ -444,7 +444,21 @@ export function gatedBeforeSend(event: CaptureResult | null): CaptureResult | nu
   if (props && typeof prev === "string" && !isAppRoute(prev)) {
     for (const key of Object.keys(props)) if (key.startsWith("$prev_pageview_")) delete props[key];
   }
-  return scrubEvent(event);
+  const scrubbed = scrubEvent(event);
+  if (scrubbed?.properties) scrubbed.properties.environment = deploymentEnvironment();
+  return scrubbed;
+}
+
+/**
+ * Which deployment sent the event. Staging and production share one PostHog
+ * project (the plan allows one), so every pageview says where it came from,
+ * matching the backend's `environment` (its APP_ENV).
+ */
+export function deploymentEnvironment(hostname: string = window.location.hostname): string {
+  const host = hostname.toLowerCase();
+  if (host === "saplinglearn.com" || host === "www.saplinglearn.com") return "production";
+  if (host.startsWith("staging.") || host.includes("frontend-staging")) return "staging";
+  return "local";
 }
 
 /**

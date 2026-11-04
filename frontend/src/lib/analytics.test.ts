@@ -19,6 +19,7 @@ import {
   beginAccountRead,
   buildPosthogConfig,
   chooseAnalytics,
+  deploymentEnvironment,
   failAccountRead,
   gatedBeforeSend,
   getAnalyticsState,
@@ -216,6 +217,11 @@ describe("only signed-in students whose account says false", () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(ph.identify.mock.calls).toEqual([["user_1038427"]]);
     expect(gatedBeforeSend(event("$pageview"))).not.toBeNull();
+  });
+
+  it("every event that passes is labelled with its deployment (jsdom = local)", async () => {
+    await signIn("user_1038427", false);
+    expect(gatedBeforeSend(event("$pageview"))?.properties.environment).toBe("local");
   });
 
   it("account true: off, never loaded, never identified", async () => {
@@ -661,5 +667,17 @@ describe("before_send URL scrubbing", () => {
     cyclic.self = cyclic;
     expect(() => scrubValue(cyclic)).not.toThrow();
     expect(cyclic.url).toBe("https://x.test/");
+  });
+});
+
+describe("deploymentEnvironment", () => {
+  it.each([
+    ["saplinglearn.com", "production"],
+    ["www.saplinglearn.com", "production"],
+    ["staging.saplinglearn.com", "staging"],
+    ["frontend-staging.example.workers.dev", "staging"],
+    ["localhost", "local"],
+  ])("%s -> %s", (host, env) => {
+    expect(deploymentEnvironment(host)).toBe(env);
   });
 });
