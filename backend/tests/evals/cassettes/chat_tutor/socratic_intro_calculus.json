@@ -1,22 +1,12 @@
 {
-  "text": "Of course. It's common for these concepts to feel a bit tangled at first. They're two sides of the same coin!\n\nTo get started, can you tell me in your own words what a derivative helps you find?",
+  "text": "Your notes define the derivative as the instantaneous rate of change, which is the slope of the tangent line. I'll start there.\n\nImagine a car's position over time. Suppose you know the position at every moment and you want the speed at one instant.\n\nWould you need a derivative or an integral for that, and what about the picture of the graph made you choose it?",
   "tool_calls": [
     {
       "args": {
-        "updates": [
-          {
-            "concept_name": "Derivatives",
-            "mastery_delta": -0.05,
-            "reason": "Expressed confusion."
-          },
-          {
-            "concept_name": "Integrals",
-            "mastery_delta": -0.05,
-            "reason": "Expressed confusion."
-          }
-        ]
+        "limit": 3,
+        "query": "derivatives vs integrals relationship"
       },
-      "tool_name": "update_mastery_tool"
+      "tool_name": "search_course_materials"
     }
   ]
 }

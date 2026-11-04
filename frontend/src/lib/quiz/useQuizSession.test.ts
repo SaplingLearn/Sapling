@@ -118,6 +118,25 @@ const START = {
   courseId: "course-1",
 };
 
+it("submits a written answer through the server grader and completes the attempt", async () => {
+  quizApi.generateQuiz.mockResolvedValue({ ...generated(1), questions: [{
+    id: 1, type: "numeric", question: "What is half?", difficulty: "easy", options: [],
+  }] });
+  quizApi.answerQuestion.mockResolvedValue({ ...answerResult(0), correct_index: -1,
+    correct_answer: "0.5", answer_text: "1/2" });
+  const { result } = mount();
+  await waitFor(() => expect(result.current.config).not.toBeNull());
+  act(() => result.current.actions.start(START, { count: 1, difficulty: "easy", feedback: "at-end", questionFormat: "numeric" }));
+  await waitFor(() => expect(result.current.session.phase).toBe("active"));
+  act(() => result.current.actions.write?.("1/2"));
+  await act(async () => { result.current.actions.submitAnswer(); });
+  await waitFor(() => expect(result.current.session.phase).toBe("results"));
+  expect(quizApi.answerQuestion).toHaveBeenCalledWith("attempt-1", {
+    questionIndex: 0, questionId: 1, selectedIndex: null, answerText: "1/2",
+  });
+  expect(result.current.session.items[0].answerText).toBe("1/2");
+});
+
 beforeEach(() => {
   resetQuizConfigCache();
   window.localStorage.clear();

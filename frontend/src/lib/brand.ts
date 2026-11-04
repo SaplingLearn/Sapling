@@ -8,4 +8,4 @@
 //     parses the value into RGBA channels to tween.
 //   - hex-alpha string concatenation (e.g. `${BRAND_FOREST}55`).
 // Keep this byte-identical to `--brand-forest`.
-export const BRAND_FOREST = "#1B6C42";
+export const BRAND_FOREST = "#445D22";

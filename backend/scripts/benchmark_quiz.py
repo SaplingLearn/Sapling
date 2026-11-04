@@ -31,9 +31,9 @@ from seed_quiz_fixture import FIXTURE_COURSE_ID, UPLOADER, seed_fixture_course  
 
 # Judge uses a DIFFERENT (stronger) model than the quiz generator to avoid
 # self-preference bias. gemini-2.5-pro judges; the quiz agent runs on
-# model_for("quiz") (gemini-2.5-flash-lite by default — see
-# agents/_providers.py). call_gemini_json accepts a `model` override, so the
-# two are guaranteed to differ; document the exact judge model in the run
+# model_for("quiz") (claude-haiku-5-5 by default since ADR 0030 — see
+# agents/_providers.py), so judge and generator now differ by provider as
+# well as by model; document the exact judge model in the run
 # output.
 JUDGE_MODEL = "gemini-2.5-pro"
 

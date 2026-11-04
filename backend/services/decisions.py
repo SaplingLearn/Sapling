@@ -733,10 +733,11 @@ async def _run_jev(
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     # Output tokens are free on Jev; llm_pricing prices them at 0 so this row
     # costs exactly the input side. provider="typesafe" keeps Jev out of the
-    # Gemini rollups.
+    # Gemini rollups. Jev's usage dict has no request count: this answered
+    # call is one (and arms log_llm_usage's #689 zero-token check).
     events_service.log_llm_usage(
         feature=feature, task="decision", model=model, usage=usage,
-        provider="typesafe", user_id=user_id, request_id=request_id,
+        provider="typesafe", user_id=user_id, request_id=request_id, requests=1,
     )
     answers = data["answers"]
     raws: dict[str, _Raw] = {}

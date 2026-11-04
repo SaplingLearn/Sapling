@@ -372,6 +372,10 @@ def update_assignment(assignment_id: str, body: dict, request: FastAPIRequest):
 
     ALLOWED = {"title", "due_date", "assignment_type"}  # course_id no longer settable here
     patch = {k: v for k, v in body.items() if k in ALLOWED}
+    # A cleared date input arrives as "": that means "no date" (the column is
+    # nullable since 0012), and "" is not a valid DATE literal for PostgREST.
+    if patch.get("due_date") == "":
+        patch["due_date"] = None
     if not patch:
         return {"updated": False}
     table("assignments").update(
@@ -561,7 +565,10 @@ def export_to_google(body: ExportBody, request: FastAPIRequest):
             continue
         a = rows[0]
 
-        if a.get("google_event_id"):
+        # Already exported, or no due date to put on a calendar (gradebook and
+        # Gradescope items may be undated; Google rejects a null all-day date
+        # and the export would fail partway). Same rule as sync_to_google.
+        if a.get("google_event_id") or not a.get("due_date"):
             skipped += 1
             continue
 

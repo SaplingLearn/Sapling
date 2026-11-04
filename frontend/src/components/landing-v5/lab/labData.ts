@@ -5,14 +5,14 @@
  * the landing page mounts inside the lab's right pane. Content and tuning
  * values only -- the behaviour lives in the demo components beside this.
  *
- * TIER here is the lab's own swatch set: `unexplored` is #C3CCC6, lighter
+ * TIER here is the lab's own swatch set: `unexplored` is #C7CBC2, lighter
  * than the landing graph's #9a9a9a, because these sit on cream cards rather
  * than the dark act ground.
  */
 
-export const TIER = { mastered:'#3a7d4e', learning:'#c89b5e', struggling:'#b25855', unexplored:'#C3CCC6' };
+export const TIER = { mastered:'#5a7834', learning:'#c89b5e', struggling:'#b25855', unexplored:'#C7CBC2' };
 
-export const TYPE = { exam:'#b25855', project:'#c89b5e', homework:'#0E9E5A', quiz:'#4FA574', reading:'#8FBFA3' };
+export const TYPE = { exam:'#b25855', project:'#c89b5e', homework:'#68951F', quiz:'#7B9E51', reading:'#A5BA8F' };
 
 export const QUESTIONS = [
   { concept:'Eigenvalues', diff:'MEDIUM',
@@ -50,7 +50,7 @@ export const DECK = [
 
 export const RATE_DUE = { '1':'10 min', '2':'1 day', '3':'4 days' };
 
-export const RATE_TONE = { '1':'#b25855', '2':'#c89b5e', '3':'#3a7d4e' };
+export const RATE_TONE = { '1':'#b25855', '2':'#c89b5e', '3':'#5a7834' };
 
 export const RATE_LABEL = { '1':'Forgot', '2':'Hard', '3':'Easy' };
 
@@ -130,7 +130,7 @@ export const GRAPH_EDGES = [ ['vs','det'], ['det','eig'], ['vs','eig'], ['eig','
 
 export const TUTOR = {
   socratic: {
-    label:'SOCRATIC', topic:'AVL ROTATIONS', tone:'#0E9E5A',
+    label:'SOCRATIC', topic:'AVL ROTATIONS', tone:'#68951F',
     blurb:'It never hands over the answer. Pick a reply and watch where it takes you.',
     open:'Before we touch rotations: what does an AVL tree promise about the heights of a node\u2019s two subtrees?',
     steps:[
@@ -147,7 +147,7 @@ export const TUTOR = {
     ],
   },
   expository: {
-    label:'EXPOSITORY', topic:'AVL ROTATIONS', tone:'#4FA574',
+    label:'EXPOSITORY', topic:'AVL ROTATIONS', tone:'#7B9E51',
     blurb:'Straight explanation, assembled from your own uploads and shown with its sources.',
     open:'An AVL tree keeps every node\u2019s balance factor in {\u22121, 0, +1}. When an insert pushes a node to \u00b12, exactly one of four rotations restores it in O(1): LL, LR, RL, RR.',
     sources:['lecture-07.pdf p. 12', 'notes-wk4.md'],

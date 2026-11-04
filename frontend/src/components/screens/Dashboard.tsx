@@ -28,6 +28,10 @@ import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
 import { dueSet } from "@/lib/quiz/proposals";
 
+/** An assignment known to have a due date (gradebook/Gradescope items may not). */
+type DatedAssignment = Assignment & { due_date: string };
+const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
+
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
   "The roots of education are bitter, but the fruit is sweet. — Aristotle",
@@ -210,7 +214,7 @@ export function Dashboard() {
   });
   const [courses, setCourses] = React.useState<EnrolledCourse[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
-  const [assignments, setAssignments] = React.useState<Assignment[]>([]);
+  const [assignments, setAssignments] = React.useState<DatedAssignment[]>([]);
   const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
   // Mirrors the same tier-membership filter `/quiz`'s useQuizHome runs (R-7) —
   // computed over the RAW (pre-apiToGraphNode) nodes because `dueSet` is typed
@@ -298,7 +302,9 @@ export function Dashboard() {
         struggling: graphRes.stats?.struggling ?? 0,
         unexplored: graphRes.stats?.unexplored ?? 0,
       });
-      setAssignments(assignsRes.assignments || []);
+      // /upcoming already filters due_date >= today; drop undated rows here too
+      // so the urgency chips can never compute from new Date(null) (1970).
+      setAssignments((assignsRes.assignments || []).filter(hasDueDate));
       setSessions(sessionsRes.sessions || []);
       setRecommendations(recsRes.recommendations || []);
 

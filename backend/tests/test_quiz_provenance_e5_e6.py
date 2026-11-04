@@ -91,6 +91,24 @@ def _stored(row):
     return decrypt_json_column(row["questions_json"])
 
 
+@pytest.mark.parametrize(("kind", "answer"), [("short_answer", "base case"), ("numeric", "0.5"), ("symbolic", "2x+2")])
+def test_written_generation_preserves_course_material_context_and_hides_the_key(kind, answer):
+    question = QuizQuestion(question="A course-grounded practice question?", type=kind,
+                            difficulty="easy", correct_answer=answer,
+                            explanation="Explanation from the material.", concept="Recursion")
+    response, row, prompt = _generate([question], body_extra={"num_questions": 1, "question_format": kind},
+                                    material=CourseMaterial(block="Uploaded lecture notes on recursion.", chunk_ids=("chunk-1",)))
+    assert response.status_code == 200
+    served = response.json()["questions"][0]
+    assert served["type"] == kind
+    assert served["material_context"] == "course_material"
+    assert not {"correct_answer", "accepted_answers", "explanation", "provenance"} & served.keys()
+    assert _stored(row)[0]["correct_answer"] == answer
+    assert _stored(row)[0]["provenance"]["chunk_ids"] == ["chunk-1"]
+    assert f"question_format: {kind}." in prompt
+    assert "Uploaded lecture notes on recursion." in prompt
+
+
 # ── CourseMaterial's groundedness invariant ─────────────────────────────────
 
 

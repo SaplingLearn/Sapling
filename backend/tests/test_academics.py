@@ -343,3 +343,40 @@ def test_user_course_ids_for_term_empty_args():
     with patch.object(ac, "table", side_effect=_factory({})):
         assert ac.user_course_ids_for_term("", "t") == set()
         assert ac.user_course_ids_for_term("u", "") == set()
+
+
+# ── scoped_user_enrollments ──────────────────────────────────────────────────
+
+_ENROLLMENTS = [
+    {"id": "enr-fall", "offering_id": "cs-fall"},
+    {"id": "enr-spring", "offering_id": "cs-spring"},
+    {"id": "enr-bio", "offering_id": "bio-spring"},
+]
+_COURSE = {"cs-fall": "cs", "cs-spring": "cs", "bio-spring": "bio"}
+_TERM = {"cs-fall": "t-fall", "cs-spring": "t-spring", "bio-spring": "t-spring"}
+
+
+def _scoped(**kw):
+    with (
+        patch.object(ac, "user_enrollment_ids", return_value=list(_ENROLLMENTS)),
+        patch.object(ac, "offering_course_id", side_effect=_COURSE.get),
+        patch.object(ac, "term_for_offering", side_effect=lambda oid: {"id": _TERM[oid]}),
+    ):
+        return [e["id"] for e in ac.scoped_user_enrollments("u1", **kw)]
+
+
+def test_scoped_user_enrollments_unscoped_is_every_enrollment():
+    assert _scoped() == ["enr-fall", "enr-spring", "enr-bio"]
+
+
+def test_scoped_user_enrollments_by_course_keeps_every_term():
+    assert _scoped(course_id="cs") == ["enr-fall", "enr-spring"]
+
+
+def test_scoped_user_enrollments_by_term_spans_courses():
+    assert _scoped(term_id="t-spring") == ["enr-spring", "enr-bio"]
+
+
+def test_scoped_user_enrollments_by_course_and_term():
+    assert _scoped(course_id="cs", term_id="t-fall") == ["enr-fall"]
+    assert _scoped(course_id="bio", term_id="t-fall") == []

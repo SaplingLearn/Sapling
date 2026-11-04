@@ -17,10 +17,12 @@ Caveats worth being honest about:
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from typing import Any
-from urllib.parse import unquote
+from functools import partial
+from urllib.parse import unquote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -103,6 +105,39 @@ def _require_gradescopeapi() -> None:
         )
 
 
+def _is_gradescope_url(url: str, *, account: bool = False) -> bool:
+    """Accept only HTTPS Gradescope pages, never a matching substring in an IdP URL.
+
+    The root counts as "off /login": a successful password POST or SAML
+    callback can land there, and the /account check is what proves the login.
+    """
+    parsed = urlparse(url)
+    valid = parsed.scheme == "https" and parsed.hostname in {"gradescope.com", "www.gradescope.com"}
+    if account:
+        return valid and parsed.path.rstrip("/") == "/account"
+    return valid and parsed.path.rstrip("/") != "/login"
+
+
+def _is_bu_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == "shib.bu.edu"
+
+
+def _new_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update(_BROWSER_HEADERS)
+    # The upstream scraper omits timeouts on course/assignment requests.
+    session.request = partial(session.request, timeout=20)
+    return session
+
+
+def _check_availability(response: requests.Response, session: requests.Session) -> None:
+    """An outage or upstream throttle does not invalidate saved credentials."""
+    if response.status_code == 429 or response.status_code >= 500:
+        session.close()
+        raise GradescopeFetchError("Gradescope is temporarily unavailable. Please retry shortly.")
+
+
 def _clean_pasted_cookie(value: str | None) -> str | None:
     """Strip the packaging off a cookie value copied out of a browser by hand.
 
@@ -167,8 +202,7 @@ def login_with_cookies(
 
     last_failure: GradescopeAuthError | None = None
     for candidate in candidates:
-        session = requests.Session()
-        session.headers.update(_BROWSER_HEADERS)
+        session = _new_session()
         # Domain '.gradescope.com' so cookies are sent for both www and root.
         session.cookies.set(
             "_gradescope_session", candidate, domain=".gradescope.com", path="/"
@@ -183,24 +217,24 @@ def login_with_cookies(
         except requests.RequestException as e:
             # Network failure is not a credential problem — don't burn the other
             # candidate on it, and don't tell the user their cookie is bad.
-            raise GradescopeAuthError(f"Couldn't reach Gradescope: {e}") from e
+            session.close()
+            raise GradescopeFetchError("Couldn't reach Gradescope. Please retry shortly.") from e
 
-        if r.status_code == 200 and "/login" not in (r.url or ""):
+        _check_availability(r, session)
+        if r.status_code == 200 and _is_gradescope_url(r.url or "", account=True):
             break
 
         if "/login" in (r.url or ""):
             last_failure = GradescopeAuthError(
-                "Gradescope redirected to its login page, so that session is expired "
-                "or was logged out — including by signing out in the browser you "
-                "copied it from. Sign in to Gradescope again, then copy the CURRENT "
-                "value of _gradescope_session from DevTools → Application → Cookies."
+                "Your Gradescope session has expired or was signed out. Sign in to "
+                "Gradescope, then copy the current _gradescope_session cookie."
             )
         else:
             last_failure = GradescopeAuthError(
-                f"Gradescope returned HTTP {r.status_code} for /account. The cookie may "
-                "be truncated — copy the whole value (they run ~700 characters and end "
-                "in '--' followed by 40 hex characters)."
+                f"Gradescope returned HTTP {r.status_code} for /account. Copy the full "
+                "session cookie from a freshly signed-in Gradescope tab."
             )
+        session.close()
     else:
         # Every candidate failed; surface the most recent reason.
         raise last_failure or GradescopeAuthError("Session cookies were rejected.")
@@ -238,8 +272,7 @@ def login(email: str, password: str) -> GSConnection:
     """
     _require_gradescopeapi()
     base_url = DEFAULT_GRADESCOPE_BASE_URL
-    session = requests.Session()
-    session.headers.update(_BROWSER_HEADERS)
+    session = _new_session()
 
     try:
         # Step 1: load the homepage to grab the CSRF authenticity_token
@@ -247,14 +280,16 @@ def login(email: str, password: str) -> GSConnection:
         home = session.get(base_url, timeout=20)
         home.raise_for_status()
     except requests.RequestException as e:
-        raise GradescopeAuthError(f"Couldn't reach Gradescope: {e}") from e
+        session.close()
+        raise GradescopeFetchError("Couldn't reach Gradescope. Please retry shortly.") from e
 
     soup = BeautifulSoup(home.text, "html.parser")
     token_input = soup.select_one(
         'form[action="/login"] input[name="authenticity_token"]'
     )
     if not token_input or not token_input.get("value"):
-        raise GradescopeAuthError(
+        session.close()
+        raise GradescopeFetchError(
             "Couldn't find the Gradescope login form — site markup may have changed."
         )
     auth_token = token_input["value"]
@@ -278,23 +313,40 @@ def login(email: str, password: str) -> GSConnection:
             headers={"Referer": f"{base_url}/login"},
         )
     except requests.RequestException as e:
-        raise GradescopeAuthError(f"Login request failed: {e}") from e
+        session.close()
+        raise GradescopeFetchError("Couldn't reach Gradescope. Please retry shortly.") from e
 
+    _check_availability(resp, session)
     # Success looks like: at least one 302 in the redirect chain AND the
     # final URL isn't /login (which is where Gradescope bounces failed
     # attempts back to with a flash error).
     redirected = bool(resp.history) and any(
         h.status_code in (301, 302, 303) for h in resp.history
     )
-    landed_off_login = "/login" not in (resp.url or "")
-    if not (redirected and landed_off_login):
+    landed_off_login = _is_gradescope_url(resp.url or "")
+    if not (resp.status_code == 200 and redirected and landed_off_login):
         # Try to surface the in-page error if Gradescope rendered one.
         err_soup = BeautifulSoup(resp.text, "html.parser")
         flash = err_soup.select_one(".alert, .flash, .error")
         detail = flash.get_text(strip=True) if flash else None
+        session.close()
         raise GradescopeAuthError(
             detail or "Invalid Gradescope credentials"
         )
+
+    # A redirect alone can land on SSO or an error page. Confirm the session
+    # can open the account before storing credentials or scraping grades —
+    # unless the redirect chain already ended on /account with a 200.
+    if not _is_gradescope_url(resp.url or "", account=True):
+        try:
+            account_page = session.get(f"{base_url}/account", timeout=20, allow_redirects=True)
+        except requests.RequestException as e:
+            session.close()
+            raise GradescopeFetchError("Couldn't verify the Gradescope login. Please retry.") from e
+        _check_availability(account_page, session)
+        if account_page.status_code != 200 or not _is_gradescope_url(account_page.url or "", account=True):
+            session.close()
+            raise GradescopeAuthError("Gradescope login did not create an authenticated session.")
 
     # Pick up X-CSRF-Token from the landed page so subsequent POSTs work.
     landed_soup = BeautifulSoup(resp.text, "html.parser")
@@ -321,7 +373,9 @@ def list_student_courses(conn: GSConnection) -> list[dict[str, Any]]:
     except Exception as e:
         raise GradescopeFetchError(f"Failed to list courses: {e}") from e
 
-    student_courses = all_courses.get("student", {}) if isinstance(all_courses, dict) else {}
+    if not isinstance(all_courses, dict) or not isinstance(all_courses.get("student"), dict):
+        raise GradescopeFetchError("Gradescope returned an unexpected course list. Please retry.")
+    student_courses = all_courses["student"]
     return [
         {
             "id": str(cid),
@@ -345,7 +399,8 @@ def _parse_grade(value: Any) -> float | None:
     if not s or s in ("—", "-", "/", "N/A"):
         return None
     try:
-        return float(s)
+        number = float(s)
+        return number if math.isfinite(number) else None
     except (ValueError, TypeError):
         return None
 
@@ -363,13 +418,16 @@ def list_assignments(conn: GSConnection, course_id: str) -> list[dict[str, Any]]
             f"Failed to list assignments for course {course_id}: {e}"
         ) from e
 
+    if not isinstance(assignments, list):
+        raise GradescopeFetchError("Gradescope returned an unexpected assignment list. Please retry.")
+
     out: list[dict[str, Any]] = []
     for a in assignments:
         due_dt = getattr(a, "due_date", None)
         release_dt = getattr(a, "release_date", None)
         out.append(
             {
-                "id": str(getattr(a, "assignment_id", "")),
+                "id": str(getattr(a, "assignment_id", "") or ""),
                 "name": getattr(a, "name", "") or "",
                 "release_date": release_dt.isoformat() if release_dt else None,
                 "due_date": due_dt.isoformat() if due_dt else None,
@@ -594,6 +652,10 @@ def login_via_bu_sso(
                 raise GradescopeAuthError(
                     f"Didn't land on BU's WebLogin (currently at {page.url}): {e}"
                 ) from e
+            # The glob above is a navigation wait, not a hostname check. Never
+            # fill institutional credentials into a substring/lookalike URL.
+            if not _is_bu_login_url(page.url or ""):
+                raise GradescopeAuthError("Didn't reach BU's secure WebLogin. Use session cookies or retry.")
 
             # Step 5: Fill BU username + password, click Continue. Trimmed
             # per-selector timeouts — these elements appear within the
@@ -622,7 +684,7 @@ def login_via_bu_sso(
             last_diag_url = ""
             while time.monotonic() < deadline:
                 current_url = page.url or ""
-                if "gradescope.com" in current_url and "/login" not in current_url:
+                if _is_gradescope_url(current_url):
                     break
                 # Try to click through any visible continuation button.
                 # Order matters: most-specific labels first so we don't
@@ -704,7 +766,7 @@ def login_via_bu_sso(
             gs_cookies = {
                 c["name"]: c["value"]
                 for c in all_cookies
-                if "gradescope.com" in (c.get("domain") or "")
+                if (c.get("domain") or "").lstrip(".") in {"gradescope.com", "www.gradescope.com"}
             }
             if "_gradescope_session" not in gs_cookies:
                 raise GradescopeAuthError(

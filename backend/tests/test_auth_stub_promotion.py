@@ -108,8 +108,13 @@ def drive_callback(monkeypatch):
     # auth.py does `import httpx` inside the function, so patch the module attr.
     monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 
-    def _drive(users_rows):
+    def _drive(users_rows, *, waitlist_approved=False):
         factory, mocks = _mock_table_factory(users_rows)
+        if waitlist_approved:
+            # A new account is only created once its email is approved on the waitlist.
+            factory("newsletter_emails").select.return_value = [
+                {"id": "w1", "email": EMAIL, "approved_at": "2026-10-20T00:00:00+00:00"},
+            ]
         monkeypatch.setattr(auth_module, "table", factory)
 
         nonce = "nonce-abc"
@@ -140,7 +145,7 @@ class TestStubUserPromotion:
         )
 
     def test_stub_is_promoted_via_upsert_on_id_not_insert(self, drive_callback):
-        _, mocks = drive_callback(users_rows=[])
+        _, mocks = drive_callback(users_rows=[], waitlist_approved=True)
 
         mocks["users"].insert.assert_not_called()
         mocks["users"].upsert.assert_called_once()
@@ -158,7 +163,7 @@ class TestStubUserPromotion:
     def test_profile_row_is_also_upserted(self, drive_callback):
         """A stub that completed onboarding already has a user_profiles row
         (user_id is the PK), so that insert 409s too."""
-        _, mocks = drive_callback(users_rows=[])
+        _, mocks = drive_callback(users_rows=[], waitlist_approved=True)
 
         mocks["user_profiles"].insert.assert_not_called()
         mocks["user_profiles"].upsert.assert_called_once()
@@ -167,15 +172,18 @@ class TestStubUserPromotion:
 
     def test_unapproved_new_user_still_gated_to_pending(self, drive_callback):
         """Promotion must not smuggle anyone past the approval gate."""
-        response, _ = drive_callback(users_rows=[])
+        response, mocks = drive_callback(users_rows=[])
         assert "/pending" in response.headers["location"]
+        # And nothing is stored for someone who isn't approved.
+        mocks["users"].upsert.assert_not_called()
+        assert "user_profiles" not in mocks or not mocks["user_profiles"].upsert.called
 
 
 class TestBrandNewUser:
     """(b) The no-stub path must still provision a user."""
 
     def test_new_user_row_is_created(self, drive_callback):
-        response, mocks = drive_callback(users_rows=[])
+        response, mocks = drive_callback(users_rows=[], waitlist_approved=True)
         assert response.status_code in (302, 307)
         mocks["users"].upsert.assert_called_once()
         assert mocks["users"].upsert.call_args.args[0]["id"] == USER_ID
@@ -194,8 +202,14 @@ class TestExistingUserUnchanged:
         )
 
         assert response.status_code in (302, 307)
-        mocks["users"].update.assert_called_once()
-        assert mocks["users"].update.call_args.kwargs["filters"] == {"id": f"eq.{legacy_id}"}
+        # The welcome-email claim (a conditional `welcomed_at=is.null` PATCH,
+        # routes/auth.py::_claim_welcome) is a separate update; this test is
+        # about the auth-field update.
+        auth_updates = [
+            c for c in mocks["users"].update.call_args_list if "welcomed_at" not in c.args[0]
+        ]
+        assert len(auth_updates) == 1
+        assert auth_updates[0].kwargs["filters"] == {"id": f"eq.{legacy_id}"}
         mocks["users"].upsert.assert_not_called()
         mocks["users"].insert.assert_not_called()
 

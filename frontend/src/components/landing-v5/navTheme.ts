@@ -22,9 +22,9 @@ export interface NavTheme {
   ink: string;
   /** Hover / current-page colour. */
   inkHi: string;
-  logo: string;
-  /** CSS filter applied to the leaf mark, to lift it off a dark ground. */
-  iconFilter: string;
+  /** CSS filter on the wordmark. Dark grounds flatten its two greens to one
+   *  near-white; both values name the same two functions so the swap tweens. */
+  logoFilter: string;
   rule: string;
   pillBorder: string;
   pillBg: string;
@@ -36,30 +36,28 @@ export interface NavTheme {
 }
 
 export const NAV_LIGHT: NavTheme = {
-  ink: '#61726A',
-  inkHi: '#12201A',
-  logo: '#0C5638',
-  iconFilter: 'none',
-  rule: 'rgba(18,32,26,0.14)',
-  pillBorder: 'rgba(18,32,26,0.14)',
+  ink: '#697062',
+  inkHi: '#191F13',
+  logoFilter: 'brightness(1) invert(0)',
+  rule: 'rgba(25,31,19,0.14)',
+  pillBorder: 'rgba(25,31,19,0.14)',
   pillBg: 'rgba(253,252,249,0.72)',
-  pillFg: '#12201A',
-  btnBg: '#0C5638',
+  pillFg: '#191F13',
+  btnBg: '#445D22',
   btnFg: '#fff',
-  lift: '0 1px 2px rgba(18,32,26,0.14), 0 6px 16px -4px rgba(18,32,26,0.28)',
+  lift: '0 1px 2px rgba(25,31,19,0.14), 0 6px 16px -4px rgba(25,31,19,0.28)',
 };
 
 export const NAV_DARK: NavTheme = {
-  ink: 'rgba(214,234,222,0.62)',
-  inkHi: '#F2FAF5',
-  logo: '#EAF3EC',
-  iconFilter: 'brightness(1.85) saturate(0.95)',
-  rule: 'rgba(214,234,222,0.2)',
-  pillBorder: 'rgba(214,234,222,0.2)',
+  ink: 'rgba(223,232,213,0.62)',
+  inkHi: '#F5F9F2',
+  logoFilter: 'brightness(0) invert(0.93)',
+  rule: 'rgba(223,232,213,0.2)',
+  pillBorder: 'rgba(223,232,213,0.2)',
   pillBg: 'rgba(255,255,255,0.06)',
-  pillFg: '#EAF3EC',
-  btnBg: '#EAF3EC',
-  btnFg: '#07301E',
+  pillFg: '#EDF2E9',
+  btnBg: '#EDF2E9',
+  btnFg: '#1F2D0D',
   lift: '0 1px 2px rgba(0,0,0,0.3), 0 6px 16px -4px rgba(0,0,0,0.5)',
 };
 

@@ -12,7 +12,7 @@ type Size = "sm" | "md" | "lg" | "xl";
 // Pills are NOT a Button — use <Toggle> for segmented controls.
 //
 // `link` is a bare text button — no padding, border or background, muted until
-// hover. It exists because "adjust", "Discard", "Pick something specific →"
+// hover. It exists because "Adjust", "Discard", "Cancel"
 // and "Done" are text, not chrome, and `ghost` keeps button padding so it
 // still reads as a control (#537). `aria-pressed` / `data-active="true"`
 // underlines it in the accent, which is how the quiz shows "this link's dialog

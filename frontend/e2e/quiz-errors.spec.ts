@@ -426,8 +426,7 @@ test("everything mastered: nothing to propose, but the list is still there", asy
   await expect(empty).toContainText("Nothing needs review right now");
   await expect(page.getByTestId("quiz-review-due")).toHaveCount(0);
 
-  // The way out is in the page rather than at a URL: it opens the browse list.
-  await page.getByTestId("quiz-pick-open").click();
+  // The way out is in the page rather than at a URL: the topic list beside it.
   const list = page.getByTestId("quiz-pick-list");
   await expect(list).toBeVisible();
   await expect(page.getByTestId("quiz-pick-e2e-mastered-1")).toBeVisible();

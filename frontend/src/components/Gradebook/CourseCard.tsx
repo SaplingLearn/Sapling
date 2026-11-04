@@ -181,7 +181,7 @@ export function CourseCard({ course, variant, courseColor, semester }: CourseCar
             zIndex: 1,
             display: "inline-block",
             color: "#ffffff",
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: isPlaceholder ? 400 : 500,
             fontStyle: isPlaceholder ? "italic" : "normal",
             fontSize: isHero ? 168 : 64,
@@ -204,7 +204,7 @@ export function CourseCard({ course, variant, courseColor, semester }: CourseCar
       >
         <div
           style={{
-            fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+            fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
             fontWeight: 500,
             fontSize: isHero ? 28 : 18,
             lineHeight: 1.25,

@@ -1,19 +1,34 @@
 {
   "concepts": [
     {
-      "description": "A fundamental proof in number theory demonstrating that the square root of two cannot be expressed as a simple fraction, often proven by contradiction.",
+      "description": "A proof technique that assumes the negation of a statement and derives a contradiction to establish the original claim. It is central to proving the irrationality of sqrt(2) and the infinitude of primes.",
       "importance": 0.9,
-      "name": "Irrationality of the Square Root of Two"
+      "name": "Proof By Contradiction"
     },
     {
-      "description": "Euclid's theorem stating that there are infinitely many prime numbers, a classic proof often using contradiction or construction.",
-      "importance": 0.9,
-      "name": "Infinitude of Primes"
+      "description": "Real numbers that cannot be expressed as a ratio of two integers. The assignment asks students to prove that sqrt(2) is irrational.",
+      "importance": 0.8,
+      "name": "Irrational Numbers"
     },
     {
-      "description": "A basic proof in number theory demonstrating that the result of adding any two odd integers will always be an even integer.",
-      "importance": 0.9,
-      "name": "Sum of Two Odd Integers"
+      "description": "The result that there are infinitely many prime numbers, which the assignment asks students to prove, typically by constructing a number that yields a contradiction or a new prime.",
+      "importance": 0.75,
+      "name": "Infinitude Of Primes"
+    },
+    {
+      "description": "Integers greater than 1 whose only positive divisors are 1 and themselves. Understanding primes is required for the infinitude proof.",
+      "importance": 0.6,
+      "name": "Prime Numbers"
+    },
+    {
+      "description": "Integers classified by divisibility by 2: even integers are of the form 2k and odd integers are of the form 2k+1. The assignment uses these forms to prove that the sum of two odd integers is even.",
+      "importance": 0.6,
+      "name": "Even And Odd Integers"
+    },
+    {
+      "description": "A proof technique that starts from known definitions and assumptions and reasons step by step to the conclusion. It is the approach expected for showing that the sum of two odd integers is even.",
+      "importance": 0.4,
+      "name": "Direct Proof"
     }
   ]
 }

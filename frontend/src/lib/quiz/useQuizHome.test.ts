@@ -506,6 +506,81 @@ describe("the card definition (R-8)", () => {
     expect(quizApi.describeConcept).not.toHaveBeenCalled();
   });
 
+  it("is pending while the call is in flight, and settles either way", async () => {
+    let resolve!: (text: string) => void;
+    quizApi.describeConcept.mockReturnValue(new Promise<string>(r => (resolve = r)));
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.cardDescriptionPending).toBe(true);
+
+    resolve("Recursion is a function calling itself.");
+    await waitFor(() => expect(result.current.cardDescription).not.toBeNull());
+    expect(result.current.cardDescriptionPending).toBe(false);
+  });
+
+  it("is not pending after a failed call, so the card shows its built sentence", async () => {
+    quizApi.describeConcept.mockRejectedValue(new ApiError("agent down", 502));
+    const { result } = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    await waitFor(() => expect(result.current.cardDescriptionPending).toBe(false));
+    expect(result.current.cardDescription).toBeNull();
+  });
+
+  it("remembers a description: the next visit shows it with no call", async () => {
+    const first = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(first.result.current.cardDescription).not.toBeNull());
+    first.unmount();
+    quizApi.describeConcept.mockClear();
+
+    const second = renderHook(() => useQuizHome("u1", ""));
+    await waitFor(() => expect(second.result.current.status).toBe("ready"));
+    expect(second.result.current.cardDescription).toBe("Recursion is a function calling itself.");
+    expect(second.result.current.cardDescriptionPending).toBe(false);
+    expect(quizApi.describeConcept).not.toHaveBeenCalled();
+  });
+
+  it("describes a picked concept, and a prefetch makes it ready before the pick", async () => {
+    quizApi.describeConcept.mockImplementation((_u: string, name: string) =>
+      Promise.resolve(`About ${name}.`));
+    const { result, rerender } = renderHook(
+      ({ picked }: { picked: string | null }) => useQuizHome("u1", "", undefined, picked),
+      { initialProps: { picked: null as string | null } },
+    );
+    await waitFor(() => expect(result.current.cardDescription).toBe("About n1."));
+
+    act(() => result.current.prefetchDescription("n2"));
+    await waitFor(() => expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n2", "CS 330"));
+    quizApi.describeConcept.mockClear();
+
+    rerender({ picked: "n2" });
+    expect(result.current.cardConceptId).toBe("n2");
+    await waitFor(() => expect(result.current.cardDescription).toBe("About n2."));
+    // Already fetched by the prefetch: the pick costs no second call.
+    expect(quizApi.describeConcept).not.toHaveBeenCalled();
+  });
+
+  it("keeps a picked concept pending while it retries a failed prefetch", async () => {
+    // A hover prefetch that failed must not mark the CARD as failed: picking
+    // that concept shows the placeholder while the card's own fetch retries.
+    quizApi.describeConcept.mockImplementation((_u: string, name: string) =>
+      name === "n2" ? Promise.reject(new ApiError("down", 502)) : Promise.resolve(`About ${name}.`));
+    const { result, rerender } = renderHook(
+      ({ picked }: { picked: string | null }) => useQuizHome("u1", "", undefined, picked),
+      { initialProps: { picked: null as string | null } },
+    );
+    await waitFor(() => expect(result.current.cardDescription).toBe("About n1."));
+    act(() => result.current.prefetchDescription("n2"));
+    await waitFor(() => expect(quizApi.describeConcept).toHaveBeenCalledWith("u1", "n2", "CS 330"));
+    await new Promise(r => setTimeout(r, 0));
+
+    let resolve!: (t: string) => void;
+    quizApi.describeConcept.mockReturnValue(new Promise<string>(r => (resolve = r)));
+    rerender({ picked: "n2" });
+    expect(result.current.cardDescriptionPending).toBe(true);
+    resolve("About n2.");
+    await waitFor(() => expect(result.current.cardDescription).toBe("About n2."));
+  });
+
   it("still describes when an unusable ?course= falls back to the primary card", async () => {
     const { result } = renderHook(() =>
       useQuizHome("u1", "", { source: { kind: "tree" }, course: "no-such-course" }));

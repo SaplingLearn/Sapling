@@ -12,6 +12,13 @@ harness (#385); this is deliberately **not** a whole-app sweep.
 
 ## Naming
 
+Topic Checklist uses the `topic-checklist` prefix in
+`src/components/TopicChecklistPanel.tsx`: root `topic-checklist`, controls
+`topic-checklist-toggle`, `topic-checklist-semester`, `topic-checklist-filter`,
+`topic-checklist-refresh`, and repeated `topic-checklist-topic-{topicId}` /
+`topic-checklist-check-{topicId}`. Topic IDs are stable name hashes supplied by
+the API. Course selection on the map uses `graph-course-filter-{courseId}`.
+
 Kebab-case, `<surface>-<element>`:
 
 ```
@@ -68,11 +75,13 @@ renders the element.
 | --- | --- | --- |
 | Sign-in | `signin` | `frontend/src/components/marketing/SignInModal.tsx` (+ the trigger in `src/app/(public)/page.tsx`) |
 | Approval gate | `pending` | `frontend/src/app/pending/page.tsx` |
+| Local sample-data hold screen | `setup` | `frontend/src/app/setting-up/page.tsx` (where a new account waits after signing in to a LOCAL backend while the sample dataset is copied onto it, #715) |
 | Onboarding | `onboarding` | `frontend/src/components/screens/Onboarding.tsx` (the first-run funnel, rendered bare outside `(shell)`) |
 | Upload modal | `upload-modal` | `frontend/src/components/DocumentUploadModal.tsx` |
 | Tutor | `tutor` | `frontend/src/components/chat/ChatPanel.tsx` (rendered by `screens/Learn.tsx`; + the session-resume rows in `src/components/screens/Learn.tsx` itself) |
-| Quiz | `quiz` | `frontend/src/components/quiz/**` — `QuizScreen.tsx` (route root + error card) switching on phase between `home/QuizHome.tsx` (+ `ConceptDialog`/`AdjustDialog`/`PickList`/`QuizSettings`), `question/QuizQuestion.tsx` (+ `AskPanel`/`LeaveDialog`) and `results/QuizResults.tsx` (+ `MissedList`); the ids on the shared `ui/` primitives and `graph/ConceptNeighbourhood.tsx` are passed in from those files as a `testid` prop (#537) |
+| Quiz | `quiz` | `frontend/src/components/quiz/**` — `QuizScreen.tsx` (route root + error card) switching on phase between `home/QuizHome.tsx` (+ `AdjustDialog`/`TopicList`/`LiveNeighbourhood`/`QuizSettings`), `question/QuizQuestion.tsx` (+ `AskPanel`/`LeaveDialog`) and `results/QuizResults.tsx` (+ `MissedList`); the ids on the shared `ui/` primitives and `graph/ConceptNeighbourhood.tsx` are passed in from those files as a `testid` prop (#537) |
 | Knowledge graph | `graph` | `frontend/src/components/graph/KnowledgeGraph.tsx` (wrapper: container root + mode toggle) plus `KnowledgeGraph2D.tsx`/`KnowledgeGraph3D.tsx` (the render/data-layer seam — hidden a11y node list, SVG node/edge marks, zoom controls — added with the #395 graph-integrity journey) |
+| Topic Checklist | `topic-checklist` | `frontend/src/components/TopicChecklistPanel.tsx` (course-scoped outline and study checkmarks) |
 | App shell | `app` | `frontend/src/components/ShellFrame.tsx` (the authed layout frame every `(shell)` route renders inside) |
 | Study rooms | `social` | `frontend/src/components/screens/Social.tsx` (rooms sidebar, chat, overview, study match, directory — added with the #394 two-context journey) |
 | Dashboard | `dashboard` | `frontend/src/components/screens/Dashboard.tsx` (rendered by `(shell)/dashboard/page.tsx`) |
@@ -85,7 +94,10 @@ renders the element.
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
+| Admin allowlist | `allowlist` | `frontend/src/components/screens/admin/AllowlistTab.tsx` (the `allowlist` tab: waitlist with status filters, row selection + bulk approve behind a confirm dialog, per-row "you're in" invite status) |
+| Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
@@ -125,7 +137,15 @@ route:
 | testid | element |
 | --- | --- |
 | `pending-gate` | approval-gate page root |
-| `pending-signout` | "Sign out" |
+| `pending-signout` | "Sign out" / "Use a different account" (same control; the label depends on whether a pending token resolved) |
+| `pending-loading` | "Checking your account…" while the pending-token status is in flight |
+| `pending-not-on-waitlist` | state root: signed in, not approved, not on the waitlist yet |
+| `pending-join` | "Join the waitlist" (only in `pending-not-on-waitlist`) |
+| `pending-join-error` | inline error after a failed join (`role="alert"`) |
+| `pending-on-waitlist` | state root: signed in, not approved, already on the waitlist |
+| `pending-joined` | "You're on the waitlist" confirmation, only right after a join in this visit |
+| `pending-unknown` | state root: no usable pending token (missing, expired, network failure) |
+| `pending-home` | "Back to home" (only in `pending-unknown`) |
 | `onboarding-gate` | first-run onboarding page root |
 | `onboarding-continue` | primary advance button ("Continue" / "Enter Sapling →") |
 | `onboarding-back` | "Back" (absent on step 0) |
@@ -139,6 +159,14 @@ route:
 | `onboarding-course-result-${course.id}` | one course search result |
 | `onboarding-course-remove-${course_code}` | one selected-course chip's remove control |
 | `onboarding-learning-style-${style.id}` | one learning-style radio option (5 render at once) |
+
+### `setup`
+
+| testid | element |
+| --- | --- |
+| `setup-gate` | local sample-data hold screen root (`/setting-up`) |
+| `setup-error` | why the seed failed (failed state only) |
+| `setup-continue` | "Continue anyway" link to `/onboarding` (failed state only) |
 
 ### `upload-modal`
 
@@ -204,21 +232,22 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-resume` | "Resume" on that banner |
 | `quiz-resume-discard` | "Discard" — abandons the attempt server-side (`POST /attempts/{id}/abandon`) and hides it locally |
 | `quiz-proposal` | the "Ready for you" primary proposal card |
+| `quiz-proposal-name` | the card's title — the concept name, or "Practice {course}" / "Review everything due" on a queued card |
+| `quiz-pick-reset` | "← Back to the suggestion", beside the eyebrow once a concept has been picked off the list (the eyebrow then reads "Your pick") |
+| `quiz-definition-pending` | the definition's placeholder while its sentence is fetched (nothing remembered for that concept yet) |
 | `quiz-start` | "Start" on that card |
 | `quiz-cancel` | "Cancel" — leaves for the entry source, or `/dashboard` when there is none |
-| `quiz-adjust` | "adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
-| `quiz-alternative-{nodeId}` | one "Also worth a look" row |
-| `quiz-review-due` | "Review everything due" row |
-| `quiz-pick-open` | "Pick something specific →" |
-| `quiz-pick-list` | the grouped concept list it reveals |
-| `quiz-pick-{nodeId}` | one concept row in that list |
-| `quiz-pick-back` | "← Back" out of that list |
+| `quiz-adjust` | "Adjust" on the card — toggles the adjust dialog (`aria-pressed`) |
+| `quiz-review-due` | "Or review everything due · …" link under the card's Start / Adjust (absent on a due card) |
+| `quiz-pick-list` | the "Choose a topic" list beside the proposal — every in-scope concept, grouped by course, weakest first; capped to the proposal's height and scrolled inside; leaves out the concept already on the card unless a search names it |
+| `quiz-pick-{nodeId}` | one concept row in that list — clicking it makes that concept the card (no dialog); the row the old card's concept returns to carries `data-returned` for a moment |
+| `quiz-topic-search` | the search pill in the toolbar above that list — filters by concept name or course code; Escape clears |
+| `quiz-course-all` / `quiz-course-{courseId}` | the course pills in that toolbar (`aria-pressed`); only drawn for 2+ courses |
+| `quiz-topic-search-empty` | "No concepts match …" when the search finds nothing |
+| `quiz-neighbourhood` | the live neighbourhood window under the proposal (`KnowledgeGraph2D` inside; its own `graph-*` ids apply) |
 | `quiz-empty-state` | the home's empty states (`ui/EmptyState`) — no courses, empty tree, or nothing left to propose; they are alternatives, so only one ever mounts |
 | `quiz-home-error` | the home's load-failure card |
 | `quiz-home-retry` | "Retry" inside it |
-| `quiz-concept-dialog` | the concept dialog opened from an alternative or a pick row |
-| `quiz-concept-start` | "Start · {count} {difficulty}" inside it |
-| `quiz-concept-cancel` | its "Cancel" |
 | `quiz-adjust-dialog` | "Adjust this quiz" dialog |
 | `quiz-adjust-done` | its "Done" — keeps the settings without starting |
 | `quiz-adjust-start` | its "Start · {count} {difficulty}" — saves and starts in one |
@@ -227,6 +256,12 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
+| `quiz-written-answer` | the single-line written-answer input (`WrittenAnswer`) for short answers, numeric answers and algebra; Enter submits |
+| `quiz-format-hint` | the visible answer-format rules for a written question (what the grader accepts); describes the written-answer input |
+| `quiz-key-{id}` | a symbol key under a numeric (`minus`/`fraction`/`percent`/`exponent`) or algebra (`squared`/`power`/`brackets`/`times`/`divide`/`minus`) input; inserts at the cursor |
+| `quiz-written-readback` | the live read-back under a numeric or algebra input ("Reads as 0.75", the superscript preview, or why it can't be graded); `data-ok` says which |
+| `quiz-material-context` | reports whether retrieved course material, catalog context, or general knowledge was supplied |
+| `quiz-seg-format` | question-format selector; each option uses `quiz-seg-format-{value}` |
 | `quiz-answer-option-{label}` | one answer choice (`ui/AnswerOption`), suffixed with its label (`A`…) |
 | `quiz-submit-answer` | the footer's primary button while the answer is unrevealed |
 | `quiz-next` | the same footer button once the verdict is showing — "Next question" / "See results" |
@@ -405,8 +440,8 @@ entered the lint block new, so there is no baselined backlog.
 
 Added with the #620 feature-flags admin UI (ADR 0029). `admin-tab-{tab}` is
 on every button in `Admin.tsx`'s tab bar (one per `Tab` value — `users`,
-`allowlist`, `roles`, `flags`, `achievements`, `cosmetics`, `analytics`,
-`audit`, `feedback`); Task 8's E2E journey opens the flags tab via
+`allowlist`, `email`, `roles`, `flags`, `achievements`, `cosmetics`,
+`analytics`, `audit`, `feedback`); Task 8's E2E journey opens the flags tab via
 `admin-tab-flags`. The tab's own content is `admin/FeatureFlags.tsx` (the
 list) and `admin/FlagPanel.tsx` (the right-hand panel), both new files with no
 baselined backlog — every button/input in them is tagged.
@@ -438,6 +473,65 @@ baselined backlog — every button/input in them is tagged.
 | `flag-explain-input-{key}` | "Check a student" input — name/email search, or a raw user id + Enter (`adminExplainFlag`) |
 | `flag-explain-user-{key}-{userId}` | one student search result there; clicking it runs the check |
 | `flag-explain-result-{key}` | the answer in words, e.g. `Hidden: from the Admin role override` |
+
+### `admin-user`
+
+Added with the waitlist-approval-at-sign-in change (PR #741). Admin → Users
+lists only approved accounts; the one per-row action is "Remove access",
+which confirms in an in-page `Dialog` before calling `adminRemoveUserAccess`
+(`PATCH /api/admin/users/{id}/unapprove`). Only these elements are tagged —
+`Admin.tsx` stays out of the lint `files` list (see Enforcement).
+
+| testid | element |
+| --- | --- |
+| `admin-users-summary` | the "N users" count line above the table |
+| `admin-user-remove-access-{userId}` | a row's "Remove access" button; opens the confirm dialog, never calls the API directly |
+| `admin-user-remove-body` | the confirm dialog's explanation (what removal does) |
+| `admin-user-remove-confirm` / `admin-user-remove-cancel` | the confirm dialog's buttons; confirm calls `adminRemoveUserAccess` then reloads the list |
+
+### `allowlist`
+
+The waitlist (`newsletter_emails`). Only signup rows (not approved, not
+joined) are selectable; selection survives filter changes, and the confirm
+dialog lists every selected address.
+
+| testid | element |
+| --- | --- |
+| `allowlist-search` | email search input |
+| `allowlist-add-input` / `allowlist-add` | add-an-address input and its "Allowlist" button (approves + sends the invite) |
+| `allowlist-filter-{all\|signup\|approved\|joined}` | status filter chips (with counts) |
+| `allowlist-select-all` | header checkbox: selects every selectable row under the current filter |
+| `allowlist-select-{email}` | a signup row's checkbox |
+| `allowlist-row-{email}` | a table row |
+| `allowlist-invite-{email}` | the row's "you're in" email status chip (`invite_status`) |
+| `allowlist-toggle-{email}` | the row's Approve / Revoke button |
+| `allowlist-bulk-approve` | "Approve selected (N)"; opens the confirm dialog |
+| `allowlist-bulk-confirm-text` | the confirm dialog's summary (count, and the not-configured caveat) |
+| `allowlist-bulk-confirm` / `allowlist-bulk-cancel` | the confirm dialog buttons; confirm calls `adminApproveAllowlistBulk` |
+
+### `email`
+
+Admin broadcasts. The final send is gated by typing the recipient count (or
+`SEND`) in the confirm dialog.
+
+| testid | element |
+| --- | --- |
+| `email-not-configured-banner` | shown on both the allowlist and email tabs when `GET /api/admin/email/status` says Resend isn't configured |
+| `email-subject` / `email-subject-count` | subject input and its 200-char counter |
+| `email-body` / `email-body-count` | plain-text body textarea and its 20000-char counter |
+| `email-variables` | the "Personalize:" chip row, one chip per `variables` entry from `GET /api/admin/email/status` (hidden when there are none) |
+| `email-variable-{key}` | one variable chip (`first_name`/`name`/`email`/`app_link`/`signin_link`); click inserts `{{key}}` at the caret of the last-focused field (subject or body; body by default) |
+| `email-unknown-variables` | inline warning listing the preview's `unknown_variables`; while shown, `email-send` and `email-send-test` are disabled |
+| `email-audience-{key}` | one audience radio (`waitlist_all`/`waitlist_pending`/`waitlist_approved_not_joined`/`users_all`) |
+| `email-preview` / `email-preview-subject` | the preview pane and its subject line |
+| `email-preview-frame` | sandboxed iframe whose `srcdoc` is the server-rendered email from `POST /api/admin/email/broadcasts/preview` (debounced) |
+| `email-preview-error` | inline "Couldn't load the preview." when the preview request fails |
+| `email-send-test` | "Send test to me" |
+| `email-send` | "Send to N people"; opens the confirm dialog |
+| `email-send-confirm-input` | the typed-confirmation input |
+| `email-send-confirm` / `email-send-cancel` | the confirm dialog buttons; confirm calls `adminSendBroadcast` |
+| `email-history` | the history table |
+| `email-history-row-{id}` / `email-history-status-{id}` | one broadcast row and its status chip |
 
 ### `profile`
 

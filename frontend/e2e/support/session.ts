@@ -45,19 +45,13 @@ type StorageState = {
   }>;
 };
 
-/** Mint a session for a seeded rich-* user and return it as storageState.
- * `displayName` mirrors what setActiveUser would persist after a real
- * sign-in (the user's profile name per db/seed_local_rich.py).
- *
- * `opts.omitLocalStorage` deliberately leaves out the `sapling_user`
- * localStorage entry, minting a cookie-ONLY storageState — the shape a real
- * browser has when a valid `sapling_session` cookie outlives cleared site
- * data (#430). Defaults to false so every existing caller is unaffected. */
-export async function mintStorageState(
+/** POST /api/auth/test-login (#381) through the frontend origin: the raw
+ * `sapling_session` token for `userId`. mintStorageState wraps it as a
+ * storageState; a journey that drives the same-tab sign-in callback passes
+ * it as `auth_token` instead (local-seed.spec.ts). */
+export async function mintSessionToken(
   userId: string,
-  displayName: string,
-  opts?: { omitLocalStorage?: boolean },
-): Promise<StorageState> {
+): Promise<{ token: string; expiresIn: number }> {
   const res = await fetch(`${FRONTEND_URL}/api/auth/test-login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -78,16 +72,33 @@ export async function mintStorageState(
         JSON.stringify(body).slice(0, 200),
     );
   }
+  return { token: body.token, expiresIn: body.expires_in ?? 3600 };
+}
+
+/** Mint a session for a seeded rich-* user and return it as storageState.
+ * `displayName` mirrors what setActiveUser would persist after a real
+ * sign-in (the user's profile name per db/seed_local_rich.py).
+ *
+ * `opts.omitLocalStorage` deliberately leaves out the `sapling_user`
+ * localStorage entry, minting a cookie-ONLY storageState — the shape a real
+ * browser has when a valid `sapling_session` cookie outlives cleared site
+ * data (#430). Defaults to false so every existing caller is unaffected. */
+export async function mintStorageState(
+  userId: string,
+  displayName: string,
+  opts?: { omitLocalStorage?: boolean },
+): Promise<StorageState> {
+  const { token, expiresIn } = await mintSessionToken(userId);
 
   const { hostname } = new URL(FRONTEND_URL);
   return {
     cookies: [
       {
         name: "sapling_session",
-        value: body.token,
+        value: token,
         domain: hostname,
         path: "/",
-        expires: Math.floor(Date.now() / 1000) + (body.expires_in ?? 3600),
+        expires: Math.floor(Date.now() / 1000) + expiresIn,
         httpOnly: true,
         secure: true,
         sameSite: "Lax",

@@ -87,7 +87,7 @@ class TestQuizConfigEndpoint:
         # Same token as the agent schema (agents/quiz.py::QuizQuestionType) —
         # inventing a parallel "mcq" vocabulary would recreate the exact
         # client-offers-what-the-server-rejects class this endpoint fixes.
-        assert data["question_types"] == ["multiple_choice"]
+        assert data["question_types"] == ["multiple_choice", "short_answer", "numeric", "symbolic", "mixed"]
 
     def test_config_matches_pydantic_model_bounds(self):
         """The Pydantic cap and the config endpoint must read the same named

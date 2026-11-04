@@ -8,11 +8,17 @@ ENCRYPTION_KEY. Refuses to run against a non-local SUPABASE_URL.
 
 Run (from backend/ with the local stack up and backend/.env active):
     python -m db.seed_local_rich
+
+Pass --owner-email or --owner-user-id after signing in to populate your own
+account. Owner mode inserts missing sample rows without resetting existing data.
+A local backend does this by itself on sign-in (services/local_seed_watcher.py,
+which calls seed_owner); the flags are the manual fallback.
 """
 from __future__ import annotations
 
 import os
 import sys
+import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,8 +29,12 @@ from services.encryption import encrypt_if_present, encrypt_json  # noqa: E402
 
 
 def _guard_local() -> None:
-    url = (os.getenv("SUPABASE_URL") or "").strip()
-    if "127.0.0.1" not in url and "localhost" not in url:
+    # The two halves of h.is_local_backend, split only for the message: the
+    # CLI, the owner-seed watcher and its status route share one definition.
+    if not h.local_app_env():
+        sys.exit("REFUSING: rich seeding requires APP_ENV=local or APP_ENV=test.")
+    if not h.local_supabase_url():
+        url = (os.getenv("SUPABASE_URL") or "").strip()
         sys.exit(f"REFUSING: SUPABASE_URL {url!r} is not local — seed_local_rich only writes to local.")
 
 
@@ -78,8 +88,8 @@ ENR_SECOND_HIST_F25 = "rich-enr-second-hist200-f25"
 # ─── Seed steps ──────────────────────────────────────────────────────────────
 
 
-def seed_school() -> None:
-    h.upsert(
+def seed_school(writer=h) -> None:
+    writer.upsert(
         "schools",
         {"id": SCHOOL_ID, "name": "Rich Local University", "slug": "rich-local"},
         on_conflict="slug",
@@ -102,9 +112,9 @@ _COURSES = [
 ]
 
 
-def seed_courses() -> None:
+def seed_courses(writer=h) -> None:
     for cid, code, name, dept, credits, desc in _COURSES:
-        h.upsert(
+        writer.upsert(
             "courses",
             {
                 "id": cid,
@@ -139,9 +149,9 @@ _OFFERINGS = [
 ]
 
 
-def seed_offerings() -> None:
+def seed_offerings(writer=h) -> None:
     for oid, cid, term_id, instructor, meeting, location in _OFFERINGS:
-        h.upsert(
+        writer.upsert(
             "course_offerings",
             {
                 "id": oid,
@@ -191,9 +201,9 @@ _PROFILE_ENCRYPTED_FIELDS = ("name", "first_name", "last_name")
 _PROFILE_PLAIN_FIELDS = ("username", "year", "majors", "minors", "learning_style")
 
 
-def seed_users() -> None:
+def seed_users(writer=h) -> None:
     for uid, email, onboarding_completed, is_approved, streak_count, profile in _USERS:
-        h.upsert(
+        writer.upsert(
             "users",
             {
                 "id": uid,
@@ -213,13 +223,13 @@ def seed_users() -> None:
             for key in _PROFILE_PLAIN_FIELDS:
                 if key in profile:
                     row[key] = profile[key]
-            h.upsert("user_profiles", row, on_conflict="user_id")
+            writer.upsert("user_profiles", row, on_conflict="user_id")
 
     rid = _admin_role_id()
     if rid:
         # user_roles has PK (user_id, role_id) and no `id` column — upsert on
         # the composite key rather than insert_if_absent (which assumes `id`).
-        h.upsert(
+        writer.upsert(
             "user_roles",
             {"user_id": USER_ADMIN, "role_id": rid},
             on_conflict="user_id,role_id",
@@ -247,7 +257,7 @@ _ENROLLMENTS = [
 ]
 
 
-def seed_enrollments() -> None:
+def seed_enrollments(writer=h) -> None:
     for eid, uid, off_id, color, nickname, curve_mode, avg_target, sd_delta in _ENROLLMENTS:
         row = {
             "id": eid,
@@ -260,7 +270,7 @@ def seed_enrollments() -> None:
         if curve_mode == "curved":
             row["curve_avg_target"] = avg_target
             row["curve_sd_delta"] = sd_delta
-        h.upsert("enrollments", row, on_conflict="user_id,offering_id")
+        writer.upsert("enrollments", row, on_conflict="user_id,offering_id")
 
 
 # Graph nodes keyed on the ABSTRACT course_id (mastery is cumulative across
@@ -317,11 +327,11 @@ _MASTERY_EVENTS = [
 ]
 
 
-def seed_graph() -> None:
+def seed_graph(writer=h) -> None:
     for course_id, nodes in _GRAPH_NODES.items():
         for node_id, concept, score in nodes:
             subject = concept.split()[0]
-            h.upsert(
+            writer.upsert(
                 "graph_nodes",
                 {
                     "id": node_id,
@@ -336,7 +346,7 @@ def seed_graph() -> None:
             )
 
     for edge_id, src_id, tgt_id, rel_type, strength in _GRAPH_EDGES:
-        h.upsert(
+        writer.upsert(
             "graph_edges",
             {
                 "id": edge_id,
@@ -350,7 +360,7 @@ def seed_graph() -> None:
         )
 
     for node_id, event_id, delta, reason in _MASTERY_EVENTS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "node_mastery_events",
             event_id,
             {"node_id": node_id, "delta": delta, "reason": reason},
@@ -400,9 +410,9 @@ _ASSIGNMENTS = [
 ]
 
 
-def seed_gradebook() -> None:
+def seed_gradebook(writer=h) -> None:
     for cat_id, enr_id, name, weight, drop_lowest in _CATEGORIES:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "gradebook_categories",
             cat_id,
             {
@@ -414,7 +424,7 @@ def seed_gradebook() -> None:
         )
 
     for asg_id, enr_id, cat_id, title, due, atype, source, possible, earned in _ASSIGNMENTS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "assignments",
             asg_id,
             {
@@ -465,9 +475,9 @@ _ROOM_MESSAGES = [
 ]
 
 
-def seed_rooms() -> None:
+def seed_rooms(writer=h) -> None:
     for room_id, name, invite_code, created_by in _ROOMS:
-        h.upsert(
+        writer.upsert(
             "rooms",
             # owner_id mirrors create_room's semantics (#405): ownership starts
             # with the creator. 0038 makes it NOT NULL and SQL has no
@@ -479,14 +489,14 @@ def seed_rooms() -> None:
         )
 
     for room_id, user_id in _ROOM_MEMBERS:
-        h.upsert(
+        writer.upsert(
             "room_members",
             {"room_id": room_id, "user_id": user_id},
             on_conflict="room_id,user_id",
         )
 
     for msg_id, room_id, user_id, user_name, text in _ROOM_MESSAGES:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "room_messages",
             msg_id,
             {
@@ -530,9 +540,9 @@ _DOCUMENTS = [
 ]
 
 
-def seed_notes_documents() -> None:
+def seed_notes_documents(writer=h) -> None:
     for note_id, user_id, off_id, title, body, tags in _NOTES:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "notes",
             note_id,
             {
@@ -546,7 +556,7 @@ def seed_notes_documents() -> None:
         )
 
     for doc_id, user_id, off_id, file_name, category, summary, c_name, c_desc, extracted in _DOCUMENTS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "documents",
             doc_id,
             {
@@ -579,9 +589,9 @@ _FLASHCARDS = [
 ]
 
 
-def seed_flashcards() -> None:
+def seed_flashcards(writer=h) -> None:
     for fc_id, user_id, off_id, topic, front, back in _FLASHCARDS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "flashcards",
             fc_id,
             {
@@ -625,9 +635,9 @@ _STUDY_GUIDES = [
 ]
 
 
-def seed_study_guides() -> None:
+def seed_study_guides(writer=h) -> None:
     for guide_id, user_id, off_id, exam_id, generated_at, content in _STUDY_GUIDES:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "study_guides",
             guide_id,
             {
@@ -641,18 +651,14 @@ def seed_study_guides() -> None:
         )
 
 
-def seed_room_summaries() -> None:
+def seed_room_summaries(writer=h) -> None:
     # #518: room_summaries.summary is 🔒. PK is room_id (no id column), so this
     # can't go through insert_if_absent.
-    if not table("room_summaries").select("room_id", filters={"room_id": f"eq.{ROOM_STUDY}"}):
-        table("room_summaries").insert({
-            "room_id": ROOM_STUDY,
-            "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
-            "member_hash": "rich-member-hash-v1",
-        })
-        h.record("room_summaries", created=True)
-    else:
-        h.record("room_summaries", created=False)
+    writer.insert_by_keys("room_summaries", {
+        "room_id": ROOM_STUDY,
+        "summary": encrypt_if_present("The group is reviewing recursion before the midterm."),
+        "member_hash": "rich-member-hash-v1",
+    }, "room_id")
 
 
 # (qa_id, concept_node_id, difficulty, score, total, questions_json, answers_json, completed_at)
@@ -711,9 +717,9 @@ _OFFERING_CONCEPT_STATS = [
 ]
 
 
-def seed_offering_concept_stats() -> None:
+def seed_offering_concept_stats(writer=h) -> None:
     for stats_id, off_id, concept, misconceptions in _OFFERING_CONCEPT_STATS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "offering_concept_stats",
             stats_id,
             {
@@ -732,9 +738,9 @@ def seed_offering_concept_stats() -> None:
         )
 
 
-def seed_quiz() -> None:
+def seed_quiz(writer=h) -> None:
     for qa_id, node_id, difficulty, score, total, questions, answers, completed_at in _QUIZ_ATTEMPTS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "quiz_attempts",
             qa_id,
             {
@@ -751,7 +757,7 @@ def seed_quiz() -> None:
         )
 
     # #521: quiz_context is 🔒 — one row so the roundtrip test has a baseline.
-    h.insert_if_absent(
+    writer.insert_if_absent(
         "quiz_context",
         "rich-qc-cs-variables",
         {
@@ -766,8 +772,8 @@ def seed_quiz() -> None:
 
 # #520: feedback/issue_reports are 🔒 (comment/topic/description) — seed them
 # encrypted so the roundtrip test + ciphertext oracle have baseline rows.
-def seed_feedback() -> None:
-    h.insert_if_absent(
+def seed_feedback(writer=h) -> None:
+    writer.insert_if_absent(
         "feedback",
         "rich-fb-1",
         {
@@ -779,7 +785,7 @@ def seed_feedback() -> None:
             "topic": encrypt_if_present("chat"),
         },
     )
-    h.insert_if_absent(
+    writer.insert_if_absent(
         "issue_reports",
         "rich-issue-1",
         {
@@ -819,9 +825,9 @@ _MESSAGES = [
 ]
 
 
-def seed_sessions() -> None:
+def seed_sessions(writer=h) -> None:
     for sess_id, user_id, off_id, mode, topic, name, summary in _SESSIONS:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "sessions",
             sess_id,
             {
@@ -836,7 +842,7 @@ def seed_sessions() -> None:
         )
 
     for msg_id, sess_id, role, content in _MESSAGES:
-        h.insert_if_absent(
+        writer.insert_if_absent(
             "messages",
             msg_id,
             {
@@ -853,34 +859,95 @@ _SUMMARY_ORDER = [
     "enrollments", "graph_nodes", "graph_edges", "node_mastery_events",
     "gradebook_categories", "assignments", "rooms", "room_members", "room_messages",
     "room_summaries",
-    "notes", "documents", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
+    "notes", "documents", "course_chunks", "flashcards", "study_guides", "quiz_attempts", "quiz_context",
     "sessions", "messages", "feedback", "issue_reports",
     "offering_concept_stats",
 ]
 
 
-def main() -> None:
+def _seed_dataset(writer=h) -> None:
+    for step in (
+        seed_school, seed_courses, seed_offerings, seed_users, seed_enrollments,
+        seed_graph, seed_gradebook, seed_rooms, seed_notes_documents,
+        seed_flashcards, seed_study_guides, seed_room_summaries, seed_quiz,
+        seed_offering_concept_stats, seed_feedback, seed_sessions,
+    ):
+        step(writer)
+
+
+def _seed_owner_chunks(writer) -> None:
+    # Synthetic nonzero embeddings exercise local retrieval without billable
+    # model calls. They are fixtures, not semantic embeddings of these texts.
+    embedding = [1.0] + [0.0] * 767
+    # course_chunks keys on the course CODE (what index_document writes and
+    # retrieve_chunks filters on), not the courses-table id.
+    codes = {cid: code for cid, code, *_ in _COURSES}
+    course_code_by_offering = {oid: codes[cid] for oid, cid, *_ in _OFFERINGS}
+    for doc_id, _, off_id, _, category, _, _, _, extracted in _DOCUMENTS:
+        writer.insert_if_absent("course_chunks", f"{doc_id}-chunk-0", {
+            "course_id": course_code_by_offering[off_id],
+            "doc_id": doc_id,
+            "uploader_id": USER_ACTIVE,
+            "chunk_index": 0,
+            "chunk_text": encrypt_if_present(extracted),
+            "embedding": embedding,
+            "category": category,
+            "visibility": "private",
+            "semester": "current",
+        })
+
+
+def seed_owner(owner: dict, *, report: bool = True) -> int:
+    """Copy the rich dataset onto an existing account; returns rows created.
+
+    `owner` is a users row with at least `id` (and `onboarding_completed`).
+    The CLI prints the per-table summary (`report=True`); the backend's
+    local-seed watcher passes report=False and logs the count instead.
+    Raises — never exits — when the backend is not local, so a watcher thread
+    gets an ordinary exception. Not re-entrant: h.counts is process-global.
+    """
+    if not h.is_local_backend():
+        raise RuntimeError("REFUSING: the owner seed only writes to a local stack.")
+    from db.seed_local_owner import OwnerSeedWriter
+
+    h.reset_counts()
+    writer = OwnerSeedWriter(owner["id"])
+    _seed_dataset(writer)
+    _seed_owner_chunks(writer)
+    # OAuth creates the profile; retain its name, email, and settings. Completing
+    # onboarding only after seeding succeeds lets a fresh sign-in see the dashboard
+    # (and is what tells the watcher a seed finished rather than stopped midway).
+    if not owner.get("onboarding_completed"):
+        table("users").update({"onboarding_completed": True}, filters={"id": f"eq.{owner['id']}"})
+    if report:
+        return h.print_summary(_SUMMARY_ORDER, f"Seed summary (owner {owner['id']}):")
+    return sum(h.counts[name]["created"] for name in _SUMMARY_ORDER if name in h.counts)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Seed realistic data into a local Supabase stack.")
+    owner_group = parser.add_mutually_exclusive_group()
+    owner_group.add_argument("--owner-email", help="Email of an existing local Google account")
+    owner_group.add_argument("--owner-user-id", help="ID of an existing local account")
+    # Programmatic callers (integration/reset fixtures) retain the no-flag seed.
+    args = parser.parse_args(argv if argv is not None else [])
     _guard_local()
     h.reset_counts()
-    seed_school()
-    seed_courses()
-    seed_offerings()
-    seed_users()
-    seed_feature_flags()
-    seed_enrollments()
-    seed_graph()
-    seed_gradebook()
-    seed_rooms()
-    seed_notes_documents()
-    seed_flashcards()
-    seed_study_guides()
-    seed_room_summaries()
-    seed_quiz()
-    seed_offering_concept_stats()
-    seed_feedback()
-    seed_sessions()
-    h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
+    if args.owner_email is None and args.owner_user_id is None:
+        _seed_dataset()
+        # Global config, not per-user data: the owner seed leaves flags alone.
+        seed_feature_flags()
+        h.print_summary(_SUMMARY_ORDER, "Seed summary (rich local dataset):")
+        return
+
+    from db.seed_local_owner import resolve_owner
+
+    try:
+        owner = resolve_owner(email=args.owner_email, user_id=args.owner_user_id)
+    except ValueError as exc:
+        parser.exit(1, f"{exc}\n")
+    seed_owner(owner)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

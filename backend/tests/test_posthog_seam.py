@@ -1624,7 +1624,10 @@ class TestProviderPassthrough:
     @pytest.mark.parametrize("provider, model, expect", [
         (None, "gemini-2.5-flash", "gemini"),
         ("", "google-gla:gemini-2.5-flash", "google-gla"),
-        ("  ", "jev-1.13.0", "unknown"),
+        ("  ", "jev-1.13.0", "typesafe"),
+        (None, "claude-haiku-5-5", "anthropic"),
+        (None, "claude-sonnet-5-5", "anthropic"),
+        (None, "mystery-model", "unknown"),
     ])
     def test_derived_only_when_missing(self, provider, model, expect, fake_client):
         posthog_client.capture_ai_generation(

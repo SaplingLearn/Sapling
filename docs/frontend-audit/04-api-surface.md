@@ -37,7 +37,6 @@ Conventions:
 | GET | `/api/auth/google` | `signin/page.tsx:95`, `OnboardingFlow:208`, middleware fallbacks | Start OAuth (hard redirect, not fetch) |
 | GET | `/api/auth/google/callback` | Backend only (redirect target) | Receives Google auth code, redirects to `/signin/callback?...` |
 | GET | `/api/auth/me?user_id=` | `UserContext.fetchProfileData`, `middleware.ts` (2x), `/api/auth/session` fallback, `/signin/callback`, `/signin` | Session validity + `is_approved` + `onboarding_completed` + roles/cosmetics |
-| GET | `/api/users` | `UserContext` | List users (for `userName` reconciliation) |
 
 **Next.js route handler** (local):
 | Method | Path | Caller | Purpose |
@@ -243,7 +242,6 @@ Code that uses `fetch` directly instead of `lib/api.ts`:
 | `middleware.ts` | `${API_URL}/api/auth/me?user_id=` | Edge runtime — can't import app code |
 | `/api/auth/session` route handler | `${API_URL}/api/auth/me?user_id=` | Edge runtime |
 | `UserContext.fetchProfileData` | `${API_URL}/api/auth/me?user_id=` | Legacy — could migrate to `lib/api.ts` |
-| `UserContext` mount effect | `${API_URL}/api/users` | Legacy — could migrate |
 | `/dashboard` course typeahead | `${API_URL}/api/onboarding/courses?q=` | Legacy — could migrate |
 | `OnboardingFlow` step 4 | `${API_URL}/api/onboarding/courses?q=` | Component-local, could migrate |
 | `/study/StudyClient` | `/api/study-guide/*` | Anomaly — this whole feature skips `lib/api.ts` |

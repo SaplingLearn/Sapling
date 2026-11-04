@@ -12,6 +12,7 @@ import {
   type OnboardingCourse,
   type OnboardingProfilePayload,
 } from "@/lib/api";
+import { onboardingRedirect } from "@/lib/localSeed";
 
 type LearningStyleId = OnboardingProfilePayload["learning_style"];
 
@@ -77,6 +78,14 @@ export function Onboarding() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [hydrated, setHydrated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // #715: on a local backend this account is getting (or has) the sample
+  // dataset; the hold screen waits for it and moves on to the dashboard.
+  useEffect(() => {
+    let cancelled = false;
+    void onboardingRedirect().then(route => { if (route && !cancelled) router.replace(route); });
+    return () => { cancelled = true; };
+  }, [router]);
 
   useEffect(() => {
     const d = loadDraft();

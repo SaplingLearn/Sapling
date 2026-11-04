@@ -577,13 +577,15 @@ def capture_ai_generation(
 
 
 def _provider_of(model: str) -> str:
-    """``provider:model`` → provider; a bare Gemini id → gemini."""
+    """``provider:model`` → provider; a bare id → the ``llm_usage.provider``
+    label (``llm_pricing.usage_provider``: claude-* → anthropic, gemini-* →
+    gemini, jev-* → typesafe), so PostHog and the in-house rollups agree."""
     name = (model or "").strip().lower()
     if ":" in name:
         return name.split(":", 1)[0]
-    if name.startswith("gemini"):
-        return "gemini"
-    return "unknown"
+    from services.llm_pricing import usage_provider
+
+    return usage_provider(name)
 
 
 def capture_exception(

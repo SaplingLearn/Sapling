@@ -33,6 +33,8 @@ class TestPaginateUsers:
         assert result["users"][0]["name"] == "Decrypted Name"
         assert result["users"][0]["email"] == "d:enc2"
         users_tbl.select_with_count.assert_called_once()
+        # Admin → Users lists people with access; the waiting live in Allowlist.
+        assert users_tbl.select_with_count.call_args.kwargs["filters"] == {"is_approved": "eq.true"}
 
     def test_query_filters_after_decrypt(self):
         rows = [
@@ -58,6 +60,7 @@ class TestPaginateUsers:
             t.side_effect = by_name
 
             result = paginate_users(q="alice", page=1, page_size=10)
+        assert users_tbl.select.call_args.kwargs["filters"] == {"is_approved": "eq.true"}
 
         # Matches on the user_profiles-sourced name.
         assert result["total"] == 1
@@ -108,3 +111,66 @@ class TestPaginateUsers:
             "icon": None, "description": None, "is_staff_assigned": True,
             "is_earnable": False, "display_priority": 100,
         }]
+
+
+def _foreign_ciphertext(plaintext: str) -> str:
+    """Ciphertext in the on-disk shape, sealed under a key this process lacks —
+    what a row written by a backend with a different ENCRYPTION_KEY looks like."""
+    import base64
+    import os
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    nonce = os.urandom(12)
+    ct = AESGCM(os.urandom(32)).encrypt(nonce, plaintext.encode(), None)
+    return base64.b64encode(nonce + ct).decode()
+
+
+class TestUndecryptableRows:
+    """A row sealed under another ENCRYPTION_KEY must not render its ciphertext
+    as the user's name/email: decrypt_if_present fails soft and hands it back."""
+
+    def _run(self, rows, names, q=None):
+        with patch("services.users_search.table") as t, \
+             patch("services.users_search.get_display_names", return_value=names):
+            users_tbl = MagicMock()
+            users_tbl.select_with_count.return_value = (rows, len(rows))
+            users_tbl.select.return_value = rows
+            roles_tbl = MagicMock()
+            roles_tbl.select.return_value = []
+            t.side_effect = lambda name: users_tbl if name == "users" else roles_tbl
+            return paginate_users(q=q, page=1, page_size=50)
+
+    def _rows(self):
+        from services.encryption import encrypt
+        return [
+            {"id": "u1", "email": _foreign_ciphertext("jackhe@bu.edu"), "is_approved": False,
+             "created_at": "x", "last_sign_in_at": None},
+            {"id": "u2", "email": encrypt("alee7@bu.edu"), "is_approved": True,
+             "created_at": "x", "last_sign_in_at": None},
+            # Legacy plaintext still reads through as-is.
+            {"id": "u3", "email": "mober@bu.edu", "is_approved": True,
+             "created_at": "x", "last_sign_in_at": None},
+        ]
+
+    def test_foreign_ciphertext_is_blanked_and_flagged(self):
+        # get_display_names fails soft too: the foreign name comes back raw.
+        names = {"u1": _foreign_ciphertext("Jack He"), "u2": "Aerim Lee"}
+        result = self._run(self._rows(), names)
+        by_id = {u["id"]: u for u in result["users"]}
+
+        assert by_id["u1"]["email"] is None
+        assert by_id["u1"]["name"] == ""
+        assert by_id["u1"]["undecryptable"] is True
+
+        assert by_id["u2"]["email"] == "alee7@bu.edu"
+        assert by_id["u2"]["name"] == "Aerim Lee"
+        assert by_id["u2"]["undecryptable"] is False
+
+        assert by_id["u3"]["email"] == "mober@bu.edu"
+        assert by_id["u3"]["name"] == ""
+        assert by_id["u3"]["undecryptable"] is False
+
+    def test_search_never_matches_ciphertext(self):
+        rows = self._rows()
+        needle = rows[0]["email"][16:24]
+        result = self._run(rows, {}, q=needle)
+        assert result["total"] == 0

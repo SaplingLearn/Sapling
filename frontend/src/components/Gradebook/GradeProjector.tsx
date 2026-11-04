@@ -237,7 +237,7 @@ export function GradeProjector({
       <div
         style={{
           padding: "32px 0",
-          fontFamily: "var(--font-serif), var(--font-spectral), 'Spectral', Georgia, serif",
+          fontFamily: "var(--font-serif), var(--font-aleo), 'Aleo', Georgia, serif",
           fontSize: 15,
           lineHeight: 1.6,
           color: "var(--text-dim)",
@@ -430,7 +430,7 @@ export function GradeProjector({
           </div>
           <div
             style={{
-              fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+              fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
               fontSize: 18,
               fontWeight: 500,
               color: percentColor(current),
@@ -517,7 +517,7 @@ function Stat({
       </div>
       <div
         style={{
-          fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif",
+          fontFamily: "var(--font-display), 'Aleo', Georgia, serif",
           fontWeight: emphasis ? 600 : 500,
           fontSize: emphasis ? 22 : 20,
           color: muted ? "var(--text-dim)" : "var(--text)",

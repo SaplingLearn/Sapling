@@ -20,7 +20,7 @@
  * webgl/webgl2/experimental-webgl branches of HTMLCanvasElement.getContext
  * BEFORE any app script runs — exactly the API surface three.js probes —
  * and seeds the poisoned `"3d"` mode the way a real profile would carry it.
- * 2D canvas contexts stay real (the AtmosphericBackdrop uses one).
+ * 2D canvas contexts stay real.
  *
  * Test 2 pins the POSITIVE path in a real browser: with genuine WebGL2
  * (headless Chromium's SwiftShader), the toggle must stay enabled — a probe

@@ -407,7 +407,7 @@ class TestModelPref:
         """Default-parity invariant (PR #78/#71, folded here from the deleted
         TestResolveLegacyModel in #151a): when body.model_pref is None,
         `_resolve_model_pref` returns no override, so the run lands on the
-        agent's default model — gemini-2.5-pro per
+        agent's default model — claude-sonnet-5-5 per
         agents/_providers.py:_DEFAULTS["chat_tutor"] — which is exactly the
         tier an explicit "smart" pref selects. A drift in either direction
         (a different agent default, or a "smart" map entry pointing
@@ -418,7 +418,7 @@ class TestModelPref:
         assert _resolve_model_pref(None) is None, (
             "no pref must fall through to the agent default, not build an override"
         )
-        assert _PREF_MODEL_NAMES["smart"] == _DEFAULTS["chat_tutor"] == "gemini-2.5-pro"
+        assert _PREF_MODEL_NAMES["smart"] == _DEFAULTS["chat_tutor"] == "claude-sonnet-5-5"
 
 
 # ── POST /api/learn/chat (agent path + legacy fallback) ──────────────────────
@@ -679,8 +679,54 @@ class TestChatViaAgent:
         assert inserts[0]["content"] == "ENC:USER_PROMPT"
         assert inserts[1]["content"] == "ENC:MODEL_REPLY"
 
+    def test_text_written_before_a_tool_call_is_persisted_too(self):
+        """ADR 0030: Claude explains, calls update_mastery_tool, then adds a
+        line — two text parts in two model responses. `.output` is only the
+        LAST one; the persisted reply must be the whole turn, joined the way
+        the stream renders it (`join_text_parts`)."""
+        from pydantic_ai.messages import (
+            ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart,
+        )
+        from tests.agent_run_fakes import FakeRunResult
+
+        result = FakeRunResult("I've nudged your mastery.", [
+            ModelResponse(parts=[
+                TextPart(content="Big-O describes growth."),
+                ToolCallPart(tool_name="update_mastery_tool", args={}, tool_call_id="t1"),
+            ]),
+            ModelRequest(parts=[ToolReturnPart(tool_name="update_mastery_tool", content="ok", tool_call_id="t1")]),
+            ModelResponse(parts=[TextPart(content="I've nudged your mastery.")]),
+        ])
+        agent = MagicMock()
+        agent.run = AsyncMock(return_value=result)
+        inserts: list[dict] = []
+
+        def factory(name):
+            mock = MagicMock()
+            if name == "messages":
+                mock.select.return_value = []
+                mock.insert.side_effect = lambda payload: inserts.append(payload) or [payload]
+            elif name == "sessions":
+                mock.select.return_value = [{"offering_id": "off1", "user_id": "user_andres"}]
+            else:
+                mock.select.return_value = []
+                mock.insert.return_value = []
+            mock.update.return_value = []
+            return mock
+
+        with (
+            patch("routes.learn.table", side_effect=factory),
+            patch("routes.learn.agent_for_mode", return_value=agent),
+            patch("routes.learn.encrypt_if_present", side_effect=lambda v: v),
+        ):
+            r = self._post(message="Explain Big-O")
+
+        assert r.status_code == 200
+        assert inserts[1]["content"] == "Big-O describes growth.\n\nI've nudged your mastery."
+        assert r.json()["reply"] == inserts[1]["content"]
+
     def test_smart_pref_overrides_agent_model(self):
-        """body.model_pref='smart' → agent.run gets `model=GoogleModel('gemini-2.5-pro')`."""
+        """body.model_pref='smart' → agent.run gets `model=AnthropicModel('claude-sonnet-5-5')`."""
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
@@ -691,10 +737,10 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model" in kwargs, "smart pref must pass an explicit model override"
-        assert kwargs["model"].model_name == "gemini-2.5-pro"
+        assert kwargs["model"].model_name == "claude-sonnet-5-5"
 
     def test_fast_pref_overrides_agent_model(self):
-        """body.model_pref='fast' → agent.run gets `model=GoogleModel('gemini-2.5-flash-lite')`."""
+        """body.model_pref='fast' → agent.run gets `model=AnthropicModel('claude-haiku-5-5')`."""
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
@@ -705,7 +751,7 @@ class TestChatViaAgent:
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
         assert "model" in kwargs
-        assert kwargs["model"].model_name == "gemini-2.5-flash-lite"
+        assert kwargs["model"].model_name == "claude-haiku-5-5"
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO `model` kwarg; agent default wins."""
@@ -720,38 +766,31 @@ class TestChatViaAgent:
         kwargs = agent.run.call_args.kwargs
         assert "model" not in kwargs
 
-    def test_smart_pref_attaches_thinking_cap(self):
-        """smart pref → agent.run gets model_settings with thinking_budget=2048.
+    def test_claude_deep_turns_carry_no_run_level_settings(self):
+        """smart pref / no pref on the default Claude slots → no run-level
+        model_settings: Claude's depth is the slot's model-level `effort`
+        (ADR 0030 — `medium` bought no measurable quality over `low`)."""
+        for pref in ("smart", None):
+            agent = MagicMock()
+            agent.run = AsyncMock(return_value=run_result("ok"))
+            with (
+                patch("routes.learn.table", side_effect=self._make_table_factory()),
+                patch("routes.learn.agent_for_mode", return_value=agent),
+            ):
+                r = self._post(**({"model_pref": pref} if pref else {}))
+            assert r.status_code == 200
+            assert "model_settings" not in agent.run.call_args.kwargs, pref
 
-        Regression guard: a future refactor that drops the
-        `_build_pro_model_settings()` call would silently restore Pro to
-        unbounded dynamic thinking — the exact latency regression this PR
-        fixed. Pin the budget value, not just the kwarg's presence.
-        """
+    def test_a_gemini_deep_turn_gets_the_capped_thinking_budget(self):
+        """Rollback path: a deep turn served by a Gemini model (the agent's
+        own model here — the no-pref path) still gets Pro's capped budget.
+        Pin the value, not just the kwarg's presence: dropping it would
+        silently restore unbounded dynamic thinking on Pro."""
+        from pydantic_ai.models.google import GoogleModel
         from routes.learn import _PRO_THINKING_BUDGET
-        agent = MagicMock()
-        agent.run = AsyncMock(return_value=run_result("ok"))
-        with (
-            patch("routes.learn.table", side_effect=self._make_table_factory()),
-            patch("routes.learn.agent_for_mode", return_value=agent),
-        ):
-            r = self._post(model_pref="smart")
-        assert r.status_code == 200
-        kwargs = agent.run.call_args.kwargs
-        assert "model_settings" in kwargs
-        # GoogleModelSettings is a TypedDict at the type level but a plain
-        # dict at runtime; ThinkingConfig is a regular Pydantic-style object.
-        budget = kwargs["model_settings"]["google_thinking_config"].thinking_budget
-        assert budget == _PRO_THINKING_BUDGET
-        assert _PRO_THINKING_BUDGET == 2048  # pin the literal too
 
-    def test_no_pref_attaches_thinking_cap(self):
-        """No model_pref → falls through to Pro default → still capped.
-
-        The cap protects every path that lands on Pro, including the
-        no-pref agent default — not just explicit "smart" requests.
-        """
         agent = MagicMock()
+        agent.model = MagicMock(spec=GoogleModel)
         agent.run = AsyncMock(return_value=run_result("ok"))
         with (
             patch("routes.learn.table", side_effect=self._make_table_factory()),
@@ -760,24 +799,26 @@ class TestChatViaAgent:
             r = self._post()
         assert r.status_code == 200
         kwargs = agent.run.call_args.kwargs
-        assert "model_settings" in kwargs
-        assert kwargs["model_settings"]["google_thinking_config"].thinking_budget == 2048
+        assert kwargs["model_settings"]["google_thinking_config"].thinking_budget == _PRO_THINKING_BUDGET
+        assert _PRO_THINKING_BUDGET == 2048  # pin the literal too
 
-    def test_build_pro_model_settings_uses_constant(self):
-        """Direct unit test on the helper. The integration tests above
-        cover the contract end-to-end via a mocked agent; this one pins
-        the helper itself so a refactor of `_build_pro_model_settings`
-        can't drift from `_PRO_THINKING_BUDGET` silently."""
-        from routes.learn import _build_pro_model_settings, _PRO_THINKING_BUDGET
-        s = _build_pro_model_settings()
+    def test_deep_turn_settings_follow_the_serving_model(self):
+        """Direct unit test on the helper: it reads the model that will
+        actually serve the turn, so it can't disagree with the pref
+        resolution. Gemini → capped budget; Claude / function mode → None."""
+        from agents._providers import provider_model
+        from pydantic_ai.models.function import FunctionModel
+        from routes.learn import _build_deep_turn_model_settings, _PRO_THINKING_BUDGET
+
+        assert _build_deep_turn_model_settings(provider_model("claude-sonnet-5-5")) is None
+        assert _build_deep_turn_model_settings(FunctionModel(lambda m, i: None)) is None
+        assert _build_deep_turn_model_settings(None) is None
+        s = _build_deep_turn_model_settings(provider_model("gemini-2.5-pro"))
         assert s["google_thinking_config"].thinking_budget == _PRO_THINKING_BUDGET
 
-    def test_fast_pref_does_not_attach_thinking_cap(self):
-        """fast pref → Lite model → no model_settings.
-
-        Lite doesn't think, so passing a thinking_config is wasted at
-        best and could be rejected by the provider. The route's
-        `if model_pref != "fast":` guard is the contract; pin it.
+    def test_fast_pref_does_not_attach_deep_turn_settings(self):
+        """fast pref → no run-level model_settings, whatever serves it. The
+        route's `if model_pref != "fast":` guard is the contract; pin it.
         """
         agent = MagicMock()
         agent.run = AsyncMock(return_value=run_result("ok"))

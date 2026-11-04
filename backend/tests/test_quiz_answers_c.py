@@ -125,6 +125,31 @@ def _answer(body_extra=None, attempt_id="quiz1"):
 
 
 class TestAnswerEndpoint:
+    def test_written_response_is_encrypted_idempotent_and_included_in_completion(self, monkeypatch):
+        from services.encryption import decrypt_json_column
+        from contextlib import ExitStack
+        written = {"id": 1, "question": "What is half?", "type": "numeric", "options": [],
+                   "correct_answer": "0.5", "explanation": "One divided by two.", "difficulty": "easy"}
+        monkeypatch.setitem(globals(), "QUESTIONS", [written])
+        factory, responses = _tables()
+        with patch("routes.quiz.table", side_effect=factory):
+            first = client.post("/api/quiz/attempts/quiz1/answer", json={"question_index": 0, "answer_text": "1/2"})
+            second = client.post("/api/quiz/attempts/quiz1/answer", json={"question_index": 0, "answer_text": "99"})
+        assert first.status_code == second.status_code == 200
+        assert first.json()["is_correct"] is True
+        assert second.json()["is_correct"] is True
+        assert second.json()["recorded"] is False
+        assert len(responses.rows) == 1
+        assert responses.rows[0]["answer_text"] != "1/2"
+        assert decrypt_json_column(responses.rows[0]["answer_text"]) == {"text": "1/2"}
+        with ExitStack() as stack:
+            for mock in TestSubmitReconciliation()._submit_mocks(responses):
+                stack.enter_context(mock)
+            completed = client.post("/api/quiz/submit", json={"quiz_id": "quiz1", "answers": []})
+        assert completed.status_code == 200
+        assert completed.json()["score"] == 1
+        assert completed.json()["results"][0]["selected"] == "1/2"
+
     def test_grades_and_persists_a_response(self):
         factory, responses = _tables()
         with patch("routes.quiz.table", side_effect=factory):

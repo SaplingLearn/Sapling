@@ -57,15 +57,17 @@ vi.mock("@/components/TopBar", () => ({ TopBar: () => null }));
 // The stub exposes onAdd so the tests can open the REAL AssignmentModal
 // without rendering the full list.
 vi.mock("@/components/Gradebook/AssignmentList", () => ({
-  AssignmentList: ({ onAdd }: { onAdd: () => void }) => (
+  AssignmentList: ({ onAdd, onSyncGradescope }: { onAdd: () => void; onSyncGradescope: () => void }) => (
+    <>
     <button type="button" data-testid="stub-add-assignment" onClick={onAdd}>
       add
     </button>
+    <button type="button" onClick={onSyncGradescope}>Sync Gradescope</button>
+    </>
   ),
 }));
 vi.mock("@/components/Gradebook/GradescopeSyncModal", () => ({ GradescopeSyncModal: () => null }));
 vi.mock("@/components/Gradebook/GradePredictorPanel", () => ({ GradePredictorPanel: () => null }));
-vi.mock("@/components/Gradebook/AmbientOrbs", () => ({ AmbientOrbs: () => null }));
 
 import { GradebookCourseScreen } from "./Course";
 import {
@@ -73,6 +75,8 @@ import {
   getGradescopeStatus,
   bulkUpdateCategories,
   createGradedAssignment,
+  listGradescopeLinks,
+  syncGradescopeCourse,
 } from "@/lib/api";
 import type { GradebookCourse, GradedAssignment } from "@/lib/types";
 
@@ -155,6 +159,31 @@ async function createAssignmentThroughModal(
 }
 
 describe("GradebookCourseScreen term-scoped mutations (#468)", () => {
+  it("syncs Gradescope into the semester shown in the gradebook", async () => {
+    window.history.replaceState({}, "", "/gradebook/c1?semester=Fall+2025");
+    mockedGscopeStatus.mockResolvedValue({ has_credentials: true, auth_mode: "cookies", last_synced_at: null });
+    vi.mocked(listGradescopeLinks).mockResolvedValue({ links: [{
+      id: "link", sapling_course_id: "c1", gradescope_course_id: "123", last_synced_at: null,
+    }] });
+    vi.mocked(syncGradescopeCourse).mockResolvedValue({ inserted: 1, updated: 0, skipped: 0, failed: 0 });
+    const user = userEvent.setup();
+    render(<GradebookCourseScreen courseId="c1" />);
+    await waitFor(() => expect(listGradescopeLinks).toHaveBeenCalledWith("u1", "Fall 2025"));
+    await user.click(await screen.findByRole("button", { name: "Sync Gradescope" }));
+    await waitFor(() => expect(syncGradescopeCourse).toHaveBeenCalledWith("u1", "c1", "Fall 2025"));
+  });
+
+  it("without ?semester=, looks up the Gradescope link only for the term the gradebook resolved", async () => {
+    // An unscoped lookup made before the course loaded would list another
+    // term's link; answering late, it would mark this term's gradebook as
+    // linked and the direct sync would 400. Only the loaded term may ask.
+    mockedGscopeStatus.mockResolvedValue({ has_credentials: true, auth_mode: "cookies", last_synced_at: null });
+    vi.mocked(listGradescopeLinks).mockResolvedValue({ links: [] });
+    render(<GradebookCourseScreen courseId="c1" />);
+    await waitFor(() => expect(listGradescopeLinks).toHaveBeenCalledWith("u1", "Fall 2025"));
+    expect(listGradescopeLinks).not.toHaveBeenCalledWith("u1", undefined);
+  });
+
   it("passes the URL's semester to bulkUpdateCategories", async () => {
     window.history.replaceState({}, "", "/gradebook/c1?semester=Fall+2025");
     const user = userEvent.setup();

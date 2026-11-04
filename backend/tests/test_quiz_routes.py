@@ -768,32 +768,21 @@ class TestQuizAgentSuccess:
         assert len(correct) == 1
         assert correct[0]["text"] == "4"
 
-    def test_short_answer_type_is_rejected_at_schema_layer(self):
-        """short_answer was dropped from QuizQuestionType in refactor #2
-        because the frontend has no UI for free-text answers and
-        submit_quiz grades by option-label lookup. Constructing a
-        QuizQuestion with type='short_answer' must raise a Pydantic
-        validation error — not silently produce an ungradable item.
-        """
-        from pydantic import ValidationError
-        try:
-            QuizQuestion(
-                question="Define a closure.",
-                type="short_answer",  # type: ignore[arg-type]
-                difficulty="medium",
-                options=["a", "b", "c", "d"],
-                correct_answer="a",
-                explanation="x",
-                concept="Closures",
-            )
-        except ValidationError:
-            pass
-        else:
-            raise AssertionError(
-                "Short-answer regression: QuizQuestion accepted "
-                "type='short_answer'. The Literal must stay MCQ-only "
-                "until real short-answer grading exists."
-            )
+    def test_short_answer_rejects_multiple_choice_options(self):
+        """Written questions have no answer choices; a mixed shape is dropped
+        PER ITEM by the route. It must not fail schema validation, which
+        would reject the whole Quiz (and 502 the request) over one item."""
+        from routes.quiz import _agent_question_to_wire
+        q = QuizQuestion(
+            question="Define a closure.",
+            type="short_answer",
+            difficulty="medium",
+            options=["a", "b", "c", "d"],
+            correct_answer="a",
+            explanation="x",
+            concept="Closures",
+        )
+        assert _agent_question_to_wire(q, 1) is None
 
     def test_persists_to_quiz_attempts_table(self):
         fake_quiz = Quiz(questions=[
@@ -1308,7 +1297,7 @@ class TestQuizModelPref:
         })
 
     def test_smart_pref_overrides_agent_model(self):
-        """model_pref='smart' → agent.run is called with model=GoogleModel('gemini-2.5-pro')."""
+        """model_pref='smart' → agent.run is called with model=AnthropicModel('claude-sonnet-5-5')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -1319,10 +1308,10 @@ class TestQuizModelPref:
         assert run_mock.call_count == 1
         kwargs = run_mock.call_args.kwargs
         assert "model" in kwargs, "smart pref must pass an explicit model override"
-        assert kwargs["model"].model_name == "gemini-2.5-pro"
+        assert kwargs["model"].model_name == "claude-sonnet-5-5"
 
     def test_fast_pref_overrides_agent_model(self):
-        """model_pref='fast' → agent.run is called with model=GoogleModel('gemini-2.5-flash-lite')."""
+        """model_pref='fast' → agent.run is called with model=AnthropicModel('claude-haiku-5-5')."""
         run_mock = AsyncMock(return_value=SimpleNamespace(output=self._fake_quiz()))
         with (
             patch("routes.quiz.table", side_effect=_generate_table_factory()),
@@ -1332,7 +1321,7 @@ class TestQuizModelPref:
         assert r.status_code == 200
         kwargs = run_mock.call_args.kwargs
         assert "model" in kwargs
-        assert kwargs["model"].model_name == "gemini-2.5-flash-lite"
+        assert kwargs["model"].model_name == "claude-haiku-5-5"
 
     def test_no_pref_falls_through_to_agent_default(self):
         """No model_pref → agent.run gets NO model kwarg, falls back to model_for('quiz')."""
