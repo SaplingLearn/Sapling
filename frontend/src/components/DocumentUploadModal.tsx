@@ -295,7 +295,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     <div
       onClick={handleClose}
       style={{
-        position: "fixed", inset: 0, background: "rgba(19,38,16,0.45)",
+        position: "fixed", inset: 0, background: "rgba(25, 37, 11,0.45)",
         zIndex: 200, display: "grid", placeItems: "center", padding: 20,
       }}
     >

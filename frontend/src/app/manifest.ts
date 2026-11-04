@@ -11,7 +11,7 @@ export default function manifest(): MetadataRoute.Manifest {
     display: 'standalone',
     // --ink-0 / --brand-forest from globals.css.
     background_color: '#faf8f3',
-    theme_color: '#1B6C42',
+    theme_color: '#445D22',
     icons: [{ src: '/sapling-icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
   };
 }

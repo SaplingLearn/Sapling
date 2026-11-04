@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from './middleware';
 import { SHELL_PREFIXES } from '@/lib/appRoutes';
@@ -30,5 +30,26 @@ describe('middleware — /profile gating (#189)', () => {
 
   it('config.matcher (a static literal Next requires) covers exactly lib/appRoutes SHELL_PREFIXES', () => {
     expect([...config.matcher].sort()).toEqual(SHELL_PREFIXES.map((p) => `${p}/:path*`).sort());
+  });
+});
+
+describe('middleware — sign-in return origin (PR previews)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('sends its own origin as return_to on the Google sign-in redirect', async () => {
+    // API_URL is resolved at import, so load a staging-configured copy.
+    vi.resetModules();
+    vi.stubEnv('DEPLOY_ENV', 'staging');
+    const { middleware: stagingMiddleware } = await import('./middleware');
+
+    const preview = 'https://pr-742-frontend-staging.saplinglearn.workers.dev';
+    const res = await stagingMiddleware(new NextRequest(`${preview}/dashboard`));
+    const location = new URL(res.headers.get('location') ?? '');
+    expect(location.origin).toBe('https://api.staging.saplinglearn.com');
+    expect(location.pathname).toBe('/api/auth/google');
+    expect(location.searchParams.get('return_to')).toBe(preview);
   });
 });

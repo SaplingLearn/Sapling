@@ -58,7 +58,7 @@ test.beforeEach(async ({ page }) => {
  * Everything a screen needs before it is worth photographing: the network
  * quiet, motion suppressed (the app animates on mount — `fadeUp`, the graph —
  * and a shot taken mid-animation is a shot of a half-faded screen), webfonts
- * resolved (Playfair and Spectral swap in late, so capturing early
+ * resolved (Aleo and SUSE swap in late, so capturing early
  * photographs the fallback stack), and one beat to settle.
  */
 async function settle(page: Page): Promise<void> {

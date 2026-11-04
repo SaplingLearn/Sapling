@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
@@ -40,6 +41,8 @@ from services.request_limits import check_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
+from services.quiz_grading import WRITTEN_TYPES, grade_written, numeric_value
+from services.quiz_algebra import equivalent_algebra
 from services.graph_service import apply_graph_update
 from services.quiz_context_service import get_quiz_context, save_quiz_context
 from services.academics import course_offering_ids
@@ -389,13 +392,22 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
 # stored row from an older shape can hold the answer under any key at all
 # (the rich seed has {"q":..., "a":...}). Anything not listed here never
 # reaches a client that hasn't answered yet.
-_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty")
+_KEYLESS_QUESTION_KEYS = ("id", "question", "concept_tested", "difficulty", "type", "material_context")
 _KEYLESS_OPTION_KEYS = ("label", "text")
+
+
+def _written_response_text(row: dict) -> str:
+    if not row.get("answer_text"):
+        return ""
+    value = decrypt_json_column(row["answer_text"])
+    return value.get("text", "") if isinstance(value, dict) else ""
 
 
 def _is_wire_question(q) -> bool:
     """True if this stored question is in the current wire shape, so
     _strip_answer_key can be trusted to remove everything sensitive."""
+    if isinstance(q, dict) and q.get("type") in WRITTEN_TYPES:
+        return _validate_wire_question(q)
     return (
         isinstance(q, dict)
         and isinstance(q.get("options"), list)
@@ -444,10 +456,90 @@ def _resolved_difficulty(wire_questions: list[dict]) -> str:
 
 
 # The wire contract every emitted question must satisfy (#543 E3). The
-# agent schema already pins 4 options, but the route is the boundary the
-# stored questions_json and every grading path trust, so it validates
-# rather than assuming.
+# agent schema carries no option bound (agents/quiz.py: nested array bounds
+# 400 on Gemini), so the route is the only check on option count, and it is
+# the boundary the stored questions_json and every grading path trust.
 _MIN_OPTIONS = 2
+# What the agent must emit for a multiple-choice item (the system prompt's "4
+# options"). Checked per item in _agent_question_to_wire, not in the agent's
+# output schema, so one short item is dropped instead of failing the quiz.
+_MCQ_OPTIONS = 4
+_MAX_ANSWER_CHARS = 2000
+# Generation-only guards for items a student cannot answer fairly (found
+# clicking through live quizzes). Applied in _agent_question_to_wire, never in
+# _validate_wire_question, which also re-checks stored attempts on resume.
+# A symbolic key whose letter run is a word is not a product: the grammar
+# reads "lambda" as a*a*b*d*l*m, so the real answer is wrong and an anagram
+# is right. A 4+ letter run is taken as a word; so is a short Greek-letter or
+# constant name ("pi r^2" grades as p*i*r^2, and a student typing the symbol
+# cannot match it at all). Short products ("2xy", "mgh") stay allowed. Function
+# names need no entry here: the grammar refuses them, and
+# _validate_wire_question drops a key it cannot parse.
+_SYMBOLIC_LETTER_RUN = re.compile(r"[A-Za-z]+")
+_SYMBOLIC_WORD_MIN = 4
+# "mu" and "xi" are left out: m*u (mass times initial velocity) and x*i are
+# ordinary products in mechanics and algebra keys.
+_SYMBOLIC_NAMES = frozenset({"pi", "nu", "rho", "tau", "phi", "chi", "psi", "eta"})
+# A short-answer key is a term or brief fact (docs/quiz-formats.md); exact
+# matching can never accept a sentence or paragraph key. A sentence break is a
+# semicolon, "!" or "?", or a full stop, each followed by more text, except a
+# full stop right after an initial ("John F. Kennedy", "U.S.", "e.g.") or a
+# known abbreviation ("St. Louis", "Prof. Xavier", "Sept. 11"). A full stop
+# after anything else — a word, a number, a bracket, a quote, a percent sign
+# ("x (y). Then", '"ATP". It', "10%. Then") — ends a sentence.
+_SHORT_ANSWER_MAX_WORDS = 8
+# A stem cut at an inner quote ends in the space that preceded the quote
+# ('...as the ', 'Consider this definition. '); a whole stem the model padded
+# usually ends in a newline ("Define osmosis.\n", a code fence). So: trailing
+# spaces are a cut unless the stem ends in its question mark, a "___" blank or
+# a code fence; a trailing newline is padding unless the stem stops on ":" or
+# "," (content was coming: 'Read the code:\n').
+_WHOLE_STEM_ENDINGS = ("?", "_", "`")
+_CUT_BEFORE_NEWLINE = (":", ",")
+_SENTENCE_BREAK = re.compile(r"(?:;|([A-Za-z0-9]*)([.!?]))\s+\S")
+_ABBREVIATIONS = frozenset({
+    "mr", "mrs", "ms", "dr", "prof", "st", "mt", "ft", "jr", "sr", "sgt", "capt", "col",
+    "gen", "lt", "pres", "gov", "sen", "rep", "rev", "hon", "dept", "univ", "inc", "ltd",
+    "co", "corp", "vs", "etc", "approx", "no", "vol", "fig", "eq", "ch", "sec", "jan",
+    "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+})
+
+
+def _is_symbolic_word(key: str) -> bool:
+    return any(
+        len(run) >= _SYMBOLIC_WORD_MIN or run.lower() in _SYMBOLIC_NAMES
+        for run in _SYMBOLIC_LETTER_RUN.findall(key)
+    )
+
+
+def _is_sentence(key: str) -> bool:
+    if len(key.split()) > _SHORT_ANSWER_MAX_WORDS:
+        return True
+    for m in _SENTENCE_BREAK.finditer(key):
+        word, mark = m.groups()
+        if mark is None or mark != ".":
+            return True  # a semicolon, "!" or "?" mid-key
+        if word.lower() == "no" and key[m.end() - 1].isdigit():
+            continue  # "Symphony No. 9", "No. 10 Downing Street" — but not "No. It is not."
+        if word.lower() != "no" and ((len(word) == 1 and word.isalpha()) or word.lower() in _ABBREVIATIONS):
+            continue
+        return True  # after a word, a number, or punctuation (word == "")
+    return False
+
+
+def _unfair_written_key(q: QuizQuestion) -> str | None:
+    """Why this written item's key cannot be fairly matched, or None.
+
+    An item is judged on everything the grader accepts, not the canonical key
+    alone: a sentence-length key with a short alias ("base case") still lets
+    the student who writes the term get it right.
+    """
+    keys = [k.strip() for k in (q.correct_answer, *q.accepted_answers) if k.strip()]
+    if q.type == "symbolic" and _is_symbolic_word(q.correct_answer.strip()):
+        return "symbolic key is a word"
+    if q.type == "short_answer" and all(_is_sentence(k) for k in keys):
+        return "short-answer key is a sentence"
+    return None
 
 
 def _validate_wire_question(wire: dict) -> bool:
@@ -458,6 +550,14 @@ def _validate_wire_question(wire: dict) -> bool:
     exactly one correct option (zero = ungradable free point per #129,
     two = the grader's first-match wins silently).
     """
+    if wire.get("type") in WRITTEN_TYPES:
+        answer = wire.get("correct_answer")
+        return (
+            isinstance(answer, str) and bool(answer.strip())
+            and len(answer) <= _MAX_ANSWER_CHARS and not wire.get("options")
+            and (wire["type"] != "numeric" or numeric_value(answer) is not None)
+            and (wire["type"] != "symbolic" or equivalent_algebra(answer, answer))
+        )
     options = wire.get("options") or []
     qid = wire.get("id")
     if len(options) < _MIN_OPTIONS:
@@ -496,6 +596,49 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 
     Returning None lets the caller filter questions out cleanly.
     """
+    stem = q.question.rstrip()
+    if stem != q.question:
+        # Gemini can end a function-call string at an inner double quote
+        # ('...referred to as the "energy currency"' served as '...as the ',
+        # 'Fill in the blank: "..."' as 'Fill in the blank: '). See
+        # _WHOLE_STEM_ENDINGS for how a cut is told from padding; a whole stem
+        # is served trimmed.
+        padded_with_newline = "\n" in q.question[len(stem):]
+        cut = (
+            stem.endswith(_CUT_BEFORE_NEWLINE)
+            if padded_with_newline
+            else not stem.endswith(_WHOLE_STEM_ENDINGS)
+        )
+        if cut:
+            logger.warning("quiz: dropping question id=%d — stem cut off mid-string", qid)
+            return None
+        q = q.model_copy(update={"question": stem})
+    if q.type in WRITTEN_TYPES:
+        if (reason := _unfair_written_key(q)) is not None:
+            logger.warning("quiz: dropping question id=%d — %s", qid, reason)
+            return None
+        if q.options:
+            # A written item with answer choices is format drift: drop it here,
+            # per item (agents/quiz.py keeps this out of the output schema).
+            logger.warning("quiz: dropping question id=%d — written item has options", qid)
+            return None
+        # A blank or unbounded alias is dropped on its own; it says nothing
+        # about whether the rest of the item is sound.
+        accepted = [a for a in q.accepted_answers if a.strip() and len(a) <= _MAX_ANSWER_CHARS]
+        wire = {
+            "id": qid, "type": q.type, "question": q.question, "options": [],
+            "correct_answer": q.correct_answer, "accepted_answers": accepted,
+            "explanation": q.explanation, "concept_tested": q.concept,
+            "difficulty": q.difficulty,
+            "question_hash": question_hash(q.question, [q.type]),
+        }
+        return wire if _validate_wire_question(wire) else None
+    if len(q.options) != _MCQ_OPTIONS:
+        logger.warning(
+            "quiz: dropping question id=%d — %d option(s), need %d",
+            qid, len(q.options), _MCQ_OPTIONS,
+        )
+        return None
     options: list[dict] = []
     matched = False
     canonical = q.correct_answer.strip()
@@ -575,39 +718,38 @@ def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> l
 # model strings as Learn. None falls through to the agent's
 # task-default model from agents/_providers.py::model_for("quiz").
 _PREF_MODEL_NAMES: dict[str, str] = {
-    "fast": "gemini-2.5-flash-lite",
-    "smart": "gemini-2.5-pro",
+    "fast": "claude-haiku-5-5",
+    "smart": "claude-sonnet-5-5",
 }
 
 
 def _resolve_model_pref(model_pref: str | None):
-    """Build a GoogleModel override for the per-request fast/smart
+    """Build a provider-model override for the per-request fast/smart
     preference, or return None to use the agent's default.
 
-    `google_model` is imported lazily so that constructing a
-    GoogleProvider (which reads GEMINI_API_KEY at call time) only
-    happens when an override is actually requested — not at module
-    import. agents.quiz is already in this route's import graph, so
-    this isn't about import-path isolation; it's about deferring the
+    `override_model` is imported lazily so that constructing a provider
+    (which reads its API key at call time) only happens when an override
+    is actually requested — not at module import. agents.quiz is already
+    in this route's import graph, so this isn't about import-path isolation; it's about deferring the
     one runtime side-effect (the provider build) to the request that
     needs it.
     """
     if not model_pref:
         return None
-    from agents._providers import _model_mode, google_model
+    from agents._providers import _model_mode, override_model
     if _model_mode() != "real":
         # #391 seam: the per-request fast/smart override must not bypass
-        # SAPLING_MODEL_MODE by constructing a live GoogleModel. Same fix as
+        # SAPLING_MODEL_MODE by constructing a live provider model. Same fix as
         # routes/learn.py (#392) — there the browser always sends a pref;
         # the quiz UI does not send one today, but any client that did would
-        # silently put live Gemini back in the function-mode path. Fall
+        # silently put a live provider back in the function-mode path. Fall
         # through to the agent's default model, which model_for("quiz")
         # already built for the active mode.
         return None
     name = _PREF_MODEL_NAMES.get(model_pref)
     if not name:
         return None
-    return google_model(name)
+    return override_model(name, "quiz")
 
 
 class BuCodeLookup(NamedTuple):
@@ -1017,6 +1159,30 @@ class GeneratedQuiz(NamedTuple):
     exam_days_away: int | None = None
 
 
+_MCQ_TOPUP_RULE = (
+    "multiple_choice items need exactly 4 options and correct_answer must "
+    "appear VERBATIM in options."
+)
+_WRITTEN_TOPUP_RULE = (
+    "for short_answer, numeric and symbolic items options must be empty and "
+    "correct_answer is the canonical answer (short_answer: a term or brief fact "
+    "of at most 8 words, never a sentence; numeric: a plain number or fraction; "
+    "symbolic: an expression in the supported grammar, with single-letter "
+    "variables only and no words or Greek-letter names)."
+)
+
+
+def _topup_format_rule(question_format: str) -> str:
+    """The format contract the top-up retry restates — the one that applies
+    to the requested format, so a written quiz is never told to put its
+    answer in options it must not have."""
+    if question_format == "multiple_choice":
+        return _MCQ_TOPUP_RULE
+    if question_format in WRITTEN_TYPES:
+        return f"{question_format} only; {_WRITTEN_TOPUP_RULE}"
+    return f"{_MCQ_TOPUP_RULE} And {_WRITTEN_TOPUP_RULE}"
+
+
 async def _quiz_via_agent(
     *,
     user_id: str,
@@ -1028,6 +1194,7 @@ async def _quiz_via_agent(
     use_shared_context: bool,
     request_id: str,
     model_pref: str | None = None,
+    question_format: str = "multiple_choice",
     times_studied: int | None = None,
     has_graph: bool | None = None,
 ) -> GeneratedQuiz:
@@ -1255,6 +1422,7 @@ async def _quiz_via_agent(
         request_id=request_id,
     )
     routing_msg += _do_not_repeat_block(recent)
+    routing_msg += f"\nquestion_format: {question_format}. Only generate the requested format; mixed uses a useful variety.\n"
 
     if material.block:
         user_message = (
@@ -1347,6 +1515,9 @@ async def _quiz_via_agent(
     def _absorb(quiz: Quiz, model: str) -> None:
         nonlocal dropped
         for q in quiz.questions:
+            if question_format != "mixed" and q.type != question_format:
+                dropped += 1
+                continue
             # E5: identity is the dedupe key now. The stem check is kept
             # alongside it and is the COARSER of the two — a hash covers the
             # stem AND the options, so a model re-emitting one stem with
@@ -1354,7 +1525,7 @@ async def _quiz_via_agent(
             # Dropping it would have narrowed #543's duplicate-question
             # guard, which is not a trade E5 needs to make.
             stem = normalize_text(q.question)
-            qhash = question_hash(q.question, q.options)
+            qhash = question_hash(q.question, [q.type] if q.type in WRITTEN_TYPES else q.options)
             if qhash in seen_hashes or stem in seen_stems:
                 logger.warning(
                     "quiz: dropping duplicate question (hash=%s, stem_len=%d)",
@@ -1367,6 +1538,9 @@ async def _quiz_via_agent(
                 dropped += 1
                 continue
             mapped["provenance"] = {**provenance_base, "model": model}
+            mapped["material_context"] = (
+                "course_material" if material.rag_grounded else "catalog" if material.has_catalog else "general"
+            )
             seen_stems.add(stem)
             seen_hashes.add(qhash)
             wire_questions.append(mapped)
@@ -1394,8 +1568,7 @@ async def _quiz_via_agent(
             topup_msg = (
                 f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
                 f"format errors. Generate {missing} MORE questions on the same "
-                f"concept. Remember: correct_answer must appear VERBATIM in "
-                f"options."
+                f"concept. Remember: {_topup_format_rule(question_format)}"
             )
             if already:
                 topup_msg += (
@@ -1694,6 +1867,7 @@ async def _generate_or_502(
             use_shared_context=body.use_shared_context,
             request_id=request_id,
             model_pref=body.model_pref,
+            question_format=body.question_format,
             times_studied=times_studied,
             # A fact, not a guess (#592): `generate_quiz` reached here only
             # after an owner-scoped `graph_nodes` read, and `course_id` came
@@ -2060,10 +2234,14 @@ def get_attempt(attempt_id: str, request: Request):
     attempt = _load_owned_attempt(attempt_id, request)
 
     responses = table("quiz_responses").select(
-        "question_index,selected_index,is_correct,time_ms,confidence,answered_at",
+        "question_index,selected_index,answer_text,is_correct,time_ms,confidence,answered_at",
         filters={"attempt_id": f"eq.{attempt_id}"},
         order="question_index.asc",
     ) or []
+    responses = [
+        {**r, "answer_text": _written_response_text(r) if r.get("answer_text") else None}
+        for r in responses
+    ]
     last_activity = max(
         (r.get("answered_at") for r in responses if r.get("answered_at")),
         default=None,
@@ -2131,7 +2309,11 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         )
     question = questions[body.question_index]
     options = question.get("options", [])
-    if body.selected_index >= len(options):
+    written = question.get("type") in WRITTEN_TYPES
+    if (written and body.answer_text is None) or (not written and body.selected_index is None):
+        raise QuizAPIError(status_code=400, code=QuizErrorCode.QUIZ_QUESTION_INVALID,
+                           message="Use the answer format shown for this question.")
+    if not written and body.selected_index >= len(options):
         raise QuizAPIError(
             status_code=400,
             code=QuizErrorCode.QUIZ_QUESTION_INVALID,
@@ -2154,7 +2336,9 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         (i for i, o in enumerate(options) if o.get("correct")), -1
     )
 
-    def _is_correct(selected_index: int) -> bool:
+    def _is_correct(selected_index: int | None, answer_text: str | None = None) -> bool:
+        if written:
+            return grade_written(question, answer_text or "")
         return correct_index >= 0 and correct_index == selected_index
 
     recorded = True
@@ -2174,10 +2358,12 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
             "attempt_id": attempt_id,
             "question_index": body.question_index,
             "selected_index": body.selected_index,
-            "is_correct": _is_correct(body.selected_index),
+            "is_correct": _is_correct(body.selected_index, body.answer_text),
             "time_ms": body.time_ms,
             "confidence": body.confidence,
         }
+        if written:
+            row["answer_text"] = encrypt_json({"text": body.answer_text})
         # ACCEPTED RISK (#597, #537 G4): this is the one quiz write path still
         # guarded by a PRE-READ alone. Submit and abandon both arbitrate with a
         # conditional claim on `quiz_attempts`; an INSERT into `quiz_responses`
@@ -2220,7 +2406,10 @@ def answer_question(attempt_id: str, body: AnswerQuestionBody, request: Request)
         # it immediately rather than discovering it at submit time.
         "question_index": body.question_index,
         "question_id": question.get("id"),
-        "is_correct": _is_correct(response_row["selected_index"]),
+        "is_correct": _is_correct(response_row["selected_index"],
+                                  _written_response_text(response_row)),
+        "correct_answer": question.get("correct_answer") if written else None,
+        **({"answer_text": _written_response_text(response_row)} if written else {}),
         "correct_index": correct_index,
         "explanation": question.get("explanation", ""),
         "next_question": next_question,
@@ -2462,7 +2651,7 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # to close). Questions never answered through C1 fall back to the
     # submitted payload, so the current all-at-the-end client keeps working.
     recorded_rows = table("quiz_responses").select(
-        "question_index,selected_index",
+        "question_index,selected_index,answer_text",
         filters={"attempt_id": f"eq.{body.quiz_id}"},
     ) or []
     recorded_by_index = {r["question_index"]: r for r in recorded_rows}
@@ -2479,6 +2668,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     for q_index, q in enumerate(questions):
         qid = str(q["id"])
         recorded = recorded_by_index.get(q_index)
+        if q.get("type") in WRITTEN_TYPES:
+            # Written responses must have been accepted through /answer. Never
+            # let a submission payload override the first recorded response.
+            selected_text = _written_response_text(recorded) if recorded else ""
+            is_correct = grade_written(q, selected_text)
+            if selected_text:
+                graded_answers.append({"question_id": q["id"], "answer_text": selected_text})
+            score += int(is_correct)
+            results.append({"question_id": qid, "selected": selected_text,
+                            "correct": is_correct, "correct_answer": q.get("correct_answer", ""),
+                            "explanation": q.get("explanation", "")})
+            continue
         if recorded is not None:
             sel_idx = recorded.get("selected_index")
             options = q.get("options", [])

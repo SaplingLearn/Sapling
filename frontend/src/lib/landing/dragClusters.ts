@@ -42,7 +42,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       "top": "20%"
     },
     "anim": "nodeFloatA 21s ease-in-out -5.4s infinite",
-    "color": "hsl(212 42% 42%)",
+    "color": "hsl(212 26% 44%)",
     "code": "MA 242",
     "svg": {
       "w": 1974,
@@ -132,7 +132,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       "top": "64%"
     },
     "anim": "nodeFloatB 24s ease-in-out -8.100000000000001s infinite",
-    "color": "hsl(58 44% 38%)",
+    "color": "hsl(45 50% 40%)",
     "code": "ME 218",
     "svg": {
       "w": 1940,
@@ -203,7 +203,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       "top": "18%"
     },
     "anim": "nodeFloatA 15s ease-in-out -10.8s infinite",
-    "color": "hsl(150 46% 34%)",
+    "color": "hsl(85 46% 30%)",
     "code": "CS 112",
     "svg": {
       "w": 1972,
@@ -293,7 +293,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       "bottom": "14%"
     },
     "anim": "nodeFloatB 18s ease-in-out -13.5s infinite",
-    "color": "hsl(272 34% 46%)",
+    "color": "hsl(300 18% 44%)",
     "code": "PH 150",
     "svg": {
       "w": 1940,
@@ -364,7 +364,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       "top": "20%"
     },
     "anim": "nodeFloatA 21s ease-in-out -16.200000000000003s infinite",
-    "color": "hsl(96 40% 38%)",
+    "color": "hsl(88 24% 50%)",
     "code": "BI 108",
     "svg": {
       "w": 1942,
@@ -435,7 +435,7 @@ export const DRAG_CLUSTERS: DragCluster[] = [
       "bottom": "16%"
     },
     "anim": "nodeFloatB 24s ease-in-out -18.900000000000002s infinite",
-    "color": "hsl(240 28% 50%)",
+    "color": "hsl(250 14% 48%)",
     "code": "WR 120",
     "svg": {
       "w": 1940,

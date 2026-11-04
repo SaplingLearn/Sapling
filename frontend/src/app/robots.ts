@@ -10,6 +10,7 @@ const PRIVATE = [
   '/flashcards',
   '/onboarding',
   '/pending',
+  '/setting-up',
   '/auth/',
   '/api/',
 ];

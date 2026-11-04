@@ -1,7 +1,7 @@
 {
   "category": "lecture_notes",
-  "confidence": 0.9,
+  "confidence": 0.93,
   "is_syllabus": false,
-  "rationale": "The document contains mathematical formulas and definitions related to Fourier Series, which are typical of lecture notes.",
+  "rationale": "Titled as a numbered lecture with formal definitions of Fourier coefficients, Parseval's identity, and the Dirichlet kernel, with no personal annotations or graded content. This reads as instructor-style lecture material fine for any enrolled student to study from.",
   "shareability": "course_material"
 }

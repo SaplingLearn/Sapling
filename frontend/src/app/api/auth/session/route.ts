@@ -17,6 +17,24 @@ const COOKIE_DOMAIN = sanitizeCookieDomain(
 );
 
 /**
+ * A PR preview (`*-frontend-staging.saplinglearn.workers.dev`) runs with
+ * DEPLOY_ENV=staging, but the browser drops a `.staging.saplinglearn.com`
+ * cookie set from that host. Scope to COOKIE_DOMAIN only when this host is
+ * inside it; anywhere else the cookie is host-only.
+ */
+function cookieDomainFor(request: NextRequest): string | undefined {
+  if (!COOKIE_DOMAIN) return undefined;
+  const host = request.nextUrl.hostname.toLowerCase();
+  const bare = COOKIE_DOMAIN.replace(/^\./, '');
+  return host === bare || host.endsWith(`.${bare}`) ? COOKIE_DOMAIN : undefined;
+}
+
+function domainAttr(request: NextRequest): { domain?: string } {
+  const domain = cookieDomainFor(request);
+  return domain ? { domain } : {};
+}
+
+/**
  * CSRF defense beyond SameSite=Lax (#190): reject cross-origin requests to the
  * session endpoint. When a browser sends an Origin header (always, for these
  * fetch POST/DELETE calls), its host must match this route's host. A missing
@@ -110,7 +128,7 @@ export async function POST(request: NextRequest) {
       secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: SESSION_MAX_AGE,
-      ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+      ...domainAttr(request),
     });
     return response;
   } catch {
@@ -130,7 +148,7 @@ export async function DELETE(request: NextRequest) {
     secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: 0,
-    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
+    ...domainAttr(request),
   });
   return response;
 }

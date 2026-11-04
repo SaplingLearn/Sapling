@@ -110,6 +110,7 @@ function makeActions(): QuizActions {
     setConfig: vi.fn(),
     start: vi.fn(),
     select: vi.fn(),
+    write: vi.fn(),
     submitAnswer: vi.fn(),
     next: vi.fn(),
     finish: vi.fn(),
@@ -157,6 +158,87 @@ afterEach(() => {
 // ── the screen ────────────────────────────────────────────────────────────
 
 describe("QuizQuestion — the question", () => {
+  it("lets a fully recorded written quiz proceed to results after cross-device resume", () => {
+    const actions = makeActions();
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "at-end" },
+      items: [item(0, { question: { ...question(1), type: "numeric", options: [] }, answerText: "1/2",
+        verdict: { isCorrect: true, correctIndex: -1, explanation: "" } })] }), actions);
+    fireEvent.click(screen.getByRole("button", { name: "See results" }));
+    expect(actions.next).toHaveBeenCalledOnce();
+  });
+  it.each(["short_answer", "numeric", "symbolic"] as const)("answers %s on one line, focused, with Enter to submit", type => {
+    const actions = makeActions();
+    const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] }, answerText: "" })] });
+    const view = renderScreen(session, actions);
+    const input = screen.getByRole("textbox", { name: /^Your answer/ });
+    // A single-line input, not a paragraph box, and ready to type into.
+    expect(input.tagName).toBe("INPUT");
+    expect(input).toHaveFocus();
+    expect(input).toHaveAccessibleName(/base case in a recursive function/);
+    // Enter with nothing typed does nothing...
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.submitAnswer).not.toHaveBeenCalled();
+    // ...and submits once there is an answer.
+    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: "42" }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /^Your answer/ }), { key: "Enter" });
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
+
+  it.each(["short_answer", "numeric", "symbolic"] as const)("supports %s without answer choices", type => {
+    const actions = makeActions();
+    const session = makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] });
+    const view = renderScreen(session, actions);
+    const input = screen.getByRole("textbox", { name: /^Your answer/ });
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByTestId("quiz-submit-answer")).toBeDisabled();
+    fireEvent.change(input, { target: { value: "2(x+1)" } });
+    expect(actions.write).toHaveBeenCalledWith("2(x+1)");
+    fireEvent.keyDown(input, { key: "a" });
+    expect(actions.select).not.toHaveBeenCalled();
+    view.rerender(<QuizQuestion session={{ ...session, items: [{ ...session.items[0], answerText: "2(x+1)" }] }} actions={actions} config={null} concept={CONCEPT} userId="user-1" courseId="course-cs101" />);
+    fireEvent.click(screen.getByTestId("quiz-submit-answer"));
+    expect(actions.submitAnswer).toHaveBeenCalledOnce();
+  });
+  it.each([
+    ["numeric", /Enter only the number, without units/],
+    ["symbolic", /single-letter variables/],
+    ["short_answer", /Write a brief answer/],
+  ] as const)("shows the %s answer format rules on screen, not only to screen readers", (type, rule) => {
+    renderScreen(makeSession({ items: [item(0, { question: { ...question(1), type, options: [] } })] }));
+    const hint = screen.getByTestId("quiz-format-hint");
+    expect(hint).toHaveTextContent(rule);
+    // `.quiz-question__hint` is the visually hidden keyboard hint: the rules
+    // a sighted student must follow to be graded correctly can never live there.
+    expect(hint).not.toHaveClass("quiz-question__hint");
+    expect(screen.getByRole("textbox", { name: /^Your answer/ })).toHaveAccessibleDescription(rule);
+    expect(screen.queryByText(/Keyboard: press A to F/)).not.toBeInTheDocument();
+  });
+
+  it("ends the expected-answer feedback with exactly one full stop", () => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: "Cellular respiration." } })] }));
+    expect(screen.getByText("Not quite — the expected answer is Cellular respiration.")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Why?", "Why?"],
+    ["respiration. ", "respiration."],
+    ["Stop!", "Stop!"],
+    ["ATP", "ATP."],
+  ])("never doubles the key's own terminal punctuation (%j)", (key, shown) => {
+    renderScreen(makeSession({ phase: "answered", config: { count: 1, difficulty: "easy", feedback: "as-you-go" },
+      items: [item(0, { question: { ...question(1), type: "short_answer", options: [] }, answerText: "x",
+        verdict: { isCorrect: false, correctIndex: -1, explanation: "", correctAnswer: key } })] }));
+    expect(screen.getByText(`Not quite — the expected answer is ${shown}`)).toBeInTheDocument();
+  });
+
+  it("keeps the multiple-choice keyboard hint for assistive tech, with no format rules", () => {
+    renderScreen(makeSession());
+    expect(screen.getByText(/Keyboard: press A to F/)).toHaveClass("quiz-question__hint");
+    expect(screen.queryByTestId("quiz-format-hint")).not.toBeInTheDocument();
+  });
+
   it("renders the stem, the options and the progress rail", () => {
     renderScreen(makeSession({ cursor: 1, items: [item(0, { verdict: { isCorrect: true, correctIndex: 1, explanation: "" }, selectedIndex: 1 }), item(1), item(2)] }));
 

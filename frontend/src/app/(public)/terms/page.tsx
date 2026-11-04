@@ -109,7 +109,7 @@ const sections = [
   },
   {
     title: "5. AI-Generated Content",
-    body: "Sapling uses Google Gemini to generate tutoring responses, quizzes, flashcards, and study guides. AI-generated content may occasionally be inaccurate or incomplete. You should not rely on it as a substitute for official course materials, instructors, or academic advisors. We make no guarantees about the accuracy of AI outputs.",
+    body: "Sapling uses Anthropic's Claude to generate tutoring responses, quizzes, flashcards, and study guides. AI-generated content may occasionally be inaccurate or incomplete. You should not rely on it as a substitute for official course materials, instructors, or academic advisors. We make no guarantees about the accuracy of AI outputs.",
   },
   {
     title: "6. Study Rooms and Social Features",
@@ -178,7 +178,7 @@ export default function TermsPage() {
               every clause under it, instead of running the full width alone. */}
           <div style={{ ...ROW, ...enter(0) }}>
             <div style={TITLE_CELL}>
-              <span style={META}>Last updated: May 3, 2026</span>
+              <span style={META}>Last updated: October 22, 2026</span>
             </div>
             <div style={TEXT_CELL}>
               <p style={PROSE}>

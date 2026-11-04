@@ -62,7 +62,8 @@ function dateKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function dueLabel(date: string) {
+function dueLabel(date: string | null) {
+  if (!date) return { label: "no date", cls: "chip--info" };
   const nowMs = now();
   const due = new Date(date).getTime();
   const diffMs = due - nowMs;
@@ -163,6 +164,8 @@ export function Calendar() {
   const byDate = React.useMemo(() => {
     const map = new Map<string, Assignment[]>();
     for (const a of assignments) {
+      // Gradebook/Gradescope items may have no due date; they only show in the list view.
+      if (!a.due_date) continue;
       const k = a.due_date.slice(0, 10);
       const arr = map.get(k) || [];
       arr.push(a);
@@ -216,7 +219,7 @@ export function Calendar() {
     }
     const rows = [
       ["Title", "Course", "Type", "Due Date", "Notes"],
-      ...ids.map(a => [a.title, a.course_code || a.course_name || "", a.assignment_type || "", a.due_date, a.notes || ""]),
+      ...ids.map(a => [a.title, a.course_code || a.course_name || "", a.assignment_type || "", a.due_date || "", a.notes || ""]),
     ];
     const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -414,7 +417,7 @@ function GoogleEventsModal({
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 120,
-        background: "rgba(19,38,16,0.45)",
+        background: "rgba(25, 37, 11,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
       }}
     >
@@ -700,8 +703,11 @@ function AssignmentTable({
     const copy = [...assignments];
     copy.sort((a, b) => {
       let cmp = 0;
-      if (sortKey === "due_date") cmp = (a.due_date || "").localeCompare(b.due_date || "");
-      else if (sortKey === "title") cmp = (a.title || "").localeCompare(b.title || "");
+      if (sortKey === "due_date") {
+        // Undated rows sort last in both directions, so skip the asc/desc flip.
+        if (!a.due_date || !b.due_date) return Number(!a.due_date) - Number(!b.due_date);
+        cmp = a.due_date.localeCompare(b.due_date);
+      } else if (sortKey === "title") cmp = (a.title || "").localeCompare(b.title || "");
       else if (sortKey === "course") cmp = (a.course_code || a.course_name || "").localeCompare(b.course_code || b.course_name || "");
       else if (sortKey === "type") cmp = (a.assignment_type || "").localeCompare(b.assignment_type || "");
       return sortDir === "asc" ? cmp : -cmp;
@@ -769,7 +775,8 @@ function AssignmentTable({
       await updateAssignment(editing, userId, {
         title: draft.title,
         course_id: draft.course_id ?? "",
-        due_date: (draft.due_date || "").slice(0, 10),
+        // An empty date input means "no date": send null, never "" (invalid for a DATE column).
+        due_date: draft.due_date ? draft.due_date.slice(0, 10) : null,
         assignment_type: draft.assignment_type || undefined,
         notes: draft.notes || undefined,
       });
@@ -894,7 +901,7 @@ function AssignmentTable({
                         style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: "var(--r-xs)", fontSize: 12 }}
                       />
                     ) : (
-                      a.due_date
+                      a.due_date || "No date"
                     )}
                   </td>
                   <td style={{ padding: 10, display: "flex", gap: 4 }}>

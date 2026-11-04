@@ -6,25 +6,29 @@ import { Avatar } from "../Avatar";
 import { RoleBadge } from "../RoleBadge";
 import { CustomSelect } from "../CustomSelect";
 import { AdminTableSkeleton } from "../Skeleton";
+import Dialog from "../Dialog";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
+import { humanizeError } from "@/lib/errorMessage";
 import {
-  adminFetchUsers, adminApproveUser, adminUnapproveUser,
+  adminFetchUsers, adminRemoveUserAccess,
   adminListRoles, adminCreateRole, adminDeleteRole, adminAssignRole, adminRevokeRole,
   adminListCosmetics, adminCreateCosmetic, adminDeleteCosmetic,
   adminListRoleCosmetics, adminLinkRoleCosmetic, adminUnlinkRoleCosmetic,
-  adminListAllowlist, adminApproveAllowlist, adminRevokeAllowlist,
   adminAuditLog, adminAnalyticsOverview,
   adminListFeedback, adminListIssueReports,
   type AdminFeedbackEntry, type AdminIssueReport,
 } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
-import type { Role, Cosmetic, CosmeticType, RarityTier, AllowlistEmail, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
+import type { Role, Cosmetic, CosmeticType, RarityTier, AdminAuditEntry, AnalyticsOverview, AdminUserListItem as AdminUser } from "@/lib/types";
 import { AchievementWiki } from "./admin/AchievementWiki";
 import { FeatureFlagsTab } from "./admin/FeatureFlags";
+import { AllowlistTab } from "./admin/AllowlistTab";
+import { EmailBroadcastsTab } from "./admin/EmailBroadcasts";
+import { fieldStyle } from "./admin/adminStyles";
 
-type Tab = "users" | "allowlist" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
+type Tab = "users" | "allowlist" | "email" | "roles" | "flags" | "achievements" | "cosmetics" | "analytics" | "audit" | "feedback";
 
 const RARITIES: RarityTier[] = ["common", "uncommon", "rare", "epic", "legendary"];
 const COSMETIC_TYPES: CosmeticType[] = ["avatar_frame", "banner", "name_color", "title"];
@@ -55,7 +59,7 @@ export function Admin() {
     );
   }
 
-  const tabs: Tab[] = ["users", "allowlist", "roles", "flags", "achievements", "cosmetics", "analytics", "audit", "feedback"];
+  const tabs: Tab[] = ["users", "allowlist", "email", "roles", "flags", "achievements", "cosmetics", "analytics", "audit", "feedback"];
 
   return (
     <div>
@@ -88,6 +92,7 @@ export function Admin() {
       <div style={{ padding: "24px 32px" }}>
         {tab === "users" && <UsersTab />}
         {tab === "allowlist" && <AllowlistTab />}
+        {tab === "email" && <EmailBroadcastsTab />}
         {tab === "roles" && <RolesTab />}
         {tab === "flags" && <FeatureFlagsTab />}
         {tab === "achievements" && <AchievementWiki />}
@@ -102,6 +107,13 @@ export function Admin() {
 
 // ── Users ────────────────────────────────────────────────────────────────────
 
+// One-line, ellipsized cell text: a long name or email (or an unreadable
+// ciphertext blob) must not stretch its column and push the actions off-card.
+const clipCell: React.CSSProperties = {
+  display: "block", minWidth: 0, maxWidth: 240,
+  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+};
+
 function UsersTab() {
   const toast = useToast();
   const [users, setUsers] = React.useState<AdminUser[]>([]);
@@ -114,6 +126,7 @@ function UsersTab() {
   const [assignFor, setAssignFor] = React.useState<string | null>(null);
   const [assignRoleId, setAssignRoleId] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
+  const [removeFor, setRemoveFor] = React.useState<AdminUser | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -142,8 +155,6 @@ function UsersTab() {
     return () => window.clearTimeout(id);
   }, [query]);
 
-  const approved = users.filter(u => u.is_approved).length;
-
   const assign = async (uid: string) => {
     if (!assignRoleId) return;
     try {
@@ -167,18 +178,18 @@ function UsersTab() {
     }
   };
 
-  const approve = async (uid: string) => {
-    try { await adminApproveUser(uid); await load(); }
-    catch (err) { toast.error(`Approve failed: ${String(err)}`); }
-  };
-
-  const unapprove = async (uid: string) => {
+  // Removing access sends the account back to the waitlist (backend: PATCH
+  // /users/{id}/unapprove), so the row leaves this list and shows up under
+  // Allowlist as a signup.
+  const removeAccess = async (u: AdminUser) => {
     try {
-      await adminUnapproveUser(uid);
-      toast.success("Approval revoked");
+      await adminRemoveUserAccess(u.id);
+      setRemoveFor(null);
+      toast.success(`Access removed. ${u.email || u.name} is back on the Allowlist.`);
       await load();
     } catch (err) {
-      toast.error(`Unapprove failed: ${String(err)}`);
+      setRemoveFor(null);
+      toast.error(humanizeError(err, "Couldn't remove access. Try again."));
     }
   };
 
@@ -190,11 +201,10 @@ function UsersTab() {
 
   return (
     <>
-      <div className="body-serif" style={{
+      <div className="body-serif" data-testid="admin-users-summary" style={{
         fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680,
       }}>
-        <span style={{ color: "var(--text)" }}>{total}</span> student{total === 1 ? "" : "s"} · {" "}
-        <span style={{ color: "var(--accent)" }}>{approved} approved on this page</span>
+        <span style={{ color: "var(--text)" }}>{total}</span> user{total === 1 ? "" : "s"}
         {committedQuery && <> · <span style={{ color: "var(--text-muted)" }}>filter "{committedQuery}"</span></>}
       </div>
       <div className="card" style={{ padding: 0 }}>
@@ -215,98 +225,100 @@ function UsersTab() {
             />
           </div>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: "var(--bg-subtle)" }}>
-              {["User", "Email", "Roles", "Status", "Last seen", "Joined", ""].map(h => (
-                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {users.map(u => (
-              <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "10px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Avatar name={u.name || "?"} size={28} />
-                    <span style={{ fontWeight: 500 }}>{u.name}</span>
-                  </div>
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>{u.email}</td>
-                <td style={{ padding: "10px 16px" }}>
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-                    {(u.roles || []).map(r => (
-                      <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                        <RoleBadge role={r} />
-                        <button
-                          title="Revoke"
-                          onClick={() => revoke(u.id, r.id)}
-                          style={{ color: "var(--text-muted)", padding: "1px 4px" }}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "var(--bg-subtle)" }}>
+                {["User", "Email", "Roles", "Last seen", "Joined", ""].map(h => (
+                  <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} style={{ borderTop: "1px solid var(--border)" }}>
+                  <td style={{ padding: "10px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Avatar name={u.name || u.email || "?"} size={28} />
+                      {u.undecryptable ? (
+                        <span
+                          data-testid="admin-user-undecryptable"
+                          title={`Encrypted with a different key than this server's; can't be read. User id: ${u.id}`}
+                          style={{ fontStyle: "italic", color: "var(--text-muted)" }}
                         >
-                          ×
+                          Unreadable record
+                        </span>
+                      ) : u.name ? (
+                        <span title={u.name} style={{ ...clipCell, fontWeight: 500 }}>{u.name}</span>
+                      ) : (
+                        <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>No profile name</span>
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: "10px 16px", color: "var(--text-dim)" }}>
+                    <span title={u.email ?? undefined} style={clipCell}>{u.email ?? "—"}</span>
+                  </td>
+                  <td style={{ padding: "10px 16px" }}>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                      {(u.roles || []).map(r => (
+                        <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                          <RoleBadge role={r} />
+                          <button
+                            title="Revoke"
+                            onClick={() => revoke(u.id, r.id)}
+                            style={{ color: "var(--text-muted)", padding: "1px 4px" }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {assignFor === u.id ? (
+                        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          <CustomSelect
+                            size="sm"
+                            value={assignRoleId}
+                            onChange={v => setAssignRoleId(v)}
+                            options={roles.filter(r => !(u.roles || []).some(ur => ur.id === r.id)).map(r => ({ value: r.id, label: r.name }))}
+                            placeholder="Role…"
+                          />
+                          <button className="btn btn--sm btn--primary" onClick={() => assign(u.id)} disabled={!assignRoleId}>
+                            Add
+                          </button>
+                          <button className="btn btn--sm btn--ghost" onClick={() => { setAssignFor(null); setAssignRoleId(""); }}>×</button>
+                        </span>
+                      ) : (
+                        <button
+                          className="btn btn--sm btn--ghost"
+                          onClick={() => { setAssignFor(u.id); setAssignRoleId(""); }}
+                          style={{ fontSize: 11 }}
+                        >
+                          + role
                         </button>
-                      </span>
-                    ))}
-                    {assignFor === u.id ? (
-                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                        <CustomSelect
-                          size="sm"
-                          value={assignRoleId}
-                          onChange={v => setAssignRoleId(v)}
-                          options={roles.filter(r => !(u.roles || []).some(ur => ur.id === r.id)).map(r => ({ value: r.id, label: r.name }))}
-                          placeholder="Role…"
-                        />
-                        <button className="btn btn--sm btn--primary" onClick={() => assign(u.id)} disabled={!assignRoleId}>
-                          Add
-                        </button>
-                        <button className="btn btn--sm btn--ghost" onClick={() => { setAssignFor(null); setAssignRoleId(""); }}>×</button>
-                      </span>
-                    ) : (
-                      <button
-                        className="btn btn--sm btn--ghost"
-                        onClick={() => { setAssignFor(u.id); setAssignRoleId(""); }}
-                        style={{ fontSize: 11 }}
-                      >
-                        + role
-                      </button>
-                    )}
-                  </div>
-                </td>
-                <td style={{ padding: "10px 16px" }}>
-                  <span className={`chip ${u.is_approved ? "chip--accent" : "chip--warn"}`}>
-                    {u.is_approved ? "approved" : "pending"}
-                  </span>
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                  {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                  {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
-                </td>
-                <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                  {u.is_approved ? (
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                    {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
+                    {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td style={{ padding: "10px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
                     <button
                       className="btn btn--sm btn--ghost"
-                      onClick={() => unapprove(u.id)}
-                      title="Revoke approval"
+                      data-testid={`admin-user-remove-access-${u.id}`}
+                      onClick={() => setRemoveFor(u)}
                     >
-                      Unapprove
+                      Remove access
                     </button>
-                  ) : (
-                    <button
-                      className="btn btn--sm btn--primary"
-                      onClick={() => approve(u.id)}
-                    >
-                      Approve
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
           padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)",
@@ -318,7 +330,59 @@ function UsersTab() {
           </div>
         </div>
       </div>
+      <RemoveAccessDialog
+        user={removeFor}
+        onCancel={() => setRemoveFor(null)}
+        onConfirm={removeAccess}
+      />
     </>
+  );
+}
+
+/** In-page confirm for "Remove access" (never window.confirm). The middleware
+ *  re-checks approval via /api/auth/me on every app page request, so the copy
+ *  says they lose access on their next page load: the session itself isn't
+ *  revoked, so "signed out" would overstate it. */
+function RemoveAccessDialog({ user, onCancel, onConfirm }: {
+  user: AdminUser | null;
+  onCancel: () => void;
+  onConfirm: (u: AdminUser) => Promise<void>;
+}) {
+  const [saving, setSaving] = React.useState(false);
+  if (!user) return null;
+  const who = user.name || user.email;
+
+  const confirm = async () => {
+    setSaving(true);
+    try { await onConfirm(user); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open onClose={onCancel} size="sm" title={`Remove ${who}'s access?`}>
+      <p
+        data-testid="admin-user-remove-body"
+        style={{ margin: "0 0 24px", color: "var(--text-dim)", fontSize: "var(--fs-base)", lineHeight: 1.55 }}
+      >
+        They&apos;ll lose access to Sapling the next time they load a page, and move to the Allowlist as a
+        signup. Their account and data are kept, and approving them on the Allowlist lets them back in when
+        they next sign in.
+      </p>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <button type="button" className="btn" data-testid="admin-user-remove-cancel" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          data-testid="admin-user-remove-confirm"
+          disabled={saving}
+          onClick={() => void confirm()}
+        >
+          {saving ? "Removing…" : "Remove access"}
+        </button>
+      </div>
+    </Dialog>
   );
 }
 
@@ -758,7 +822,7 @@ function AnalyticsTab() {
       <div className="metric-grid">
         <MetricCard label="Users" value={totals.users} />
         <MetricCard label="Approved" value={totals.approved} accent />
-        <MetricCard label="Pending" value={totals.pending} warn={totals.pending > 0} />
+        <MetricCard label="Awaiting approval" value={totals.pending} warn={totals.pending > 0} />
         <MetricCard label="Admins" value={totals.admins} />
       </div>
       <div className="card" style={{ padding: "var(--pad-lg)" }}>
@@ -933,157 +997,9 @@ function LabeledField({ label, children }: { label: string; children: React.Reac
   );
 }
 
-const fieldStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "7px 10px",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)",
-  fontSize: 13,
-  background: "var(--bg-input)",
-  fontFamily: "inherit",
-};
-
 const checkLabel: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-dim)",
 };
-
-// ── Allowlist ────────────────────────────────────────────────────────────────
-function AllowlistTab() {
-  const toast = useToast();
-  const [emails, setEmails] = React.useState<AllowlistEmail[]>([]);
-  const [query, setQuery] = React.useState("");
-  const [newEmail, setNewEmail] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
-
-  const load = React.useCallback(async () => {
-    try {
-      const r = await adminListAllowlist();
-      setEmails(r.emails || []);
-    } catch (err) {
-      toast.error(`Load failed: ${String(err)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  React.useEffect(() => { load(); }, [load]);
-
-  const filtered = query
-    ? emails.filter(e => e.email.toLowerCase().includes(query.toLowerCase()))
-    : emails;
-  const approved = emails.filter(e => e.approved_at).length;
-  const pending = emails.length - approved;
-
-  const add = async () => {
-    const e = newEmail.trim().toLowerCase();
-    if (!e) return;
-    setBusy(true);
-    try {
-      await adminApproveAllowlist(e);
-      setNewEmail("");
-      toast.success("Email allowlisted");
-      await load();
-    } catch (err) {
-      toast.error(`Add failed: ${String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const toggle = async (row: AllowlistEmail) => {
-    try {
-      if (row.approved_at) {
-        await adminRevokeAllowlist(row.email);
-        toast.success("Allowlist revoked");
-      } else {
-        await adminApproveAllowlist(row.email);
-        toast.success("Email allowlisted");
-      }
-      await load();
-    } catch (err) {
-      toast.error(`Update failed: ${String(err)}`);
-    }
-  };
-
-  if (loading) return <AdminTableSkeleton />;
-
-  return (
-    <>
-      <div className="body-serif" style={{ fontSize: 15, marginBottom: 22, color: "var(--text-dim)", maxWidth: 680 }}>
-        <span style={{ color: "var(--text)" }}>{emails.length}</span> address{emails.length === 1 ? "" : "es"} · {" "}
-        <span style={{ color: "var(--accent)" }}>{approved} approved</span>
-        {pending > 0 && <> · <span style={{ color: "var(--warn)" }}>{pending} unapproved signups</span></>}
-      </div>
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ display: "flex", padding: "12px 16px", borderBottom: "1px solid var(--border)", alignItems: "center", gap: 12 }}>
-          <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
-            <div style={{ position: "absolute", left: 10, top: 8, color: "var(--text-muted)" }}>
-              <Icon name="search" size={14} />
-            </div>
-            <input
-              placeholder="Search emails…"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              style={{
-                width: "100%", padding: "7px 12px 7px 32px",
-                border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
-                fontSize: 13, background: "var(--bg-input)",
-              }}
-            />
-          </div>
-          <input
-            placeholder="someone@bu.edu"
-            value={newEmail}
-            onChange={e => setNewEmail(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") add(); }}
-            style={{ ...fieldStyle, maxWidth: 240 }}
-          />
-          <button className="btn btn--primary btn--sm" onClick={add} disabled={busy || !newEmail.trim()}>
-            {busy ? "Adding…" : "Allowlist"}
-          </button>
-        </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: "var(--bg-subtle)" }}>
-              {["Email", "Status", "Submitted", "Approved", ""].map(h => (
-                <th key={h} style={{ textAlign: "left", padding: "10px 16px", fontWeight: 500, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(row => (
-              <tr key={row.id} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "10px 16px", fontWeight: 500 }}>{row.email}</td>
-                <td style={{ padding: "10px 16px" }}>
-                  <span className={`chip ${row.approved_at ? "chip--accent" : "chip--warn"}`}>
-                    {row.approved_at ? "approved" : "signup"}
-                  </span>
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                  {row.created_at ? new Date(row.created_at).toLocaleDateString() : "—"}
-                </td>
-                <td style={{ padding: "10px 16px", color: "var(--text-muted)" }}>
-                  {row.approved_at ? new Date(row.approved_at).toLocaleDateString() : "—"}
-                </td>
-                <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                  <button
-                    className={`btn btn--sm ${row.approved_at ? "btn--ghost" : "btn--primary"}`}
-                    onClick={() => toggle(row)}
-                  >
-                    {row.approved_at ? "Revoke" : "Approve"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
 
 // ── Audit ─────────────────────────────────────────────────────────────────────
 function AuditTab() {

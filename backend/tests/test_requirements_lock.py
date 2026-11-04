@@ -9,37 +9,14 @@ Guards the dependency pinning + lockfile (#163).
   the check that catches a dep added to the manifest without regenerating the
   lock (e.g. #97's `redis`, added while this branch was forked).
 """
-import os
+
 import re
 
-_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from packaging.utils import canonicalize_name
 
-# Installed separately from the CPU wheel index / excluded from the fast lock.
-_OCR_STACK = {"torch", "docling", "transformers"}
+from tests.dependency_manifest import OCR_STACK, lock_pins, read, requirement_lines, requirements
 
 _SPEC = re.compile(r"[<>=!~]")
-
-
-def _normalize(name: str) -> str:
-    return name.strip().lower().replace("_", "-")
-
-
-def _requirement_lines() -> list[str]:
-    path = os.path.join(_BACKEND, "requirements.txt")
-    with open(path, encoding="utf-8") as fh:
-        out = []
-        for raw in fh:
-            line = raw.split("#", 1)[0].strip()
-            if line:
-                out.append(line)
-        return out
-
-
-def _base_name(line: str) -> str:
-    # strip extras "[...]" then the version specifier
-    name = re.sub(r"\[.*?\]", "", line)
-    name = _SPEC.split(name, 1)[0]
-    return _normalize(name)
 
 
 def test_no_requirement_is_completely_unconstrained():
@@ -54,25 +31,21 @@ def test_no_requirement_is_completely_unconstrained():
     every one of them to an exact hashed version; requirements.txt is the
     manifest of intent, not the install plan.
     """
-    bare = [ln for ln in _requirement_lines() if not _SPEC.search(ln)]
+    bare = [ln for ln in requirement_lines() if not _SPEC.search(ln)]
     assert bare == [], f"dependencies with no version specifier at all: {bare}"
 
 
 def test_lock_pins_every_non_ocr_requirement():
-    with open(os.path.join(_BACKEND, "requirements.lock"), encoding="utf-8") as fh:
-        lock = fh.read().lower()
+    pins = lock_pins()
     missing = []
-    for line in _requirement_lines():
-        name = _base_name(line)
-        if name in _OCR_STACK:
-            continue
-        if not re.search(rf"^{re.escape(name)}==", lock, re.MULTILINE):
+    for req in requirements():
+        name = canonicalize_name(req.name)
+        if name not in OCR_STACK and name not in pins:
             missing.append(name)
     assert missing == [], f"in requirements.txt but not pinned in requirements.lock: {missing}"
 
 
 def test_lock_is_hash_pinned():
-    with open(os.path.join(_BACKEND, "requirements.lock"), encoding="utf-8") as fh:
-        lock = fh.read()
+    lock = read("requirements.lock")
     # A real lock carries per-artifact hashes for --require-hashes installs.
     assert "--hash=sha256:" in lock

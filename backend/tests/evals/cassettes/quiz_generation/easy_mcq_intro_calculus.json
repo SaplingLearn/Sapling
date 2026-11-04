@@ -1,45 +1,48 @@
 {
   "questions": [
     {
+      "accepted_answers": [],
       "concept": "Limits",
-      "correct_answer": "The behavior of a function as it approaches a certain input value.",
+      "correct_answer": "f(x) gets arbitrarily close to L as x gets close to a, and f(a) need not equal L",
       "difficulty": "easy",
-      "explanation": "A limit describes the value that a function 'approaches' as the input (or independent variable) approaches some value. It doesn't necessarily mean the function reaches that value at that exact point.",
+      "explanation": "A limit describes the value that f(x) approaches as x approaches a, not necessarily the value at x = a. The function may even be undefined at a and still have a limit.",
       "options": [
-        "The value a function reaches at a specific point.",
-        "The behavior of a function as it approaches a certain input value.",
-        "The rate of change of a function at a point.",
-        "The area under the curve of a function."
+        "f(x) gets arbitrarily close to L as x gets close to a, and f(a) need not equal L",
+        "f(a) always equals L exactly",
+        "f(x) grows without bound as x approaches a",
+        "x equals L whenever f(x) equals a"
       ],
-      "question": "What is the fundamental concept of a limit in calculus?",
+      "question": "Which statement best describes what lim x\u2192a f(x) = L means?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Derivatives",
-      "correct_answer": "The instantaneous rate of change of the function.",
+      "correct_answer": "The instantaneous rate of change of f at x = a, equal to the slope of the tangent line there",
       "difficulty": "easy",
-      "explanation": "The derivative of a function at a point represents the instantaneous rate at which the function's value is changing with respect to its input variable at that specific point.",
+      "explanation": "The derivative at a point is the limit of average rates of change over shrinking intervals, which gives the instantaneous rate of change and the slope of the tangent line at that point.",
       "options": [
-        "The instantaneous rate of change of the function.",
-        "The total change in the function over an interval.",
-        "The area under the curve of the function.",
-        "The point where the function crosses the x-axis."
+        "The average value of f on the interval from 0 to a",
+        "The total area under the graph of f from 0 to a",
+        "The instantaneous rate of change of f at x = a, equal to the slope of the tangent line there",
+        "The value f(a) of the function at x = a"
       ],
-      "question": "Which of the following best defines the derivative of a function?",
+      "question": "What does the derivative f'(a) represent?",
       "type": "multiple_choice"
     },
     {
+      "accepted_answers": [],
       "concept": "Continuity",
-      "correct_answer": "The function must be defined at c, the limit as x approaches c must exist, and these two values must be equal.",
+      "correct_answer": "The limit of f(x) as x approaches a exists and equals f(a)",
       "difficulty": "easy",
-      "explanation": "The formal definition of continuity at a point requires three conditions to be met: the function is defined at the point, the limit exists at that point, and the limit's value equals the function's value at that point.",
+      "explanation": "Continuity at a point requires three things: f(a) is defined, the limit as x approaches a exists, and the two values are equal. Failing any one of these makes f discontinuous at a.",
       "options": [
-        "The function must be defined at c, the limit as x approaches c must exist, and these two values must be equal.",
-        "The function must be defined at c, and the limit as x approaches c must exist.",
-        "The limit as x approaches c must exist, and these two values must be equal.",
-        "The function must be defined at c, and the limit as x approaches c from the left must equal the limit as x approaches c from the right."
+        "f has a derivative equal to zero at x = a",
+        "f(a) is defined and f is increasing near a",
+        "The limit of f(x) as x approaches a exists, even if f(a) is undefined",
+        "The limit of f(x) as x approaches a exists and equals f(a)"
       ],
-      "question": "For a function to be continuous at a point 'c', what must be true?",
+      "question": "A function f is continuous at x = a exactly when which condition holds?",
       "type": "multiple_choice"
     }
   ]

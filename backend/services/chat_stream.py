@@ -40,6 +40,30 @@ def merge_graph_updates(updates: list[dict]) -> dict:
     return merged
 
 
+#: Inserted between two DISTINCT text parts of one turn. Claude routinely
+#: writes text, calls a tool, then writes more (an explanation, then
+#: `update_mastery_tool`, then "I've nudged your mastery…") — two TextParts in
+#: two model responses. Streamed raw they run together ("…the explanation.I've
+#: nudged…"); a paragraph break is what the reader would have written. Only
+#: added when neither side already supplies a line break.
+TEXT_PART_SEPARATOR = "\n\n"
+
+
+def join_text_parts(parts: list[str]) -> str:
+    """Join one turn's TextPart contents the way the stream renders them
+    (`TEXT_PART_SEPARATOR` between parts that don't already break a line).
+    The JSON tutor route (`routes.learn._new_run_text`) uses this too, so a
+    turn persists byte-identically whichever path served it."""
+    out = ""
+    for part in parts:
+        if not part:
+            continue
+        if out and not out.endswith("\n") and not part.startswith("\n"):
+            out += TEXT_PART_SEPARATOR
+        out += part
+    return out
+
+
 def _text_from(event: Any) -> str | None:
     """Extract a NEW text chunk from a stream event, or None.
 
@@ -64,8 +88,8 @@ def _text_from(event: Any) -> str | None:
     `TextPart.part_kind == "text"`, `TextPartDelta.part_delta_kind ==
     "text"` (verified by inspecting the installed library — `ThinkingPart`/
     `ThinkingPartDelta` carry `"thinking"` in the same fields). Today
-    `_build_pro_model_settings` never sets `include_thoughts`, so this is
-    latent — but the moment thought summaries are enabled, an ungated
+    no tutor setting requests a thinking display (Claude's default is
+    `"omitted"`: thinking blocks stream with empty text), so this is latent — but the moment thought summaries are enabled, an ungated
     reader would stream raw chain-of-thought into a student's chat bubble.
     """
     cls_name = type(event).__name__
@@ -231,7 +255,6 @@ async def stream_agent_turn(
     yield SaplingEvent(type="status", step="start", message="Starting.")
 
     chunks: list[str] = []
-    final_output: str | None = None
     run_result: Any = None
     # High-water marks: how much of deps.* we have already emitted.
     graph_hw = 0
@@ -241,6 +264,16 @@ async def stream_agent_turn(
         async for event in agent.run_stream_events(user_message, **run_kwargs):
             text = _text_from(event)
             if text:
+                if (
+                    type(event).__name__ == "PartStartEvent"
+                    and chunks
+                    and not chunks[-1].endswith("\n")
+                    and not text.startswith("\n")
+                ):
+                    # A NEW text part after earlier text this turn (see
+                    # TEXT_PART_SEPARATOR) — stream the break too, so what
+                    # the student watched is what gets persisted.
+                    text = TEXT_PART_SEPARATOR + text
                 chunks.append(text)
                 yield SaplingEvent(
                     type="token", step="reply", message="", data={"delta": text}
@@ -273,9 +306,6 @@ async def stream_agent_turn(
 
             if cls_name == "AgentRunResultEvent":
                 run_result = getattr(event, "result", None)
-                output = getattr(run_result, "output", None)
-                if isinstance(output, str):
-                    final_output = output
 
     # Catches UsageLimitExceeded / UnexpectedModelBehavior (both Exception
     # subclasses) and anything else the model or a tool raises. Deliberately
@@ -326,18 +356,20 @@ async def stream_agent_turn(
             yield ev
         return
 
+    # The reply is EVERYTHING this turn streamed, never `run_result.output`.
+    # `.output` is only the FINAL model response's text: a Claude turn that
+    # explains, calls `update_mastery_tool`, then adds one line streamed the
+    # whole explanation to the student but would have persisted only that
+    # last line (ADR 0030 — caught by the first Claude tutor eval). It is
+    # also untrustworthy when this turn streamed nothing: it resolves out of
+    # a message list that INCLUDES `message_history`, so a turn that ended
+    # after tool calls hands back the PREVIOUS turn's assistant message,
+    # fully formed and invisible to the blank-reply ladder below (observed
+    # live on gemini-2.5-flash-lite; ~25% of turns). Text always reaches us
+    # as PartStart/PartDelta events, so "nothing streamed" means "this turn
+    # produced no text" — degrade instead of replaying history.
     joined = "".join(chunks)
-    # `final_output` (run_result.output) is only trustworthy when this turn
-    # actually streamed text. It resolves out of the run's message list, and
-    # that list INCLUDES `message_history` — so a turn whose model response
-    # carries no text part (ended after tool calls) hands back the PREVIOUS
-    # turn's assistant message: fully formed, non-blank, and therefore
-    # invisible to the blank-reply ladder below. Persisting it makes the tutor
-    # answer a follow-up with a byte-identical copy of its own last answer
-    # (observed live on gemini-2.5-flash-lite; ~25% of turns). Text always
-    # reaches us as PartStart/PartDelta events, so "nothing streamed" means
-    # "this turn produced no text" — degrade instead of replaying history.
-    reply = final_output if (final_output is not None and joined.strip()) else joined
+    reply = joined
 
     # Usage first, persistence second: the tokens were spent regardless of
     # whether on_complete manages to persist — including on the degenerate
@@ -351,18 +383,14 @@ async def stream_agent_turn(
             logger.debug("on_usage hook failed; usage row dropped", exc_info=True)
 
     if not reply.strip():
-        # Degenerate output (#153, ADR-0023 follow-up): gemini-2.5-pro
-        # occasionally follows an end-of-turn tool call with a bare-newline
-        # final text, making the run OUTPUT whitespace-only. The real reply
-        # may still have streamed earlier in the turn — prefer the joined
-        # chunks. If nothing non-blank streamed either, never persist an
-        # empty assistant row: degrade exactly like Rung 1 (legacy fallback
-        # owns the turn, or a terminal `error` without one). Tool writes
-        # that already landed stay, matching the existing Rung-1 contract
-        # for a failure after a tool write.
-        if joined.strip():
-            reply = joined
-        elif deps.graph_updates or deps.mastery_changes:
+        # Degenerate output (#153, ADR-0023 follow-up): nothing non-blank
+        # streamed this turn (e.g. gemini-2.5-pro's bare-newline final text
+        # after an end-of-turn tool call). Never persist an empty assistant
+        # row: degrade exactly like Rung 1 (legacy fallback owns the turn,
+        # or a terminal `error` without one). Tool writes that already
+        # landed stay, matching the existing Rung-1 contract for a failure
+        # after a tool write.
+        if deps.graph_updates or deps.mastery_changes:
             # Tool writes ALREADY LANDED this turn (append-only mastery
             # events, graph upserts). The nonstream fallback would re-run
             # the whole turn and its tools would apply the writes AGAIN —

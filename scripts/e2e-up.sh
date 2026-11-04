@@ -15,7 +15,7 @@
 # skip-if-done migrations/seeds. LOCAL ONLY — never touches staging/prod.
 #
 # First-time setup on a new machine (same as scripts/local-up.sh):
-#   cp backend/.env.local.example backend/.env       # then fill in GEMINI_API_KEY
+#   cp backend/.env.local.example backend/.env       # then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY
 #   python -m venv backend/venv && backend/venv/bin/pip install -r backend/requirements.txt
 #   cd frontend && npm ci
 #
@@ -172,7 +172,7 @@ echo "▶ Preflight…"
 command -v supabase >/dev/null 2>&1 \
   || { echo "✗ supabase CLI not found. Install it first (Arch: paru -S supabase-bin) — see docs/local-supabase.md"; exit 1; }
 [ -f backend/.env ] \
-  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in GEMINI_API_KEY)"; exit 1; }
+  || { echo "✗ backend/.env not found. Create it first: cp backend/.env.local.example backend/.env  (then fill in ANTHROPIC_API_KEY + GEMINI_API_KEY)"; exit 1; }
 # $VENV_PY is resolved in local-common.sh and accepts both the POSIX
 # (venv/bin/python) and Windows (venv/Scripts/python.exe) venv layouts.
 [ -n "${VENV_PY:-}" ] \

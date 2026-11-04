@@ -31,15 +31,18 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-      - name: Install backend deps
+          cache-dependency-path: backend/requirements.lock
+      # The hash-pinned lock, like ci.yml and e2e.yml (#694). It pins
+      # pydantic-evals too, so no separate install is needed.
+      - name: Install backend deps from lockfile
         run: |
           cd backend
-          pip install -r requirements.txt
-          pip install 'pydantic-evals>=0.0.5'
+          pip install --require-hashes -r requirements.lock
       - name: Run evals against cassettes
         env:
           SAPLING_EVAL_MODE: replay
           GEMINI_API_KEY: dummy-not-used-in-replay
+          ANTHROPIC_API_KEY: dummy-not-used-in-replay
           # 64 hex chars; only needed if any import path requires it.
           ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
         run: |

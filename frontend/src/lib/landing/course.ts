@@ -24,8 +24,8 @@ export type MasteryTier = 'mastered' | 'learning' | 'struggling' | 'unexplored';
  * move a landing-page mastery tier.
  */
 export const XTIER: Record<MasteryTier, string> = {
-  mastered: '#0E9E5A',
-  learning: '#4FA574',
+  mastered: '#68951F',
+  learning: '#7B9E51',
   struggling: '#E27A63',
   unexplored: '#9a9a9a',
 };

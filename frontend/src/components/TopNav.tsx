@@ -27,6 +27,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
+import { SaplingWordmark } from "./SaplingWordmark";
 import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import type { NavSection } from "@/lib/navFeatures";
@@ -124,43 +125,9 @@ export function TopNav() {
         </div>
       )}
 
-      {/* Logo — ported verbatim from the pre-revamp Navbar
-          (main@929658f:frontend/src/components/Navbar.tsx:213-231):
-          /sapling-icon.svg + Spectral "Sapling" with a soft green
-          text-shadow. */}
-      <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "2px", textDecoration: "none" }}>
-        <img
-          src="/sapling-icon.svg"
-          alt="Sapling"
-          width={32}
-          height={32}
-          decoding="async"
-          style={{
-            width: "32px",
-            height: "32px",
-            marginTop: "-7px",
-            marginBottom: "-3px",
-            marginLeft: "-2px",
-            marginRight: "-4px",
-            alignSelf: "center",
-            flexShrink: 0,
-          }}
-        />
-        <div style={{ display: "flex", flexDirection: "column", gap: "1px", alignItems: "center", textAlign: "center" }}>
-          <span
-            style={{
-              fontFamily: "var(--font-spectral), 'Spectral', Georgia, serif",
-              fontWeight: 700,
-              fontSize: isMobile ? "17px" : "20px",
-              color: "var(--brand-forest)",
-              letterSpacing: "-0.02em",
-              textShadow: "0 0 12px rgba(26, 92, 42, 0.2)",
-              lineHeight: 1.1,
-            }}
-          >
-            Sapling
-          </span>
-        </div>
+      {/* Logo — the approved wordmark (#728). */}
+      <Link href="/dashboard" aria-label="Sapling — home" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
+        <SaplingWordmark width={isMobile ? 88 : 104} decorative />
       </Link>
 
       {/* Desktop group row — hover/focus reveals each group's items */}

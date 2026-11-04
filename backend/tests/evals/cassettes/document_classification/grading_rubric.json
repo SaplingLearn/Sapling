@@ -1,7 +1,7 @@
 {
   "category": "other",
   "confidence": 0.8,
-  "is_syllabus": true,
-  "rationale": "The document outlines grading criteria and point allocation for an essay, which functions as a course requirement and implies a course structure.",
+  "is_syllabus": false,
+  "rationale": "The document is a scoring rubric with point weights per criterion and grade cutoffs, which is an assignment-grading tool rather than a course schedule or overall grading policy. It contains no student answers, so it is instructor-produced course material.",
   "shareability": "course_material"
 }

@@ -290,7 +290,9 @@ class TestFlashLiteBackend:
         assert len(usage) == 1
         assert usage[0]["task"] == "decision"
         assert usage[0]["feature"] == "test"
-        assert usage[0]["provider"] == "gemini"
+        # The provider label follows the served model (ADR 0030): this lane
+        # runs the decision agent in function mode.
+        assert usage[0]["provider"] == "function"
 
     def test_one_out_of_range_confidence_does_not_sink_the_output(self):
         """#672 review: ge/le on the schema made a single 1.02 fail validation
@@ -442,6 +444,14 @@ class TestJevBackend:
         # $0.042 / 1M input tokens, output free — exactly, at the column's
         # 10dp (the old 6dp stored 0.000013).
         assert row["cost_usd"] == 0.000013104
+
+    def test_a_jev_answer_reporting_no_tokens_warns(self, monkeypatch, sink, caplog):
+        """The #689 zero-token check covers this writer too: it bills through
+        events_service.log_llm_usage directly, not record_agent_usage."""
+        _use_jev(monkeypatch, _jev_transport({**JEV_OK, "usage": {}}))
+        with caplog.at_level("WARNING"):
+            _decide()
+        assert any("reported 0 tokens" in r.getMessage() for r in caplog.records)
 
     def test_base_url_and_model_are_configurable(self, monkeypatch):
         seen: list[httpx.Request] = []
@@ -854,7 +864,7 @@ class TestShadowAndEvent:
         assert shadow["backend"] == "flash_lite"
         assert shadow["agree"] == {"urgent": True, "team": False, "mood": None}
         # Both backends' tokens are billed — the shadow costs real money.
-        assert {r["provider"] for r in _usage_rows(sink)} == {"typesafe", "gemini"}
+        assert {r["provider"] for r in _usage_rows(sink)} == {"typesafe", "function"}
 
     def test_primary_degraded_onto_the_shadow_backend_is_not_compared(
         self, monkeypatch, sink,
@@ -875,7 +885,7 @@ class TestShadowAndEvent:
         shadow = event["payload"]["shadow"]
         assert shadow["fallback_reason"] == "shadow_same_as_served"
         assert shadow["agree"] is None
-        assert [r["provider"] for r in _usage_rows(sink)] == ["gemini"]
+        assert [r["provider"] for r in _usage_rows(sink)] == ["function"]
 
     def test_an_off_list_shadow_answer_disagrees(self, monkeypatch, sink):
         _use_jev(monkeypatch, _jev_transport(JEV_OK))

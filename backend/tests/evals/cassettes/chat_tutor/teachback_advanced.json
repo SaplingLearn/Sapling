@@ -1,31 +1,4 @@
 {
-  "text": "You've got the main components right! The Pumping Lemma is indeed a tool to prove a language *isn't* regular, and it involves splitting a string and repeating (or \"pumping\") the middle part.\n\nThere's a subtle but crucial point you've inverted. The lemma states that for a regular language, there exists a pumping length `p` such that any string `s` with length at least `p` *can* be pumped and remain in the language.\n\nTo prove a language is *not* regular, we use this by contradiction. We show that for a given language, this property fails.\n\nSo, for the proof to work, what are we hoping to show when we pump the middle section of a chosen string?",
-  "tool_calls": [
-    {
-      "args": {
-        "concepts": [
-          "Pumping Lemma",
-          "Regular Languages"
-        ]
-      },
-      "tool_name": "apply_graph_update_tool"
-    },
-    {
-      "args": {
-        "updates": [
-          {
-            "concept_name": "Pumping Lemma",
-            "mastery_delta": 0.1,
-            "reason": "Partially correct explanation."
-          },
-          {
-            "concept_name": "Regular Languages",
-            "mastery_delta": 0.1,
-            "reason": "Used term correctly in context."
-          }
-        ]
-      },
-      "tool_name": "update_mastery_tool"
-    }
-  ]
+  "text": "Good start. You have the core idea that strings can be split and a piece pumped. But the way you've stated it is backwards in a few places.\n\n**What's right**\n- The lemma involves a pumping length $p$ and strings of length at least $p$.\n- It involves splitting a string into three parts, $s = xyz$, and repeating the middle part $y$.\n\n**What needs fixing**\n1. **The lemma is a property of regular languages.** It says that if $L$ is regular, then every string $s \\in L$ with $|s| \\ge p$ can be split as $s = xyz$ such that:\n   - $|y| > 0$\n   - $|xy| \\le p$\n   - $xy^iz \\in L$ for all $i \\ge 0$, including $i = 0$, which deletes $y$.\n\n   The lemma doesn't prove a language is non-regular directly. It gives a property that every regular language has.\n\n2. **Proving non-regularity is a proof by contradiction.** You show that the property fails. Suppose $L$ is regular with pumping length $p$. Then you pick one clever string $s \\in L$ with $|s| \\ge p$. Next you show that *every* legal split $xyz$ (obeying the conditions above) has some $i$ where $xy^iz \\notin L$. That contradicts the lemma, so $L$ isn't regular.\n\n3. **Quantifiers.** Your wording suggests we choose the split, but we don't. The adversary picks $p$ and the split. We pick only $s$ and $i$. Some strings $s$ will be pumpable, so choosing a good one matters.\n\n4. **Direction.** Pumping can't prove a language *is* regular. Some non-regular languages satisfy the pumping property.\n\n**Check your understanding.** Take $L = \\{0^n1^n : n \\ge 0\\}$. Suppose you pick $s = 0^p1^p$. Using the condition $|xy| \\le p$, what must $y$ look like, and why does pumping it break the language?",
+  "tool_calls": []
 }

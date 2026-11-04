@@ -548,7 +548,7 @@ export class LandingEngine {
     M.ticks.forEach((t) => {
       const wn = ACT1_WINDOWS[t.i];
       const active = p >= wn[0] && p < (wn[1] === 1.01 ? 2 : wn[1] + 0.02);
-      put(t.el, 'background', active ? '#0E9E5A' : 'rgba(18,32,26,0.14)');
+      put(t.el, 'background', active ? '#68951F' : 'rgba(25,31,19,0.14)');
       put(t.el, 'height', active ? '38px' : '26px');
     });
   }
@@ -606,7 +606,7 @@ export class LandingEngine {
         const tile = sc.tiles[i] as HTMLElement & { __shadow?: string };
         if (tile.__shadow === undefined) tile.__shadow = tile.style.boxShadow || '';
         tile.style.transform = 'scale(1.045)';
-        tile.style.boxShadow = '0 18px 44px rgba(12,86,56,0.18)';
+        tile.style.boxShadow = '0 18px 44px rgba(68,93,34,0.18)';
         setTimeout(() => {
           tile.style.transform = 'scale(1)';
           tile.style.boxShadow = tile.__shadow as string;
@@ -697,21 +697,21 @@ export class LandingEngine {
         if (n.dot) {
           put(
             n.dot, 'background',
-            i < activeIdx ? '#4FA574' : i === activeIdx ? '#0E9E5A' : 'rgba(18,32,26,0.18)',
+            i < activeIdx ? '#7B9E51' : i === activeIdx ? '#68951F' : 'rgba(25,31,19,0.18)',
           );
-          put(n.dot, 'box-shadow', i === activeIdx ? '0 0 0 3px rgba(14,158,90,0.18)' : 'none');
+          put(n.dot, 'box-shadow', i === activeIdx ? '0 0 0 3px rgba(104,149,31,0.18)' : 'none');
         }
-        put(n.btn, 'color', i === activeIdx ? '#0C5638' : '#61726A');
-        put(n.btn, 'background', i === activeIdx ? 'rgba(12,86,56,0.07)' : 'transparent');
+        put(n.btn, 'color', i === activeIdx ? '#445D22' : '#697062');
+        put(n.btn, 'background', i === activeIdx ? 'rgba(68,93,34,0.07)' : 'transparent');
       });
       M.jumpTicks.forEach((t, i) => {
         put(
           t, 'background',
           i === activeIdx
-            ? '#0E9E5A'
+            ? '#68951F'
             : i < activeIdx
-              ? 'rgba(79,165,116,0.6)'
-              : 'rgba(18,32,26,0.18)',
+              ? 'rgba(123,158,81,0.6)'
+              : 'rgba(25,31,19,0.18)',
         );
         put(t, 'transform', i === activeIdx ? 'scale(1.5)' : 'scale(1)');
       });

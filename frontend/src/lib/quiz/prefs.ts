@@ -53,6 +53,8 @@ export function loadPrefs(config?: QuizConfig | null): QuizPrefs {
     : null;
 
   return {
+    ...(typeof stored.questionFormat === "string" && config?.question_types.includes(stored.questionFormat)
+      ? { questionFormat: stored.questionFormat } : {}),
     count: config && count !== null && !config.num_questions.options.includes(count) ? null : count,
     difficulty:
       config && difficulty !== null && !config.difficulties.includes(difficulty)

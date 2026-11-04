@@ -105,6 +105,27 @@ export function QuizSettings({ config, value, onChange, flush = false }: QuizSet
           />
         )}
       </Row>
+      {config && config.question_types.length > 1 && (
+        <Row label="Format">
+          {labelId => (
+            <SegmentedControl
+              options={config.question_types.map(format => ({
+                value: format,
+                label: ({ multiple_choice: "Multiple choice", short_answer: "Short answer", numeric: "Numeric", symbolic: "Algebra", mixed: "Mixed" } as Record<string, string>)[format] ?? format,
+              }))}
+              value={value.questionFormat ?? "multiple_choice"}
+              onChange={questionFormat => onChange({ ...value, questionFormat })}
+              labelledBy={labelId}
+              testid="quiz-seg-format"
+            />
+          )}
+        </Row>
+      )}
+      {value.questionFormat === "mixed" && (
+        <p className="quiz-home-settings__note" data-testid="quiz-format-mixed-note">
+          A variety suited to your course: written answers and multiple choice, with math only when relevant.
+        </p>
+      )}
     </div>
   );
 }

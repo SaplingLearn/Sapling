@@ -6,7 +6,6 @@ import { SideNav } from "./SideNav";
 import { FloatingActions } from "./FloatingActions";
 import { FeedbackFlow } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
-import { AtmosphericBackdrop } from "./AtmosphericBackdrop";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
 import { NavFeatureGate } from "./NavFeatureGate";
 import { useLayoutPref } from "@/lib/useLayoutPref";
@@ -38,29 +37,39 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           position: "relative",
         }}
       >
-        <AtmosphericBackdrop />
         <a href="#main-content" className="skip-link">Skip to content</a>
         <SideNav />
-        <main
-          id="main-content"
-          tabIndex={-1}
-          // The one stable "authed shell mounted" anchor for browser E2E
-          // (#385); present in both layout variants so the layout pref
-          // never matters to a locator.
-          data-testid="app-shell"
-          // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
-          // so this — not <body> — is what scrolls. `useScrollLock` targets it.
-          data-scroll-container=""
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            minWidth: 0,
-            position: "relative",
-            zIndex: 1,
-          }}
-        >
-          <NavFeatureGate>{children}</NavFeatureGate>
-        </main>
+        {/* The content column. Its wrapper exists only to anchor the two
+            olive corner pieces: they round the page's top-left and
+            bottom-left into the rail, sit outside the scrollport so they
+            never scroll away, and track the rail's width as it collapses
+            because they ride this column's left edge. See .shell-corner. */}
+        <div style={{ flex: 1, minWidth: 0, display: "flex", position: "relative" }}>
+          <span aria-hidden className="shell-corner shell-corner--top" />
+          <span aria-hidden className="shell-corner shell-corner--bottom" />
+          <main
+            id="main-content"
+            tabIndex={-1}
+            // The one stable "authed shell mounted" anchor for browser E2E
+            // (#385); present in both layout variants so the layout pref
+            // never matters to a locator.
+            data-testid="app-shell"
+            // The shell's scrollport: the root above is height:100dvh/overflow:hidden,
+            // so this — not <body> — is what scrolls. `useScrollLock` targets it.
+            data-scroll-container=""
+            // No z-index: a stacking context here would trap every
+            // overlay inside it (graph full view, modals) below the
+            // .shell-corner pieces, which must sit above opaque screens.
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              minWidth: 0,
+              position: "relative",
+            }}
+          >
+            <NavFeatureGate>{children}</NavFeatureGate>
+          </main>
+        </div>
         <FloatingActions />
         <Suspense fallback={null}>
           <FeedbackFlow />
@@ -81,7 +90,6 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
         position: "relative",
       }}
     >
-      <AtmosphericBackdrop />
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopNav />
       <main
