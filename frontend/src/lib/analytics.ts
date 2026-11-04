@@ -61,10 +61,12 @@
  *   browser's IP and every event carries `$geoip_disable`; the PostHog
  *   project setting "Discard client IP data" must stay ON
  *   (docs/frontend-audit/07-integrations.md).
- * - **Same-origin transport only.** `api_host` is `/ingest`, served by
- *   `src/app/ingest/[...path]/route.ts`. `NEXT_PUBLIC_POSTHOG_HOST` may only
- *   move it to another same-origin path — never to an external host that
- *   would bypass the proxy.
+ * - **No one else's id in a URL.** `before_send` also masks path segments
+ *   that name another account (`/profile/<userId>` → `/profile/:userId`), so
+ *   viewing a classmate's profile never sends their account id — they may
+ *   have opted out.
+ * - **Same-origin transport only.** `api_host` is always `/ingest`, served by
+ *   `src/app/ingest/[...path]/route.ts` — no build variable can move it.
  * - **Pageviews inert unless configured.** No `NEXT_PUBLIC_POSTHOG_KEY`,
  *   local UI mode (`NEXT_PUBLIC_LOCAL_MODE`) or the E2E/test build
  *   (`NEXT_PUBLIC_TEST_MODE`) → posthog-js never loads and the UserProvider
@@ -83,7 +85,6 @@ import { isTruthyBuildFlag } from "./testMode";
 /** Build-time env bag the gate reads. Injectable for tests. */
 export interface AnalyticsEnv {
   NEXT_PUBLIC_POSTHOG_KEY?: string;
-  NEXT_PUBLIC_POSTHOG_HOST?: string;
   NEXT_PUBLIC_LOCAL_MODE?: string;
   NEXT_PUBLIC_TEST_MODE?: string;
 }
@@ -91,7 +92,6 @@ export interface AnalyticsEnv {
 export function readAnalyticsEnv(): AnalyticsEnv {
   return {
     NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
-    NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
     NEXT_PUBLIC_LOCAL_MODE: process.env.NEXT_PUBLIC_LOCAL_MODE,
     NEXT_PUBLIC_TEST_MODE: process.env.NEXT_PUBLIC_TEST_MODE,
   };
@@ -141,16 +141,28 @@ export const PERSONAL_DATA_QUERY_PARAMS = [
 ] as const;
 
 /**
- * Strip `?query` and `#fragment` from an absolute URL; anything else is
- * returned unchanged. Query strings here can carry the OAuth handoff token
- * (`/auth/callback?auth_token=…`) and the Google avatar URL.
+ * Path segments that name ANOTHER account, masked to a placeholder in every
+ * URL/path value: `/profile/[userId]` is the one shell route keyed on an
+ * account id (`/gradebook/[courseId]` names a catalog course, not a person).
+ */
+const PERSONAL_PATH_SEGMENTS: ReadonlyArray<[RegExp, string]> = [
+  [/\/profile\/[^/]+/g, "/profile/:userId"],
+];
+
+/**
+ * Strip `?query` and `#fragment` from a URL or path, and mask account ids in
+ * its path; anything that is not URL-shaped is returned unchanged. Query
+ * strings here can carry the OAuth handoff token (`/auth/callback?auth_token=…`)
+ * and the Google avatar URL.
  */
 export function stripUrlQuery(value: unknown): unknown {
   // Absolute (`https://…`), protocol-relative (`//…`) and root-relative
   // (`/path?…`) URLs alike: a relative href can carry a query too.
   if (typeof value !== "string" || !/^(https?:\/\/|\/)/i.test(value)) return value;
   const cut = value.search(/[?#]/);
-  return cut === -1 ? value : value.slice(0, cut);
+  let out = cut === -1 ? value : value.slice(0, cut);
+  for (const [pattern, mask] of PERSONAL_PATH_SEGMENTS) out = out.replace(pattern, mask);
+  return out;
 }
 
 /** Deeper than any posthog-js payload; also the stop for a cyclic object. */
@@ -193,22 +205,13 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   return event;
 }
 
-/**
- * `NEXT_PUBLIC_POSTHOG_HOST` may move the proxy to another SAME-ORIGIN path
- * ("/something"), nothing else: an absolute or protocol-relative URL would
- * send events straight to a third party, around the proxy's cookie/IP
- * stripping, relay guards and project-key check. Anything else → /ingest.
- */
-export function sameOriginApiHost(override: string | undefined): string {
-  const v = (override ?? "").trim().replace(/\/+$/, "");
-  return /^\/[A-Za-z0-9._~\-/]*$/.test(v) && !v.startsWith("//") ? v : INGEST_PREFIX;
-}
-
 /** The full init config. Exported so tests can pin the privacy posture. */
 export function buildPosthogConfig(env: AnalyticsEnv): Partial<PostHogConfig> {
   return {
-    // The same-origin proxy (src/app/ingest/[...path]/route.ts).
-    api_host: sameOriginApiHost(env.NEXT_PUBLIC_POSTHOG_HOST),
+    // The same-origin proxy (src/app/ingest/[...path]/route.ts). Fixed: the
+    // route handler, its path checks and the trailing-slash exemption all
+    // live at INGEST_PREFIX only, so no other value could work.
+    api_host: INGEST_PREFIX,
     ui_host: UI_HOST,
     defaults: "2026-01-30",
     // Nothing in cookies or localStorage: identity, session and super
@@ -338,6 +341,18 @@ export const MAX_ACCOUNT_READ_FAILURES = 3;
 let generation = 0;
 /** A Settings toggle whose account save is still in flight. */
 let toggleInFlight = false;
+/** When the current account answer arrived (Date.now()), for re-reads. */
+let accountReadAt = 0;
+
+/**
+ * How often an open, visible tab that is SENDING re-reads the account
+ * preference (and FlagsProvider the admin flag): an opt-out made on another
+ * device or tab — or the flag switched off in /admin — stops this tab's
+ * pageviews within about a minute, as the privacy policy says, without a
+ * reload. Only a tab whose answer is `on` re-reads; nothing else would change
+ * what it sends.
+ */
+export const ACCOUNT_REFRESH_MS = 60_000;
 
 /** The live client, once loaded and initialised. */
 let client: PostHog | null = null;
@@ -500,6 +515,19 @@ export function needsAccountRead(userId: string): boolean {
 }
 
 /**
+ * Whether a sending tab's answer for `userId` is due a re-read
+ * (ACCOUNT_REFRESH_MS): the account said `on` and that answer is old.
+ */
+export function accountRefreshDue(userId: string, now: number = Date.now()): boolean {
+  return currentUser === userId && account === "on" && now - accountReadAt >= ACCOUNT_REFRESH_MS;
+}
+
+/** Whether a read issued as `gen` for `userId` would still be applied. */
+export function isCurrentAccountRead(gen: number, userId: string): boolean {
+  return gen === generation && userId === currentUser;
+}
+
+/**
  * `userId`'s account preference is about to be read. Returns the generation
  * to hand back to applyAccountAnalytics / failAccountRead.
  */
@@ -526,6 +554,7 @@ export function beginAccountRead(userId: string): number {
 export function applyAccountAnalytics(gen: number, userId: string, optOut: unknown): void {
   if (gen !== generation || userId !== currentUser) return;
   account = optOut === false ? "on" : optOut === true ? "off" : "unset";
+  accountReadAt = Date.now();
   offUnsaved = false;
   failedReads = 0;
   ensureStarted();
@@ -605,6 +634,7 @@ export async function chooseAnalytics(
     }
     if (currentUser === userId) {
       account = "on";
+      accountReadAt = Date.now();
       offUnsaved = false;
       ensureStarted();
     }
@@ -630,6 +660,7 @@ export function __resetAnalyticsForTests(
   currentUser = null;
   generation = 0;
   toggleInFlight = false;
+  accountReadAt = 0;
   client = null;
   loading = null;
   loadFailed = false;

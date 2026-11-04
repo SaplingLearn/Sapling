@@ -15,6 +15,8 @@ import { API_URL, getMe } from '@/lib/api';
 import { readAccountSettings } from '@/lib/accountSettings';
 import { isAppShellRoute } from '@/lib/appRoutes';
 import {
+  ACCOUNT_REFRESH_MS,
+  accountRefreshDue,
   needsAccountRead,
   pageviewsMayRun,
   resumeAnalytics,
@@ -248,6 +250,26 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       // next shell navigation (`pathname`) retries, within the budget.
     });
   }, [userReady, isAuthenticated, userId, onAppRoute, mayRun, pathname]);
+  // While this tab is SENDING, re-read the preference every
+  // ACCOUNT_REFRESH_MS (visible tabs only) and on coming back to the tab, so
+  // an opt-out made on another device or tab stops these pageviews within
+  // about a minute without a reload. A failed re-read is `unreadable`: off
+  // (fail closed) until a later read answers.
+  useEffect(() => {
+    if (!userReady || !isAuthenticated || !userId || !mayRun || !onAppRoute) return;
+    const tick = () => {
+      if (document.visibilityState !== 'visible' || !accountRefreshDue(userId)) return;
+      readAccountSettings(userId).catch(() => {
+        // Recorded by analytics.ts (`unreadable`); capture is off meanwhile.
+      });
+    };
+    const timer = window.setInterval(tick, ACCOUNT_REFRESH_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun]);
 
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;

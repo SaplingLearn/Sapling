@@ -12,6 +12,8 @@ import type { CaptureResult, PostHog } from "posthog-js";
 import {
   __analyticsLoadedForTests,
   __resetAnalyticsForTests,
+  ACCOUNT_REFRESH_MS,
+  accountRefreshDue,
   analyticsDisabledReason,
   applyAccountAnalytics,
   beginAccountRead,
@@ -182,23 +184,8 @@ describe("build gating", () => {
     expect(config).toMatchObject({ request_batching: false, disable_compression: true });
   });
 
-  it("NEXT_PUBLIC_POSTHOG_HOST can only move the proxy to another same-origin path", () => {
-    const host = (v: string) => buildPosthogConfig({ ...ENV, NEXT_PUBLIC_POSTHOG_HOST: v }).api_host;
-    expect(host("/ph-proxy")).toBe("/ph-proxy");
-    expect(host("/ph-proxy/")).toBe("/ph-proxy");
-    for (const v of [
-      "https://us.i.posthog.com",
-      "http://evil.example",
-      "//evil.example",
-      "evil.example",
-      "/",
-      "",
-      "  ",
-      "/x?y=1",
-      "javascript:alert(1)",
-    ]) {
-      expect(host(v), v).toBe("/ingest");
-    }
+  it("api_host is always the /ingest proxy", () => {
+    expect(buildPosthogConfig(ENV).api_host).toBe("/ingest");
   });
 
   it("a loader failure leaves the app running with analytics off", async () => {
@@ -466,6 +453,20 @@ describe("the product_analytics admin flag (#620/#677)", () => {
   });
 });
 
+describe("re-reading a sending tab's answer (#675 re-review)", () => {
+  it("only an `on` answer older than ACCOUNT_REFRESH_MS is due", () => {
+    __resetAnalyticsForTests({ env: ENV });
+    const t0 = Date.now();
+    expect(accountRefreshDue("u1", t0)).toBe(false); // nobody read yet
+    applyAccountAnalytics(beginAccountRead("u1"), "u1", false);
+    expect(accountRefreshDue("u1", Date.now() + 1_000)).toBe(false);
+    expect(accountRefreshDue("u1", Date.now() + ACCOUNT_REFRESH_MS)).toBe(true);
+    expect(accountRefreshDue("u2", Date.now() + ACCOUNT_REFRESH_MS)).toBe(false);
+    applyAccountAnalytics(beginAccountRead("u1"), "u1", true);
+    expect(accountRefreshDue("u1", Date.now() + ACCOUNT_REFRESH_MS)).toBe(false); // off: nothing to stop
+  });
+});
+
 describe("stale account reads", () => {
   it("a read that started before a toggle is ignored", async () => {
     await signIn("u-1", false);
@@ -597,6 +598,16 @@ describe("before_send URL scrubbing", () => {
     expect(stripUrlQuery("https://saplinglearn.com/learn#topic")).toBe("https://saplinglearn.com/learn");
     expect(stripUrlQuery("/relative?x=1")).toBe("/relative");
     expect(stripUrlQuery(42)).toBe(42);
+  });
+
+  it("masks another account's id in a path (#675 re-review)", () => {
+    expect(stripUrlQuery("/profile/user_1234567890")).toBe("/profile/:userId");
+    expect(stripUrlQuery("https://saplinglearn.com/profile/user_1234567890/?tab=x")).toBe(
+      "https://saplinglearn.com/profile/:userId/",
+    );
+    expect(stripUrlQuery("/profile")).toBe("/profile");
+    expect(stripUrlQuery("/gradebook/cs-101")).toBe("/gradebook/cs-101");
+    expect(stripUrlQuery("profile/user_1 is not a URL")).toBe("profile/user_1 is not a URL");
   });
 
   it("scrubs properties, $set and $set_once", () => {

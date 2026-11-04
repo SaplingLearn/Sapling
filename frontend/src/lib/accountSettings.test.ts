@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const fetchSettings = vi.fn();
 vi.mock("./api", () => ({ fetchSettings: (...a: unknown[]) => fetchSettings(...a) }));
 
-import { __resetAnalyticsForTests, chooseAnalytics, getAnalyticsState } from "./analytics";
+import { __resetAnalyticsForTests, chooseAnalytics, getAnalyticsState, stopAnalytics } from "./analytics";
 import { __resetAccountSettingsForTests, readAccountSettings } from "./accountSettings";
 
 function deferred<T>() {
@@ -37,6 +37,20 @@ describe("readAccountSettings", () => {
     expect(fetchSettings).toHaveBeenCalledTimes(1);
     d.resolve({ analytics_opt_out: true });
     expect(await a).toBe(await b);
+  });
+
+  it("a GET issued before a sign-out → sign-in is not shared with the new reader (#675 re-review)", async () => {
+    const stale = deferred<{ analytics_opt_out: boolean }>();
+    fetchSettings.mockReturnValueOnce(stale.promise);
+    void readAccountSettings("u1").catch(() => {});
+    stopAnalytics(); // sign-out bumps the generation…
+    fetchSettings.mockResolvedValueOnce({ analytics_opt_out: true });
+    await readAccountSettings("u1"); // …so the signed-back-in reader gets a fresh GET
+    expect(fetchSettings).toHaveBeenCalledTimes(2);
+    expect(getAnalyticsState()).toBe("off");
+    stale.resolve({ analytics_opt_out: false }); // the old answer is ignored
+    await Promise.resolve();
+    expect(getAnalyticsState()).toBe("off");
   });
 
   it("nothing is cached once it settles: the next call is a fresh GET", async () => {

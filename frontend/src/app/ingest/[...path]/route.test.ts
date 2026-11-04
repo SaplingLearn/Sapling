@@ -26,7 +26,7 @@ const SECRET = "route-test-session-secret-at-least-32-bytes";
 const KEY = "phc_ours";
 let SESSION: { cookie: string };
 /** A minimal event body for THIS project. */
-const EVENT = JSON.stringify({ event: "$pageview", properties: { token: KEY } });
+const EVENT = JSON.stringify({ event: "$pageview", properties: { token: KEY, distinct_id: "u-1" } });
 
 beforeAll(async () => {
   vi.stubEnv("SESSION_SECRET", SECRET);
@@ -60,7 +60,7 @@ afterEach(() => {
 describe("POST /ingest/e/", () => {
   it("forwards the (capped, checked) body with no cookie or client IP", async () => {
     const calls = stubUpstream(() => new Response('{"status":1}', { status: 200 }));
-    const payload = JSON.stringify({ api_key: KEY, batch: [{ event: "$pageview", properties: { token: KEY } }] });
+    const payload = JSON.stringify({ api_key: KEY, batch: [{ event: "$pageview", properties: { token: KEY, distinct_id: "u-1" } }] });
     const res = await POST(
       new Request("https://saplinglearn.com/ingest/e/?ver=1", {
         method: "POST",
@@ -171,6 +171,37 @@ describe("not an open relay", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("403 for any event not under the session's own account id — upstream never called", async () => {
+    // #675 re-review: a signed-in student must not post events (or $set
+    // person properties) as another account, e.g. one that opted out.
+    const calls = stubUpstream(() => new Response("x"));
+    const ev = (props: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+      event: "$pageview", properties: { token: KEY, ...props }, ...extra,
+    });
+    for (const body of [
+      JSON.stringify(ev({ distinct_id: "u-victim", $set: { email: "x" } })),
+      JSON.stringify(ev({})), // no distinct_id at all
+      JSON.stringify({ api_key: KEY, batch: [ev({ distinct_id: "u-1" }), ev({ distinct_id: "u-2" })] }),
+      JSON.stringify([ev({ distinct_id: "u-1" }), ev({ distinct_id: "u-2" })]),
+      JSON.stringify({ api_key: KEY, batch: [] }), // no event to vouch for
+    ]) {
+      const res = await POST(new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body, headers: SESSION }));
+      expect(res.status, body).toBe(403);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("a top-level distinct_id (no properties copy) is checked too", async () => {
+    const calls = stubUpstream(() => new Response("ok"));
+    const ok = JSON.stringify({ event: "$identify", distinct_id: "u-1", properties: { token: KEY } });
+    const bad = JSON.stringify({ event: "$identify", distinct_id: "u-2", properties: { token: KEY } });
+    const post = (body: string) =>
+      POST(new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body, headers: SESSION }));
+    expect((await post(ok)).status).toBe(200);
+    expect((await post(bad)).status).toBe(403);
+    expect(calls).toHaveLength(1);
+  });
+
   it("400 for a compressed or unparseable body — nothing is decompressed", async () => {
     const calls = stubUpstream(() => new Response("x"));
     for (const [search, body] of [["?compression=gzip-js", EVENT], ["", "not json"]] as const) {
@@ -271,7 +302,7 @@ describe("not an open relay", () => {
 
   it("a body under the cap goes through whole", async () => {
     const calls = stubUpstream(() => new Response("ok"));
-    const payload = JSON.stringify({ event: "$pageview", properties: { token: KEY, pad: "x".repeat(200_000) } });
+    const payload = JSON.stringify({ event: "$pageview", properties: { token: KEY, distinct_id: "u-1", pad: "x".repeat(200_000) } });
     const res = await POST(
       new Request("https://saplinglearn.com/ingest/e/", { method: "POST", body: payload, headers: SESSION }),
     );

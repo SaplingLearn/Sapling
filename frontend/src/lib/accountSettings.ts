@@ -14,16 +14,26 @@
  * Nothing is cached once a request settles: the next call is a fresh GET.
  */
 import { fetchSettings } from "./api";
-import { applyAccountAnalytics, beginAccountRead, failAccountRead } from "./analytics";
+import {
+  applyAccountAnalytics,
+  beginAccountRead,
+  failAccountRead,
+  isCurrentAccountRead,
+} from "./analytics";
 import type { UserSettings } from "./types";
 
-const inFlight = new Map<string, Promise<UserSettings>>();
+/** One in-flight GET per student, with the generation it was issued under. */
+const inFlight = new Map<string, { gen: number; request: Promise<UserSettings> }>();
 
 export function readAccountSettings(userId: string): Promise<UserSettings> {
   const pending = inFlight.get(userId);
-  if (pending) return pending;
+  // Share a pending GET only while its answer would still be APPLIED: one
+  // issued before a sign-out → sign-in (or a toggle) is stale, so a caller
+  // reusing it would wait for an answer analytics.ts throws away and the
+  // switch would stay on "Loading…". Issue a fresh read instead.
+  if (pending && isCurrentAccountRead(pending.gen, userId)) return pending.request;
   const gen = beginAccountRead(userId);
-  const request = fetchSettings(userId)
+  const request: Promise<UserSettings> = fetchSettings(userId)
     .then(
       (settings) => {
         applyAccountAnalytics(gen, userId, settings.analytics_opt_out);
@@ -35,9 +45,10 @@ export function readAccountSettings(userId: string): Promise<UserSettings> {
       },
     )
     .finally(() => {
-      inFlight.delete(userId);
+      // Only our own entry: a newer read may have replaced it meanwhile.
+      if (inFlight.get(userId)?.request === request) inFlight.delete(userId);
     });
-  inFlight.set(userId, request);
+  inFlight.set(userId, { gen, request });
   return request;
 }
 

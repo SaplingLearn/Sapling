@@ -9,17 +9,18 @@
  * reason. Not an open relay: only the endpoints the SDK config uses, only
  * with a `sapling_session` that verifies (never forwarded), only plain
  * (un-encoded) bodies, capped at MAX_INGEST_BODY_BYTES, and only events for
- * this deployment's project key.
+ * this deployment's project key under the session's own account id.
  */
 import type { NextRequest } from "next/server";
 
 import {
   MAX_INGEST_BODY_BYTES,
   downstreamResponseHeaders,
-  ingestTokens,
+  ingestDistinctIdsOk,
   ingestTokensOk,
   isAllowedIngestRequest,
   isImmutableAsset,
+  parseIngestBody,
   readCappedBody,
   requestEncodingOk,
   upstreamRequestHeaders,
@@ -44,7 +45,8 @@ async function proxy(request: NextRequest): Promise<Response> {
   // Not an open relay: analytics only runs for signed-in students, so the
   // session must verify (local HMAC + expiry, as middleware.ts does).
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  if (!token || !(await verifySession(token))) return new Response(null, { status: 403 });
+  const session = token ? await verifySession(token) : null;
+  if (!session) return new Response(null, { status: 403 });
 
   const init: RequestInit = {
     method: request.method,
@@ -57,10 +59,14 @@ async function proxy(request: NextRequest): Promise<Response> {
     if (declared > MAX_INGEST_BODY_BYTES) return new Response(null, { status: 413 });
     const body = await readCappedBody(request.body, MAX_INGEST_BODY_BYTES);
     if (!body) return new Response(null, { status: 413 });
-    // …and only into THIS deployment's PostHog project.
-    const tokens = ingestTokens(body, search);
-    if (tokens === null) return new Response(null, { status: 400 });
-    if (!ingestTokensOk(tokens, projectKey())) return new Response(null, { status: 403 });
+    // …only into THIS deployment's PostHog project, and only as the student
+    // whose session this is (never another account's distinct_id).
+    const parsed = parseIngestBody(body, search);
+    if (parsed === null) return new Response(null, { status: 400 });
+    if (!ingestTokensOk(parsed.tokens, projectKey())) return new Response(null, { status: 403 });
+    if (!ingestDistinctIdsOk(parsed.distinctIds, session.userId)) {
+      return new Response(null, { status: 403 });
+    }
     init.body = body;
   }
 

@@ -203,6 +203,19 @@ export async function readCappedBody(
  * attacker-supplied input keeps the 1 MiB cap a real bound.
  */
 export function ingestTokens(body: Uint8Array, search: string): string[] | null {
+  return parseIngestBody(body, search)?.tokens ?? null;
+}
+
+/**
+ * What the proxy checks in an event/batch body: the project keys it names
+ * (`tokens`) and the `distinct_id` of every EVENT in it (`distinctIds`; an
+ * event without one contributes "" so it can never pass ingestDistinctIdsOk).
+ * Null when the body is not in an accepted form (see ingestTokens).
+ */
+export function parseIngestBody(
+  body: Uint8Array,
+  search: string,
+): { tokens: string[]; distinctIds: string[] } | null {
   const compression = new URLSearchParams(search).get("compression");
   if (compression && compression !== "base64") return null;
   let text: string;
@@ -225,6 +238,7 @@ export function ingestTokens(body: Uint8Array, search: string): string[] | null 
     return null;
   }
   const tokens: string[] = [];
+  const distinctIds: string[] = [];
   const visit = (node: unknown, depth: number): void => {
     if (depth > 2 || node === null || typeof node !== "object") return;
     if (Array.isArray(node)) {
@@ -235,10 +249,26 @@ export function ingestTokens(body: Uint8Array, search: string): string[] | null 
     for (const key of ["api_key", "token"]) if (typeof obj[key] === "string") tokens.push(obj[key] as string);
     const props = obj.properties as Record<string, unknown> | undefined;
     if (props && typeof props.token === "string") tokens.push(props.token);
+    if (typeof obj.event === "string") {
+      const id = props?.distinct_id ?? obj.distinct_id;
+      distinctIds.push(typeof id === "string" ? id : "");
+    }
     if (Array.isArray(obj.batch)) visit(obj.batch, depth + 1);
   };
   visit(parsed, 0);
-  return tokens;
+  return { tokens, distinctIds };
+}
+
+/**
+ * Every event in the body is the signed-in student's own: a body with no
+ * event, or any event under another (or no) `distinct_id`, is refused. Without
+ * this a signed-in student could post events — and `$set` person properties —
+ * as any other account, including one that opted out (#675 re-review).
+ * posthog-js identifies in its `loaded` hook, before its first capture, so
+ * every event it sends carries the account id.
+ */
+export function ingestDistinctIdsOk(distinctIds: string[], userId: string): boolean {
+  return !!userId && distinctIds.length > 0 && distinctIds.every((id) => id === userId);
 }
 
 /** Every key the body names is this deployment's project key — and there is one. */
