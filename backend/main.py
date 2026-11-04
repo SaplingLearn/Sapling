@@ -37,7 +37,11 @@ from routes.topic_checklist import router as topic_checklist_router
 from services import quiz_config, quiz_errors
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
-from services.request_context import RequestIDMiddleware, current_request_id
+from services.request_context import (
+    RequestIDMiddleware,
+    current_request_id,
+    privacy_signal_in,
+)
 from services.encryption_canary import verify_encryption_key
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
@@ -51,6 +55,7 @@ from services.local_seed_watcher import (
     stop_watcher as stop_local_seed_watcher,
 )
 from services import typesafe_client
+from services import posthog_client
 
 try:
     from recost.frameworks.fastapi import RecostMiddleware
@@ -107,6 +112,9 @@ async def _lifespan(_app: FastAPI):
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.
     verify_encryption_key()
+    # ADR 0028: optional; builds nothing (no threads, no network) when the
+    # token is unset, under pytest/APP_ENV=test, or in function mode.
+    posthog_client.initialize_posthog()
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -151,6 +159,8 @@ async def _lifespan(_app: FastAPI):
     # Stop the drain thread and flush anything still queued so the last batch
     # of usage rows isn't lost on shutdown.
     events_service.shutdown()
+    # After events_service: drain the PostHog queue, then its SDK, last.
+    posthog_client.shutdown_posthog()
     shutdown_dbos()
 
 
@@ -292,6 +302,19 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.getLogger("main").exception("Unhandled exception")
     rid = getattr(request.state, "request_id", None) or current_request_id()
+    # ADR 0028: PostHog error tracking — queued, consent-checked on the
+    # PostHog worker like every event. No-op when PostHog is off; message
+    # redacted and no frame locals (posthog_client._scrub_event). The user is
+    # whatever auth_guard stamped on request.state (#117 1b) — a users.id or
+    # None. This handler runs in ServerErrorMiddleware, OUTSIDE
+    # RequestIDMiddleware, whose per-request DNT/GPC contextvar is already
+    # reset by now — so the signal is read off the request's own headers.
+    posthog_client.capture_exception(
+        exc,
+        user_id=getattr(request.state, "user_id", None),
+        request_id=rid,
+        privacy_signal=privacy_signal_in(getattr(request, "headers", None) or {}),
+    )
     content = quiz_errors.error_content(
         request.url.path, 500, "Internal server error.", rid,
     )

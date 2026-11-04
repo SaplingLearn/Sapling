@@ -65,11 +65,12 @@ def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
     from agents._providers import clear_override_model_cache
-    from services import academics, course_context_service, feature_flags, growth
+    from services import academics, analytics_consent, course_context_service, feature_flags, growth
     clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
+    analytics_consent.clear_analytics_consent_cache()
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
     yield
@@ -77,6 +78,7 @@ def _clear_lru_caches():
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
     growth.clear_growth_cache()
+    analytics_consent.clear_analytics_consent_cache()
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
 
