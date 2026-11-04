@@ -260,7 +260,9 @@ def test_lifespan_under_pytest_builds_no_client():
 
 
 class TestMirror:
-    def test_log_event_mirrors_same_name_payload_and_uuid(self, fake_client, sink):
+    def test_log_event_mirrors_same_name_payload_and_uuid(self, fake_client, sink, monkeypatch):
+        # Staging and prod share one PostHog project: every event is labelled.
+        monkeypatch.setattr(posthog_client.config, "APP_ENV", "staging")
         events_service.log_event(
             "note.created",
             category="usage",
@@ -277,7 +279,7 @@ class TestMirror:
         assert call.kwargs["distinct_id"] == USER_ID
         assert call.kwargs["properties"] == {
             "note_id": "n1", "has_body": True, "event_category": "usage",
-            "request_id": "req-123",
+            "request_id": "req-123", "environment": "staging",
         }
         # Neither the content nor its fingerprint is forwarded.
         assert SECRET not in json.dumps(call.kwargs, default=str)
@@ -1475,7 +1477,7 @@ class TestAiGeneration:
     _ALLOWED_KEYS = {
         "$ai_model", "$ai_provider", "$ai_input_tokens", "$ai_output_tokens",
         "$ai_total_cost_usd", "$ai_latency", "$ai_trace_id", "$ai_span_name",
-        "feature", "task",
+        "feature", "task", "environment",
     }
 
     def _run(self):
