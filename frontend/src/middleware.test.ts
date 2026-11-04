@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { middleware, config } from './middleware';
+import { SHELL_PREFIXES } from '@/lib/appRoutes';
 
 const ORIGIN = 'https://app.saplinglearn.com';
 
@@ -25,6 +26,10 @@ describe('middleware — /profile gating (#189)', () => {
 
   it('lists /profile in config.matcher so middleware actually runs there', () => {
     expect(config.matcher).toContain('/profile/:path*');
+  });
+
+  it('config.matcher (a static literal Next requires) covers exactly lib/appRoutes SHELL_PREFIXES', () => {
+    expect([...config.matcher].sort()).toEqual(SHELL_PREFIXES.map((p) => `${p}/:path*`).sort());
   });
 });
 

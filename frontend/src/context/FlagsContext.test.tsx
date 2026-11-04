@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchFlags = vi.fn();
 vi.mock("@/lib/flags", () => ({ fetchFlags: () => fetchFlags() }));
+const setProductAnalyticsFlag = vi.fn();
+vi.mock("@/lib/analytics", () => ({
+  ACCOUNT_REFRESH_MS: 60_000,
+  setProductAnalyticsFlag: (on: boolean) => setProductAnalyticsFlag(on),
+}));
 let pathname = "/dashboard";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 let user = { userId: "u1", isAuthenticated: true, userReady: true };
@@ -22,11 +27,58 @@ function MapProbe() {
 
 describe("FlagsProvider/useFlag", () => {
   beforeEach(() => {
-    fetchFlags.mockReset();
+    fetchFlags.mockReset(); setProductAnalyticsFlag.mockReset();
     pathname = "/dashboard"; user = { userId: "u1", isAuthenticated: true, userReady: true };
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
+  });
+  // jsdom reports "prerender"; the refresh only runs in a visible tab.
+  beforeEach(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+  });
+
+  it("an open tab sees product_analytics switched off within a refresh (#675 re-review)", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    fetchFlags.mockResolvedValue({ product_analytics: "on", hide_quiz: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
+    await waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0)); // refresh armed
+    expect(fetchFlags).toHaveBeenCalledTimes(1);
+    fetchFlags.mockResolvedValue({ product_analytics: "off", hide_quiz: "on" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+    expect(fetchFlags).toHaveBeenCalledTimes(2);
+    // Updated in place: the other flags never dropped to "off" meanwhile.
+    expect(screen.getByTestId("v").textContent).toBe("on");
+  });
+
+  it("a failed refresh turns analytics off but keeps the other flags", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    fetchFlags.mockResolvedValue({ product_analytics: "on", hide_quiz: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
+    await waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0)); // refresh armed
+    fetchFlags.mockRejectedValue(new Error("down"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+    expect(screen.getByTestId("v").textContent).toBe("on");
+  });
+
+  it("no refresh timer when product_analytics is off (no extra requests)", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    fetchFlags.mockResolvedValue({ product_analytics: "off" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(fetchFlags).toHaveBeenCalledTimes(1);
   });
 
   it("is off until loaded, then the fetched variant", async () => {
@@ -50,6 +102,42 @@ describe("FlagsProvider/useFlag", () => {
     render(<FlagsProvider><Probe /></FlagsProvider>);
     expect(fetchFlags).not.toHaveBeenCalled();
     expect(screen.getByTestId("v").textContent).toBe("off");
+  });
+
+  it("product_analytics drives the analytics switch (#677)", async () => {
+    fetchFlags.mockResolvedValue({ product_analytics: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
+  });
+
+  it("an absent or off product_analytics keeps analytics off", async () => {
+    fetchFlags.mockResolvedValue({ hide_quiz: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(screen.getByTestId("v").textContent).toBe("on"));
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+    expect(setProductAnalyticsFlag).not.toHaveBeenCalledWith(true);
+  });
+
+  it("a failed flag fetch turns analytics off", async () => {
+    fetchFlags.mockRejectedValue(new Error("down"));
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenCalledTimes(2));
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+  });
+
+  it("drops the previous user's analytics flag as soon as a switch refetches", async () => {
+    fetchFlags.mockResolvedValueOnce({ product_analytics: "on" });
+    const { rerender } = render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
+    let second!: (v: Record<string, string>) => void;
+    fetchFlags.mockReturnValueOnce(new Promise((r) => { second = r; }));
+    user = { userId: "u2", isAuthenticated: true, userReady: true };
+    rerender(<FlagsProvider><Probe /></FlagsProvider>);
+    // u2's flags are still in flight: u1's "on" must not stay in force.
+    await waitFor(() => expect(fetchFlags).toHaveBeenCalledTimes(2));
+    expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
+    second({ product_analytics: "on" });
+    await waitFor(() => expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(true));
   });
 
   it("ignores a stale response after a user switch", async () => {

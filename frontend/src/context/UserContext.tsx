@@ -1,8 +1,30 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useSyncExternalStore,
+} from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
+import { usePathname } from 'next/navigation';
 import { API_URL, getMe } from '@/lib/api';
+import { readAccountSettings } from '@/lib/accountSettings';
+import { isAppShellRoute } from '@/lib/appRoutes';
+import {
+  ACCOUNT_REFRESH_MS,
+  accountRefreshDue,
+  needsAccountRead,
+  pageviewsMayRun,
+  resumeAnalytics,
+  stopAnalytics,
+  subscribeAnalytics,
+} from '@/lib/analytics';
+
+const pageviewsNeverRunOnServer = () => false;
 
 interface UserContextValue {
   userId: string;
@@ -46,18 +68,11 @@ export const UserContext = createContext<UserContextValue>({
   setAvatarUrl: () => {},
 });
 
-// Mirror of middleware.ts PROTECTED (keep in sync; app/robots.ts mirrors it
-// too): the shell routes where a cleared session leaves no usable UI.
-const SHELL_PREFIXES = [
-  '/dashboard', '/learn', '/quiz', '/study', '/tree',
-  '/library', '/calendar', '/social',
-  '/settings', '/achievements', '/admin',
-  '/gradebook', '/course-planner', '/notetaker', '/profile',
-];
-
 // Pure + exported for tests (window.location is unstubbable under jsdom).
+// The shell routes (lib/appRoutes.ts) are where a cleared session leaves no
+// usable UI.
 export function shouldBounceToSignin(pathname: string): boolean {
-  return SHELL_PREFIXES.some(p => pathname.startsWith(p));
+  return isAppShellRoute(pathname);
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -189,7 +204,72 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setFeaturedRole(null);
     setIsAdmin(false);
     localStorage.removeItem('sapling_user');
+    // Sign-out, account deletion (Settings → signOut) and a dead session all
+    // land here: analytics stops at once. No-op when analytics is off.
+    stopAnalytics();
   }, []);
+
+  // Product-analytics pageviews (src/lib/analytics.ts) run only for a
+  // signed-in student, only inside the app shell (lib/appRoutes.ts — never
+  // public or marketing pages, /auth/*, onboarding), and only once their
+  // account preference (user_settings.analytics_opt_out) has been read as
+  // `false`. Nothing about it is stored in the browser, so it is read on the
+  // first shell page of each page load — and only while pageviews may run
+  // here at all (pageviewsMayRun: a configured build, the admin
+  // `product_analytics` flag on, no DNT/GPC). A build without analytics, or a
+  // student the flag is off for, costs no settings request. The read goes
+  // through lib/accountSettings.ts, which shares one in-flight GET with the
+  // Settings screen and feeds every answer — whoever asked — into the
+  // analytics state, so the two never disagree.
+  //
+  // Signed out → off. A failed read → off, retried on each later shell
+  // navigation until it answers or MAX_ACCOUNT_READ_FAILURES reads have
+  // failed (needsAccountRead) — bounded, never a loop; opening Settings
+  // always reads again. A read overtaken by a Settings toggle or a sign-out
+  // is ignored (analytics.ts's generation counter). The capture gate itself
+  // also checks the live route, so leaving the shell (Settings → /privacy)
+  // stops capture for that page at once.
+  const pathname = usePathname();
+  const onAppRoute = isAppShellRoute(pathname);
+  const mayRun = useSyncExternalStore(subscribeAnalytics, pageviewsMayRun, pageviewsNeverRunOnServer);
+  useEffect(() => {
+    if (!userReady) return;
+    if (!isAuthenticated || !userId) {
+      stopAnalytics();
+      return;
+    }
+    // Back in the shell with the answer known: start posthog-js if it is not
+    // running (one retry of a failed load per entry into the shell).
+    if (mayRun && onAppRoute && !needsAccountRead(userId)) resumeAnalytics();
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun]);
+  useEffect(() => {
+    if (!userReady || !isAuthenticated || !userId || !mayRun || !onAppRoute) return;
+    if (!needsAccountRead(userId)) return;
+    readAccountSettings(userId).catch(() => {
+      // Fail closed: analytics.ts records the failure (`unreadable`); the
+      // next shell navigation (`pathname`) retries, within the budget.
+    });
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun, pathname]);
+  // While this tab is SENDING, re-read the preference every
+  // ACCOUNT_REFRESH_MS (visible tabs only) and on coming back to the tab, so
+  // an opt-out made on another device or tab stops these pageviews within
+  // about a minute without a reload. A failed re-read is `unreadable`: off
+  // (fail closed) until a later read answers.
+  useEffect(() => {
+    if (!userReady || !isAuthenticated || !userId || !mayRun || !onAppRoute) return;
+    const tick = () => {
+      if (document.visibilityState !== 'visible' || !accountRefreshDue(userId)) return;
+      readAccountSettings(userId).catch(() => {
+        // Recorded by analytics.ts (`unreadable`); capture is off meanwhile.
+      });
+    };
+    const timer = window.setInterval(tick, ACCOUNT_REFRESH_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [userReady, isAuthenticated, userId, onAppRoute, mayRun]);
 
   const fetchProfileData = useCallback(async (uid: string) => {
     if (!uid) return;
