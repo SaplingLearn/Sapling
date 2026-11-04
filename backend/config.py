@@ -245,6 +245,9 @@ def posthog_project_id() -> str:
 _POSTHOG_INGEST_TO_API_HOST = {
     "https://us.i.posthog.com": "https://us.posthog.com",
     "https://eu.i.posthog.com": "https://eu.posthog.com",
+    # The app hosts also accept ingestion; they ARE the API hosts.
+    "https://us.posthog.com": "https://us.posthog.com",
+    "https://eu.posthog.com": "https://eu.posthog.com",
 }
 
 
@@ -255,7 +258,7 @@ def posthog_api_host() -> str | None:
     The ingestion host (`us.i.posthog.com`) does not serve `/api/projects/...`;
     the app host does. POSTHOG_API_HOST, when set, is used as-is (self-hosted
     or proxied setups must name their API host explicitly). Otherwise it is
-    derived ONLY from the two PostHog-cloud ingestion hosts; any other
+    derived ONLY from the PostHog-cloud hosts (us/eu, ingestion or app); any other
     POSTHOG_HOST returns None and the caller WARNs and skips rather than
     guessing where to send the key."""
     explicit = (os.getenv("POSTHOG_API_HOST") or "").strip().rstrip("/")

@@ -40,7 +40,10 @@ goes through ``content=`` and lands only as a ``content_fp`` fingerprint.
 ============================  ========  =====================================================
 event_type                    category  payload keys
 ============================  ========  =====================================================
-error.4xx / error.5xx         error     path, method, status_code, duration_ms, route (template)
+error.4xx / error.5xx         error     path, method, status_code, duration_ms, route (FULL
+                                        mounted template, e.g. /api/notes/{note_id}; rows
+                                        written before ADR 0028's deploy hold the
+                                        router-relative one, e.g. /{note_id} — #699)
                                         (an ANONYMOUS 404 that matched no route is not
                                         recorded, #690)
 auth.login                    audit     method ("google" / "test_login")

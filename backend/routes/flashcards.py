@@ -286,17 +286,19 @@ def generate(body: GenerateFlashcardsBody, request: Request):
 
     # #117 taxonomy (+ the ADR 0028 PostHog mirror). Counts only — never the
     # topic or card text.
-    events_service.log_event(
-        "flashcard.generated",
-        category="usage",
-        user_id=body.user_id,
-        payload={
-            "card_count": len(rows_to_insert),
-            "documents_used": len(documents),
-            "weak_concepts_used": len(weak_concepts),
-            "via": "topic",
-        },
-    )
+    # Zero cards is not a generation (it would inflate the funnel).
+    if rows_to_insert:
+        events_service.log_event(
+            "flashcard.generated",
+            category="usage",
+            user_id=body.user_id,
+            payload={
+                "card_count": len(rows_to_insert),
+                "documents_used": len(documents),
+                "weak_concepts_used": len(weak_concepts),
+                "via": "topic",
+            },
+        )
 
     # Check for achievements after flashcard generation
     try:
@@ -584,17 +586,19 @@ def import_generate(body: ImportGenerateBody, request: Request):
     # generation (the cards come back for review; /import/commit only
     # persists what the student keeps — from any import source — so it does
     # not emit, and a generate-then-commit is counted once). Counts only.
-    events_service.log_event(
-        "flashcard.generated",
-        category="usage",
-        user_id=body.user_id,
-        payload={
-            "card_count": len(cards),
-            "documents_used": 1 if body.source == "library_doc" else 0,
-            "weak_concepts_used": 0,
-            "via": body.source,
-        },
-    )
+    # Zero cards is not a generation (it would inflate the funnel).
+    if cards:
+        events_service.log_event(
+            "flashcard.generated",
+            category="usage",
+            user_id=body.user_id,
+            payload={
+                "card_count": len(cards),
+                "documents_used": 1 if body.source == "library_doc" else 0,
+                "weak_concepts_used": 0,
+                "via": body.source,
+            },
+        )
 
     return {"cards": cards}
 
