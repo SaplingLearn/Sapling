@@ -377,6 +377,12 @@ def _product_analytics_on(actor: str) -> bool:
         return False
 
 
+def _environment() -> str:
+    """The deployment label every event carries: ``APP_ENV`` (staging,
+    production, local), read at send time so tests can patch it."""
+    return config.APP_ENV or "production"
+
+
 def _deliver(item: _Item) -> None:
     client = _client
     if client is None:
@@ -390,11 +396,12 @@ def _deliver(item: _Item) -> None:
         distinct_id = _distinct_id_for(item.actor)
         if distinct_id is _SKIP:
             return
-        properties = item.properties
+        # Staging and production share one PostHog project (the plan allows
+        # one), so every event says which deployment sent it.
+        properties = {**item.properties, "environment": _environment()}
         if _EXCEPTION_SUMMARY in properties:
             # Built here, off the request path: the SDK shape with source
             # context from linecache (file I/O), then scrubbed.
-            properties = dict(properties)
             properties["$exception_list"] = _exception_list(properties.pop(_EXCEPTION_SUMMARY))
         # One call for every kind; the client's before_send (_scrub_event)
         # still runs on it.
