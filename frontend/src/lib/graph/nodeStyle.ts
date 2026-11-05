@@ -161,6 +161,20 @@ export const TIER_GLYPH: Record<MasteryTier, string> = {
   unexplored: "○",
 };
 
+/**
+ * The canonical order to present the tiers in, best first.
+ *
+ * Lives beside the ramp it orders: a legend, a stacked bar and the readiness
+ * ring all have to walk the tiers in ONE sequence or the same data reads as
+ * a different shape on each surface.
+ */
+export const TIER_ORDER: readonly MasteryTier[] = [
+  "mastered",
+  "learning",
+  "struggling",
+  "unexplored",
+] as const;
+
 /** Tier → glyph, tolerant of wire strings the same way `opacityFor` is. */
 export function glyphFor(tier: string): string {
   if (tier === "subject_root") return TIER_GLYPH.mastered;

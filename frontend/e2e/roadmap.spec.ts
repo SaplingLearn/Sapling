@@ -103,7 +103,9 @@ test("The readiness breakdown sums to the number in the ring", async ({ page }) 
 
   const ring = page.getByTestId("roadmap-readiness-ring");
   await expect(ring).toBeVisible();
-  const shown = Number((await ring.innerText()).match(/(\d+)%/)?.[1]);
+  const shown = Number(
+    ((await ring.getByTestId("roadmap-ring-pct").textContent()) || "").match(/(\d+)%/)?.[1],
+  );
   expect(Number.isFinite(shown)).toBe(true);
 
   await page.getByRole("button", { name: /why this number/i }).click();
@@ -126,8 +128,9 @@ test("Start here points at real remaining work, never at a finished state", asyn
   await page.goto(`${FRONTEND_URL}/roadmap/${COURSE_ID}`);
   await expect(page.getByTestId("roadmap")).toBeVisible();
 
-  const ring = page.getByTestId("roadmap-readiness-ring");
-  const pct = Number((await ring.innerText()).match(/(\d+)%/)?.[1]);
+  const pct = Number(
+    ((await page.getByTestId("roadmap-ring-pct").textContent()) || "").match(/(\d+)%/)?.[1],
+  );
 
   if (pct < 100) {
     await expect(page.getByTestId("roadmap-start-here").first()).toBeVisible();

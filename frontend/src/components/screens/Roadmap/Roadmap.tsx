@@ -112,6 +112,18 @@ export function RoadmapScreen({ courseId }: { courseId: string }) {
 
   const hasAnything = data.topics.length > 0 || data.unfiled.length > 0;
 
+  // Exactly the scope the server's readiness figure covers (routes/roadmap.py
+  // builds `all_rows` the same way): every topic's subtopics PLUS the unfiled
+  // concepts, which count whether or not anything has grouped them.
+  const allRows = [...data.topics.flatMap(t => t.subtopics), ...data.unfiled];
+  // One course hue for the ring. Per-node jitter (`shadeFor`) is a row-level
+  // affordance; a slice aggregates many nodes, so it shows the course's own
+  // tone at the tier's strength.
+  const courseHue =
+    data.topics.find(t => t.color)?.color ||
+    data.unfiled.find(u => u.color)?.color ||
+    FALLBACK_HUE;
+
   return (
     <>
       <TopBar
@@ -200,6 +212,8 @@ export function RoadmapScreen({ courseId }: { courseId: string }) {
             readiness={data.readiness}
             exam={data.selected_exam}
             onExplain={hasAnything ? explain : undefined}
+            rows={allRows}
+            baseHue={courseHue}
           />
 
           <dl className="roadmap__stats">
