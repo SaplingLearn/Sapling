@@ -70,4 +70,6 @@ npm run cf:deploy:staging   # build + deploy --env staging
 
 `/onboarding` — full-bleed.
 
-A Report button (bottom-right, `FloatingActions` in the shell) opens the feedback modal.
+Settings and Report use compact, borderless icons within page headers (or the top navigation on mobile). Labels appear on hover or keyboard focus. Report opens the issue-report dialog.
+
+Quiz is accessed from Study alongside Study Guide and Flashcards. Existing `/quiz` links remain supported.

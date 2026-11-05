@@ -25,6 +25,7 @@ import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard",
   useRouter: () => ({ push, replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));

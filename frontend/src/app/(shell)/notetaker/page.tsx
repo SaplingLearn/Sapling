@@ -1,6 +1,7 @@
 "use client";
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { PageActions } from "@/components/ShellActions";
 import { Icon } from "@/components/Icon";
 import { useUser } from "@/context/UserContext";
 import {
@@ -505,15 +506,13 @@ function NotetakerScreen() {
           style={{
             display: "flex",
             flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
             height: "100%",
             padding: 32,
-            textAlign: "center",
             gap: 12,
           }}
         >
-          <div className="label-micro">Notetaker</div>
+          <div style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 16 }}><div className="label-micro">Notetaker</div><PageActions /></div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12 }}>
           <h2
             className="h-serif"
             style={{
@@ -551,6 +550,7 @@ function NotetakerScreen() {
               Add a course first to start taking notes.
             </p>
           )}
+          </div>
         </div>
         {pickerOpen && (
           <CoursePickerModal
@@ -1011,6 +1011,7 @@ function NoteEditor({
         >
           <Icon name={fullscreen ? "x" : "max"} size={12} />
         </button>
+        <PageActions />
       </div>
 
       <div

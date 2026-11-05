@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import { brandIcons, brandIconViewBoxes } from "./BrandIcons";
 
 // Each entry is either a bare path string (uses the default stroke
 // config below) or a full spec so individual icons — e.g. Streamline
@@ -102,7 +103,22 @@ const paths: Record<string, string | IconSpec> = {
   planner: "M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1zM16 6h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2M9 11l1 1 2-2M9 16l1 1 2-2M14.5 11h2.5M14.5 16h2.5",
 };
 
+const brandAliases: Record<string, string> = {
+  brain: "clover", tree: "trees", book: "library", cal: "calendar",
+  users: "social", cog: "setting", trophy: "achievements", x: "cross",
+  chev: "chevron-right", doc: "file", bell: "nofitication", notification: "nofitication",
+};
+
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
+  const brandName = brandAliases[name] ?? name;
+  const artwork = brandIcons[brandName];
+  if (artwork) {
+    return (
+      <svg width={size} height={size} viewBox={brandIconViewBoxes[brandName]} fill="currentColor" aria-hidden="true" focusable="false" style={{ flexShrink: 0 }}>
+        {artwork}
+      </svg>
+    );
+  }
   const entry = paths[name];
   if (!entry) return null;
   const spec: IconSpec =

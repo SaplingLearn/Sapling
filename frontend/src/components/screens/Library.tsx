@@ -210,7 +210,7 @@ export function Library() {
                 disabled={courses.length === 0}
                 title={courses.length === 0 ? "Enroll in a course first" : "Upload documents"}
               >
-                <Icon name="up" size={13} /> Upload
+                <Icon name="upload" size={13} /> Upload
               </button>
             </>
           }

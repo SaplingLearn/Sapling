@@ -26,6 +26,7 @@ const push = vi.fn();
 let searchParamsValue = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard",
   useRouter: () => ({ push, replace: vi.fn() }),
   useSearchParams: () => searchParamsValue,
 }));

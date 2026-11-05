@@ -509,14 +509,13 @@ body { font-size: 14px; line-height: 1.5; }
    `ShellFrame` picks TopNav vs SideNav from `useIsMobile`, which reports
    desktop on the server and on the hydrating render — it has to, or server
    and client markup disagree. So a phone is served the sidebar shell and
-   would paint a 200px desktop rail (and its .shell-corner pieces) until hydration swaps it out. The rail is
+   would paint a 200px desktop rail until hydration swaps it out. The rail is
    desktop-only by definition, so hide it below the hook's own breakpoint,
    where CSS reaches the very first frame and JS can't. After hydration React
    has already unmounted it and this rule is moot. Keep the width in sync with
    MOBILE_BREAKPOINT in lib/useIsMobile.ts. */
 @media (max-width: 767px) {
-  [data-app-sidenav],
-  .shell-corner {
+  [data-app-sidenav] {
     display: none;
   }
 }
@@ -529,40 +528,71 @@ body { font-size: 14px; line-height: 1.5; }
   display: none;
 }
 
-/* The content side of the rail: two olive quarter-squares whose transparent
-   quarter-circle reads as the page's top-left / bottom-left corner rounding
-   into the rail. Painted, not a border-radius on <main>, because <main> is
-   transparent over the page background. z-index 25: above every screen's
-   own opaque ground
-   and its sticky headers (z ≤ 20), and below the overlays and modals
-   (z ≥ 100). That only works because the sidebar layout's <main> sets no
-   z-index — a stacking context there would trap those overlays under the
-   corners (see ShellFrame). */
-.shell-corner {
-  --shell-corner-r: var(--r-lg);
-  position: absolute;
-  left: 0;
-  width: var(--shell-corner-r);
-  height: var(--shell-corner-r);
-  z-index: 25;
-  pointer-events: none;
+.shell-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.shell-corner--top {
-  top: 0;
-  background: radial-gradient(circle at 100% 100%, transparent calc(var(--shell-corner-r) - 0.5px), var(--sidenav-bg) var(--shell-corner-r));
+.shell-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  box-shadow: none;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease);
 }
-.shell-corner--bottom {
-  bottom: 0;
-  background: radial-gradient(circle at 100% 0, transparent calc(var(--shell-corner-r) - 0.5px), var(--sidenav-bg) var(--shell-corner-r));
+.shell-action:hover,
+.shell-action:focus-visible,
+.shell-action[aria-current="page"] {
+  color: var(--accent);
 }
+@media (pointer: coarse) {
+  .shell-action { width: 44px; height: 44px; }
+}
+.study-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  isolation: isolate;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.study-tabs a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 6px 12px;
+  border-radius: var(--r-xs);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.study-tabs a[aria-current="page"] {
+  color: var(--accent);
+}
+.study-tabs a:hover { color: var(--accent); }
 
 /* The rail is the one olive-filled surface in the shell. Rather than thread
    light-on-dark colours through every row, it re-declares the semantic tokens
    its children already read (text, border, the --bg-soft active fill, the
    focus --accent), so SideNav keeps speaking in shell tokens and the swap
    lives here. Text steps hold ≥4.5:1 on #445D22. Its fill, --sidenav-bg, is
-   declared on :root so the .shell-corner pieces outside this subtree read the
-   same value. */
+   declared on :root so every shell layout uses the same rail fill. */
 [data-app-sidenav] {
   --text:        #faf8f3;
   --text-dim:    rgba(250, 248, 243, 0.86);

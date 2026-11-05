@@ -2,6 +2,7 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
+import { StudyTabs } from "../StudyTabs";
 import { TopBar } from "../TopBar";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
@@ -15,20 +16,6 @@ const MarkdownChat = dynamic(
   { ssr: false, loading: () => null },
 );
 
-// Lazy-load the framer-motion subtree the same way (#111) — the library is
-// only needed for the toggle highlight + mode crossfade, so it stays out of
-// Study's initial bundle. Fallbacks keep the resting visuals identical while
-// the chunk loads: an identically-styled static pill, and the same flex
-// wrapper minus the crossfade.
-const StudyToggleHighlight = dynamic(
-  () => import("./StudyMotion").then((m) => m.StudyToggleHighlight),
-  {
-    ssr: false,
-    loading: () => (
-      <span style={{ position: "absolute", inset: 0, background: "var(--accent-soft)", zIndex: -1 }} />
-    ),
-  },
-);
 // The mode transition wraps the pane CONTENT, so it must not depend on the
 // motion chunk (#490 review): a lazy wrapper either gates the panes behind
 // the chunk fetch (next/dynamic's fallback can't carry children) or remounts
@@ -133,36 +120,7 @@ export function Study() {
   const actions = (
     <>
       <AIDisclaimerChip />
-      <div
-        style={{
-          position: "relative",
-          display: "flex",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-sm)",
-          overflow: "hidden",
-          isolation: "isolate",
-        }}
-      >
-        {([["guide", "Study Guide"], ["cards", "Flashcards"]] as const).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => setMode(v)}
-            style={{
-              position: "relative",
-              padding: "6px 14px",
-              fontSize: 12,
-              fontWeight: 600,
-              background: "transparent",
-              color: mode === v ? "var(--accent)" : "var(--text-dim)",
-              transition: "color 220ms cubic-bezier(.2,.85,.35,1)",
-              zIndex: 1,
-            }}
-          >
-            {mode === v && <StudyToggleHighlight />}
-            {label}
-          </button>
-        ))}
-      </div>
+      <StudyTabs mode={mode} onChange={setMode} />
     </>
   );
 
@@ -845,7 +803,7 @@ function FlashcardsMode({
             onClick={() => setImportOpen(true)}
             disabled={!userId}
           >
-            <Icon name="up" size={12} /> Import
+            <Icon name="upload" size={12} /> Import
           </button>
           <button
             className="btn btn--sm btn--primary"

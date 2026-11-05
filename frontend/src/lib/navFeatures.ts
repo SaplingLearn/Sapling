@@ -18,24 +18,23 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Learn",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "home" },
-      { href: "/learn",     label: "Tutor",     icon: "brain", flag: "hide_tutor" },
-      { href: "/quiz",      label: "Quiz",      icon: "flask", flag: "hide_quiz" },
-      { href: "/tree",      label: "Tree",      icon: "tree",  flag: "hide_tree" },
-      { href: "/study",     label: "Study",     icon: "bolt",  flag: "hide_study" },
+      { href: "/learn",     label: "Tutor",     icon: "clover", flag: "hide_tutor" },
+      { href: "/tree",      label: "Tree",      icon: "trees",  flag: "hide_tree" },
+      { href: "/study",     label: "Study",     icon: "study",  flag: "hide_study" },
     ],
   },
   {
     label: "Organize",
     items: [
-      { href: "/library",  label: "Library",  icon: "book", flag: "hide_library" },
-      { href: "/calendar", label: "Calendar", icon: "cal",  flag: "hide_calendar" },
+      { href: "/library",  label: "Library",  icon: "library", flag: "hide_library" },
+      { href: "/calendar", label: "Calendar", icon: "calendar",  flag: "hide_calendar" },
     ],
   },
   {
     label: "Community",
     items: [
-      { href: "/social",       label: "Social",       icon: "users",  flag: "hide_social" },
-      { href: "/achievements", label: "Achievements", icon: "trophy", flag: "hide_achievements" },
+      { href: "/social",       label: "Social",       icon: "social",  flag: "hide_social" },
+      { href: "/achievements", label: "Achievements", icon: "achievements", flag: "hide_achievements" },
     ],
   },
   {
@@ -51,6 +50,7 @@ export const NAV_SECTIONS: NavSection[] = [
 /** The `hide_*` flag guarding `pathname` (segment-boundary match), or null. */
 export function navFlagForPath(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
+  if (pathname === "/quiz" || pathname.startsWith("/quiz/")) return "hide_quiz";
   for (const section of NAV_SECTIONS) {
     for (const item of section.items) {
       if (item.flag && (pathname === item.href || pathname.startsWith(item.href + "/"))) {
