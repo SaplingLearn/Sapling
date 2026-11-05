@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { PageActions } from "../ShellActions";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
@@ -26,7 +27,6 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
-import { dueSet } from "@/lib/quiz/proposals";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
@@ -216,12 +216,6 @@ export function Dashboard() {
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [assignments, setAssignments] = React.useState<DatedAssignment[]>([]);
   const [recommendations, setRecommendations] = React.useState<{ concept_name: string; reason?: string }[]>([]);
-  // Mirrors the same tier-membership filter `/quiz`'s useQuizHome runs (R-7) —
-  // computed over the RAW (pre-apiToGraphNode) nodes because `dueSet` is typed
-  // against the wire `GraphNode` (concept_name/times_studied included), while
-  // this screen's own `nodes` state has already been through `apiToGraphNode`
-  // and dropped those fields.
-  const [due, setDue] = React.useState<ReturnType<typeof dueSet>>({ conceptIds: [], count: 0, courseCount: 0 });
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
@@ -293,7 +287,6 @@ export function Dashboard() {
       const gNodes: GraphNode[] = rawNodes.map((n) => apiToGraphNode(n, cs));
       setNodes(gNodes);
       setEdges((graphRes.edges || []).map(apiToGraphEdge));
-      setDue(dueSet(rawNodes));
       setStats({
         streak: graphRes.stats?.streak ?? 0,
         mastered: graphRes.stats?.mastered ?? 0,
@@ -508,42 +501,18 @@ export function Dashboard() {
     return c?.course_code || c?.course_name || null;
   };
 
-  // The Learn-next panel's quiz CTA, and its sidenav-layout counterpart:
-  // "review everything due" when there's a due set, else a plain quiz home.
-  const reviewDueHref = due.count > 0
-    ? buildQuizHref({ scope: "due" }, { kind: "dashboard", returnTo: "/dashboard" })
-    : buildQuizHref({}, { kind: "dashboard", returnTo: "/dashboard" });
-  const reviewDueLabel = due.count > 0 ? `Review what's due · ${due.count}` : "Quiz";
-
   const rightPanel = (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
       {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
-          {/* Sidenav layout has no "Learn next" panel of its own (that CTA
-              only lives in the legacy topnav's right column below), so the
-              same review-what's-due entry point is surfaced here instead. */}
-          <button
-            className="btn btn--sm"
-            data-testid="dashboard-review-due"
-            onClick={() => router.push(reviewDueHref)}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="bolt" size={13} /> {reviewDueLabel}
-          </button>
-          <button
-            className="btn btn--sm"
-            onClick={() => router.push("/library")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="search" size={13} /> Search
-          </button>
+        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 32, alignItems: "center", flexWrap: "wrap" }}>
           <button
             className="btn btn--sm btn--primary"
             onClick={() => router.push("/learn")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
+            style={{ padding: "7px 10px", fontSize: 12 }}
           >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
+          <PageActions />
         </div>
       )}
 
@@ -716,23 +685,6 @@ export function Dashboard() {
 
   const mobileMetaRow = isMobile ? (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* The sidenav (non-legacy) layout has no Learn-next panel to carry
-          this CTA into on mobile — rightPanel's own copy is `!isMobile`-gated
-          — so it gets its own full-width row here instead. The legacy
-          layout already has its copy inside the Learn-next panel (reachable
-          via the "Stats & More" mobile tab), so it's skipped here: exactly
-          one `dashboard-review-due` button ever mounts for a given
-          layout/viewport combination. */}
-      {!useLegacyPanels && (
-        <button
-          className="btn btn--sm"
-          data-testid="dashboard-review-due"
-          onClick={() => router.push(reviewDueHref)}
-          style={{ width: "100%", padding: "7px 14px", fontSize: 12 }}
-        >
-          <Icon name="bolt" size={13} /> {reviewDueLabel}
-        </button>
-      )}
       <div
         style={{
           display: "flex",
@@ -742,13 +694,6 @@ export function Dashboard() {
           flexWrap: "wrap",
         }}
       >
-        <button
-          className="btn btn--sm"
-          onClick={() => router.push("/library")}
-          style={{ padding: "7px 14px", fontSize: 12 }}
-        >
-          <Icon name="search" size={13} /> Library
-        </button>
         <button
           className="btn btn--sm btn--primary"
           onClick={() => router.push("/learn")}
@@ -869,13 +814,6 @@ export function Dashboard() {
       {!isMobile && (
         <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 28 }}>
           <button
-            className="btn btn--sm"
-            onClick={() => router.push("/library")}
-            style={{ padding: "7px 14px", fontSize: 12 }}
-          >
-            <Icon name="search" size={13} /> Library
-          </button>
-          <button
             className="btn btn--sm btn--primary"
             onClick={() => router.push("/learn")}
             style={{ padding: "7px 14px", fontSize: 12 }}
@@ -955,14 +893,6 @@ export function Dashboard() {
           </button>
         ))}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button
-            className="btn btn--sm btn--primary"
-            style={{ flex: 1 }}
-            data-testid="dashboard-review-due"
-            onClick={() => router.push(reviewDueHref)}
-          >
-            <Icon name="bolt" size={12} /> {reviewDueLabel}
-          </button>
           <button className="btn btn--sm" style={{ flex: 1 }} onClick={() => router.push("/social")}>
             <Icon name="users" size={12} /> Study room
           </button>

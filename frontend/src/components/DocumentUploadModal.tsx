@@ -339,7 +339,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
               PDF, DOCX, PPTX · max 100 MB each
             </div>
             <label data-testid="upload-modal-browse" className="btn btn--primary btn--sm">
-              <Icon name="up" size={12} /> Browse
+              <Icon name="upload" size={12} /> Browse
               <input
                 data-testid="upload-modal-file-input"
                 type="file"
@@ -531,7 +531,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
                 disabled={items.length === 0 || items.every(i => i.status !== "pending")}
                 onClick={startAll}
               >
-                <Icon name="up" size={12} /> Start upload
+                <Icon name="upload" size={12} /> Start upload
               </button>
             )}
           </div>

@@ -7,7 +7,7 @@
  *   1. Every destination renders, grouped under its 4 section labels
  *   2. Nav rows never drop below the 36px interactive floor — in BOTH the
  *      expanded and collapsed states (the whole point of the density pass)
- *   3. The single foot rule sits ABOVE Settings, and the profile block
+ *   3. The single foot rule sits ABOVE the account controls, and the profile block
  *      carries no rule of its own
  *   4. Active is marked (weight + brand color), inactive is not
  *   5. Collapsed swaps section labels for separator rules and keeps the
@@ -108,9 +108,10 @@ describe("SideNav — structure", () => {
     for (const label of ["Learn", "Organize", "Community", "Tools"]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
-    for (const item of ["Dashboard", "Tutor", "Quiz", "Tree", "Study", "Library", "Calendar", "Social", "Achievements", "Grades", "Notetaker", "Course Planner", "Settings"]) {
+    for (const item of ["Dashboard", "Tutor", "Tree", "Study", "Library", "Calendar", "Social", "Achievements", "Grades", "Notetaker", "Course Planner"]) {
       expect(screen.getByText(item)).toBeTruthy();
     }
+    expect(screen.queryByRole("link", { name: "Quiz" })).toBeNull();
     // Admin is gated on the flag.
     expect(screen.queryByText("Admin")).toBeNull();
   });
@@ -168,12 +169,11 @@ describe("SideNav — the account footer", () => {
   const footerOf = (rail: HTMLElement) =>
     rail.querySelector<HTMLElement>("[data-sidenav-footer]")!;
 
-  it("opens the footer with one full-width rule directly above Settings", () => {
+  it("opens the account footer with one full-width rule", () => {
     const rail = renderRail();
     const footer = footerOf(rail);
     expect(footer.style.borderTop).toBe("1px solid var(--border)");
-    // Settings is the footer's first row: nothing sits between it and the rule.
-    expect(footer.firstElementChild).toBe(screen.getByText("Settings").closest("a"));
+    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
 
     // The profile block (the one holding the avatar) owns no rule of its own.
     let node: HTMLElement | null = screen.getByTestId("avatar").closest("div[style]");
@@ -187,10 +187,8 @@ describe("SideNav — the account footer", () => {
   it("keeps Admin below the same single rule when the user is an admin", () => {
     mockUser.isAdmin = true;
     const rail = renderRail();
-    const settings = screen.getByText("Settings").closest("a")!;
     const admin = screen.getByText("Admin").closest("a")!;
-    // Admin follows Settings directly — no second rule between them.
-    expect(settings.nextElementSibling).toBe(admin);
+    expect(footerOf(rail).firstElementChild).toBe(admin);
     expect(admin.parentElement).toBe(footerOf(rail));
   });
 
@@ -215,23 +213,23 @@ describe("SideNav — the account footer", () => {
     const scroller = rail.querySelector<HTMLElement>("[data-sidenav-scroll]")!;
     expect(scroller.style.overflowY).toBe("auto");
     expect(scroller.getAttribute("style") || "").toMatch(/scrollbar-width:\s*none/);
-    expect(scroller.contains(screen.getByText("Quiz"))).toBe(true);
+    expect(scroller.contains(screen.getByText("Tutor"))).toBe(true);
     expect(scroller.contains(footerOf(rail))).toBe(false);
   });
 });
 
 describe("SideNav — active vs inactive", () => {
-  it("marks only the current route", () => {
+  it("marks Study active while a quiz is open", () => {
     mockedUsePathname.mockReturnValue("/quiz");
     renderRail();
-    const quiz = screen.getByText("Quiz").closest("a")!;
+    const study = screen.getByText("Study").closest("a")!;
     const tree = screen.getByText("Tree").closest("a")!;
 
     // The selected row is a plain neutral fill in the ink scale; an unselected one
     // has no background at all. Asserting the TOKEN rather than a computed
     // colour keeps this honest if the scale is retuned.
-    expect(quiz.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
-    expect(quiz.getAttribute("style") || "").toMatch(/--bg-soft/);
+    expect(study.getAttribute("style") || "").toMatch(/font-weight:\s*600/);
+    expect(study.getAttribute("style") || "").toMatch(/--bg-soft/);
     expect(tree.getAttribute("style") || "").toMatch(/font-weight:\s*400/);
     expect(tree.getAttribute("style") || "").not.toMatch(/--bg-soft/);
   });
@@ -288,7 +286,7 @@ describe("SideNav — collapsed state", () => {
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     // Each row still carries its label as an accessible name.
-    expect(screen.getByRole("link", { name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Dashboard" })).toBeTruthy();
   });
 
   it("shows the collapse affordance when expanded", () => {

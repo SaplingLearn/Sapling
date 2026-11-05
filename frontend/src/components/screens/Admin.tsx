@@ -690,7 +690,7 @@ function CosmeticsTab() {
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
               >
-                <Icon name="up" size={12} /> {uploading ? "…" : "Upload"}
+                <Icon name="upload" size={12} /> {uploading ? "…" : "Upload"}
               </button>
               <input
                 ref={fileRef}

@@ -89,6 +89,7 @@ const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
+  if (href === "/study" && (pathname === "/quiz" || pathname.startsWith("/quiz/"))) return true;
   return pathname === href || pathname.startsWith(href + "/");
 }
 
@@ -121,13 +122,9 @@ export function SideNav() {
       style={{
         width,
         minWidth: width,
-        height: "100vh",
-        // Olive rail; the light-on-dark token overrides live on
-        // [data-app-sidenav] in globals.css. No right border: the olive edge
-        // is the divider, and ShellFrame rounds the content side into it.
+        height: "100%",
         background: "var(--sidenav-bg)",
-        // Positioned and lifted so the rail paints over the content column
-        // it borders (the .shell-corner pieces round that column into it).
+        borderRadius: "0 var(--r-lg) var(--r-lg) 0",
         position: "relative",
         zIndex: 1,
         padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
@@ -140,9 +137,6 @@ export function SideNav() {
         transition: "width var(--dur) var(--ease), min-width var(--dur) var(--ease), padding var(--dur) var(--ease)",
       }}
     >
-      {/* Logo — the approved wordmark (#728). There is no approved standalone
-          mark, so the collapsed rail shows no logo: the wordmark fades and the
-          row keeps its height, and it leaves the tab order while hidden. */}
       <Link
         href="/dashboard"
         aria-label="Sapling — home"
@@ -270,7 +264,7 @@ export function SideNav() {
         <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
       </button>
 
-      {/* The account footer — Settings, Admin and the profile block — sits
+      {/* The account footer — Admin and the profile block — sits
           under one full-width rule, the same line as the logo's, so the pair
           frames the rail top and bottom and the account cluster reads as split
           off from the main nav. Pinned: it never scrolls with the list above. */}
@@ -286,11 +280,6 @@ export function SideNav() {
           borderTop: "1px solid var(--border)",
         }}
       >
-      <NavLink
-        entry={{ href: "/settings", label: "Settings", icon: "cog" }}
-        active={isActive(pathname, "/settings")}
-        collapsed={collapsed}
-      />
       {isAdmin && (
         <NavLink
           entry={{ href: "/admin", label: "Admin", icon: "shield" }}

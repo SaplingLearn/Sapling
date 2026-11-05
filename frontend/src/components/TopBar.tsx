@@ -1,4 +1,5 @@
 import React from "react";
+import { PageActions } from "./ShellActions";
 
 export function TopBar({
   title,
@@ -36,7 +37,7 @@ export function TopBar({
         )}
         {subtitle && <div style={{ color: "var(--text-dim)", marginTop: 4, fontSize: 13 }}>{subtitle}</div>}
       </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>{actions}<PageActions /></div>
     </header>
   );
 }
