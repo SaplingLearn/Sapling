@@ -172,3 +172,56 @@ test("A course node on the DASHBOARD opens the roadmap, not the tutor", async ({
   await expect(page).toHaveURL(new RegExp(`/roadmap/${COURSE_ID}$`));
   await expect(page.getByTestId("roadmap")).toBeVisible();
 });
+
+/**
+ * A prerequisite cycle is SAID, not silently ordered around.
+ *
+ * Found by looking at the page, not by this suite. `order_roadmap` detects
+ * cycles at three levels — topics against each other, subtopics within one
+ * topic, and the unfiled list — and stamps `in_cycle` on every row it
+ * returns. The UI marked only the topic level, so a cycle among concepts
+ * rendered as a confident top-to-bottom order: the exact claim the ordering
+ * code refuses to make. Nothing failed, because an arbitrary order is still
+ * a valid-looking list.
+ *
+ * MATH210's two unfiled concepts are the fixture: a topic exists (so the
+ * page is not in its "not yet grouped" state and the unfiled rows render),
+ * and Eigenvalues/Determinants are siblings with no ordering between them.
+ * The edges are inserted here rather than seeded because a cycle is a
+ * pathology, not a property of the demo course — and the per-test TRUNCATE
+ * takes them away again.
+ */
+test("Concepts whose prerequisites loop say so, instead of showing a made-up order", async ({
+  page,
+}) => {
+  const cycle = [
+    ["rich-node-math-eigenvalues", "rich-node-math-determinants"],
+    ["rich-node-math-determinants", "rich-node-math-eigenvalues"],
+  ];
+  for (const [source, target] of cycle) {
+    await queryRaw(
+      `INSERT INTO graph_edges (user_id, source_node_id, target_node_id, relationship_type)
+       VALUES ($1, $2, $3, 'prerequisite')`,
+      [USER_ACTIVE, source, target],
+    );
+  }
+
+  await page.goto(`${FRONTEND_URL}/roadmap/${COURSE_ID}`);
+
+  const unfiled = page.getByTestId("roadmap-unfiled");
+  await expect(unfiled).toBeVisible();
+
+  // Said once for the list…
+  await expect(unfiled.getByTestId("roadmap-subtopic-cycle")).toHaveCount(1);
+
+  // …and the rows in the loop are named, so "which ones?" is answerable.
+  for (const nodeId of ["rich-node-math-eigenvalues", "rich-node-math-determinants"]) {
+    await expect(
+      page.getByTestId(`roadmap-subtopic-${nodeId}`).getByTestId("roadmap-cycle-badge"),
+    ).toBeVisible();
+  }
+
+  // The topic-level note is a different claim ("this TOPIC's position is a
+  // guess") and must not fire for a cycle that lives below it.
+  await expect(page.getByText(/prerequisites loop, so its position/)).toHaveCount(0);
+});

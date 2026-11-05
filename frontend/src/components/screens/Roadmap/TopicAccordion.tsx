@@ -11,6 +11,15 @@
  * Each subtopic row carries Learn and Quiz (§3.15) — the same two actions
  * the Tree detail panel offers, built with the same href helpers so the
  * routing cannot drift.
+ *
+ * `order_roadmap` detects prerequisite cycles at THREE levels — topics
+ * against each other, subtopics within one topic, and the unfiled list — and
+ * merges them into one `cycle_node_ids` set, so `in_cycle` arrives on every
+ * row as well as every topic. Both levels are marked here: the topic note
+ * says the TOPIC's position is a guess, `SubtopicCycleNote` says the order
+ * WITHIN it is, and the per-row badge names which rows are involved. Marking
+ * only the topic left a detected subtopic cycle rendering as a confident
+ * sequence — the exact thing the ordering code refuses to assert.
  */
 
 import React from "react";
@@ -64,9 +73,27 @@ function SubtopicRow({
           {glyphFor(subtopic.tier)}
         </span>
         <span className="roadmap-sub__name">{subtopic.concept_name}</span>
-        {subtopic.is_stale && (
-          <span className="roadmap-sub__stale" title="You haven't proved this recently">
-            needs review
+        {/* One right-aligned group: a row can be stale AND in a cycle, and
+            two independently auto-margined badges would drift apart. */}
+        {(subtopic.is_stale || subtopic.in_cycle) && (
+          <span className="roadmap-sub__flags">
+            {subtopic.is_stale && (
+              <span className="roadmap-sub__stale" title="You haven't proved this recently">
+                needs review
+              </span>
+            )}
+            {subtopic.in_cycle && (
+              <span
+                className="roadmap-sub__cycle"
+                // Own testid: the sr-only line below deliberately repeats
+                // this phrase, so locating the badge by its text is a strict
+                // mode violation rather than a locator.
+                data-testid="roadmap-cycle-badge"
+                title="This concept's prerequisites loop, so where it sits in this list is a guess"
+              >
+                order unclear
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -85,6 +112,7 @@ function SubtopicRow({
         <span className="sr-only">
           {subtopic.concept_name}: {masteryLabel(subtopic.tier, subtopic.is_stale)},{" "}
           {Math.round(subtopic.mastery * 100)} percent
+          {subtopic.in_cycle ? ", order unclear" : ""}
         </span>
 
         <span className="roadmap-sub__actions">
@@ -97,6 +125,33 @@ function SubtopicRow({
         </span>
       </div>
     </li>
+  );
+}
+
+/**
+ * One note for a whole list whose internal order loops (§3.2).
+ *
+ * Stated once per list rather than once per row: a cycle is a property of a
+ * SET of concepts, so repeating the same sentence on each member would say
+ * nothing extra and bury the rows it describes. The per-row "order unclear"
+ * badge names which members are involved; this says what that means.
+ *
+ * Renders nothing when no row is in a cycle, so both callers can mount it
+ * unconditionally.
+ */
+export function SubtopicCycleNote({
+  subtopics,
+  within,
+}: {
+  subtopics: RoadmapSubtopic[];
+  within: string;
+}) {
+  if (!subtopics.some(s => s.in_cycle)) return null;
+  return (
+    <p className="roadmap-topic__cycle" data-testid="roadmap-subtopic-cycle">
+      Some concepts below have looping prerequisites, so their order {within} is a
+      guess.
+    </p>
   );
 }
 
@@ -176,6 +231,8 @@ export function TopicAccordion({
                 This topic&apos;s prerequisites loop, so its position here is a guess.
               </p>
             )}
+
+            {isOpen && <SubtopicCycleNote subtopics={topic.subtopics} within="here" />}
 
             {isOpen && (
               <ul className="roadmap-topic__subs">

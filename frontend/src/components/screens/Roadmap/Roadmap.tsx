@@ -23,7 +23,7 @@ import {
 } from "@/lib/api";
 import { humanizeError } from "@/lib/errorMessage";
 import { Skeleton } from "@/components/Skeleton";
-import { TopicAccordion, SubtopicRow } from "./TopicAccordion";
+import { TopicAccordion, SubtopicCycleNote, SubtopicRow } from "./TopicAccordion";
 import { ReadinessRing, examCountdown } from "./ReadinessRing";
 import { SkillBreakdown } from "./SkillBreakdown";
 import { ReadinessBreakdown } from "./ReadinessBreakdown";
@@ -178,6 +178,9 @@ export function RoadmapScreen({ courseId }: { courseId: string }) {
               <h2 className="roadmap__unfiled-head">
                 Unfiled concepts ({data.unfiled.length})
               </h2>
+              {/* The unfiled list is topologically sorted by the same pass
+                  that orders a topic's subtopics, so it can loop too. */}
+              <SubtopicCycleNote subtopics={data.unfiled} within="in this list" />
               <ul className="roadmap-topic__subs">
                 {data.unfiled.map(s => (
                   <SubtopicRow

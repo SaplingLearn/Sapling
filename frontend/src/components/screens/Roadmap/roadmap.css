@@ -291,14 +291,31 @@
   text-overflow: ellipsis;
 }
 
-.roadmap-sub__stale {
+/* Holds the row's badges as one right-aligned group. The auto margin lives
+   here, not on each badge: two auto-margined siblings share the free space
+   between them instead of sitting together. */
+.roadmap-sub__flags {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.roadmap-sub__stale,
+.roadmap-sub__cycle {
   font-size: 11px;
   color: var(--text-muted);
   border: 1px dashed currentColor;
   border-radius: 999px;
   padding: 1px 8px;
   white-space: nowrap;
+}
+
+/* Dotted, not dashed: a cycle is a different kind of caveat from staleness
+   ("we can't order this" vs "you haven't proved this lately"), and the two
+   can appear on the same row. */
+.roadmap-sub__cycle {
+  border-style: dotted;
 }
 
 .roadmap-sub__body {

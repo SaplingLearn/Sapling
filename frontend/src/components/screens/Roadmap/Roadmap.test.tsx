@@ -223,6 +223,58 @@ describe("RoadmapScreen", () => {
     expect(await screen.findByText(/prerequisites loop/)).toBeInTheDocument();
   });
 
+  it("marks a subtopic cycle, which the topic-level note does not cover", async () => {
+    // The demo course's real shape (db/seed_roadmap_demo.py): the cycle is
+    // between two SUBTOPICS, so `topic.in_cycle` is false and the topic note
+    // never fires. This rendered as a confident order until #roadmap-cycle.
+    getRoadmap.mockResolvedValue(payload({
+      topics: [topic({
+        in_cycle: false,
+        subtopics: [
+          sub({ node_id: "s1", concept_name: "Convergence Tests", in_cycle: true }),
+          sub({ node_id: "s2", concept_name: "Taylor Series", in_cycle: true }),
+          sub({ node_id: "s3", concept_name: "Riemann Sums", in_cycle: false }),
+        ],
+      })],
+    }));
+
+    render(<RoadmapScreen courseId="course1" />);
+
+    // Said once for the list…
+    expect(await screen.findByTestId("roadmap-subtopic-cycle")).toBeInTheDocument();
+    // …and only on the rows that are actually in it.
+    expect(screen.getAllByTestId("roadmap-cycle-badge")).toHaveLength(2);
+    expect(
+      within(screen.getByTestId("roadmap-subtopic-s3")).queryByTestId("roadmap-cycle-badge"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says nothing about ordering when no subtopic loops", async () => {
+    getRoadmap.mockResolvedValue(payload({ topics: [topic()] }));
+
+    render(<RoadmapScreen courseId="course1" />);
+
+    await screen.findByTestId("roadmap-topics");
+    expect(screen.queryByTestId("roadmap-subtopic-cycle")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("roadmap-cycle-badge")).not.toBeInTheDocument();
+  });
+
+  it("marks a cycle among unfiled concepts too", async () => {
+    getRoadmap.mockResolvedValue(payload({
+      topics: [topic()],
+      unfiled: [
+        sub({ node_id: "u1", concept_name: "Related Rates", in_cycle: true }),
+        sub({ node_id: "u2", concept_name: "L'Hopital's Rule", in_cycle: true }),
+      ],
+    }));
+
+    render(<RoadmapScreen courseId="course1" />);
+
+    const unfiled = await screen.findByTestId("roadmap-unfiled");
+    expect(within(unfiled).getByTestId("roadmap-subtopic-cycle")).toBeInTheDocument();
+    expect(within(unfiled).getAllByTestId("roadmap-cycle-badge")).toHaveLength(2);
+  });
+
   it("fetches the breakdown rather than recomputing it", async () => {
     getRoadmap.mockResolvedValue(payload());
     getRoadmapReadiness.mockResolvedValue({
