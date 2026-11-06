@@ -2046,6 +2046,11 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "quiz: daily spend cap reached user=%s request_id=%s",
             body.user_id, request_id,
         )
+        # #760: refused before anything was generated, so it must not cost a
+        # rate-limit slot. The cap can't be checked before the claim — whether
+        # it applies depends on how much G5 re-served — so hand back this
+        # request's exact slot instead.
+        _refund_generate_slot(body.user_id, slot)
         raise QuizAPIError(
             status_code=429,
             code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
