@@ -1385,6 +1385,12 @@ export const adminSendBroadcast = (payload: { subject: string; body: string; aud
 export const adminListBroadcasts = () =>
   fetchJSON<{ broadcasts: EmailBroadcast[] }>('/api/admin/email/broadcasts');
 
+/** Re-run a stalled/failed/partial broadcast through the per-recipient dedupe (202). */
+export const adminResumeBroadcast = (id: string) =>
+  fetchJSON<{ broadcast: EmailBroadcast }>(`/api/admin/email/broadcasts/${encodeURIComponent(id)}/resume`, {
+    method: 'POST',
+  });
+
 // Admin — audit
 export const adminAuditLog = (params?: {
   page?: number; page_size?: number; action?: string; target_type?: string; actor_id?: string;

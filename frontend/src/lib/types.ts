@@ -430,7 +430,8 @@ export interface EmailBroadcast {
   id: string;
   subject: string;
   audience: string;
-  status: "sending" | "sent" | "failed";
+  /** partial = some sent, some failed (or the run died part-way); skipped = nothing sent, nothing failed. */
+  status: "sending" | "sent" | "partial" | "skipped" | "failed";
   recipient_count: number;
   sent_count: number;
   skipped_count: number;
@@ -438,6 +439,11 @@ export interface EmailBroadcast {
   created_at: string;
   sent_at: string | null;
   created_by: string | null;
+  heartbeat_at?: string | null;
+  /** `sending` with no heartbeat for a while: the run is dead and can be resumed. */
+  stale?: boolean;
+  /** Stale, failed or partial: `POST /broadcasts/{id}/resume` will re-run it. */
+  resumable?: boolean;
 }
 
 /** POST /api/admin/email/broadcasts/preview: the real server-rendered email (a full HTML document). Sends nothing. */
