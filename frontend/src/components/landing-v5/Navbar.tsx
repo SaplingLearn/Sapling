@@ -33,7 +33,7 @@
  * engine's scroll handler, not through React.
  */
 
-import { SaplingWordmark } from '@/components/SaplingWordmark';
+import Image from 'next/image';
 import type { NavTheme } from './navTheme';
 
 const TAB: React.CSSProperties = {
@@ -80,11 +80,21 @@ export function Navbar({
           className="ld-nav-logo"
           style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
         >
-          <SaplingWordmark
-            width={132}
+          <Image
+            src="/sapling-icon.svg" alt="" width={32} height={32} priority
             className="ld-nav-mark"
-            style={{ filter: theme.logoFilter, transition: 'filter 500ms' }}
+            style={{ position: 'relative', top: -3, filter: theme.iconFilter, transition: 'filter 500ms' }}
           />
+          <span
+            className="ld-nav-word"
+            style={{
+              fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 25,
+              color: theme.logo, letterSpacing: '-0.02em', lineHeight: 1.1,
+              transition: 'color 500ms',
+            }}
+          >
+            Sapling
+          </span>
         </button>
 
         <div className="ld-nav-actions" style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'nowrap', flexShrink: 0 }}>

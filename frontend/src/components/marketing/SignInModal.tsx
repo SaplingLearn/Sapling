@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { HeroCard } from "@/components/marketing/HeroCard";
-import { SaplingWordmark } from "@/components/SaplingWordmark";
 import { postSignInRoute } from "@/lib/localSeed";
 import { stashPendingToken } from "@/lib/pendingToken";
 
@@ -262,7 +261,10 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
         >×</button>
 
-        <SaplingWordmark width={88} style={{ marginBottom: 24 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 24 }}>
+          <img src="/sapling-icon.svg" alt="Sapling" style={{ width: 22, height: 22 }} />
+          <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 17, color: "var(--brand-forest)", letterSpacing: "-0.02em" }}>Sapling</span>
+        </div>
 
         <h2 style={{
           margin: 0,
@@ -311,7 +313,7 @@ export default function SignInModal({ open, onClose, errorCode }: SignInModalPro
           onMouseEnter={e => {
             if (waiting) return;
             e.currentTarget.style.borderColor = "var(--brand-forest)";
-            e.currentTarget.style.boxShadow = "0 6px 18px rgba(68,93,34,0.15)";
+            e.currentTarget.style.boxShadow = "0 6px 18px rgba(27,108,66,0.15)";
           }}
           onMouseLeave={e => {
             e.currentTarget.style.borderColor = "rgba(107,114,128,0.25)";
