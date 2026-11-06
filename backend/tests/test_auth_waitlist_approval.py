@@ -12,6 +12,7 @@ place the two can be matched).
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
 
+import secrets
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -75,10 +76,13 @@ def callback(monkeypatch):
         }
         monkeypatch.setattr(httpx, "get", lambda *a, **k: userinfo)
 
+        # Each drive is a fresh sign-in: a new nonce, since the callback now
+        # honours an OAuth state nonce only once (#756).
+        nonce = secrets.token_urlsafe(8)
         cookie = auth_module._encode_oauth_cookie(
-            {"n": "n1", "cv": "verifier", "popup_id": popup_id}
+            {"n": nonce, "cv": "verifier", "popup_id": popup_id}
         )
-        state = auth_module._encode_state({"action": "signin", "n": "n1"})
+        state = auth_module._encode_state({"action": "signin", "n": nonce})
         client = TestClient(_app)
         client.cookies.set(auth_module.OAUTH_STATE_COOKIE, cookie)
         resp = client.get(

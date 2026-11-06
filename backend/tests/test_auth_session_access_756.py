@@ -252,7 +252,7 @@ def callback(monkeypatch):
     monkeypatch.setattr(auth_module, "FRONTEND_URL", FRONTEND)
     monkeypatch.setattr(auth_module, "SESSION_SECRET", SECRET)
     monkeypatch.setattr(auth_module, "GOOGLE_AVAILABLE", True)
-    monkeypatch.setattr(auth_module, "_claim_welcome", lambda *_a, **_k: False)
+    monkeypatch.setattr(auth_module, "_welcome_due", lambda *_a, **_k: False)
     monkeypatch.setattr(ach_module, "check_achievements", lambda *a, **k: None)
 
     creds = MagicMock(token="access-tok", refresh_token="refresh-tok", expiry=None)
