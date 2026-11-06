@@ -250,6 +250,17 @@ def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
+    # Mirror achievements_status_check (20260731193214) so a bad value is a
+    # 422 here, not a CHECK violation surfacing as a 500 (#767).
+    #
+    # live → draft is UNPUBLISH, not revoke: existing user_achievements rows
+    # (and the XP/cosmetics they paid) are kept, but every user-facing read
+    # filters to live (profile list + showcase, the hero card's N of M), so the
+    # badge disappears for everyone, and check_achievements neither grants it
+    # nor heals it while it is a draft. Publishing it again restores it as it
+    # was — the same contract 20260731194102 used to demote legacy seeds.
+    if "status" in updates and updates["status"] not in ("draft", "live"):
+        raise HTTPException(status_code=422, detail="status must be 'draft' or 'live'")
     table("achievements").update(updates, filters={"id": f"eq.{achievement_id}"})
     log_admin_action(
         actor_id=actor, action="achievement.update", target_type="achievement",

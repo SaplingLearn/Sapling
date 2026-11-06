@@ -691,6 +691,39 @@ class TestAchievementAudits:
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "achievement.update"
 
+    @pytest.mark.parametrize("bad", ["published", "LIVE", "", None, 1])
+    def test_an_invalid_status_is_a_422_not_a_check_violation(self, bad):
+        """#767: any status used to reach the achievements_status_check
+        constraint and come back as a 500."""
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            r = client.patch("/api/admin/achievements/a1", json={"status": bad})
+        assert r.status_code == 422
+        t.return_value.update.assert_not_called()
+        audit.assert_not_called()
+
+    @pytest.mark.parametrize("status", ["draft", "live"])
+    def test_a_valid_status_is_written(self, status):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action"):
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/achievements/a1", json={"status": status})
+        assert r.status_code == 200
+        assert t.return_value.update.call_args[0][0] == {"status": status}
+
+    def test_unpublishing_does_not_touch_existing_grants(self):
+        """live → draft hides the badge; it does not revoke user_achievements."""
+        touched = []
+        with _mock_admin(), \
+             patch("routes.admin.table", side_effect=lambda n: touched.append(n) or MagicMock()), \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.patch("/api/admin/achievements/a1", json={"status": "draft"})
+        assert r.status_code == 200
+        assert touched == ["achievements"]
+
     def test_delete_logs_audit(self):
         with _mock_admin(), patch("routes.admin.table") as t, \
              patch("routes.admin.get_session_user_id", return_value="u1"), \
