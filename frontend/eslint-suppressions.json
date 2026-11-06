@@ -14,11 +14,6 @@
       "count": 1
     }
   },
-  "src/components/DocumentUploadModal.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/FeedbackFlow.tsx": {
     "react/no-unescaped-entities": {
       "count": 1
@@ -141,7 +136,7 @@
   },
   "src/lib/api.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 23
+      "count": 21
     }
   },
   "src/lib/useActiveSemester.ts": {
