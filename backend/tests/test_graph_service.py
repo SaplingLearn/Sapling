@@ -506,6 +506,39 @@ class TestDeleteCourse:
 
 # ── apply_graph_update ────────────────────────────────────────────────────────
 
+#: Stand-in for graph_nodes as the ``apply_mastery_delta`` SQL function sees it
+#: (#766): id → stored row copy. ``_bulk_factory`` seeds it with the existing
+#: nodes and every upserted node; ``_fake_mastery_rpc`` applies deltas to it
+#: exactly as the migration's function does (clamp, tier, times_studied + 1).
+_FAKE_NODE_STORE: dict = {}
+
+
+def _fake_mastery_rpc(name, params):
+    assert name == "apply_mastery_delta"
+    node = _FAKE_NODE_STORE.get(params["p_node_id"])
+    if node is None:
+        return []
+    before = float(node.get("mastery_score") or 0.0)
+    after = max(0.0, min(1.0, before + params["p_delta"]))
+    tier = (
+        "mastered" if after >= params["p_mastered_min"]
+        else "learning" if after >= params["p_learning_min"]
+        else "struggling" if after >= params["p_struggling_min"]
+        else "unexplored"
+    )
+    node.update(mastery_score=after, mastery_tier=tier,
+                times_studied=(node.get("times_studied") or 0) + 1)
+    return [{"before_score": before, "after_score": after, "new_tier": tier}]
+
+
+@pytest.fixture(autouse=True)
+def _mastery_rpc():
+    _FAKE_NODE_STORE.clear()
+    with patch("services.graph_service.rpc", side_effect=_fake_mastery_rpc) as m:
+        yield m
+    _FAKE_NODE_STORE.clear()
+
+
 def _bulk_factory(existing_nodes=None, existing_edges=None):
     """Factory that returns a fresh mock per table; bulk-fetch returns the given rows.
 
@@ -516,13 +549,20 @@ def _bulk_factory(existing_nodes=None, existing_edges=None):
     nodes = list(existing_nodes or [])
     edges = list(existing_edges or [])
     mocks = {}
+    for n in nodes:
+        _FAKE_NODE_STORE[n["id"]] = dict(n)
+
+    def _upsert(data, **kw):
+        for d in [data] if isinstance(data, dict) else list(data):
+            _FAKE_NODE_STORE.setdefault(d["id"], dict(d))
+        return [data] if isinstance(data, dict) else list(data)
 
     def factory(name):
         if name not in mocks:
             m = MagicMock()
             if name == "graph_nodes":
                 m.select.return_value = nodes
-                m.upsert.side_effect = lambda data, **kw: [data] if isinstance(data, dict) else list(data)
+                m.upsert.side_effect = _upsert
             elif name == "graph_edges":
                 m.select.return_value = edges
                 m.upsert.return_value = []
@@ -662,10 +702,100 @@ class TestApplyGraphUpdate:
         assert result[0]["after"] == pytest.approx(0.6)
         # Mastery change should reference the canonical stored name, not the LLM's
         assert result[0]["concept"] == "Algebra"
-        # Scalar columns updated; the dropped JSON blob is no longer written.
-        update_payload = mocks["graph_nodes"].update.call_args[0][0]
-        assert update_payload["mastery_score"] == pytest.approx(0.6)
-        assert "mastery_events" not in update_payload
+        # #766: the score is no longer written back by a Python
+        # read-modify-write; the atomic SQL function applies the DELTA.
+        mocks["graph_nodes"].update.assert_not_called()
+        assert _FAKE_NODE_STORE["n1"]["mastery_score"] == pytest.approx(0.6)
+        assert _FAKE_NODE_STORE["n1"]["mastery_tier"] == "learning"
+        assert _FAKE_NODE_STORE["n1"]["times_studied"] == 3
+
+    # ── #766: the mastery update is atomic ────────────────────────────────
+
+    def _update(self, existing, delta=0.2, user="u1"):
+        factory, mocks = _bulk_factory(existing_nodes=existing)
+        graph_update = {
+            "new_nodes": [],
+            "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": delta}],
+            "new_edges": [],
+        }
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.course_context_service.update_course_context"):
+            return apply_graph_update(user, graph_update, course_id="c1"), mocks
+
+    def test_rpc_gets_the_delta_and_configs_thresholds(self, _mastery_rpc):
+        from config import (
+            MASTERY_LEARNING_MIN, MASTERY_MASTERED_MIN, MASTERY_STRUGGLING_MIN,
+        )
+        self._update([{"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+                       "times_studied": 2, "course_id": "c1"}])
+        _mastery_rpc.assert_called_once_with("apply_mastery_delta", {
+            "p_node_id": "n1",
+            "p_user_id": "u1",
+            "p_delta": pytest.approx(0.2),
+            "p_mastered_min": MASTERY_MASTERED_MIN,
+            "p_learning_min": MASTERY_LEARNING_MIN,
+            "p_struggling_min": MASTERY_STRUGGLING_MIN,
+        })
+
+    def test_concurrent_writers_compose_instead_of_losing_an_update(self):
+        # Two writers (a quiz submit and a tutor turn) both bulk-read the node
+        # at 0.4. The old Python read-modify-write had each write back
+        # 0.4 + 0.2, so the store ended at 0.6 with times_studied 3; deltas
+        # applied in SQL compose to 0.8 / 4.
+        stale = {"id": "n1", "concept_name": "Algebra", "mastery_score": 0.4,
+                 "times_studied": 2, "course_id": "c1"}
+        first, _ = self._update([dict(stale)])
+        # The second writer's bulk read predates the first commit: it still
+        # sees 0.4. (_bulk_factory would re-seed the store from that stale
+        # row, so restore the committed state the database actually holds.)
+        committed = dict(_FAKE_NODE_STORE["n1"])
+        factory2, _ = _bulk_factory(existing_nodes=[dict(stale)])
+        _FAKE_NODE_STORE["n1"] = committed
+        graph_update = {"new_nodes": [], "new_edges": [],
+                        "updated_nodes": [{"concept_name": "Algebra", "mastery_delta": 0.2}]}
+        with patch("services.graph_service.table", side_effect=factory2), \
+             patch("services.course_context_service.update_course_context"):
+            second = apply_graph_update("u1", graph_update, course_id="c1")
+
+        assert first[0]["after"] == pytest.approx(0.6)
+        # The second writer's before/after are what was actually applied.
+        assert second[0]["before"] == pytest.approx(0.6)
+        assert second[0]["after"] == pytest.approx(0.8)
+        assert _FAKE_NODE_STORE["n1"]["mastery_score"] == pytest.approx(0.8)
+        assert _FAKE_NODE_STORE["n1"]["times_studied"] == 4
+
+    def test_a_node_deleted_under_us_is_skipped(self, _mastery_rpc):
+        _mastery_rpc.side_effect = lambda *_a, **_k: []
+        result, mocks = self._update([{"id": "n1", "concept_name": "Algebra",
+                                       "mastery_score": 0.4, "course_id": "c1"}])
+        assert result == []
+        assert "node_mastery_events" not in mocks
+
+    def test_missing_function_falls_back_to_the_legacy_write(self, _mastery_rpc):
+        import httpx
+        req = httpx.Request("POST", "http://test/rpc/apply_mastery_delta")
+        _mastery_rpc.side_effect = httpx.HTTPStatusError(
+            "404", request=req, response=httpx.Response(404, request=req))
+        result, mocks = self._update([{"id": "n1", "concept_name": "Algebra",
+                                       "mastery_score": 0.4, "times_studied": 2,
+                                       "course_id": "c1"}])
+        assert result[0]["after"] == pytest.approx(0.6)
+        payload = mocks["graph_nodes"].update.call_args[0][0]
+        assert payload["mastery_score"] == pytest.approx(0.6)
+        assert payload["mastery_tier"] == "learning"
+        assert payload["times_studied"] == 3
+        assert mocks["graph_nodes"].update.call_args.kwargs["filters"] == {
+            "id": "eq.n1", "user_id": "eq.u1",
+        }
+
+    def test_other_rpc_errors_propagate(self, _mastery_rpc):
+        import httpx
+        req = httpx.Request("POST", "http://test/rpc/apply_mastery_delta")
+        _mastery_rpc.side_effect = httpx.HTTPStatusError(
+            "500", request=req, response=httpx.Response(500, request=req))
+        with pytest.raises(httpx.HTTPStatusError):
+            self._update([{"id": "n1", "concept_name": "Algebra",
+                           "mastery_score": 0.4, "course_id": "c1"}])
 
     def test_mastery_change_appends_event_row(self):
         """A mastery change appends exactly one append-only node_mastery_events row

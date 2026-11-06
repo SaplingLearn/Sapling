@@ -136,6 +136,16 @@ MASTERY_STRUGGLING_MIN = 0.1
 
 
 def get_mastery_tier(score: float) -> str:
+    """The tier for a score. Persisted on graph_nodes.mastery_tier (#766):
+    the atomic ``apply_mastery_delta`` SQL function takes these thresholds as
+    parameters (never its own literals) and re-tiers a node on every write; a
+    threshold change leaves untouched rows stale until
+    ``scripts/backfill_mastery_tiers.py --apply``.
+
+    "unexplored" covers BOTH never-studied and studied-but-below-the-floor;
+    ``graph_nodes.times_studied == 0`` is what tells them apart. The stored
+    vocabulary is exactly these four ('subject_root' is a get_graph payload
+    marker only, never persisted)."""
     if score >= MASTERY_MASTERED_MIN:
         return "mastered"
     elif score >= MASTERY_LEARNING_MIN:

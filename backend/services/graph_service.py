@@ -4,8 +4,15 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from config import get_mastery_tier
-from db.connection import table
+import httpx
+
+from config import (
+    MASTERY_LEARNING_MIN,
+    MASTERY_MASTERED_MIN,
+    MASTERY_STRUGGLING_MIN,
+    get_mastery_tier,
+)
+from db.connection import rpc, table
 from services.streak_service import touch_streak_safe
 
 logger = logging.getLogger(__name__)
@@ -597,6 +604,54 @@ def _coerce_unit(value, default: float = 0.0) -> float:
     return max(0.0, min(1.0, f))
 
 
+def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, float] | None:
+    """Apply ``delta`` to one node's mastery ATOMICALLY; return (before, after).
+
+    The ``apply_mastery_delta`` SQL function (migration
+    20261106042903_graph_node_mastery_atomic.sql) locks the row, clamps the
+    new score, recomputes the tier from the thresholds passed here (config.py
+    stays their one home) and increments ``times_studied`` in one statement,
+    so concurrent quiz submits / tutor turns compose instead of the later
+    write erasing the earlier (#766). Returns None when the node is gone.
+
+    A backend that lands before the migration (PostgREST 404s an unknown
+    function) degrades to the old blind read-modify-write with a warning,
+    rather than failing every mastery update until the migration lands.
+    """
+    try:
+        rows = rpc("apply_mastery_delta", {
+            "p_node_id": row["id"],
+            "p_user_id": user_id,
+            "p_delta": delta,
+            "p_mastered_min": MASTERY_MASTERED_MIN,
+            "p_learning_min": MASTERY_LEARNING_MIN,
+            "p_struggling_min": MASTERY_STRUGGLING_MIN,
+        })
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+        logger.warning(
+            "apply_mastery_delta is missing (migration 20261106042903 not "
+            "applied?); falling back to a NON-atomic mastery update node=%s",
+            row["id"],
+        )
+        before = float(row.get("mastery_score") or 0.0)
+        after = max(0.0, min(1.0, before + delta))
+        table("graph_nodes").update(
+            {
+                "mastery_score": after,
+                "mastery_tier": get_mastery_tier(after),
+                "times_studied": (row.get("times_studied") or 0) + 1,
+                "last_studied_at": datetime.now(timezone.utc).isoformat(),
+            },
+            filters={"id": f"eq.{row['id']}", "user_id": f"eq.{user_id}"},
+        )
+        return before, after
+    if not rows:
+        return None
+    return float(rows[0]["before_score"]), float(rows[0]["after_score"])
+
+
 def add_node(
     user_id: str,
     concept_name: str,
@@ -807,20 +862,15 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         if not row:
             continue
 
-        before = row["mastery_score"]
-        after = max(0.0, min(1.0, before + delta))
+        applied = _apply_mastery_delta(user_id, row, delta)
+        if applied is None:
+            continue  # node deleted under us: nothing to log against
+        before, after = applied
+        # A second update of the same concept in this batch must see this one.
+        row["mastery_score"] = after
+        row["times_studied"] = (row.get("times_studied") or 0) + 1
 
         now = datetime.now(timezone.utc).isoformat()
-        # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
-        table("graph_nodes").update(
-            {
-                "mastery_score": after,
-                "mastery_tier": get_mastery_tier(after),
-                "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": now,
-            },
-            filters={"id": f"eq.{row['id']}"},
-        )
         # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
         event_row = {
             "id": str(uuid.uuid4()),
