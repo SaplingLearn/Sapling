@@ -175,6 +175,9 @@ export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/lo
 export interface PendingStatus {
   email: string;
   on_waitlist: boolean;
+  /** #757: an admin approved the address since this sign-in; a fresh
+   * sign-in now gets in (the pending token itself is never a session). */
+  approved?: boolean;
 }
 export const getPendingStatus = (token: string) =>
   fetchJSON<PendingStatus>('/api/auth/pending/status', {

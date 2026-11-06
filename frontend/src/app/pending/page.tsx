@@ -3,7 +3,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
-import { getPendingStatus, joinWaitlistFromPending } from '@/lib/api';
+import { API_URL, getPendingStatus, joinWaitlistFromPending } from '@/lib/api';
 import { statusOf } from '@/lib/errorMessage';
 import { clearPendingToken, readPendingToken, stashPendingToken } from '@/lib/pendingToken';
 
@@ -19,8 +19,11 @@ import { clearPendingToken, readPendingToken, stashPendingToken } from '@/lib/pe
  * (expired, a direct visit, the middleware bouncing a revoked session here)
  * it can only point back to sign-in.
  *
- * The heading is the same in every state, so the card doesn't jump when the
- * status arrives; only the body below it changes.
+ * #757: once an admin approves the address, the status says so and the page
+ * offers a fresh sign-in (the pending token is never a session).
+ *
+ * The heading changes only for that approved state, so the card doesn't jump
+ * while the status loads; otherwise only the body below it changes.
  *
  * The sapling draws itself once and the message steps in behind it
  * (`.pending-*` in globals.css), settling in ~560ms. One-shot CSS animation on
@@ -31,7 +34,9 @@ import { clearPendingToken, readPendingToken, stashPendingToken } from '@/lib/pe
 type View =
   | { kind: 'loading' }
   | { kind: 'unknown' }
-  | { kind: 'status'; email: string; onWaitlist: boolean; justJoined: boolean };
+  | { kind: 'status'; email: string; onWaitlist: boolean; justJoined: boolean }
+  // #757: approved since this sign-in — only a fresh sign-in can let them in.
+  | { kind: 'approved'; email: string };
 
 const bodyText: CSSProperties = {
   fontSize: 15,
@@ -80,6 +85,10 @@ export default function PendingPage() {
     getPendingStatus(t)
       .then((s) => {
         if (cancelled) return;
+        if (s.approved) {
+          setView({ kind: 'approved', email: s.email });
+          return;
+        }
         setView({ kind: 'status', email: s.email, onWaitlist: s.on_waitlist, justJoined: false });
       })
       .catch((err) => {
@@ -103,7 +112,9 @@ export default function PendingPage() {
     setJoinFailed(false);
     try {
       const s = await joinWaitlistFromPending(token);
-      setView({ kind: 'status', email: s.email, onWaitlist: s.on_waitlist, justJoined: true });
+      setView(s.approved
+        ? { kind: 'approved', email: s.email }
+        : { kind: 'status', email: s.email, onWaitlist: s.on_waitlist, justJoined: true });
     } catch (err) {
       if (statusOf(err) === 401) {
         // The token expired while they read the page: only a fresh sign-in
@@ -116,6 +127,14 @@ export default function PendingPage() {
     } finally {
       setJoining(false);
     }
+  }
+
+  function handleSignInAgain() {
+    // Same-tab Google sign-in, as SignInModal's fallback does; the token
+    // has done its job.
+    clearPendingToken();
+    const returnTo = encodeURIComponent(window.location.origin);
+    window.location.assign(`${API_URL}/api/auth/google?return_to=${returnTo}`);
   }
 
   async function handleSignOut() {
@@ -195,7 +214,7 @@ export default function PendingPage() {
           className="h-serif pending-step anim-d1"
           style={{ fontSize: 30, fontWeight: 500, marginBottom: 10 }}
         >
-          Your account isn&apos;t approved yet
+          {view.kind === 'approved' ? "You're approved" : "Your account isn't approved yet"}
         </h1>
 
         <div
@@ -228,6 +247,22 @@ export default function PendingPage() {
                 onClick={() => router.replace('/')}
               >
                 Back to home
+              </button>
+            </div>
+          )}
+
+          {view.kind === 'approved' && (
+            <div data-testid="pending-approved" style={stateStyle}>
+              <p style={bodyText}>
+                <strong style={emailStyle}>{view.email}</strong> has been let in. Sign in
+                again to start using Sapling.
+              </p>
+              <button
+                data-testid="pending-signin-again"
+                className="btn btn--primary"
+                onClick={handleSignInAgain}
+              >
+                Sign in
               </button>
             </div>
           )}
@@ -285,7 +320,7 @@ export default function PendingPage() {
           className="btn btn--ghost pending-step anim-d3"
           onClick={handleSignOut}
         >
-          {view.kind === 'status' ? 'Use a different account' : 'Sign out'}
+          {view.kind === 'status' || view.kind === 'approved' ? 'Use a different account' : 'Sign out'}
         </button>
       </div>
     </div>
