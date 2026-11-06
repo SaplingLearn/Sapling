@@ -1485,7 +1485,8 @@ const DRAFT = {
  *  funnel never detours to /setting-up. */
 async function onboardingAt(page: Page, step: number, draft: Partial<typeof DRAFT> = {}): Promise<void> {
   await mockError(page, "/api/auth/local-seed", 404, "Not Found");
-  await storage(page, { sapling_onboarding_draft: JSON.stringify({ ...DRAFT, ...draft, step }) });
+  // The draft is per account (#757): the "new" persona is rich-user-new.
+  await storage(page, { "sapling_onboarding_draft:rich-user-new": JSON.stringify({ ...DRAFT, ...draft, step }) });
   await page.goto("/onboarding");
   await visible(page, "onboarding-gate");
 }
