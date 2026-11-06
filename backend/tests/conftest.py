@@ -64,10 +64,11 @@ def _clear_rate_limit_state():
 def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
-    from agents._providers import clear_override_model_cache
+    from agents._providers import _unfreeze_model_mode_for_tests, clear_override_model_cache
     from services import (
         academics, analytics_consent, auth_guard, course_context_service, feature_flags, growth,
     )
+    _unfreeze_model_mode_for_tests()  # #771: a lifespan run latches the mode
     clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
@@ -82,6 +83,7 @@ def _clear_lru_caches():
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
     yield
+    _unfreeze_model_mode_for_tests()
     clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()

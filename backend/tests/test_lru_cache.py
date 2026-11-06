@@ -104,6 +104,27 @@ class TestCourseContextCacheInvalidation:
             after = course_context_service.get_course_context("o1")
         assert after["course_summary"]["summary_text"] == "v2"
 
+    def test_expires_after_the_ttl(self, monkeypatch):
+        """#771: another worker's update never reaches this process's cache;
+        the TTL bounds how long it serves the old context."""
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(course_context_service.time, "monotonic", lambda: clock["t"])
+        with patch("services.course_context_service.table", side_effect=self._ctx_table("v1")):
+            course_context_service.get_course_context("o1")
+        with patch("services.course_context_service.table", side_effect=self._ctx_table("v2")):
+            assert course_context_service.get_course_context("o1")["course_summary"]["summary_text"] == "v1"
+            clock["t"] += course_context_service.COURSE_CONTEXT_TTL_S
+            assert course_context_service.get_course_context("o1")["course_summary"]["summary_text"] == "v2"
+
+    def test_a_failed_read_is_not_cached(self):
+        def _boom(name):
+            raise RuntimeError("db down")
+
+        with patch("services.course_context_service.table", side_effect=_boom):
+            assert course_context_service.get_course_context("o1") == {}
+        with patch("services.course_context_service.table", side_effect=self._ctx_table("v1")):
+            assert course_context_service.get_course_context("o1")["course_summary"]["summary_text"] == "v1"
+
     def test_returns_defensive_copy(self):
         with patch("services.course_context_service.table", side_effect=self._ctx_table("v1")):
             a = course_context_service.get_course_context("o1")

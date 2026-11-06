@@ -35,6 +35,7 @@ export const USER_SCOPED_LOCAL_KEYS = [
 /** localStorage key prefixes (one key per account). */
 export const USER_SCOPED_LOCAL_PREFIXES = [
   'sapling_onboarding_draft:', // Onboarding.tsx onboardingDraftKey(userId), #757
+  'sapling.flags.v1:', // context/FlagsContext.tsx last-known flags per user, #771
 ] as const;
 
 /** sessionStorage keys holding one account's data. */

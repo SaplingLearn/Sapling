@@ -196,6 +196,7 @@ def initialize_posthog() -> bool:
         logger.info("PostHog disabled: %s", reason)
         return False
     with _client_lock:
+        _set_stopped(False)  # a new lifespan accepts again (#771)
         if _client is not None:
             return True
         try:
@@ -222,12 +223,22 @@ def initialize_posthog() -> bool:
 
 
 def shutdown_posthog() -> None:
-    """Drain our queue, then flush and stop posthog's consumers (lifespan
-    shutdown). Bounded; never raises."""
+    """Stop accepting, drain our queue, then flush and stop posthog's
+    consumers (lifespan shutdown). Bounded; never raises.
+
+    The order closes the gap #771 found: accepting stops FIRST (under the
+    queue lock, so an item is either counted before the flush snapshots its
+    target or refused), the flush then delivers every accepted item while the
+    client is still live, and only then is the client dropped. The STOPPED
+    state also keeps ``_ensure_worker`` from lazily resurrecting the worker
+    after shutdown; ``initialize_posthog`` clears it."""
     global _client
-    flush_queue(timeout_seconds=5.0)
+    _set_stopped(True)
+    if not flush_queue(timeout_seconds=5.0):
+        logger.warning("PostHog shutdown: queue not drained in 5s; the rest is dropped")
     with _client_lock:
         client, _client = _client, None
+    _stop_worker()
     if client is None:
         return
     try:
@@ -237,8 +248,9 @@ def shutdown_posthog() -> None:
 
 
 def set_client_for_tests(client: Any) -> None:
-    """Install a fake client (or None). Test-only."""
+    """Install a fake client (or None), accepting again. Test-only."""
     global _client
+    _set_stopped(False)
     _client = client
 
 
@@ -290,14 +302,49 @@ _accepted_total = 0
 _finished_total = 0
 _worker: threading.Thread | None = None
 _worker_lock = threading.Lock()
+#: Set by shutdown_posthog, cleared by initialize_posthog: once stopped, no
+#: item is accepted and no worker is (re)started. Read and written under
+#: _queue_lock so it orders against every enqueue (#771).
+_stopped = False
+_refused_after_stop = 0
+#: Put on the queue by shutdown to end the worker; never counted as an item.
+_STOP = object()
+
+
+def _set_stopped(value: bool) -> None:
+    global _stopped
+    with _queue_lock:
+        _stopped = value
+
+
+def _stop_worker() -> None:
+    """End the worker thread (after the drain): it exits on the sentinel."""
+    global _worker
+    with _worker_lock:
+        worker, _worker = _worker, None
+    if worker is None or not worker.is_alive():
+        return
+    try:
+        _queue.put_nowait(_STOP)  # type: ignore[arg-type]
+    except queue.Full:  # undrained items remain; the daemon dies with the process
+        return
+    worker.join(timeout=1.0)
 
 
 def _enqueue(item: _Item) -> None:
     """Non-blocking put; when full, drop the OLDEST item (the newest events
     are the ones anyone is looking at). Warns once, then every 1000th."""
-    global _dropped, _accepted_total
+    global _dropped, _accepted_total, _refused_after_stop
     _ensure_worker()
     with _queue_lock:
+        if _stopped:  # shut down: refused, visibly — never queued to nothing
+            _refused_after_stop += 1
+            if _refused_after_stop == 1 or _refused_after_stop % 1000 == 0:
+                logger.warning(
+                    "PostHog item submitted after shutdown; refused %d so far",
+                    _refused_after_stop,
+                )
+            return
         while True:
             try:
                 _queue.put_nowait(item)
@@ -323,6 +370,8 @@ def _ensure_worker() -> None:
     if _worker is not None and _worker.is_alive():
         return
     with _worker_lock:
+        if _stopped:  # never resurrected after shutdown (#771)
+            return
         if _worker is not None and _worker.is_alive():
             return
         _worker = threading.Thread(target=_work, name="posthog-send", daemon=True)
@@ -332,6 +381,9 @@ def _ensure_worker() -> None:
 def _work() -> None:
     while True:
         item = _queue.get()
+        if item is _STOP:
+            _queue.task_done()
+            return
         try:
             _deliver(item)
         except Exception:  # pragma: no cover - _deliver guards itself
@@ -460,8 +512,9 @@ def _actor(user_id: str | None) -> str | None:
 def _accepting() -> bool:
     """Cheap pre-check before any work: a client exists. The gate was
     decided once, when ``initialize_posthog`` built (or declined to build)
-    it; the per-student runtime switch is the worker's flag check."""
-    return _client is not None
+    it; the per-student runtime switch is the worker's flag check. False
+    once shut down (#771)."""
+    return _client is not None and not _stopped
 
 
 def _submit(

@@ -5,7 +5,9 @@ Study guide generation and caching.
 """
 
 import logging
+import threading
 import uuid
+import weakref
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -89,6 +91,56 @@ def _course_enrollment_ids(
     ]
 
 
+class _KeyLock:
+    """A per-(user, offering, exam) lock; weakly held so idle keys vanish."""
+
+    __slots__ = ("lock", "__weakref__")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+
+_key_locks: "weakref.WeakValueDictionary[tuple[str, str, str], _KeyLock]" = (
+    weakref.WeakValueDictionary()
+)
+_key_locks_guard = threading.Lock()
+
+
+def _guide_lock(user_id: str, offering_id: str | None, exam_id: str) -> _KeyLock:
+    """Single-flight per guide (#771): concurrent cache misses for the same
+    guide used to generate (and insert) it twice. The caller holds the
+    returned object for as long as it needs the lock. Per process — a second
+    worker can still race; the insert-time doc check below keeps either
+    result consistent with the documents."""
+    key = (user_id, offering_id or "", exam_id)
+    with _key_locks_guard:
+        kl = _key_locks.get(key)
+        if kl is None:
+            kl = _key_locks[key] = _KeyLock()
+        return kl
+
+
+def _material_fingerprint(user_id: str, offering_id: str) -> tuple[str, ...]:
+    """The live documents a guide for (user, offering) is generated from.
+
+    Uploading or deleting a document invalidates the offering's guides
+    (routes/documents.py::_invalidate_study_guide_cache) — but a generation
+    that read the documents BEFORE that and inserts AFTER it would leave a
+    stale guide cached for good (#771). Comparing this before the read and
+    after the insert catches exactly that: the document row lands before the
+    invalidation runs, so either the check sees the new document or the
+    invalidation deletes the inserted guide."""
+    rows = table("documents").select(
+        "id",
+        filters={
+            "user_id": f"eq.{user_id}",
+            "offering_id": f"eq.{offering_id}",
+            "deleted_at": "is.null",
+        },
+    ) or []
+    return tuple(sorted(str(r.get("id")) for r in rows))
+
+
 def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     """Generate a study guide, insert it into study_guides, and return
     {content, generated_at}.
@@ -129,7 +181,9 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
     exam_title = exam.get("title", "")
     due_date = exam.get("due_date", "")
 
-    # 2. Fetch documents for this user+offering
+    # 2. Fetch documents for this user+offering. The id set is captured first
+    #    so the insert below can tell whether the material changed meanwhile.
+    material = _material_fingerprint(user_id, offering_id)
     docs = table("documents").select(
         "summary,concept_notes",
         filters={
@@ -210,6 +264,16 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         "content": encrypt_json(content),
     }
     table("study_guides").insert(row)
+    # #771: if the material changed while this guide was generating, its
+    # invalidation may already have run — take the stale row back out so the
+    # next request regenerates from the current documents. The student still
+    # gets this answer; it just is not cached.
+    if _material_fingerprint(user_id, offering_id) != material:
+        logger.info(
+            "study guide for offering %s generated across a document change; "
+            "not caching it", offering_id,
+        )
+        table("study_guides").delete(filters={"id": f"eq.{row['id']}"})
 
     return {"content": content, "generated_at": now}
 
@@ -331,20 +395,33 @@ def get_guide(
             status_code=404,
             detail="No offering of this course in that semester.",
         )
-    cached = table("study_guides").select(
-        "id,user_id,offering_id,exam_id,content,generated_at",
-        filters={
-            "user_id": f"eq.{user_id}",
-            "offering_id": f"eq.{offering_id}",
-            "exam_id": f"eq.{exam_id}",
-        },
-        limit=1,
-    )
-    if cached:
-        row = cached[0]
+    def _cached() -> dict | None:
+        rows = table("study_guides").select(
+            "id,user_id,offering_id,exam_id,content,generated_at",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"eq.{offering_id}",
+                "exam_id": f"eq.{exam_id}",
+            },
+            # Newest first: a cross-worker race can still leave two rows.
+            order="generated_at.desc",
+            limit=1,
+        )
+        if not rows:
+            return None
+        row = rows[0]
         return {"guide": decrypt_json_column(row["content"]), "generated_at": row["generated_at"], "cached": True}
 
-    result = _generate_and_insert(user_id, offering_id, exam_id)
+    hit = _cached()
+    if hit:
+        return hit
+    flight = _guide_lock(user_id, offering_id, exam_id)
+    with flight.lock:
+        # A concurrent miss may have generated it while this one waited.
+        hit = _cached()
+        if hit:
+            return hit
+        result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"guide": result["content"], "generated_at": result["generated_at"], "cached": False}
 
 
@@ -366,12 +443,14 @@ def regenerate_guide(request: Request, body: dict = Body(...)):
             status_code=404,
             detail="No offering of this course in that semester.",
         )
-    table("study_guides").delete(
-        filters={
-            "user_id": f"eq.{user_id}",
-            "offering_id": f"eq.{offering_id}",
-            "exam_id": f"eq.{exam_id}",
-        }
-    )
-    result = _generate_and_insert(user_id, offering_id, exam_id)
+    flight = _guide_lock(user_id, offering_id, exam_id)
+    with flight.lock:
+        table("study_guides").delete(
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"eq.{offering_id}",
+                "exam_id": f"eq.{exam_id}",
+            }
+        )
+        result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"success": True, "guide": result["content"], "generated_at": result["generated_at"]}
