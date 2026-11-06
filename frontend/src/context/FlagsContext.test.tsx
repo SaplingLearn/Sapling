@@ -99,6 +99,16 @@ describe("FlagsProvider/useFlag", () => {
     expect(setProductAnalyticsFlag).toHaveBeenLastCalledWith(false);
   });
 
+  it("sign-out's clearUserScopedStorage drops the last-known map (#756)", async () => {
+    const { clearUserScopedStorage } = await import("@/lib/userScopedStorage");
+    fetchFlags.mockResolvedValueOnce({ hide_quiz: "on" });
+    render(<FlagsProvider><Probe /></FlagsProvider>);
+    await waitFor(() => expect(screen.getByTestId("v").textContent).toBe("on"));
+    expect(window.localStorage.getItem("sapling.flags.v1:u1")).not.toBeNull();
+    clearUserScopedStorage();
+    expect(window.localStorage.getItem("sapling.flags.v1:u1")).toBeNull();
+  });
+
   it("the last-known map is per user", async () => {
     fetchFlags.mockResolvedValueOnce({ hide_quiz: "on" });
     render(<FlagsProvider><Probe /></FlagsProvider>);
