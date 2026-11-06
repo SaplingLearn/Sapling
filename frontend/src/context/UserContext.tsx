@@ -11,9 +11,10 @@ import React, {
 } from 'react';
 import type { UserRole, EquippedCosmetics, Role } from '@/lib/types';
 import { usePathname } from 'next/navigation';
-import { API_URL, getMe } from '@/lib/api';
+import { API_URL, getMe, onSessionExpired } from '@/lib/api';
 import { readAccountSettings } from '@/lib/accountSettings';
 import { isAppShellRoute } from '@/lib/appRoutes';
+import { clearUserScopedStorage } from '@/lib/userScopedStorage';
 import {
   ACCOUNT_REFRESH_MS,
   accountRefreshDue,
@@ -32,14 +33,12 @@ interface UserContextValue {
   avatarUrl: string;
   userReady: boolean;
   isAuthenticated: boolean;
-  isApproved: boolean;
   username: string | null;
   roles: UserRole[];
   equippedCosmetics: EquippedCosmetics;
   featuredRole: Role | null;
   isAdmin: boolean;
   setActiveUser: (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => void;
-  confirmApproved: () => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   // Direct setter exposed so callers can do an optimistic UI update
@@ -55,14 +54,12 @@ export const UserContext = createContext<UserContextValue>({
   avatarUrl: '',
   userReady: false,
   isAuthenticated: false,
-  isApproved: false,
   username: null,
   roles: [],
   equippedCosmetics: {},
   featuredRole: null,
   isAdmin: false,
   setActiveUser: () => {},
-  confirmApproved: () => {},
   signOut: () => Promise.resolve(),
   refreshProfile: () => Promise.resolve(),
   setAvatarUrl: () => {},
@@ -75,12 +72,21 @@ export function shouldBounceToSignin(pathname: string): boolean {
   return isAppShellRoute(pathname);
 }
 
+/** The account id persisted in `sapling_user`, or '' (none / unreadable). */
+function persistedIdentity(): string {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sapling_user') ?? 'null');
+    return saved && typeof saved.id === 'string' ? saved.id : '';
+  } catch {
+    return '';
+  }
+}
+
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState('');
   const [userName, setUserName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isApproved, setIsApproved] = useState(false);
   const [userReady, setUserReady] = useState(false);
 
   const [username, setUsername] = useState<string | null>(null);
@@ -94,6 +100,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const activeIdentity = React.useRef('');
 
   const setActiveUser = useCallback((id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => {
+    // #756: signing in as someone else on this browser (no sign-out between)
+    // must not inherit the previous student's semester, drafts, quiz or
+    // privacy toggle. Same account again → nothing is cleared.
+    const persisted = persistedIdentity();
+    if (
+      (activeIdentity.current && activeIdentity.current !== id) ||
+      (persisted && persisted !== id)
+    ) {
+      clearUserScopedStorage();
+    }
     // A repeated confirmation of the same account must not cancel its
     // profile load: userId would be unchanged, so the effect would not retry.
     if (id !== activeIdentity.current) profileGeneration.current += 1;
@@ -162,7 +178,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // localStorage, so the next bootstrap takes the fast synchronous
         // path above instead of hitting the network again.
         setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
-        if (me.is_approved) setIsApproved(true);
       } catch {
         // No identity source is left, for any reason: a 401 (no/expired
         // session), a 404 (the cookie names a user row that no longer
@@ -197,15 +212,18 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setUserName('');
     setAvatarUrl('');
     setIsAuthenticated(false);
-    setIsApproved(false);
     setUsername(null);
     setRoles([]);
     setEquippedCosmetics({});
     setFeaturedRole(null);
     setIsAdmin(false);
-    localStorage.removeItem('sapling_user');
+    // #756: every user-scoped key, not just the identity — a shared browser
+    // must not hand the next student this one's semester, drafts or quiz.
+    clearUserScopedStorage();
     // Sign-out, account deletion (Settings → signOut) and a dead session all
-    // land here: analytics stops at once. No-op when analytics is off.
+    // land here: analytics stops at once, and stopAnalytics resets the
+    // PostHog identity, so nothing more is attributed to this account (a
+    // soft-deleted one included). No-op when analytics is off.
     stopAnalytics();
   }, []);
 
@@ -314,7 +332,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // fallback above): just drop the stale identity there.
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) return;
         setActiveUser(data.user_id, data.name || '', data.avatar_url || '');
-        if (data.is_approved) setIsApproved(true);
         return;
       }
       // /me is the source of truth for the display name (it may have changed
@@ -364,9 +381,29 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (userReady && userId) fetchProfileData(userId);
   }, [userReady, userId, fetchProfileData]);
 
-  const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
+  // #756: a 401 from ANY fetchJSON call (lib/api.ts onSessionExpired) means
+  // the server may have stopped honouring this session — expired, signed out
+  // elsewhere, account deleted. Re-check it at once with the same
+  // GET /api/auth/me reconciliation as above instead of waiting for the next
+  // profile refetch: a definitive 401/404 there clears the identity, the
+  // user-scoped storage and the analytics identity, and bounces shell routes
+  // to sign-in; a blip keeps the session. One check at a time, so a burst
+  // of 401s costs one /me. Signed-out tabs (anonymous pages) have nothing to
+  // check.
+  const sessionCheck = React.useRef<Promise<void> | null>(null);
+  useEffect(
+    () =>
+      onSessionExpired(() => {
+        const uid = activeIdentity.current;
+        if (!uid || sessionCheck.current) return;
+        sessionCheck.current = fetchProfileData(uid).finally(() => {
+          sessionCheck.current = null;
+        });
+      }),
+    [fetchProfileData],
+  );
 
-  const confirmApproved = () => setIsApproved(true);
+  const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
   const signOut = useCallback(async () => {
     try {
@@ -378,11 +415,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
+      // #757: no `isApproved` — nothing read it, and it sat false on a
+      // localStorage boot. Approval is enforced server-side (the auth guard's
+      // 403 not_approved, #756) and routed by the middleware (/pending).
+      userId, userName, avatarUrl, userReady, isAuthenticated,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
-      setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
+      setActiveUser, signOut, refreshProfile, setAvatarUrl,
     }),
-    [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
+    [userId, userName, avatarUrl, userReady, isAuthenticated,
      username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut]
   );
 

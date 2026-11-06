@@ -1142,7 +1142,7 @@ class TestPathTemplating:
     event, not just error.5xx."""
 
     def test_403_on_another_users_path_mirrors_no_foreign_id(
-        self, monkeypatch, fake_client, sink,
+        self, monkeypatch, fake_client, sink, live_accounts,
     ):
         from main import app
         from services import auth_guard

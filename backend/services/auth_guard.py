@@ -7,13 +7,17 @@ import json
 import base64
 import hashlib
 import hmac as _hmac
+import logging
+import threading
 import time as _time
 
 from fastapi import HTTPException, Request
 from config import SESSION_SECRET
 from db.connection import table
 from services import events_service
-from services.session_tokens import SESSION_COOKIE_NAME
+from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_SESSION
+
+logger = logging.getLogger(__name__)
 
 # #117 note: the 401 paths in _decode_session/get_session_user_id are
 # deliberately NOT instrumented — RequestIDMiddleware already records every
@@ -76,15 +80,105 @@ def _decode_session(request: Request) -> dict:
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid session token")
 
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=401, detail="Invalid session token")
+
     # Check expiry
     if payload.get("exp", 0) < int(_time.time()):
         raise HTTPException(status_code=401, detail="Session expired")
 
+    # #756: only a `session` token is an API credential. The OAuth callback's
+    # `handoff` token (300 s, carried in a URL) is for the session BFF alone;
+    # without this check it worked as a full credential via `?auth_token=`. A
+    # legacy token with no `typ` predates the claim and is a session.
+    if payload.get("typ", TOKEN_TYPE_SESSION) != TOKEN_TYPE_SESSION:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+
     return payload
 
 
-def get_session_user_id(request: Request) -> str:
-    """Get the authenticated user_id from a verified session token. No fallbacks."""
+# ── Account state (#756) ─────────────────────────────────────────────────────
+# A valid signature only says the token was issued; the account may since have
+# been deleted (soft delete: `users.deleted_at`) or had its access removed
+# (`users.is_approved = false`, Admin → Users). The guard therefore reads the
+# `users` row too — through a short-TTL per-process cache, so an authenticated
+# request does not pay a DB round-trip each time.
+#
+# Invalidation story (CLAUDE.md's cache rule): bounded staleness. An entry lives
+# at most ACCOUNT_STATE_TTL_SECONDS, so a deletion or approval change made by
+# ANY process is honoured everywhere within that window. Mutators in this
+# process call `clear_account_state_cache(user_id)` to make it immediate
+# (profile.delete_account does). Failures to read are never cached.
+ACCOUNT_ACTIVE = "active"
+ACCOUNT_MISSING = "missing"
+ACCOUNT_DELETED = "deleted"
+ACCOUNT_UNAPPROVED = "unapproved"
+
+ACCOUNT_STATE_TTL_SECONDS = 30.0
+_ACCOUNT_STATE_MAX_ENTRIES = 10_000
+_account_state_cache: dict[str, tuple[float, str]] = {}
+_account_state_lock = threading.Lock()
+
+
+def clear_account_state_cache(user_id: str | None = None) -> None:
+    """Forget the cached account state for `user_id` (or everyone)."""
+    with _account_state_lock:
+        if user_id is None:
+            _account_state_cache.clear()
+        else:
+            _account_state_cache.pop(user_id, None)
+
+
+def _read_account_state(user_id: str) -> str:
+    rows = table("users").select(
+        "id,deleted_at,is_approved", filters={"id": f"eq.{user_id}"}
+    )
+    if not rows:
+        return ACCOUNT_MISSING
+    row = rows[0]
+    if row.get("deleted_at"):
+        return ACCOUNT_DELETED
+    if not row.get("is_approved"):
+        return ACCOUNT_UNAPPROVED
+    return ACCOUNT_ACTIVE
+
+
+def account_state(user_id: str) -> str:
+    """`active` | `missing` | `deleted` | `unapproved`, cached for a short TTL.
+
+    Raises 503 if the row cannot be read: failing open would let a deleted
+    account through whenever the DB blips, and the request needs the DB anyway.
+    """
+    now = _time.monotonic()
+    with _account_state_lock:
+        hit = _account_state_cache.get(user_id)
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        state = _read_account_state(user_id)
+    except Exception:
+        logger.warning("auth guard: could not read account state for %r", user_id, exc_info=True)
+        raise HTTPException(status_code=503, detail="Could not verify your account. Please try again.")
+    with _account_state_lock:
+        if len(_account_state_cache) >= _ACCOUNT_STATE_MAX_ENTRIES:
+            expired = [k for k, (exp, _) in _account_state_cache.items() if exp <= now]
+            for k in expired:
+                del _account_state_cache[k]
+            if len(_account_state_cache) >= _ACCOUNT_STATE_MAX_ENTRIES:
+                _account_state_cache.clear()
+        _account_state_cache[user_id] = (now + ACCOUNT_STATE_TTL_SECONDS, state)
+    return state
+
+
+def get_session_user_id(request: Request, *, allow_unapproved: bool = False) -> str:
+    """Get the authenticated user_id from a verified session token. No fallbacks.
+
+    #756: the token must also name a live account — a `users` row that is not
+    soft-deleted (missing or deleted → 401) and is approved (unapproved → 403
+    with `code=not_approved`). `allow_unapproved=True` is for `GET
+    /api/auth/me` alone, which the frontend middleware reads to route an
+    unapproved account to /pending.
+    """
     try:
         payload = _decode_session(request)
     except HTTPException:
@@ -92,8 +186,18 @@ def get_session_user_id(request: Request) -> str:
     except Exception:
         raise HTTPException(status_code=401, detail="Not authenticated")
     user_id = payload.get("user_id")
-    if not user_id:
+    if not user_id or not isinstance(user_id, str):
         raise HTTPException(status_code=401, detail="Not authenticated")
+    state = account_state(user_id)
+    if state in (ACCOUNT_MISSING, ACCOUNT_DELETED):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if state == ACCOUNT_UNAPPROVED and not allow_unapproved:
+        # Stamp the actor first so the 403 is attributable (see below).
+        request.state.user_id = user_id
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "not_approved", "message": "Your account is not approved yet."},
+        )
     # #117 (1b): stamp the authenticated user onto request.state so the
     # error-event seam in RequestIDMiddleware can attribute 4xx/5xx responses
     # to a user. It must be request.state (the shared ASGI scope), NOT a

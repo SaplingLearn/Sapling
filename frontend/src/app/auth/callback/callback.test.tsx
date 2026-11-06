@@ -17,9 +17,8 @@ vi.mock('next/navigation', () => ({
 }));
 
 const setActiveUser = vi.fn();
-const confirmApproved = vi.fn();
 vi.mock('@/context/UserContext', () => ({
-  useUser: () => ({ setActiveUser, confirmApproved }),
+  useUser: () => ({ setActiveUser }),
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => ({

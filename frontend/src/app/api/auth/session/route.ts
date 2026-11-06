@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { signSession, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from '@/lib/sessionToken';
+import { signSession, tokenTypeOf, SESSION_COOKIE_NAME, SESSION_MAX_AGE } from '@/lib/sessionToken';
 import { sanitizeCookieDomain } from '@/lib/cookieDomain';
 import { resolveFrontendEnv } from '@/lib/deployGuard';
 
@@ -52,6 +52,12 @@ function isCrossOrigin(request: NextRequest): boolean {
   }
 }
 
+/**
+ * The user id of a valid OAuth HANDOFF token (the backend's 300 s redirect
+ * token, `typ=handoff`), or null. #756: a session token — live or legacy
+ * (no `typ`) — is refused, so a session can never be re-minted into a fresh
+ * 30-day one and extended forever; only a real sign-in mints a session.
+ */
 async function verifyAuthToken(token: string): Promise<string | null> {
   if (!SESSION_SECRET) return null;
   const dot = token.lastIndexOf('.');
@@ -87,6 +93,7 @@ async function verifyAuthToken(token: string): Promise<string | null> {
     const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(payloadB64)));
     if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
     if (typeof payload.user_id !== 'string') return null;
+    if (tokenTypeOf(payload) !== 'handoff') return null;
     return payload.user_id;
   } catch {
     return null;

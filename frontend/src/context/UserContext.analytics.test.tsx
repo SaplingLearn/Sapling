@@ -20,6 +20,7 @@ vi.mock('@/lib/api', () => ({
   API_URL: '',
   getMe: vi.fn().mockRejectedValue(new Error('not used in these tests')),
   fetchSettings: (...a: unknown[]) => fetchSettings(...a),
+  onSessionExpired: () => () => {},
 }));
 
 let pathname = '/dashboard';
