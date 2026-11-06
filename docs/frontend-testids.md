@@ -204,7 +204,9 @@ route:
 | `tutor-interrupted` | the "Interrupted" marker inside a stopped/failed assistant bubble (ADR 0020, #356; the partial text stays in the bubble itself) |
 | `tutor-retry` | the Retry button inside that marker — re-dispatches the interrupted turn |
 | `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
-| `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
+| `tutor-resume-loading` | the transient loading state while a session resume hydrates — a `/learn?resume=` deep link (#164) or any in-app resume (#762) |
+| `tutor-session-ended` | the banner shown when the server refuses a turn because the session has ended (409, #762); the composer is disabled while it shows |
+| `tutor-session-ended-new` | that banner's "Start a new session" button — starts a fresh session on the same topic |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
 | `tutor-topic-picker` | the entry screen's topic dropdown trigger (`screens/Learn.tsx::TopicPicker`) — opens the concept/custom-topic search |
 | `tutor-topic-search` | the search input inside the open topic dropdown; Enter picks the first match, or the typed text as a custom topic |
