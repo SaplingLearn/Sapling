@@ -76,7 +76,9 @@ class TestSendRequest:
         data, kwargs = handles["friend_requests"].update.call_args[0], handles["friend_requests"].update.call_args[1]
         assert data[0]["status"] == "pending"
         assert data[0]["responded_at"] is None
-        assert kwargs["filters"] == {"id": "eq.r1"}
+        # #764: conditional on the status read, so a concurrent transition
+        # is a 409 rather than a blind overwrite.
+        assert kwargs["filters"] == {"id": "eq.r1", "status": "eq.declined"}
 
     def test_resend_after_unfriend_reactivates_the_accepted_row(self):
         """remove_friend deliberately leaves the friend_requests row behind

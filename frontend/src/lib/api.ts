@@ -2013,3 +2013,9 @@ export const adminUploadAchievementIcon = (
       method: 'POST',
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
+
+// #764: the sender withdraws a pending friend request.
+export const cancelFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ cancelled: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' });
