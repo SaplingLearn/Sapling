@@ -27,7 +27,7 @@ from models import (
 )
 from services.academics import school_peer_user_ids
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
+from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id, guard_off_loop
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
@@ -430,7 +430,7 @@ class _AvatarUploadBody(BaseModel):
 
 @router.post("/{user_id}/avatar")
 async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     _get_user_or_404(user_id)
 
     # `file_b64` may arrive as a bare base64 string OR as a data URL
@@ -841,7 +841,8 @@ def delete_account(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    require_self(user_id, request)
+    # #756: a removed (unapproved) student may still erase their account.
+    require_self(user_id, request, allow_unapproved=True)
 
     if body.confirmation != "DELETE":
         raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
@@ -870,7 +871,8 @@ def delete_account(
 
 @router.post("/{user_id}/export")
 def export_data(user_id: str, request: Request):
-    require_self(user_id, request)
+    # #756: a removed (unapproved) student may still export their data.
+    require_self(user_id, request, allow_unapproved=True)
 
     user = _get_user_or_404(user_id)
     settings = _get_or_create_settings(user_id)

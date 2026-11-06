@@ -507,7 +507,7 @@ def _bypass_session_auth(request, monkeypatch):
         # **_kwargs: the real guard takes `allow_unapproved=` (#756).
         return _decode_session_stub(request)["user_id"]
 
-    def _require_self_stub(user_id, request):
+    def _require_self_stub(user_id, request, **_kwargs):
         return None
 
     def _require_admin_stub(request):

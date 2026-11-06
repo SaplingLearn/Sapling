@@ -25,7 +25,7 @@ from config import (
 from db.connection import table
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services import academics
-from services.auth_guard import require_self, get_session_user_id
+from services.auth_guard import require_self, get_session_user_id, guard_off_loop
 from services.calendar_service import extract_assignments_from_file, insert_new_assignments
 from services.encryption import encrypt, encrypt_if_present, decrypt, decrypt_if_present
 from services.request_context import current_request_id
@@ -297,9 +297,9 @@ def calendar_callback(
 @router.post("/extract")
 async def extract(request: FastAPIRequest, file: UploadFile = File(...), user_id: str = Form(None)):
     if user_id:
-        require_self(user_id, request)
+        await guard_off_loop(require_self, user_id, request)
     else:
-        user_id = get_session_user_id(request)
+        user_id = await guard_off_loop(get_session_user_id, request)
     file_bytes = await file.read()
     filename = file.filename or "upload"
     content_type = file.content_type or "application/octet-stream"

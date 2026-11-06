@@ -32,7 +32,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
-from services.auth_guard import get_session_user_id, require_self
+from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
 from services.calendar_service import save_assignments_to_db
@@ -683,7 +683,7 @@ async def upload_document_sync(
 ):
     """Non-streaming JSON upload. Original behavior preserved here so any
     frontend that hasn't migrated to the SSE /upload route keeps working."""
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     _validate_user(user_id)
 
     # ── Validation ────────────────────────────────────────────────────────────
@@ -827,7 +827,7 @@ async def upload_document(
     stream opens. Errors during the stream surface as type='error' SSE
     events; the client should NOT auto-retry against this route.
     """
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     _validate_user(user_id)
 
     filename = file.filename or ""

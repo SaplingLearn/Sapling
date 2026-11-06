@@ -41,7 +41,7 @@ from config import (
 from db.connection import like_literal, pg_quote_value, table
 from services import email_service, events_service
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
-from services.auth_guard import get_session_user_id
+from services.auth_guard import clear_account_state_cache, get_session_user_id, guard_off_loop
 from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
 
 try:
@@ -828,6 +828,11 @@ def google_callback(
 
     if not is_approved:
         return _not_approved(email, first_name)
+    # #756: this sign-in may just have created the account or flipped it to
+    # approved (local auto-approve, waitlist re-approval above). Drop any
+    # cached "missing"/"unapproved" answer so the new session is honoured on
+    # its first request, not up to the guard's TTL later.
+    clear_account_state_cache(user_id)
 
     # Welcome email, once per account, on the first sign-in that gets in (or a
     # later one, if that send was skipped or failed). The send runs after the
@@ -1116,7 +1121,7 @@ async def local_seed_status(request: Request):
 
     if not local_seed_watcher.watcher_enabled():
         raise HTTPException(status_code=404, detail="Not Found")
-    user_id = get_session_user_id(request)
+    user_id = await guard_off_loop(get_session_user_id, request)
     if not local_seed_watcher.is_oauth_account(user_id):
         raise HTTPException(status_code=404, detail="Not Found")
     status = await asyncio.to_thread(local_seed_watcher.status_for, user_id)
