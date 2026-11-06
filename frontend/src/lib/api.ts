@@ -1690,11 +1690,25 @@ export const uploadSyllabus = (input: {
 
 export type GradescopeAuthMode = 'password' | 'cookies';
 
+/** #770: `disconnected` = no saved credentials (course links may survive);
+ *  `needs_reauth` = saved, but Gradescope rejected them on the last login. */
+export type GradescopeConnectionState = 'disconnected' | 'needs_reauth' | 'connected';
+
+/** Machine code for the last sync attempt's failure (null = it succeeded). */
+export type GradescopeSyncError = 'auth_failed' | 'fetch_failed' | 'write_failed' | 'partial_write';
+
 export interface GradescopeStatus {
   has_credentials: boolean;
   auth_mode: GradescopeAuthMode | null;
   last_synced_at: string | null;
   credentials_updated_at?: string | null;
+  // Optional so a backend without the #770 migration still type-checks; read
+  // it through components/Gradebook/gradescopeState.ts, which derives it.
+  state?: GradescopeConnectionState;
+  connected?: boolean;
+  needs_reauth?: boolean;
+  last_attempt_at?: string | null;
+  last_sync_error?: GradescopeSyncError | null;
 }
 
 export type GradescopeConnectInput =
