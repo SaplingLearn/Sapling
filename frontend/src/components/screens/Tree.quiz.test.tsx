@@ -188,16 +188,19 @@ describe("Quick quiz links (§6)", () => {
     );
   });
 
-  it("sends a subject root as its abstract course, returning to the tree", async () => {
+  // A subject root no longer opens the detail panel at all: clicking a
+  // course navigates to its study roadmap (roadmap spec §3.14), so there is
+  // no panel on which to offer a quick quiz. The course-scoped quiz is
+  // reached from the roadmap instead.
+  it("navigates a subject root to its study roadmap instead of opening a panel", async () => {
     const user = userEvent.setup();
     renderTree();
     await selectNode(user, ROOT_ID);
 
-    await user.click(screen.getByRole("button", { name: /quick quiz/i }));
-
-    expect(push).toHaveBeenCalledWith(
-      `/quiz?course=${COURSE_ID}&from=tree&return=${encodeURIComponent("/tree")}`,
-    );
+    expect(push).toHaveBeenCalledWith(`/roadmap/${COURSE_ID}`);
+    expect(
+      screen.queryByRole("button", { name: /quick quiz/i }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -299,12 +302,16 @@ describe("Recent quizzes", () => {
     expect(within(block).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("never offers history on a subject root", async () => {
+  // Unchanged in substance, stronger in form: a subject root never reads
+  // quiz history. Since §3.14 it does not even open a panel — it navigates —
+  // so the absence of a history fetch is asserted off the navigation rather
+  // than off a heading that no longer renders.
+  it("never reads quiz history for a subject root", async () => {
     const user = userEvent.setup();
     renderTree();
     await selectNode(user, ROOT_ID);
 
-    await screen.findByRole("heading", { name: "CS101 - Intro to CS" });
+    await waitFor(() => expect(push).toHaveBeenCalledWith(`/roadmap/${COURSE_ID}`));
     expect(screen.queryByTestId("tree-node-recent-quizzes")).not.toBeInTheDocument();
     expect(mockedAttempts).not.toHaveBeenCalled();
   });

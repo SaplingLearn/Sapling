@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { apiToGraphNode, hashSeed, learnHrefForNode, paletteFor } from "./data";
+import { apiToGraphNode, hashSeed, learnHrefForNode, paletteFor, roadmapHrefForNode } from "./data";
 import type { GraphNode as ApiNode } from "./types";
 import type { EnrolledCourse } from "./api";
 import type { GraphNode } from "./data";
@@ -121,6 +121,43 @@ function makeGraphNode(over: Partial<GraphNode> = {}): GraphNode {
     ...over,
   };
 }
+
+describe("roadmapHrefForNode", () => {
+  // The #319 regression's second face: `learnHrefForNode` deliberately
+  // answers for a course node too (course-scoped tutor, no topic), so a
+  // caller that only knew about it sent course nodes to the tutor. The
+  // dashboard's graph did exactly that while Tree's did not, which is the
+  // bug this helper exists to make unrepeatable.
+  it("sends a course node to that course's roadmap", () => {
+    expect(
+      roadmapHrefForNode(
+        makeGraphNode({ id: "subject_root__c1", is_subject_root: true }),
+      ),
+    ).toBe("/roadmap/c1");
+  });
+
+  it("returns null for a concept node, so the caller decides", () => {
+    expect(roadmapHrefForNode(makeGraphNode({ name: "Eigenvalues" }))).toBe(null);
+  });
+
+  // graph_service.py synthesizes `subject_root__{course_id}` WITH course_id
+  // set; unpicking the id is belt-and-braces for a node that lost it.
+  it("falls back to the id's suffix when course_id is empty", () => {
+    expect(
+      roadmapHrefForNode(
+        makeGraphNode({ id: "subject_root__c9", course_id: "", is_subject_root: true }),
+      ),
+    ).toBe("/roadmap/c9");
+  });
+
+  it("encodes a course id that needs it", () => {
+    expect(
+      roadmapHrefForNode(
+        makeGraphNode({ id: "subject_root__a b/c", course_id: "a b/c", is_subject_root: true }),
+      ),
+    ).toBe("/roadmap/a%20b%2Fc");
+  });
+});
 
 describe("learnHrefForNode", () => {
   it("seeds the topic from a concept node's name", () => {
