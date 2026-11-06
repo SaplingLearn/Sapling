@@ -534,3 +534,111 @@ class TestGenerationFailure:
              patch("routes.study_guide.study_guide_agent.run", new=boom):
             r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
         assert r.status_code == 502
+
+
+# ── #771: invalidation-safe + single-flight generation ──────────────────────
+
+
+class _GuideStore:
+    """Stateful study_guides + documents tables for the race tests."""
+
+    def __init__(self, doc_ids_seq):
+        import threading
+
+        self.guides: list[dict] = []
+        self.deleted: list[dict] = []
+        self.doc_ids_seq = list(doc_ids_seq)
+        self.lock = threading.Lock()
+
+    def table(self, name):
+        m = MagicMock()
+        if name == "study_guides":
+            def _select(cols, filters=None, order=None, limit=None):
+                with self.lock:
+                    return list(self.guides)[:1]
+
+            def _insert(row):
+                with self.lock:
+                    self.guides.append(row)
+                return [row]
+
+            def _delete(filters=None):
+                with self.lock:
+                    self.deleted.append(filters)
+                    gid = (filters or {}).get("id", "")[3:]
+                    self.guides = [g for g in self.guides if gid and g["id"] != gid]
+            m.select.side_effect = _select
+            m.insert.side_effect = _insert
+            m.delete.side_effect = _delete
+        elif name == "assignments":
+            m.select.return_value = [{"title": "Final", "due_date": "2026-05-01"}]
+        elif name == "documents":
+            def _docs(cols, filters=None, **_k):
+                if cols == "id":  # the material fingerprint read
+                    with self.lock:
+                        ids = self.doc_ids_seq.pop(0) if len(self.doc_ids_seq) > 1 else self.doc_ids_seq[0]
+                    return [{"id": i} for i in ids]
+                return []
+            m.select.side_effect = _docs
+        else:
+            m.select.return_value = []
+        return m
+
+
+def _guide_patches(store, agent_run):
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch("routes.study_guide.table", side_effect=store.table))
+    stack.enter_context(patch("routes.study_guide.user_enrollment_ids",
+                              return_value=[{"id": "enr1", "offering_id": "off1"}]))
+    stack.enter_context(patch("routes.study_guide.resolve_offering", return_value="off1"))
+    stack.enter_context(patch("routes.study_guide.study_guide_agent.run", new=agent_run))
+    return stack
+
+
+class TestGuideRaces:
+    def test_a_guide_generated_across_an_upload_is_not_cached(self):
+        """The generation read the documents before an upload's invalidation
+        and inserted after it: the stale guide used to stay cached."""
+        store = _GuideStore([["d1"], ["d1", "d2"]])  # d2 uploaded mid-generation
+        with _guide_patches(store, _agent_run_returning({"exam": "Final"})):
+            r = client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+        assert r.status_code == 200
+        assert r.json()["guide"]["exam"] == "Final"  # the student still gets it
+        assert store.guides == []  # ...but it is not cached
+        assert store.deleted and "id" in store.deleted[-1]
+
+    def test_unchanged_material_keeps_the_guide_cached(self):
+        store = _GuideStore([["d1"]])
+        with _guide_patches(store, _agent_run_returning({"exam": "Final"})):
+            client.get(f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}")
+        assert len(store.guides) == 1
+        assert store.deleted == []
+
+    def test_concurrent_misses_generate_once(self):
+        import asyncio
+        import threading
+
+        store = _GuideStore([["d1"]])
+        calls = {"n": 0}
+        started = threading.Event()
+
+        async def slow_run(*_a, **_k):
+            calls["n"] += 1
+            started.set()
+            await asyncio.sleep(0.3)
+            return SimpleNamespace(output=SimpleNamespace(model_dump=lambda: {"exam": "Final"}))
+
+        results: list = []
+        url = f"/api/study-guide/{USER_ID}/guide?course_id={COURSE_ID}&exam_id={EXAM_ID}"
+        with _guide_patches(store, slow_run):
+            threads = [threading.Thread(target=lambda: results.append(client.get(url).json()))
+                       for _ in range(3)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(10)
+        assert calls["n"] == 1
+        assert len(store.guides) == 1
+        assert sorted(r["cached"] for r in results) == [False, True, True]
