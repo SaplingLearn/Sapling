@@ -23,6 +23,12 @@ class ChatBody(BaseModel):
     mode: str = "socratic"
     use_shared_context: bool = True
     model_pref: Optional[Literal["fast", "smart"]] = None  # "fast" (default, gemini-2.5-flash) or "smart" (gemini-2.5-pro)
+    # #761: client-minted id for ONE student turn, sent unchanged on the
+    # stream AND on its JSON fallback/retry. Makes the turn's message writes
+    # idempotent and lets a re-send of an already-persisted turn replay the
+    # stored reply instead of running the turn twice. Optional: without it a
+    # turn is not deduplicated across requests.
+    turn_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_\-]{8,128}$")
 
 
 class EndSessionBody(BaseModel):

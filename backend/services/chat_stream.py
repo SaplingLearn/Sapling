@@ -19,6 +19,7 @@ both, and the error rungs run neither. See `stream_agent_turn` for the rungs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -196,6 +197,8 @@ async def stream_agent_turn(
     data. It persists; on the success path it is called once, after the run
     completes and BEFORE `done` is yielded, so a mid-generation disconnect
     (which cancels this generator at its current yield) persists nothing.
+    It is SYNC and runs in a worker thread (#761): anything in it that needs
+    the event loop must hand itself back (`loop.call_soon_threadsafe`).
 
     on_usage(run_result) -> observability hook (#118): called once with the
     final `AgentRunResult` after the stream completes, BEFORE on_complete —
@@ -464,15 +467,29 @@ async def stream_agent_turn(
     mastery = list(deps.mastery_changes)
 
     try:
-        extra = on_complete(reply, merged, mastery) or {}
+        # #761: on_complete makes synchronous DB writes; in a worker thread
+        # they never stall the event loop (and every other stream on it).
+        # `to_thread` copies this context, so request contextvars still read.
+        #
+        # Cancel-after-persist: a client that disconnects while this runs
+        # cancels the await, but not the thread — the turn finishes
+        # persisting and `done` is simply never delivered. The client's
+        # fallback/retry must therefore not re-run the turn blindly: it
+        # re-sends the turn's `turn_id`, and the route replays the stored
+        # reply (routes/learn.py::_persisted_turn).
+        extra = await asyncio.to_thread(on_complete, reply, merged, mastery) or {}
     except Exception as exc:
         # Persistence failed AFTER the reply fully streamed. Letting this
         # propagate would abort the ASGI response mid-stream with no closing
         # event (sse_starlette has already flushed headers), leaving the
         # client an unstructured network error. Emit the structured error
         # instead so the ADR-0020 interrupted-turn treatment (keep partial
-        # text, offer Retry) applies; the turn persisted at most a partial
-        # write, and Retry re-sends it.
+        # text, offer Retry) applies.
+        #
+        # The turn may have persisted PART of its rows. on_complete stamps
+        # `sapling_wrote` on the exception when a re-run could not be
+        # deduplicated (e.g. the user row landed and the client sent no turn
+        # id), and then — exactly as for tool writes — retrying is unsafe.
         logger.warning("on_complete persistence failed after streamed reply", exc_info=exc)
         yield SaplingEvent(
             type="error",
@@ -480,7 +497,11 @@ async def stream_agent_turn(
             message="The tutor was interrupted. Please retry.",
             data={
                 "request_id": request_id,
-                "retryable": not (deps.graph_updates or deps.mastery_changes),
+                "retryable": not (
+                    deps.graph_updates
+                    or deps.mastery_changes
+                    or getattr(exc, "sapling_wrote", False)
+                ),
             },
         )
         return

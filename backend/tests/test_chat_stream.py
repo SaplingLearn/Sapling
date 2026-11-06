@@ -1084,3 +1084,44 @@ def test_join_text_parts_adds_a_break_only_where_none_exists():
     assert join_text_parts(["a.", "\nb."]) == "a.\nb."
     assert join_text_parts(["", "a.", ""]) == "a."
     assert join_text_parts(["only"]) == "only"
+
+
+# ── #761: on_complete off the event loop; partial persistence ─────────────
+
+def test_on_complete_runs_in_a_worker_thread_not_on_the_event_loop():
+    """on_complete makes synchronous DB writes; run inline they stall every
+    other stream on the loop for the length of the round trips."""
+    import threading
+
+    async def run():
+        loop_thread = threading.current_thread()
+        seen = {}
+
+        def persist(reply, graph_update, mastery_changes):
+            seen["thread"] = threading.current_thread()
+            return {}
+
+        agent = FakeAgent([PartStartEvent("hi"), AgentRunResultEvent("hi")])
+        events = await collect(agent, make_deps(), on_complete=persist)
+        assert events[-1].type == "done"
+        assert seen["thread"] is not loop_thread
+
+    asyncio.run(run())
+
+
+def test_on_complete_partial_write_stamp_makes_the_error_non_retryable():
+    """A persist that failed AFTER some rows landed, and cannot be safely
+    re-run, stamps `sapling_wrote` — exactly like a tool write, the client
+    must not re-send the turn."""
+    async def run():
+        def half_persist(reply, graph_update, mastery_changes):
+            exc = RuntimeError("assistant row write failed")
+            exc.sapling_wrote = True
+            raise exc
+
+        agent = FakeAgent([PartStartEvent("hi"), AgentRunResultEvent("hi")])
+        events = await collect(agent, make_deps(), on_complete=half_persist)
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+
+    asyncio.run(run())

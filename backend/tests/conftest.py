@@ -96,6 +96,11 @@ def _tutor_session_reads_follow_learn_table(monkeypatch):
     from services import tutor_sessions
 
     monkeypatch.setattr(tutor_sessions, "table", lambda name: learn_routes.table(name))
+    # #761: discard tombstones are process-global, and test session ids are
+    # reused ("s1"), so one test's delete would 404 the next test's turn.
+    tutor_sessions._DISCARDED.clear()
+    yield
+    tutor_sessions._DISCARDED.clear()
 
 
 @pytest.fixture(autouse=True)
