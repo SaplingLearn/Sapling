@@ -280,6 +280,25 @@ class TestDailySpendGuard:
         assert r.json()["error"]["code"] == "QUIZ_DAILY_LIMIT_REACHED"
         run.assert_not_called()
 
+    def test_a_spend_cap_refusal_does_not_consume_a_rate_limit_slot(self):
+        """#760: the cap 429 generated nothing, so it must hand back the slot
+        it claimed — and only that one, not a concurrent request's."""
+        from services import request_limits
+        from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
+
+        key = "quiz_generate:user_andres"
+        other = request_limits.claim_rate_limit(key, limit=100, window_sec=300).slot
+        spent = [{"cost_usd": QUIZ_DAILY_SPEND_CAP_USD + 1.0}]
+        with (
+            patch("routes.quiz.table", side_effect=_factory(spend_rows=spent)),
+            patch("routes.quiz.quiz_agent.run",
+                  new=AsyncMock(return_value=SimpleNamespace(output=_quiz()))),
+        ):
+            r = _generate()
+        assert r.status_code == 429
+        assert r.json()["error"]["code"] == "QUIZ_DAILY_LIMIT_REACHED"
+        assert request_limits._rate_state[key] == [other]
+
     def test_under_budget_passes(self):
         from services.quiz_config import QUIZ_DAILY_SPEND_CAP_USD
 
