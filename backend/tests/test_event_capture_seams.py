@@ -440,7 +440,7 @@ def test_metrics_route_disabled_404_still_emits_error_4xx(sink, monkeypatch):
 # ── Seam 1b: get_session_user_id stamps request.state.user_id ────────────────
 
 
-def test_get_session_user_id_stamps_request_state(sink):
+def test_get_session_user_id_stamps_request_state(sink, live_accounts):
     from services import auth_guard
 
     req = _make_request("/api/whatever", query="user_id=user_xyz")

@@ -27,7 +27,7 @@ from models import (
 )
 from services.academics import school_peer_user_ids
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import require_self, get_session_user_id
+from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
@@ -850,6 +850,9 @@ def delete_account(
     # (which would re-create the person the delete below removes). Drop the
     # cached "allowed" answer now.
     clear_analytics_consent_cache(user_id)
+    # #756: the auth guard refuses a deleted account; drop its cached "active"
+    # answer so this process stops honouring the session now, not at the TTL.
+    clear_account_state_cache(user_id)
     # Best-effort PostHog person + event delete, AFTER the response so it adds
     # no latency and cannot fail the deletion (it never raises; unconfigured
     # -> WARN + skip). It drains our queue and the SDK's first, and repeats

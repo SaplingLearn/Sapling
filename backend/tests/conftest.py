@@ -65,7 +65,9 @@ def _clear_lru_caches():
     """#98: reset the per-process lru_caches around every test so one test's
     mocked DB state can't leak into another via a cached read."""
     from agents._providers import clear_override_model_cache
-    from services import academics, analytics_consent, course_context_service, feature_flags, growth
+    from services import (
+        academics, analytics_consent, auth_guard, course_context_service, feature_flags, growth,
+    )
     clear_override_model_cache()
     academics.clear_academics_caches()
     course_context_service.clear_course_context_cache()
@@ -73,6 +75,12 @@ def _clear_lru_caches():
     analytics_consent.clear_analytics_consent_cache()
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
+    auth_guard.clear_account_state_cache()
+    # #756: the OAuth callback honours each state nonce once per process, and
+    # the callback harnesses reuse fixed nonces. Only if already imported.
+    auth_routes = sys.modules.get("routes.auth")
+    if auth_routes is not None:
+        auth_routes.clear_consumed_oauth_nonces()
     yield
     clear_override_model_cache()
     academics.clear_academics_caches()
@@ -81,6 +89,10 @@ def _clear_lru_caches():
     analytics_consent.clear_analytics_consent_cache()
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
+    auth_guard.clear_account_state_cache()
+    auth_routes = sys.modules.get("routes.auth")
+    if auth_routes is not None:
+        auth_routes.clear_consumed_oauth_nonces()
 
 
 @pytest.fixture(autouse=True)
@@ -446,6 +458,18 @@ def _hermetic_llm_transport(request, monkeypatch):
         monkeypatch.setattr(cls, "request", _blocked)
 
 
+@pytest.fixture
+def live_accounts(monkeypatch):
+    """Opt-in, for tests that run the REAL guard (`_real_*`): every user id
+    names a live, approved `users` row. Since #756 the guard reads the account,
+    and the hermetic DB answers that read with no row (→ 401). A test about
+    the account states themselves mocks the read instead
+    (test_auth_session_access_756.py)."""
+    from services import auth_guard
+
+    monkeypatch.setattr(auth_guard, "_read_account_state", lambda _uid: auth_guard.ACCOUNT_ACTIVE)
+
+
 @pytest.fixture(autouse=True)
 def _bypass_session_auth(request, monkeypatch):
     """Stub the auth guard so tests don't need to mint session tokens.
@@ -472,7 +496,8 @@ def _bypass_session_auth(request, monkeypatch):
         )
         return {"user_id": uid, "exp": 9999999999}
 
-    def _get_session_user_id_stub(request):
+    def _get_session_user_id_stub(request, **_kwargs):
+        # **_kwargs: the real guard takes `allow_unapproved=` (#756).
         return _decode_session_stub(request)["user_id"]
 
     def _require_self_stub(user_id, request):

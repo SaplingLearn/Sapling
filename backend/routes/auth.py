@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time as _time
 from urllib.parse import urlencode
 
@@ -41,7 +42,7 @@ from db.connection import like_literal, pg_quote_value, table
 from services import email_service, events_service
 from services.encryption import encrypt, encrypt_if_present, decrypt_if_present
 from services.auth_guard import get_session_user_id
-from services.session_tokens import SESSION_COOKIE_NAME, mint_session
+from services.session_tokens import SESSION_COOKIE_NAME, TOKEN_TYPE_HANDOFF, mint_session
 
 try:
     from google_auth_oauthlib.flow import Flow
@@ -317,6 +318,36 @@ _REDIRECT_TOKEN_TTL_SECONDS = _parse_redirect_ttl(
 # are keyed by nonce and expire after _OAUTH_COOKIE_MAX_AGE seconds.
 _OAUTH_FALLBACK_STORE: dict[str, tuple[float, dict]] = {}
 
+# #756: OAuth state nonces the callback has already accepted, nonce → monotonic
+# expiry. The state cookie is cleared on every callback response, but a client
+# that ignores (or an attacker that captured) the cookie could otherwise replay
+# the same state for the cookie's whole max-age. Each nonce is honoured once.
+# Per-process: the backend runs one uvicorn process (backend/Dockerfile), and
+# Google's authorization code is itself single-use, so this is the second lock,
+# not the only one. Entries expire with the cookie, so the set stays bounded.
+_CONSUMED_OAUTH_NONCES: dict[str, float] = {}
+_CONSUMED_OAUTH_NONCES_LOCK = threading.Lock()
+
+
+def _consume_oauth_nonce(nonce: str) -> bool:
+    """Mark `nonce` used. True the first time, False on any replay."""
+    now = _time.monotonic()
+    with _CONSUMED_OAUTH_NONCES_LOCK:
+        for k in [k for k, exp in _CONSUMED_OAUTH_NONCES.items() if exp < now]:
+            del _CONSUMED_OAUTH_NONCES[k]
+        if nonce in _CONSUMED_OAUTH_NONCES:
+            return False
+        _CONSUMED_OAUTH_NONCES[nonce] = now + _OAUTH_COOKIE_MAX_AGE
+    # The local-dev unsigned fallback keeps the state server-side too: drop it.
+    _OAUTH_FALLBACK_STORE.pop(nonce, None)
+    return True
+
+
+def clear_consumed_oauth_nonces() -> None:
+    """Test hook: forget every consumed nonce (tests reuse fixed nonces)."""
+    with _CONSUMED_OAUTH_NONCES_LOCK:
+        _CONSUMED_OAUTH_NONCES.clear()
+
 
 def _google_client_config() -> dict:
     return {
@@ -443,12 +474,18 @@ def _prune_fallback_store() -> None:
 @router.get("/me")
 def get_me(request: Request):
     """Return approval and onboarding status for a given user_id."""
-    user_id = get_session_user_id(request)
+    # #756: reachable while unapproved — the frontend middleware reads
+    # is_approved here to route that account to /pending.
+    user_id = get_session_user_id(request, allow_unapproved=True)
     user = table("users").select(
-        "id,is_approved,onboarding_completed", filters={"id": f"eq.{user_id}"}
+        "id,is_approved,onboarding_completed,deleted_at", filters={"id": f"eq.{user_id}"}
     )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # The guard's account-state cache may be up to its TTL old; this fresh row
+    # makes a deletion end the session on the very next /me.
+    if user[0].get("deleted_at"):
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Profile fields (username/name/avatar_url) moved to user_profiles in migration 0024.
     profile_rows = table("user_profiles").select(
@@ -617,6 +654,10 @@ def google_callback(
     state_nonce = state_data.get("n")
     if not cookie_payload or not cookie_nonce or not state_nonce or not _hmac.compare_digest(str(state_nonce), str(cookie_nonce)):
         return _fail_redirect("invalid_state")
+    # #756: one callback per state. Consumed before the code exchange, so a
+    # replay is refused whatever the rest of this callback would have done.
+    if not _consume_oauth_nonce(str(cookie_nonce)):
+        return _fail_redirect("invalid_state")
 
     flow = Flow.from_client_config(_google_client_config(), scopes=AUTH_SCOPES)
     flow.redirect_uri = GOOGLE_AUTH_REDIRECT_URI
@@ -667,7 +708,15 @@ def google_callback(
     }
 
     # Determine user_id: check if this Google ID already exists
-    existing = table("users").select("id,is_approved", filters={"google_id": f"eq.{google_id}"})
+    existing = table("users").select(
+        "id,is_approved,deleted_at", filters={"google_id": f"eq.{google_id}"}
+    )
+    # #756: a deleted account stays deleted. Refused before anything is written
+    # (sign-in time, profile, OAuth tokens, waitlist) — there is no silent
+    # un-delete, and the guard would 401 a session minted for it anyway.
+    if existing and existing[0].get("deleted_at"):
+        logger.info("sign-in refused for deleted account %s", existing[0]["id"])
+        return _fail_redirect("account_deleted")
     # The waitlist decides whether someone new gets an account at all: an admin
     # approving their email under Admin → Allowlist is the yes. Without it
     # nothing is stored for them (no users row, profile or OAuth tokens), and
@@ -798,16 +847,18 @@ def google_callback(
     # `sapling_session` cookie (see _REDIRECT_TOKEN_TTL_SECONDS above) — it is
     # NOT the session itself, so it expires quickly.
     #
-    # Uses the shared minter (#381). Byte-for-byte identical to the inline code
-    # it replaces — same payload key order, same json.dumps separators, same
-    # HMAC — so no behaviour changes here; only the TTL differs from a session,
-    # and that is passed explicitly. The `if SESSION_SECRET` guard is kept (and
-    # the secret passed explicitly) so this path still degrades to "no
-    # auth_token in the redirect" rather than raising, exactly as before.
+    # Uses the shared minter (#381) with `typ=handoff` (#756): the API refuses a
+    # handoff token as a credential, and the BFF exchanges nothing else, so a
+    # live session can no longer be re-minted into a fresh one. The `if
+    # SESSION_SECRET` guard is kept (and the secret passed explicitly) so this
+    # path still degrades to "no auth_token in the redirect" rather than raising.
     auth_token = ""
     if SESSION_SECRET:
         auth_token = mint_session(
-            user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=SESSION_SECRET
+            user_id,
+            ttl=_REDIRECT_TOKEN_TTL_SECONDS,
+            secret=SESSION_SECRET,
+            typ=TOKEN_TYPE_HANDOFF,
         )
 
     # #117: auth.login fires at the two real session-mint sites (here and
@@ -933,12 +984,16 @@ async def mint_test_session(request: Request):
       thing standing between a caller and an arbitrary account. That is why the
       allowlist is two exact strings rather than the broader `config.IS_LOCAL`.
     - It does not touch the database: it neither creates users nor grants
-      approval/roles, so a token minted for a non-seeded id authenticates as an
-      account that does not exist and gets nowhere.
+      approval/roles. A token minted for an id with no `users` row (or a
+      deleted or unapproved one) is refused by the auth guard (#756: 401, or
+      403 `not_approved`) before any route runs — so it gets nowhere, and no
+      `ensure_user_exists` stub row is created for it.
 
     Returns the token in the JSON body as well as in the cookie, so a Playwright
     global-setup step can inject it with `context.addCookies()` instead of
-    replaying the response.
+    replaying the response. `handoff_token` is the same user's OAuth-redirect
+    token (`typ=handoff`, #756), for a journey that drives /auth/callback the
+    way a real sign-in does: the session BFF exchanges only that type.
     """
     # The gate runs FIRST, before the body is even looked at. The body is parsed
     # and validated by hand rather than declared as a `MintTestSessionBody`
@@ -984,6 +1039,9 @@ async def mint_test_session(request: Request):
     requested = TEST_LOGIN_DEFAULT_TTL_SECONDS if body.ttl is None else body.ttl
     ttl = max(30, min(int(requested), TEST_LOGIN_MAX_TTL_SECONDS))
     token = mint_session(user_id, ttl=ttl, secret=secret)
+    handoff_token = mint_session(
+        user_id, ttl=_REDIRECT_TOKEN_TTL_SECONDS, secret=secret, typ=TOKEN_TYPE_HANDOFF
+    )
 
     logger.warning("test-login: minted a session for %r (APP_ENV=%s)", user_id, config.APP_ENV)
 
@@ -1001,6 +1059,7 @@ async def mint_test_session(request: Request):
         "user_id": user_id,
         "cookie_name": SESSION_COOKIE_NAME,
         "token": token,
+        "handoff_token": handoff_token,
         "expires_in": ttl,
     })
     # Same attributes the real session cookie carries (frontend BFF
