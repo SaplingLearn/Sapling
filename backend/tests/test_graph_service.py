@@ -441,27 +441,67 @@ class TestAddCourse:
 # ── delete_course ─────────────────────────────────────────────────────────────
 
 class TestDeleteCourse:
-    def test_unenrolls_user_from_course(self):
-        # The user has one offering of the abstract course → delete that enrollment.
-        factory, mocks = _cached_mock_table({
-            "course_offerings": [{"id": "off-1"}],
-            "enrollments": [{"offering_id": "off-1"}],
-        })
+    """#766: a drop removes ONE term's enrollment, never every term's — an
+    enrollment cascades to that term's assignments/grades/checklists."""
+
+    _TERMS = {"off-fall": {"id": "fall-2025"}, "off-spring": {"id": "spring-2026"}}
+
+    def _run(self, *, held, term=None, current="spring-2026", label_map=None):
+        factory, mocks = _cached_mock_table({})
+        label_map = label_map if label_map is not None else {
+            "Fall 2025": "fall-2025", "Spring 2026": "spring-2026",
+        }
         with patch("services.graph_service.table", side_effect=factory), \
-             patch("services.academics.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=held), \
+             patch("services.academics.term_for_offering", side_effect=self._TERMS.get), \
+             patch("services.academics.term_id_for_label", side_effect=label_map.get), \
+             patch("services.academics.current_term",
+                   return_value={"id": current} if current else None), \
+             patch("services.course_context_service.update_course_context") as ucc:
+            result = delete_course("u1", "cs101", term)
+        deleted = [
+            c.args[0]["offering_id"] for c in mocks["enrollments"].delete.call_args_list
+        ] if "enrollments" in mocks else []
+        return result, deleted, ucc
+
+    def test_default_drops_only_the_current_terms_enrollment(self):
+        result, deleted, ucc = self._run(held=["off-fall", "off-spring"])
+        assert result == {"deleted": True}
+        # The past term's enrollment (and its gradebook) survives.
+        assert deleted == ["eq.off-spring"]
+        ucc.assert_called_once_with("off-spring")
+
+    def test_explicit_term_drops_only_that_term(self):
+        result, deleted, _ = self._run(held=["off-fall", "off-spring"], term="Fall 2025")
+        assert result == {"deleted": True}
+        assert deleted == ["eq.off-fall"]
+
+    def test_unknown_term_label_is_an_error_and_deletes_nothing(self):
+        result, deleted, _ = self._run(held=["off-fall"], term="Winter 1999")
+        assert result["deleted"] is False and "error" in result
+        assert deleted == []
+
+    def test_no_term_and_only_past_enrollment_refuses(self):
+        # Without a term the caller means "this term"; silently dropping the
+        # student's Fall gradebook instead is exactly the bug.
+        result, deleted, _ = self._run(held=["off-fall"])
+        assert result["deleted"] is False and "error" in result
+        assert deleted == []
+
+    def test_not_enrolled_is_an_idempotent_noop(self):
+        result, deleted, _ = self._run(held=[])
+        assert result == {"deleted": False}
+        assert deleted == []
+
+    def test_graph_nodes_are_never_touched(self):
+        factory, mocks = _cached_mock_table({})
+        with patch("services.graph_service.table", side_effect=factory), \
+             patch("services.academics.user_offering_ids_for_course", return_value=["off-spring"]), \
+             patch("services.academics.term_for_offering", side_effect=self._TERMS.get), \
+             patch("services.academics.current_term", return_value={"id": "spring-2026"}), \
              patch("services.course_context_service.update_course_context"):
-            result = delete_course("u1", "course-id-1")
-
-        assert result == {"deleted": True}
-        mocks["enrollments"].delete.assert_called_once()
-
-    def test_unenroll_with_no_prior_nodes(self):
-        # No offerings for the course → nothing to delete, still succeeds.
-        factory, _ = _cached_mock_table({"course_offerings": [], "enrollments": []})
-        with patch("services.graph_service.table", side_effect=factory), \
-             patch("services.academics.table", side_effect=factory):
-            result = delete_course("u1", "empty-course-id")
-        assert result == {"deleted": True}
+            delete_course("u1", "cs101")
+        assert "graph_nodes" not in mocks and "graph_edges" not in mocks
 
 
 # ── apply_graph_update ────────────────────────────────────────────────────────
@@ -1365,3 +1405,24 @@ def test_create_course_route_passes_term_through():
 
     assert resp.status_code == 200
     assert captured["term"] == "Fall 2026"
+
+
+# ── DELETE /api/graph/{user_id}/courses/{course_id} (#766) ───────────────────
+
+class TestRemoveCourseRoute:
+    def _client(self):
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app)
+
+    def test_forwards_term_query_param(self):
+        with patch("routes.graph.delete_course", return_value={"deleted": True}) as dc:
+            r = self._client().delete("/api/graph/u1/courses/cs101?term=Fall%202025")
+        assert r.status_code == 200
+        dc.assert_called_once_with("u1", "cs101", "Fall 2025")
+
+    def test_error_is_a_404(self):
+        with patch("routes.graph.delete_course",
+                   return_value={"deleted": False, "error": "Unknown term: X"}):
+            r = self._client().delete("/api/graph/u1/courses/cs101?term=X")
+        assert r.status_code == 404

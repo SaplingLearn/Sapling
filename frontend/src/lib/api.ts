@@ -273,9 +273,11 @@ export const addCourse = (userId: string, courseId: string, color?: string, nick
     body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}), ...(term ? { term } : {}) }),
   });
 
-export const deleteCourse = (userId: string, courseId: string) =>
+// Drops ONE term's enrollment (#766): `term` is the semester label to drop;
+// omitted = the backend's current term. Other terms' gradebooks survive.
+export const deleteCourse = (userId: string, courseId: string, term?: string) =>
   fetchJSON<{ deleted: boolean }>(
-    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}`,
+    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}${term ? `?term=${encodeURIComponent(term)}` : ''}`,
     { method: 'DELETE' }
   );
 

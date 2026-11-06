@@ -34,7 +34,7 @@ vi.mock("@/lib/api", () => ({
 
 import { ManageCoursesModal } from "./ManageCoursesModal";
 import { ToastProvider } from "./ToastProvider";
-import { addCourse, onboardingCoursesSearch } from "@/lib/api";
+import { addCourse, deleteCourse, onboardingCoursesSearch } from "@/lib/api";
 
 const mockedAddCourse = vi.mocked(addCourse);
 
@@ -198,5 +198,33 @@ describe("ManageCoursesModal course search (#769)", () => {
     });
     expect(screen.queryByText("BIO-101")).toBeNull();
     expect(screen.getByText("CHEM-201")).toBeInTheDocument();
+  });
+});
+
+describe("ManageCoursesModal remove (#766)", () => {
+  // CS101 taken in two terms: removing it from one tab must name THAT term so
+  // the backend drops only its enrollment, never the other term's gradebook.
+  const twoTerm = { ...enrolled("CS101", "Spring 2026"), terms: ["Fall 2025", "Spring 2026"] };
+
+  const confirmRemove = () => {
+    fireEvent.click(screen.getByTitle("Remove course"));
+    fireEvent.click(screen.getByTitle("Click again to confirm"));
+  };
+
+  it("drops the enrollment for the tab being viewed", async () => {
+    window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Fall 2025");
+    renderModal([twoTerm]);
+    confirmRemove();
+    await waitFor(() =>
+      expect(vi.mocked(deleteCourse)).toHaveBeenCalledWith("u1", "c-CS101", "Fall 2025"),
+    );
+  });
+
+  it("under All semesters, drops only the course's representative term", async () => {
+    renderModal([twoTerm]);
+    confirmRemove();
+    await waitFor(() =>
+      expect(vi.mocked(deleteCourse)).toHaveBeenCalledWith("u1", "c-CS101", "Spring 2026"),
+    );
   });
 });
