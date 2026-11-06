@@ -2,7 +2,7 @@ import logging
 import uuid
 import random
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -36,6 +36,34 @@ def _touch_room(room_id: str) -> None:
         {"updated_at": datetime.now(timezone.utc).isoformat()},
         {"id": f"eq.{room_id}"},
     )
+
+
+def _is_banned(room_id: str, user_id: str) -> bool:
+    """A kick records a room_bans row (#764); both join paths refuse it."""
+    return bool(table("room_bans").select(
+        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{user_id}"},
+    ))
+
+
+def _require_member(room_id: str, user_id: str) -> None:
+    membership = table("room_members").select(
+        "user_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{user_id}"}
+    )
+    if not membership:
+        raise HTTPException(status_code=403, detail="Not a member of this room")
+
+
+#: Who counts as a real, listable student (#764). A stub is the bare
+#: {id, streak_count} row graph_service.ensure_user_exists inserts, and it has
+#: no email. (google_id is NOT the test: every seeded local/E2E/showcase user
+#: carries an email but no google_id, so keying on it would empty the
+#: directory on every seeded stack.) Pending and soft-deleted accounts are
+#: neither matchable nor browsable.
+_LISTABLE_USER_FILTERS = {
+    "email": "not.is.null",
+    "is_approved": "eq.true",
+    "deleted_at": "is.null",
+}
 
 
 @router.post("/rooms/create")
@@ -120,6 +148,8 @@ def join_public_room(room_id: str, body: PublicJoinBody, request: Request):
         raise HTTPException(status_code=404, detail="Room not found")
     if not rooms[0].get("is_public"):
         raise HTTPException(status_code=403, detail="This room is invite-only")
+    if _is_banned(room_id, body.user_id):
+        raise HTTPException(status_code=403, detail="You were removed from this room")
     existing = table("room_members").select(
         "room_id", filters={"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"},
     )
@@ -169,6 +199,8 @@ def join_room(body: JoinRoomBody, request: Request):
     if not room_rows:
         raise HTTPException(status_code=404, detail="Room not found")
     room = room_rows[0]
+    if _is_banned(room["id"], body.user_id):
+        raise HTTPException(status_code=403, detail="You were removed from this room")
 
     existing = table("room_members").select(
         "room_id",
@@ -323,6 +355,8 @@ def room_activity(room_id: str, request: Request):
 @router.post("/rooms/{room_id}/match")
 def match_partners(room_id: str, body: MatchBody, request: Request):
     require_self(body.user_id, request)
+    # Members' graphs are room-private (#764): the same gate as the overview.
+    _require_member(room_id, body.user_id)
     member_id_rows = table("room_members").select("user_id", filters={"room_id": f"eq.{room_id}"})
     member_ids = [m["user_id"] for m in member_id_rows]
 
@@ -365,7 +399,7 @@ def school_match(body: MatchBody, request: Request):
 
     school_users = table("users").select(
         "id",
-        filters={"id": f"not.in.({','.join(excl_list)})"},
+        filters={"id": f"not.in.({','.join(excl_list)})", **_LISTABLE_USER_FILTERS},
     )
 
     # Names live on user_profiles (0024); resolve in bulk and decrypt.
@@ -395,9 +429,38 @@ def school_match(body: MatchBody, request: Request):
 def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
     require_self(body.user_id, request)
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{body.user_id}"})
-    _touch_room(room_id)
     invalidate_summary(room_id)
-    return {"left": True}
+
+    # #764: a room is owned by a MEMBER, or it does not exist.
+    remaining = table("room_members").select(
+        "user_id,joined_at",
+        filters={"room_id": f"eq.{room_id}"},
+        order="joined_at.asc,user_id.asc",
+    ) or []
+    if not remaining:
+        # The last member left: delete the room, which kills its invite code.
+        # Its children (members, messages + reactions, activity, summary,
+        # bans) cascade (20261106042133_room_bans_and_room_cascade.sql).
+        table("rooms").delete({"id": f"eq.{room_id}"})
+        return {"left": True, "room_deleted": True, "owner_id": None}
+
+    room_rows = table("rooms").select("owner_id", filters={"id": f"eq.{room_id}"}) or []
+    owner_id = room_rows[0].get("owner_id") if room_rows else None
+    member_ids = {m["user_id"] for m in remaining}
+    if room_rows and owner_id not in member_ids:
+        # The owner left (or, for a room orphaned before #764, had already
+        # gone): hand ownership to the earliest remaining member. Conditional
+        # on owner_id still being the stale value, so two concurrent leaves
+        # cannot both transfer and the later one cannot clobber the earlier.
+        new_owner = remaining[0]["user_id"]
+        moved = table("rooms").update(
+            {"owner_id": new_owner, "updated_at": datetime.now(timezone.utc).isoformat()},
+            {"id": f"eq.{room_id}", "owner_id": f"eq.{owner_id}"},
+        )
+        if moved:
+            return {"left": True, "room_deleted": False, "owner_id": new_owner}
+    _touch_room(room_id)
+    return {"left": True, "room_deleted": False, "owner_id": owner_id}
 
 
 @router.delete("/rooms/{room_id}/members/{member_id}")
@@ -413,6 +476,17 @@ def kick_member(room_id: str, member_id: str, request: Request, requester_id: st
     # created_by stays the immutable creator record and no longer gates.
     if room_rows[0]["owner_id"] != requester_id:
         raise HTTPException(status_code=403, detail="Only the room owner can kick members")
+    if member_id == requester_id:
+        # Kicking yourself would leave the room owned by a non-member; leaving
+        # is the path that hands ownership on.
+        raise HTTPException(status_code=400, detail="Leave the room instead of kicking yourself")
+    # #764: a kick is a ban. Record it BEFORE removing the membership so a
+    # rejoin racing the kick is already refused by the join paths.
+    table("room_bans").upsert(
+        {"room_id": room_id, "user_id": member_id, "banned_by": requester_id},
+        on_conflict="room_id,user_id",
+        ignore_duplicates=True,
+    )
     table("room_members").delete({"room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}"})
     _touch_room(room_id)
     invalidate_summary(room_id)
@@ -547,7 +621,13 @@ def delete_room_message(room_id: str, message_id: str, request: Request, user_id
         raise HTTPException(status_code=404, detail="Message not found")
     if rows[0]["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Cannot delete another user's message")
-    table("room_messages").update({"is_deleted": True}, filters={"id": f"eq.{message_id}"})
+    # #764: a delete removes the content, not just hides it. Before this the
+    # ciphertext (and image link) stayed in the row behind the flag, so a
+    # "deleted" message was still recoverable by anyone holding the key.
+    table("room_messages").update(
+        {"is_deleted": True, "text": None, "image_url": None},
+        filters={"id": f"eq.{message_id}", "user_id": f"eq.{user_id}"},
+    )
     return {"deleted": True}
 
 
@@ -561,11 +641,14 @@ def edit_room_message(room_id: str, message_id: str, body: EditMessageBody, requ
         raise HTTPException(status_code=403, detail="Cannot edit another user's message")
     if rows[0].get("is_deleted"):
         raise HTTPException(status_code=400, detail="Cannot edit a deleted message")
-    from datetime import datetime, timezone
-    table("room_messages").update(
+    # #764: conditional on is_deleted=false, so an edit racing a delete cannot
+    # write fresh text onto the just-deleted (and just-cleared) message.
+    edited = table("room_messages").update(
         {"text": encrypt_if_present(body.text), "edited_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{message_id}"},
+        filters={"id": f"eq.{message_id}", "user_id": f"eq.{body.user_id}", "is_deleted": "eq.false"},
     )
+    if not edited:
+        raise HTTPException(status_code=409, detail="Cannot edit a deleted message")
     return {"edited": True}
 
 
@@ -629,7 +712,8 @@ def get_students(request: Request):
         return {"students": []}
 
     users = table("users").select(
-        "id,streak_count", filters={"id": f"in.({','.join(visible_ids)})"}
+        "id,streak_count",
+        filters={"id": f"in.({','.join(visible_ids)})", **_LISTABLE_USER_FILTERS},
     ) or []
     # Display names live on user_profiles (0024); resolve in bulk and decrypt.
     name_map = get_display_names([u["id"] for u in users])
@@ -673,6 +757,42 @@ def _are_friends(user_id: str, other_id: str) -> bool:
     return bool(rows)
 
 
+#: How long a declined request blocks the same sender from re-sending (#764).
+DECLINE_COOLDOWN = timedelta(days=7)
+
+
+def _decline_cooldown_ends(responded_at: str | None) -> datetime | None:
+    """When the decline cooldown lifts, or None if it already has (or the
+    decline carries no timestamp to measure from)."""
+    if not responded_at:
+        return None
+    try:
+        declined = datetime.fromisoformat(str(responded_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if declined.tzinfo is None:
+        declined = declined.replace(tzinfo=timezone.utc)
+    ends = declined + DECLINE_COOLDOWN
+    return ends if ends > datetime.now(timezone.utc) else None
+
+
+def _request_status(request_id: str) -> str | None:
+    """Re-read a request's status after losing a conditional write; None if
+    the row is gone (cancelled)."""
+    rows = table("friend_requests").select("status", filters={"id": f"eq.{request_id}"})
+    return rows[0].get("status") if rows else None
+
+
+def _resolve_pending(request_id: str, status: str) -> list:
+    """The one write every friend-request transition goes through (#764):
+    pending -> `status`, conditional on the row STILL being pending. Returns
+    the updated rows, so an empty list means another transition won."""
+    return table("friend_requests").update(
+        {"status": status, "responded_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{request_id}", "status": "eq.pending"},
+    )
+
+
 @router.post("/friends/request")
 def send_friend_request(body: FriendRequestBody, request: Request):
     require_self(body.from_user_id, request)
@@ -687,31 +807,48 @@ def send_friend_request(body: FriendRequestBody, request: Request):
     # still resolves its row. Auto-accepting here would silently create a
     # friendship from a click that only meant "send a request".
     existing = table("friend_requests").select(
-        "id,status",
+        "id,status,responded_at",
         filters={
             "from_user_id": f"eq.{body.from_user_id}",
             "to_user_id": f"eq.{body.to_user_id}",
         },
     )
     if existing:
-        if existing[0].get("status") == "pending":
+        status = existing[0].get("status")
+        if status == "pending":
             raise HTTPException(status_code=409, detail="Request already pending")
+        if status == "declined":
+            # #764: a decline holds for DECLINE_COOLDOWN. Re-pending used to be
+            # unlimited, so a declined sender could put the request straight
+            # back in the recipient's inbox, forever.
+            until = _decline_cooldown_ends(existing[0].get("responded_at"))
+            if until is not None:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"They declined recently. You can send another request after {until.date().isoformat()}.",
+                )
         # A row for this (from_user_id, to_user_id) pair already exists —
         # declined, or accepted-then-unfriended (remove_friend only deletes
         # the symmetric friendships rows, it deliberately leaves the
         # historical friend_requests row in place). UNIQUE(from_user_id,
         # to_user_id) means a second insert here would 409/500 on the
         # constraint, so reactivate the existing row instead of inserting
-        # a duplicate.
+        # a duplicate. created_at is re-stamped on purpose: it is the send time
+        # of the LIVE request the recipient sees, and the cooldown above (keyed
+        # on responded_at) is what bounds re-sends. Conditional on the status
+        # we read, so a concurrent transition is a 409 rather than a blind
+        # overwrite.
         result = table("friend_requests").update(
             {
                 "status": "pending",
                 "responded_at": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             },
-            filters={"id": f"eq.{existing[0]['id']}"},
+            filters={"id": f"eq.{existing[0]['id']}", "status": f"eq.{status}"},
         )
-        return {"request": result[0] if result else None}
+        if not result:
+            raise HTTPException(status_code=409, detail="That request just changed. Try again.")
+        return {"request": result[0]}
     result = table("friend_requests").insert({
         "from_user_id": body.from_user_id,
         "to_user_id": body.to_user_id,
@@ -758,28 +895,40 @@ def accept_friend_request(request_id: str, user_id: str, request: Request):
     # accepted with no friendship behind it, and the sender left to work out
     # that they have to send again. A resolved request that produced no
     # friendship is not an accept to replay, it's a stale one to reject.
-    friends_already = _are_friends(a, b)
-    if req.get("status") != "pending" and not friends_already:
+    if _are_friends(a, b):
+        # Resolve a stale pending row, but only a PENDING one (#764): a blind
+        # write here could flip a declined row to accepted.
+        _resolve_pending(request_id, "accepted")
+        return {"accepted": True}
+    if req.get("status") != "pending":
         raise HTTPException(status_code=409, detail="Request is no longer pending")
-    already = friends_already
 
-    if not already:
-        # Symmetric rows: "my friends" stays a plain equality filter.
-        # upsert, not insert: two simultaneous accepts (a real double-click
-        # fires both before either has updated the status) both read `pending`,
-        # so the check above cannot close the race on its own — the write has
-        # to tolerate the conflict too.
+    # #764: claim the transition FIRST, conditional on the row still being
+    # pending, and only the winner writes the friendship. The old order (write
+    # friendships, then blindly stamp `accepted`) let an accept racing a
+    # decline or a cancel create a friendship out of a request that was no
+    # longer there to accept.
+    if not _resolve_pending(request_id, "accepted"):
+        if _request_status(request_id) == "accepted":
+            # A double-click's twin won the claim and writes the friendship.
+            return {"accepted": True}
+        raise HTTPException(status_code=409, detail="Request is no longer pending")
+
+    try:
+        # Symmetric rows: "my friends" stays a plain equality filter. upsert,
+        # not insert, so a duplicate pair (mutual requests) cannot 500.
         table("friendships").upsert([
             {"user_id": a, "friend_id": b},
             {"user_id": b, "friend_id": a},
         ], on_conflict="user_id,friend_id")
-
-    table("friend_requests").update(
-        {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{request_id}"},
-    )
-    if already:
-        return {"accepted": True}
+    except Exception:
+        # Hand the claim back so the request stays answerable, rather than
+        # recorded as accepted with no friendship behind it.
+        table("friend_requests").update(
+            {"status": "pending", "responded_at": None},
+            filters={"id": f"eq.{request_id}", "status": "eq.accepted"},
+        )
+        raise
 
     # Guarded like every other dispatch site in this file (:64, :144, :185).
     # The friendship rows and the request status are already committed above,
@@ -799,12 +948,41 @@ def accept_friend_request(request_id: str, user_id: str, request: Request):
 @router.post("/friends/requests/{request_id}/decline")
 def decline_friend_request(request_id: str, user_id: str, request: Request):
     require_self(user_id, request)
-    _load_request(request_id, user_id)
-    table("friend_requests").update(
-        {"status": "declined", "responded_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{request_id}"},
+    req = _load_request(request_id, user_id)
+    # #764: only a PENDING request can be declined. The old blind write could
+    # flip an `accepted` row to `declined` while the friendship stood.
+    status = req.get("status")
+    if status == "pending":
+        if _resolve_pending(request_id, "declined"):
+            return {"declined": True}
+        status = _request_status(request_id)
+    if status == "declined":
+        # Already declined (a double-click's twin won): the same outcome.
+        return {"declined": True}
+    raise HTTPException(status_code=409, detail="Request is no longer pending")
+
+
+@router.delete("/friends/requests/{request_id}")
+def cancel_friend_request(request_id: str, user_id: str, request: Request):
+    """The sender withdraws a PENDING request (#764). The row is deleted, so
+    the pair can be requested again later; a decline cannot be dodged this
+    way because only pending rows are cancellable."""
+    require_self(user_id, request)
+    rows = table("friend_requests").select(
+        "id,from_user_id,status", filters={"id": f"eq.{request_id}"}
     )
-    return {"declined": True}
+    if not rows:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if rows[0]["from_user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not your request to cancel")
+    deleted = table("friend_requests").delete({
+        "id": f"eq.{request_id}",
+        "from_user_id": f"eq.{user_id}",
+        "status": "eq.pending",
+    })
+    if not deleted:
+        raise HTTPException(status_code=409, detail="Request is no longer pending")
+    return {"cancelled": True}
 
 
 @router.delete("/friends/{friend_id}")
