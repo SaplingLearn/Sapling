@@ -119,8 +119,9 @@ class TestEnsureUserExists:
 
 class TestGetGraph:
     def test_empty_graph_returns_zero_stats(self):
+        today = datetime.now(timezone.utc).date().isoformat()
         factory = _mock_table({
-            "users": [{"streak_count": 5}],
+            "users": [{"streak_count": 5, "last_active_date": today}],
             "graph_nodes": [],
             "graph_edges": [],
             "enrollments": [],
@@ -132,6 +133,20 @@ class TestGetGraph:
         assert result["stats"]["streak"] == 5
         assert result["nodes"] == []
         assert result["edges"] == []
+
+    def test_lapsed_streak_reads_zero(self):
+        # #767: the stored count is only reset on next activity; a student last
+        # active three days ago has no streak, whatever streak_count says.
+        stale = (datetime.now(timezone.utc).date() - timedelta(days=3)).isoformat()
+        factory = _mock_table({
+            "users": [{"streak_count": 12, "last_active_date": stale}],
+            "graph_nodes": [],
+            "graph_edges": [],
+            "enrollments": [],
+        })
+        with patch("services.graph_service.table", side_effect=factory):
+            result = get_graph("u1")
+        assert result["stats"]["streak"] == 0
 
     def test_counts_each_mastery_tier(self):
         nodes = [

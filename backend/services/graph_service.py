@@ -13,7 +13,7 @@ from config import (
     get_mastery_tier,
 )
 from db.connection import rpc, table
-from services.streak_service import touch_streak_safe
+from services.streak_service import effective_streak, touch_streak_safe
 
 logger = logging.getLogger(__name__)
 
@@ -212,8 +212,13 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
     avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
 
-    user_rows = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-    streak = user_rows[0]["streak_count"] if user_rows else 0
+    # The STORED streak_count is only reset on the student's next activity, so
+    # a lapsed streak would still display; effective_streak reads it as of
+    # today (#767).
+    user_rows = table("users").select(
+        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"},
+    )
+    streak = effective_streak(user_rows[0] if user_rows else None)
 
     stats = {
         "total_nodes": len(nodes),
