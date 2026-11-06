@@ -177,15 +177,21 @@ export function createNoteAutosave(opts: {
     }
   }
 
-  /** The note is gone: drop its queued save and ignore any in-flight outcome. */
-  function cancel(noteId: string) {
+  /**
+   * The note is (being) deleted: drop its queued save and ignore any in-flight
+   * outcome. Returns the dropped patch so a caller whose delete then FAILS can
+   * `queue` it back instead of losing the edit.
+   */
+  function cancel(noteId: string): NotePatch | null {
     const e = entries.get(noteId);
-    if (!e) return;
+    if (!e) return null;
+    const dropped = e.pending;
     e.cancelled = true;
     clearTimer(e);
     e.pending = null;
     entries.delete(noteId);
     recompute();
+    return dropped;
   }
 
   /** Mount/unmount: a disposed engine never schedules background retries. */

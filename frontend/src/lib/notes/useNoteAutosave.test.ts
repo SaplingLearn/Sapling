@@ -160,6 +160,19 @@ describe("useNoteAutosave", () => {
     expect(mockedPatch).not.toHaveBeenCalled();
   });
 
+  it("cancel returns the dropped patch so a failed delete can re-queue it", () => {
+    const { result } = setup();
+    act(() => result.current.queue("a", { body: "x" }));
+    let dropped: unknown;
+    act(() => {
+      dropped = result.current.cancel("a");
+    });
+    expect(dropped).toEqual({ body: "x" });
+    act(() => result.current.queue("a", dropped as { body: string }));
+    act(() => vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS));
+    expect(mockedPatch).toHaveBeenCalledWith("a", "u1", { body: "x" }, { keepalive: false });
+  });
+
   it("cancel ignores the outcome of a save already in flight (no error, no retry)", async () => {
     const { result } = setup();
     act(() => result.current.queue("a", { body: "x" }));
