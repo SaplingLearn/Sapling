@@ -1220,7 +1220,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
         patch("routes.learn._consume_pending"),
-        patch("routes.learn.require_session_owner"),
+        patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),
         patch("routes.learn.offering_course_id", return_value="c1"),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -1320,7 +1320,8 @@ def test_end_session_emits_session_ended(sink):
             ]
         else:
             mock.select.return_value = []
-        mock.update.return_value = []
+        # A conditional end (#761) reports the row it closed.
+        mock.update.return_value = [{"id": "s-ended"}] if name == "sessions" else []
         return mock
 
     with patch("routes.learn.table", side_effect=factory):
