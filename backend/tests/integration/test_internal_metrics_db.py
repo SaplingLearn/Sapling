@@ -309,8 +309,8 @@ def test_row_backed_counts_and_totals_move_by_exactly_what_landed(client, db_con
             (USER, f"it-signup-{i}", age),
         )
         db_conn.execute(
-            "INSERT INTO quiz_attempts (user_id, created_at, completed_at)"
-            " VALUES (%s, now() - %s::interval - interval '1 hour', now() - %s::interval)",
+            "INSERT INTO quiz_attempts (user_id, created_at, completed_at, score, total)"
+            " VALUES (%s, now() - %s::interval - interval '1 hour', now() - %s::interval, 1, 1)",
             (USER, age, age),
         )
         db_conn.execute(
@@ -372,6 +372,13 @@ def test_row_backed_counts_and_totals_move_by_exactly_what_landed(client, db_con
     )
     db_conn.execute(
         "INSERT INTO quiz_attempts (user_id, created_at) VALUES (%s, now() - interval '50 days')",
+        (USER,),
+    )
+    # #760: claimed but never scored is not a completed quiz (it IS started,
+    # so it lands outside every window here to keep quizzes_started exact).
+    db_conn.execute(
+        "INSERT INTO quiz_attempts (user_id, created_at, completed_at)"
+        " VALUES (%s, now() - interval '50 days', now() - interval '1 hour')",
         (USER,),
     )
     db_conn.execute("INSERT INTO rooms (id, name, invite_code, created_by, owner_id)"

@@ -559,7 +559,11 @@ def test_a_refused_source_attempt_refunds_the_generate_slot(attempts, expected):
             attempts=attempts, body_extra={"source_attempt_id": SOURCE_ID},
         )
     assert r.status_code == expected
-    refund.assert_called_once_with("user_andres")
+    refund.assert_called_once()
+    user_id, slot = refund.call_args.args
+    assert user_id == "user_andres"
+    # #760: the refund names the slot this request claimed.
+    assert isinstance(slot, float)
 
 
 def test_a_non_dict_stored_question_does_not_shift_the_missed_index():

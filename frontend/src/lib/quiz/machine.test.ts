@@ -717,6 +717,74 @@ describe("invariant 1 — nothing walks out of a live quiz by accident", () => {
   });
 });
 
+describe("#760 — a pending request is never a dead end", () => {
+  const generatingSession = () => {
+    const base = initialSession(entry(), CONFIG, PREFS);
+    return reduce(base, { type: "START", start: startOf("c1"), config: base.config });
+  };
+
+  it("CANCEL from generating goes home on the same concept", () => {
+    const generating = generatingSession();
+    expect(generating.phase).toBe("generating");
+    const s = reduce(generating, { type: "CANCEL" });
+    expect(s.phase).toBe("home");
+    expect(s.conceptId).toBe("c1");
+    expect(s.attemptId).toBeNull();
+    expect(s.sourceAttemptId).toBeNull();
+  });
+
+  it("a GENERATED arriving after CANCEL is refused", () => {
+    const cancelled = reduce(generatingSession(), { type: "CANCEL" });
+    expect(reduce(cancelled, { type: "GENERATED", result: generated(3) })).toBe(cancelled);
+  });
+
+  it("generating is exitable; nothing live exists client-side yet", () => {
+    const generating = generatingSession();
+    expect(canExit(generating)).toBe(true);
+    expect(reduce(generating, { type: "EXIT" }).phase).toBe("home");
+  });
+
+  it("CANCEL from submitting returns INTO the quiz, on the final verdict", () => {
+    const submitting = answerAll(activeSession(2));
+    expect(submitting.phase).toBe("submitting");
+    const s = reduce(submitting, { type: "CANCEL" });
+    expect(s.phase).toBe("answered");
+    expect(s.attemptId).toBe(submitting.attemptId);
+    expect(s.items).toBe(submitting.items);
+    // …from where the ordinary ways on (See results again) and out (Leave) work.
+    expect(reduce(s, { type: "NEXT" }).phase).toBe("submitting");
+    expect(reduce(s, { type: "REQUEST_LEAVE" }).phase).toBe("confirm-leave");
+  });
+
+  it("a dismissed submit error can still be left, via CANCEL", () => {
+    const failed = reduce(answerAll(activeSession(2)), {
+      type: "SUBMIT_FAILED",
+      error: { code: "NETWORK", message: "offline", retryable: true },
+    });
+    const parked = reduce(failed, { type: "DISMISS_ERROR" });
+    expect(parked.phase).toBe("submitting");
+    expect(reduce(parked, { type: "CANCEL" }).phase).toBe("answered");
+  });
+
+  it("submitting is still not exitable — the attempt is live", () => {
+    expect(canExit(answerAll(activeSession(2)))).toBe(false);
+  });
+
+  it("CANCEL is ignored everywhere else", () => {
+    const active = activeSession(3);
+    expect(reduce(active, { type: "CANCEL" })).toBe(active);
+    const home = initialSession(entry(), CONFIG, PREFS);
+    expect(reduce(home, { type: "CANCEL" })).toBe(home);
+  });
+
+  it("FAILED (a stale resume) never replaces a generation in flight", () => {
+    const generating = generatingSession();
+    expect(
+      reduce(generating, { type: "FAILED", error: { code: "NETWORK", message: "x", retryable: true } }),
+    ).toBe(generating);
+  });
+});
+
 describe("invariant 2 — source survives the whole session", () => {
   const NOTE_SOURCE: QuizSource = {
     kind: "notes",

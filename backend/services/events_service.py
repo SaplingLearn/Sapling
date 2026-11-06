@@ -152,6 +152,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # submit, so the /errors feed can carry it without drowning. See the emit
     # site, routes/quiz.py::_gamification_block.
     "quiz.gamification_snapshot_failed",
+    # #760: the post-score graph/mastery update failed. Best-effort since
+    # the score must always land after the submit claim, so the submit still
+    # succeeds — this is what keeps the skipped mastery write countable.
+    "quiz.mastery_write_failed",
     # F5: a personalization input returned zero rows for a student who
     # plausibly should have data. Three inputs were silently empty for
     # months (#529's 42P10, the misconceptions offering-id filter, the

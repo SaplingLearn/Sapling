@@ -53,6 +53,8 @@ export interface QuizActions {
   practiseMissed(): void;
   nextInQueue(): void;
   exit(target?: string): void;
+  /** #760: stop waiting on a generate or a submit (aborts the request). */
+  cancel(): void;
   flag(): void;
   dismissError(): void;
   retry(): void;
@@ -173,6 +175,31 @@ async function withNetworkRetry<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Client-side ceilings on the two calls a student waits on with nothing else to
+ * do (#760). Before these, a `/generate` that never answered (a dropped proxy
+ * connection, a wedged worker) left the skeleton up forever.
+ *
+ * Generation is bounded server-side per agent run (`QUIZ_GENERATION_TIMEOUT_SEC`,
+ * 90s) and may run one top-up after the first, so the client allows both plus
+ * headroom — it is a backstop for a request the server has lost, never a
+ * second, tighter budget. Submit is plain database work.
+ */
+export const GENERATE_TIMEOUT_MS = 200_000;
+export const SUBMIT_TIMEOUT_MS = 45_000;
+
+type RequestKind = "generate" | "answer" | "submit" | "resume";
+
+/** One quiz call in flight. Its token is how a chain asks "am I still the
+ *  request this session is waiting for?" after every await. */
+interface InFlight {
+  token: number;
+  kind: RequestKind;
+  controller: AbortController;
+  timer: ReturnType<typeof setTimeout> | null;
+  timedOut: boolean;
+}
+
 export function useQuizSession(userId: string, entry: EntryRequest): QuizSessionHandle {
   const router = useRouter();
   const { config } = useQuizConfig();
@@ -198,13 +225,64 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
   // round trip, so neither `canSubmitAnswer` nor a `phase !== "active"` disabled
   // check rules the second press out.
   const answeringRef = useRef<string | null>(null);
-  const generationRef = useRef(0);
   const configAppliedRef = useRef(false);
   const autoResumedRef = useRef(false);
 
-  const setPending = useCallback((value: boolean) => {
-    if (mountedRef.current) setPendingState(value);
+  // #760: every call in flight, by token. `pending` is "this map is non-empty",
+  // so one call finishing can no longer clear the flag while another (a resume
+  // under a generate, a submit chained off an answer) is still running — the
+  // old single boolean was set and cleared by all four chains at once. And each
+  // chain checks its OWN token after every await, so a cancelled or superseded
+  // call lands nowhere, whichever kind it is (only generate used to check).
+  const inFlightRef = useRef(new Map<number, InFlight>());
+  const tokenSeqRef = useRef(0);
+
+  const syncPending = useCallback(() => {
+    if (mountedRef.current) setPendingState(inFlightRef.current.size > 0);
   }, []);
+
+  const begin = useCallback((kind: RequestKind, timeoutMs?: number): InFlight => {
+    tokenSeqRef.current += 1;
+    const request: InFlight = {
+      token: tokenSeqRef.current,
+      kind,
+      controller: new AbortController(),
+      timer: null,
+      timedOut: false,
+    };
+    if (timeoutMs !== undefined) {
+      request.timer = setTimeout(() => {
+        request.timedOut = true;
+        request.controller.abort();
+      }, timeoutMs);
+    }
+    inFlightRef.current.set(request.token, request);
+    syncPending();
+    return request;
+  }, [syncPending]);
+
+  const isLive = useCallback(
+    (request: InFlight) => inFlightRef.current.get(request.token) === request,
+    [],
+  );
+
+  const end = useCallback((request: InFlight) => {
+    if (request.timer !== null) clearTimeout(request.timer);
+    if (inFlightRef.current.get(request.token) === request) {
+      inFlightRef.current.delete(request.token);
+      syncPending();
+    }
+  }, [syncPending]);
+
+  /** Abort and forget every call of one kind. The chains see `isLive` go false
+   *  and drop whatever they were about to apply. */
+  const abandonRequests = useCallback((kind: RequestKind) => {
+    for (const request of Array.from(inFlightRef.current.values())) {
+      if (request.kind !== kind) continue;
+      request.controller.abort();
+      end(request);
+    }
+  }, [end]);
 
   /** Apply one event, persist the outcome, and hand it back so the caller can
    *  decide what the new phase requires. */
@@ -266,11 +344,11 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         });
         return;
       }
-      const token = generationRef.current + 1;
-      generationRef.current = token;
+      // A newer generation supersedes any older one still in flight.
+      abandonRequests("generate");
+      const request = begin("generate", GENERATE_TIMEOUT_MS);
       // Snapshot XP now so the results screen has a "before" to subtract from.
       void gamification.snapshotBefore();
-      setPending(true);
       try {
         const result = await generateQuiz({
           userId,
@@ -281,17 +359,27 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           // G5: set only by PRACTISE_MISSED, so an ordinary start sends
           // nothing and the route behaves exactly as it always has.
           sourceAttemptId: from.sourceAttemptId,
+          signal: request.controller.signal,
         });
-        if (generationRef.current !== token) return;
+        if (!isLive(request)) return;
         apply({ type: "GENERATED", result });
       } catch (err) {
-        if (generationRef.current !== token) return;
-        apply({ type: "GENERATE_FAILED", error: describeQuizError(err) });
+        if (!isLive(request)) return;
+        apply({
+          type: "GENERATE_FAILED",
+          error: request.timedOut
+            ? {
+              code: "QUIZ_GENERATION_TIMEOUT",
+              message: QUIZ_ERROR_COPY.QUIZ_GENERATION_TIMEOUT,
+              retryable: true,
+            }
+            : describeQuizError(err),
+        });
       } finally {
-        if (generationRef.current === token) setPending(false);
+        end(request);
       }
     },
-    [apply, gamification, setPending, userId],
+    [abandonRequests, apply, begin, end, gamification, isLive, userId],
   );
 
   const runSubmit = useCallback(
@@ -299,7 +387,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
       const attemptId = from.attemptId;
       if (!attemptId || submittingRef.current === attemptId) return;
       submittingRef.current = attemptId;
-      setPending(true);
+      const request = begin("submit", SUBMIT_TIMEOUT_MS);
       try {
         // Belt and braces: the server reconciles against `quiz_responses` and a
         // recorded row always wins, so this payload only covers questions whose
@@ -310,26 +398,39 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
             question_id: i.question.id,
             selected_label: i.question.options[i.selectedIndex as number]?.label ?? "",
           }));
-        const result = await submitQuiz(attemptId, answers);
+        const result = await submitQuiz(attemptId, answers, request.controller.signal);
         const xp = await gamification.deltaAfterSubmit();
+        // Cancelled while scoring: the student is back in the quiz and asked
+        // not to be moved. If the server did score it, "See results" will say
+        // so (409 → already scored) rather than this landing under them.
+        if (!isLive(request)) return;
         apply({ type: "SUBMITTED", result, xp });
         clearSession();
         announceGraphChanged(from.conceptId, result);
       } catch (err) {
-        apply({ type: "SUBMIT_FAILED", error: describeQuizError(err) });
+        if (!isLive(request)) return;
+        apply({
+          type: "SUBMIT_FAILED",
+          error: request.timedOut
+            ? { code: "TIMEOUT", message: QUIZ_ERROR_COPY.TIMEOUT, retryable: true }
+            : describeQuizError(err),
+        });
       } finally {
-        submittingRef.current = null;
-        setPending(false);
+        // Only release the double-submit latch if it is still ours: a cancel
+        // already released it, and a newer submit may hold it now.
+        if (isLive(request) && submittingRef.current === attemptId) submittingRef.current = null;
+        end(request);
       }
     },
-    [apply, gamification, setPending],
+    [apply, begin, end, gamification, isLive],
   );
 
   const runResume = useCallback(
     async (attemptId: string) => {
-      setPending(true);
+      const request = begin("resume");
       try {
         const detail = await getAttempt(attemptId);
+        if (!isLive(request)) return;
         if (!detail.resumable) {
           apply({
             type: "FAILED",
@@ -345,12 +446,13 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         apply({ type: "RESUME", detail, stored });
         void gamification.snapshotBefore();
       } catch (err) {
+        if (!isLive(request)) return;
         apply({ type: "FAILED", error: describeQuizError(err) });
       } finally {
-        setPending(false);
+        end(request);
       }
     },
-    [apply, gamification, setPending],
+    [apply, begin, end, gamification, isLive],
   );
 
   const submitAnswer = useCallback(async () => {
@@ -365,7 +467,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
     const inFlight = `${attemptId}:${item.index}`;
     if (answeringRef.current === inFlight) return;
     answeringRef.current = inFlight;
-    setPending(true);
+    const request = begin("answer");
     try {
       const result = await withNetworkRetry(() =>
         answerQuestion(attemptId, {
@@ -375,15 +477,17 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
           questionId: item.question.id,
         }),
       );
+      if (!isLive(request)) return;
       const next = apply({ type: "ANSWER_RECORDED", result });
       if (next.phase === "submitting") await runSubmit(next);
     } catch (err) {
+      if (!isLive(request)) return;
       apply({ type: "ANSWER_FAILED", error: describeQuizError(err) });
     } finally {
       answeringRef.current = null;
-      setPending(false);
+      end(request);
     }
-  }, [apply, runSubmit, setPending]);
+  }, [apply, begin, end, isLive, runSubmit]);
 
   // A `?attempt=<id>` entry (the resume strip, or a leave-and-return link) picks
   // the quiz back up without a stop on home.
@@ -485,9 +589,23 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         // Read the destination BEFORE the reset: `returnToSource` falls back to
         // the tree focused on `conceptId`, which EXIT clears.
         const destination = target ?? returnToSource(current);
+        // Exitable mid-generate (#760): the request is abandoned, not awaited.
+        abandonRequests("generate");
         apply({ type: "EXIT" });
         clearSession();
         goTo(destination, router);
+      },
+
+      cancel: () => {
+        const phase = sessionRef.current.phase;
+        if (phase === "generating") abandonRequests("generate");
+        else if (phase === "submitting") {
+          abandonRequests("submit");
+          // Released here, not by the aborted chain: "See results" must be able
+          // to submit again straight away.
+          submittingRef.current = null;
+        } else return;
+        apply({ type: "CANCEL" });
       },
 
       flag: () => {
@@ -527,7 +645,7 @@ export function useQuizSession(userId: string, entry: EntryRequest): QuizSession
         } else if (back === "active") void submitAnswer();
       },
     };
-  }, [apply, config, router, runGenerate, runResume, runSubmit, submitAnswer]);
+  }, [abandonRequests, apply, config, router, runGenerate, runResume, runSubmit, submitAnswer]);
 
   return { session, pending, config, actions };
 }
