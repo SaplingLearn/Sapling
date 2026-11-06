@@ -1639,7 +1639,9 @@ export interface Semester {
 }
 
 export const getSemesters = () =>
-  fetchJSON<{ semesters: Semester[] }>('/api/semesters');
+  // current_term_id: the server's current term (#766) — prefer it over the
+  // browser clock (lib/semesters.ts::currentTerm).
+  fetchJSON<{ semesters: Semester[]; current_term_id?: string | null }>('/api/semesters');
 
 // ── Gradebook ────────────────────────────────────────────────────────────────
 
