@@ -1,6 +1,6 @@
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import logfire
@@ -103,6 +103,15 @@ logfire.instrument_pydantic_ai()
 # list below only takes effect on buckets this code creates. Environments whose
 # bucket predates the change (staging/prod) need a one-off bucket update to add
 # image/svg+xml before SVG icon uploads will work there.
+#
+# Lifecycle shape (#771): every started resource registers its teardown on an
+# AsyncExitStack the moment it starts, so a startup failure part-way through
+# still tears down what already started, and shutdown unwinds in REVERSE start
+# order. Sinks (PostHog, the events worker) start first so they stop LAST —
+# after every producer that can still log_event (the seed watcher, the
+# sweeper, DBOS workflows, upload post-roll work, tutor-router decisions) has
+# stopped or drained. Add a new resource by starting it AND registering its
+# teardown on the next line, at the position that keeps that order.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # #174: fail loudly at startup if required secrets are missing, before
@@ -112,9 +121,19 @@ async def _lifespan(_app: FastAPI):
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.
     verify_encryption_key()
+    async with AsyncExitStack() as stack:
+        await _start(stack)
+        yield
+
+
+async def _start(stack: AsyncExitStack) -> None:
+    """Start everything, registering each teardown as it starts (#771)."""
     # ADR 0028: optional; builds nothing (no threads, no network) when the
     # token is unset, under pytest/APP_ENV=test, or in function mode.
+    # Drained, then its SDK flushed, LAST: every sink-feeding producer below
+    # has stopped by then.
     posthog_client.initialize_posthog()
+    stack.callback(posthog_client.shutdown_posthog)
     await ensure_bucket_exists(
         STORAGE_BUCKET,
         public=True,  # required for unauthenticated <img src> reads
@@ -128,43 +147,46 @@ async def _lifespan(_app: FastAPI):
         allowed_mime_types=sorted(ALLOWED_CONTENT_TYPES | ICON_CONTENT_TYPES),
     )
     # #116/#118: start the fire-and-forget observability drain thread so LLM
-    # usage + event rows flush off the request path.
+    # usage + event rows flush off the request path. Stopped (and the queue
+    # flushed) after every producer below, just before PostHog.
     from services import events_service
     events_service.start_worker()
+    stack.callback(events_service.shutdown)
+    # The decision seam's pooled Jev client (#642) for this loop: closed after
+    # the tutor-router drain below, whose decisions still use it.
+    stack.push_async_callback(typesafe_client.aclose_clients)
+    # Let in-flight tutor-router decisions finish before the client and the
+    # events worker close: each one emits a decision.made row (bounded by the
+    # router's own backstop).
+    from services import tutor_router
+    stack.push_async_callback(tutor_router.drain_inflight)
     # ADR 0011 / #154: construct + launch DBOS when DBOS_ENABLED=true; no-op
     # passthrough otherwise. Fails loudly (raises) if the operator opted in
-    # and launch fails — see services/durable.py::init_dbos.
+    # and launch fails — see services/durable.py::init_dbos. Destroyed BEFORE
+    # the events worker stops: its workflows log events. Registered BEFORE
+    # init: a launch that raises part-way still gets destroyed (a no-op when
+    # nothing launched).
+    stack.callback(shutdown_dbos)
     init_dbos()
+    # #759: let in-flight upload post-roll tasks (indexing, course context)
+    # finish — bounded by drain_post_roll's own timeout. They log events and
+    # may touch DBOS-decorated code, so they drain before DBOS is destroyed
+    # (registered after it: the stack unwinds in reverse).
+    from routes.documents import drain_post_roll
+    stack.push_async_callback(drain_post_roll)
     # #482: drain the document indexing queue. Without this, a document whose
     # upload-time index attempt failed — or died with the process — would stay
     # out of retrieval for good. No-op outside real model mode.
     start_sweeper()
+    stack.push_async_callback(stop_sweeper)
     # #715: on a developer's LOCAL stack only, copy the rich sample dataset
     # onto each Google account that signs in. Not started anywhere else.
     start_local_seed_watcher()
+    stack.push_async_callback(stop_local_seed_watcher)
     # #672: the decision seam's backends moved from env vars to the
     # decision_router flag; say so if a deployment still sets the old ones.
     from services import decisions
     decisions.warn_removed_env()
-    yield
-    await stop_local_seed_watcher()
-    await stop_sweeper()
-    # #759: let in-flight upload post-roll tasks (indexing, course context) finish.
-    from routes.documents import drain_post_roll
-    await drain_post_roll()
-    # Let in-flight tutor-router decisions finish first: each one emits a
-    # decision.made row through the Jev client and the events worker closed
-    # below (bounded by the router's own backstop).
-    from services import tutor_router
-    await tutor_router.drain_inflight()
-    # The decision seam's pooled Jev client (#642) for this loop.
-    await typesafe_client.aclose_clients()
-    # Stop the drain thread and flush anything still queued so the last batch
-    # of usage rows isn't lost on shutdown.
-    events_service.shutdown()
-    # After events_service: drain the PostHog queue, then its SDK, last.
-    posthog_client.shutdown_posthog()
-    shutdown_dbos()
 
 
 def _drop_request_arguments(_request, _attributes):
