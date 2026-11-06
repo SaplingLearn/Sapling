@@ -440,7 +440,7 @@ def leave_room(room_id: str, body: LeaveRoomBody, request: Request):
     if not remaining:
         # The last member left: delete the room, which kills its invite code.
         # Its children (members, messages + reactions, activity, summary,
-        # bans) cascade (20261106042133_room_bans_and_room_cascade.sql).
+        # bans) cascade (20261106055333_state_machines_audit.sql).
         table("rooms").delete({"id": f"eq.{room_id}"})
         return {"left": True, "room_deleted": True, "owner_id": None}
 

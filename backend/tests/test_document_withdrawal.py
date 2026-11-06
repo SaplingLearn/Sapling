@@ -297,7 +297,7 @@ def test_record_sources_is_best_effort(monkeypatch, caplog):
 
 
 def _migration() -> str:
-    hits = sorted(MIG_DIR.glob("*_course_chunk_sources.sql"))
+    hits = sorted(MIG_DIR.glob("*_state_machines_audit.sql"))
     assert len(hits) == 1, hits
     return hits[0].read_text()
 

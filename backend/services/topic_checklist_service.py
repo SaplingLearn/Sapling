@@ -48,7 +48,7 @@ def resolve_scope(user_id: str, course_id: str, semester: str | None) -> dict:
     if semester and not term_id:
         raise HTTPException(404, "Semester not found.")
     # No deleted_at filter: nothing ever soft-deleted a catalog course, and
-    # the column is dropped (#771, 20261106043825_drop_dead_state_columns).
+    # the column is dropped (#771, 20261106055333_state_machines_audit).
     courses = table("courses").select("id,course_code,course_name,description", filters={
         "id": f"eq.{course_id}",
     }, limit=1)

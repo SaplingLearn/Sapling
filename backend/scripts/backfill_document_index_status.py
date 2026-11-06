@@ -33,7 +33,7 @@ Dry-run by default. Run from backend/:
 
 Reads .env; for staging/prod run under `dotenv -f .env.<env> run -- ...` and
 check the project it prints first. Run it AFTER the migrations — including
-`*_document_index_terminal_state.sql`, whose CHECK constraint is what admits
+`*_state_machines_audit.sql` (the #758 terminal-state section), whose CHECK constraint is what admits
 'exhausted' — once per environment. It needs no ENCRYPTION_KEY: it tests extracted_text for presence
 and never reads it.
 """

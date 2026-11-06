@@ -2,7 +2,7 @@
 Fill course_chunk_sources from each document's own text, then withdraw the
 chunks of every document that was deleted before #758.
 
-Run AFTER `20261106042249_course_chunk_sources.sql`. That migration seeds the
+Run AFTER `20261106055333_state_machines_audit.sql`. That migration seeds the
 ledger from `course_chunks.doc_id`, which names only the LAST writer of a
 deduped row, so:
 

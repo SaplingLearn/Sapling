@@ -100,8 +100,10 @@ def test_the_signature_is_unchanged_so_no_second_overload_appears():
 
 
 def _terminal_migration() -> str:
-    hits = sorted(MIG_DIR.glob("*_document_index_terminal_state.sql"))
-    assert len(hits) == 1, f"expected exactly one terminal-state migration, got {hits}"
+    # #772 combined the batch's migrations into one file; the terminal-state
+    # DDL is its "#758 indexing: explicit 'exhausted'" section.
+    hits = sorted(MIG_DIR.glob("*_state_machines_audit.sql"))
+    assert len(hits) == 1, f"expected exactly one state-machines migration, got {hits}"
     return hits[0].read_text()
 
 
@@ -129,12 +131,13 @@ def test_the_live_claim_reaps_an_over_budget_pending_row():
     assert re.search(r"r\.index_attempts >= max_attempts", reap)
 
 
-def test_the_reap_pending_fix_is_a_new_migration_not_an_edit():
-    """The terminal-state file may already sit in a ledger; an edit would
-    never re-run there."""
-    assert "'pending'" not in _reap(_terminal_migration()).split("WHERE", 1)[1]
-    hits = sorted(MIG_DIR.glob("*_document_index_reap_pending.sql"))
-    assert len(hits) == 1 and hits[0].read_text() == _latest_claim()
+def test_the_claim_function_is_defined_once_in_its_final_form():
+    """The combined #772 migration carries exactly one definition of the
+    claim, and it is the one with the over-budget `pending` reaper arm."""
+    sql = _terminal_migration()
+    assert sql.count("CREATE OR REPLACE FUNCTION claim_documents_for_indexing(") == 1
+    assert sql == _latest_claim()
+    assert re.search(r"r\.index_status = 'pending'", _reap(sql))
 
 
 def test_exhausted_is_admitted_by_the_check_constraint():

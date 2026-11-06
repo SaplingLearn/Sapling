@@ -4,7 +4,7 @@ Recompute every stale graph_nodes.mastery_tier from its mastery_score (#766).
 The tier is stored next to the score, so a change to the thresholds in
 config.py (MASTERY_*_MIN) — or any writer that ever stored a tier the current
 rule would not produce, including a 'subject_root' reset to 'unexplored' by
-migration 20261106042903 — leaves rows whose tier disagrees with their score.
+migration 20261106055333_state_machines_audit — leaves rows whose tier disagrees with their score.
 The atomic `apply_mastery_delta` function heals a node on its next write; this
 heals the rest, using `config.get_mastery_tier` so the thresholds keep their
 one home.

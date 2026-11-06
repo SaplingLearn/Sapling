@@ -224,7 +224,7 @@ def test_after_shutdown_nothing_is_accepted_and_no_worker_restarts(ph):
 
 def test_dropped_columns_have_no_reader_left():
     """users.current_room_id and courses.deleted_at are dropped by
-    20261106043825_drop_dead_state_columns; a reader added back would 400 at
+    20261106055333_state_machines_audit; a reader added back would 400 at
     PostgREST (mocked tests cannot see that)."""
     from pathlib import Path
     from unittest.mock import MagicMock

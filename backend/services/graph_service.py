@@ -613,7 +613,7 @@ def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, 
     """Apply ``delta`` to one node's mastery ATOMICALLY; return (before, after).
 
     The ``apply_mastery_delta`` SQL function (migration
-    20261106042903_graph_node_mastery_atomic.sql) locks the row, clamps the
+    20261106055333_state_machines_audit.sql) locks the row, clamps the
     new score, recomputes the tier from the thresholds passed here (config.py
     stays their one home) and increments ``times_studied`` in one statement,
     so concurrent quiz submits / tutor turns compose instead of the later
@@ -636,7 +636,7 @@ def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, 
         if exc.response.status_code != 404:
             raise
         logger.warning(
-            "apply_mastery_delta is missing (migration 20261106042903 not "
+            "apply_mastery_delta is missing (migration 20261106055333_state_machines_audit not "
             "applied?); falling back to a NON-atomic mastery update node=%s",
             row["id"],
         )

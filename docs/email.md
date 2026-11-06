@@ -163,10 +163,10 @@ inject markup. Defined in `backend/services/email_variables.py`.
 5. **Migrations** (before deploying the code): `20261022062444_newsletter_joined.sql`
    and `20261022063145_email.sql`. The second backfills `users.welcomed_at` for
    every account that's already approved, so the deploy doesn't welcome
-   existing students. `20261106042113_email_send_lease_broadcast_resume.sql`
+   existing students. `20261106055333_state_machines_audit.sql`
    adds `email_sends.claimed_at`, `email_broadcasts.heartbeat_at` and the
    `partial`/`skipped` broadcast statuses, and
-   `20261106050246_email_sends_idempotency_gen.sql` adds
+   `20261106055333_state_machines_audit.sql` adds
    `email_sends.idempotency_gen`. Apply both before the code that writes them.
 6. **Smoke test.** Go to Admin → Email, check the banner is gone, and use "Send
    test to me". The history and `email_sends` show the result; a failure's
