@@ -67,6 +67,7 @@ EXPECTED_STRUCTURED_AGENTS = {
     "concept_scan_agent",
     "course_summary_agent",
     "decision_agent",
+    "document_notes_agent",
     "flashcard_agent",
     "note_concepts_agent",
     "note_summary_agent",
@@ -75,6 +76,7 @@ EXPECTED_STRUCTURED_AGENTS = {
     "social_summary_agent",
     "study_guide_agent",
     "summary_agent",
+    "summary_edit_agent",
     "syllabus_extraction_agent",
 }
 EXPECTED_TEXT_AGENTS = {

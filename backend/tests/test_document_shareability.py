@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agents.document_notes import NotesSection
+
 
 # ── The classifier's new field ───────────────────────────────────────────────
 
@@ -240,12 +242,16 @@ def test_the_documents_row_records_its_shareability():
     result.classification.category = "assignment"
     result.classification.shareability = "completed_work"
     result.summary.abstract = "abstract"
+    result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
     result.concepts.concepts = []
 
     with (
         patch("routes.documents.table", side_effect=_table),
         patch("routes.documents.award_xp_safe"),
         patch("routes.documents.events_service.log_event"),
+        patch("routes.documents.create_summary_doc", return_value={
+            "id": "sd-stub", "content": {"type": "doc", "content": []},
+        }),
     ):
         _persist_document(
             user_id="u1", offering_id="off-1", filename="hw4.pdf",
@@ -291,6 +297,7 @@ class TestPersistRetry:
         result.classification.category = "lecture_notes"
         result.classification.shareability = "course_material"
         result.summary.abstract = "abstract"
+        result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
         result.concepts.concepts = []
         return result
 
@@ -315,6 +322,9 @@ class TestPersistRetry:
             patch("routes.documents.table", side_effect=_table),
             patch("routes.documents.award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             _persist_document(
                 user_id="u1", offering_id="off-1", filename="f.pdf",
@@ -488,6 +498,7 @@ class TestRetryDropsOnlyTheNamedColumn:
     def _result():
         result = MagicMock()
         result.classification.category = "lecture_notes"
+        result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
         result.classification.shareability = "course_material"
         result.summary.abstract = "abstract"
         result.concepts.concepts = []
@@ -516,6 +527,9 @@ class TestRetryDropsOnlyTheNamedColumn:
             patch("routes.documents.table", side_effect=_table),
             patch("routes.documents.award_xp_safe"),
             patch("routes.documents.events_service.log_event"),
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
         ):
             _persist_document(
                 user_id="u1", offering_id="off-1", filename="f.pdf",

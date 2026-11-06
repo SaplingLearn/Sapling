@@ -8,6 +8,7 @@ queue.
 """
 from unittest.mock import MagicMock, patch
 
+from agents.document_notes import NotesSection
 from services.encryption import decrypt_if_present
 
 
@@ -17,6 +18,7 @@ def _result(confidence=0.91):
     result.classification.shareability = "course_material"
     result.classification.confidence = confidence
     result.summary.abstract = "abstract"
+    result.notes.sections = [NotesSection(heading="h", heading_level=2, body="abstract")]
     result.concepts.concepts = []
     return result
 
@@ -45,6 +47,9 @@ def _persist(*, extracted_text="gradient descent notes", confidence=0.91,
         patch("routes.documents.table", side_effect=_table),
         patch("routes.documents.award_xp_safe"),
         patch("routes.documents.events_service.log_event"),
+        patch("routes.documents.create_summary_doc", return_value={
+            "id": "sd-stub", "content": {"type": "doc", "content": []},
+        }),
     ):
         doc_id, full_row = _persist_document(
             user_id="u1", offering_id="off-1", filename="f.pdf",

@@ -1,21 +1,23 @@
 """Document processing pipeline.
 
 Coordinates classification, summary, concept extraction, and (when
-applicable) syllabus extraction, then merges results into the user's
-course graph via `_step_apply_graph`, a durable step that calls
-`apply_concepts_to_graph`.
+applicable) syllabus extraction, then composes the result.
 
-There is no orchestrator agent here: the graph merge is a deterministic
-function call with concept names already produced by the workers, so
-we save a Gemini round-trip by skipping the agent wrapper entirely.
+Uploading a document NEVER writes to the knowledge graph. The extracted
+concepts are persisted on the document row (`documents.concept_notes`)
+and reach `graph_nodes` only when the student explicitly asks for it via
+the scan-concepts routes — an upload must not seed the course graph with
+concepts nobody chose to add.
+
+There is no orchestrator agent here: the result is composed
+deterministically from worker output, so we save a model round-trip by
+skipping the agent wrapper entirely.
 
 Concurrency model:
 - Workers (summary, concepts, syllabus) run in parallel via
   asyncio.gather.
 - Classification runs first because it gates whether syllabus
   extraction runs at all.
-- The graph update runs as a durable step (`_step_apply_graph`) after
-  workers complete, so a DBOS resume does not re-run the merge.
 
 Failure contract (ADR 0024 — this pipeline is the ONLY upload pipeline;
 ADR 0001's legacy fallback was retired in #151b):
@@ -31,9 +33,8 @@ ADR 0001's legacy fallback was retired in #151b):
 
 Internal API: the `_step_*` functions defined below are wrapped with
 @durable_step and are meant to be called ONLY from within the
-@durable_workflow-decorated `process_document` — either directly
-(`_step_apply_graph`) or via `_run_workers` (the other four). For the
-pinned dbos==2.28.0, calling a `_step_*` outside a workflow context is
+@durable_workflow-decorated `process_document`, via `_run_workers`. For
+the pinned dbos==2.28.0, calling a `_step_*` outside a workflow context is
 NOT undefined: `dbos/_core.py::decorate_step`'s wrapper checks
 `ctx.is_workflow()` and, when there's no ambient workflow context, falls
 straight through to `return func(*args, **kwargs)` — the plain function
@@ -52,13 +53,13 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from agents import WORKER_LIMITS
+from agents import NOTES_LIMITS, WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.classifier import classifier_agent, DocumentClassification
 from agents.summary import summary_agent, Summary
+from agents.document_notes import document_notes_agent, ComprehensiveNotes
 from agents.concept_extraction import concept_extraction_agent, ConceptList
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
-from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from services.durable import workflow as durable_workflow, step as durable_step
 
@@ -68,6 +69,7 @@ class DocumentProcessingResult(BaseModel):
 
     classification: DocumentClassification
     summary: Summary
+    notes: ComprehensiveNotes
     concepts: ConceptList
     syllabus: SyllabusAssignments | None = Field(
         default=None,
@@ -75,7 +77,11 @@ class DocumentProcessingResult(BaseModel):
     )
     graph_updated: bool = Field(
         default=False,
-        description="True if any concepts were merged into the graph.",
+        description=(
+            "Always False: uploading a document never merges concepts into "
+            "the graph. Kept on the wire so SSE/JSON clients and the "
+            "function-mode fixtures keep their existing shape."
+        ),
     )
 
 
@@ -83,6 +89,7 @@ class DocumentProcessingResult(BaseModel):
 class _WorkerResults:
     classification: DocumentClassification
     summary: Summary
+    notes: ComprehensiveNotes
     concepts: ConceptList
     syllabus: SyllabusAssignments | None
 
@@ -111,6 +118,15 @@ async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
 
 
 @durable_step
+async def _step_notes(text: str, deps: SaplingDeps) -> ComprehensiveNotes:
+    result = record_agent_usage(
+        await document_notes_agent.run(text, deps=deps, usage_limits=NOTES_LIMITS),
+        feature="document", task="document_notes", user_id=deps.user_id,
+    )
+    return result.output
+
+
+@durable_step
 async def _step_concepts(text: str, deps: SaplingDeps) -> ConceptList:
     result = record_agent_usage(
         await concept_extraction_agent.run(text, deps=deps, usage_limits=WORKER_LIMITS),
@@ -128,34 +144,6 @@ async def _step_syllabus(text: str, deps: SaplingDeps) -> SyllabusAssignments:
     return result.output
 
 
-@durable_step
-async def _step_apply_graph(
-    user_id: str, course_id: str | None, concept_names: list[str],
-) -> int:
-    """Merge extracted concepts into the graph as a durable step, so a
-    DBOS resume does not re-run the merge (it's the pipeline's one
-    real-Supabase side effect besides persistence, which happens outside
-    process_document entirely — see routes/documents.py).
-
-    Calls `apply_concepts_to_graph` by its bare (module-global) name
-    rather than binding it to a local/default-arg at decoration time —
-    that matters because a plain global reference inside a function body
-    is looked up fresh from the function's `__globals__` (this module's
-    namespace) on EVERY call, not captured once when the function is
-    defined. That is what lets tests/test_dbos_resume.py's
-    `document_module.apply_concepts_to_graph = AsyncMock(...)`
-    monkeypatch take effect here: it reassigns the SAME name in this
-    module's namespace that this call resolves at call time. (A default
-    argument like `apply_fn=apply_concepts_to_graph` would instead freeze
-    in the ORIGINAL function object at decoration time and silently not
-    observe the monkeypatch.) routes/documents.py's streaming route
-    imports and calls the same `apply_concepts_to_graph` independently,
-    inline and non-durable per ADR 0011's streaming-route asymmetry —
-    a separate binding this monkeypatch doesn't touch, and doesn't need to.
-    """
-    return await apply_concepts_to_graph(user_id, course_id, concept_names)
-
-
 async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
     """Run classification first, then fan out the other workers in parallel.
 
@@ -169,46 +157,44 @@ async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
     classification = await _step_classify(text, deps)
 
     summary_task = _step_summary(text, deps)
+    notes_task = _step_notes(text, deps)
     concepts_task = _step_concepts(text, deps)
     syllabus_task = _step_syllabus(text, deps) if classification.is_syllabus else None
 
     if syllabus_task is not None:
-        summary, concepts, syllabus = await asyncio.gather(
-            summary_task, concepts_task, syllabus_task,
+        summary, notes, concepts, syllabus = await asyncio.gather(
+            summary_task, notes_task, concepts_task, syllabus_task,
         )
         return _WorkerResults(
             classification=classification,
-            summary=summary, concepts=concepts, syllabus=syllabus,
+            summary=summary, notes=notes, concepts=concepts, syllabus=syllabus,
         )
-    summary, concepts = await asyncio.gather(summary_task, concepts_task)
+    summary, notes, concepts = await asyncio.gather(summary_task, notes_task, concepts_task)
     return _WorkerResults(
         classification=classification,
-        summary=summary, concepts=concepts, syllabus=None,
+        summary=summary, notes=notes, concepts=concepts, syllabus=None,
     )
 
 
 @durable_workflow
 async def process_document(text: str, deps: SaplingDeps) -> DocumentProcessingResult:
-    """Run workers in parallel, then merge concepts into the graph via the
-    durable `_step_apply_graph`.
+    """Run the workers in parallel and compose their output.
 
     DocumentProcessingResult is composed deterministically here from worker
-    outputs. The graph merge has no orchestrator agent — no decisions to
-    make beyond passing the already-extracted concept names through — but
-    IS wrapped as a checkpointed step (`_step_apply_graph`) so a DBOS
-    resume of this workflow doesn't repeat the merge.
+    outputs. Nothing in this pipeline touches the knowledge graph: the
+    extracted concepts travel on the result (and from there onto
+    `documents.concept_notes`), and only an explicit scan-concepts request
+    turns them into `graph_nodes`.
 
     Wrapped in `@durable_workflow` from services.durable: a no-op when
     DBOS_ENABLED is unset (the default), a real DBOS workflow when the
     operator opts in. See ADR 0011 for the activation procedure.
     """
     workers = await _run_workers(text, deps)
-    concept_names = [c.name for c in workers.concepts.concepts]
-    merged = await _step_apply_graph(deps.user_id, deps.course_id, concept_names)
     return DocumentProcessingResult(
         classification=workers.classification,
         summary=workers.summary,
+        notes=workers.notes,
         concepts=workers.concepts,
         syllabus=workers.syllabus,
-        graph_updated=merged > 0,
     )

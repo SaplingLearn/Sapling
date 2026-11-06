@@ -9,8 +9,8 @@
  * raw-SQL readback (support/db.ts::query).
  *
  * LLM-dependence (the #387 "known hard part"): the SSE pipeline's happy
- * path is agent-driven — classifier → (summary ∥ concepts) → graph merge —
- * and the documents row is only persisted AFTER those stages, so the
+ * path is agent-driven — classifier → (summary ∥ concepts) — and the
+ * documents row is only persisted AFTER those stages, so the
  * journey cannot complete without model responses. The #391 seam covers
  * every one of these agents (they all build via `model_for`); its
  * boot-time half (#392's SAPLING_FUNCTION_HANDLERS autoload, which this
@@ -55,6 +55,12 @@ const FIXTURE_NAME = "upload-journey.pdf";
 // output this journey asserts on. Keep in sync with that module.
 const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
+// The Library card's rendered text is `summary_preview`, truncated to 220
+// chars (services/summary_docs_service.py::_PREVIEW_MAX_CHARS) — and
+// SCRIPTED_ABSTRACT_SNIPPET sits at char 223 of E2E_DOC_ABSTRACT, just past
+// that cutoff. Use a snippet from the abstract's opening clause instead,
+// which is always inside the preview window.
+const SCRIPTED_ABSTRACT_PREVIEW_SNIPPET = "gradient descent as an iterative optimization procedure";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
 
 /**
@@ -164,10 +170,11 @@ test("upload → SSE → document appears in library and Postgres", async ({
 
   // ── Postgres readback (raw SQL) ───────────────────────────────────────
   const docs = await queryRaw(
-    `SELECT id, user_id, offering_id, category, summary
-       FROM documents
-      WHERE file_name = $1
-        AND deleted_at IS NULL`,
+    `SELECT d.id, d.user_id, d.offering_id, d.category, sd.content AS summary_content
+       FROM documents d
+       JOIN summary_docs sd ON sd.primary_document_id = d.id
+      WHERE d.file_name = $1
+        AND d.deleted_at IS NULL`,
     [FIXTURE_NAME],
   );
   expect(docs).toHaveLength(1);
@@ -176,21 +183,28 @@ test("upload → SSE → document appears in library and Postgres", async ({
     user_id: string;
     offering_id: string | null;
     category: string;
-    summary: string | null;
+    summary_content: string | null;
   };
   expect(doc.user_id).toBe(USER_ACTIVE);
   expect(doc.category).toBe(SCRIPTED_CATEGORY);
   // Documents key on the offering (0025) — resolve_offering(create=True)
   // must have attached one.
   expect(doc.offering_id).toBeTruthy();
-  // `documents.summary` is column-encrypted at rest: present, but the
-  // stored value must be ciphertext, never the plaintext abstract.
-  expect(doc.summary ?? "").not.toBe("");
-  expect(doc.summary ?? "").not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
-  expect(doc.summary ?? "").not.toContain("gradient descent");
+  // summary_docs.content is encrypted at rest (library-summary-editor
+  // cutover, replacing the old documents.summary assertion here): present,
+  // but the stored value must be ciphertext, never the plaintext abstract.
+  expect(doc.summary_content ?? "").not.toBe("");
+  expect(String(doc.summary_content)).not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
+  expect(String(doc.summary_content)).not.toContain("gradient descent");
 
-  // Phase-3 side effect: the scripted concepts were merged into the
-  // course knowledge graph (plaintext columns — safe to assert exactly).
+  // An upload adds NOTHING to the knowledge graph. The pipeline used to
+  // merge every extracted concept into the course graph (and a
+  // syllabus/assignment backstop did it again when the merge was skipped),
+  // so uploading quietly seeded nodes the student never chose. The
+  // concepts now live on the document row only; `graph_nodes` gains them
+  // solely through an explicit scan (Library's "scan concepts" button →
+  // /api/documents/doc/{id}/scan-concepts). Plaintext column — safe to
+  // assert exactly.
   const nodes = await queryRaw(
     `SELECT concept_name
        FROM graph_nodes
@@ -198,9 +212,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
         AND concept_name = ANY($2::text[])`,
     [USER_ACTIVE, SCRIPTED_CONCEPTS],
   );
-  expect(nodes.map((n) => n.concept_name as string).sort()).toEqual(
-    [...SCRIPTED_CONCEPTS].sort(),
-  );
+  expect(nodes).toHaveLength(0);
 
   // ── Document appears in the library ───────────────────────────────────
   // Closing via Done triggers the library refetch (onComplete → load()).
@@ -210,9 +222,10 @@ test("upload → SSE → document appears in library and Postgres", async ({
   const card = page.getByTestId(`library-doc-${doc.id}`);
   await expect(card).toBeVisible();
   await expect(card).toContainText(FIXTURE_NAME);
-  // The card renders the decrypted summary — the encryption round-trip
-  // (encrypt at persist, decrypt at read) closed correctly.
-  await expect(card).toContainText(SCRIPTED_ABSTRACT_SNIPPET);
+  // The card renders the decrypted, truncated summary preview — the
+  // encryption round-trip (encrypt at persist, decrypt at read) closed
+  // correctly.
+  await expect(card).toContainText(SCRIPTED_ABSTRACT_PREVIEW_SNIPPET);
 
   // ── Library course filter matches the seeded course (#435) ────────────
   // Regression: GET /api/documents/user/{id} used to return offering_id but

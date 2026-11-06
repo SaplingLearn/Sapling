@@ -203,11 +203,13 @@ def test_shim_resume_minimal_workflow(tmp_path):
 # (tests/test_e2e_function_handlers.py) -- i.e. wrapping it in
 # `@durable_workflow`/`@durable_step` changes durability, not behavior.
 #
-# What this does NOT prove: this stubs `apply_concepts_to_graph` (the one
-# real-Supabase side effect inside process_document) rather than running
-# against the live local stack + seeded course/user rows -- wiring that
+# What this does NOT prove: this runs the pipeline in isolation rather
+# than against the live local stack + seeded course/user rows -- wiring that
 # full stack through a subprocess was disproportionate to what this test is
-# for (see the module docstring). The HTTP-route-level, real-DB behavior
+# for (see the module docstring). process_document itself has no Supabase
+# side effect to stub (the graph merge is gone -- an upload never writes
+# `graph_nodes`); persistence happens in the route, outside the workflow.
+# The HTTP-route-level, real-DB behavior
 # under DBOS-off is already covered by tests/test_documents_routes.py and
 # the Chapter 1 Playwright upload journey; this test's job is narrower and
 # DBOS-specific: prove the workflow is genuinely DBOS-backed
@@ -222,7 +224,6 @@ def test_shim_resume_minimal_workflow(tmp_path):
 _PROCESS_DOCUMENT_HELPER = r"""
 import asyncio
 import json
-from unittest.mock import AsyncMock
 
 import services.durable as durable
 
@@ -230,10 +231,6 @@ assert durable.is_durable(), "DBOS_ENABLED=true but the shim did not activate"
 
 import agents.document as document_module
 from agents.deps import SaplingDeps
-
-# The only real-Supabase side effect inside process_document -- stubbed so
-# this test needs nothing but DBOS's own Postgres (see module comment above).
-document_module.apply_concepts_to_graph = AsyncMock(return_value=0)
 
 durable.init_dbos()
 
@@ -408,7 +405,6 @@ _PIPELINE_RESUME_HELPER = r"""
 import asyncio
 import json
 import sys
-from unittest.mock import AsyncMock
 
 import services.durable as durable
 
@@ -418,25 +414,6 @@ import agents.document as document_module
 from agents.deps import SaplingDeps
 
 workflow_id = sys.argv[1]
-graph_counter = sys.argv[2]
-
-
-async def _fake_apply_concepts_to_graph(user_id, course_id, concept_names):
-    # File-backed, not just an AsyncMock call count: this test spans TWO
-    # separate subprocesses, and an in-memory mock count would not survive
-    # across them.
-    with open(graph_counter, "a") as f:
-        print("x", file=f)
-    return 0
-
-
-# The one real-Supabase side effect inside process_document -- stubbed the
-# same way test_pipeline_identical_with_dbos_on above does, but with a
-# file-backed side_effect (see _fake_apply_concepts_to_graph) instead of
-# just an AsyncMock call count.
-document_module.apply_concepts_to_graph = AsyncMock(
-    side_effect=_fake_apply_concepts_to_graph
-)
 
 durable.init_dbos()
 
@@ -483,7 +460,6 @@ def test_pipeline_crash_resume_via_workflow_id(tmp_path):
     workflow_id = "pipeline-resume-" + str(uuid.uuid4())
     classify_counter = tmp_path / "classify_counter.txt"
     summary_marker = tmp_path / "summary_marker.txt"
-    graph_counter = tmp_path / "graph_counter.txt"
 
     env = _subprocess_env(
         SAPLING_MODEL_MODE="function",
@@ -492,7 +468,7 @@ def test_pipeline_crash_resume_via_workflow_id(tmp_path):
         DBOS_RESUME_CLASSIFY_COUNTER=str(classify_counter),
         DBOS_RESUME_SUMMARY_MARKER=str(summary_marker),
     )
-    args = (workflow_id, str(graph_counter))
+    args = (workflow_id,)
 
     crash = _run_helper(script, *args, env=env)
     assert crash.returncode == 42, (
@@ -511,15 +487,10 @@ def test_pipeline_crash_resume_via_workflow_id(tmp_path):
     # re-run an already-checkpointed step on the phase-2 same-id retry.
     assert classify_counter.read_text().splitlines() == ["x"]
 
-    # The _step_apply_graph checkpoint claim: the graph merge runs exactly
-    # once total, on whichever execution actually completes the workflow
-    # (phase 1 crashes before reaching it). File-backed so the count is
-    # correct across the two subprocesses.
-    assert graph_counter.read_text().splitlines() == ["x"]
-
     [result_line] = [
         line for line in resume.stdout.splitlines() if line.startswith("RESULT_JSON:")
     ]
     payload = json.loads(result_line[len("RESULT_JSON:"):])
     assert payload["category"] == "lecture_notes"
-    assert payload["graph_updated"] is False  # _fake_apply_concepts_to_graph returns 0
+    # Always False: an upload never merges concepts into the graph.
+    assert payload["graph_updated"] is False

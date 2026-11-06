@@ -3013,3 +3013,33 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 .ld-betaclose:hover  { background: rgba(107,114,128,0.1); }
 .ld-betasubmit:hover:not(:disabled) { background: var(--brand-forest-hover) !important; }
 .ld-betainput:focus  { border-color: var(--brand-forest); box-shadow: 0 0 0 3px rgba(68,93,34,0.12); outline: none; }
+
+.summary-suggestion-pending-range {
+  background: var(--accent-soft);
+  border-radius: var(--r-xs);
+}
+
+.summary-suggestion-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: var(--bg-panel);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.summary-suggestion-card__text {
+  color: var(--accent);
+  max-width: 320px;
+}
+
+.summary-suggestion-card__actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
