@@ -29,7 +29,11 @@ import httpx
 
 from db.connection import table
 from services.academics import offering_course_id
-from services.chunk_visibility import decide_visibility
+from services.chunk_visibility import (
+    decide_visibility,
+    record_sources,
+    withdraw_document_chunks,
+)
 from services.chunker import chunk_for_category
 from services.encryption import decrypt, decrypt_if_present
 from services.events_service import log_event
@@ -135,6 +139,19 @@ def index_document(
         logger.exception("[RAG] indexing doc %s failed", doc_id)
         outcome = IndexOutcome(FAILED, error=type(exc).__name__)
 
+    # `_load` refused a deleted row, but only at the start: a delete that
+    # lands while this attempt embeds still sees its chunks arrive after the
+    # delete path withdrew what was there (#758). The sources this attempt
+    # wrote are already in the ledger, so whichever of the two runs second
+    # sees the other's effect — the same ordering argument as rag_service's
+    # post-index consent reconcile.
+    if outcome.status != SKIPPED and _deleted_since_load(doc_id):
+        logger.info(
+            "[RAG] doc %s was deleted while it indexed — withdrawing its chunks",
+            doc_id,
+        )
+        withdraw_document_chunks(doc_id, row["user_id"])
+
     if tracking:
         if outcome.status == SKIPPED and not first_attempt:
             # `skipped` describes this PROCESS (embedding is off here), not the
@@ -162,6 +179,20 @@ def _load(doc_id: str) -> dict | None:
         "*", filters={"id": f"eq.{doc_id}", "deleted_at": "is.null"}, limit=1,
     )
     return rows[0] if rows else None
+
+
+def _deleted_since_load(doc_id: str) -> bool:
+    """Whether the row is gone or soft-deleted now. A failed read says no:
+    retrieval refuses chunks whose every source is deleted anyway."""
+    try:
+        rows = table("documents").select(
+            "deleted_at", filters={"id": f"eq.{doc_id}"}, limit=1,
+        )
+    except Exception:
+        logger.warning("[RAG] could not re-check doc %s for deletion", doc_id,
+                       exc_info=True)
+        return False
+    return not rows or rows[0].get("deleted_at") is not None
 
 
 def _course_code(offering_id: str | None) -> str | None:
@@ -305,6 +336,10 @@ def _run(row: dict) -> IndexOutcome:
             error = type(exc).__name__
             break
 
+        # Every try, not just the best: ids are content-addressed, so what any
+        # try upserted is live now and must be findable when the document is
+        # deleted (#758).
+        record_sources(getattr(result, "chunk_ids", ()), doc_id)
         if result.embedding_disabled:
             # #439: the seam turned embedding off (every function-mode run).
             # rag_service owns that rule; this only records it as the designed

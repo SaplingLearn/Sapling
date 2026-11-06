@@ -334,6 +334,11 @@ class ChunkIndexResult(NamedTuple):
     #: Class name of the last embed exception swallowed, e.g. 'ServerError'.
     #: The class only — an exception message can quote the chunk text.
     embed_error: str | None = None
+    #: Ids of the rows this pass upserted, so the caller can record which
+    #: document produced them (`chunk_visibility.record_sources`, #758). This
+    #: layer does not record them itself: it is also called with fixture
+    #: doc ids that name no `documents` row.
+    chunk_ids: tuple[str, ...] = ()
 
 
 def index_document_chunks(
@@ -523,6 +528,7 @@ def index_document_chunks_detailed(
     return ChunkIndexResult(
         upserted=len(embedded), total=len(records),
         embedding_disabled=embedding_disabled, embed_error=embed_error,
+        chunk_ids=tuple(r["id"] for r in embedded),
     )
 
 

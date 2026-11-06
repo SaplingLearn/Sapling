@@ -85,6 +85,7 @@ class _Chunks:
     total: int
     embedding_disabled: bool = False
     embed_error: str | None = None
+    chunk_ids: tuple = ()
 
 
 @pytest.fixture
@@ -94,6 +95,12 @@ def db(monkeypatch):
     monkeypatch.setattr(di, "offering_course_id", lambda off: "course-1")
     monkeypatch.setattr(di, "_BACKOFF_SECONDS", (0, 0))
     monkeypatch.setattr(di, "_observe_course_relevance", lambda *a, **k: None)
+    fake.sources = []
+    fake.withdrawn = []
+    monkeypatch.setattr(di, "record_sources",
+                        lambda ids, doc_id: fake.sources.append((tuple(ids), doc_id)))
+    monkeypatch.setattr(di, "withdraw_document_chunks",
+                        lambda doc_id, user_id: fake.withdrawn.append((doc_id, user_id)))
     return fake
 
 
@@ -384,6 +391,48 @@ def test_a_deleted_document_is_not_indexed(db, events, visibility, monkeypatch):
 
     assert index_document("doc-1").error == "no_such_document"
     assert calls == []
+
+
+# ── #758: what an attempt landed is findable, and a delete mid-index wins ──
+
+
+def test_every_try_records_the_chunks_it_landed(db, events, visibility, monkeypatch):
+    """The source ledger is how a delete finds a document's chunks. A short
+    try's rows are live too (ids are content-addressed), so each try records."""
+    _doc(db)
+    _rag(monkeypatch, _Chunks(2, 4, embed_error="ServerError", chunk_ids=("a", "b")),
+         _Chunks(4, 4, chunk_ids=("a", "b", "c", "d")))
+
+    index_document("doc-1")
+
+    assert db.sources == [(("a", "b"), "doc-1"), (("a", "b", "c", "d"), "doc-1")]
+
+
+def test_a_document_deleted_mid_index_has_its_chunks_withdrawn(db, events,
+                                                               visibility, monkeypatch):
+    """`_load` only refuses a deleted row at the START. The delete path's
+    withdrawal can run before this attempt's upsert lands, so the attempt
+    re-checks afterwards and withdraws what it wrote."""
+    row = _doc(db)
+
+    def deleted_while_embedding(course_code, doc_id, uploader_id, chunks, **kw):
+        row["deleted_at"] = "2026-11-06T00:00:00Z"
+        return _Chunks(4, 4, chunk_ids=("a",))
+
+    monkeypatch.setattr(di, "index_document_chunks_detailed", deleted_while_embedding)
+
+    index_document("doc-1")
+
+    assert db.withdrawn == [("doc-1", "u1")]
+
+
+def test_a_live_document_is_not_withdrawn(db, events, visibility, monkeypatch):
+    _doc(db)
+    _rag(monkeypatch, _Chunks(4, 4))
+
+    index_document("doc-1")
+
+    assert db.withdrawn == []
 
 
 # ── the claim: one attempt, one increment, one winner ───────────────────────
