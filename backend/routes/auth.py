@@ -100,32 +100,44 @@ def _email_domain_allowed(email: str) -> bool:
     return domain in ALLOWED_EMAIL_DOMAINS
 
 
+def _waitlist_entries(email: str, columns: str = "id,email,approved_at,joined_at") -> list[dict]:
+    """Every waitlist row (`newsletter_emails`) for `email`, approved first.
+
+    Case-insensitive, because the waitlist keeps the email as typed — so one
+    address can have case twins, and every admin write (approve, revoke,
+    unapprove) must reach all of them or it can miss the row sign-in reads.
+    Re-checked in Python because PostgREST rewrites `*` to a wildcard that
+    `like_literal` cannot escape. Raises on a lookup error: the caller decides
+    whether that fails closed (sign-in) or loud (an admin write).
+    """
+    wanted = email.strip().lower()
+    if not wanted:
+        return []
+    needle = pg_quote_value(like_literal(wanted))
+    rows = table("newsletter_emails").select(
+        columns, filters={"or": f"(email.ilike.{needle})"},
+    )
+    matches = [r for r in rows or [] if (r.get("email") or "").strip().lower() == wanted]
+    # Two rows can differ only by case; prefer an approved one.
+    matches.sort(key=lambda r: not r.get("approved_at"))
+    return matches
+
+
 def _waitlist_entry(email: str) -> dict | None:
     """The landing-page waitlist row (`newsletter_emails`) for `email`, if any.
 
     Admin → Allowlist sets its `approved_at` (`POST /api/admin/allowlist/approve`),
     which lets the student in on their first sign-in instead of an admin
     approving the `users` row after they hit /pending; `joined_at` records that
-    they actually got in. Case-insensitive, because the waitlist keeps the email
-    as typed; re-checked in Python because PostgREST rewrites `*` to a wildcard
-    that `like_literal` cannot escape. Fails closed: a lookup error reads as "not
-    on the waitlist", leaving the user pending rather than breaking sign-in.
+    they actually got in. Of case twins, the approved one wins. Fails closed: a
+    lookup error reads as "not on the waitlist", leaving the user pending
+    rather than breaking sign-in.
     """
-    wanted = email.strip().lower()
-    if not wanted:
-        return None
     try:
-        needle = pg_quote_value(like_literal(wanted))
-        rows = table("newsletter_emails").select(
-            "id,email,approved_at,joined_at",
-            filters={"or": f"(email.ilike.{needle})"},
-        )
+        matches = _waitlist_entries(email)
     except Exception:
         logger.warning("waitlist lookup failed", exc_info=True)
         return None
-    matches = [r for r in rows or [] if (r.get("email") or "").strip().lower() == wanted]
-    # Two rows can differ only by case; prefer an approved one.
-    matches.sort(key=lambda r: not r.get("approved_at"))
     return matches[0] if matches else None
 
 
@@ -844,11 +856,25 @@ def _pending_claims(token: str) -> dict:
     return claims
 
 
+def _pending_standing(email: str, entry: dict | None) -> dict:
+    """The /pending view of `email`: on the waitlist at all, and approved yet.
+
+    `approved` lets /pending say "you're in — sign in again" once an admin
+    approves the address while the student sits on the page: the pending token
+    is not a session, so only a fresh sign-in can let them in.
+    """
+    return {
+        "email": email,
+        "on_waitlist": entry is not None,
+        "approved": bool(entry and entry.get("approved_at")),
+    }
+
+
 @router.post("/pending/status")
 def pending_status(body: PendingTokenBody):
-    """Whether an unapproved sign-in's email is on the waitlist (/pending)."""
+    """Where an unapproved sign-in's email stands on the waitlist (/pending)."""
     email = _pending_claims(body.token)["email"]
-    return {"email": email, "on_waitlist": _waitlist_entry(email) is not None}
+    return _pending_standing(email, _waitlist_entry(email))
 
 
 @router.post("/pending/join")
@@ -874,7 +900,7 @@ def pending_join(body: PendingTokenBody):
         raise HTTPException(
             status_code=500, detail="Could not join the waitlist. Please try again.",
         )
-    return {"email": email, "on_waitlist": True}
+    return {**_pending_standing(email, entry), "on_waitlist": True}
 
 
 class MintTestSessionBody(BaseModel):

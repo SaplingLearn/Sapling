@@ -333,13 +333,35 @@ def test_pending_status_not_on_waitlist(pending):
     tables, client, token = pending(waitlist_rows=[])
     resp = client.post("/api/auth/pending/status", json={"token": token})
     assert resp.status_code == 200
-    assert resp.json() == {"email": EMAIL, "on_waitlist": False}
+    assert resp.json() == {"email": EMAIL, "on_waitlist": False, "approved": False}
     tables["users"].select.assert_not_called()  # there is no account to look up
 
 
 def test_pending_status_on_waitlist_is_case_insensitive(pending):
     _, client, token = pending(waitlist_rows=[{"id": "w1", "email": "Student@BU.edu", "approved_at": None}])
     assert client.post("/api/auth/pending/status", json={"token": token}).json()["on_waitlist"] is True
+
+
+def test_pending_status_reports_an_approval_that_landed_after_sign_in(pending):
+    """#757: an admin approving the address while the student sits on /pending
+    used to leave the page able to say only "sign in again" — it could not
+    tell "approved" from "still waiting". The status now says which."""
+    _, client, token = pending(waitlist_rows=[
+        {"id": "w1", "email": "Student@BU.edu", "approved_at": None},
+        {"id": "w2", "email": EMAIL, "approved_at": APPROVED_AT},
+    ])
+    resp = client.post("/api/auth/pending/status", json={"token": token})
+    assert resp.json() == {"email": EMAIL, "on_waitlist": True, "approved": True}
+
+
+def test_waitlist_entries_returns_every_case_twin(monkeypatch):
+    """#757: admin writes must reach every case twin, not just the first."""
+    _tables(monkeypatch, users_rows=[], waitlist_rows=[
+        {"id": "w1", "email": "Student@bu.edu", "approved_at": None},
+        {"id": "w2", "email": "student@bu.edu", "approved_at": APPROVED_AT},
+        {"id": "w3", "email": "other@bu.edu", "approved_at": None},
+    ])
+    assert [r["id"] for r in auth_module._waitlist_entries(EMAIL)] == ["w2", "w1"]
 
 
 def test_pending_status_bad_token_is_401(pending):
@@ -351,7 +373,7 @@ def test_pending_join_adds_the_sign_in_email(pending):
     tables, client, token = pending(waitlist_rows=[])
     resp = client.post("/api/auth/pending/join", json={"token": token})
     assert resp.status_code == 200
-    assert resp.json() == {"email": EMAIL, "on_waitlist": True}
+    assert resp.json() == {"email": EMAIL, "on_waitlist": True, "approved": False}
     upsert = tables["newsletter_emails"].upsert.call_args
     assert upsert.args[0] == {"email": EMAIL, "first_name": None}
     assert upsert.kwargs["on_conflict"] == "email"
