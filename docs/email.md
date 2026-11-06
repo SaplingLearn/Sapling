@@ -25,7 +25,9 @@ Tests, E2E and local dev run this way. A `skipped` or `failed` send can be
 re-claimed later, so re-approving someone after the key is set does send their
 "you're in". The welcome works the same way: `users.welcomed_at` is stamped
 only once a welcome is actually `sent`, so a welcome that was skipped or
-failed goes out on that person's next sign-in.
+failed goes out on that person's next sign-in. If the welcome went out but
+the stamp failed, the next sign-in's send comes back `duplicate`. Its ledger
+row says `sent`, so `welcomed_at` is stamped then.
 
 **Send ledger (`email_sends`).** A send claims its dedupe key as `queued`
 (with `claimed_at`) before it talks to Resend, then records `sent`, `failed`
@@ -36,15 +38,24 @@ a `queued` row older than 15 minutes, which means the process died mid-send or
 couldn't write the outcome. A failed outcome write is retried once, then
 logged at ERROR.
 
-**Idempotency.** Every attempt at one dedupe key sends the same Resend
-`Idempotency-Key` (the dedupe key itself). If an earlier attempt reached Resend
-before a timeout or crash, Resend returns its stored result instead of
-delivering again. Resend keeps keys for **24 hours**, which leaves one residual
-risk: if an attempt's outcome is never learned (a transport timeout, or a crash
-before the status write) and the key is re-claimed more than 24 hours later,
-that address can get the email twice. A 409 from Resend (the same key still in
-flight, or a changed payload, such as a first name learned in between) is
-recorded as `failed` and retried by a later re-claim.
+**Idempotency.** Each send carries a Resend `Idempotency-Key`. The first
+attempt uses the dedupe key itself. Whether the next attempt reuses it depends
+on what happened last time:
+
+| last outcome | next attempt's key |
+| --- | --- |
+| unknown: transport error or timeout, a crash before the status write, or a 409 `invalid_idempotent_request` (the payload changed, e.g. a first name learned in between) | the **same** key, so if that attempt reached Resend, Resend returns its stored result instead of delivering again |
+| definitive: Resend answered with any other non-2xx (4xx, 5xx, a 429 after the retry) | a **new** key, `<dedupe key>#<n>` (`email_sends.idempotency_gen`), so the retry is a real retry and not a replay of the cached failure |
+
+A 409 `concurrent_idempotent_requests` means another attempt with the same key
+is still in flight at Resend, for example a re-claim of a stale `queued` row
+racing a live send. That attempt owns the outcome, so this one returns
+`duplicate` and leaves the row alone. Resend keeps keys for **24 hours**, which
+leaves one residual risk: if an attempt's outcome is never learned and the key
+is re-claimed more than 24 hours later, that address can get the email twice.
+
+Resend's docs don't say whether a failed response is stored against a key,
+which is why a definitive failure moves to a new key.
 
 **Privacy:** the email tables (`email_sends`, `email_suppressions`,
 `email_broadcasts`) never store an address, only `recipient_hash`, an HMAC
@@ -154,8 +165,9 @@ inject markup. Defined in `backend/services/email_variables.py`.
    every account that's already approved, so the deploy doesn't welcome
    existing students. `20261106042113_email_send_lease_broadcast_resume.sql`
    adds `email_sends.claimed_at`, `email_broadcasts.heartbeat_at` and the
-   `partial`/`skipped` broadcast statuses; apply it before the code that
-   writes them.
+   `partial`/`skipped` broadcast statuses, and
+   `20261106050246_email_sends_idempotency_gen.sql` adds
+   `email_sends.idempotency_gen`. Apply both before the code that writes them.
 6. **Smoke test.** Go to Admin → Email, check the banner is gone, and use "Send
    test to me". The history and `email_sends` show the result; a failure's
    `error` column says why, with the address scrubbed.

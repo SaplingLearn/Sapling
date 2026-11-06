@@ -17,15 +17,18 @@ Every send goes through `send_email`, which:
    un-suppressed by an admin), or `queued` past `STALE_QUEUED_AFTER` (the
    process died mid-send, or its status write failed) can be re-claimed;
 4. with no `RESEND_API_KEY` (the kill switch: tests, E2E, local dev) marks the
-   row `skipped`; otherwise POSTs to Resend under an Idempotency-Key equal to
-   the dedupe key, and marks it `sent` or `failed`.
+   row `skipped`; otherwise POSTs to Resend under the key's current
+   Idempotency-Key (`_idempotency_key`), and marks it `sent` or `failed`.
 
-The idempotency key is the SAME for every attempt at one dedupe key, so a
-re-claimed send whose earlier attempt actually reached Resend (a transport
-timeout after delivery, or a crash before the status write) gets Resend's
-stored response back instead of a second delivery. Resend keeps keys for 24
-hours: a re-claim after that window can still double-send an earlier attempt
-whose outcome we never learned. That is the residual risk (docs/email.md).
+The Idempotency-Key is reused only while the last attempt's outcome is
+UNKNOWN: a re-claimed send whose earlier attempt may have reached Resend (a
+transport error or timeout, a crash before the status write) sends the same
+key, so Resend replays its stored result instead of delivering twice. After a
+DEFINITIVE provider failure (a non-2xx response), `email_sends.idempotency_gen`
+is bumped and the next attempt sends a new key, so a retry is a real retry and
+not a replay of the cached failure. Resend keeps keys for 24 hours: a re-claim
+after that window can still double-send an attempt whose outcome we never
+learned. That is the residual risk (docs/email.md).
 
 It never raises: an email is a side effect, and a failure must never fail the
 request that triggered it. Routes enqueue through `send_in_background` (FastAPI
@@ -287,6 +290,24 @@ def _retry_after(resp: httpx.Response) -> float:
     return max(MIN_REQUEST_INTERVAL_S, min(value, MAX_RETRY_AFTER_S))
 
 
+def _idempotency_key(dedupe_key: str, gen: int) -> str:
+    """The Resend Idempotency-Key for generation `gen` of a dedupe key: the key
+    itself first, then `<key>#<gen>` after each definitive failure. Kept within
+    Resend's 256-character limit without cutting off the generation."""
+    if not gen:
+        return dedupe_key[:256]
+    suffix = f"#{gen}"
+    return dedupe_key[: 256 - len(suffix)] + suffix
+
+
+def _error_name(resp: httpx.Response) -> str:
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    return str(body.get("name") or "") if isinstance(body, dict) else ""
+
+
 def _post_to_resend(payload: dict, idempotency_key: str) -> httpx.Response:
     headers = {
         "Authorization": f"Bearer {config.RESEND_API_KEY.strip()}",
@@ -434,6 +455,10 @@ def send_email(
         return "duplicate"
 
     row_id = claimed[0].get("id")
+    try:
+        gen = int(claimed[0].get("idempotency_gen") or 0)
+    except (TypeError, ValueError):
+        gen = 0
 
     if not is_configured():
         logger.info("RESEND_API_KEY unset; email skipped kind=%s key=%s", kind, dedupe_key)
@@ -455,20 +480,26 @@ def send_email(
     if reply_to:
         payload["reply_to"] = reply_to
 
-    # Stable per dedupe_key, NOT per attempt: if an earlier attempt reached
-    # Resend (a timeout after delivery, a crash before the status write),
-    # Resend answers this one with the stored result instead of mailing again.
-    # Resend holds keys for 24 h; a re-claim after that can double-send an
-    # attempt whose outcome we never learned (the documented residual risk).
-    # A 409 (same key still in flight, or a changed payload) lands as `failed`
-    # and a later re-claim retries it.
+    # Same key while the last outcome is unknown (Resend replays instead of
+    # mailing again); a new generation after a definitive failure (a replay of
+    # the cached failure would make every retry a no-op for 24 h). Resend
+    # holds keys for 24 h; a re-claim after that can double-send an attempt
+    # whose outcome we never learned (the documented residual risk).
     try:
-        resp = _post_to_resend(payload, dedupe_key)
-    except Exception as exc:  # noqa: BLE001 — network/transport failure
+        resp = _post_to_resend(payload, _idempotency_key(dedupe_key, gen))
+    except Exception as exc:  # noqa: BLE001 — network/transport failure: outcome UNKNOWN
         error = type(exc).__name__
         logger.warning("email send failed kind=%s key=%s error=%s", kind, dedupe_key, error)
         _mark(row_id, {"status": "failed", "error": error}, dedupe_key=dedupe_key)
         return "failed"
+
+    if resp.status_code == 409 and _error_name(resp) == "concurrent_idempotent_requests":
+        # Another attempt with this key is in flight at Resend (a stale-queued
+        # re-claim racing a live send): it owns the outcome and writes it to
+        # this same row. Leave the row alone; if that attempt is dead too, the
+        # row goes stale again and the next send re-claims it.
+        logger.info("email already in flight at Resend kind=%s key=%s", kind, dedupe_key)
+        return "duplicate"
 
     if 200 <= resp.status_code < 300:
         provider_id = None
@@ -487,7 +518,13 @@ def send_email(
 
     error = _scrub(_error_from_response(resp), to)
     logger.warning("email send failed kind=%s key=%s error=%s", kind, dedupe_key, error)
-    _mark(row_id, {"status": "failed", "error": error}, dedupe_key=dedupe_key)
+    fields: dict = {"status": "failed", "error": error}
+    if not (resp.status_code == 409 and _error_name(resp) == "invalid_idempotent_request"):
+        # Definitive: Resend answered and did not send. The next attempt gets a
+        # fresh key. (A 409 for a changed payload means an earlier request with
+        # this key reached Resend and its outcome is still unknown: keep it.)
+        fields["idempotency_gen"] = gen + 1
+    _mark(row_id, fields, dedupe_key=dedupe_key)
     return "failed"
 
 
@@ -544,11 +581,30 @@ def queue_waitlist_approved(background_tasks, email: str, first_name: Optional[s
         logger.warning("could not queue waitlist approval email", exc_info=True)
 
 
+def _already_sent(dedupe_key: str) -> bool:
+    """Whether the ledger records this key as `sent`. False on any error."""
+    try:
+        rows = table("email_sends").select(
+            "status", filters={"dedupe_key": f"eq.{dedupe_key}"}, limit=1,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("email_sends status read failed key=%s", dedupe_key, exc_info=True)
+        return False
+    return bool(rows) and rows[0].get("status") == "sent"
+
+
 def _send_then(on_sent, **kwargs) -> str:
-    """`send_email`, then `on_sent()` only if the mail actually went out.
-    Never raises."""
+    """`send_email`, then `on_sent()` once the mail has actually gone out:
+    on `sent`, and on a `duplicate` whose ledger row is `sent` (an earlier
+    delivery whose hook failed; without this the caller would re-run on every
+    trigger forever). Never raises."""
     status = send_email(**kwargs)
-    if status == "sent" and on_sent is not None:
+    if on_sent is None:
+        return status
+    went_out = status == "sent" or (
+        status == "duplicate" and _already_sent(kwargs.get("dedupe_key") or "")
+    )
+    if went_out:
         try:
             on_sent()
         except Exception:  # noqa: BLE001
