@@ -71,6 +71,16 @@ export type QuizEvent =
   | { type: "PRACTISE_MISSED"; missedCount: number; numQuestions: number }
   | { type: "NEXT_IN_QUEUE" }
   | { type: "EXIT" }
+  /**
+   * #760: the student stops waiting on a request. Before this, `generating` and
+   * `submitting` had no way out at all — a `/generate` that never answered left
+   * the skeleton up for good. From `generating` it goes home (nothing was
+   * created that the client knows about); from `submitting` it goes BACK INTO
+   * the quiz, on the final verdict, so the attempt stays live and the ordinary
+   * exits (See results again, or Leave with its confirmation) still apply —
+   * invariant 1 holds. The hook aborts the request; this only moves the phase.
+   */
+  | { type: "CANCEL" }
   | { type: "FLAG" }
   | { type: "DISMISS_ERROR" }
   // ── Two events beyond §4's list, both forced by effects that have nowhere
@@ -184,13 +194,29 @@ export function canSubmitAnswer(session: QuizSession): boolean {
 }
 
 /** Leaving for another screen. False for every phase where an attempt is live —
- *  those exit through the leave dialog (CONFIRM_LEAVE) or the submit path. */
+ *  those exit through the leave dialog (CONFIRM_LEAVE) or the submit path, and
+ *  `submitting` through CANCEL back into the quiz first.
+ *
+ *  `generating` is exitable (#760): no attempt exists client-side yet, so
+ *  there is nothing live to walk out of — only a request, which the hook aborts.
+ *  Refusing it left a hung `/generate` with no way off the skeleton. */
 export function canExit(session: QuizSession): boolean {
   return session.phase !== "active"
     && session.phase !== "answered"
     && session.phase !== "confirm-leave"
-    && session.phase !== "generating"
     && session.phase !== "submitting";
+}
+
+/** A request owns the phase: its outcome event is the only thing that should
+ *  move it (besides CANCEL). */
+function awaitingRequest(session: QuizSession): boolean {
+  return session.phase === "generating" || session.phase === "submitting";
+}
+
+/** The phase a live quiz rests on when nothing is pending: on the current
+ *  item's verdict if it has one (as CANCEL_LEAVE and RESUME also decide). */
+function settledPhase(session: QuizSession): Phase {
+  return session.items[session.cursor]?.verdict != null ? "answered" : "active";
 }
 
 /**
@@ -496,6 +522,18 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
       };
     }
 
+    case "CANCEL": {
+      if (session.phase === "generating") {
+        // Back to the same concept on home, minus any practice framing: the
+        // student asked to stop, not to keep "the ones you missed" queued.
+        return { ...session, phase: "home", error: null, sourceAttemptId: null, reserved: null };
+      }
+      if (session.phase === "submitting") {
+        return { ...session, phase: settledPhase(session), error: null };
+      }
+      return session;
+    }
+
     case "FLAG": {
       const item = session.items[session.cursor];
       if (!item) return session;
@@ -510,7 +548,9 @@ export function reduce(session: QuizSession, event: QuizEvent): QuizSession {
     case "FAILED": {
       // Never over a live attempt — an in-flight quiz has ANSWER_FAILED /
       // SUBMIT_FAILED, which keep the items so DISMISS_ERROR can go back to them.
-      if (!canExit(session)) return session;
+      // Nor over a request's own phase: a stale resume failing mid-generate must
+      // not replace the generation the student is waiting on.
+      if (!canExit(session) || awaitingRequest(session)) return session;
       if (session.phase === "error") return session;
       return { ...session, phase: "error", error: event.error };
     }
