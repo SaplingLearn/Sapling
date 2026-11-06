@@ -41,6 +41,7 @@ import {
   startSessionStream,
   streamChat,
 } from "@/lib/api";
+import { tutorStepLabel } from "@/components/chat/ChatPanel";
 
 // The same renderer the tutor uses, loaded the same way `ChatPanel` loads it:
 // `MarkdownChat` statically imports mermaid, katex and highlight.js, and a
@@ -117,6 +118,11 @@ export function AskPanel({
 }: AskPanelProps) {
   const [turns, setTurns] = useState<AskTurn[]>([]);
   const [streaming, setStreaming] = useState<string | null>(null);
+  // What the tutor is doing before its first word (the stream's `progress`
+  // events, labelled exactly as Learn labels them) — shown in place of
+  // "Thinking…". On a model that sends its reply in one burst this is the
+  // only sign of life for several seconds.
+  const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -138,6 +144,9 @@ export function AskPanel({
   const idRef = useRef(0);
   // What Retry re-sends.
   const lastMessageRef = useRef<string>("");
+  // The in-flight turn's text so far, readable by the close effect: closing
+  // the sheet is this panel's Stop, and ADR 0020 keeps what was already shown.
+  const partialRef = useRef("");
   // The seed the current conversation was opened with.
   const lastSeededRef = useRef<string | null>(null);
 
@@ -158,6 +167,8 @@ export function AskPanel({
       setBusy(true);
       setError(null);
       setStreaming("");
+      setStatus(null);
+      partialRef.current = "";
       let sawToken = false;
       // The partial reply so far. `streaming` state can't serve here: it is
       // cleared before the JSON leg and again in `finally`, and ADR 0020 needs
@@ -204,9 +215,17 @@ export function AskPanel({
           // move the graph under the quiz.
           const res = await streamChat(sid, userId, message, TUTOR_MODE, true, undefined, {
             onToken: delta => {
+              // The pacer flushes its backlog after an abort; a closed or
+              // superseded turn must not write into the panel any more.
+              if (runRef.current !== token) return;
               if (delta.trim()) sawToken = true;
               partial += delta;
+              partialRef.current = partial;
               setStreaming(prev => (prev ?? "") + delta);
+            },
+            onProgress: step => {
+              const label = tutorStepLabel(step);
+              if (label && runRef.current === token) setStatus(label);
             },
             signal: controller.signal,
           });
@@ -218,6 +237,7 @@ export function AskPanel({
           // The partial survives via the outer catch.
           if (sawToken || !shouldFallBackToJson(err)) throw err;
           setStreaming(null);
+          setStatus(null);
           const res = await sendChat(sid, userId, message, TUTOR_MODE, true);
           reply = res.reply || "";
         }
@@ -243,6 +263,7 @@ export function AskPanel({
           if (mountedRef.current) {
             setBusy(false);
             setStreaming(null);
+            setStatus(null);
           }
         }
       }
@@ -265,26 +286,41 @@ export function AskPanel({
     void runTurn(seedMessage);
   }, [open, seedMessage, runTurn]);
 
-  // Closing the sheet ends the turn it was showing.
+  // Closing the sheet ends the turn it was showing — it is this panel's Stop.
   //
   // The stream used to be left running ("shut the panel mid-sentence and find
   // the finished answer waiting"), but nobody is reading it: the tokens are
   // still generated and paid for, and the reply lands in state behind a closed
   // sheet. Bumping the run token first means the aborted turn's late
-  // resolution is dropped rather than appended. Dropping the seed marker is the
-  // other half — an unfinished turn left no answer, so reopening the same
-  // question must ASK it again rather than show an empty thread with no way to
-  // get one. A turn that already finished is untouched: close and reopen still
-  // finds the conversation exactly where it was.
+  // resolution is dropped rather than appended.
+  //
+  // What the student already saw is kept, as Learn keeps a stopped reply
+  // (ADR 0020, #762): a partial answer stays in the thread marked
+  // interrupted, and Retry re-asks. Only a SEED turn that produced nothing at
+  // all drops the seed marker, so reopening the same question asks it again
+  // rather than showing an empty thread. A stopped follow-up keeps the
+  // conversation so far — it used to drop the seed marker too, so reopening
+  // wiped every finished answer and started over.
   useEffect(() => {
     if (open || !inFlightRef.current) return;
+    const partial = partialRef.current;
+    const wasSeedTurn = lastMessageRef.current === lastSeededRef.current;
     runRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
     inFlightRef.current = false;
-    lastSeededRef.current = null;
+    partialRef.current = "";
     setBusy(false);
     setStreaming(null);
+    setStatus(null);
+    if (partial.trim()) {
+      setTurns(t => [...t, { id: nextId(), role: "assistant", text: partial, interrupted: true }]);
+      setError("Stopped before the tutor finished.");
+    } else if (wasSeedTurn) {
+      lastSeededRef.current = null;
+    } else {
+      setError("Stopped before the tutor answered.");
+    }
   }, [open]);
 
   // Unmount: the same stop, plus the latch that keeps the settle path from
@@ -373,7 +409,7 @@ export function AskPanel({
               {streaming ? (
                 <MarkdownChat>{streaming}</MarkdownChat>
               ) : (
-                <p className="quiz-ask__pending">Thinking…</p>
+                <p className="quiz-ask__pending">{status ?? "Thinking…"}</p>
               )}
             </div>
           )}
