@@ -37,7 +37,7 @@ from services.quiz_config import (
     mastery_after,
     quiz_config_payload,
 )
-from services.request_limits import check_rate_limit, refund_rate_limit
+from services.request_limits import claim_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
@@ -154,7 +154,7 @@ def _daily_spend_exceeded(user_id: str) -> bool:
         return False
 
 
-def _refund_generate_slot(user_id: str) -> None:
+def _refund_generate_slot(user_id: str, slot: float | None) -> None:
     """Hand back the rate-limit slot a failed generation consumed (#544 F1).
 
     The slot is claimed BEFORE the model runs (so a burst can't get past
@@ -163,9 +163,12 @@ def _refund_generate_slot(user_id: str) -> None:
     out for five with a message saying they'd generated too many quizzes,
     having received none. A failure the student didn't cause shouldn't
     cost them anything, and the 502 explicitly invites a retry.
+
+    `slot` is the one THIS request claimed (#760) — refunding "the newest"
+    would hand back a concurrent request's slot instead.
     """
     try:
-        refund_rate_limit(f"quiz_generate:{user_id}")
+        refund_rate_limit(f"quiz_generate:{user_id}", slot)
     except Exception:
         logger.exception("quiz: rate-limit refund failed user=%s", user_id)
 
@@ -1846,11 +1849,13 @@ async def _generate_or_502(
     concept_name: str,
     times_studied: int | None,
     count: int,
+    slot: float | None,
 ) -> GeneratedQuiz:
     """Run generation, or raise the error the client contract calls for.
 
     `count` is what to generate NOW, which is not `body.num_questions` when
-    G5 recovered part of the quiz from a previous attempt.
+    G5 recovered part of the quiz from a previous attempt. `slot` is the
+    rate-limit slot this request claimed, refunded on every failure exit.
     """
     try:
         # Each agent run inside is individually bounded by
@@ -1878,7 +1883,7 @@ async def _generate_or_502(
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
         # never swallow a known HTTP state.
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         raise
     except asyncio.TimeoutError as e:
         # #544 F2: distinct from a generic failure — the client can say
@@ -1890,7 +1895,7 @@ async def _generate_or_502(
             "quiz: generation timed out after %ss request_id=%s",
             QUIZ_GENERATION_TIMEOUT_SEC, request_id,
         )
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         _log_generation_failed(body, request_id, "timeout")
         raise QuizAPIError(
             status_code=502,
@@ -1901,7 +1906,7 @@ async def _generate_or_502(
         # The raw-Gemini legacy fallback was retired in #145; degrade to 502
         # rather than serving a quiz from a second LLM path.
         logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         _log_generation_failed(body, request_id, "agent_guardrail")
         raise QuizAPIError(
             status_code=502,
@@ -1910,7 +1915,7 @@ async def _generate_or_502(
         ) from e
     except Exception as e:
         logger.exception("Unexpected quiz-agent failure; returning 502")
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         _log_generation_failed(body, request_id, "agent_error")
         raise QuizAPIError(
             status_code=502,
@@ -1960,7 +1965,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # first, so probing can't consume a victim's quota) and BEFORE the
     # model call. Neither rejection is a backend failure, so neither emits
     # quiz.generation_failed.
-    retry_after = check_rate_limit(
+    retry_after, slot = claim_rate_limit(
         f"quiz_generate:{body.user_id}",
         limit=QUIZ_GENERATE_RATE_LIMIT,
         window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
@@ -1987,7 +1992,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         # results screen the student left open would otherwise spend their
         # quota eight times over and then 429 them having generated nothing.
         # Same rule _generate_or_502 follows on every one of its exits.
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         raise
     recovered = list(reserved.questions) if reserved else []
     missing = body.num_questions - len(recovered)
@@ -2035,6 +2040,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 concept_name=concept_name,
                 times_studied=node.get("times_studied"),
                 count=missing,
+                slot=slot,
             )
         except QuizAPIError:
             if not recovered:
@@ -2090,7 +2096,26 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # instead of 400ing on a column PostgREST's schema cache doesn't have.
     if exam_days_away is not None:
         attempt_row["exam_days_away"] = exam_days_away
-    _insert_attempt(attempt_row)
+    try:
+        _insert_attempt(attempt_row)
+    except Exception as e:
+        # #760: the quiz was generated (and billed) but there is no row to
+        # serve it from, so the student got nothing. Same three duties as
+        # every other failure exit: refund THIS request's slot, make the 502
+        # countable, and answer with the contract's retryable code rather
+        # than an opaque 500.
+        logger.exception(
+            "quiz: attempt insert failed after generation request_id=%s",
+            request_id,
+        )
+        _refund_generate_slot(body.user_id, slot)
+        _log_generation_failed(body, request_id, "attempt_insert_failed")
+        prompt_dimensions.clear()
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
     if reserved is not None:
         # G5, closing the pair opened before the run: how this quiz was
         # actually assembled. Rides quiz.started on the F6 snapshot, which
