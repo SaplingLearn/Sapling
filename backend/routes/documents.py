@@ -61,7 +61,6 @@ from agents.concept_extraction import concept_extraction_agent
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
-from agents.tools.graph import apply_concepts_to_graph
 from agents._run import run_agent_sync
 from agents.concept_scan import concept_scan_agent
 from agents.usage import record_agent_usage
@@ -95,8 +94,9 @@ VALID_CATEGORIES = {
 # produces a *fabrication* rather than an error: the classify prompt's JSON
 # schema requires a summary and a concept list with no "insufficient content"
 # escape hatch, so an empty `Content:` block makes the model invent a plausible
-# document. Those invented concepts then flow into the course's shared
-# knowledge graph, where they mislead every enrolled student.
+# document. Those invented concepts are then stored on the document and shown
+# as its notes — and reach the course's shared knowledge graph the moment
+# anyone scans it, where they mislead every enrolled student.
 #
 # Matches the 50-char floor that
 # `extraction_service._extract_text_from_file_uncached` already applies when
@@ -729,23 +729,6 @@ def _save_orchestrator_syllabus(*, user_id: str, course_id: str, filename: str,
             logger.exception("Assignment save failed for '%s' (best-effort)", filename)
 
 
-def _graph_backstop(*, user_id: str, course_id: str, filename: str,
-                    result: DocumentProcessingResult) -> None:
-    """Apply graph update if the orchestrator skipped its tool call."""
-    if result.graph_updated:
-        return
-    if result.classification.category not in ("syllabus", "assignment"):
-        return
-    try:
-        new_nodes = [
-            {"concept_name": c.name, "initial_mastery": 0.0}
-            for c in result.concepts.concepts
-        ]
-        apply_graph_update(user_id, {"new_nodes": new_nodes}, course_id=course_id)
-    except Exception:
-        logger.exception("Graph backstop failed for '%s' (best-effort)", filename)
-
-
 @router.post("/upload/sync")
 async def upload_document_sync(
     background_tasks: BackgroundTasks,
@@ -785,10 +768,10 @@ async def upload_document_sync(
     # The upload form sends the ABSTRACT course id; documents key on the
     # OFFERING. Resolve to the current-term offering once (create=True so a
     # fresh upload lands in the real semester). The abstract course_id stays
-    # the key for the graph + course-context + calendar side effects below.
+    # the key for the course-context + calendar side effects below.
     offering_id = resolve_offering(course_id, create=True)
 
-    # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
+    # ── AI: orchestrator (parallel workers, no graph write) ──────────────────
     # Unify with the middleware-stamped request ID so agent traces and
     # client-facing error payloads share the same correlation key.
     request_id = (
@@ -860,10 +843,6 @@ async def upload_document_sync(
         _save_orchestrator_syllabus, user_id=user_id, course_id=course_id,
         filename=filename, result=result,
     )
-    await asyncio.to_thread(
-        _graph_backstop, user_id=user_id, course_id=course_id,
-        filename=filename, result=result,
-    )
     doc_id, full_row = await asyncio.to_thread(
         _persist_document, user_id=user_id, offering_id=offering_id,
         filename=filename, result=result, request_id=request_id,
@@ -927,8 +906,8 @@ async def upload_document(
         or current_request_id()
         or str(uuid.uuid4())  # ultimate fallback if middleware somehow didn't run
     )
-    # Documents key on the offering (0025); the graph + course-context key on
-    # the abstract course id (kept in SaplingDeps for the agent's graph tools).
+    # Documents key on the offering (0025); course-context keys on the
+    # abstract course id (kept in SaplingDeps for the agents' course tools).
     offering_id = resolve_offering(course_id, create=True)
     deps = SaplingDeps(
         user_id=user_id,
@@ -1111,27 +1090,17 @@ async def upload_document(
                 message=f"Extracted {len(concepts.concepts)} concept(s).",
             ))
 
-            # ── Phase 3: graph update (direct call, no agent loop) ──────────────
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_update",
-                message="Merging concepts into the course graph...",
-            ))
-            concept_names = [c.name for c in concepts.concepts]
-            merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
-            graph_updated = merged > 0
-            yield sapling_event_to_sse(SaplingEvent(
-                type="progress", step="graph_updated",
-                message=f"Merged {merged} concept(s).",
-            ))
-
             # ── Compose final result + emit ──────────────────────────────────
+            # An upload never writes `graph_nodes`: the extracted concepts
+            # ride this result onto the document row and become nodes only
+            # when the student runs a scan-concepts request, so
+            # `graph_updated` stays False on the wire.
             final_output = DocumentProcessingResult(
                 classification=classification,
                 summary=summary,
                 notes=notes,
                 concepts=concepts,
                 syllabus=syllabus,
-                graph_updated=graph_updated,
             )
             yield sapling_event_to_sse(SaplingEvent(
                 type="result", step="finalize",
@@ -1191,11 +1160,6 @@ async def upload_document(
             # (#132 item 22; same pattern as the async-OCR extraction above).
             await asyncio.to_thread(
                 _save_orchestrator_syllabus,
-                user_id=user_id, course_id=course_id,
-                filename=filename, result=final_output,
-            )
-            await asyncio.to_thread(
-                _graph_backstop,
                 user_id=user_id, course_id=course_id,
                 filename=filename, result=final_output,
             )

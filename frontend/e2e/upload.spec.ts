@@ -9,8 +9,8 @@
  * raw-SQL readback (support/db.ts::query).
  *
  * LLM-dependence (the #387 "known hard part"): the SSE pipeline's happy
- * path is agent-driven — classifier → (summary ∥ concepts) → graph merge —
- * and the documents row is only persisted AFTER those stages, so the
+ * path is agent-driven — classifier → (summary ∥ concepts) — and the
+ * documents row is only persisted AFTER those stages, so the
  * journey cannot complete without model responses. The #391 seam covers
  * every one of these agents (they all build via `model_for`); its
  * boot-time half (#392's SAPLING_FUNCTION_HANDLERS autoload, which this
@@ -197,8 +197,14 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(String(doc.summary_content)).not.toContain(SCRIPTED_ABSTRACT_SNIPPET);
   expect(String(doc.summary_content)).not.toContain("gradient descent");
 
-  // Phase-3 side effect: the scripted concepts were merged into the
-  // course knowledge graph (plaintext columns — safe to assert exactly).
+  // An upload adds NOTHING to the knowledge graph. The pipeline used to
+  // merge every extracted concept into the course graph (and a
+  // syllabus/assignment backstop did it again when the merge was skipped),
+  // so uploading quietly seeded nodes the student never chose. The
+  // concepts now live on the document row only; `graph_nodes` gains them
+  // solely through an explicit scan (Library's "scan concepts" button →
+  // /api/documents/doc/{id}/scan-concepts). Plaintext column — safe to
+  // assert exactly.
   const nodes = await queryRaw(
     `SELECT concept_name
        FROM graph_nodes
@@ -206,9 +212,7 @@ test("upload → SSE → document appears in library and Postgres", async ({
         AND concept_name = ANY($2::text[])`,
     [USER_ACTIVE, SCRIPTED_CONCEPTS],
   );
-  expect(nodes.map((n) => n.concept_name as string).sort()).toEqual(
-    [...SCRIPTED_CONCEPTS].sort(),
-  );
+  expect(nodes).toHaveLength(0);
 
   // ── Document appears in the library ───────────────────────────────────
   // Closing via Done triggers the library refetch (onComplete → load()).

@@ -512,7 +512,6 @@ def _make_orchestrator_result(
     syllabus_assignments=None,
     grading_categories=None,
     course_title=None,
-    graph_updated=False,
 ):
     """Build a DocumentProcessingResult with sensible defaults for tests."""
     from agents.classifier import DocumentClassification
@@ -558,7 +557,6 @@ def _make_orchestrator_result(
         notes=notes,
         concepts=concepts,
         syllabus=syllabus,
-        graph_updated=graph_updated,
     )
 
 
@@ -567,8 +565,8 @@ class TestUploadDocumentOrchestrator:
 
     Mocks process_document to RETURN a DocumentProcessingResult (vs the
     legacy-fallback class above which raises). This exercises
-    _persist_document, _save_orchestrator_syllabus, _graph_backstop,
-    and _grading_categories_from in routes/documents.py.
+    _persist_document, _save_orchestrator_syllabus, and
+    _grading_categories_from in routes/documents.py.
     """
 
     def test_sync_upload_is_indexed(self):
@@ -765,75 +763,41 @@ class TestUploadDocumentOrchestrator:
         assert saved_assignments[0]["due_date"] == "2026-04-01"
         assert saved_assignments[0]["course_id"] == "c-7"
 
-    def test_graph_backstop_fires_when_orchestrator_skipped_tool(self):
-        """If graph_updated=False and category is syllabus/assignment, the
-        route applies the graph update procedurally."""
-        result = _make_orchestrator_result(
-            category="assignment",
-            concept_names=["Linear Regression", "Gradient Descent"],
-            graph_updated=False,
-        )
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
-            patch("routes.documents.create_summary_doc", return_value={
-                "id": "sd-stub", "content": {"type": "doc", "content": []},
-            }),
-        ):
-            t.return_value.insert.return_value = [{"id": "a1"}]
-            r = _make_upload(filename="pset.pdf", course_id="c-9")
-        assert r.status_code == 200
-        mock_apply.assert_called_once()
-        args, kwargs = mock_apply.call_args
-        assert args[0] == "u1"
-        assert kwargs["course_id"] == "c-9"
-        assert [n["concept_name"] for n in args[1]["new_nodes"]] == [
-            "Linear Regression", "Gradient Descent"
-        ]
-
-    def test_graph_backstop_skipped_when_orchestrator_already_updated(self):
-        result = _make_orchestrator_result(
-            category="assignment",
-            concept_names=["Stuff"],
-            graph_updated=True,
-        )
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
-            patch("routes.documents.create_summary_doc", return_value={
-                "id": "sd-stub", "content": {"type": "doc", "content": []},
-            }),
-        ):
-            t.return_value.insert.return_value = [{"id": "a2"}]
-            r = _make_upload(filename="pset.pdf")
-        assert r.status_code == 200
-        mock_apply.assert_not_called()
-
-    def test_lecture_notes_skip_graph_backstop(self):
-        """Backstop only fires for syllabus/assignment categories."""
-        result = _make_orchestrator_result(
-            category="lecture_notes", concept_names=["X"], graph_updated=False,
-        )
-        with (
-            _mock_validate_user(),
-            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            patch("routes.documents.process_document", return_value=result),
-            patch("routes.documents.apply_graph_update") as mock_apply,
-            patch("routes.documents.table") as t,
-            patch("routes.documents.create_summary_doc", return_value={
-                "id": "sd-stub", "content": {"type": "doc", "content": []},
-            }),
-        ):
-            t.return_value.insert.return_value = [{"id": "l1"}]
-            r = _make_upload()
-        assert r.status_code == 200
-        mock_apply.assert_not_called()
+    def test_upload_never_writes_the_knowledge_graph(self):
+        """Uploading a document adds NO concepts to `graph_nodes` — not even
+        for the syllabus/assignment categories the old `_graph_backstop`
+        singled out. The extracted concepts are persisted on the document
+        row; they become nodes only when the student asks for a scan
+        (`/doc/{id}/scan-concepts`), so an upload can never seed a course
+        graph with concepts nobody chose."""
+        for category in ("assignment", "syllabus", "lecture_notes"):
+            result = _make_orchestrator_result(
+                category=category,
+                is_syllabus=category == "syllabus",
+                concept_names=["Linear Regression", "Gradient Descent"],
+            )
+            with (
+                _mock_validate_user(),
+                patch("routes.documents.extract_text_from_file",
+                      return_value=_doc_text("text")),
+                patch("routes.documents.process_document", return_value=result),
+                patch("routes.documents.save_assignments_to_db"),
+                patch("routes.documents.apply_graph_update") as mock_apply,
+                patch("routes.documents.table") as t,
+                patch("routes.documents.index_document"),
+                patch("routes.documents.create_summary_doc", return_value={
+                    "id": "sd-stub", "content": {"type": "doc", "content": []},
+                }),
+            ):
+                t.return_value.select.return_value = []
+                t.return_value.insert.return_value = [{"id": "a1"}]
+                r = _make_upload(filename="pset.pdf", course_id="c-9")
+            assert r.status_code == 200, category
+            mock_apply.assert_not_called()
+            # ...and the concepts still land on the document row.
+            assert [c["name"] for c in r.json()["concept_notes"]] == [
+                "Linear Regression", "Gradient Descent"
+            ]
 
 
 class TestUploadCreatesSummaryDoc:
@@ -1073,18 +1037,24 @@ class TestUploadDocumentStreaming:
             patch("routes.documents.document_notes_agent.run", notes_run),
             patch("routes.documents.concept_extraction_agent.run", cpt_run),
             patch("routes.documents.syllabus_extraction_agent.run", syl_run),
-            patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=0)),
+            # Nothing in the streaming upload may touch the graph; patched
+            # here so a regression would be a failed assertion, not a live
+            # Supabase call.
+            patch("routes.documents.apply_graph_update"),
         )
 
     def test_emits_full_event_sequence_on_happy_path(self):
         """status:start → progress:classify → progress:classified →
-        progress:extract → progress:extracted → progress:graph_update →
-        progress:graph_updated → result:finalize → status:done with document_id."""
-        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        progress:extract → progress:extracted → result:finalize →
+        status:done with document_id.
+
+        No graph_update/graph_updated pair: an upload no longer merges
+        concepts into the course graph."""
+        cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll"),  # avoid stray asyncio.create_task in tests
             patch("routes.documents.create_summary_doc", return_value={
@@ -1108,8 +1078,6 @@ class TestUploadDocumentStreaming:
             ("progress", "classified"),
             ("progress", "extract"),
             ("progress", "extracted"),
-            ("progress", "graph_update"),
-            ("progress", "graph_updated"),
             ("result", "finalize"),
             ("status", "done"),
         ]
@@ -1117,17 +1085,52 @@ class TestUploadDocumentStreaming:
         done = json.loads(events[-1]["data"])
         assert done["data"]["document_id"] == "stream-1"
 
+    def test_streaming_upload_never_writes_the_knowledge_graph(self):
+        """The streaming route's old Phase 3 merged every extracted concept
+        into the course graph. It no longer runs: an upload persists the
+        concepts on the document and leaves `graph_nodes` alone until the
+        student explicitly scans."""
+        cls_p, sum_p, notes_p, cpt_p, syl_p, _graph_p = self._mock_agent_runs()
+        with (
+            _mock_validate_user(),
+            patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
+            cls_p, sum_p, notes_p, cpt_p, syl_p,
+            patch("routes.documents.apply_graph_update") as mock_apply,
+            patch("routes.documents.table") as t,
+            patch("routes.documents._spawn_post_roll"),
+            patch("routes.documents.create_summary_doc", return_value={
+                "id": "sd-stub", "content": {"type": "doc", "content": []},
+            }),
+        ):
+            t.return_value.insert.return_value = [{"id": "stream-nograph"}]
+            with client.stream(
+                "POST", "/api/documents/upload",
+                files={"file": ("notes.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+                data={"course_id": "c-1", "user_id": "u1"},
+            ) as r:
+                assert r.status_code == 200
+                body = r.read()
+
+        mock_apply.assert_not_called()
+        events = _parse_sse_stream(body)
+        steps = [json.loads(e["data"])["step"] for e in events]
+        assert "graph_update" not in steps and "graph_updated" not in steps
+        final = json.loads(
+            next(e["data"] for e in events if e["event"] == "result")
+        )
+        assert final["data"]["graph_updated"] is False
+
     def test_streaming_upload_indexes_through_the_shared_entry_point(self):
         """The post-roll hands index_document the persisted id and nothing else:
         everything the indexer needs is read back off the row, which is what
         lets the sweeper re-drive the identical work later (#482)."""
         from routes import documents
 
-        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p,
             patch("routes.documents.table") as t,
             patch("routes.documents._spawn_post_roll") as spawn,
             patch("routes.documents.create_summary_doc", return_value={
@@ -1148,11 +1151,11 @@ class TestUploadDocumentStreaming:
 
     def test_includes_syllabus_event_when_is_syllabus(self):
         """progress:extract message mentions syllabus when classifier flags it."""
-        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs(is_syllabus=True)
+        cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p = self._mock_agent_runs(is_syllabus=True)
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p,
             patch("routes.documents.save_assignments_to_db"),
             patch("routes.documents.apply_graph_update"),
             patch("routes.documents.table") as t,
@@ -1191,7 +1194,7 @@ class TestUploadDocumentStreaming:
         the legacy fallback (which would crash on extracted_text=None).
         It should yield a clean error+done pair and stop.
         """
-        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.OCR_ASYNC_ENABLED", True),
@@ -1199,7 +1202,7 @@ class TestUploadDocumentStreaming:
                 "routes.documents.extract_text_from_file",
                 side_effect=RuntimeError("scanned PDF too noisy"),
             ),
-            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p,
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -1237,12 +1240,12 @@ class TestUploadDocumentStreaming:
         answers by inventing one. Streaming counterpart of
         TestEmptyExtractionGuard.
         """
-        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.OCR_ASYNC_ENABLED", True),
             patch("routes.documents.extract_text_from_file", return_value=""),
-            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p,
             patch("routes.documents.table") as t,
         ):
             t.return_value.select.return_value = []  # no idempotency cache hit
@@ -1321,11 +1324,11 @@ class TestUploadDocumentStreaming:
         processed. Contract: exactly ONE result event, then the same terminal
         error+done tail the pre-result failure branches use.
         """
-        cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p = self._mock_agent_runs()
+        cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p = self._mock_agent_runs()
         with (
             _mock_validate_user(),
             patch("routes.documents.extract_text_from_file", return_value=_doc_text("text")),
-            cls_p, sum_p, notes_p, cpt_p, syl_p, doc_p,
+            cls_p, sum_p, notes_p, cpt_p, syl_p, graph_p,
             patch(
                 "routes.documents._persist_document",
                 side_effect=RuntimeError("documents insert blew up"),
