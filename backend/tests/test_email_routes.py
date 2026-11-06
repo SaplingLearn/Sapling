@@ -154,26 +154,36 @@ def test_send_failure_never_fails_the_signup(monkeypatch):
     assert r.status_code == 200
 
 
-def test_single_approve_enqueues_youre_in(sent):
-    with patch("routes.admin.table") as t, \
-         patch("routes.admin.log_admin_action"):
-        t.return_value.upsert.return_value = [{"email": "A@B.co"}]
+def test_single_approve_enqueues_youre_in(monkeypatch, sent):
+    factory, made = _factory()
+    stored = {"id": "w1", "email": "A@B.co", "approved_at": None}
+    made_rows = factory("newsletter_emails")
+    made_rows.select.return_value = [stored]
+    monkeypatch.setattr("routes.admin.table", factory)
+    monkeypatch.setattr("routes.auth.table", factory)
+    with patch("routes.admin.log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.co"})
     assert r.status_code == 200
-    assert r.json() == {"email": {"email": "A@B.co"}}  # response unchanged
+    assert r.json() == {"email": stored}
     kw = sent.call_args.kwargs
     assert kw["kind"] == "waitlist_approved"
     assert kw["dedupe_key"] == f"waitlist_approved:{_h('a@b.co')}"
+    assert kw["to"] == "A@B.co"  # the stored spelling
 
 
-def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(sent):
+def test_single_approve_greets_a_named_entry_and_hides_the_ciphertext(monkeypatch, sent):
     from services.encryption import encrypt
-    with patch("routes.admin.table") as t, \
-         patch("routes.admin.log_admin_action"):
-        t.return_value.upsert.return_value = [{"email": "a@bu.edu", "first_name": encrypt("Ada")}]
+    factory, made = _factory()
+    factory("newsletter_emails").select.return_value = [
+        {"id": "w1", "email": "a@bu.edu", "approved_at": None, "first_name": encrypt("Ada")},
+    ]
+    monkeypatch.setattr("routes.admin.table", factory)
+    monkeypatch.setattr("routes.auth.table", factory)
+    with patch("routes.admin.log_admin_action"):
         r = client.post("/api/admin/allowlist/approve", json={"email": "a@bu.edu"})
     assert r.status_code == 200
-    assert r.json() == {"email": {"email": "a@bu.edu"}}  # no first_name, encrypted or not
+    # no first_name, encrypted or not
+    assert r.json() == {"email": {"id": "w1", "email": "a@bu.edu", "approved_at": None}}
     kw = sent.call_args.kwargs
     assert kw["subject"] == "Your Sapling spot is ready"
     assert "Your spot is ready, Ada!" in kw["html"] and "Your spot is ready, Ada!" in kw["text"]

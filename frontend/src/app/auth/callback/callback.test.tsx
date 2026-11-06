@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 /**
  * #191 (first half): the OAuth callback must not persist localStorage identity
- * unless GET /api/auth/me confirmed the live session. On a failed /me the
- * sign-in still completes for this tab (context hydrates, navigation happens)
- * but nothing is written to localStorage — the next full load reconciles via
- * the provider's cookie fallback.
+ * unless GET /api/auth/me confirmed the live session. #757: a failed /me is
+ * retried, and if it still fails the sign-in fails — it no longer completes
+ * with a guessed `onboarding_completed = true` that skipped onboarding.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -75,15 +74,47 @@ describe('#191 callback persistence gate', () => {
     expect(setActiveUser).toHaveBeenCalledWith('u1', 'Nina', 'av', { persist: true });
   });
 
-  it('hydrates without persisting when /me fails', async () => {
+  it('#757: retries a transient /me failure instead of guessing', async () => {
     search = 'user_id=u1&is_approved=true&avatar=g-av';
+    let calls = 0;
     vi.stubGlobal(
       'fetch',
-      stubFetch(() => ({ ok: false, status: 500, json: async () => ({}) })),
+      stubFetch(() => {
+        calls += 1;
+        return calls === 1
+          ? { ok: false, status: 503, json: async () => ({}) }
+          : { ok: true, status: 200, json: async () => ({ onboarding_completed: false, name: 'Nina' }) };
+      }),
     );
     render(<CallbackPage />);
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
-    expect(setActiveUser).toHaveBeenCalledWith('u1', '', 'g-av', { persist: false });
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/onboarding'), { timeout: 3000 });
+    expect(calls).toBe(2);
+    expect(setActiveUser).toHaveBeenCalledWith('u1', 'Nina', 'g-av', { persist: true });
+  });
+
+  it('#757: a /me that never answers fails the sign-in, never skips onboarding', async () => {
+    search = 'user_id=u1&is_approved=true&avatar=g-av';
+    const fetchMock = stubFetch(() => ({ ok: false, status: 500, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=signin_failed'), { timeout: 3000 });
+    expect(replace).not.toHaveBeenCalledWith('/dashboard');
+    expect(setActiveUser).not.toHaveBeenCalled();
+    const meCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/auth/me'));
+    expect(meCalls).toHaveLength(3);
+    // The half-made session is dropped so the retry starts clean.
+    expect(fetchMock.mock.calls.some(
+      ([u, init]) => String(u).includes('/api/auth/session') && init?.method === 'DELETE',
+    )).toBe(true);
+  });
+
+  it('#757: a dead account (404) is not retried', async () => {
+    search = 'user_id=u1&is_approved=true';
+    const fetchMock = stubFetch(() => ({ ok: false, status: 404, json: async () => ({}) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<CallbackPage />);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/?error=signin_failed'));
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/auth/me'))).toHaveLength(1);
   });
 
   it('still fails cleanly when the session mint itself fails', async () => {

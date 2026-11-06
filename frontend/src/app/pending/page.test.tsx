@@ -238,3 +238,32 @@ describe('#741 waitlist standing from the pending token', () => {
     expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBe('tok');
   });
 });
+
+describe('#757 an approval that lands while the student waits', () => {
+  const approved = { status: 200, body: { email: 'nina@bu.edu', on_waitlist: true, approved: true } };
+
+  it('says they are approved and offers a fresh sign-in', async () => {
+    sessionStorage.setItem(PENDING_TOKEN_KEY, 'tok');
+    stubPending({ status: approved });
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, origin: 'https://app.example', assign });
+    render(<PendingPage />);
+    const state = await screen.findByTestId('pending-approved');
+    expect(screen.getByRole('heading').textContent).toBe("You're approved");
+    expect(state.textContent).toContain('nina@bu.edu');
+    expect(screen.queryByTestId('pending-join')).toBeNull();
+    fireEvent.click(screen.getByTestId('pending-signin-again'));
+    expect(assign).toHaveBeenCalledWith(
+      `/api/auth/google?return_to=${encodeURIComponent('https://app.example')}`,
+    );
+    expect(sessionStorage.getItem(PENDING_TOKEN_KEY)).toBeNull();
+  });
+
+  it('an unapproved entry still reads as waiting', async () => {
+    sessionStorage.setItem(PENDING_TOKEN_KEY, 'tok');
+    stubPending({ status: { status: 200, body: { email: 'nina@bu.edu', on_waitlist: true, approved: false } } });
+    render(<PendingPage />);
+    await screen.findByTestId('pending-on-waitlist');
+    expect(screen.queryByTestId('pending-approved')).toBeNull();
+  });
+});
