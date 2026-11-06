@@ -44,6 +44,12 @@ def get_user_stat(user_id: str, trigger_type: str) -> int:
 def _get_user_stat(user_id: str, trigger_type: str) -> int:
     """Evaluate the current value for a trigger type."""
     if trigger_type == "login_streak":
+        # Deliberately the STORED count, not streak_service.effective_streak
+        # (#767). Readers that DISPLAY "your streak" must use the effective
+        # value, but a badge asks "did you ever reach N days", and a lapsed
+        # stored count is a streak that genuinely happened. login_streak is
+        # only dispatched at session end and sign-in, so a streak built from
+        # quizzes/uploads and then broken would otherwise never earn its badge.
         user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
         if user:
             return user[0].get("streak_count", 0) or 0

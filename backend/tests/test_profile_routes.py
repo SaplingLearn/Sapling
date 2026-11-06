@@ -18,6 +18,7 @@ Tests cover:
 All DB access and auth guards are mocked.
 """
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -51,7 +52,10 @@ FULL_PROFILE_ROW = {
 
 def _visibility_tables(visibility):
     """table() factory for a user whose profile carries every sensitive field."""
-    user_row = {"id": USER_ID, "email": None, "streak_count": 3, "created_at": "2025-01-01"}
+    # Active today, so the effective streak (#767) is the stored 3.
+    today = datetime.now(timezone.utc).date().isoformat()
+    user_row = {"id": USER_ID, "email": None, "streak_count": 3,
+                "last_active_date": today, "created_at": "2025-01-01"}
     settings_row = {"user_id": USER_ID, "profile_visibility": visibility}
 
     def table_side_effect(name):
@@ -238,6 +242,17 @@ class TestProfileVisibilityMatrix:
 
 
 # ── PATCH /api/profile/{user_id} ───────────────────────────────────────────
+
+class TestStatsStreakIsEffective:
+    def test_a_lapsed_streak_reads_zero(self):
+        """#767: the stored streak_count survives a broken streak until the
+        next activity; the profile stats must not show it."""
+        t = MagicMock()
+        t.select.return_value = [{"streak_count": 8, "last_active_date": "2020-01-01"}]
+        with patch("routes.profile.table", return_value=t):
+            from routes.profile import _get_user_stats
+            assert _get_user_stats(USER_ID)["streak_count"] == 0
+
 
 class TestUpdateProfile:
     def test_updates_profile_fields_on_user_profiles(self):
