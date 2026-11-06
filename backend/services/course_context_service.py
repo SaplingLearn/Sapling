@@ -16,6 +16,7 @@ Stores data in:
 import copy
 import json
 import hashlib
+import time
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -97,39 +98,50 @@ def _generate_summary_with_gemini(
         )
 
 
+#: Upper bound on how stale a cached course context can be (#771). The clear
+#: hook below only reaches THIS process: another worker's
+#: `update_course_context` used to leave this one serving its old copy for
+#: as long as the process lived. Entries are keyed on a time bucket of this
+#: width, so every worker converges within one TTL; a same-process update
+#: still clears at once.
+COURSE_CONTEXT_TTL_S = 60.0
+
+
+def _ttl_bucket() -> int:
+    return int(time.monotonic() // COURSE_CONTEXT_TTL_S)
+
+
 @lru_cache(maxsize=512)
-def _get_course_context_cached(offering_id: str) -> dict:
-    try:
-        # Get the offering summary
-        summary_rows = table("offering_summary").select(
-            "*",
-            filters={"offering_id": f"eq.{offering_id}"},
-        )
-        if not summary_rows:
-            return {}
-
-        summary = summary_rows[0]
-
-        # Get concept stats for this offering
-        stats_rows = table("offering_concept_stats").select(
-            "*",
-            filters={"offering_id": f"eq.{offering_id}"},
-        )
-
-        return {
-            "course_summary": {
-                "offering_id": summary["offering_id"],
-                "student_count": summary["student_count"],
-                "avg_class_mastery": summary["avg_class_mastery"],
-                "top_struggling_concepts": summary.get("top_struggling_concepts", []),
-                "top_mastered_concepts": summary.get("top_mastered_concepts", []),
-                "summary_text": summary.get("summary_text", ""),
-                "updated_at": summary["updated_at"],
-            },
-            "concept_stats": stats_rows or [],
-        }
-    except Exception:
+def _get_course_context_cached(offering_id: str, _bucket: int) -> dict:
+    # Errors propagate (lru_cache never caches an exception): a transient read
+    # failure must not pin an empty context for the whole TTL.
+    summary_rows = table("offering_summary").select(
+        "*",
+        filters={"offering_id": f"eq.{offering_id}"},
+    )
+    if not summary_rows:
         return {}
+
+    summary = summary_rows[0]
+
+    # Get concept stats for this offering
+    stats_rows = table("offering_concept_stats").select(
+        "*",
+        filters={"offering_id": f"eq.{offering_id}"},
+    )
+
+    return {
+        "course_summary": {
+            "offering_id": summary["offering_id"],
+            "student_count": summary["student_count"],
+            "avg_class_mastery": summary["avg_class_mastery"],
+            "top_struggling_concepts": summary.get("top_struggling_concepts", []),
+            "top_mastered_concepts": summary.get("top_mastered_concepts", []),
+            "summary_text": summary.get("summary_text", ""),
+            "updated_at": summary["updated_at"],
+        },
+        "concept_stats": stats_rows or [],
+    }
 
 
 def get_course_context(offering_id: str) -> dict:
@@ -137,13 +149,17 @@ def get_course_context(offering_id: str) -> dict:
     Return the cached class context for an offering: summary + concept stats.
     Offering-scoped (one class instance in one term). Returns {} if not found.
 
-    Cached per-process (#98) and invalidated by ``update_course_context`` (which
-    runs after graph updates). Returns a deep copy so callers can't mutate the
-    shared cached value.
+    Cached per-process (#98), invalidated by ``update_course_context`` (which
+    runs after graph updates) in this process and by COURSE_CONTEXT_TTL_S in
+    every other (#771). Returns a deep copy so callers can't mutate the shared
+    cached value. A failed read returns {} and is not cached.
     """
     if not offering_id:
         return {}
-    return copy.deepcopy(_get_course_context_cached(offering_id))
+    try:
+        return copy.deepcopy(_get_course_context_cached(offering_id, _ttl_bucket()))
+    except Exception:
+        return {}
 
 
 def clear_course_context_cache() -> None:
