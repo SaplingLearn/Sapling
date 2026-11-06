@@ -253,6 +253,26 @@ def test_a_failed_row_at_the_budget_is_reaped_with_its_error(db_conn):
     assert row["index_error"] == "ServerError"
 
 
+def test_an_over_budget_pending_row_is_reaped(db_conn):
+    """#758 review: `_restore` refunds a claim to 'pending' with attempts > 0;
+    lower the budget under that and the row was neither claimed nor reaped."""
+    _insert(db_conn, status="pending", attempts=2)
+
+    assert {"id": DOC} not in _claim(max_attempts=2)
+
+    row = _row(db_conn)
+    assert row["index_status"] == "exhausted"
+    assert row["index_error"] == "attempts_exhausted"
+    assert row["index_attempts"] == 2
+
+
+def test_a_pending_row_under_budget_is_claimed_not_reaped(db_conn):
+    _insert(db_conn, status="pending", attempts=1)
+
+    assert {"id": DOC} in _claim(max_attempts=3)
+    assert _row(db_conn)["index_status"] == "indexing"
+
+
 def test_raising_the_budget_does_not_re_queue_an_exhausted_row(db_conn):
     _insert(db_conn, status="exhausted", attempts=3)
 

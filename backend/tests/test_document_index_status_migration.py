@@ -113,8 +113,28 @@ def _latest_claim() -> str:
     raise AssertionError("no claim_documents_for_indexing definition")
 
 
-def test_the_terminal_migration_is_the_latest_claim():
-    assert _latest_claim() == _terminal_migration()
+def _reap(sql: str) -> str:
+    return sql.split("UPDATE documents r", 1)[1].split(";", 1)[0]
+
+
+def test_the_live_claim_reaps_an_over_budget_pending_row():
+    """#758 review: `_restore` refunds a claim back to 'pending' with
+    attempts > 0. Lower INDEX_MAX_ATTEMPTS under that count and the row is
+    neither claimable (`attempts < max`) nor — before this — reaped: pending
+    forever, out of retrieval, never reported as exhausted."""
+    reap = _reap(_latest_claim())
+    assert re.search(r"r\.index_status = 'pending'", reap)
+    assert re.search(r"WHEN 'pending'\s+THEN 'attempts_exhausted'", reap)
+    # Still bounded by the budget, so a fresh upload is never reaped.
+    assert re.search(r"r\.index_attempts >= max_attempts", reap)
+
+
+def test_the_reap_pending_fix_is_a_new_migration_not_an_edit():
+    """The terminal-state file may already sit in a ledger; an edit would
+    never re-run there."""
+    assert "'pending'" not in _reap(_terminal_migration()).split("WHERE", 1)[1]
+    hits = sorted(MIG_DIR.glob("*_document_index_reap_pending.sql"))
+    assert len(hits) == 1 and hits[0].read_text() == _latest_claim()
 
 
 def test_exhausted_is_admitted_by_the_check_constraint():
@@ -136,7 +156,7 @@ def test_an_omitted_status_lands_in_the_queue_not_a_terminal_state():
 def test_a_last_attempt_that_died_holding_its_lease_is_reaped():
     """attempts = max and 'indexing': the claim's `attempts < max` meant
     nothing could ever retake it. The reaper makes it terminal and visible."""
-    sql = _terminal_migration()
+    sql = _latest_claim()
     assert re.search(r"SET index_status = 'exhausted'", sql)
     assert re.search(r"r\.index_attempts >= max_attempts", sql)
     assert re.search(
@@ -149,12 +169,11 @@ def test_a_last_attempt_that_died_holding_its_lease_is_reaped():
 
 
 def test_the_reaper_leaves_the_lease_so_a_slow_attempt_still_records():
-    reap = _terminal_migration().split("UPDATE documents r", 1)[1].split(";", 1)[0]
-    assert "index_leased_at =" not in reap
+    assert "index_leased_at =" not in _reap(_latest_claim())
 
 
 def test_the_claim_clears_the_previous_error_and_keeps_its_contract():
-    sql = _terminal_migration()
+    sql = _latest_claim()
     assert re.search(r"index_error\s*=\s*NULL", sql)
     assert "CREATE OR REPLACE FUNCTION claim_documents_for_indexing(" in sql
     assert re.search(r"max_attempts\s+INT,\s*lease_seconds\s+INT,\s*batch_size\s+INT", sql)
