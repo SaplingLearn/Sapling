@@ -19,7 +19,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import type { EnrolledCourse } from "@/lib/api";
 import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 
@@ -34,7 +34,7 @@ vi.mock("@/lib/api", () => ({
 
 import { ManageCoursesModal } from "./ManageCoursesModal";
 import { ToastProvider } from "./ToastProvider";
-import { addCourse } from "@/lib/api";
+import { addCourse, onboardingCoursesSearch } from "@/lib/api";
 
 const mockedAddCourse = vi.mocked(addCourse);
 
@@ -172,5 +172,31 @@ describe("ManageCoursesModal semester tabs", () => {
     expect(window.localStorage.getItem(ACTIVE_SEMESTER_STORAGE_KEY)).toBe("");
     expect(tab("All semesters")).toHaveAttribute("aria-pressed", "true");
     expect(tab("Spring 2026")).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
+describe("ManageCoursesModal course search (#769)", () => {
+  it("a slow reply for an older query can't replace the newer query's results", async () => {
+    type Reply = { courses: { id: string; course_code: string; course_name: string }[] };
+    const pending: Record<string, (v: Reply) => void> = {};
+    vi.mocked(onboardingCoursesSearch).mockImplementation(
+      (q: string) =>
+        q === "chem"
+          ? Promise.resolve({ courses: [{ id: "c-chem", course_code: "CHEM-201", course_name: "Chemistry" }] })
+          : new Promise<Reply>(res => { pending[q] = res; }),
+    );
+    renderModal();
+    const input = screen.getByRole("textbox", { name: "Search courses" });
+
+    fireEvent.change(input, { target: { value: "bio" } });
+    await waitFor(() => expect(pending.bio).toBeDefined(), { timeout: 2000 });
+    fireEvent.change(input, { target: { value: "chem" } });
+    expect(await screen.findByText("CHEM-201", undefined, { timeout: 2000 })).toBeInTheDocument();
+
+    await act(async () => {
+      pending.bio({ courses: [{ id: "c-bio", course_code: "BIO-101", course_name: "Biology" }] });
+    });
+    expect(screen.queryByText("BIO-101")).toBeNull();
+    expect(screen.getByText("CHEM-201")).toBeInTheDocument();
   });
 });
