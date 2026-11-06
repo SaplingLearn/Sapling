@@ -101,6 +101,42 @@ function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
   return { code, requestId };
 }
 
+// ── Global 401 (#756) ─────────────────────────────────────────────────────────
+// A 401 from any session-authenticated call means the server no longer honours
+// this browser's session (expired, signed out elsewhere, account deleted). Until
+// #756 nothing noticed until the next profile refetch, so a dead session kept
+// its identity — and its analytics identify — in the tab. fetchJSON now tells
+// the listeners (UserContext tears the identity down); it still throws, so each
+// caller's own error handling is unchanged.
+
+type SessionExpiredListener = () => void;
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+
+/** Subscribe to "a session-authenticated call answered 401". Returns the
+ * unsubscribe. */
+export function onSessionExpired(listener: SessionExpiredListener): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+/** The /pending endpoints authenticate with the pending token in their body,
+ * not the session cookie: their 401 says nothing about a session. */
+function isSessionAuthenticated(path: string): boolean {
+  return !path.startsWith('/api/auth/pending/');
+}
+
+function notifySessionExpired(): void {
+  for (const listener of [...sessionExpiredListeners]) {
+    try {
+      listener();
+    } catch (err) {
+      console.error('[api] session-expired listener failed', err);
+    }
+  }
+}
+
 /**
  * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
  * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
@@ -113,6 +149,7 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
+  if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
   if (!res.ok) {
     const err = await res.text();
     const body = parseErrorBody(err);

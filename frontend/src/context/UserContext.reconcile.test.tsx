@@ -10,9 +10,17 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react';
 
+const sessionExpired = vi.hoisted(() => ({ listeners: new Set<() => void>() }));
 vi.mock('@/lib/api', () => ({
   API_URL: '',
   getMe: vi.fn().mockRejectedValue(new Error('not used in these tests')),
+  // #756: lib/api.ts's global-401 hook, driven by hand below.
+  onSessionExpired: (listener: () => void) => {
+    sessionExpired.listeners.add(listener);
+    return () => {
+      sessionExpired.listeners.delete(listener);
+    };
+  },
 }));
 
 import { UserProvider, useUser, shouldBounceToSignin } from './UserContext';
@@ -352,5 +360,105 @@ describe('profile responses cannot restore an older identity', () => {
     // The profile fields must also remain cleared under a signed-out identity.
     expect(screen.getByTestId('profile').textContent).toBe(':false');
     expect(localStorage.getItem('sapling_user')).toBeNull();
+  });
+});
+
+describe('#756 user-scoped storage and the global 401', () => {
+  const seedUserData = () => {
+    localStorage.setItem('sapling_active_semester', 'Fall 2026');
+    localStorage.setItem('sapling_onboarding_draft', '{"courses":["CS101"]}');
+    localStorage.setItem('sapling_shared_ctx', 'false');
+    localStorage.setItem('sapling_sidenav_collapsed', 'true'); // device-level: kept
+    sessionStorage.setItem('gb-cats-cs101', '[]');
+    sessionStorage.setItem('sapling_last_session_context', '{}');
+  };
+  const expectUserDataCleared = () => {
+    expect(localStorage.getItem('sapling_user')).toBeNull();
+    expect(localStorage.getItem('sapling_active_semester')).toBeNull();
+    expect(localStorage.getItem('sapling_onboarding_draft')).toBeNull();
+    expect(localStorage.getItem('sapling_shared_ctx')).toBeNull();
+    expect(sessionStorage.getItem('gb-cats-cs101')).toBeNull();
+    expect(sessionStorage.getItem('sapling_last_session_context')).toBeNull();
+    expect(localStorage.getItem('sapling_sidenav_collapsed')).toBe('true');
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, '', '/');
+    seed();
+    seedUserData();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const okMe = (id = 'stale-1') => () => ({
+    ok: true, status: 200, json: async () => ({ user_id: id, name: 'N', roles: [] }),
+  });
+
+  it('sign-out clears every user-scoped key, not just the identity', async () => {
+    vi.stubGlobal('fetch', stubFetch(okMe()));
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toContain('stale-1'));
+    fireEvent.click(screen.getByText('Sign out'));
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toBe('out'));
+    expectUserDataCleared();
+  });
+
+  it('signing in as someone else clears the previous account’s data', async () => {
+    vi.stubGlobal('fetch', stubFetch(okMe('new-user')));
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toContain('stale-1'));
+    fireEvent.click(screen.getByText('Switch account'));
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toContain('new-user'));
+    expect(localStorage.getItem('sapling_active_semester')).toBeNull();
+    expect(localStorage.getItem('sapling_onboarding_draft')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({ id: 'new-user' });
+  });
+
+  it('confirming the same account keeps its data', async () => {
+    vi.stubGlobal('fetch', stubFetch(okMe()));
+    render(<UserProvider><SwitchingProbe /></UserProvider>);
+    await waitFor(() => expect(screen.getByTestId('identity').textContent).toContain('stale-1'));
+    fireEvent.click(screen.getByText('Confirm current account'));
+    expect(localStorage.getItem('sapling_active_semester')).toBe('Fall 2026');
+  });
+
+  it('a 401 from any API call re-checks /me at once and clears a dead session', async () => {
+    let meStatus = 200;
+    const fetchMock = stubFetch(() =>
+      meStatus === 200 ? okMe()() : { ok: false, status: meStatus, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<UserProvider><Probe /></UserProvider>);
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('in:stale-1'));
+    const meCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/auth/me')).length;
+    const before = meCalls();
+
+    meStatus = 401;
+    // A burst of 401s (e.g. a dashboard's parallel loads) costs one /me.
+    act(() => {
+      for (const listener of sessionExpired.listeners) listener();
+      for (const listener of sessionExpired.listeners) listener();
+    });
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('out'));
+    expect(meCalls()).toBe(before + 1);
+    expectUserDataCleared();
+  });
+
+  it('a 401 followed by a /me blip keeps the session', async () => {
+    let meStatus = 200;
+    vi.stubGlobal('fetch', stubFetch(() =>
+      meStatus === 200 ? okMe()() : { ok: false, status: meStatus, json: async () => ({}) }));
+    render(<UserProvider><Probe /></UserProvider>);
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('in:stale-1'));
+    meStatus = 503;
+    act(() => {
+      for (const listener of sessionExpired.listeners) listener();
+    });
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.getByTestId('probe').textContent).toBe('in:stale-1');
+    expect(localStorage.getItem('sapling_active_semester')).toBe('Fall 2026');
   });
 });
