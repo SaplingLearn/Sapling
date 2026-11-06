@@ -217,6 +217,13 @@ const card = (id: string) => ({ id, front: `Q-${id}`, back: `A-${id}`, topic: "B
 
 const flip = () => fireEvent.keyDown(window, { code: "Space", key: " " });
 const press = (key: string, repeat = false) => fireEvent.keyDown(window, { key, code: `Digit${key}`, repeat });
+// Flip, then wait until the flip has rendered (the rating buttons enable only
+// when the card is flipped). Pressing a rating key before that re-render lands
+// on the unflipped handler and is ignored, which flaked these tests on slow CI.
+const flipCard = async () => {
+  act(() => { flip(); });
+  await waitFor(() => expect(screen.getByTitle(/\(press 3\)/)).toBeEnabled());
+};
 
 describe("Study flashcards — review session state (#769)", () => {
   beforeEach(() => {
@@ -230,7 +237,7 @@ describe("Study flashcards — review session state (#769)", () => {
     renderStudy();
     await screen.findByText("Card 1 of 2");
 
-    act(() => { flip(); });
+    await flipCard();
     act(() => { press("3"); press("3"); press("3", true); });
     await act(async () => { pending.resolve({ ok: true }); });
 
@@ -243,7 +250,7 @@ describe("Study flashcards — review session state (#769)", () => {
     renderStudy();
     await screen.findByText("Card 1 of 2");
 
-    act(() => { flip(); });
+    await flipCard();
     await act(async () => { press("2"); });
 
     expect(await screen.findByText(/Couldn't save that rating/i)).toBeTruthy();
@@ -260,10 +267,10 @@ describe("Study flashcards — review session state (#769)", () => {
     renderStudy();
     await screen.findByText("Card 1 of 2");
 
-    act(() => { flip(); });
+    await flipCard();
     await act(async () => { press("3"); });
     await screen.findByText("Card 2 of 2");
-    act(() => { flip(); });
+    await flipCard();
     await act(async () => { press("3"); });
 
     expect(await screen.findByText("Deck complete")).toBeTruthy();
@@ -276,7 +283,7 @@ describe("Study flashcards — review session state (#769)", () => {
     mockedRate.mockResolvedValue({ ok: true });
     renderStudy();
     await screen.findByText("Card 1 of 2");
-    act(() => { flip(); });
+    await flipCard();
     await act(async () => { press("3"); });
     await screen.findByText("Card 2 of 2");
 
