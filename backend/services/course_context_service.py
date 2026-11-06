@@ -16,9 +16,11 @@ Stores data in:
 import copy
 import json
 import hashlib
+import random
+import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
-from functools import lru_cache
 
 from db.connection import table
 from agents._run import run_agent_sync
@@ -101,20 +103,26 @@ def _generate_summary_with_gemini(
 #: Upper bound on how stale a cached course context can be (#771). The clear
 #: hook below only reaches THIS process: another worker's
 #: `update_course_context` used to leave this one serving its old copy for
-#: as long as the process lived. Entries are keyed on a time bucket of this
-#: width, so every worker converges within one TTL; a same-process update
-#: still clears at once.
+#: as long as the process lived. Each entry expires on its own clock, at a
+#: jittered 90-100% of this TTL from when it was read, so every worker
+#: converges within one TTL without all offerings refetching at the same
+#: instant; a same-process update still clears at once.
 COURSE_CONTEXT_TTL_S = 60.0
+_TTL_JITTER = 0.1
+#: Entries kept per process; expired entries go first, then least recently used.
+COURSE_CONTEXT_CACHE_MAX = 512
+
+# offering_id -> (expires_at monotonic, context). LRU order, newest last.
+_cache: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+_cache_lock = threading.Lock()
+#: Bumped by every clear: a read that began before a clear must not store its
+#: (pre-update) result after it.
+_cache_generation = 0
 
 
-def _ttl_bucket() -> int:
-    return int(time.monotonic() // COURSE_CONTEXT_TTL_S)
-
-
-@lru_cache(maxsize=512)
-def _get_course_context_cached(offering_id: str, _bucket: int) -> dict:
-    # Errors propagate (lru_cache never caches an exception): a transient read
-    # failure must not pin an empty context for the whole TTL.
+def _read_course_context(offering_id: str) -> dict:
+    """Uncached read. Raises on a store error (the caller answers {} and
+    caches nothing, so a transient failure never pins an empty context)."""
     summary_rows = table("offering_summary").select(
         "*",
         filters={"offering_id": f"eq.{offering_id}"},
@@ -156,16 +164,45 @@ def get_course_context(offering_id: str) -> dict:
     """
     if not offering_id:
         return {}
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get(offering_id)
+        if hit is not None and hit[0] > now:
+            _cache.move_to_end(offering_id)
+            return copy.deepcopy(hit[1])
+        generation = _cache_generation
     try:
-        return copy.deepcopy(_get_course_context_cached(offering_id, _ttl_bucket()))
+        value = _read_course_context(offering_id)
     except Exception:
         return {}
+    ttl = COURSE_CONTEXT_TTL_S * (1.0 - random.uniform(0.0, _TTL_JITTER))
+    with _cache_lock:
+        if generation == _cache_generation:
+            _cache[offering_id] = (time.monotonic() + ttl, value)
+            _cache.move_to_end(offering_id)
+            _evict_locked()
+    return copy.deepcopy(value)
+
+
+def _evict_locked() -> None:
+    """Hold the size bound: drop expired entries, then the least recently
+    used. Caller holds _cache_lock."""
+    if len(_cache) <= COURSE_CONTEXT_CACHE_MAX:
+        return
+    now = time.monotonic()
+    for key in [k for k, (exp, _) in _cache.items() if exp <= now]:
+        del _cache[key]
+    while len(_cache) > COURSE_CONTEXT_CACHE_MAX:
+        _cache.popitem(last=False)
 
 
 def clear_course_context_cache() -> None:
     """Drop the per-process course-context cache. Called whenever the underlying
     aggregates change (``update_course_context``) and from test setup."""
-    _get_course_context_cached.cache_clear()
+    global _cache_generation
+    with _cache_lock:
+        _cache.clear()
+        _cache_generation += 1
 
 
 def update_course_context(offering_id: str) -> None:
