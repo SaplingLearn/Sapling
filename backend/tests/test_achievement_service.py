@@ -10,7 +10,7 @@ Tests cover:
 """
 import pytest
 from unittest.mock import MagicMock, patch, call
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 class TestGetUserStat:
@@ -391,11 +391,14 @@ class _GrantWorld:
     not written. A plain `insert` on a conflict raises, as the real one did."""
 
     def __init__(self, *, triggers, badges, links=(), earned=(), owned=(),
-                 paid=(), stat_rows=None, fail_cosmetics=False):
+                 paid=(), stat_rows=None, fail_cosmetics=False, earned_at=None):
         self.triggers = list(triggers)
         self.badges = {b["id"]: b for b in badges}
         self.links = list(links)
         self.earned = set(earned)
+        # Grant times; a badge not listed was earned just now (inside the
+        # heal window).
+        self.earned_at = dict(earned_at or {})
         self.owned = set(owned)
         self.paid = set(paid)
         self.stat_rows = stat_rows if stat_rows is not None else [{"user_id": "u1"}] * 5
@@ -420,7 +423,10 @@ class _GrantWorld:
             m.select.return_value = self.triggers
         elif name == "user_achievements":
             m.select.side_effect = lambda *a, **k: [
-                {"achievement_id": a_id} for a_id in world.earned
+                {"achievement_id": a_id,
+                 "earned_at": world.earned_at.get(
+                     a_id, datetime.now(timezone.utc).isoformat())}
+                for a_id in world.earned
             ]
 
             def _upsert(row, **kw):
@@ -598,6 +604,73 @@ class TestGrantPipelineSelfHeals:
         world.table = broken_xp
         earned, _ = _run(world)
         assert [e["slug"] for e in earned] == ["a2"]
+
+
+class TestGrantHealingIsBounded:
+    """Review of #783: an unbounded heal read on every event, and paid the
+    CURRENT reward/cosmetics to every past holder — so an admin raising
+    xp_reward or linking a new cosmetic triggered a mass retroactive payout.
+    Healing now covers only grants inside HEAL_WINDOW."""
+
+    OLD = "2025-01-01T00:00:00+00:00"
+
+    def test_raising_xp_reward_pays_no_old_holder(self):
+        # Earned long ago when the badge paid 0; an admin since set it to 500.
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=500)],
+            earned={"a1"}, earned_at={"a1": self.OLD},
+        )
+        _, award = _run(world)
+        award.assert_not_called()
+
+    def test_linking_a_new_cosmetic_unlocks_it_for_no_old_holder(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1")],
+            earned={"a1"}, earned_at={"a1": self.OLD},
+            links=[{"achievement_id": "a1", "cosmetic_id": "c-new"}],
+        )
+        _run(world)
+        assert world.cosmetic_upserts == []
+
+    def test_an_old_grant_costs_no_heal_reads(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=5)],
+            earned={"a1"}, earned_at={"a1": self.OLD},
+        )
+        touched = []
+        real_table = world.table
+        world.table = lambda name: touched.append(name) or real_table(name)
+        _run(world)
+        assert touched == ["achievement_triggers", "user_achievements"]
+
+    def test_a_fresh_half_grant_still_heals(self):
+        an_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=120)],
+            earned={"a1"}, earned_at={"a1": an_hour_ago},
+            links=[{"achievement_id": "a1", "cosmetic_id": "c1"}],
+        )
+        _, award = _run(world)
+        award.assert_called_once()
+        assert world.cosmetic_upserts == ["c1"]
+
+    def test_a_grant_with_no_recorded_time_is_not_healed(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=5)],
+            earned={"a1"}, earned_at={"a1": None},
+        )
+        _, award = _run(world)
+        award.assert_not_called()
+
+    def test_only_the_events_badges_are_healed(self):
+        """A recent grant of a badge this event cannot trigger is not
+        this check's business."""
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1"), _badge("b9", reward=5)],
+            earned={"a1", "b9"}, earned_at={"a1": self.OLD},
+        )
+        _, award = _run(world)
+        award.assert_not_called()
 
 
 class TestGrantLinkedCosmeticsIsIdempotent:

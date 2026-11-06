@@ -351,17 +351,24 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
 
     # Get user's existing achievements to avoid re-granting
     existing = table("user_achievements").select(
-        "achievement_id",
+        "achievement_id,earned_at",
         filters={"user_id": f"eq.{user_id}"},
-    )
-    existing_ids = {row["achievement_id"] for row in existing} if existing else set()
+    ) or []
+    existing_ids = {row["achievement_id"] for row in existing}
 
-    # Self-heal the badges this event's triggers already granted (#767): a
-    # grant is insert → XP → cosmetics over separate writes, so one that died
-    # after the insert left the badge "earned" with its reward never paid, and
-    # nothing retried it because the badge is skipped from then on.
+    # Self-heal this event's badges that were granted RECENTLY (#767): a grant
+    # is insert → XP → cosmetics over separate writes, so one that died after
+    # the insert left the badge "earned" with its reward never paid, and
+    # nothing retried it because the badge is skipped from then on. Bounded to
+    # HEAL_WINDOW so the steady state costs no extra reads, and so raising a
+    # badge's xp_reward or linking a new cosmetic never pays out retroactively
+    # to everyone who already holds it.
+    event_ids = {t["achievement_id"] for t in triggers}
+    recent_cutoff = datetime.now(timezone.utc) - HEAL_WINDOW
     _heal_grants(user_id, {
-        t["achievement_id"] for t in triggers if t["achievement_id"] in existing_ids
+        row["achievement_id"] for row in existing
+        if row["achievement_id"] in event_ids
+        and _earned_since(row.get("earned_at"), recent_cutoff)
     })
 
     # Drop already-earned triggers BEFORE evaluating the stat. Several stats
@@ -448,19 +455,47 @@ def check_achievements(user_id: str, event_type: str, event_data: dict = None) -
     return newly_earned
 
 
+# How long after a grant its missing XP/cosmetics are still re-attempted. A
+# half-grant is a request that died between the badge insert and its payouts,
+# so the student's next qualifying event almost always lands well inside this.
+# Past it, a missing payout is indistinguishable from an admin change made
+# after the grant (a raised xp_reward, a newly linked cosmetic), which must
+# NOT be paid out retroactively to every past holder.
+HEAL_WINDOW = timedelta(hours=24)
+
+
+def _earned_since(raw: str | None, cutoff: datetime) -> bool:
+    """True when `earned_at` is after `cutoff`. Missing/unparseable → False:
+    an unknown grant time is treated as old, so it is never healed."""
+    try:
+        ts = _parse_ts(raw)
+        if ts is None:
+            return False
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts > cutoff
+    except (TypeError, ValueError):
+        return False
+
+
 def _heal_grants(user_id: str, achievement_ids: set) -> None:
-    """Re-attempt the XP reward and linked cosmetics of already-earned badges
-    that never received them (#767). Never raises — it runs ahead of the
-    event's real work.
+    """Re-attempt the XP reward and linked cosmetics of badges granted within
+    HEAL_WINDOW that never received them (#767). Never raises — it runs ahead
+    of the event's real work.
+
+    The grant-time reward and cosmetic set are not recorded, so the CURRENT
+    values are used — which is why the caller only passes recent grants: an
+    admin edit can then at most affect a badge earned in the last day, never
+    the whole back catalogue of holders.
 
     Only LIVE badges are healed: a badge demoted to draft keeps its grant row
     (hidden from display, see routes/admin.py::update_achievement) but pays
     nothing more until it is published again.
 
-    Cost on the steady-state path (every trigger already earned): one read of
-    the badges, one of their achievement_unlocked ledger rows (only if any pays
-    XP), one of their cosmetic links, and one of the user's cosmetics (only if
-    any are linked). Writes happen only when something is actually missing.
+    Cost: nothing unless the event's badges include a recent grant; then one
+    read of the badges, one of their achievement_unlocked ledger rows (only if
+    any pays XP), one of their cosmetic links, and one of the user's cosmetics
+    (only if any are linked). Writes happen only when something is missing.
     """
     if not achievement_ids:
         return
