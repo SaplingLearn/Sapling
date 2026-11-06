@@ -3,18 +3,48 @@
 Sapling sends four kinds of email, all through `backend/services/email_service.py`
 (the only module that talks to Resend):
 
-| kind | when | dedupe (never twice) |
-| --- | --- | --- |
-| `waitlist_confirmation` | someone joins the waitlist (`POST /api/newsletter/subscribe`) | per address |
-| `waitlist_approved` | an admin approves a waitlist email (Admin → Allowlist, single or bulk) | per address, so a revoke and re-approve doesn't re-send |
-| `welcome` | an account's first approved sign-in (`users.welcomed_at` claim) | per account |
-| `broadcast` | Admin → Email, sent to a chosen audience | per broadcast × address |
+| kind | category | when | dedupe (never twice) |
+| --- | --- | --- | --- |
+| `waitlist_confirmation` | transactional | someone joins the waitlist (`POST /api/newsletter/subscribe`) | per address |
+| `waitlist_approved` | transactional | an admin approves a waitlist email (Admin → Allowlist, single or bulk) | per address, so a revoke and re-approve doesn't re-send |
+| `welcome` | transactional | an account's first approved sign-in while `users.welcomed_at` is NULL | per account |
+| `broadcast` | notification | Admin → Email, sent to a chosen audience | per broadcast × address |
+
+The category lives in one place, `email_service.EMAIL_CATEGORIES` (a kind
+missing from it counts as notification). **Notification** mail is not sent to
+an account whose Settings → Notifications → Email (`user_settings.notification_email`)
+is off: the send returns `opted_out` and records nothing, and broadcast
+audiences leave those accounts out of their counts. The setting is matched by
+address hash, so it also covers that person's waitlist address, and a toggle
+reaches a running send within a minute. **Transactional** mail (waitlist,
+"you're in", welcome) ignores that setting. Only the suppression list stops it.
 
 **Kill switch:** with `RESEND_API_KEY` unset, nothing is sent. Each send is
 recorded as `skipped`, and the admin portal shows a "not configured" banner.
 Tests, E2E and local dev run this way. A `skipped` or `failed` send can be
 re-claimed later, so re-approving someone after the key is set does send their
-"you're in". A welcome claimed while unconfigured is not retried.
+"you're in". The welcome works the same way: `users.welcomed_at` is stamped
+only once a welcome is actually `sent`, so a welcome that was skipped or
+failed goes out on that person's next sign-in.
+
+**Send ledger (`email_sends`).** A send claims its dedupe key as `queued`
+(with `claimed_at`) before it talks to Resend, then records `sent`, `failed`
+or `skipped`. A key that is `sent`, or `queued` less than 15 minutes ago, is
+never sent again. Anything else can be re-claimed by the next send of that key:
+`skipped`, `failed`, `suppressed` (once an admin removes the suppression), and
+a `queued` row older than 15 minutes, which means the process died mid-send or
+couldn't write the outcome. A failed outcome write is retried once, then
+logged at ERROR.
+
+**Idempotency.** Every attempt at one dedupe key sends the same Resend
+`Idempotency-Key` (the dedupe key itself). If an earlier attempt reached Resend
+before a timeout or crash, Resend returns its stored result instead of
+delivering again. Resend keeps keys for **24 hours**, which leaves one residual
+risk: if an attempt's outcome is never learned (a transport timeout, or a crash
+before the status write) and the key is re-claimed more than 24 hours later,
+that address can get the email twice. A 409 from Resend (the same key still in
+flight, or a changed payload, such as a first name learned in between) is
+recorded as `failed` and retried by a later re-claim.
 
 **Privacy:** the email tables (`email_sends`, `email_suppressions`,
 `email_broadcasts`) never store an address, only `recipient_hash`, an HMAC
@@ -26,7 +56,37 @@ casually.
 headers (`List-Unsubscribe` / `List-Unsubscribe-Post`). The link is
 `{FRONTEND_URL}/api/email/unsubscribe?t=…`, which the frontend proxies to the
 backend. GET shows a confirm page and POST suppresses, because mail scanners
-prefetch GETs. A suppressed address gets no email of any kind.
+prefetch GETs. A suppressed address gets no email of any kind; a send to it
+returns and records `suppressed`, including over an earlier `skipped`/`failed`
+row for the same key.
+
+**Undoing a suppression:** `POST /api/admin/email/suppressions/remove` with
+`{"email": "…"}` (admin only) takes the address off the list and returns
+`{"removed": true|false}`. The audit log records the hash, never the address.
+There is no admin UI for it yet.
+
+## Broadcasts
+
+A broadcast resolves its audience when it's sent and mails it from a
+background task, writing progress (and a `heartbeat_at`) every 25 recipients or
+30 seconds. When it finishes, its status is one of:
+
+| status | meaning |
+| --- | --- |
+| `sent` | everything that went anywhere went out |
+| `partial` | some went out and some failed, or the run died part-way |
+| `failed` | nothing went out and something failed |
+| `skipped` | nothing went out and nothing failed: no `RESEND_API_KEY`, everyone suppressed or opted out, or an empty audience |
+
+A run killed by a deploy or restart stays `sending`. Once its heartbeat is 10
+minutes old, Admin → Email shows it as **stalled**. Stalled, `failed` and
+`partial` broadcasts have a **Resume** button
+(`POST /api/admin/email/broadcasts/{id}/resume`). Resuming re-resolves the
+audience as it is now, because addresses are never stored, so the original
+list can't be replayed. Every recipient then goes back through the
+per-broadcast dedupe: anyone already mailed is skipped, failed sends are
+retried, and anyone who joined the audience since gets it too. A resumed run
+takes its sent count from `email_sends`. Two clicks start one run.
 
 ## Design and images
 
@@ -92,7 +152,10 @@ inject markup. Defined in `backend/services/email_variables.py`.
 5. **Migrations** (before deploying the code): `20261022062444_newsletter_joined.sql`
    and `20261022063145_email.sql`. The second backfills `users.welcomed_at` for
    every account that's already approved, so the deploy doesn't welcome
-   existing students.
+   existing students. `20261106042113_email_send_lease_broadcast_resume.sql`
+   adds `email_sends.claimed_at`, `email_broadcasts.heartbeat_at` and the
+   `partial`/`skipped` broadcast statuses; apply it before the code that
+   writes them.
 6. **Smoke test.** Go to Admin → Email, check the banner is gone, and use "Send
    test to me". The history and `email_sends` show the result; a failure's
    `error` column says why, with the address scrubbed.
@@ -105,7 +168,8 @@ links in staging emails land on the Access login. Prod is unaffected.
 - No Resend bounce/complaint webhook yet. Resend suppresses hard bounces on its
   side, but `email_suppressions` only learns about unsubscribes.
 - A broadcast runs as one in-process background task at about 2 emails per
-  second. A restart mid-send leaves it `sending` with no resume.
+  second. A restart mid-send stops it until an admin resumes it (see
+  Broadcasts); nothing resumes it automatically.
 - `POST /api/newsletter/subscribe` is public and has no rate limit or bot
   check. Dedupe caps it at one confirmation per address, but adding Turnstile
   there would stop it being used to mail strangers.
