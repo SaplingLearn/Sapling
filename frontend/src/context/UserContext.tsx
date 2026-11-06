@@ -33,14 +33,12 @@ interface UserContextValue {
   avatarUrl: string;
   userReady: boolean;
   isAuthenticated: boolean;
-  isApproved: boolean;
   username: string | null;
   roles: UserRole[];
   equippedCosmetics: EquippedCosmetics;
   featuredRole: Role | null;
   isAdmin: boolean;
   setActiveUser: (id: string, name: string, avatar?: string, opts?: { persist?: boolean }) => void;
-  confirmApproved: () => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   // Direct setter exposed so callers can do an optimistic UI update
@@ -56,14 +54,12 @@ export const UserContext = createContext<UserContextValue>({
   avatarUrl: '',
   userReady: false,
   isAuthenticated: false,
-  isApproved: false,
   username: null,
   roles: [],
   equippedCosmetics: {},
   featuredRole: null,
   isAdmin: false,
   setActiveUser: () => {},
-  confirmApproved: () => {},
   signOut: () => Promise.resolve(),
   refreshProfile: () => Promise.resolve(),
   setAvatarUrl: () => {},
@@ -91,7 +87,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [userName, setUserName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isApproved, setIsApproved] = useState(false);
   const [userReady, setUserReady] = useState(false);
 
   const [username, setUsername] = useState<string | null>(null);
@@ -183,7 +178,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // localStorage, so the next bootstrap takes the fast synchronous
         // path above instead of hitting the network again.
         setActiveUser(me.user_id, me.name || '', me.avatar_url || '');
-        if (me.is_approved) setIsApproved(true);
       } catch {
         // No identity source is left, for any reason: a 401 (no/expired
         // session), a 404 (the cookie names a user row that no longer
@@ -218,7 +212,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setUserName('');
     setAvatarUrl('');
     setIsAuthenticated(false);
-    setIsApproved(false);
     setUsername(null);
     setRoles([]);
     setEquippedCosmetics({});
@@ -339,7 +332,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         // fallback above): just drop the stale identity there.
         if (typeof window !== 'undefined' && window.location.pathname.startsWith('/auth')) return;
         setActiveUser(data.user_id, data.name || '', data.avatar_url || '');
-        if (data.is_approved) setIsApproved(true);
         return;
       }
       // /me is the source of truth for the display name (it may have changed
@@ -413,8 +405,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = useCallback(async () => { await fetchProfileData(userId); }, [userId, fetchProfileData]);
 
-  const confirmApproved = () => setIsApproved(true);
-
   const signOut = useCallback(async () => {
     try {
       await fetch('/api/auth/session', { method: 'DELETE' });
@@ -425,11 +415,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
+      // #757: no `isApproved` — nothing read it, and it sat false on a
+      // localStorage boot. Approval is enforced server-side (the auth guard's
+      // 403 not_approved, #756) and routed by the middleware (/pending).
+      userId, userName, avatarUrl, userReady, isAuthenticated,
       username, roles, equippedCosmetics, featuredRole, isAdmin,
-      setActiveUser, confirmApproved, signOut, refreshProfile, setAvatarUrl,
+      setActiveUser, signOut, refreshProfile, setAvatarUrl,
     }),
-    [userId, userName, avatarUrl, userReady, isAuthenticated, isApproved,
+    [userId, userName, avatarUrl, userReady, isAuthenticated,
      username, roles, equippedCosmetics, featuredRole, isAdmin, setActiveUser, refreshProfile, signOut]
   );
 

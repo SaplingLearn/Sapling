@@ -367,6 +367,7 @@ describe('#756 user-scoped storage and the global 401', () => {
   const seedUserData = () => {
     localStorage.setItem('sapling_active_semester', 'Fall 2026');
     localStorage.setItem('sapling_onboarding_draft', '{"courses":["CS101"]}');
+    localStorage.setItem('sapling_onboarding_draft:stale-1', '{"courses":["CS101"]}');
     localStorage.setItem('sapling_shared_ctx', 'false');
     localStorage.setItem('sapling_sidenav_collapsed', 'true'); // device-level: kept
     sessionStorage.setItem('gb-cats-cs101', '[]');
@@ -376,6 +377,7 @@ describe('#756 user-scoped storage and the global 401', () => {
     expect(localStorage.getItem('sapling_user')).toBeNull();
     expect(localStorage.getItem('sapling_active_semester')).toBeNull();
     expect(localStorage.getItem('sapling_onboarding_draft')).toBeNull();
+    expect(localStorage.getItem('sapling_onboarding_draft:stale-1')).toBeNull();
     expect(localStorage.getItem('sapling_shared_ctx')).toBeNull();
     expect(sessionStorage.getItem('gb-cats-cs101')).toBeNull();
     expect(sessionStorage.getItem('sapling_last_session_context')).toBeNull();
@@ -415,6 +417,7 @@ describe('#756 user-scoped storage and the global 401', () => {
     await waitFor(() => expect(screen.getByTestId('identity').textContent).toContain('new-user'));
     expect(localStorage.getItem('sapling_active_semester')).toBeNull();
     expect(localStorage.getItem('sapling_onboarding_draft')).toBeNull();
+    expect(localStorage.getItem('sapling_onboarding_draft:stale-1')).toBeNull();
     expect(JSON.parse(localStorage.getItem('sapling_user') ?? 'null')).toMatchObject({ id: 'new-user' });
   });
 

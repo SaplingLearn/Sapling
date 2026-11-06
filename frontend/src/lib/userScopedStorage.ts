@@ -17,7 +17,7 @@
 export const USER_SCOPED_LOCAL_KEYS = [
   'sapling_user', // identity (UserContext)
   'sapling_active_semester', // lib/useActiveSemester.ts
-  'sapling_onboarding_draft', // components/screens/Onboarding.tsx
+  'sapling_onboarding_draft', // Onboarding.tsx's legacy shared draft (pre-#757)
   'sapling_quiz_session', // lib/quiz/session.ts
   'sapling_quiz_prefs', // lib/quiz/session.ts + prefs.ts
   'sapling_quiz_dismissed', // lib/quiz/session.ts
@@ -30,6 +30,11 @@ export const USER_SCOPED_LOCAL_KEYS = [
   'sapling_last_session_feedback', // SessionFeedbackFlow.tsx cooldown
   'sapling_session_end_count', // Learn.tsx / SessionFeedbackFlow.tsx
   'sapling_disclaimer_ack', // DisclaimerModal.tsx (each student acknowledges)
+] as const;
+
+/** localStorage key prefixes (one key per account). */
+export const USER_SCOPED_LOCAL_PREFIXES = [
+  'sapling_onboarding_draft:', // Onboarding.tsx onboardingDraftKey(userId), #757
 ] as const;
 
 /** sessionStorage keys holding one account's data. */
@@ -56,7 +61,13 @@ function keysOf(storage: Storage): string[] {
 export function clearUserScopedStorage(): void {
   if (typeof window === 'undefined') return;
   try {
-    for (const key of USER_SCOPED_LOCAL_KEYS) window.localStorage.removeItem(key);
+    const local = window.localStorage;
+    for (const key of USER_SCOPED_LOCAL_KEYS) local.removeItem(key);
+    for (const key of keysOf(local)) {
+      if (USER_SCOPED_LOCAL_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        local.removeItem(key);
+      }
+    }
   } catch {}
   try {
     const session = window.sessionStorage;

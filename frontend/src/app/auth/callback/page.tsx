@@ -34,7 +34,7 @@ async function fetchMe(): Promise<MeBody | null> {
 function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { setActiveUser, confirmApproved } = useUser();
+  const { setActiveUser } = useUser();
 
   useEffect(() => {
     const userId = searchParams.get('user_id');
@@ -122,7 +122,6 @@ function CallbackInner() {
 
       if (!isPopup) {
         setActiveUser(userId, name, avatar, { persist: true });
-        confirmApproved();
       }
 
       if (broadcast({
