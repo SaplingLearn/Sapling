@@ -870,7 +870,7 @@ class TestGetUserOr404SelectColumns:
     # `users` after the identity split (migration 0024): identity + auth + activity.
     USERS_SCHEMA_COLUMNS = {
         "id", "email", "onboarding_completed",
-        "streak_count", "last_active_date", "current_room_id", "created_at",
+        "streak_count", "last_active_date", "created_at",
         "updated_at", "google_id", "auth_provider", "is_approved",
         "last_sign_in_at", "deleted_at",
     }

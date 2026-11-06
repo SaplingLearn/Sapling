@@ -219,6 +219,43 @@ def test_after_shutdown_nothing_is_accepted_and_no_worker_restarts(ph):
     assert sent == []
 
 
+# ── Dead state (#771) ───────────────────────────────────────────────────────
+
+
+def test_dropped_columns_have_no_reader_left():
+    """users.current_room_id and courses.deleted_at are dropped by
+    20261106043825_drop_dead_state_columns; a reader added back would 400 at
+    PostgREST (mocked tests cannot see that)."""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from services import topic_checklist_service as svc
+
+    backend = Path(__file__).resolve().parents[1]
+    for path in backend.rglob("*.py"):
+        if "venv" in path.parts or "tests" in path.parts:
+            continue
+        assert "current_room_id" not in path.read_text(encoding="utf-8"), path
+
+    seen: dict = {}
+
+    def fake_table(name):
+        m = MagicMock()
+
+        def select(cols, filters=None, **_k):
+            if name == "courses":
+                seen.update(filters or {})
+            return []
+        m.select.side_effect = select
+        return m
+
+    with patch("services.topic_checklist_service.table", side_effect=fake_table), \
+         patch("services.topic_checklist_service.user_offering_ids_for_course", return_value=[]):
+        with pytest.raises(Exception):
+            svc.resolve_scope("u1", "c1", None)
+    assert seen and "deleted_at" not in seen
+
+
 # ── Model mode is immutable after boot ──────────────────────────────────────
 
 
