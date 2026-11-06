@@ -4,9 +4,16 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from config import get_mastery_tier
-from db.connection import table
-from services.streak_service import touch_streak_safe
+import httpx
+
+from config import (
+    MASTERY_LEARNING_MIN,
+    MASTERY_MASTERED_MIN,
+    MASTERY_STRUGGLING_MIN,
+    get_mastery_tier,
+)
+from db.connection import rpc, table
+from services.streak_service import effective_streak, touch_streak_safe
 
 logger = logging.getLogger(__name__)
 
@@ -205,8 +212,13 @@ def get_graph(user_id: str, semester: str | None = None) -> dict:
     velocities = [n["learning_velocity"] for n in nodes if n["learning_velocity"] > 0]
     avg_velocity = round(sum(velocities) / len(velocities), 4) if velocities else 0.0
 
-    user_rows = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-    streak = user_rows[0]["streak_count"] if user_rows else 0
+    # The STORED streak_count is only reset on the student's next activity, so
+    # a lapsed streak would still display; effective_streak reads it as of
+    # today (#767).
+    user_rows = table("users").select(
+        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"},
+    )
+    streak = effective_streak(user_rows[0] if user_rows else None)
 
     stats = {
         "total_nodes": len(nodes),
@@ -525,13 +537,52 @@ def update_node_color(user_id: str, node_id: str, color: str | None) -> dict:
     return {"updated": True}
 
 
-def delete_course(user_id: str, course_id: str) -> dict:
+def delete_course(user_id: str, course_id: str, term: str | None = None) -> dict:
     """
-    Unenroll a user from a course (delete their enrollment(s) for the abstract
-    course's offerings). Graph nodes are kept for potential re-enrollment.
+    Drop ONE term's enrollment in an abstract course (#766).
+
+    ``term`` is a semester label (or term id) — the tab the student removed the
+    course from. Omitted, it means the current term. Only enrollments in that
+    term's offerings are deleted: an enrollment row cascades to its
+    assignments, grades, gradescope links and topic checklists (0021/0027 and
+    later), so deleting every term's enrollment — the old behavior — erased a
+    student's PAST terms' gradebooks to drop this term's class.
+
+    Graph nodes are never touched: the knowledge graph lives on the abstract
+    course and mastery is cumulative across terms, so the nodes stay for any
+    remaining enrollment and for a later re-enrollment.
+
+    Returns ``{"deleted": bool}``; ``{"deleted": False, "error": ...}`` when the
+    term label doesn't resolve, or when no term was given and the student holds
+    this course only in other terms (the caller must name which one to drop).
+    Nothing to delete in the targeted term is an idempotent ``deleted: False``.
     """
-    from services.academics import user_offering_ids_for_course
-    offering_ids = user_offering_ids_for_course(user_id, course_id)
+    from services.academics import (
+        current_term,
+        term_for_offering,
+        term_id_for_label,
+        user_offering_ids_for_course,
+    )
+    if term:
+        term_id = term_id_for_label(term)
+        if not term_id:
+            return {"deleted": False, "error": f"Unknown term: {term}"}
+    else:
+        cur = current_term()
+        term_id = cur["id"] if cur else None
+    held = user_offering_ids_for_course(user_id, course_id)
+    offering_ids = [
+        oid for oid in held
+        if term_id and (term_for_offering(oid) or {}).get("id") == term_id
+    ]
+    if not offering_ids:
+        if held and not term:
+            return {
+                "deleted": False,
+                "error": "Not enrolled in this course in the current term; "
+                         "pass the term to drop",
+            }
+        return {"deleted": False}
     from services.course_context_service import update_course_context
     for offering_id in offering_ids:
         table("enrollments").delete(
@@ -556,6 +607,54 @@ def _coerce_unit(value, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         f = default
     return max(0.0, min(1.0, f))
+
+
+def _apply_mastery_delta(user_id: str, row: dict, delta: float) -> tuple[float, float] | None:
+    """Apply ``delta`` to one node's mastery ATOMICALLY; return (before, after).
+
+    The ``apply_mastery_delta`` SQL function (migration
+    20261106042903_graph_node_mastery_atomic.sql) locks the row, clamps the
+    new score, recomputes the tier from the thresholds passed here (config.py
+    stays their one home) and increments ``times_studied`` in one statement,
+    so concurrent quiz submits / tutor turns compose instead of the later
+    write erasing the earlier (#766). Returns None when the node is gone.
+
+    A backend that lands before the migration (PostgREST 404s an unknown
+    function) degrades to the old blind read-modify-write with a warning,
+    rather than failing every mastery update until the migration lands.
+    """
+    try:
+        rows = rpc("apply_mastery_delta", {
+            "p_node_id": row["id"],
+            "p_user_id": user_id,
+            "p_delta": delta,
+            "p_mastered_min": MASTERY_MASTERED_MIN,
+            "p_learning_min": MASTERY_LEARNING_MIN,
+            "p_struggling_min": MASTERY_STRUGGLING_MIN,
+        })
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 404:
+            raise
+        logger.warning(
+            "apply_mastery_delta is missing (migration 20261106042903 not "
+            "applied?); falling back to a NON-atomic mastery update node=%s",
+            row["id"],
+        )
+        before = float(row.get("mastery_score") or 0.0)
+        after = max(0.0, min(1.0, before + delta))
+        table("graph_nodes").update(
+            {
+                "mastery_score": after,
+                "mastery_tier": get_mastery_tier(after),
+                "times_studied": (row.get("times_studied") or 0) + 1,
+                "last_studied_at": datetime.now(timezone.utc).isoformat(),
+            },
+            filters={"id": f"eq.{row['id']}", "user_id": f"eq.{user_id}"},
+        )
+        return before, after
+    if not rows:
+        return None
+    return float(rows[0]["before_score"]), float(rows[0]["after_score"])
 
 
 def add_node(
@@ -768,20 +867,15 @@ def apply_graph_update(user_id: str, graph_update: dict, course_id: str | None =
         if not row:
             continue
 
-        before = row["mastery_score"]
-        after = max(0.0, min(1.0, before + delta))
+        applied = _apply_mastery_delta(user_id, row, delta)
+        if applied is None:
+            continue  # node deleted under us: nothing to log against
+        before, after = applied
+        # A second update of the same concept in this batch must see this one.
+        row["mastery_score"] = after
+        row["times_studied"] = (row.get("times_studied") or 0) + 1
 
         now = datetime.now(timezone.utc).isoformat()
-        # Update only the scalar columns — the mastery_events JSONB blob is gone (0023).
-        table("graph_nodes").update(
-            {
-                "mastery_score": after,
-                "mastery_tier": get_mastery_tier(after),
-                "times_studied": (row.get("times_studied") or 0) + 1,
-                "last_studied_at": now,
-            },
-            filters={"id": f"eq.{row['id']}"},
-        )
         # Append-only mastery event (fixes the non-atomic read-modify-write, #247).
         event_row = {
             "id": str(uuid.uuid4()),

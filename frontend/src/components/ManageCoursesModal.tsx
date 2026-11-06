@@ -192,7 +192,16 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
             {courses
               .filter((c) => courseInTerm(c, activeTerm))
               .map((c) => (
-                <EnrolledRow key={c.course_id} userId={userId} course={c} onChanged={onChanged} />
+                <EnrolledRow
+                  key={c.course_id}
+                  userId={userId}
+                  course={c}
+                  // Remove drops the enrollment for the tab being viewed (or,
+                  // under "All semesters", the course's representative term)
+                  // — never every term's, which wiped past gradebooks (#766).
+                  dropTerm={activeTerm || c.term}
+                  onChanged={onChanged}
+                />
               ))}
           </div>
 
@@ -272,10 +281,11 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
 }
 
 function EnrolledRow({
-  userId, course, onChanged,
+  userId, course, dropTerm, onChanged,
 }: {
   userId: string;
   course: EnrolledCourse;
+  dropTerm?: string;
   onChanged: () => Promise<void> | void;
 }) {
   const toast = useToast();
@@ -302,7 +312,7 @@ function EnrolledRow({
 
   const doDelete = async () => {
     try {
-      await deleteCourse(userId, course.course_id);
+      await deleteCourse(userId, course.course_id, dropTerm || undefined);
       toast.success(`Removed ${course.course_code || course.course_name}`);
       await onChanged();
     } catch (err) {
