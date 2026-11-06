@@ -3,8 +3,15 @@
 Layer 0 ingestion: bu_catalog_fall_2026.json -> course_chunks table.
 
 Reads the scraped BU catalog JSON, builds one chunk per course
-(title + description + prerequisites), embeds with Gemini
-text-embedding-004, and upserts into course_chunks.
+(title + description + prerequisites), embeds with the SAME local encoder
+the request path uses (services/rag_service, ADR 0031), and upserts into
+course_chunks.
+
+Embedding goes through rag_service deliberately: catalog rows share the
+`course_chunks` table and its ANN index with document rows, and vectors
+from two different models do not share a space. A private Gemini client
+here would silently poison `course_relevance` and catalog retrieval
+against every bge-embedded row.
 
 Run from repo root:
     python backend/scripts/ingest_catalog.py
@@ -14,54 +21,47 @@ Resume-safe: already-ingested chunks are skipped via upsert on_conflict=id.
 
 import hashlib
 import json
-import os
 import sys
 import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types as genai_types
 
 # ── Bootstrap paths ────────────────────────────────────────────────────────────
 load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from agents._providers import model_mode  # noqa: E402
 from db.connection import table  # noqa: E402
 from services.encryption import encrypt_if_present  # noqa: E402
+from services.rag_service import (  # noqa: E402
+    _EMBED_MODEL,
+    _embed_documents_batch,
+)
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 CATALOG_FILE  = Path(__file__).parent.parent / "data" / "bu_catalog_fall_2026.json"
-EMBED_MODEL   = "gemini-embedding-001"
+# Kept as a name for the log line only; the model itself is rag_service's.
+EMBED_MODEL   = _EMBED_MODEL
 SEMESTER_TAG  = "fall_2026"
 BATCH_SIZE    = 50    # courses per Supabase upsert batch
-EMBED_BATCH   = 100   # texts per Gemini embed_content call
-RATE_DELAY    = 3.0   # 100 texts / 3s = ~2,000 texts/min (limit is 3,000/min)
+EMBED_BATCH   = 100   # texts per local encoder forward pass
+RATE_DELAY    = 0.0   # local encoder: no provider rate limit to respect
 
-# Deliberately NOT gated on agents/_providers.model_mode() (#439): this is an
-# offline ops CLI, run by hand against a real Gemini key — it is never imported
-# on the request path and never runs under the E2E function seam, and catalog
-# ingestion is meaningless without real embeddings. What #413 does fix here:
-# the client used to be built at module import with api_key=os.getenv(..., ""),
-# and genai.Client(api_key="") raises a bare ValueError at construction — so a
-# keyless invocation died on an opaque import error. Build lazily and fail
-# fast with an actionable message instead.
-_gemini: genai.Client | None = None
-
-
-def _get_gemini() -> genai.Client:
-    global _gemini
-    if _gemini is None:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            sys.exit(
-                "GEMINI_API_KEY is not set. ingest_catalog.py embeds with the real "
-                "Gemini API and has no offline mode — set the key in backend/.env "
-                "(or the environment) and re-run."
-            )
-        _gemini = genai.Client(api_key=api_key)
-    return _gemini
+# Catalog ingestion is meaningless without real embeddings, so this CLI
+# asserts real mode rather than inheriting the request path's silent
+# degrade: under SAPLING_MODEL_MODE=function every _embed_* raises
+# _EmbeddingDisabled, and a run that wrote NULL vectors for 20k courses
+# would look like success. Fail fast with an actionable message instead
+# (the shape #413 established when this was a keyless genai.Client).
+def _require_real_mode_cli() -> None:
+    if model_mode() != "real":
+        sys.exit(
+            f"SAPLING_MODEL_MODE={model_mode()!r}: ingest_catalog.py embeds with "
+            "the real local encoder and has no offline mode. Unset "
+            "SAPLING_MODEL_MODE (or set it to 'real') and re-run."
+        )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -92,21 +92,18 @@ def chunk_id(course_id: str, chunk_text: str) -> str:
 
 
 def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed up to EMBED_BATCH texts in one Gemini call, truncated to 768-dim."""
-    response = _get_gemini().models.embed_content(
-        model=EMBED_MODEL,
-        contents=texts,
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=768,
-            task_type="RETRIEVAL_DOCUMENT",
-        ),
-    )
-    return [list(e.values) for e in response.embeddings]
+    """Embed up to EMBED_BATCH texts as 768-d document-side vectors.
+
+    Delegates to rag_service so catalog rows are produced by the exact
+    encoder, pooling and normalisation the retrieval path uses.
+    """
+    return _embed_documents_batch(texts)
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    _require_real_mode_cli()
     with open(CATALOG_FILE, encoding="utf-8") as f:
         catalog: list[dict] = json.load(f)
 

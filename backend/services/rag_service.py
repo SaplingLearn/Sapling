@@ -1,19 +1,23 @@
 """
 RAG retrieval service.
 
-Embeds queries and documents with gemini-embedding-001 using the correct
-task types (RETRIEVAL_QUERY for queries, RETRIEVAL_DOCUMENT for indexing),
-then calls the match_course_chunks Supabase RPC for ANN retrieval.
+Embeds queries and documents with a LOCAL ``BAAI/bge-base-en-v1.5`` encoder
+(768-d, CLS-pooled, L2-normalised), applying bge's query instruction prefix
+on the query side — the asymmetry gemini-embedding-001's RETRIEVAL_QUERY /
+RETRIEVAL_DOCUMENT task types used to supply — then calls the
+match_course_chunks Supabase RPC for ANN retrieval.
+
+Local rather than hosted because Anthropic ships no embeddings endpoint
+(ADR 0030 moved every agent to Claude), so the alternative was keeping one
+Google API key alive for this single remaining call. See
+docs/decisions/0031-local-rag-embeddings.md.
 """
 import hashlib
 import json
 import logging
 import math
-import os
+import threading
 from typing import NamedTuple
-
-from google import genai
-from google.genai import types as genai_types
 
 from agents._providers import model_mode
 from db.connection import rpc, table
@@ -23,32 +27,71 @@ from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
 
-# Bound embedding requests so a stalled Gemini call can't hang quiz/tutor
-# grounding indefinitely — retrieve_chunks() runs inline on the request path.
-_HTTP_TIMEOUT_MS = 60_000
-_EMBED_MODEL = "gemini-embedding-001"
+_EMBED_MODEL = "BAAI/bge-base-en-v1.5"
 _OUTPUT_DIM = 768
+#: bge's retrieval asymmetry: the QUERY side carries an instruction prefix,
+#: the passage side carries none. This is the direct analogue of the
+#: RETRIEVAL_QUERY / RETRIEVAL_DOCUMENT task types the Gemini call passed,
+#: and dropping it measurably costs recall — do not "simplify" it away.
+_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+#: bge-base's trained context window. Longer chunks truncate, which is what
+#: the hosted API did silently anyway.
+_MAX_TOKENS = 512
 
-# `genai.Client(api_key="")` raises ValueError at construction, so a missing
-# GEMINI_API_KEY would break `import main` (routes/quiz.py and routes/learn.py
-# both pull this module in) if built eagerly. #439 goes further: the client is
-# now built lazily, on first REAL-mode use. `_get_client()` is only ever
-# reached from inside an `_embed_*` function AFTER its `model_mode() != "real"`
-# gate below, so a non-real run (SAPLING_MODEL_MODE=function — the hermetic
-# E2E default, ADR 0019) never constructs a genai.Client and never touches the
-# network, instead of constructing one that then degrades by an accidental
-# swallowed exception.
-_client: genai.Client | None = None
+# The encoder is built lazily on first REAL-mode use, for exactly the reason
+# the genai.Client it replaces was (#439): `_encode()` is only ever reached
+# from inside an `_embed_*` function AFTER its `model_mode() != "real"` gate
+# below, so a non-real run (SAPLING_MODEL_MODE=function — the hermetic E2E
+# default, ADR 0019) never imports torch, never loads ~440MB of weights and
+# never reads the HuggingFace cache. Import stays cheap, which matters:
+# routes/quiz.py and routes/learn.py both pull this module in at startup.
+_encoder: tuple = ()
+_encoder_lock = threading.Lock()
 
 
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(
-            api_key=os.getenv("GEMINI_API_KEY", "") or "dummy-key-for-import",
-            http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
-        )
-    return _client
+def _get_encoder() -> tuple:
+    """The ``(tokenizer, model)`` pair, loaded once per process.
+
+    Locked because `retrieve_chunks()` runs inline on the request path and
+    uvicorn serves concurrently: unlocked, two simultaneous first-requests
+    each load a full copy of the weights.
+    """
+    global _encoder
+    if _encoder:
+        return _encoder
+    with _encoder_lock:
+        if not _encoder:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+
+            tok = AutoTokenizer.from_pretrained(_EMBED_MODEL)
+            mdl = AutoModel.from_pretrained(_EMBED_MODEL)
+            mdl.eval()
+            torch.set_grad_enabled(False)
+            logger.info("[RAG] local embedding encoder loaded (%s)", _EMBED_MODEL)
+            _encoder = (tok, mdl)
+    return _encoder
+
+
+def _encode(texts: list[str], *, is_query: bool) -> list[list[float]]:
+    """Embed `texts` as 768-d unit vectors.
+
+    CLS pooling then L2 normalisation, which is what bge was trained to
+    produce. `match_course_chunks` ranks on cosine (`<=>`), so unit vectors
+    make the stored dot product and the cosine the same number.
+    """
+    import torch
+
+    tok, mdl = _get_encoder()
+    prepared = [(_QUERY_PREFIX + t) if is_query else t for t in texts]
+    batch = tok(
+        prepared, padding=True, truncation=True,
+        max_length=_MAX_TOKENS, return_tensors="pt",
+    )
+    with torch.no_grad():
+        hidden = mdl(**batch).last_hidden_state[:, 0]
+        vecs = torch.nn.functional.normalize(hidden, p=2, dim=1)
+    return [[float(x) for x in v] for v in vecs]
 
 
 class _EmbeddingDisabled(RuntimeError):
@@ -56,7 +99,7 @@ class _EmbeddingDisabled(RuntimeError):
 
     Every caller (`retrieve_chunks`, `index_document_chunks`) already wraps
     its embed call in a broad try/except — originally there to swallow a real
-    Gemini failure so retrieval/upload degrade gracefully instead of 500ing.
+    embed failure so retrieval/upload degrade gracefully instead of 500ing.
     Raising here reuses that exact same degrade path, so function-mode
     behavior is byte-for-byte identical to what an unlucky real-mode failure
     already produced — except now it happens by design on every run, not by
@@ -74,28 +117,12 @@ def _require_real_mode() -> None:
 
 def _embed_query(text: str) -> list[float]:
     _require_real_mode()
-    resp = _get_client().models.embed_content(
-        model=_EMBED_MODEL,
-        contents=[text],
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=_OUTPUT_DIM,
-            task_type="RETRIEVAL_QUERY",
-        ),
-    )
-    return list(resp.embeddings[0].values)
+    return _encode([text], is_query=True)[0]
 
 
 def _embed_document(text: str) -> list[float]:
     _require_real_mode()
-    resp = _get_client().models.embed_content(
-        model=_EMBED_MODEL,
-        contents=[text],
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=_OUTPUT_DIM,
-            task_type="RETRIEVAL_DOCUMENT",
-        ),
-    )
-    return list(resp.embeddings[0].values)
+    return _encode([text], is_query=False)[0]
 
 
 def embed_document_text(text: str) -> list[float]:
@@ -103,11 +130,11 @@ def embed_document_text(text: str) -> list[float]:
 
     The sanctioned entry point for the one below-seam embed consumer outside
     this module: ``course_relevance`` below, behind routes/documents.py's
-    observe-only catalog-relevance score (#628). Routing it through here (lazy
-    shared client with the dummy-key fallback, request timeout, and the #439
-    real-mode gate) replaced a raw ``genai.Client`` built with an empty-string
-    API-key fallback, whose keyless construction ``ValueError`` was swallowed
-    into a silent no-index degrade (#413).
+    observe-only catalog-relevance score (#628). Routing it through here (the
+    lazily-loaded shared encoder and the #439 real-mode gate) replaced a raw
+    ``genai.Client`` built with an empty-string API-key fallback, whose keyless
+    construction ``ValueError`` was swallowed into a silent no-index degrade
+    (#413).
     """
     return _embed_document(text)
 
@@ -140,9 +167,10 @@ def course_relevance(course_code: str, sample_text: str) -> float | None:
 
     ``None`` when the course has no catalog embedding to compare against (and
     no embed call is spent finding that out). Cosine, not a raw dot product:
-    768-d ``gemini-embedding-001`` output is not unit-normalised, and
-    ``match_course_chunks`` ranks on cosine (``<=>``), so this score sits on
-    the same scale as retrieval's ``similarity``.
+    the two agree now that ``_encode`` L2-normalises, but a vector stored
+    before that (or a future encoder that does not normalise) would silently
+    skew a dot product, and ``match_course_chunks`` ranks on cosine (``<=>``)
+    — so this score sits on the same scale as retrieval's ``similarity``.
 
     Raises whatever the embed call raises (including ``_EmbeddingDisabled``
     outside real mode) — callers treat the score as advisory and decide what a
@@ -168,15 +196,7 @@ def course_relevance(course_code: str, sample_text: str) -> float | None:
 
 def _embed_documents_batch(texts: list[str]) -> list[list[float]]:
     _require_real_mode()
-    resp = _get_client().models.embed_content(
-        model=_EMBED_MODEL,
-        contents=texts,
-        config=genai_types.EmbedContentConfig(
-            output_dimensionality=_OUTPUT_DIM,
-            task_type="RETRIEVAL_DOCUMENT",
-        ),
-    )
-    return [list(e.values) for e in resp.embeddings]
+    return _encode(texts, is_query=False)
 
 
 class Retrieval(NamedTuple):
