@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import threading
 
 from agents._providers import model_mode
 from db.connection import rpc
@@ -44,6 +45,16 @@ _OFF = frozenset({"false", "0", "off", "no"})
 
 _task: asyncio.Task | None = None
 
+#: The running loop's stop signal, set by `stop_sweeper` and read between
+#: claims (#758). Cancelling the loop task cancels only the `await`: the
+#: `to_thread` batch keeps running, and before this it went on claiming through
+#: shutdown — each claim spending an attempt and starting a 600 s lease the
+#: dying process would never finish, so a run of deploys could exhaust
+#: perfectly healthy documents. A thread cannot be cancelled, so it is told
+#: instead; the document already in hand finishes. One Event per started loop,
+#: so a stop can never leak into a later start.
+_stop: threading.Event | None = None
+
 
 def sweeper_enabled() -> bool:
     """On unless switched off, and only in real model mode.
@@ -57,8 +68,10 @@ def sweeper_enabled() -> bool:
     return model_mode() == "real"
 
 
-def sweep_once() -> int:
+def sweep_once(stop: threading.Event | None = None) -> int:
     """Re-drive up to BATCH_SIZE unfinished documents. Returns how many.
+
+    `stop`, once set, ends the pass before its next claim (shutdown).
 
     Synchronous — PostgREST calls are — so the loop runs it in a thread, the
     same reason the upload post-roll does. Never raises: a failed claim (the
@@ -69,6 +82,9 @@ def sweep_once() -> int:
         return 0
     driven = 0
     for _ in range(BATCH_SIZE):
+        if stop is not None and stop.is_set():
+            logger.info("[RAG] index sweep stopping: shutdown requested")
+            break
         try:
             claimed = rpc(
                 "claim_documents_for_indexing",
@@ -97,13 +113,13 @@ def sweep_once() -> int:
     return driven
 
 
-async def _loop() -> None:
+async def _loop(stop: threading.Event) -> None:
     # Sleep FIRST: a deploy restarts every instance at once, and the uploads in
     # flight at that moment are still making their own inline attempts.
     while True:
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
         try:
-            await asyncio.to_thread(sweep_once)
+            await asyncio.to_thread(sweep_once, stop)
         except Exception:
             # sweep_once does not raise by contract; this is the backstop that
             # keeps one surprise from ending recovery for the process's life.
@@ -112,12 +128,13 @@ async def _loop() -> None:
 
 def start_sweeper() -> None:
     """Start the loop on the running event loop. Called from the app lifespan."""
-    global _task
+    global _task, _stop
     if not sweeper_enabled():
         logger.info("[RAG] index sweeper not started (disabled, or not real model mode)")
         return
     if _task is None or _task.done():
-        _task = asyncio.get_running_loop().create_task(_loop(), name="index-sweeper")
+        _stop = threading.Event()
+        _task = asyncio.get_running_loop().create_task(_loop(_stop), name="index-sweeper")
         logger.info(
             "[RAG] index sweeper started (every %ss, batch %d)",
             SWEEP_INTERVAL_SECONDS, BATCH_SIZE,
@@ -125,8 +142,13 @@ def start_sweeper() -> None:
 
 
 async def stop_sweeper() -> None:
-    """Cancel the loop. Safe when it never started."""
-    global _task
+    """Stop claiming, then cancel the loop. Safe when it never started."""
+    global _task, _stop
+    # First: a batch already handed to a worker thread outlives the task's
+    # cancellation and must see this before its next claim.
+    if _stop is not None:
+        _stop.set()
+    _stop = None
     task, _task = _task, None
     if task is None:
         return

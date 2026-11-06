@@ -94,3 +94,72 @@ def test_the_signature_is_unchanged_so_no_second_overload_appears():
     assert re.search(r"max_attempts\s+INT,\s*lease_seconds\s+INT,\s*batch_size\s+INT", sql)
     assert "DROP FUNCTION" not in sql
     assert "REVOKE ALL ON FUNCTION claim_documents_for_indexing" in sql
+
+
+# ── #758: the terminal state is stored ─────────────────────────────────────
+
+
+def _terminal_migration() -> str:
+    hits = sorted(MIG_DIR.glob("*_document_index_terminal_state.sql"))
+    assert len(hits) == 1, f"expected exactly one terminal-state migration, got {hits}"
+    return hits[0].read_text()
+
+
+def _latest_claim() -> str:
+    for path in sorted(MIG_DIR.glob("*.sql"), reverse=True):
+        sql = path.read_text()
+        if "FUNCTION claim_documents_for_indexing(" in sql:
+            return sql
+    raise AssertionError("no claim_documents_for_indexing definition")
+
+
+def test_the_terminal_migration_is_the_latest_claim():
+    assert _latest_claim() == _terminal_migration()
+
+
+def test_exhausted_is_admitted_by_the_check_constraint():
+    sql = _terminal_migration()
+    assert re.search(r"CHECK \(index_status IN\s*\([^)]*'exhausted'\)", sql)
+    # …alongside every value the first migration admitted.
+    for value in ("pending", "indexing", "indexed", "partial", "failed", "skipped"):
+        assert f"'{value}'" in sql
+
+
+def test_an_omitted_status_lands_in_the_queue_not_a_terminal_state():
+    """'skipped' as the default meant any insert path that forgot the column
+    landed, silently, where nothing would ever index it."""
+    assert re.search(
+        r"ALTER COLUMN index_status SET DEFAULT 'pending'", _terminal_migration()
+    )
+
+
+def test_a_last_attempt_that_died_holding_its_lease_is_reaped():
+    """attempts = max and 'indexing': the claim's `attempts < max` meant
+    nothing could ever retake it. The reaper makes it terminal and visible."""
+    sql = _terminal_migration()
+    assert re.search(r"SET index_status = 'exhausted'", sql)
+    assert re.search(r"r\.index_attempts >= max_attempts", sql)
+    assert re.search(
+        r"r\.index_status = 'indexing'\s*AND r\.index_leased_at < now\(\) - "
+        r"make_interval\(secs => lease_seconds\)", sql)
+    assert "'lease_expired'" in sql
+    # The reap runs BEFORE the claim, in the same function.
+    assert sql.index("SET index_status = 'exhausted'") < sql.index(
+        "SET index_status    = 'indexing'")
+
+
+def test_the_reaper_leaves_the_lease_so_a_slow_attempt_still_records():
+    reap = _terminal_migration().split("UPDATE documents r", 1)[1].split(";", 1)[0]
+    assert "index_leased_at =" not in reap
+
+
+def test_the_claim_clears_the_previous_error_and_keeps_its_contract():
+    sql = _terminal_migration()
+    assert re.search(r"index_error\s*=\s*NULL", sql)
+    assert "CREATE OR REPLACE FUNCTION claim_documents_for_indexing(" in sql
+    assert re.search(r"max_attempts\s+INT,\s*lease_seconds\s+INT,\s*batch_size\s+INT", sql)
+    assert "DROP FUNCTION" not in sql
+    assert "FOR UPDATE SKIP LOCKED" in sql
+    assert re.search(r"index_attempts\s*=\s*d\.index_attempts\s*\+\s*1", sql)
+    assert "REVOKE ALL ON FUNCTION claim_documents_for_indexing" in sql
+    assert "GRANT EXECUTE ON FUNCTION claim_documents_for_indexing" in sql

@@ -227,11 +227,28 @@ class TestDeleteDocument:
         assert r.json() == {"deleted": True}
 
     def test_delete_returns_404_when_doc_not_owned(self):
-        with _mock_validate_user(), patch("routes.documents.table") as t:
+        with _mock_validate_user(), patch("routes.documents.table") as t, \
+                patch("services.chunk_visibility.withdraw_document_chunks") as w:
             t.return_value.select.return_value = []
             r = client.delete("/api/documents/doc/d1?user_id=u1")
 
         assert r.status_code == 404
+        w.assert_not_called()
+
+    def test_delete_withdraws_the_documents_chunks_after_the_stamp(self):
+        """#758: the stamp alone left the document's chunks — private ones
+        included — in retrieval. The withdrawal names the deleted document and
+        its owner, and runs AFTER the stamp so a concurrent index sees it."""
+        order = []
+        with _mock_validate_user(), patch("routes.documents.table") as t, \
+                patch("services.chunk_visibility.withdraw_document_chunks",
+                      side_effect=lambda *a: order.append(("withdraw", a))):
+            t.return_value.select.return_value = [{"id": "d1"}]
+            t.return_value.update.side_effect = lambda *a, **k: order.append(("stamp",))
+            r = client.delete("/api/documents/doc/d1?user_id=u1")
+
+        assert r.status_code == 200
+        assert order == [("stamp",), ("withdraw", ("d1", "u1"))]
 
 
 # ── PATCH /api/documents/doc/{document_id} ───────────────────────────────────

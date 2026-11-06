@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from db.connection import page_all, table
 from services.auth_guard import require_admin
 from services.document_indexing import (
+    EXHAUSTED,
     FAILED,
     INDEX_MAX_ATTEMPTS,
     INDEXING,
@@ -28,7 +29,7 @@ from services.document_indexing import (
 
 router = APIRouter()
 
-_UNFINISHED = (PENDING, INDEXING, PARTIAL, FAILED)
+_UNFINISHED = (PENDING, INDEXING, PARTIAL, FAILED, EXHAUSTED)
 
 #: `index_leased_at` on a finished row is when its last attempt BEGAN — the
 #: claim's retry backoff reads it — not a live lease.
@@ -43,8 +44,10 @@ _LIST_COLUMNS = ",".join((
 def list_unindexed(request: Request) -> dict:
     """Live documents that are not `indexed` (or a designed `skipped`).
 
-    `exhausted` marks a document at its attempt budget: the sweeper will never
-    retry it again, so it stays out of retrieval until someone forces it.
+    `exhausted` marks a document the sweeper has given up on: it will never
+    retry it again, so it stays out of retrieval until someone forces it. It
+    reads the STORED terminal status (#758) — not `index_attempts` against
+    INDEX_MAX_ATTEMPTS, which flipped with the env var.
     """
     require_admin(request)
     rows = list(page_all(
@@ -59,7 +62,7 @@ def list_unindexed(request: Request) -> dict:
         order="created_at.desc,id",
     ))
     for row in rows:
-        row["exhausted"] = (row.get("index_attempts") or 0) >= INDEX_MAX_ATTEMPTS
+        row["exhausted"] = row.get("index_status") == EXHAUSTED
     return {"documents": rows, "count": len(rows), "max_attempts": INDEX_MAX_ATTEMPTS}
 
 

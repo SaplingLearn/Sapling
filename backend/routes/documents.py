@@ -291,6 +291,14 @@ def delete_document(document_id: str, request: Request, user_id: str | None = No
         {"deleted_at": datetime.now(timezone.utc).isoformat()},
         filters={"id": f"eq.{document_id}", "user_id": f"eq.{user_id}"},
     )
+    # #758: the stamp alone left every chunk the document produced — private
+    # ones included — in retrieval. Withdraw them now, after the stamp, so an
+    # index finishing concurrently sees the deletion (document_indexing
+    # re-checks). Never raises; retrieval refuses a chunk whose every source
+    # document is deleted, which covers a withdrawal that fails part-way.
+    from services.chunk_visibility import withdraw_document_chunks
+
+    withdraw_document_chunks(document_id, user_id)
     return {"deleted": True}
 
 
