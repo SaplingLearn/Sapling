@@ -21,7 +21,7 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering, term_id_for_label
-from services.auth_guard import get_session_user_id, require_self
+from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
     create_note,
     delete_note,
@@ -132,7 +132,7 @@ async def list_user_notes(
     course_id: str | None = None,
     semester: str | None = None,
 ):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     # The API speaks abstract course ids; notes key on the offering. Resolve
     # the (current-term) offering for the requested course before filtering —
     # or, with a `semester` (term label, #141), STRICTLY that term's offering:
@@ -181,7 +181,7 @@ async def list_user_notes(
 
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     # Abstract course id from the client → the current-term offering the note
     # is stored against (create=True so a fresh note lands in the real term).
     # CREATE path: deliberately NOT semester-scoped (#141) — new content
@@ -222,7 +222,7 @@ async def create(body: CreateNoteBody, request: Request):
 
 @router.get("/{note_id}")
 async def read(note_id: str, request: Request, user_id: str):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     note = await get_note(note_id=note_id, user_id=user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -234,7 +234,7 @@ async def read(note_id: str, request: Request, user_id: str):
 
 @router.patch("/{note_id}")
 async def patch(note_id: str, body: UpdateNoteBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     patch_dict: dict = {}
     if body.title is not None:
         patch_dict["title"] = body.title
@@ -259,7 +259,7 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
 
 @router.delete("/{note_id}")
 async def remove(note_id: str, request: Request, user_id: str):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     await delete_note(note_id=note_id, user_id=user_id)
     return {"deleted": True}
 
@@ -271,7 +271,7 @@ class LinkConceptBody(BaseModel):
 
 @router.get("/{note_id}/concepts")
 async def list_concepts(note_id: str, request: Request, user_id: str):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     concepts = await list_linked_concepts(note_id=note_id, user_id=user_id)
     return {"concepts": concepts}
 
@@ -280,7 +280,7 @@ async def list_concepts(note_id: str, request: Request, user_id: str):
 async def link_concept_route(
     note_id: str, body: LinkConceptBody, request: Request
 ):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     ok = await link_concept(
         note_id=note_id,
         user_id=body.user_id,
@@ -298,7 +298,7 @@ async def unlink_concept_route(
     request: Request,
     user_id: str,
 ):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     ok = await unlink_concept(
         note_id=note_id, user_id=user_id, concept_node_id=concept_node_id
     )
@@ -363,7 +363,7 @@ def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> Sapli
 
 @router.post("/{note_id}/summarize")
 async def summarize(note_id: str, body: AgentActionBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -386,7 +386,7 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
 async def extract_concepts(
     note_id: str, body: AgentActionBody, request: Request
 ):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -422,7 +422,7 @@ class NoteChatBody(BaseModel):
 
 @router.post("/{note_id}/chat")
 async def note_chat(note_id: str, body: NoteChatBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -460,7 +460,7 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
 async def send_to_tutor(
     note_id: str, body: AgentActionBody, request: Request
 ):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
@@ -485,7 +485,7 @@ async def send_to_tutor(
 async def generate_quiz_from_note(
     note_id: str, body: AgentActionBody, request: Request
 ):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")

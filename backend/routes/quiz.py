@@ -23,7 +23,7 @@ from db.connection import pg_quote_value, table
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
-from services.auth_guard import require_self
+from services.auth_guard import require_self, guard_off_loop
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
@@ -1970,7 +1970,7 @@ async def _generate_or_502(
 
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     # The concrete trio is CHECK-constrained on quiz_attempts (0025 +
     # the #540 'adaptive' extension); reject drift before we run the
     # agent or write an attempt row.

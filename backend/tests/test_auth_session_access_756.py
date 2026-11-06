@@ -401,3 +401,125 @@ def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
         [{"id": "w2", "joined_user_id": "user_carol"}], "2026-11-05T00:00:00+00:00",
     )
     assert "user_carol" not in auth_guard._account_state_cache
+
+
+# ── review follow-ups ────────────────────────────────────────────────────────
+
+
+def test_successful_sign_in_drops_a_cached_unapproved_state(callback):
+    """Local auto-approve / waitlist re-approval flip is_approved inside the
+    callback; a worker that cached "unapproved" must not 403 the new session."""
+    drive, factory, _ = callback
+    auth_guard._account_state_cache["user_112233"] = (float("inf"), auth_guard.ACCOUNT_UNAPPROVED)
+    factory("users").select.return_value = [
+        {"id": "user_112233", "is_approved": True, "deleted_at": None}
+    ]
+    assert drive().path == "/auth/callback"
+    assert "user_112233" not in auth_guard._account_state_cache
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("DELETE", "/api/profile/user_alice/account", {"confirmation": "DELETE"}),
+    ("POST", "/api/profile/user_alice/export", None),
+])
+def test_removed_student_can_still_erase_and_export(real_guard, monkeypatch, method, path, body):
+    """An unapproved (removed) account keeps its right to erase/export its data."""
+    import routes.profile as profile_module
+
+    monkeypatch.setattr(auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id)
+    monkeypatch.setattr(profile_module, "require_self", auth_guard._real_require_self)
+    monkeypatch.setattr(profile_module, "delete_posthog_person", lambda *_a, **_k: None)
+    data = MagicMock()
+    data.select.return_value = [{"id": "user_alice"}]
+    data.update.return_value = []
+    data.upsert.return_value = [{}]
+    monkeypatch.setattr(profile_module, "table", lambda name: data)
+    real_guard.select.return_value = _row(is_approved=False)
+    app = FastAPI()
+    app.include_router(profile_module.router, prefix="/api/profile")
+    client = TestClient(app)
+    client.cookies.set("sapling_session", _token())
+    kwargs = {"json": body} if body else {}
+    assert client.request(method, path, **kwargs).status_code == 200
+
+    # ...but not a deleted one, and not on the rest of the profile API.
+    auth_guard.clear_account_state_cache()
+    real_guard.select.return_value = _row(deleted_at="2026-11-01T00:00:00+00:00")
+    assert client.request(method, path, **kwargs).status_code == 401
+    auth_guard.clear_account_state_cache()
+    real_guard.select.return_value = _row(is_approved=False)
+    assert client.get("/api/profile/user_alice/settings").status_code == 403
+
+
+def test_async_route_reads_account_state_off_the_event_loop(real_guard, monkeypatch):
+    """The account read is a blocking PostgREST call; an async route must not
+    run it on the event loop (a cache miss would stall every request)."""
+    import asyncio
+
+    import routes.notes as notes_module
+
+    seen: list[bool] = []
+
+    def _read(uid):
+        try:
+            asyncio.get_running_loop()
+            seen.append(True)
+        except RuntimeError:
+            seen.append(False)
+        return auth_guard.ACCOUNT_ACTIVE
+
+    monkeypatch.setattr(auth_guard, "_read_account_state", _read)
+    monkeypatch.setattr(auth_guard, "get_session_user_id", auth_guard._real_get_session_user_id)
+    monkeypatch.setattr(notes_module, "require_self", auth_guard._real_require_self)
+    app = FastAPI()
+    app.include_router(notes_module.router, prefix="/api/notes")
+    client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set("sapling_session", _token())
+    client.get("/api/notes/user/user_alice")  # whatever happens after the guard
+    assert seen == [False]
+    # A cache hit does no read at all (guard_off_loop then skips the hop).
+    client.get("/api/notes/user/user_alice")
+    assert seen == [False]
+
+
+def test_guard_off_loop_hops_only_on_a_cache_miss(real_guard, monkeypatch):
+    import asyncio
+
+    hops = []
+
+    async def _hop(fn, *args, **kwargs):
+        hops.append(fn)
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(auth_guard, "run_in_threadpool", _hop)
+    real_guard.select.return_value = _row()
+    req = _request(_token())
+    guard = auth_guard._real_get_session_user_id
+    assert asyncio.run(auth_guard.guard_off_loop(guard, req)) == "user_alice"
+    assert len(hops) == 1  # miss → threadpool
+    assert asyncio.run(auth_guard.guard_off_loop(guard, _request(_token()))) == "user_alice"
+    assert len(hops) == 1  # hit → inline, no I/O
+    with pytest.raises(HTTPException):  # refused at decode → inline, no I/O
+        asyncio.run(auth_guard.guard_off_loop(guard, _request("garbage")))
+    assert len(hops) == 1
+
+
+def test_no_async_route_calls_the_guard_on_the_loop():
+    """Static pin for the above, over every route module: inside `async def`,
+    a guard is called only through `await run_in_threadpool(<guard>, ...)`."""
+    import ast
+    import pathlib
+
+    guards = {"get_session_user_id", "require_self", "require_admin", "account_state"}
+    offenders = []
+    routes_dir = pathlib.Path(__file__).resolve().parent.parent / "routes"
+    for path in sorted(routes_dir.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.AsyncFunctionDef):
+                continue
+            for node in ast.walk(fn):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id in guards):
+                    offenders.append(f"{path.name}:{node.lineno} {fn.name}")
+    assert offenders == [], offenders

@@ -12,6 +12,7 @@ import threading
 import time as _time
 
 from fastapi import HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from config import SESSION_SECRET
 from db.connection import table
 from services import events_service
@@ -219,9 +220,46 @@ def _log_permission_denied(session_user: str, request: Request, reason: str) -> 
     )
 
 
-def require_self(user_id: str, request: Request) -> None:
-    """Verify the authenticated user matches the target user_id."""
-    session_user = get_session_user_id(request)
+def _account_state_cached(request: Request) -> bool:
+    """Whether the guard would answer `request` WITHOUT a DB read: the token is
+    refused outright (decode is pure CPU), or its account state is cached."""
+    try:
+        payload = _decode_session(request)
+    except Exception:
+        return True
+    user_id = payload.get("user_id") if isinstance(payload, dict) else None
+    if not user_id or not isinstance(user_id, str):
+        return True
+    with _account_state_lock:
+        hit = _account_state_cache.get(user_id)
+    return bool(hit and hit[0] > _time.monotonic())
+
+
+async def guard_off_loop(guard, *args, **kwargs):
+    """Run a SYNC session guard (`require_self` / `get_session_user_id`) from
+    an `async def` route without blocking the event loop (#756 review).
+
+    The guard's account read is a blocking PostgREST call. On a cache hit (the
+    common case: the TTL above) the guard does no I/O, so it runs inline; on a
+    miss it runs in the threadpool. Pass the route module's own guard name, so
+    a test that patches it there still takes effect. `require_admin` reads
+    roles on every call: hop with `run_in_threadpool` directly.
+    """
+    request = next(
+        (a for a in (*args, *kwargs.values()) if isinstance(a, Request)), None
+    )
+    if request is not None and _account_state_cached(request):
+        return guard(*args, **kwargs)
+    return await run_in_threadpool(guard, *args, **kwargs)
+
+
+def require_self(user_id: str, request: Request, *, allow_unapproved: bool = False) -> None:
+    """Verify the authenticated user matches the target user_id.
+
+    `allow_unapproved=True` is for the routes a removed (unapproved, NOT
+    deleted) student must keep: erasing and exporting their own data
+    (profile.delete_account / export_data)."""
+    session_user = get_session_user_id(request, allow_unapproved=allow_unapproved)
     if session_user != user_id:
         _log_permission_denied(session_user, request, "not_self")
         raise HTTPException(status_code=403, detail="Forbidden: not your account")

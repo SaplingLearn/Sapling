@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 from db.connection import page_all, table
 from services.auth_guard import require_admin
@@ -74,7 +75,7 @@ async def reindex(document_id: str, request: Request) -> dict:
     whether it worked. `force` re-drives any status and resets the attempt
     budget, but never takes a row on a live lease — that answers 409.
     """
-    require_admin(request)
+    await run_in_threadpool(require_admin, request)
     found = await asyncio.to_thread(
         table("documents").select,
         "id", filters={"id": f"eq.{document_id}", "deleted_at": "is.null"}, limit=1,

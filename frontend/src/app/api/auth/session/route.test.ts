@@ -66,8 +66,29 @@ describe('session route — only a handoff token is exchanged (#756)', () => {
     expect(res.cookies.get('sapling_session')).toBeUndefined();
   });
 
-  it('refuses a legacy untyped token (a pre-#756 session)', async () => {
+  it('refuses a legacy untyped 30-day session', async () => {
+    const thirtyDays = Math.floor(Date.now() / 1000) + 30 * 86400;
+    const res = await exchange(await mintToken({ user_id: 'user_1', exp: thirtyDays }));
+    expect(res.status).toBe(401);
+  });
+
+  it('deploy-order transition: exchanges an untyped SHORT-LIVED token (an old backend’s handoff)', async () => {
+    // A frontend deployed before the backend still lets sign-in through.
     const res = await exchange(await mintToken({ user_id: 'user_1', exp: inFiveMinutes() }));
+    expect(res.status).toBe(200);
+    expect(payloadOf(res.cookies.get('sapling_session')?.value ?? '')).toMatchObject({
+      user_id: 'user_1', typ: 'session',
+    });
+  });
+
+  it('the untyped allowance ends at the handoff ceiling plus skew (660 s)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect((await exchange(await mintToken({ user_id: 'u', exp: now + 650 }))).status).toBe(200);
+    expect((await exchange(await mintToken({ user_id: 'u', exp: now + 700 }))).status).toBe(401);
+  });
+
+  it('a typed session is refused however little life it has left', async () => {
+    const res = await exchange(await mintToken({ user_id: 'u', exp: inFiveMinutes(), typ: 'session' }));
     expect(res.status).toBe(401);
   });
 

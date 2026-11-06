@@ -51,7 +51,7 @@ from services.academics import (
     scoped_user_enrollments,
     term_id_for_label,
 )
-from services.auth_guard import require_self
+from services.auth_guard import require_self, guard_off_loop
 from services.encryption import encrypt, decrypt, encrypt_if_present
 from services.request_context import current_request_id
 from services.request_limits import check_rate_limit
@@ -383,7 +383,7 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
     timeout slightly longer than `duo_timeout_seconds` so the spinner can
     sit while we wait for the tap.
     """
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     # Strictest cap: each call launches a Chromium that pins a worker thread for
     # up to duo_timeout_seconds and fires a Duo push at the user's phone.
     _enforce_gs_rate_limit(body.user_id, "bu-sso", limit=3, window_sec=600)

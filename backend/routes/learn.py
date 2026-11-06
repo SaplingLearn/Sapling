@@ -22,7 +22,7 @@ from services import events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
-from services.auth_guard import require_self, get_session_user_id
+from services.auth_guard import require_self, get_session_user_id, guard_off_loop
 from services.chat_stream import join_text_parts, merge_graph_updates, stream_agent_turn
 from services.encryption import (
     decrypt_if_present,
@@ -960,7 +960,7 @@ async def _start_session_agent(
 
 @router.post("/start-session")
 async def start_session(body: StartSessionBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     result = await _agent_turn_or_http_error(
         _start_session_agent(body), what="start-session agent"
     )
@@ -1306,7 +1306,7 @@ async def _chat_turn_json(
 
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     await _open_turn_session(body.session_id, body.user_id)
     # #761: the client's fallback for a stream whose `done` it never saw. If
     # that turn already persisted, answer with it instead of running it again.
@@ -1331,7 +1331,7 @@ async def chat_stream(body: ChatBody, request: Request):
     (#761): the writes dedupe on turn-derived ids, and a turn that already
     persisted is replayed (here and on /chat) instead of run again.
     """
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     await _open_turn_session(body.session_id, body.user_id)
 
     request_id = (
@@ -1473,7 +1473,7 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     the client never received it in a `done` event, so a retry simply mints
     a fresh session.
     """
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     request_id = (
         getattr(request.state, "request_id", None)
         or current_request_id()
@@ -1962,7 +1962,7 @@ async def _action_turn(body: ActionBody, request: Request) -> dict:
 
 @router.post("/action")
 async def action(body: ActionBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     await _open_turn_session(body.session_id, body.user_id)
     return await _agent_turn_or_http_error(
         _action_turn(body, request), what="action agent"
