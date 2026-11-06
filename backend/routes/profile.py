@@ -239,8 +239,13 @@ def _get_featured_achievements(user_id: str) -> list:
 
 
 def _get_user_stats(user_id: str) -> dict:
-    user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-    streak = user[0].get("streak_count", 0) if user else 0
+    # effective_streak: a lapsed streak keeps its stored count until the next
+    # activity (#767).
+    from services.streak_service import effective_streak
+    user = table("users").select(
+        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"}
+    )
+    streak = effective_streak(user[0] if user else None)
 
     sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}"})
     session_count = len(sessions) if sessions else 0

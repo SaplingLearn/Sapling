@@ -711,8 +711,11 @@ def get_students(request: Request):
     if not visible_ids:
         return {"students": []}
 
+    # effective_streak, not the raw column: a lapsed streak still stores its
+    # old count until the next activity (#767).
+    from services.streak_service import effective_streak
     users = table("users").select(
-        "id,streak_count",
+        "id,streak_count,last_active_date",
         filters={"id": f"in.({','.join(visible_ids)})", **_LISTABLE_USER_FILTERS},
     ) or []
     # Display names live on user_profiles (0024); resolve in bulk and decrypt.
@@ -739,7 +742,7 @@ def get_students(request: Request):
         {
             "user_id": u["id"],
             "name": name_map.get(u["id"], ""),
-            "streak": u.get("streak_count") or 0,
+            "streak": effective_streak(u),
             "courses": sorted(courses_by_user[u["id"]]),
         }
         for u in users

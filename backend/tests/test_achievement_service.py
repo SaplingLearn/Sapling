@@ -151,10 +151,10 @@ class TestCheckAchievements:
             elif name == "achievement_cosmetics":
                 m.select.return_value = linked
             elif name == "user_cosmetics":
-                def track_insert(data):
+                def track_insert(data, **_kw):
                     insert_calls.append(data)
                     return [{}]
-                m.insert.side_effect = track_insert
+                m.upsert.side_effect = track_insert
             else:
                 m.select.return_value = []
             return m
@@ -380,7 +380,239 @@ class TestDraftsAreNeverGranted:
             from services.achievement_service import check_achievements
             assert check_achievements("u1", "login_streak") == []
         t.return_value.insert.assert_not_called()
+        t.return_value.upsert.assert_not_called()
         award.assert_not_called()
+
+
+class _GrantWorld:
+    """In-memory tables for the grant pipeline (#767). `user_achievements` and
+    `user_cosmetics` honour their PKs the way PostgREST's
+    `resolution=ignore-duplicates` does: a conflicting row returns [] and is
+    not written. A plain `insert` on a conflict raises, as the real one did."""
+
+    def __init__(self, *, triggers, badges, links=(), earned=(), owned=(),
+                 paid=(), stat_rows=None, fail_cosmetics=False):
+        self.triggers = list(triggers)
+        self.badges = {b["id"]: b for b in badges}
+        self.links = list(links)
+        self.earned = set(earned)
+        self.owned = set(owned)
+        self.paid = set(paid)
+        self.stat_rows = stat_rows if stat_rows is not None else [{"user_id": "u1"}] * 5
+        self.fail_cosmetics = fail_cosmetics
+        self.achievement_upserts = []
+        self.cosmetic_upserts = []
+
+    @staticmethod
+    def _in(filters, col):
+        raw = (filters or {}).get(col, "")
+        if raw.startswith("in.("):
+            return set(raw[4:-1].split(","))
+        if raw.startswith("eq."):
+            return {raw[3:]}
+        return None
+
+    def table(self, name):
+        m = MagicMock()
+        world = self
+
+        if name == "achievement_triggers":
+            m.select.return_value = self.triggers
+        elif name == "user_achievements":
+            m.select.side_effect = lambda *a, **k: [
+                {"achievement_id": a_id} for a_id in world.earned
+            ]
+
+            def _upsert(row, **kw):
+                assert kw.get("on_conflict") == "user_id,achievement_id"
+                assert kw.get("ignore_duplicates") is True
+                world.achievement_upserts.append(row["achievement_id"])
+                if row["achievement_id"] in world.earned:
+                    return []
+                world.earned.add(row["achievement_id"])
+                return [row]
+
+            def _insert(row):
+                if row["achievement_id"] in world.earned:
+                    raise RuntimeError("409 duplicate key")
+                world.earned.add(row["achievement_id"])
+                return [row]
+            m.upsert.side_effect = _upsert
+            m.insert.side_effect = _insert
+        elif name == "achievements":
+            def _select(columns="*", filters=None, **kw):
+                ids = world._in(filters, "id")
+                return [dict(b) for i, b in world.badges.items() if ids is None or i in ids]
+            m.select.side_effect = _select
+        elif name == "achievement_cosmetics":
+            def _select(columns="*", filters=None, **kw):
+                ids = world._in(filters, "achievement_id")
+                return [dict(lc) for lc in world.links if ids is None or lc["achievement_id"] in ids]
+            m.select.side_effect = _select
+        elif name == "user_cosmetics":
+            m.select.side_effect = lambda *a, **k: [{"cosmetic_id": c} for c in world.owned]
+
+            def _upsert(row, **kw):
+                if world.fail_cosmetics:
+                    raise RuntimeError("pg down")
+                assert kw.get("on_conflict") == "user_id,cosmetic_id"
+                assert kw.get("ignore_duplicates") is True
+                world.cosmetic_upserts.append(row["cosmetic_id"])
+                if row["cosmetic_id"] in world.owned:
+                    return []
+                world.owned.add(row["cosmetic_id"])
+                return [row]
+            m.upsert.side_effect = _upsert
+        elif name == "xp_events":
+            def _select(columns="*", filters=None, **kw):
+                ids = world._in(filters, "source_id")
+                return [{"source_id": s} for s in world.paid if ids is None or s in ids]
+            m.select.side_effect = _select
+        else:
+            m.select.return_value = self.stat_rows
+        return m
+
+    def award(self, user_id, rule_key, *, source_type, source_id, amount):
+        self.paid.add(source_id)
+
+
+def _badge(i, *, reward=0, status="live"):
+    return {"id": i, "slug": i, "name": i.upper(), "xp_reward": reward, "status": status}
+
+
+def _trigger(achievement_id, threshold=1, tid=None):
+    return {"id": tid or f"t-{achievement_id}", "achievement_id": achievement_id,
+            "trigger_type": "session_count", "trigger_threshold": threshold}
+
+
+def _run(world, event="session_count"):
+    award = MagicMock(side_effect=world.award)
+    with patch("services.achievement_service.table", side_effect=world.table), \
+         patch("services.achievement_service.award_xp_safe", award):
+        from services.achievement_service import check_achievements
+        return check_achievements("u1", event, {}), award
+
+
+class TestGrantPipelineIsIdempotent:
+    def test_two_triggers_for_one_badge_grant_it_once_and_keep_going(self):
+        """Two triggers for one badge used to INSERT twice: the second raised
+        on the PK and aborted every grant after it in the loop."""
+        world = _GrantWorld(
+            triggers=[_trigger("a1", 1, "t1"), _trigger("a1", 2, "t2"), _trigger("a2", 1)],
+            badges=[_badge("a1"), _badge("a2")],
+        )
+        earned, _ = _run(world)
+        assert [e["slug"] for e in earned] == ["a1", "a2"]
+        assert world.achievement_upserts == ["a1", "a2"]
+
+    def test_a_badge_a_concurrent_check_already_granted_is_not_reported_twice(self):
+        """The race: our existence read said 'not earned', then a concurrent
+        check inserted first. ON CONFLICT DO NOTHING → no exception, no second
+        toast, but the reward is still (idempotently) ensured."""
+        world = _GrantWorld(triggers=[_trigger("a1")], badges=[_badge("a1", reward=50)])
+        real_table = world.table
+
+        def racing_table(name):
+            m = real_table(name)
+            if name == "user_achievements":
+                m.select.side_effect = lambda *a, **k: []   # stale read
+                world.earned.add("a1")                      # the winner's row
+            return m
+        world.table = racing_table
+        earned, award = _run(world)
+        assert earned == []
+        award.assert_called_once()
+
+    def test_a_cosmetics_failure_does_not_abort_later_badges(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1"), _trigger("a2")],
+            badges=[_badge("a1"), _badge("a2")],
+            links=[{"achievement_id": "a1", "cosmetic_id": "c1"}],
+            fail_cosmetics=True,
+        )
+        earned, _ = _run(world)
+        assert [e["slug"] for e in earned] == ["a1", "a2"]
+
+
+class TestGrantPipelineSelfHeals:
+    def test_unpaid_xp_of_an_earned_badge_is_paid_on_a_later_check(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=120)], earned={"a1"},
+        )
+        earned, award = _run(world)
+        assert earned == []
+        award.assert_called_once_with(
+            "u1", "achievement_unlocked", source_type="achievement",
+            source_id="a1", amount=120,
+        )
+
+    def test_a_paid_badge_is_not_paid_again(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=120)],
+            earned={"a1"}, paid={"a1"},
+        )
+        _, award = _run(world)
+        award.assert_not_called()
+
+    def test_a_missing_cosmetic_of_an_earned_badge_is_unlocked(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1")], earned={"a1"},
+            links=[{"achievement_id": "a1", "cosmetic_id": "c1"},
+                   {"achievement_id": "a1", "cosmetic_id": "c2"}],
+            owned={"c2"},
+        )
+        _run(world)
+        assert world.cosmetic_upserts == ["c1"]
+        assert world.owned == {"c1", "c2"}
+
+    def test_a_fully_granted_badge_writes_nothing(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=10)], earned={"a1"},
+            paid={"a1"}, links=[{"achievement_id": "a1", "cosmetic_id": "c1"}], owned={"c1"},
+        )
+        _, award = _run(world)
+        award.assert_not_called()
+        assert world.cosmetic_upserts == []
+
+    def test_a_draft_badge_is_not_healed(self):
+        """live→draft keeps the grant row but hides it; it pays nothing more."""
+        world = _GrantWorld(
+            triggers=[_trigger("a1")], badges=[_badge("a1", reward=50, status="draft")],
+            earned={"a1"}, links=[{"achievement_id": "a1", "cosmetic_id": "c1"}],
+        )
+        _, award = _run(world)
+        award.assert_not_called()
+        assert world.cosmetic_upserts == []
+
+    def test_a_heal_failure_never_blocks_the_check(self):
+        world = _GrantWorld(
+            triggers=[_trigger("a1"), _trigger("a2")],
+            badges=[_badge("a1", reward=5), _badge("a2")], earned={"a1"},
+        )
+        real_table = world.table
+
+        def broken_xp(name):
+            if name == "xp_events":
+                raise RuntimeError("pg down")
+            return real_table(name)
+        world.table = broken_xp
+        earned, _ = _run(world)
+        assert [e["slug"] for e in earned] == ["a2"]
+
+
+class TestGrantLinkedCosmeticsIsIdempotent:
+    def test_an_already_owned_cosmetic_is_a_no_op_not_an_error(self):
+        world = _GrantWorld(
+            triggers=[], badges=[_badge("a1")],
+            links=[{"achievement_id": "a1", "cosmetic_id": "c1"},
+                   {"achievement_id": "a1", "cosmetic_id": "c2"}],
+            owned={"c1"},
+        )
+        with patch("services.achievement_service.table", side_effect=world.table):
+            from services.achievement_service import grant_linked_cosmetics
+            grant_linked_cosmetics("u1", "a1")
+            grant_linked_cosmetics("u1", "a1")
+        assert world.owned == {"c1", "c2"}
 
 
 class TestGoalStreakClamp:
