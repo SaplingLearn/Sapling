@@ -99,6 +99,7 @@ def test_event_taxonomy_is_pinned():
         # and was swallowed. Emit coverage lives in
         # test_quiz_gamification_g8.py::TestNeitherFailureInventsANumber.
         "quiz.gamification_snapshot_failed",
+        "quiz.mastery_write_failed",  # #760
         "quiz.tool_empty",            # F5: a personalization input came back empty
         "quiz.rag_uncovered",         # E8: generation ran without course grounding
         # #546: the deprecated include_answer_key flag's two straggler
