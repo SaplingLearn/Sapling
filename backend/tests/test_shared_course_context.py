@@ -415,10 +415,12 @@ class TestUpdateCourseContext(unittest.TestCase):
 class TestApplyGraphUpdateTriggersContext(unittest.TestCase):
 
     @patch("services.academics.user_offering_ids_for_course", return_value=["off-1"])
+    @patch("services.graph_service.rpc",
+           return_value=[{"before_score": 0.4, "after_score": 0.5, "new_tier": "learning"}])
     @patch("services.graph_service.table")
     @patch("services.course_context_service.update_course_context")
     def test_update_course_context_called_for_touched_subjects(
-        self, mock_update_ctx, mock_table, mock_uoff
+        self, mock_update_ctx, mock_table, _mock_rpc, mock_uoff
     ):
         # touched_courses holds the abstract course_id ("course-1"); the analytics
         # refresh resolves it to the user's offering(s) and refreshes each one.

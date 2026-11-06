@@ -38,6 +38,10 @@ def _mint(user_id: str, ttl_seconds: int, secret: str) -> str:
     """Mint a token in the shape both services use:
     base64url(no pad) JSON {"user_id","exp"} . base64url(HMAC-SHA256(payload_b64)).
 
+    #756 added a `typ` claim to every NEW token; this one deliberately omits it,
+    so it is the LEGACY format — which the decoder must keep reading as a
+    session (cookies minted before the claim live for 30 days).
+
     This mirrors the *backend* mint (services/session_tokens.mint_session)
     byte-for-byte. It is close to, but not byte-identical with, the frontend's
     signSession: Python's json.dumps emits `{"user_id": "x", "exp": 1}` (with
@@ -93,7 +97,8 @@ def test_legacy_unused_auth_token_query_param_is_still_accepted():
     at the *frontend*, and frontend/src/app/auth/callback/page.tsx reads it there
     and POSTs it to the session BFF in a JSON body. This test pins current
     behaviour, it does not endorse the channel — the decoder applies no
-    ttl/purpose check here, so a 30-day session token in `?auth_token=` is
+    ttl check here (since #756 it does refuse a `typ=handoff` token, here and
+    in the cookie alike), so a 30-day session token in `?auth_token=` is
     accepted identically, and session tokens in URLs leak via access logs,
     Referer headers, and browser history. Removing the channel is a follow-up
     (out of scope for #168, which is about session lifetime).

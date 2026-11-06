@@ -8,7 +8,6 @@ import { useToast } from "./ToastProvider";
 
 export const SESSION_COOLDOWN_MS = 2 * 24 * 60 * 60 * 1000;
 export const SESSION_COOLDOWN_KEY = "sapling_last_session_feedback";
-export const SESSION_END_COUNT_KEY = "sapling_session_end_count";
 
 // Numeric scale — the brand's tone is "quiet library," not emoji reactions.
 const RATINGS: { value: number; label: string }[] = [

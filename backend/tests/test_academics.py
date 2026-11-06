@@ -63,14 +63,63 @@ def test_current_term_returns_row_in_range():
         assert ac.current_term()["id"] == "t-spring"
 
 
-def test_current_term_falls_back_to_latest_when_no_range_matches():
-    # First select (range query) returns []; the fallback select returns the latest.
+def test_current_term_falls_back_when_no_range_matches():
+    # First select (range query) returns []; the fallback select returns the
+    # most recently started term.
     factory = _factory({}, select_seqs={"terms": [
         [],  # range query: nothing contains today
         [{"id": "t-summer", "label": "Summer 2026", "sort_key": 20262}],  # latest
     ]})
     with patch.object(ac, "table", side_effect=factory):
         assert ac.current_term()["id"] == "t-summer"
+
+
+class _TermsTable:
+    """In-memory ``terms`` that honours the eq/lte/gte filters and the
+    comma-separated ``order`` current_term sends, so the test exercises the
+    actual date rules rather than a canned call sequence."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def select(self, _cols="*", filters=None, order=None, limit=None):
+        out = list(self.rows)
+        for col, expr in (filters or {}).items():
+            op, _, val = expr.partition(".")
+            if op == "lte":
+                out = [r for r in out if r.get(col) and r[col] <= val]
+            elif op == "gte":
+                out = [r for r in out if r.get(col) and r[col] >= val]
+            elif op == "eq":
+                out = [r for r in out if str(r.get(col)) == val]
+        for key in reversed((order or "").split(",")):
+            if key:
+                col, _, direction = key.partition(".")
+                out.sort(key=lambda r: r[col], reverse=direction == "desc")
+        return out[:limit] if limit else out
+
+
+_TERMS = [
+    {"id": "fall-2025", "start_date": "2025-09-01", "end_date": "2025-12-20", "sort_key": 20253},
+    {"id": "spring-2026", "start_date": "2026-01-15", "end_date": "2026-05-10", "sort_key": 20261},
+    # Seeded ahead of time — must not become "current" before it starts.
+    {"id": "fall-2026", "start_date": "2026-09-01", "end_date": "2026-12-20", "sort_key": 20263},
+]
+
+
+@pytest.mark.parametrize("today,expected", [
+    ("2026-03-11", "spring-2026"),  # inside a term
+    ("2026-06-20", "spring-2026"),  # summer gap: the term that just ended, NOT fall-2026
+    ("2026-01-01", "fall-2025"),    # winter gap
+    ("2026-09-01", "fall-2026"),    # boundary day: start_date is inclusive
+    ("2025-08-01", "fall-2025"),    # before every term: the soonest one
+    ("2027-02-01", "fall-2026"),    # after every term: the latest started
+])
+def test_current_term_between_terms_prefers_most_recently_started(today, expected):
+    from datetime import date as _date
+    terms = _TermsTable(_TERMS)
+    with patch.object(ac, "table", return_value=terms):
+        assert ac.current_term(_date.fromisoformat(today))["id"] == expected
 
 
 def test_current_term_none_when_no_terms():
@@ -380,3 +429,23 @@ def test_scoped_user_enrollments_by_term_spans_courses():
 def test_scoped_user_enrollments_by_course_and_term():
     assert _scoped(course_id="cs", term_id="t-fall") == ["enr-fall"]
     assert _scoped(course_id="bio", term_id="t-fall") == []
+
+
+# ── GET /api/semesters exposes the server's current term (#766) ─────────────
+
+def test_semesters_route_exposes_server_current_term():
+    from fastapi.testclient import TestClient
+    from main import app
+    with patch("routes.academics.list_terms", return_value=[{"id": "spring-2026"}]), \
+         patch("routes.academics.current_term", return_value={"id": "spring-2026"}):
+        body = TestClient(app).get("/api/semesters").json()
+    assert body == {"semesters": [{"id": "spring-2026"}], "current_term_id": "spring-2026"}
+
+
+def test_semesters_route_current_term_null_when_unseeded():
+    from fastapi.testclient import TestClient
+    from main import app
+    with patch("routes.academics.list_terms", return_value=[]), \
+         patch("routes.academics.current_term", return_value=None):
+        body = TestClient(app).get("/api/semesters").json()
+    assert body["current_term_id"] is None

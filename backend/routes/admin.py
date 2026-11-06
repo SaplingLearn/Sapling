@@ -30,7 +30,7 @@ from models import (
 )
 from services import email_service
 from services.admin_audit import log_admin_action
-from services.auth_guard import require_admin, get_session_user_id
+from services.auth_guard import clear_account_state_cache, require_admin, get_session_user_id
 from services.achievement_service import check_achievements, grant_linked_cosmetics
 from routes.admin_flags import record_flag_change
 from services.feature_flags import clear_feature_flags_cache, clear_user_roles_cache
@@ -250,6 +250,17 @@ def update_achievement(achievement_id: str, request: Request, body: dict = {}):
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")
+    # Mirror achievements_status_check (20260731193214) so a bad value is a
+    # 422 here, not a CHECK violation surfacing as a 500 (#767).
+    #
+    # live → draft is UNPUBLISH, not revoke: existing user_achievements rows
+    # (and the XP/cosmetics they paid) are kept, but every user-facing read
+    # filters to live (profile list + showcase, the hero card's N of M), so the
+    # badge disappears for everyone, and check_achievements neither grants it
+    # nor heals it while it is a draft. Publishing it again restores it as it
+    # was — the same contract 20260731194102 used to demote legacy seeds.
+    if "status" in updates and updates["status"] not in ("draft", "live"):
+        raise HTTPException(status_code=422, detail="status must be 'draft' or 'live'")
     table("achievements").update(updates, filters={"id": f"eq.{achievement_id}"})
     log_admin_action(
         actor_id=actor, action="achievement.update", target_type="achievement",
@@ -563,21 +574,27 @@ def list_users(
     return paginate_users(q=q, page=page, page_size=page_size)
 
 
-def _back_on_waitlist(email: str) -> None:
+def _back_on_waitlist(email: str, user_id: str) -> None:
     """Put `email` back on the waitlist as an unapproved signup, so a user whose
-    access was removed shows up in Admin → Allowlist (approving them there lets
-    them back in at their next sign-in). Best-effort: access is already gone."""
-    from routes.auth import _waitlist_entry
+    access was removed shows up in Admin → Allowlist. Every case twin is reset,
+    and each keeps `joined_user_id` pointing at the account: users.email is
+    encrypted with a per-call nonce, so that link is the only way approving the
+    entry again can reach the account (#757). Best-effort: access is already
+    gone."""
+    from routes.auth import _waitlist_entries
 
     try:
-        entry = _waitlist_entry(email)
-        if entry:
+        twins = _waitlist_entries(email, "id,email,approved_at")
+        if twins:
             table("newsletter_emails").update(
-                {"approved_at": None, "joined_at": None, "joined_user_id": None},
-                filters={"id": f"eq.{entry['id']}"},
+                {"approved_at": None, "joined_at": None, "joined_user_id": user_id},
+                filters={"id": f"in.({','.join(r['id'] for r in twins)})"},
             )
         else:
-            table("newsletter_emails").upsert({"email": email}, on_conflict="email")
+            table("newsletter_emails").upsert(
+                {"email": email.strip().lower(), "joined_user_id": user_id},
+                on_conflict="email",
+            )
     except Exception:
         logger.warning("could not put a removed user back on the waitlist", exc_info=True)
 
@@ -591,9 +608,10 @@ def unapprove_user(user_id: str, request: Request):
     if user_id == actor:
         raise HTTPException(status_code=409, detail="You cannot remove your own access.")
     rows = table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+    clear_account_state_cache(user_id)  # #756: the guard refuses it now, not at the TTL
     email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
     if "@" in email:
-        _back_on_waitlist(email)
+        _back_on_waitlist(email, user_id)
     log_admin_action(actor_id=actor, action="user.unapprove", target_type="user", target_id=user_id)
     return {"unapproved": True}
 
@@ -655,60 +673,63 @@ def list_allowlist(request: Request):
     return {"emails": _with_invite_status(_waitlist_rows())}
 
 
-@router.post("/allowlist/approve")
-def approve_allowlist(body: AllowlistEmailBody, request: Request, background_tasks: BackgroundTasks):
-    require_admin(request)
-    actor = get_session_user_id(request)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    rows = table("newsletter_emails").upsert(
-        {"email": body.email, "approved_at": now_iso},
-        on_conflict="email",
-    )
-    log_admin_action(
-        actor_id=actor, action="allowlist.approve",
-        target_type="allowlist", target_id=body.email,
-        payload={"email": body.email},
-    )
-    # "You're in". Deduped per address in email_sends, so a revoke followed
-    # by a re-approve never sends it twice. The 🔒 first name is there only
-    # for someone who joined from /pending; it never leaves this function.
-    row = dict(rows[0]) if rows else None
-    first_name = decrypt_if_present(row.pop("first_name", None)) if row else None
-    email_service.queue_waitlist_approved(background_tasks, body.email, first_name)
-    return {"email": row}
+#: What an approval reads off each existing row: the stored spelling and 🔒
+#: first name for the "you're in" email, and the linked account to let in.
+_APPROVE_COLUMNS = "id,email,approved_at,first_name,joined_user_id"
 
 
-@router.post("/allowlist/approve-bulk")
-def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background_tasks: BackgroundTasks):
-    """Approve up to 500 addresses at once.
+def _in_list(values) -> str:
+    return f"in.({','.join(pg_quote_value(v) for v in values)})"
+
+
+def _grant_linked_accounts(rows: list[dict], now_iso: str) -> None:
+    """Let the accounts behind approved waitlist rows in now (#757).
+
+    A row's `joined_user_id` is the account it was matched to at sign-in (or
+    the one Admin → Users removed). Sign-in copies an approval onto
+    `users.is_approved` only when the student signs in again, so a re-approval
+    used to sit unseen until then; flipping the account here makes it take
+    effect at once. Rows without a link have no account yet: their first
+    sign-in creates it approved. Idempotent, so a retried approve finishes the
+    job a failed one started.
+    """
+    linked = [r for r in rows if r.get("joined_user_id")]
+    user_ids = sorted({r["joined_user_id"] for r in linked})
+    for chunk in _chunks(user_ids, 100):
+        table("users").update({"is_approved": True}, filters={"id": _in_list(chunk)})
+        for uid in chunk:
+            clear_account_state_cache(uid)  # #756: honoured now, not at the TTL
+    for chunk in _chunks([r["id"] for r in linked], 100):
+        table("newsletter_emails").update(
+            {"joined_at": now_iso},
+            filters={"id": f"in.({','.join(chunk)})", "joined_at": "is.null"},
+        )
+
+
+def _approve_waitlist(
+    wanted: list[str], by_lower: dict[str, list[dict]], now_iso: str,
+) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """Approve normalised addresses against their existing rows (`by_lower`).
 
     Addresses already on the waitlist keep their stored spelling (the waitlist
     keeps emails as typed, so a lowercased insert would create a case twin) and
     an already-approved row keeps its original `approved_at`: only NULLs are
     stamped, via a PATCH filtered on `approved_at=is.null`. New addresses are
     inserted approved with ON CONFLICT DO NOTHING, so a concurrent signup is
-    never overwritten.
+    never overwritten. Returns the "you're in" recipients (address, 🔒 first
+    name — one per email) and every stored spelling, for the read-back.
     """
-    require_admin(request)
-    actor = get_session_user_id(request)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    wanted = body.emails  # normalized: lowercased, stripped, deduped
-
-    by_lower: dict[str, list[dict]] = {}
-    for r in _waitlist_rows("id,email,approved_at,first_name"):
-        key = (r.get("email") or "").strip().lower()
-        if key:
-            by_lower.setdefault(key, []).append(r)
-
     pending_ids: list[str] = []
     missing: list[str] = []
-    recipients: list[tuple[str, str | None]] = []  # (address, 🔒 first name), one per email
-    spellings: list[str] = []    # stored spellings, for the read-back
+    linked: list[dict] = []
+    recipients: list[tuple[str, str | None]] = []
+    spellings: list[str] = []
     for email in wanted:
         existing = by_lower.get(email)
         if existing:
             pending_ids.extend(r["id"] for r in existing if not r.get("approved_at"))
             spellings.extend(r["email"] for r in existing)
+            linked.extend(existing)
             recipients.append((existing[0]["email"], decrypt_if_present(existing[0].get("first_name"))))
         else:
             missing.append(email)
@@ -726,6 +747,56 @@ def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background
             on_conflict="email",
             ignore_duplicates=True,
         )
+    _grant_linked_accounts(linked, now_iso)
+    return recipients, spellings
+
+
+@router.post("/allowlist/approve")
+def approve_allowlist(body: AllowlistEmailBody, request: Request, background_tasks: BackgroundTasks):
+    """Approve one address — the bulk path's rules for a single email (#757):
+    normalised, case twins reached, `approved_at` never re-stamped, and an
+    existing account let in at once."""
+    from routes.auth import _waitlist_entries
+
+    require_admin(request)
+    actor = get_session_user_id(request)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    email = body.email  # normalized: lowercased, stripped
+    recipients, _ = _approve_waitlist(
+        [email], {email: _waitlist_entries(email, _APPROVE_COLUMNS)}, now_iso,
+    )
+    log_admin_action(
+        actor_id=actor, action="allowlist.approve",
+        target_type="allowlist", target_id=email,
+        payload={"email": email},
+    )
+    # "You're in". Deduped per address in email_sends, so a revoke followed
+    # by a re-approve never sends it twice. The 🔒 first name is there only
+    # for someone who joined from /pending; it never leaves this function.
+    for address, first_name in recipients:
+        email_service.queue_waitlist_approved(background_tasks, address, first_name)
+    rows = _waitlist_entries(email, _ALLOWLIST_COLUMNS)
+    row = dict(rows[0]) if rows else None
+    if row:
+        row.pop("first_name", None)  # 🔒; never in a response
+    return {"email": row}
+
+
+@router.post("/allowlist/approve-bulk")
+def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background_tasks: BackgroundTasks):
+    """Approve up to 500 addresses at once (rules: `_approve_waitlist`)."""
+    require_admin(request)
+    actor = get_session_user_id(request)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    wanted = body.emails  # normalized: lowercased, stripped, deduped
+
+    by_lower: dict[str, list[dict]] = {}
+    for r in _waitlist_rows(_APPROVE_COLUMNS):
+        key = (r.get("email") or "").strip().lower()
+        if key:
+            by_lower.setdefault(key, []).append(r)
+
+    recipients, spellings = _approve_waitlist(wanted, by_lower, now_iso)
 
     log_admin_action(
         actor_id=actor, action="allowlist.approve_bulk",
@@ -752,20 +823,43 @@ def approve_allowlist_bulk(body: AllowlistBulkBody, request: Request, background
 
 @router.post("/allowlist/revoke")
 def revoke_allowlist(body: AllowlistEmailBody, request: Request):
+    """Take an address's approval back — and the access it granted (#757).
+
+    Reaches every case twin (sign-in reads the approved twin, so revoking only
+    the exact spelling could leave it approved), clears the "joined" stamp so
+    no row reads "joined but not approved", and sets the linked account's
+    `users.is_approved` to false at once instead of leaving it signed in.
+    `joined_user_id` is kept: it is the only link back to the account
+    (users.email is nonce-encrypted), which a re-approve or a retried revoke
+    needs. The waitlist is written first so a failed account write is retried
+    by the admin repeating the revoke, never undone by the student's next
+    sign-in re-reading an approved row.
+    """
+    from routes.auth import _waitlist_entries
+
     require_admin(request)
     actor = get_session_user_id(request)
-    rows = table("newsletter_emails").update(
-        {"approved_at": None},
-        filters={"email": f"eq.{body.email}"},
-    )
-    if not rows:
+    email = body.email  # normalized: lowercased, stripped
+    twins = _waitlist_entries(email, _ALLOWLIST_COLUMNS)
+    if not twins:
         raise HTTPException(status_code=404, detail="Email not found")
+    user_ids = sorted({r["joined_user_id"] for r in twins if r.get("joined_user_id")})
+    if actor in user_ids:
+        raise HTTPException(status_code=409, detail="You cannot remove your own access.")
+    rows = table("newsletter_emails").update(
+        {"approved_at": None, "joined_at": None},
+        filters={"id": f"in.({','.join(r['id'] for r in twins)})"},
+    )
+    for chunk in _chunks(user_ids, 100):
+        table("users").update({"is_approved": False}, filters={"id": _in_list(chunk)})
+        for uid in chunk:
+            clear_account_state_cache(uid)  # #756: refused now, not at the TTL
     log_admin_action(
         actor_id=actor, action="allowlist.revoke",
-        target_type="allowlist", target_id=body.email,
-        payload={"email": body.email},
+        target_type="allowlist", target_id=email,
+        payload={"email": email, "user_ids": user_ids},
     )
-    return {"email": rows[0]}
+    return {"email": (rows or twins)[0]}
 
 
 # ── Feedback + issue reports (#520) ──────────────────────────────────────────

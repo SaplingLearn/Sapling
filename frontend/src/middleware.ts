@@ -75,10 +75,16 @@ export async function middleware(request: NextRequest) {
   if (!session) return redirectToSignin(request, 'session_expired')
 
   if (!API_URL) return redirectToSignin(request, 'google_not_configured')
+  // #756: only a DEFINITIVE answer about the session ends it here — 401 (no
+  // live session: expired, deleted account) or 404 (no user row), the same
+  // two statuses UserContext treats as a dead identity. A 5xx, a 429, a
+  // timeout or a network error says nothing about the session, so the
+  // request goes through: the backend guard still enforces on every API call,
+  // and a backend blip no longer bounces a signed-in student to the landing.
+  let res: Response
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 3000)
-    let res: Response
     try {
       res = await fetch(
         `${API_URL}/api/auth/me?user_id=${encodeURIComponent(session.userId)}`,
@@ -87,12 +93,18 @@ export async function middleware(request: NextRequest) {
     } finally {
       clearTimeout(timeout)
     }
-    if (!res.ok) return redirectToSignin(request, 'session_expired')
-    const data = await res.json()
-    if (data.is_approved !== true) return NextResponse.redirect(new URL('/pending', request.url))
   } catch {
-    return redirectToSignin(request, 'signin_failed')
+    return NextResponse.next()
   }
+  if (res.status === 401 || res.status === 404) return redirectToSignin(request, 'session_expired')
+  if (!res.ok) return NextResponse.next()
+  let data: { is_approved?: unknown }
+  try {
+    data = await res.json()
+  } catch {
+    return NextResponse.next()
+  }
+  if (data?.is_approved !== true) return NextResponse.redirect(new URL('/pending', request.url))
 
   return NextResponse.next()
 }

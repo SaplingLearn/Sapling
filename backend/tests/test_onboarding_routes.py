@@ -312,3 +312,60 @@ class TestSaveOnboardingProfile:
         assert res.status_code == 200
         profile_data = tables["user_profiles"].upsert.call_args[0][0]
         assert profile_data["minors"] == []
+
+
+class TestOnboardingIsAOneWayGate:
+    """#757: `onboarding_completed` is written last, and a replay is a 409."""
+
+    def _ordered_factory(self, tables, order, *, onboarded=False, fail_on=None):
+        base = _make_factory(tables, course_rows=[{"id": "some-id"}], enrollment_rows=[])
+
+        def factory(name):
+            m = base(name)
+            if name == "users":
+                m.select.return_value = [{"id": "user_123", "onboarding_completed": onboarded}]
+            for op in ("update", "upsert", "insert"):
+                def record(*a, _name=name, _op=op, **k):
+                    order.append(f"{_name}.{_op}")
+                    if fail_on == f"{_name}.{_op}":
+                        raise RuntimeError("postgrest down")
+                    return [{}]
+                getattr(m, op).side_effect = record
+            return m
+
+        return factory
+
+    def test_the_flag_is_written_after_the_profile_and_enrollments(self):
+        tables, order = {}, []
+        factory = self._ordered_factory(tables, order)
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
+            res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
+        assert res.status_code == 200
+        assert order[-1] == "users.update"
+        assert order.index("user_profiles.upsert") < order.index("users.update")
+        assert order.index("enrollments.insert") < order.index("users.update")
+        flag = tables["users"].update.call_args
+        assert flag.args[0] == {"onboarding_completed": True}
+        assert flag.kwargs["filters"] == {
+            "id": "eq.user_123", "onboarding_completed": "is.false",
+        }
+
+    def test_a_failure_part_way_leaves_the_account_not_onboarded(self):
+        tables, order = {}, []
+        factory = self._ordered_factory(tables, order, fail_on="enrollments.insert")
+        local = TestClient(app, raise_server_exceptions=False)
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
+            res = local.post("/api/onboarding/profile", json=VALID_PAYLOAD)
+        assert res.status_code == 500
+        assert "users.update" not in order
+
+    def test_a_replay_by_an_onboarded_user_is_a_409_and_writes_nothing(self):
+        tables, order = {}, []
+        factory = self._ordered_factory(tables, order, onboarded=True)
+        with patch("routes.onboarding.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory):
+            res = client.post("/api/onboarding/profile", json=VALID_PAYLOAD)
+        assert res.status_code == 409
+        assert order == []

@@ -62,7 +62,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { Settings } from "./Settings";
-import { fetchSettings, fetchPublicProfile, updateSettings } from "@/lib/api";
+import { fetchSettings, fetchPublicProfile, updateSettings, updateProfile, checkUsername } from "@/lib/api";
 
 function settings(overrides: Partial<UserSettings> = {}): UserSettings {
   return {
@@ -407,5 +407,98 @@ describe("Settings → Notifications toggles (shared Toggle)", () => {
     fireEvent.click(push);
     expect(push).toHaveAttribute("aria-checked", "true");
     expect(updateSettings).toHaveBeenCalledWith("u1", { notification_push: true });
+  });
+});
+
+describe("Settings username check is keyed to the draft it checked (#769)", () => {
+  beforeEach(() => {
+    __resetAccountSettingsForTests();
+    vi.mocked(fetchSettings).mockResolvedValue(settings({ username: "orig" }));
+    vi.mocked(fetchPublicProfile).mockResolvedValue(profile({ username: "orig" }));
+  });
+
+  it("a late reply for an older draft neither marks the current one available nor lets blur save it", async () => {
+    const replies: Record<string, (v: { available: boolean }) => void> = {};
+    vi.mocked(checkUsername).mockImplementation(
+      (name: string) => new Promise(res => { replies[name] = res; }),
+    );
+    render(<Settings />);
+    const input = await screen.findByPlaceholderText("your-handle");
+    await waitFor(() => expect(input).toHaveValue("orig"));
+
+    fireEvent.change(input, { target: { value: "alice" } });
+    await waitFor(() => expect(replies.alice).toBeDefined());
+    fireEvent.change(input, { target: { value: "alicebob" } });
+    await waitFor(() => expect(replies.alicebob).toBeDefined());
+
+    // The OLDER check answers "available" while the newer one is still out.
+    await act(async () => { replies.alice({ available: true }); });
+    expect(screen.queryByText("Available")).toBeNull();
+    fireEvent.blur(input);
+    expect(updateProfile).not.toHaveBeenCalled();
+
+    // The current draft's own verdict is the one that counts.
+    await act(async () => { replies.alicebob({ available: true }); });
+    expect(await screen.findByText("Available")).toBeInTheDocument();
+    vi.mocked(updateProfile).mockResolvedValue({} as never);
+    fireEvent.blur(input);
+    expect(updateProfile).toHaveBeenCalledWith("u1", { username: "alicebob" });
+  });
+});
+
+describe("Settings patch(): rollback + per-field saving (#769)", () => {
+  beforeEach(() => {
+    __resetAccountSettingsForTests();
+    vi.mocked(fetchSettings).mockResolvedValue(settings({ notification_push: false, notification_email: true }));
+    vi.mocked(fetchPublicProfile).mockResolvedValue(profile());
+    vi.mocked(updateSettings).mockReset();
+  });
+
+  async function openNotifications() {
+    render(<Settings />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("settings-tab-notifications"));
+    return {
+      push: await screen.findByTestId("settings-toggle-notification_push"),
+      email: screen.getByTestId("settings-toggle-notification_email"),
+    };
+  }
+
+  it("a failed save flips the control back and says so", async () => {
+    const save = deferredPatch();
+    vi.mocked(updateSettings).mockReturnValueOnce(save.promise);
+    const { push } = await openNotifications();
+
+    fireEvent.click(push);
+    expect(push).toHaveAttribute("aria-checked", "true");
+    await act(async () => { save.reject(new Error("500")); });
+
+    expect(push).toHaveAttribute("aria-checked", "false");
+    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/changed back/i));
+  });
+
+  it("tracks saving per field: only the saving field's control is busy, and a failure reverts only its own field", async () => {
+    const pushSave = deferredPatch();
+    const emailSave = deferredPatch();
+    vi.mocked(updateSettings)
+      .mockReturnValueOnce(pushSave.promise)
+      .mockReturnValueOnce(emailSave.promise);
+    const { push, email } = await openNotifications();
+
+    fireEvent.click(push);
+    expect(push).toBeDisabled();
+    expect(email).toBeEnabled();
+    fireEvent.click(email);
+    expect(email).toHaveAttribute("aria-checked", "false");
+
+    await act(async () => { emailSave.resolve(); });
+    expect(email).toBeEnabled();
+    expect(push).toBeDisabled();
+
+    await act(async () => { pushSave.reject(new Error("500")); });
+    expect(push).toBeEnabled();
+    expect(push).toHaveAttribute("aria-checked", "false");
+    // The other field's successful save is untouched by this rollback.
+    expect(email).toHaveAttribute("aria-checked", "false");
   });
 });

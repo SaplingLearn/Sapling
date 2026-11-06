@@ -26,6 +26,7 @@ import {
 } from "@/lib/api";
 import type { UserSettings, UserProfile, UserCosmetic, CosmeticType, EquippedCosmetics } from "@/lib/types";
 import { useLayoutPref, type LayoutPref } from "@/lib/useLayoutPref";
+import { useLatestRequest } from "@/lib/useLatestRequest";
 import { readAccountSettings } from "@/lib/accountSettings";
 import {
   getAnalyticsState,
@@ -96,7 +97,13 @@ function Toggle({
   );
 }
 
-type UsernameState = { status: "idle" | "checking" | "available" | "taken" | "invalid"; message?: string };
+// `checked` = the exact (normalised) draft this verdict is about (#769), so
+// save-on-blur can refuse a verdict that belongs to an earlier draft.
+type UsernameState = {
+  status: "idle" | "checking" | "available" | "taken" | "invalid";
+  message?: string;
+  checked?: string;
+};
 
 export function Settings() {
   const toast = useToast();
@@ -104,7 +111,29 @@ export function Settings() {
   const [tab, setTab] = React.useState<Tab>("profile");
   const [settings, setSettings] = React.useState<UserSettings | null>(null);
   const [layoutPref, setLayoutPref] = useLayoutPref();
-  const [saving, setSaving] = React.useState(false);
+  // Per-field in-flight saves (#769): a count per settings key, so the
+  // "saving…" chip stays up until the LAST overlapping save settles (one
+  // shared boolean was cleared by whichever finished first) and a field's own
+  // control can tell its save is still running.
+  const [savingFields, setSavingFields] = React.useState<Record<string, number>>({});
+  const saving = Object.keys(savingFields).length > 0;
+  const trackSaving = React.useCallback((keys: string[], delta: 1 | -1) => {
+    setSavingFields(prev => {
+      const next = { ...prev };
+      for (const k of keys) {
+        const n = (next[k] ?? 0) + delta;
+        if (n > 0) next[k] = n;
+        else delete next[k];
+      }
+      return next;
+    });
+  }, []);
+  // Rollback bookkeeping for patch() (#769). `confirmed` = the last value the
+  // server accepted per key; `fieldSeq` = the latest save per key, so only
+  // the newest save to a field may roll it back.
+  const confirmedRef = React.useRef<Partial<UserSettings>>({});
+  const fieldSeq = React.useRef<Record<string, number>>({});
+  const usernameReq = useLatestRequest();
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [preview, setPreview] = React.useState<UserProfile | null>(null);
   const [usernameDraft, setUsernameDraft] = React.useState<string>("");
@@ -136,6 +165,7 @@ export function Settings() {
           website: s.website || profile?.website || null,
         };
         setSettings(seeded);
+        confirmedRef.current = { ...seeded };
         setUsernameDraft(seeded.username || "");
         if (seeded.accent_color) {
           document.documentElement.style.setProperty("--accent", seeded.accent_color);
@@ -144,17 +174,35 @@ export function Settings() {
       .catch((e) => console.error("settings load", e));
   }, [userReady, userId]);
 
+  // Optimistic, with rollback (#769): the control flips at once; if the save
+  // fails, each field this save still owns (no newer save to it since) goes
+  // back to the last value the server accepted, and the student is told.
   const patch = async (updates: Partial<UserSettings>) => {
     if (!userId || !settings) return;
-    const next = { ...settings, ...updates };
-    setSettings(next);
-    setSaving(true);
+    const keys = Object.keys(updates) as (keyof UserSettings)[];
+    const mySeq: Record<string, number> = {};
+    for (const k of keys) mySeq[k] = fieldSeq.current[k] = (fieldSeq.current[k] ?? 0) + 1;
+    setSettings(prev => (prev ? { ...prev, ...updates } : prev));
+    trackSaving(keys, 1);
     try {
       await updateSettings(userId, updates);
+      Object.assign(confirmedRef.current, updates);
     } catch (err) {
       console.error("settings save", err);
+      const owned = keys.filter(k => fieldSeq.current[k] === mySeq[k]);
+      if (owned.length > 0) {
+        const revert: Partial<UserSettings> = {};
+        for (const k of owned) Object.assign(revert, { [k]: confirmedRef.current[k] });
+        setSettings(prev => (prev ? { ...prev, ...revert } : prev));
+        if ("accent_color" in revert) {
+          // The accent is painted straight onto :root at pick time.
+          if (revert.accent_color) document.documentElement.style.setProperty("--accent", revert.accent_color);
+          else document.documentElement.style.removeProperty("--accent");
+        }
+        toast.error("Couldn't save that setting, so it's been changed back. Please try again.");
+      }
     } finally {
-      setSaving(false);
+      trackSaving(keys, -1);
     }
   };
 
@@ -240,14 +288,16 @@ export function Settings() {
 
   const patchProfile = async (updates: { username?: string; display_name?: string; bio?: string; location?: string; website?: string }) => {
     if (!userId || !settings) return;
-    setSaving(true);
+    const keys = Object.keys(updates);
+    trackSaving(keys, 1);
     try {
       await updateProfile(userId, updates);
       setSettings(prev => prev ? { ...prev, ...updates } : prev);
+      Object.assign(confirmedRef.current, updates);
     } catch (err) {
       toast.error(`Couldn't save: ${String(err)}`);
     } finally {
-      setSaving(false);
+      trackSaving(keys, -1);
     }
   };
 
@@ -255,22 +305,30 @@ export function Settings() {
     if (usernameTimer.current) clearTimeout(usernameTimer.current);
     const next = usernameDraft.trim().toLowerCase();
     if (!next || next === (settings?.username || "")) {
+      usernameReq.cancel();
       setUsernameState({ status: "idle" });
       return;
     }
     setUsernameState({ status: "checking" });
+    // Clearing the debounce timer doesn't stop a check already in flight: a
+    // late reply for an older draft used to mark THIS draft available (#769).
+    const run = usernameReq.begin();
     usernameTimer.current = setTimeout(async () => {
       try {
         const r = await checkUsername(next, userId || undefined);
-        if (r.available) setUsernameState({ status: "available", message: "Available" });
-        else if (r.reason === "invalid") setUsernameState({ status: "invalid", message: "3–24 chars, lowercase letters, digits, or _" });
-        else setUsernameState({ status: "taken", message: "Already taken" });
+        if (!run.isCurrent()) return;
+        if (r.available) setUsernameState({ status: "available", message: "Available", checked: next });
+        else if (r.reason === "invalid") setUsernameState({ status: "invalid", message: "3–24 chars, lowercase letters, digits, or _", checked: next });
+        else setUsernameState({ status: "taken", message: "Already taken", checked: next });
       } catch {
-        setUsernameState({ status: "idle" });
+        if (run.isCurrent()) setUsernameState({ status: "idle" });
       }
     }, 400);
-    return () => { if (usernameTimer.current) clearTimeout(usernameTimer.current); };
-  }, [usernameDraft, settings?.username, userId]);
+    return () => {
+      if (usernameTimer.current) clearTimeout(usernameTimer.current);
+      usernameReq.cancel();
+    };
+  }, [usernameDraft, settings?.username, userId, usernameReq]);
 
   const openPreview = async () => {
     if (!userId) return;
@@ -353,7 +411,11 @@ export function Settings() {
                       onChange={e => setUsernameDraft(e.target.value)}
                       onBlur={async () => {
                         const v = usernameDraft.trim().toLowerCase();
-                        if (v && v !== (settings.username || "") && usernameState.status === "available") {
+                        // Save only the draft that was actually verified (#769).
+                        if (
+                          v && v !== (settings.username || "")
+                          && usernameState.status === "available" && usernameState.checked === v
+                        ) {
                           await patchProfile({ username: v });
                         } else if (!v && settings.username) {
                           setUsernameDraft(settings.username || "");
@@ -601,6 +663,7 @@ export function Settings() {
                   <Toggle
                     on={Boolean(settings[key])}
                     onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}
+                    disabled={Boolean(savingFields[key])}
                     ariaLabelledBy={`settings-toggle-${key}-label`}
                     testId={`settings-toggle-${key}`}
                   />

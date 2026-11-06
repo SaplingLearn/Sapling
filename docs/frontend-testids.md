@@ -204,7 +204,9 @@ route:
 | `tutor-interrupted` | the "Interrupted" marker inside a stopped/failed assistant bubble (ADR 0020, #356; the partial text stays in the bubble itself) |
 | `tutor-retry` | the Retry button inside that marker — re-dispatches the interrupted turn |
 | `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
-| `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
+| `tutor-resume-loading` | the transient loading state while a session resume hydrates — a `/learn?resume=` deep link (#164) or any in-app resume (#762) |
+| `tutor-session-ended` | the banner shown when the server refuses a turn because the session has ended (409, #762); the composer is disabled while it shows |
+| `tutor-session-ended-new` | that banner's "Start a new session" button — starts a fresh session on the same topic |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
 | `tutor-topic-picker` | the entry screen's topic dropdown trigger (`screens/Learn.tsx::TopicPicker`) — opens the concept/custom-topic search |
 | `tutor-topic-search` | the search input inside the open topic dropdown; Enter picks the first match, or the typed text as a custom topic |
@@ -254,6 +256,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-adjust-start` | its "Start · {count} {difficulty}" — saves and starts in one |
 | `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the three `ui/SegmentedControl`s both dialogs share; each option is `${testid}-${value}` |
 | `quiz-generating` | the skeleton question screen while a quiz is being written |
+| `quiz-cancel-generate` | its "Cancel" — aborts the generation and returns to quiz home (#760) |
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
@@ -270,6 +273,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-flag` | "This question is confusing" (toggles, `aria-pressed`; persists nothing) |
 | `quiz-ask` | "Ask about this" — opens the tutor sheet |
 | `quiz-leave` | "Leave" |
+| `quiz-cancel-submit` | "Cancel" in place of Leave while scoring (`phase: submitting`) — aborts the submit and returns to the final verdict (#760) |
 | `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
 | `quiz-ask-panel` | the tutor sheet (`ui/Sheet`) |
 | `quiz-ask-panel-close` | its × — the `Sheet` derives it as `${testid}-close` |
@@ -586,6 +590,8 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+| `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
+| `library-load-retry` | that notice's "Try again" / "Retry" button |
 
 ### `landing-graph`
 

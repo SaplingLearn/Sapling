@@ -340,6 +340,12 @@ export function QuizQuestion({
             ))}
           </div>
           <div className="quiz-question__grow" />
+          {/* #760: a generation that never answers must not be a dead end. */}
+          <div className="quiz-question__footer">
+            <Button data-testid="quiz-cancel-generate" onClick={() => actions.cancel()}>
+              Cancel
+            </Button>
+          </div>
         </div>
         <div className="quiz-question__spacer" />
       </div>
@@ -500,9 +506,18 @@ export function QuizQuestion({
         <div className="quiz-question__grow" />
 
         <div className="quiz-question__footer">
-          <Button data-testid="quiz-leave" onClick={() => actions.requestLeave()}>
-            Leave
-          </Button>
+          {phase === "submitting" ? (
+            // #760: Leave is refused mid-score (the attempt is live), so this is
+            // the way off "Scoring…" — back onto the final verdict, from where
+            // See results and Leave both work again.
+            <Button data-testid="quiz-cancel-submit" onClick={() => actions.cancel()}>
+              Cancel
+            </Button>
+          ) : (
+            <Button data-testid="quiz-leave" onClick={() => actions.requestLeave()}>
+              Leave
+            </Button>
+          )}
           <Button
             variant="primary"
             data-testid={primary.testid}

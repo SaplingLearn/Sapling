@@ -27,7 +27,7 @@ from models import (
 )
 from services.academics import school_peer_user_ids
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import require_self, get_session_user_id
+from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id, guard_off_loop
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
@@ -239,8 +239,13 @@ def _get_featured_achievements(user_id: str) -> list:
 
 
 def _get_user_stats(user_id: str) -> dict:
-    user = table("users").select("streak_count", filters={"id": f"eq.{user_id}"})
-    streak = user[0].get("streak_count", 0) if user else 0
+    # effective_streak: a lapsed streak keeps its stored count until the next
+    # activity (#767).
+    from services.streak_service import effective_streak
+    user = table("users").select(
+        "streak_count,last_active_date", filters={"id": f"eq.{user_id}"}
+    )
+    streak = effective_streak(user[0] if user else None)
 
     sessions = table("sessions").select("id", filters={"user_id": f"eq.{user_id}"})
     session_count = len(sessions) if sessions else 0
@@ -425,7 +430,7 @@ class _AvatarUploadBody(BaseModel):
 
 @router.post("/{user_id}/avatar")
 async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
-    require_self(user_id, request)
+    await guard_off_loop(require_self, user_id, request)
     _get_user_or_404(user_id)
 
     # `file_b64` may arrive as a bare base64 string OR as a data URL
@@ -836,7 +841,8 @@ def delete_account(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    require_self(user_id, request)
+    # #756: a removed (unapproved) student may still erase their account.
+    require_self(user_id, request, allow_unapproved=True)
 
     if body.confirmation != "DELETE":
         raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
@@ -850,6 +856,9 @@ def delete_account(
     # (which would re-create the person the delete below removes). Drop the
     # cached "allowed" answer now.
     clear_analytics_consent_cache(user_id)
+    # #756: the auth guard refuses a deleted account; drop its cached "active"
+    # answer so this process stops honouring the session now, not at the TTL.
+    clear_account_state_cache(user_id)
     # Best-effort PostHog person + event delete, AFTER the response so it adds
     # no latency and cannot fail the deletion (it never raises; unconfigured
     # -> WARN + skip). It drains our queue and the SDK's first, and repeats
@@ -862,7 +871,8 @@ def delete_account(
 
 @router.post("/{user_id}/export")
 def export_data(user_id: str, request: Request):
-    require_self(user_id, request)
+    # #756: a removed (unapproved) student may still export their data.
+    require_self(user_id, request, allow_unapproved=True)
 
     user = _get_user_or_404(user_id)
     settings = _get_or_create_settings(user_id)

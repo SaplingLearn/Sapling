@@ -111,6 +111,7 @@ fix and is deliberately not done here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import queue
@@ -152,6 +153,10 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # submit, so the /errors feed can carry it without drowning. See the emit
     # site, routes/quiz.py::_gamification_block.
     "quiz.gamification_snapshot_failed",
+    # #760: the post-score graph/mastery update failed. Best-effort since
+    # the score must always land after the submit claim, so the submit still
+    # succeeds — this is what keeps the skipped mastery write countable.
+    "quiz.mastery_write_failed",
     # F5: a personalization input returned zero rows for a student who
     # plausibly should have data. Three inputs were silently empty for
     # months (#529's 42P10, the misconceptions offering-id filter, the
@@ -238,6 +243,22 @@ _dropped_lock = threading.Lock()
 _worker: Optional[threading.Thread] = None
 _worker_lock = threading.Lock()
 _stop = threading.Event()
+#: Held while a batch is in flight (taken off the queue AND being inserted), by
+#: the worker and by flush_now. shutdown() takes it after its join, so a join
+#: that times out mid-insert waits for that batch instead of racing it and
+#: letting the process exit under it (#771).
+_flush_lock = threading.RLock()
+#: True once shutdown() has drained the queue: nothing drains it any more, so a
+#: late row (a producer thread that outlived its loop) is inserted inline
+#: instead of being queued into a dead queue. Flipped under _state_lock, which
+#: every enqueue takes, so a row is either queued before the final drain or
+#: sees the flag — never queued after it.
+_closed = False
+_state_lock = threading.Lock()
+_late_dropped = 0
+#: Bounds on the shutdown waits: the worker's join, then the in-flight batch.
+_SHUTDOWN_JOIN_S = 2.0
+_SHUTDOWN_FLUSH_WAIT_S = 10.0
 
 
 def _logging_enabled() -> bool:
@@ -402,19 +423,52 @@ def log_llm_usage(
 
 def _enqueue(table_name: str, row: dict) -> None:
     global _dropped
+    with _state_lock:
+        closed = _closed
+        if not closed:
+            try:
+                _queue.put_nowait({"table": table_name, "row": row})
+                return
+            except queue.Full:
+                pass
+    if closed:
+        _insert_late(table_name, row)
+        return
+    # The queue is full.
+    with _dropped_lock:
+        _dropped += 1
+        n = _dropped
+    # Throttle: warn on the first drop and every 1000th thereafter so a
+    # sustained overflow doesn't flood the logs.
+    if n == 1 or n % 1000 == 0:
+        logger.warning(
+            "events queue full (max=%d); dropped %d event(s) so far",
+            _queue.maxsize, n,
+        )
+
+
+def _insert_late(table_name: str, row: dict) -> None:
+    """A row logged after shutdown() drained the queue. Off an event loop (a
+    worker thread finishing after its loop was cancelled) it is inserted
+    inline — that thread is not serving anyone. ON a loop, blocking is not
+    allowed, so it is dropped and counted, loudly. Never raises."""
+    global _late_dropped
     try:
-        _queue.put_nowait({"table": table_name, "row": row})
-    except queue.Full:
-        with _dropped_lock:
-            _dropped += 1
-            n = _dropped
-        # Throttle: warn on the first drop and every 1000th thereafter so a
-        # sustained overflow doesn't flood the logs.
-        if n == 1 or n % 1000 == 0:
-            logger.warning(
-                "events queue full (max=%d); dropped %d event(s) so far",
-                _queue.maxsize, n,
-            )
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            table(table_name).insert([row])
+        except Exception:
+            logger.warning("late %s row after events shutdown failed to insert",
+                           table_name, exc_info=True)
+        return
+    with _dropped_lock:
+        _late_dropped += 1
+        n = _late_dropped
+    if n == 1 or n % 100 == 0:
+        logger.warning(
+            "events logged on an event loop after shutdown; dropped %d so far", n,
+        )
 
 
 def dropped_count() -> int:
@@ -475,13 +529,8 @@ def flush_now() -> None:
     Test-only determinism hook (and used by ``shutdown()``): pulls everything
     currently queued and inserts it, so tests never race the worker thread.
     """
-    items: list[dict] = []
-    while True:
-        try:
-            items.append(_queue.get_nowait())
-        except queue.Empty:
-            break
-    _flush_batch(items)
+    with _flush_lock:
+        _drain_unlocked()
 
 
 # ── Background worker lifecycle ─────────────────────────────────────────────
@@ -495,12 +544,13 @@ def _worker_loop() -> None:
             batch.append(_queue.get(timeout=_FLUSH_INTERVAL))
         except queue.Empty:
             continue
-        while len(batch) < _BATCH_MAX:
-            try:
-                batch.append(_queue.get_nowait())
-            except queue.Empty:
-                break
-        _flush_batch(batch)
+        with _flush_lock:
+            while len(batch) < _BATCH_MAX:
+                try:
+                    batch.append(_queue.get_nowait())
+                except queue.Empty:
+                    break
+            _flush_batch(batch)
 
 
 def start_worker() -> None:
@@ -509,7 +559,9 @@ def start_worker() -> None:
     Called from the FastAPI lifespan in production. Unit tests deliberately do
     not call this — they use ``flush_now()`` for deterministic draining.
     """
-    global _worker
+    global _worker, _closed
+    with _state_lock:
+        _closed = False  # a (re)started process accepts rows into the queue again
     with _worker_lock:
         if _worker is not None and _worker.is_alive():
             return
@@ -521,14 +573,47 @@ def start_worker() -> None:
 
 
 def shutdown() -> None:
-    """Stop the worker and flush anything still queued (called on app shutdown)."""
-    global _worker
+    """Stop the worker and flush anything still queued (called on app shutdown).
+
+    Ordered so no row is lost to the shutdown itself (#771): stop the worker
+    (bounded join); close the queue, so a row logged from here on is inserted
+    inline rather than queued where nothing drains it; then drain under the
+    flush lock, which a join that timed out mid-insert waits on (bounded) so
+    the worker's in-flight batch lands before the process exits. Idempotent.
+    """
+    global _worker, _closed
     _stop.set()
     worker = _worker
     if worker is not None:
-        worker.join(timeout=2.0)
-        _worker = None
-    flush_now()
+        worker.join(timeout=_SHUTDOWN_JOIN_S)
+    with _state_lock:
+        _closed = True
+    got = _flush_lock.acquire(timeout=_SHUTDOWN_FLUSH_WAIT_S)
+    if not got:
+        logger.warning(
+            "events worker still inserting after %.0fs; draining the rest alongside it",
+            _SHUTDOWN_FLUSH_WAIT_S,
+        )
+    try:
+        _drain_unlocked()
+    finally:
+        if got:
+            _flush_lock.release()
+    if worker is not None:
+        # A worker that had taken a row off the queue just before the drain
+        # finishes that one batch and exits (it re-checks _stop per batch).
+        worker.join(timeout=_SHUTDOWN_JOIN_S)
+    _worker = None
+
+
+def _drain_unlocked() -> None:
+    items: list[dict] = []
+    while True:
+        try:
+            items.append(_queue.get_nowait())
+        except queue.Empty:
+            break
+    _flush_batch(items)
 
 
 # ── Test hook ────────────────────────────────────────────────────────────────
@@ -540,13 +625,16 @@ def reset_for_tests(maxsize: int | None = None) -> None:
     Wired into an autouse fixture in ``tests/conftest.py`` so no test leaks
     queued rows or a tripped drop-counter into the next.
     """
-    global _queue, _dropped, _worker
+    global _queue, _dropped, _worker, _closed, _late_dropped
     _stop.set()
     if _worker is not None:
         _worker.join(timeout=1.0)
         _worker = None
     _stop.clear()
     _queue = queue.Queue(maxsize=maxsize if maxsize is not None else _DEFAULT_QUEUE_MAX)
+    with _state_lock:
+        _closed = False
     with _dropped_lock:
         _dropped = 0
+        _late_dropped = 0
     llm_pricing._warned_models.clear()

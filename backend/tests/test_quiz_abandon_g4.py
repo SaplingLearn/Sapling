@@ -114,6 +114,13 @@ def _factory(attempts: _Attempts):
             return attempts
         mock = MagicMock()
         mock.select.return_value = []
+        if name == "graph_nodes":
+            # Submit checks node ownership BEFORE its claim (#760), so the
+            # claim-arbitration cases below need the concept to exist.
+            mock.select.return_value = [{
+                "id": "node1", "concept_name": "Loops", "mastery_score": 0.5,
+                "course_id": "course1",
+            }]
         mock.update.return_value = []
         mock.select_with_count.return_value = ([], 0)
         return mock
