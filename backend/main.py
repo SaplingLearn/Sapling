@@ -114,6 +114,10 @@ logfire.instrument_pydantic_ai()
 # teardown on the next line, at the position that keeps that order.
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    # #771: the model mode is fixed for the life of the process from here on,
+    # so the import-time agents and every per-call gate agree on it.
+    from agents._providers import freeze_model_mode
+    freeze_model_mode()
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()

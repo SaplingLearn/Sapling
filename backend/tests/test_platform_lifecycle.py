@@ -217,3 +217,48 @@ def test_after_shutdown_nothing_is_accepted_and_no_worker_restarts(ph):
     assert posthog_client._queue.qsize() == 0
     assert posthog_client._refused_after_stop >= 1
     assert sent == []
+
+
+# ── Model mode is immutable after boot ──────────────────────────────────────
+
+
+def test_model_mode_is_frozen_at_boot(monkeypatch, caplog):
+    """Agents capture their model at import while the gates read the mode per
+    call: a runtime env change used to split them. After the lifespan's
+    freeze, every reader keeps the boot value."""
+    from agents import _providers
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert _providers.freeze_model_mode() == "function"
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+    with caplog.at_level("WARNING"):
+        assert _providers.model_mode() == "function"
+        assert _providers._model_mode() == "function"
+        assert _providers.model_mode() == "function"
+    assert sum("frozen at startup" in r.message for r in caplog.records) == 1
+    # Idempotent: a second freeze keeps the first value.
+    assert _providers.freeze_model_mode() == "function"
+
+
+def test_model_mode_reads_the_env_until_frozen(monkeypatch):
+    from agents import _providers
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert _providers.model_mode() == "function"
+    monkeypatch.setenv("SAPLING_MODEL_MODE", " REAL ")
+    assert _providers.model_mode() == "real"
+
+
+def test_the_lifespan_freezes_the_mode(monkeypatch):
+    from agents import _providers
+
+    calls: list[str] = []
+    with ExitStack() as stack:
+        _patch_lifecycle(stack, calls)
+        from main import app
+
+        monkeypatch.delenv("SAPLING_MODEL_MODE", raising=False)
+        with TestClient(app) as client:
+            monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+            assert _providers.model_mode() == "real"
+            assert client.get("/api/health").json()["model_mode"] == "real"
