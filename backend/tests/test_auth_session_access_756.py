@@ -351,3 +351,53 @@ def test_test_login_returns_a_session_and_a_handoff_token(monkeypatch):
     assert auth_guard._real_decode_session(_request(body["token"]))["typ"] == "session"
     with pytest.raises(HTTPException):
         auth_guard._real_decode_session(_request(body["handoff_token"]))
+
+
+# ── admin approval changes drop the cached state ─────────────────────────────
+
+
+def _cached(*uids):
+    for uid in uids:
+        auth_guard._account_state_cache[uid] = (float("inf"), auth_guard.ACCOUNT_ACTIVE)
+
+
+def test_admin_unapprove_drops_the_cached_state(monkeypatch):
+    import routes.admin as admin_module
+
+    _cached("user_bob")
+    users = MagicMock()
+    users.update.return_value = [{"id": "user_bob", "email": None}]
+    monkeypatch.setattr(admin_module, "table", lambda name: users)
+    monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
+    monkeypatch.setattr(admin_module, "log_admin_action", lambda **_k: None)
+    admin_module.unapprove_user("user_bob", MagicMock())
+    assert "user_bob" not in auth_guard._account_state_cache
+
+
+def test_admin_allowlist_revoke_and_grant_drop_the_cached_state(monkeypatch):
+    import routes.admin as admin_module
+    import routes.auth as auth_routes
+    from models import AllowlistEmailBody
+
+    _cached("user_bob", "user_carol")
+    tables: dict = {}
+
+    def factory(name):
+        if name not in tables:
+            tables[name] = MagicMock(name=f"table:{name}")
+            tables[name].update.return_value = []
+        return tables[name]
+
+    monkeypatch.setattr(admin_module, "table", factory)
+    monkeypatch.setattr(admin_module, "get_session_user_id", lambda request, **_k: "admin_1")
+    monkeypatch.setattr(admin_module, "log_admin_action", lambda **_k: None)
+    monkeypatch.setattr(auth_routes, "_waitlist_entries", lambda *_a, **_k: [
+        {"id": "w1", "email": "bob@bu.edu", "joined_user_id": "user_bob"},
+    ])
+    admin_module.revoke_allowlist(AllowlistEmailBody(email="bob@bu.edu"), MagicMock())
+    assert "user_bob" not in auth_guard._account_state_cache
+
+    admin_module._grant_linked_accounts(
+        [{"id": "w2", "joined_user_id": "user_carol"}], "2026-11-05T00:00:00+00:00",
+    )
+    assert "user_carol" not in auth_guard._account_state_cache

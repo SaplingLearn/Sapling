@@ -30,7 +30,7 @@ from models import (
 )
 from services import email_service
 from services.admin_audit import log_admin_action
-from services.auth_guard import require_admin, get_session_user_id
+from services.auth_guard import clear_account_state_cache, require_admin, get_session_user_id
 from services.achievement_service import check_achievements, grant_linked_cosmetics
 from routes.admin_flags import record_flag_change
 from services.feature_flags import clear_feature_flags_cache, clear_user_roles_cache
@@ -597,6 +597,7 @@ def unapprove_user(user_id: str, request: Request):
     if user_id == actor:
         raise HTTPException(status_code=409, detail="You cannot remove your own access.")
     rows = table("users").update({"is_approved": False}, filters={"id": f"eq.{user_id}"})
+    clear_account_state_cache(user_id)  # #756: the guard refuses it now, not at the TTL
     email = (decrypt_if_present((rows or [{}])[0].get("email")) or "").strip()
     if "@" in email:
         _back_on_waitlist(email, user_id)
@@ -685,6 +686,8 @@ def _grant_linked_accounts(rows: list[dict], now_iso: str) -> None:
     user_ids = sorted({r["joined_user_id"] for r in linked})
     for chunk in _chunks(user_ids, 100):
         table("users").update({"is_approved": True}, filters={"id": _in_list(chunk)})
+        for uid in chunk:
+            clear_account_state_cache(uid)  # #756: honoured now, not at the TTL
     for chunk in _chunks([r["id"] for r in linked], 100):
         table("newsletter_emails").update(
             {"joined_at": now_iso},
@@ -838,6 +841,8 @@ def revoke_allowlist(body: AllowlistEmailBody, request: Request):
     )
     for chunk in _chunks(user_ids, 100):
         table("users").update({"is_approved": False}, filters={"id": _in_list(chunk)})
+        for uid in chunk:
+            clear_account_state_cache(uid)  # #756: refused now, not at the TTL
     log_admin_action(
         actor_id=actor, action="allowlist.revoke",
         target_type="allowlist", target_id=email,

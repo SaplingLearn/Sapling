@@ -608,10 +608,13 @@ def google_callback(
     ) or FRONTEND_URL
 
     def _fail_redirect(
-        error_code: str, fallback_path: str = "/auth", extra: dict | None = None,
+        error_code: str, fallback_path: str = "/", extra: dict | None = None,
     ) -> RedirectResponse:
         # In popup mode, route failures through /auth/callback so the popup
         # can broadcast the error and self-close instead of stranding the opener.
+        # Same-tab failures land on the landing page, which opens the sign-in
+        # modal with the error's copy (#756). The frontend has no /auth page:
+        # the old fallback path 404'd.
         if popup_id:
             params = urlencode({"error": error_code, "popup_id": popup_id, **(extra or {})})
             resp = RedirectResponse(f"{frontend_url}/auth/callback?{params}")
@@ -800,8 +803,10 @@ def google_callback(
 
     # An existing account that isn't approved (its access was removed under
     # Admin → Users, or it predates unapproved sign-ins no longer creating one)
-    # is let back in once its email is approved on the waitlist. One-way:
-    # revoking the waitlist entry later does not remove access; Admin → Users does.
+    # is let back in once its email is approved on the waitlist. Revoking the
+    # waitlist entry later (Admin → Allowlist → revoke, #757) removes it again:
+    # that sets `users.is_approved = false` on the account its
+    # `joined_user_id` links to, and the auth guard then refuses the session.
     if not is_approved and waitlist_approved:
         is_approved = True
         table("users").update({"is_approved": True}, filters={"id": f"eq.{user_id}"})
