@@ -149,6 +149,9 @@ async def _lifespan(_app: FastAPI):
     yield
     await stop_local_seed_watcher()
     await stop_sweeper()
+    # #759: let in-flight upload post-roll tasks (indexing, course context) finish.
+    from routes.documents import drain_post_roll
+    await drain_post_roll()
     # Let in-flight tutor-router decisions finish first: each one emits a
     # decision.made row through the Jev client and the events worker closed
     # below (bounded by the router's own backstop).
