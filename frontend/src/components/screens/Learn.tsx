@@ -38,6 +38,7 @@ import {
   deleteGraphNode,
   describeConcept,
   shouldFallBackToJson,
+  newTurnId,
   type Session,
   type SessionSummaryData,
   type EnrolledCourse,
@@ -45,7 +46,7 @@ import {
   type GraphDelta,
 } from "@/lib/api";
 import { dropOptimisticConcept, reconcileNodes, retargetEdges } from "@/lib/graphOptimistic";
-import { isNotFound, statusOf } from "@/lib/errorMessage";
+import { humanizeError, isNotFound, statusOf } from "@/lib/errorMessage";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, type GraphNode, type GraphEdge } from "@/lib/data";
 
@@ -325,11 +326,16 @@ export function removeInterruptedTurn(
   return next;
 }
 
-// A turn the server refused because the session is already over (#762 /
-// backend workstream E1: turns on an ended session answer 409). Matched on
-// the status alone — the typed error code isn't settled yet, and nothing
-// else on these routes answers 409.
+// A turn the server refused because the session is already over (#761 /
+// #762): a 409 whose envelope carries `error.code: "SESSION_ENDED"` —
+// `ApiError.code` off fetchJSON, the same `code` streamSSE attaches. A coded
+// error decides it by its code (a 409 with any OTHER code is an ordinary
+// error); only an error with no code at all — an older backend — falls back
+// to the bare 409.
+export const SESSION_ENDED_CODE = "SESSION_ENDED";
 export function isSessionEndedError(err: unknown): boolean {
+  const code = err !== null && typeof err === "object" ? (err as { code?: unknown }).code : undefined;
+  if (typeof code === "string") return code === SESSION_ENDED_CODE;
   return statusOf(err) === 409;
 }
 
@@ -408,6 +414,9 @@ function LearnInner() {
   // written here synchronously too: its post-render mirror effect (above) is
   // too late for a turn that settles in the same tick.
   const sessionEpochRef = useRef(0);
+  // turn_id of each interrupted bubble, keyed by the bubble's id, so Retry
+  // re-sends the SAME turn (#761). ChatMsg itself carries only `retryText`.
+  const retryTurnIdsRef = useRef<Map<string, string>>(new Map());
   const enterSession = (id: string | null): number => {
     const epoch = ++sessionEpochRef.current;
     streamAbort.current?.abort();
@@ -752,6 +761,9 @@ function LearnInner() {
       const res = await resumeSession(id);
       if (!isCurrent()) return;
       adoptSession(res.session.id);
+      // Resume still returns ENDED sessions: open those read-only, with the
+      // start-a-new-session banner, instead of a composer that can only 409.
+      if (res.session.ended_at) setSessionEnded(true);
       setTopic(res.session.topic);
       setMode(normalizeMode(res.session.mode));
       setSelectedCourseId(res.session.course_id || "");
@@ -845,7 +857,10 @@ function LearnInner() {
   // (a placeholder there would double up with that live bubble). The real
   // assistant message is appended once, after the turn resolves one way or
   // another.
-  const send = useCallback(async (userText: string) => {
+  // `turnId` is this turn's idempotency key (#761): minted fresh for a new
+  // turn, passed back in by Retry so the re-send is the SAME turn — the
+  // server dedupes its writes and replays a reply it already persisted.
+  const send = useCallback(async (userText: string, turnId: string = newTurnId()) => {
     if (!userText.trim() || !sessionId || !userId) return;
     const turnSessionId = sessionId;
     // The session epoch this turn belongs to (#762) — see `enterSession`.
@@ -874,9 +889,11 @@ function LearnInner() {
     // completion), so Retry is a plain re-send.
     const appendInterrupted = () => {
       if (!isCurrent()) return;
+      const bubbleId = msgId();
+      retryTurnIdsRef.current.set(bubbleId, turnId);
       setMessages(m => [
         ...m,
-        { id: msgId(), role: "assistant", content: acc, interrupted: true, retryText: userText },
+        { id: bubbleId, role: "assistant", content: acc, interrupted: true, retryText: userText },
       ]);
     };
     // The turn never happened (409): take its user bubble back out by id and
@@ -905,7 +922,7 @@ function LearnInner() {
             if (label && isCurrent()) setStreamingStatus(label);
           },
           signal: controller.signal,
-        });
+        }, turnId);
       } catch (err) {
         if (controller.signal.aborted) {
           // Stop pressed (or the session switched, aborting via
@@ -951,7 +968,10 @@ function LearnInner() {
         // still disabled — the turn just no longer looks interruptible,
         // which is now the truth.
         setStreamingText(null);
-        res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref);
+        // Same turn_id as the stream leg: if the stream DID persist before
+        // it died, this replays that reply (`replayed: true`) rather than
+        // answering the message twice (#761).
+        res = await sendChat(sessionId, userId, userText, mode, sharedCtx, modelPref, turnId);
       }
       // Same session-switch guard as appendInterrupted, and it matters most
       // on the Rung-3 leg: sendChat cannot be aborted, so the user can have
@@ -991,8 +1011,11 @@ function LearnInner() {
   const handleRetry = useCallback((m: ChatMsg) => {
     const text = m.retryText;
     if (!text || sending || starting) return;
+    // The interrupted turn's own turn_id (#761): a Retry is the same turn.
+    const turnId = retryTurnIdsRef.current.get(m.id);
+    retryTurnIdsRef.current.delete(m.id);
     setMessages(prev => removeInterruptedTurn(prev, m.id, text));
-    void send(text);
+    void send(text, turnId);
   }, [send, sending, starting]);
 
   // Abort any in-flight stream on unmount — guards the #131/#133
@@ -1029,7 +1052,7 @@ function LearnInner() {
       if (!isCurrent()) return;
       setMessages(m => m.filter(x => x.id !== labelId));
       if (isSessionEndedError(err)) { setSessionEnded(true); return; }
-      toast.error(err instanceof Error ? err.message : "Action failed.");
+      toast.error(humanizeError(err, "Action failed."));
     } finally {
       if (isCurrent()) {
         setSending(false);
@@ -1042,6 +1065,8 @@ function LearnInner() {
 
   const handleModeSwitch = async (newMode: Mode) => {
     if (newMode === mode) return;
+    // An ended session is read-only: a switch would only 409.
+    if (sessionEnded) return;
     if (!sessionId || !userId) {
       setMode(newMode);
       return;
@@ -1066,7 +1091,9 @@ function LearnInner() {
       if (!isCurrent()) return;
       if (modeSwitchSeqRef.current === seq) setMode(prev);
       if (isSessionEndedError(err)) { setSessionEnded(true); return; }
-      toast.error(err instanceof Error ? err.message : "Mode switch failed.");
+      // Incl. the 422 "Unknown tutor mode" — an ordinary error, read off
+      // the body's `detail` rather than dumped as raw JSON.
+      toast.error(humanizeError(err, "Mode switch failed."));
     }
   };
 
@@ -1544,6 +1571,7 @@ function LearnInner() {
                 <button
                   key={m.id}
                   onClick={() => handleModeSwitch(m.id)}
+                  disabled={sessionEnded}
                   style={{
                     padding: "6px 14px",
                     borderRadius: "var(--r-full)",

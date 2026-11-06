@@ -137,6 +137,18 @@ function deferred<T>() {
 const httpError = (status: number, message = `HTTP ${status}`) =>
   Object.assign(new Error(message), { status });
 
+// The backend's typed refusal for a turn on an ended session (#761/E1): a
+// 409 whose envelope carries `error.code: "SESSION_ENDED"`. `fetchJSON`
+// surfaces it as `ApiError.code`; `streamSSE` attaches the same `code`.
+const ENDED_DETAIL = "This tutoring session has ended. Start a new session to keep learning.";
+const sessionEnded = () =>
+  Object.assign(new Error(JSON.stringify({ detail: ENDED_DETAIL, error: { code: "SESSION_ENDED" } })), {
+    status: 409,
+    code: "SESSION_ENDED",
+  });
+
+const TURN_ID = /^[A-Za-z0-9_\-]{8,128}$/;
+
 function renderLearn() {
   return render(
     <ToastProvider>
@@ -386,7 +398,7 @@ describe("handleModeSwitch", () => {
 
 describe("a turn on a session the server has ended (409)", () => {
   it("send: shows the session-ended state and offers a new session instead of an error bubble", async () => {
-    api.streamChat.mockRejectedValue(httpError(409, '{"detail":"Session has ended."}'));
+    api.streamChat.mockRejectedValue(sessionEnded());
     renderLearn();
     await openSession("sess-a");
 
@@ -406,7 +418,7 @@ describe("a turn on a session the server has ended (409)", () => {
   });
 
   it("action: same state", async () => {
-    api.learnAction.mockRejectedValue(httpError(409));
+    api.learnAction.mockRejectedValue(sessionEnded());
     renderLearn();
     await openSession("sess-a");
     fireEvent.click(screen.getByTestId("tutor-action-hint"));
@@ -415,7 +427,7 @@ describe("a turn on a session the server has ended (409)", () => {
   });
 
   it("mode switch: same state", async () => {
-    api.switchMode.mockRejectedValue(httpError(409));
+    api.switchMode.mockRejectedValue(sessionEnded());
     renderLearn();
     await openSession("sess-a");
     fireEvent.click(screen.getByRole("button", { name: "Expository" }));
@@ -423,13 +435,120 @@ describe("a turn on a session the server has ended (409)", () => {
   });
 
   it("the ended state does not follow the student into another session", async () => {
-    api.learnAction.mockRejectedValue(httpError(409));
+    api.learnAction.mockRejectedValue(sessionEnded());
     renderLearn();
     await openSession("sess-a");
     fireEvent.click(screen.getByTestId("tutor-action-hint"));
     await screen.findByTestId("tutor-session-ended");
     await hopTo("sess-b");
     expect(screen.queryByTestId("tutor-session-ended")).toBeNull();
+  });
+
+  it("a 409 with no code still reads as ended (an older backend)", async () => {
+    api.learnAction.mockRejectedValue(httpError(409));
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.click(screen.getByTestId("tutor-action-hint"));
+    expect(await screen.findByTestId("tutor-session-ended")).toBeInTheDocument();
+  });
+
+  it("a 409 with a DIFFERENT code is an ordinary error, not the ended state", async () => {
+    api.learnAction.mockRejectedValue(
+      Object.assign(new Error('{"detail":"Something else conflicted."}'), { status: 409, code: "OTHER_CONFLICT" }),
+    );
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.click(screen.getByTestId("tutor-action-hint"));
+    expect(await screen.findByText("Something else conflicted.")).toBeInTheDocument();
+    expect(screen.queryByTestId("tutor-session-ended")).toBeNull();
+    expect(log()).not.toHaveTextContent("(Requested a hint)");
+  });
+
+  it("mode switch: a 422 'Unknown tutor mode' is surfaced as a normal error and rolled back", async () => {
+    api.switchMode.mockRejectedValue(httpError(422, '{"detail":"Unknown tutor mode"}'));
+    renderLearn();
+    await openSession("sess-a");
+    fireEvent.click(screen.getByRole("button", { name: "Expository" }));
+    expect(await screen.findByText("Unknown tutor mode")).toBeInTheDocument();
+    expect(screen.queryByTestId("tutor-session-ended")).toBeNull();
+    expect(screen.getByRole("button", { name: "Socratic" })).toHaveStyle({ background: "var(--accent)" });
+  });
+});
+
+describe("resuming a session that has already ended", () => {
+  it("opens it read-only: the transcript, the ended banner, a disabled composer, and no turn ever sent", async () => {
+    api.resumeSession.mockImplementation(async (id: string) =>
+      id === "sess-a"
+        ? { ...SESSION_A, session: { ...SESSION_A.session, ended_at: "2026-11-01T01:00:00Z" } }
+        : SESSION_B,
+    );
+    renderLearn();
+    await openSession("sess-a");
+
+    expect(screen.getByTestId("tutor-session-ended")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-input")).toBeDisabled();
+    expect(screen.getByTestId("tutor-action-hint")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Expository" }));
+    expect(api.switchMode).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("tutor-session-ended-new"));
+    await waitFor(() => expect(api.startSessionStream).toHaveBeenCalled());
+    expect(api.startSessionStream.mock.calls[0][1]).toBe("Recursion");
+  });
+
+  it("an open session resumes as usual", async () => {
+    renderLearn();
+    await openSession("sess-a");
+    expect(screen.queryByTestId("tutor-session-ended")).toBeNull();
+    expect(screen.getByTestId("tutor-input")).not.toBeDisabled();
+  });
+});
+
+// ─────────────────────────────── turn_id (#761) ───────────────────────────────
+
+describe("turn_id", () => {
+  async function sendOneMore() {
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "one more" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+  }
+
+  it("mints one turn_id per turn and sends it unchanged on the stream AND its JSON fallback", async () => {
+    api.streamChat.mockRejectedValueOnce(new Error("stream refused")); // Rung 3
+    renderLearn();
+    await openSession("sess-a");
+    await sendOneMore();
+    await waitFor(() => expect(api.sendChat).toHaveBeenCalled());
+
+    const streamTurn = api.streamChat.mock.calls[0][7];
+    expect(streamTurn).toMatch(TURN_ID);
+    expect(api.sendChat.mock.calls[0][6]).toBe(streamTurn);
+
+    // The next turn is a different turn.
+    await waitFor(() => expect(log()).toHaveTextContent("json reply"));
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and another" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(2));
+    expect(api.streamChat.mock.calls[1][7]).toMatch(TURN_ID);
+    expect(api.streamChat.mock.calls[1][7]).not.toBe(streamTurn);
+  });
+
+  it("Retry re-sends the interrupted turn's SAME turn_id, and a replayed reply renders as one ordinary bubble", async () => {
+    api.streamChat.mockRejectedValueOnce(new ChatStreamError("tutor down", undefined, false));
+    renderLearn();
+    await openSession("sess-a");
+    await sendOneMore();
+    const retry = await screen.findByTestId("tutor-retry");
+    const firstTurn = api.streamChat.mock.calls[0][7];
+    expect(firstTurn).toMatch(TURN_ID);
+
+    api.streamChat.mockResolvedValueOnce({ reply: "The stored reply.", graph_update: {}, mastery_changes: [], replayed: true });
+    fireEvent.click(retry);
+    await waitFor(() => expect(log()).toHaveTextContent("The stored reply."));
+
+    expect(api.streamChat.mock.calls[1][7]).toBe(firstTurn);
+    expect(within(log()).getAllByText("The stored reply.")).toHaveLength(1);
+    expect(within(log()).getAllByText("one more")).toHaveLength(1);
+    expect(screen.queryByTestId("tutor-interrupted")).toBeNull();
   });
 });
 

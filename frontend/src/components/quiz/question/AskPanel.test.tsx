@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   sendChat: vi.fn(),
   endSession: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  newTurnId: vi.fn(() => `turn-${Math.random().toString(36).slice(2, 14)}`),
 }));
 vi.mock("@/lib/api", () => api);
 
@@ -421,6 +422,47 @@ describe("AskPanel", () => {
     expect(api.endSession).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
+  });
+
+  // #761/#762: one turn_id per turn, unchanged across the stream, its JSON
+  // fallback and a Retry — so a re-send of a turn that already persisted is
+  // replayed by the server instead of answered twice.
+  describe("turn_id", () => {
+    const TURN_ID = /^[A-Za-z0-9_\-]{8,128}$/;
+
+    it("the stream and its JSON fallback carry the same turn_id", async () => {
+      api.streamChat.mockRejectedValueOnce(new Error("stream died"));
+      renderPanel();
+      await waitFor(() => expect(api.sendChat).toHaveBeenCalledTimes(1));
+      const turnId = api.streamChat.mock.calls[0][7];
+      expect(turnId).toMatch(TURN_ID);
+      expect(api.sendChat.mock.calls[0][6]).toBe(turnId);
+    });
+
+    it("Retry re-sends the failed turn's turn_id; a follow-up gets a new one", async () => {
+      api.shouldFallBackToJson.mockReturnValue(false);
+      api.streamChat.mockRejectedValueOnce(new Error("tool writes already landed"));
+      renderPanel();
+      const retry = await screen.findByTestId("quiz-ask-retry");
+      const first = api.streamChat.mock.calls[0][7];
+      expect(first).toMatch(TURN_ID);
+
+      api.streamChat.mockResolvedValueOnce({ reply: "Replayed answer.", replayed: true });
+      await act(async () => {
+        fireEvent.click(retry);
+      });
+      await screen.findByText("Replayed answer.");
+      expect(api.streamChat.mock.calls[1][7]).toBe(first);
+      expect(screen.getAllByText("Replayed answer.")).toHaveLength(1);
+
+      fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "And then?" } });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("quiz-ask-send"));
+      });
+      await waitFor(() => expect(api.streamChat).toHaveBeenCalledTimes(3));
+      expect(api.streamChat.mock.calls[2][7]).toMatch(TURN_ID);
+      expect(api.streamChat.mock.calls[2][7]).not.toBe(first);
+    });
   });
 
   it("does nothing at all until it is opened", () => {
