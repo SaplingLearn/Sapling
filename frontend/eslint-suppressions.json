@@ -29,11 +29,6 @@
       "count": 12
     }
   },
-  "src/components/Gradebook/SyllabusUploadFlow.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
   "src/components/SessionFeedbackGlobal.tsx": {
     "react-hooks/set-state-in-effect": {
       "count": 1
