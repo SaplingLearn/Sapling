@@ -213,6 +213,58 @@ def test_reclaimed_send_after_a_timeout_reuses_the_idempotency_key(tables, resen
     assert _send() == "sent"
     keys = {c.kwargs["headers"]["Idempotency-Key"] for c in resend.post.call_args_list}
     assert keys == {"welcome:user_1"}
+    # Unknown outcome: the generation is NOT bumped.
+    first_fail = tables["email_sends"].update.call_args_list[0].args[0]
+    assert first_fail == {"status": "failed", "error": "ReadTimeout"}
+
+
+@pytest.mark.parametrize("resp", [
+    httpx.Response(422, json={"name": "validation_error", "message": "bad"}),
+    httpx.Response(500, json={"name": "internal_server_error", "message": "oops"}),
+])
+def test_definitive_failure_moves_the_next_attempt_to_a_new_key(tables, resend, resp):
+    # Review follow-up on #763: reusing the key after Resend ANSWERED would
+    # replay the cached failure (or 409) for 24 h, making Resume and the
+    # welcome retry no-ops. A definitive failure bumps the generation...
+    resend.post.return_value = resp
+    assert _send() == "failed"
+    (fail,) = _status_updates(tables)
+    assert fail["status"] == "failed" and fail["idempotency_gen"] == 1
+    # ...and the re-claim (which hands back the bumped row) sends a new key.
+    resend.post.return_value = httpx.Response(200, json={"id": "re_2"})
+    tables["email_sends"].upsert.return_value = []
+    tables["email_sends"].update.side_effect = [[{"id": "send-1", "idempotency_gen": 1}], []]
+    assert _send() == "sent"
+    keys = [c.kwargs["headers"]["Idempotency-Key"] for c in resend.post.call_args_list]
+    assert keys == ["welcome:user_1", "welcome:user_1#1"]
+
+
+def test_idempotency_key_generations_stay_within_resends_limit():
+    assert email_service._idempotency_key("k", 0) == "k"
+    assert email_service._idempotency_key("k", 3) == "k#3"
+    long = email_service._idempotency_key("x" * 300, 12)
+    assert len(long) == 256 and long.endswith("#12")
+
+
+def test_concurrent_idempotent_request_is_in_flight_not_failed(tables, resend):
+    # A stale-queued re-claim racing a live attempt: Resend says the same key
+    # is in progress. That attempt owns the row; this one must not mark it.
+    resend.post.return_value = httpx.Response(
+        409, json={"name": "concurrent_idempotent_requests", "message": "in progress"},
+    )
+    assert _send() == "duplicate"
+    assert _status_updates(tables) == []
+
+
+def test_changed_payload_409_is_failed_but_keeps_the_key(tables, resend):
+    # An earlier request with this key reached Resend (outcome unknown) and the
+    # payload has changed since: retrying under a NEW key could double-send.
+    resend.post.return_value = httpx.Response(
+        409, json={"name": "invalid_idempotent_request", "message": "body modified"},
+    )
+    assert _send() == "failed"
+    (fail,) = _status_updates(tables)
+    assert fail["status"] == "failed" and "idempotency_gen" not in fail
 
 
 # ── notification opt-out ────────────────────────────────────────────────────
@@ -287,6 +339,7 @@ def test_unsuppress_deletes_the_hash(tables):
 def test_queue_welcome_runs_on_sent_only_after_a_sent_outcome(monkeypatch, status, stamped):
     from fastapi import BackgroundTasks
     monkeypatch.setattr(email_service, "send_email", MagicMock(return_value=status))
+    monkeypatch.setattr(email_service, "_already_sent", MagicMock(return_value=False))
     on_sent = MagicMock()
     bg = BackgroundTasks()
     email_service.queue_welcome(bg, email=TO, user_id="user_1", first_name="Ada", on_sent=on_sent)
@@ -294,6 +347,30 @@ def test_queue_welcome_runs_on_sent_only_after_a_sent_outcome(monkeypatch, statu
     assert task.func(*task.args, **task.kwargs) == status
     assert on_sent.called is stamped
     assert email_service.send_email.call_args.kwargs["dedupe_key"] == "welcome:user_1"
+
+
+@pytest.mark.parametrize("ledger,stamped", [
+    ([{"status": "sent"}], True),     # delivered earlier, the stamp failed: stamp now
+    ([{"status": "queued"}], False),  # another attempt is live: not yet
+    ([], False),
+])
+def test_duplicate_of_an_already_sent_welcome_runs_on_sent(tables, monkeypatch, ledger, stamped):
+    # Review follow-up on #763: without this, a welcome whose welcomed_at stamp
+    # failed re-ran the pipeline on every sign-in forever ("duplicate" each time).
+    monkeypatch.setattr(email_service, "send_email", MagicMock(return_value="duplicate"))
+    tables["email_sends"].select.return_value = ledger
+    on_sent = MagicMock()
+    assert email_service._send_then(on_sent, dedupe_key="welcome:user_1") == "duplicate"
+    assert on_sent.called is stamped
+    assert tables["email_sends"].select.call_args.kwargs["filters"] == {"dedupe_key": "eq.welcome:user_1"}
+
+
+def test_ledger_read_failure_does_not_stamp(tables, monkeypatch):
+    monkeypatch.setattr(email_service, "send_email", MagicMock(return_value="duplicate"))
+    tables["email_sends"].select.side_effect = RuntimeError("down")
+    on_sent = MagicMock()
+    assert email_service._send_then(on_sent, dedupe_key="welcome:user_1") == "duplicate"
+    on_sent.assert_not_called()
 
 
 def test_a_failing_on_sent_hook_never_raises(monkeypatch):
