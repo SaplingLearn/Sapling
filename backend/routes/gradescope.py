@@ -7,13 +7,26 @@ using `gradescope_assignment_id` for repeat imports.
 
 Endpoints (mounted under /api/gradescope):
 - POST   /credentials                  Test login then save encrypted creds
-- DELETE /credentials                  Remove creds
-- GET    /status                       Has creds? last_synced_at?
+- DELETE /credentials                  Remove creds (course links are kept)
+- GET    /status                       Connection state + last sync outcome
 - GET    /courses                      List the user's Gradescope student courses
 - GET    /links                        List sapling-course -> gradescope-course mappings
 - POST   /link                         Create/update a mapping
 - DELETE /link/{sapling_course_id}     Remove a mapping
 - POST   /sync/{sapling_course_id}     Pull assignments, upsert grades
+
+Error contract (#770). 401 belongs to Sapling's own session (require_self) and
+nothing else: the frontend's global handling owns it. A Gradescope credential
+failure is a different state with a different remedy, so it is answered with a
+typed non-401 carrying ``error.code`` (ApiError.code on the client):
+
+- 422 ``gradescope_auth_failed``      credentials the user just submitted were
+                                      rejected; nothing was saved.
+- 409 ``gradescope_reauth_required``  the STORED credentials were rejected (an
+                                      expired cookie session, a changed password);
+                                      the row is marked ``needs_reauth``.
+- 404 ``gradescope_not_connected``    no credentials stored (e.g. after a
+                                      disconnect, which keeps course links).
 """
 from __future__ import annotations
 
@@ -25,6 +38,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from gradescopeapi.classes.connection import GSConnection
 from pydantic import BaseModel, Field
 
@@ -39,6 +53,7 @@ from services.academics import (
 )
 from services.auth_guard import require_self
 from services.encryption import encrypt, decrypt, encrypt_if_present
+from services.request_context import current_request_id
 from services.request_limits import check_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -102,12 +117,73 @@ class StoredCreds(BaseModel):
     password: str | None = None
     gradescope_session: str | None = None
     signed_token: str | None = None
+    # Row metadata, not secrets: which saved version these are (the guard for
+    # marking them stale) and whether they were already known to be rejected.
+    updated_at: str | None = None
+    needs_reauth: bool = False
+
+
+# Typed Gradescope error codes (#770) — see the module docstring.
+GS_AUTH_FAILED = "gradescope_auth_failed"
+GS_REAUTH_REQUIRED = "gradescope_reauth_required"
+GS_NOT_CONNECTED = "gradescope_not_connected"
+
+
+def _gs_error(status_code: int, code: str, message: str) -> JSONResponse:
+    """A typed Gradescope error in the coded envelope the frontend reads
+    (``error.code`` -> ApiError.code, ``error.message`` -> humanizeError), with
+    the legacy ``detail`` kept for older clients.
+
+    Returned rather than raised: main.py's HTTPException handler only emits the
+    coded envelope on quiz paths, and a Gradescope code must not depend on that.
+    """
+    rid = current_request_id()
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": message,
+            "error": {"code": code, "message": message, "request_id": rid},
+            "request_id": rid,
+        },
+    )
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_connection_state(user_id: str, fields: dict[str, Any], *, only_version: str | None = None) -> None:
+    """Persist connection/sync-outcome columns on the credentials row. Never
+    raises: the state is bookkeeping, and a failed write must not turn a
+    finished sync (or its real error) into a 500.
+
+    ``only_version`` pins the write to the credential version that produced the
+    outcome (``updated_at`` as read with the creds): marking credentials stale
+    must not land on a newer set the user saved while this request was running.
+    """
+    filters = {"user_id": f"eq.{user_id}"}
+    if only_version:
+        filters["updated_at"] = f"eq.{only_version}"
+    try:
+        table("gradescope_credentials").update(fields, filters=filters)
+    except Exception:
+        logger.warning("Failed to record Gradescope connection state for user_id=%s", user_id, exc_info=True)
+
+
+def _reauth_required(user_id: str, creds: StoredCreds, message: str, **outcome: Any) -> JSONResponse:
+    """Stored credentials were rejected: mark them stale, answer 409."""
+    _write_connection_state(user_id, {"needs_reauth": True, **outcome}, only_version=creds.updated_at)
+    return _gs_error(409, GS_REAUTH_REQUIRED, message or "Gradescope rejected the saved credentials. Reconnect Gradescope.")
+
+
+def _not_connected() -> JSONResponse:
+    return _gs_error(404, GS_NOT_CONNECTED, "No Gradescope credentials saved")
 
 
 def _load_creds(user_id: str) -> StoredCreds | None:
     """Fetch and decrypt stored Gradescope credentials for user_id. Returns None if none saved."""
     rows = table("gradescope_credentials").select(
-        "auth_mode,email_encrypted,password_encrypted,cookies_encrypted",
+        "auth_mode,email_encrypted,password_encrypted,cookies_encrypted,updated_at,needs_reauth",
         filters={"user_id": f"eq.{user_id}"},
         limit=1,
     )
@@ -115,12 +191,14 @@ def _load_creds(user_id: str) -> StoredCreds | None:
         return None
     row = rows[0]
     mode: AuthMode = row.get("auth_mode") or "password"
+    meta = {"updated_at": row.get("updated_at"), "needs_reauth": bool(row.get("needs_reauth"))}
     try:
         if mode == "password":
             return StoredCreds(
                 auth_mode="password",
                 email=decrypt(row["email_encrypted"]) if row.get("email_encrypted") else None,
                 password=decrypt(row["password_encrypted"]) if row.get("password_encrypted") else None,
+                **meta,
             )
         else:  # cookies
             raw = decrypt(row["cookies_encrypted"]) if row.get("cookies_encrypted") else None
@@ -129,6 +207,7 @@ def _load_creds(user_id: str) -> StoredCreds | None:
                 auth_mode="cookies",
                 gradescope_session=payload.get("_gradescope_session"),
                 signed_token=payload.get("signed_token"),
+                **meta,
             )
     except Exception:
         logger.exception("Failed to decrypt Gradescope creds for user_id=%s", user_id)
@@ -244,7 +323,7 @@ def save_credentials(body: CredentialsBody, request: Request):
             connection = gradescope_service.login(body.email, body.password)
             connection.session.close()
         except gradescope_service.GradescopeAuthError as e:
-            raise HTTPException(status_code=401, detail=str(e))
+            return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those credentials.")
         except gradescope_service.GradescopeFetchError as e:
             raise HTTPException(status_code=502, detail=str(e))
         payload: dict[str, Any] = {
@@ -267,7 +346,7 @@ def save_credentials(body: CredentialsBody, request: Request):
             )
             connection.session.close()
         except gradescope_service.GradescopeAuthError as e:
-            raise HTTPException(status_code=401, detail=str(e))
+            return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope rejected those cookies.")
         except gradescope_service.GradescopeFetchError as e:
             raise HTTPException(status_code=502, detail=str(e))
         cookie_blob = json.dumps(
@@ -284,8 +363,10 @@ def save_credentials(body: CredentialsBody, request: Request):
             "cookies_encrypted": encrypt(cookie_blob),
         }
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    payload["updated_at"] = now_iso
+    payload["updated_at"] = _now_iso()
+    # Fresh, verified credentials: whatever marked the old ones stale is moot.
+    payload["needs_reauth"] = False
+    payload["last_sync_error"] = None
     table("gradescope_credentials").upsert(payload, on_conflict="user_id")
     return {"ok": True}
 
@@ -323,7 +404,7 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
         # fine, the user just didn't tap in time.
         raise HTTPException(status_code=408, detail=str(e) or "Duo push timed out.")
     except gradescope_service.GradescopeAuthError as e:
-        raise HTTPException(status_code=401, detail=str(e) or "Gradescope auth failed.")
+        return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope auth failed.")
     except Exception:
         logger.exception("Unexpected error in BU SSO flow")
         raise HTTPException(
@@ -339,7 +420,7 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
         )
         connection.session.close()
     except gradescope_service.GradescopeAuthError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        return _gs_error(422, GS_AUTH_FAILED, str(e) or "Gradescope auth failed.")
     except gradescope_service.GradescopeFetchError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -347,7 +428,6 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
         "_gradescope_session": cookies.get("_gradescope_session"),
         "signed_token": cookies.get("signed_token") or None,
     })
-    now_iso = datetime.now(timezone.utc).isoformat()
     table("gradescope_credentials").upsert(
         {
             "user_id": body.user_id,
@@ -355,7 +435,9 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
             "email_encrypted": None,
             "password_encrypted": None,
             "cookies_encrypted": encrypt(cookie_blob),
-            "updated_at": now_iso,
+            "updated_at": _now_iso(),
+            "needs_reauth": False,
+            "last_sync_error": None,
         },
         on_conflict="user_id",
     )
@@ -364,7 +446,15 @@ async def save_credentials_via_bu_sso(body: BuSsoBody, request: Request):
 
 @router.delete("/credentials")
 def delete_credentials(user_id: str, request: Request):
-    """Remove stored Gradescope credentials for user_id."""
+    """Remove stored Gradescope credentials for user_id.
+
+    Course links are deliberately KEPT (#770 decided default): a link names
+    which Gradescope course feeds which enrollment, which stays true across a
+    disconnect, so reconnecting resumes syncing without re-picking every
+    course. While no credentials exist /status reports ``state:
+    'disconnected'`` and /sync and /courses answer ``gradescope_not_connected``,
+    so a surviving link never reads as a working connection.
+    """
     require_self(user_id, request)
     table("gradescope_credentials").delete(filters={"user_id": f"eq.{user_id}"})
     return {"ok": True}
@@ -372,20 +462,46 @@ def delete_credentials(user_id: str, request: Request):
 
 @router.get("/status")
 def get_status(user_id: str, request: Request):
-    """Return whether the user has saved credentials and when they last synced."""
+    """The connection state and the last sync outcome.
+
+    ``state`` is the one field a client should branch on:
+      - ``disconnected``  no credentials saved (course links may still exist)
+      - ``needs_reauth``  credentials saved, but Gradescope rejected them on
+                          the last login; they will fail until replaced
+      - ``connected``     credentials saved and not known to be rejected
+    ``has_credentials`` stays for older clients; ``connected`` is
+    ``state == 'connected'``. ``last_synced_at`` is the last COMPLETE import;
+    ``last_attempt_at`` / ``last_sync_error`` describe the last attempt.
+    """
     require_self(user_id, request)
     rows = table("gradescope_credentials").select(
-        "auth_mode,last_synced_at,updated_at",
+        "auth_mode,last_synced_at,updated_at,needs_reauth,last_attempt_at,last_sync_error",
         filters={"user_id": f"eq.{user_id}"},
         limit=1,
     )
     if not rows:
-        return {"has_credentials": False, "auth_mode": None, "last_synced_at": None}
+        return {
+            "state": "disconnected",
+            "connected": False,
+            "has_credentials": False,
+            "needs_reauth": False,
+            "auth_mode": None,
+            "last_synced_at": None,
+            "last_attempt_at": None,
+            "last_sync_error": None,
+        }
+    row = rows[0]
+    needs_reauth = bool(row.get("needs_reauth"))
     return {
+        "state": "needs_reauth" if needs_reauth else "connected",
+        "connected": not needs_reauth,
         "has_credentials": True,
-        "auth_mode": rows[0].get("auth_mode") or "password",
-        "last_synced_at": rows[0].get("last_synced_at"),
-        "credentials_updated_at": rows[0].get("updated_at"),
+        "needs_reauth": needs_reauth,
+        "auth_mode": row.get("auth_mode") or "password",
+        "last_synced_at": row.get("last_synced_at"),
+        "last_attempt_at": row.get("last_attempt_at"),
+        "last_sync_error": row.get("last_sync_error"),
+        "credentials_updated_at": row.get("updated_at"),
     }
 
 
@@ -399,18 +515,21 @@ def list_gradescope_courses(user_id: str, request: Request):
     _enforce_gs_rate_limit(user_id, "courses", limit=10, window_sec=300)
     creds = _load_creds(user_id)
     if not creds:
-        raise HTTPException(status_code=404, detail="No Gradescope credentials saved")
+        return _not_connected()
     conn = None
     try:
         conn = _establish_connection(creds)
         courses = gradescope_service.list_student_courses(conn)
     except gradescope_service.GradescopeAuthError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        return _reauth_required(user_id, creds, str(e))
     except gradescope_service.GradescopeFetchError as e:
         raise HTTPException(status_code=502, detail=str(e))
     finally:
         if conn is not None:
             conn.session.close()
+    if creds.needs_reauth:
+        # The saved credentials just logged in, so they are not stale after all.
+        _write_connection_state(user_id, {"needs_reauth": False})
     return {"courses": courses}
 
 
@@ -555,15 +674,19 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
 
     creds = _load_creds(user_id)
     if not creds:
-        raise HTTPException(status_code=404, detail="No Gradescope credentials saved")
+        return _not_connected()
 
     conn = None
     try:
         conn = _establish_connection(creds)
         gs_assignments = gradescope_service.list_assignments(conn, gs_course_id)
     except gradescope_service.GradescopeAuthError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        return _reauth_required(
+            user_id, creds, str(e), last_sync_error="auth_failed", last_attempt_at=_now_iso(),
+        )
     except gradescope_service.GradescopeFetchError as e:
+        # An outage says nothing about the credentials: needs_reauth untouched.
+        _write_connection_state(user_id, {"last_sync_error": "fetch_failed", "last_attempt_at": _now_iso()})
         raise HTTPException(status_code=502, detail=str(e))
     finally:
         if conn is not None:
@@ -655,14 +778,17 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
             logger.exception("Failed to upsert Gradescope assignment %s", gs_id)
             failed += 1
 
+    now_iso = _now_iso()
+    # The login worked, so whatever the write outcome the credentials are good.
+    outcome: dict[str, Any] = {"needs_reauth": False, "last_attempt_at": now_iso}
     if failed and not (inserted or updated):
+        _write_connection_state(user_id, {**outcome, "last_sync_error": "write_failed"})
         raise HTTPException(status_code=502, detail="No assignments could be saved. Please retry; if this continues, contact support.")
-    # A timestamp represents a complete import, not a partial or failed one.
-    if not failed:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        table("gradescope_credentials").update(
-            {"last_synced_at": now_iso}, filters={"user_id": f"eq.{user_id}"},
-        )
+    # last_synced_at represents a complete import, not a partial or failed one.
+    if failed:
+        _write_connection_state(user_id, {**outcome, "last_sync_error": "partial_write"})
+    else:
+        _write_connection_state(user_id, {**outcome, "last_sync_error": None, "last_synced_at": now_iso})
         table("gradescope_course_links").update(
             {"last_synced_at": now_iso}, filters={"id": f"eq.{link_rows[0]['id']}"},
         )
