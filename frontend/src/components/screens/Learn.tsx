@@ -405,8 +405,8 @@ function LearnInner() {
   // path (start, resume, send, action, mode switch) captures the epoch it
   // began under and drops its result if the epoch moved on, so a late reply
   // can only ever land in the session that asked for it. `sessionIdRef` is
-  // written here synchronously too: the post-render effect below is too late
-  // for a turn that settles in the same tick.
+  // written here synchronously too: its post-render mirror effect (above) is
+  // too late for a turn that settles in the same tick.
   const sessionEpochRef = useRef(0);
   const enterSession = (id: string | null): number => {
     const epoch = ++sessionEpochRef.current;
