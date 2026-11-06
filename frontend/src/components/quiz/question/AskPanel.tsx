@@ -35,6 +35,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import dynamic from "next/dynamic";
 import { Sheet } from "@/components/ui";
 import {
+  newTurnId,
   sendChat,
   shouldFallBackToJson,
   startSession,
@@ -142,8 +143,11 @@ export function AskPanel({
   // Monotonic run token — a superseded turn's late resolution is dropped.
   const runRef = useRef(0);
   const idRef = useRef(0);
-  // What Retry re-sends.
+  // What Retry re-sends — the message AND its turn_id (#761): a Retry is the
+  // same turn, so a reply the server already persisted is replayed rather
+  // than answered twice.
   const lastMessageRef = useRef<string>("");
+  const lastTurnIdRef = useRef<string>("");
   // The in-flight turn's text so far, readable by the close effect: closing
   // the sheet is this panel's Stop, and ADR 0020 keeps what was already shown.
   const partialRef = useRef("");
@@ -155,7 +159,7 @@ export function AskPanel({
   const nextId = () => ++idRef.current;
 
   const runTurn = useCallback(
-    async (message: string) => {
+    async (message: string, turnId: string = newTurnId()) => {
       const token = ++runRef.current;
       // A new turn supersedes whatever was in flight; two streams writing into
       // the same partial-text state would interleave.
@@ -164,6 +168,7 @@ export function AskPanel({
       abortRef.current = controller;
       inFlightRef.current = true;
       lastMessageRef.current = message;
+      lastTurnIdRef.current = turnId;
       setBusy(true);
       setError(null);
       setStreaming("");
@@ -228,7 +233,7 @@ export function AskPanel({
               if (label && runRef.current === token) setStatus(label);
             },
             signal: controller.signal,
-          });
+          }, turnId);
           reply = res.reply || "";
         } catch (err) {
           if (controller.signal.aborted) return;
@@ -238,7 +243,7 @@ export function AskPanel({
           if (sawToken || !shouldFallBackToJson(err)) throw err;
           setStreaming(null);
           setStatus(null);
-          const res = await sendChat(sid, userId, message, TUTOR_MODE, true);
+          const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
           reply = res.reply || "";
         }
 
@@ -356,7 +361,7 @@ export function AskPanel({
    */
   const retry = () => {
     setTurns(t => (t.length > 0 && t[t.length - 1].interrupted ? t.slice(0, -1) : t));
-    void runTurn(lastMessageRef.current);
+    void runTurn(lastMessageRef.current, lastTurnIdRef.current);
   };
 
   const send = (e: React.FormEvent) => {

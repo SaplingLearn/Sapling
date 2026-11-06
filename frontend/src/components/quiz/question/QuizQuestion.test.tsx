@@ -33,6 +33,7 @@ const api = vi.hoisted(() => ({
   streamChat: vi.fn(),
   sendChat: vi.fn(),
   shouldFallBackToJson: vi.fn(() => true),
+  newTurnId: vi.fn(() => "turn-test-0001"),
 }));
 vi.mock("@/lib/api", () => api);
 

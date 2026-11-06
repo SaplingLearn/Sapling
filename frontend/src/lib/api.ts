@@ -298,6 +298,18 @@ export const startSession = (
     }),
   });
 
+/**
+ * One id per student turn (#761/#762), sent UNCHANGED on the stream, its
+ * JSON fallback and any Retry of that turn: the backend dedupes the turn's
+ * writes on it and replays an already-persisted reply (`replayed: true`)
+ * instead of running the turn twice. Must match `^[A-Za-z0-9_\-]{8,128}$`.
+ */
+export function newTurnId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export const sendChat = (
   sessionId: string,
   userId: string,
@@ -305,8 +317,9 @@ export const sendChat = (
   mode: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[] }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -315,6 +328,7 @@ export const sendChat = (
       mode,
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     }),
   });
 
@@ -329,6 +343,8 @@ export interface ChatResult {
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
+  /** The server already had this `turn_id`'s reply and replayed it (#761). */
+  replayed?: boolean;
 }
 
 interface StreamEvent {
@@ -463,6 +479,7 @@ export const streamChat = (
   useSharedContext = true,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  turnId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/chat/stream',
@@ -473,6 +490,7 @@ export const streamChat = (
       mode,
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     },
     handlers,
   );
