@@ -587,7 +587,18 @@ class SyllabusApplyBody(BaseModel):
 # ── Newsletter & Allowlist (Admin) ──────────────────────────────────────────
 
 class AllowlistEmailBody(BaseModel):
+    """POST /api/admin/allowlist/{approve,revoke}. Lowercased and stripped the
+    way the bulk path normalises (#757): the waitlist keeps emails as typed, so
+    a raw spelling would miss (or twin) the row sign-in matches."""
     email: str
+
+    @field_validator("email")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        email = (v or "").strip().lower()
+        if not email or len(email) > 254 or not _EMAIL_SHAPE.match(email):
+            raise ValueError("invalid email address")
+        return email
 
 
 # One address, no spaces, a dot in the domain. Deliberately loose (the waitlist
