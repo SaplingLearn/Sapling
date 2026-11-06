@@ -196,17 +196,86 @@ def test_one_sweep_cannot_spend_a_documents_whole_budget(db_conn, monkeypatch):
     assert _row(db_conn)["index_attempts"] == 1
 
 
-def test_a_terminal_failure_spends_the_budget(db_conn):
-    from services.document_indexing import (
-        INDEX_MAX_ATTEMPTS, IndexOutcome, _finish, _load,
-    )
+def test_a_terminal_failure_is_stored_exhausted(db_conn):
+    """#758: terminal is a status the CHECK constraint admits, not a counter
+    forced to the env var's budget."""
+    from services.document_indexing import IndexOutcome, _finish, _load
 
     _insert(db_conn, status="indexing", attempts=1, leased="now()")
     lease = _load(DOC)["index_leased_at"]
 
-    _finish(DOC, IndexOutcome("failed", 0, "no_extracted_text"), lease=lease)
+    _finish(DOC, IndexOutcome("exhausted", 0, "no_extracted_text"), lease=lease)
 
-    assert _row(db_conn)["index_attempts"] == INDEX_MAX_ATTEMPTS
+    row = _row(db_conn)
+    assert row["index_status"] == "exhausted"
+    assert row["index_attempts"] == 1
+
+
+# ── #758: the reaper, and the default ───────────────────────────────────────
+
+
+def _claim(max_attempts=3):
+    from db.connection import rpc
+
+    return rpc("claim_documents_for_indexing",
+               {"max_attempts": max_attempts, "lease_seconds": 600, "batch_size": 10})
+
+
+def test_a_last_attempt_that_died_holding_its_lease_is_reaped(db_conn):
+    """attempts = max and 'indexing' with the lease run out: before #758
+    nothing could retake it and nothing reported it."""
+    _insert(db_conn, status="indexing", attempts=3,
+            leased="now() - interval '1 hour'")
+
+    assert {"id": DOC} not in _claim()
+
+    row = _row(db_conn)
+    assert row["index_status"] == "exhausted"
+    assert row["index_error"] == "lease_expired"
+
+
+def test_a_live_last_attempt_is_not_reaped(db_conn):
+    _insert(db_conn, status="indexing", attempts=3, leased="now()")
+
+    _claim()
+
+    assert _row(db_conn)["index_status"] == "indexing"
+
+
+def test_a_failed_row_at_the_budget_is_reaped_with_its_error(db_conn):
+    _insert(db_conn, status="failed", attempts=3)
+    db_conn.execute("UPDATE documents SET index_error = 'ServerError' WHERE id = %s", (DOC,))
+
+    _claim()
+
+    row = _row(db_conn)
+    assert row["index_status"] == "exhausted"
+    assert row["index_error"] == "ServerError"
+
+
+def test_raising_the_budget_does_not_re_queue_an_exhausted_row(db_conn):
+    _insert(db_conn, status="exhausted", attempts=3)
+
+    assert {"id": DOC} not in _claim(max_attempts=10)
+    assert _row(db_conn)["index_status"] == "exhausted"
+
+
+def test_the_sql_claim_clears_the_previous_error(db_conn):
+    _insert(db_conn, status="failed", attempts=1, leased="now() - interval '1 hour'")
+    db_conn.execute("UPDATE documents SET index_error = 'ServerError' WHERE id = %s", (DOC,))
+
+    assert {"id": DOC} in _claim()
+    assert _row(db_conn)["index_error"] is None
+
+
+def test_an_insert_that_omits_the_status_lands_in_the_queue(db_conn):
+    db_conn.execute(
+        "INSERT INTO documents (id, user_id, offering_id, file_name, category) "
+        "VALUES (%s, %s, %s, 'itest.pdf', 'lecture_notes')",
+        (DOC, USER_ACTIVE, _offering(db_conn)),
+    )
+
+    assert _row(db_conn)["index_status"] == "pending"
 
 
 def test_the_check_constraint_rejects_an_unknown_status(db_conn):

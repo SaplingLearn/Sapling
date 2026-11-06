@@ -364,15 +364,17 @@ def test_the_error_column_never_carries_exception_text(db, events, visibility,
 ])
 def test_a_document_with_nothing_to_index_is_terminal(db, events, visibility,
                                                       monkeypatch, over, error):
-    """Prod has two of these. Visible as failed, and spent: the sweeper must
-    never claim them again."""
+    """Prod has two of these. Visible, and terminal: the sweeper must never
+    claim them again. #758: terminal is the STORED state, and the attempt
+    counter stays honest instead of being forced to the env var's value."""
     row = _doc(db, **over)
     calls = _rag(monkeypatch, _Chunks(4, 4))
 
     out = index_document("doc-1")
 
-    assert out == IndexOutcome("failed", 0, error)
-    assert row["index_attempts"] == di.INDEX_MAX_ATTEMPTS
+    assert out == IndexOutcome("exhausted", 0, error)
+    assert row["index_status"] == "exhausted"
+    assert row["index_attempts"] == 1
     assert calls == []
 
 
@@ -382,7 +384,7 @@ def test_a_missing_offering_is_terminal(db, events, visibility, monkeypatch):
     _rag(monkeypatch, _Chunks(4, 4))
 
     assert index_document("doc-1").error == "no_course"
-    assert row["index_attempts"] == di.INDEX_MAX_ATTEMPTS
+    assert row["index_status"] == "exhausted"
 
 
 def test_a_deleted_document_is_not_indexed(db, events, visibility, monkeypatch):
@@ -716,6 +718,84 @@ def test_a_sweeper_claim_that_cannot_embed_is_returned_to_the_queue(
     assert row["index_status"] == "pending"
     assert row["index_attempts"] == 1
     assert row["index_leased_at"] is None
+
+
+def test_a_row_returned_to_the_queue_drops_the_stale_error(db, events, visibility,
+                                                           monkeypatch):
+    """#758: a `pending` row carrying the previous attempt's error class reads
+    as a failure that did not happen."""
+    row = _doc(db, index_status="indexing", index_attempts=2,
+               index_leased_at="2026-09-21T00:00:00Z", index_error="ServerError")
+    _rag(monkeypatch, _Chunks(upserted=0, total=4, embedding_disabled=True))
+
+    index_document("doc-1", claimed=True)
+
+    assert row["index_status"] == "pending"
+    assert row["index_error"] is None
+
+
+# ── #758: terminal is a stored state ────────────────────────────────────────
+
+
+def test_a_failure_on_the_last_attempt_is_stored_exhausted(db, events, visibility,
+                                                           monkeypatch):
+    row = _doc(db, index_status="indexing", index_attempts=di.INDEX_MAX_ATTEMPTS,
+               index_leased_at="2026-09-21T00:00:00Z")
+    _rag(monkeypatch, _Chunks(0, 4, embed_error="ServerError"))
+
+    out = index_document("doc-1", claimed=True)
+
+    assert out.status == "exhausted"
+    assert row["index_status"] == "exhausted"
+    assert row["index_error"] == "ServerError"
+    # The event still reports what the ATTEMPT did.
+    assert events[-1][1]["payload"]["status"] == "failed"
+
+
+def test_a_partial_last_attempt_keeps_its_count(db, events, visibility, monkeypatch):
+    row = _doc(db, index_status="partial", index_attempts=di.INDEX_MAX_ATTEMPTS - 1,
+               index_leased_at="2000-01-01T00:00:00Z")
+    _rag(monkeypatch, _Chunks(3, 4, embed_error="ServerError"))
+
+    index_document("doc-1")
+
+    assert row["index_status"] == "exhausted"
+    assert row["index_chunk_count"] == 3
+
+
+def test_an_earlier_failure_stays_retryable(db, events, visibility, monkeypatch):
+    row = _doc(db)
+    _rag(monkeypatch, _Chunks(0, 4, embed_error="ServerError"))
+
+    index_document("doc-1")
+
+    assert row["index_status"] == "failed"
+
+
+def test_raising_the_budget_does_not_resurrect_an_exhausted_row(db, events,
+                                                                visibility, monkeypatch):
+    """The finding: terminal was `attempts >= INDEX_MAX_ATTEMPTS`, so raising
+    the env var silently re-queued every given-up row. Stored, it stays put."""
+    _doc(db, index_status="exhausted", index_attempts=3, index_error="ServerError")
+    monkeypatch.setattr(di, "INDEX_MAX_ATTEMPTS", 10)
+    calls = _rag(monkeypatch, _Chunks(4, 4))
+
+    out = index_document("doc-1")
+
+    assert out == IndexOutcome("exhausted", 0, "ServerError")
+    assert calls == []
+
+
+def test_force_takes_a_row_out_of_exhausted(db, events, visibility, monkeypatch):
+    row = _doc(db, index_status="exhausted", index_attempts=3, index_error="ServerError")
+    _rag(monkeypatch, _Chunks(4, 4))
+
+    out = index_document("doc-1", force=True)
+
+    assert out.status == "indexed"
+    assert row["index_attempts"] == 1
+    assert row["index_error"] is None
+    assert events[-1][0] == "rag.index_recovered"
 
 
 def test_a_never_attempted_upload_still_records_skipped(db, events, visibility,
