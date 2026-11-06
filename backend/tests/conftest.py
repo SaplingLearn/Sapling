@@ -410,7 +410,7 @@ def _hermetic_llm_transport(request, monkeypatch):
             "(google.genai._api_client.BaseApiClient or "
             "anthropic._base_client.*APIClient.request) and would have made a "
             "real, billable model call. Patch the service/agent seam the code "
-            "path uses (e.g. <agent>.run, services.rag_service._client), or "
+            "path uses (e.g. <agent>.run, or services.rag_service._embed_* — which since ADR 0031 is a LOCAL encoder that makes no network call at all), or "
             "mark the test @pytest.mark.live_llm if the live call is intentional."
         )
 

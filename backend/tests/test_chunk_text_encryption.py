@@ -128,12 +128,10 @@ def test_two_uploads_of_one_passage_still_converge_on_one_id(mock_embed):
 # ── Read ────────────────────────────────────────────────────────────────────
 
 
-@patch("services.rag_service._client")
-def test_retrieval_hands_back_plaintext(mock_client, monkeypatch):
+@patch("services.rag_service._encode")
+def test_retrieval_hands_back_plaintext(mock_encode, monkeypatch):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    resp = MagicMock()
-    resp.embeddings = [MagicMock(values=[0.1] * 768)]
-    mock_client.models.embed_content.return_value = resp
+    mock_encode.return_value = [[0.1] * 768]
     text = "Backprop computes the gradient via the chain rule."
     rows = [{"id": "c1", "course_id": "CAS CS 330",
              "chunk_text": encrypt(text), "category": "lecture_notes",
@@ -146,17 +144,15 @@ def test_retrieval_hands_back_plaintext(mock_client, monkeypatch):
     assert got[0]["chunk_text"] == text
 
 
-@patch("services.rag_service._client")
-def test_a_plaintext_row_still_reads_back(mock_client, monkeypatch):
+@patch("services.rag_service._encode")
+def test_a_plaintext_row_still_reads_back(mock_encode, monkeypatch):
     """There is a window between deploying this code and finishing the backfill
     in which the table holds both shapes. `decrypt_if_present` returns the raw
     value when it cannot decrypt, so those rows keep working — with a WARNING,
     which is the correct signal while the window is open and a real alarm once
     it is closed."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    resp = MagicMock()
-    resp.embeddings = [MagicMock(values=[0.1] * 768)]
-    mock_client.models.embed_content.return_value = resp
+    mock_encode.return_value = [[0.1] * 768]
     rows = [{"id": "c1", "chunk_text": "still plaintext", "similarity": 0.9}]
 
     with patch("services.rag_service.rpc", return_value=rows):

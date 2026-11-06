@@ -107,18 +107,36 @@ class TestAnthropicLaneIsOffline:
 
 class TestRealSaplingCallPathsAreBlocked:
     """The synthetic-client tests above prove the seam; these prove it on the
-    real, module-level clients Sapling actually builds at import time — the
-    exact objects a forgotten `patch(...)` would leave live. (The
-    gemini_service client this class also covered was deleted in #151b /
-    ADR 0024; rag_service holds the one remaining module-level client.)"""
+    real clients Sapling actually builds — the exact objects a forgotten
+    `patch(...)` would leave live. (The gemini_service client this class also
+    covered was deleted in #151b / ADR 0024; rag_service's was removed by
+    ADR 0031, leaving the pydantic-ai provider clients below.)"""
 
-    def test_rag_service_embedding_is_blocked(self):
-        """services/rag_service.py holds its own module-level genai.Client
-        (the one #378 fixed the keyless construction of)."""
-        from services.rag_service import _embed_query
+    def test_rag_service_holds_no_provider_client_to_block(self):
+        """rag_service used to hold a module-level genai.Client, and this test
+        asserted the guard caught it. ADR 0031 removed that client: embedding
+        is a local `transformers` encoder, so there is no transport to reach
+        and nothing for the egress guard to catch.
 
-        with pytest.raises(RuntimeError, match="unstubbed LLM egress"):
-            _embed_query("dynamic programming")
+        The assertion inverts rather than being deleted, because the property
+        still matters and is still worth regressing on — a future change that
+        reintroduces a hosted embedding client must either come back through
+        the guard or be a deliberate decision, not a silent one.
+
+        Structural on purpose: actually CALLING `_embed_query` here would load
+        ~440MB of weights and run a real forward pass in the hermetic lane.
+        That is the one protection genuinely lost — a forgotten `patch(...)`
+        on the embed path is now slow rather than loud — so the cheap check is
+        that the provider seam is gone, not that the call is blocked.
+        """
+        import services.rag_service as rag
+
+        assert not hasattr(rag, "_client"), (
+            "rag_service grew a provider client again - route it through the "
+            "egress guard or amend ADR 0031"
+        )
+        assert not hasattr(rag, "genai"), "rag_service re-imported google.genai"
+        assert hasattr(rag, "_encode"), "the local encoder seam disappeared"
 
 
 class TestPydanticAISharesTheSameSeam:

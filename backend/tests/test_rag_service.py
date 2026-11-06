@@ -7,21 +7,20 @@ import pytest
 
 
 def test_import_succeeds_without_gemini_api_key():
-    """#378: rag_service originally built a module-level `genai.Client` at
-    import time, and `genai.Client(api_key="")` raises ValueError, so a
-    missing GEMINI_API_KEY broke `import main` (via routes/quiz.py ->
-    services/rag_service.py) outright.
+    """#378/#439 originally: rag_service must not build an embedding client at
+    import time, so a missing GEMINI_API_KEY could not break `import main` (via
+    routes/quiz.py -> services/rag_service.py).
 
-    #439 went further: client construction is now fully lazy (`_get_client()`,
-    reached only from inside a `model_mode() == 'real'` `_embed_*` call), so
-    import no longer touches `google.genai.Client` at all regardless of the
-    key — `rag._client` starts (and, absent a real-mode embed call, stays) as
-    `None`. This pins that behaviour for the whole import graph.
+    ADR 0031 keeps the property and raises the stakes. There is no API key to
+    miss any more, but the encoder it replaced the client with is ~440MB of
+    weights behind a `torch` import — so an eager load would add seconds to
+    every process start, E2E and CI included. `rag._encoder` must start (and,
+    absent a real-mode embed call, stay) empty, and `torch` must not even be in
+    `sys.modules` from importing the app.
 
-    Run in a subprocess: the modules are already imported in-process, so this is
-    the only way to observe import-time behaviour. `load_dotenv` is stubbed out
-    first so a developer's backend/.env can't silently re-supply the key and
-    make the assertion vacuous.
+    Run in a subprocess: the modules are already imported in-process, so this
+    is the only way to observe import-time behaviour. `load_dotenv` is stubbed
+    out first so a developer's backend/.env can't make the assertion vacuous.
     """
     backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = {k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
@@ -36,8 +35,10 @@ def test_import_succeeds_without_gemini_api_key():
         "import dotenv; dotenv.load_dotenv = lambda *a, **k: False\n"
         "import os; os.environ.pop('GEMINI_API_KEY', None)\n"
         "import main\n"
+        "import sys as _s\n"
         "import services.rag_service as rag\n"
-        "assert rag._client is None\n"
+        "assert rag._encoder == (), rag._encoder\n"
+        "assert 'torch' not in _s.modules, 'importing main pulled in torch'\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", program],
@@ -49,46 +50,63 @@ def test_import_succeeds_without_gemini_api_key():
 
 
 def _make_embedding_response(vecs: list[list[float]]):
-    resp = MagicMock()
-    resp.embeddings = [MagicMock(values=v) for v in vecs]
-    return resp
+    """Kept as the one place tests say "the encoder returned these vectors".
+
+    Pre-ADR-0031 this had to fake google-genai's nested response object. The
+    local encoder just returns the lists, so this is now identity — but the
+    call sites keep reading the same, and a future encoder swap has one place
+    to change again.
+    """
+    return vecs
 
 
-def test_client_is_constructed_with_bounded_http_timeout():
+def test_embedding_input_length_is_bounded():
     """retrieve_chunks() runs inline on the quiz/tutor request path, so the
-    embedding client must carry an explicit HTTP timeout — otherwise a stalled
-    Gemini call hangs the request indefinitely."""
-    from services.rag_service import _HTTP_TIMEOUT_MS
+    embedding step must have a bounded cost.
 
-    assert isinstance(_HTTP_TIMEOUT_MS, int)
-    assert 0 < _HTTP_TIMEOUT_MS <= 180_000
+    Pre-ADR-0031 the bound that mattered was an HTTP timeout, because the risk
+    was a stalled Gemini call hanging the request. The local encoder cannot
+    stall on a network, but it CAN be handed an unbounded string — cost grows
+    with sequence length — so the bound moved to the tokeniser's
+    `max_length`. bge-base is trained at 512; anything longer is truncated
+    rather than silently quadratic.
+    """
+    from services.rag_service import _MAX_TOKENS
+
+    assert isinstance(_MAX_TOKENS, int)
+    assert 0 < _MAX_TOKENS <= 512
 
 
-@patch("services.rag_service._client")
-def test_retrieve_chunks_returns_empty_on_embedding_failure(mock_client):
+@patch("services.rag_service._encode")
+def test_retrieve_chunks_returns_empty_on_embedding_failure(mock_encode):
     """Best-effort contract: a retrieval failure must degrade to [] rather
     than propagating and breaking quiz generation."""
-    mock_client.models.embed_content.side_effect = Exception("embed timeout")
+    mock_encode.side_effect = Exception("embed failed")
     from services.rag_service import retrieve_chunks
 
     assert retrieve_chunks("dynamic programming", course_id="CAS CS 330") == []
 
 
-@patch("services.rag_service._client")
-def test_retrieve_chunks_uses_retrieval_query_task_type(mock_client):
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.1] * 768])
+@patch("services.rag_service._encode")
+def test_retrieve_chunks_embeds_the_query_as_a_query(mock_encode):
+    """The query side must be embedded asymmetrically from the passage side.
+
+    Under gemini-embedding-001 that was `task_type="RETRIEVAL_QUERY"`; under
+    bge it is the instruction prefix. Same property, same reason: drop it and
+    recall degrades silently.
+    """
+    mock_encode.return_value = _make_embedding_response([[0.1] * 768])
     with patch("services.rag_service.rpc", return_value=[]):
         from services.rag_service import retrieve_chunks
         retrieve_chunks("what is dynamic programming", course_id="CAS CS 330")
 
-    call_kwargs = mock_client.models.embed_content.call_args
-    config = call_kwargs.kwargs.get("config") or call_kwargs.args[2]
-    assert config.task_type == "RETRIEVAL_QUERY"
+    assert mock_encode.call_args.kwargs["is_query"] is True
 
 
-@patch("services.rag_service._client")
-def test_index_document_chunks_uses_retrieval_document_task_type(mock_client):
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768])
+@patch("services.rag_service._encode")
+def test_index_document_chunks_embeds_chunks_as_passages(mock_encode):
+    """The passage side takes NO query prefix — see the query test above."""
+    mock_encode.return_value = _make_embedding_response([[0.2] * 768])
     with patch("services.rag_service.rpc", return_value=[]), \
          patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
@@ -102,14 +120,12 @@ def test_index_document_chunks_uses_retrieval_document_task_type(mock_client):
             category="lecture_notes",
         )
 
-    call_kwargs = mock_client.models.embed_content.call_args
-    config = call_kwargs.kwargs.get("config") or call_kwargs.args[2]
-    assert config.task_type == "RETRIEVAL_DOCUMENT"
+    assert mock_encode.call_args.kwargs["is_query"] is False
 
 
-@patch("services.rag_service._client")
-def test_index_document_chunks_returns_count(mock_client):
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768] * 3)
+@patch("services.rag_service._encode")
+def test_index_document_chunks_returns_count(mock_encode):
+    mock_encode.return_value = _make_embedding_response([[0.2] * 768] * 3)
     with patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
@@ -124,21 +140,21 @@ def test_index_document_chunks_returns_count(mock_client):
     assert count == 3
 
 
-@patch("services.rag_service._client")
-def test_index_document_chunks_empty_returns_zero(mock_client):
+@patch("services.rag_service._encode")
+def test_index_document_chunks_empty_returns_zero(mock_encode):
     from services.rag_service import index_document_chunks
     count = index_document_chunks("CAS CS 330", "doc-1", "user-1", [], visibility="shared", category="lecture_notes")
     assert count == 0
-    mock_client.models.embed_content.assert_not_called()
+    mock_encode.assert_not_called()
 
 
-@patch("services.rag_service._client")
-def test_chunk_ids_are_content_addressed_per_course(mock_client):
+@patch("services.rag_service._encode")
+def test_chunk_ids_are_content_addressed_per_course(mock_encode):
     """Identical chunk text in the same course must map to the same chunk id
     regardless of which document or uploader supplied it — 200 students
     uploading the same lecture slides should produce one row per unique
     chunk, not 200 copies of every embedding."""
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768])
+    mock_encode.return_value = _make_embedding_response([[0.2] * 768])
     with patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
@@ -152,12 +168,12 @@ def test_chunk_ids_are_content_addressed_per_course(mock_client):
     assert id_from_doc_a == id_from_doc_b
 
 
-@patch("services.rag_service._client")
-def test_chunk_ids_differ_across_courses(mock_client):
+@patch("services.rag_service._encode")
+def test_chunk_ids_differ_across_courses(mock_encode):
     """The dedup scope is per-course: the same text indexed under two
     different course codes must NOT collide, or one course's doc_id/metadata
     would clobber the other's."""
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768])
+    mock_encode.return_value = _make_embedding_response([[0.2] * 768])
     with patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
@@ -171,12 +187,12 @@ def test_chunk_ids_differ_across_courses(mock_client):
     assert id_cs330 != id_cs111
 
 
-@patch("services.rag_service._client")
-def test_duplicate_chunks_within_one_document_are_deduped(mock_client):
+@patch("services.rag_service._encode")
+def test_duplicate_chunks_within_one_document_are_deduped(mock_encode):
     """A document repeating the same text (boilerplate headers/footers) must
     not emit duplicate ids in a single upsert payload — Postgres rejects
     ON CONFLICT DO UPDATE hitting the same row twice in one statement."""
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.2] * 768] * 2)
+    mock_encode.return_value = _make_embedding_response([[0.2] * 768] * 2)
     with patch("services.rag_service.table") as mock_table:
         mock_table.return_value.upsert.return_value = []
         from services.rag_service import index_document_chunks
@@ -256,49 +272,53 @@ def test_index_document_chunks_keeps_the_chunks_that_did_embed(mock_embed):
 # ── #439: below-seam RAG embed calls must gate on SAPLING_MODEL_MODE ───────
 #
 # These call sites (`_embed_query`, `_embed_document`, `_embed_documents_batch`)
-# predate the #391 seam and construct a raw `google.genai.Client` directly, so
-# they need their own mode check rather than going through `model_for`. In
-# non-real mode no client may be constructed and no network call attempted;
-# the existing callers' broad try/except (exercised above) then produces the
-# exact same deterministic empty/no-op result as an unlucky real-mode
-# failure — by design now, not by accident.
+# predate the #391 seam, so they need their own mode check rather than going
+# through `model_for`. In non-real mode the encoder must not be LOADED and no
+# embedding attempted; the existing callers' broad try/except (exercised above)
+# then produces the exact same deterministic empty/no-op result as an unlucky
+# real-mode failure — by design now, not by accident.
+#
+# Post-ADR-0031 the thing being guarded changed from "no network call" to "no
+# ~440MB weight load", which is why these assert on `_get_encoder` rather than
+# on a client constructor. The hermetic test lane depends on it: a non-real run
+# that loaded the encoder would add seconds to every CI job.
 
 
-def test_embed_query_does_not_construct_client_outside_real_mode(monkeypatch):
-    """Force a clean slate (module-level `_client` back to `None`) so this
-    exercises the lazy-construction path fresh, rather than reusing whatever
-    an earlier real-mode test already cached in the module singleton."""
+def test_embed_query_does_not_load_the_encoder_outside_real_mode(monkeypatch):
+    """Force a clean slate (module-level `_encoder` back to empty) so this
+    exercises the lazy-load path fresh, rather than reusing whatever an earlier
+    real-mode test already cached in the module singleton."""
     import services.rag_service as rag
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setattr(rag, "_client", None)
-    ctor = MagicMock(side_effect=AssertionError(
-        "genai.Client must not be constructed outside real mode"
+    monkeypatch.setattr(rag, "_encoder", ())
+    loader = MagicMock(side_effect=AssertionError(
+        "the encoder must not be loaded outside real mode"
     ))
-    monkeypatch.setattr(rag.genai, "Client", ctor)
+    monkeypatch.setattr(rag, "_get_encoder", loader)
 
     with pytest.raises(RuntimeError, match="SAPLING_MODEL_MODE"):
         rag._embed_query("dynamic programming")
 
-    ctor.assert_not_called()
-    assert rag._client is None
+    loader.assert_not_called()
+    assert rag._encoder == ()
 
 
-def test_embed_documents_batch_does_not_construct_client_outside_real_mode(monkeypatch):
+def test_embed_documents_batch_does_not_load_the_encoder_outside_real_mode(monkeypatch):
     import services.rag_service as rag
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
-    monkeypatch.setattr(rag, "_client", None)
-    ctor = MagicMock(side_effect=AssertionError(
-        "genai.Client must not be constructed outside real mode"
+    monkeypatch.setattr(rag, "_encoder", ())
+    loader = MagicMock(side_effect=AssertionError(
+        "the encoder must not be loaded outside real mode"
     ))
-    monkeypatch.setattr(rag.genai, "Client", ctor)
+    monkeypatch.setattr(rag, "_get_encoder", loader)
 
     with pytest.raises(RuntimeError, match="SAPLING_MODEL_MODE"):
         rag._embed_documents_batch(["chunk one", "chunk two"])
 
-    ctor.assert_not_called()
-    assert rag._client is None
+    loader.assert_not_called()
+    assert rag._encoder == ()
 
 
 def test_retrieve_chunks_never_reaches_transport_in_function_mode(monkeypatch, caplog):
@@ -403,16 +423,16 @@ def test_document_chunk_ids_never_collide_with_catalog_ids():
 
 
 @patch("services.rag_service.log_event")
-@patch("services.rag_service._client")
+@patch("services.rag_service._encode")
 def test_retrieve_chunks_failure_is_logged_and_counted(
-    mock_client, mock_log_event, caplog, monkeypatch
+    mock_encode, mock_log_event, caplog, monkeypatch
 ):
     # Pin real mode explicitly. _require_real_mode() runs BEFORE the mocked
     # client is reached, so with SAPLING_MODEL_MODE=function exported — which
     # the E2E workflow tells you to export — this would take the
     # _EmbeddingDisabled branch and pass vacuously on an unrelated code path.
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    mock_client.models.embed_content.side_effect = Exception("embed timeout")
+    mock_encode.side_effect = Exception("embed failed")
     from services.rag_service import retrieve_chunks
 
     with caplog.at_level("WARNING", logger="services.rag_service"):
@@ -684,12 +704,12 @@ def test_nothing_upserted_means_no_contributor_rows(mock_embed):
     mock_record.assert_not_called()
 
 
-@patch("services.rag_service._client")
-def test_retrieve_chunks_passes_the_reader_to_the_rpc(mock_client, monkeypatch):
+@patch("services.rag_service._encode")
+def test_retrieve_chunks_passes_the_reader_to_the_rpc(mock_encode, monkeypatch):
     """The RPC filters `visibility='shared' OR the reader contributed`, so a
     caller that forgets the reader gets shared rows only — never a leak."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.1] * 768])
+    mock_encode.return_value = _make_embedding_response([[0.1] * 768])
     with patch("services.rag_service.rpc", return_value=[]) as mock_rpc:
         from services.rag_service import retrieve_chunks
         retrieve_chunks("query", course_id="CAS CS 330", user_id="u1")
@@ -697,14 +717,14 @@ def test_retrieve_chunks_passes_the_reader_to_the_rpc(mock_client, monkeypatch):
     assert mock_rpc.call_args[0][1]["filter_user_id"] == "u1"
 
 
-@patch("services.rag_service._client")
+@patch("services.rag_service._encode")
 def test_retrieve_chunks_without_a_reader_asks_for_shared_rows_only(
-    mock_client, monkeypatch
+    mock_encode, monkeypatch
 ):
     """`None` is the fail-closed default: an offline script or a caller not yet
     threaded through sees the shared pool, not everyone's private uploads."""
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
-    mock_client.models.embed_content.return_value = _make_embedding_response([[0.1] * 768])
+    mock_encode.return_value = _make_embedding_response([[0.1] * 768])
     with patch("services.rag_service.rpc", return_value=[]) as mock_rpc:
         from services.rag_service import retrieve_chunks
         retrieve_chunks("query", course_id="CAS CS 330")
