@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import threading
 from typing import NamedTuple
 
 from google import genai
@@ -38,16 +39,29 @@ _OUTPUT_DIM = 768
 # E2E default, ADR 0019) never constructs a genai.Client and never touches the
 # network, instead of constructing one that then degrades by an accidental
 # swallowed exception.
+#
+# #771: a missing GEMINI_API_KEY is NOT latched. It used to build (and keep, for
+# the life of the process) a client on "dummy-key-for-import", so a key set
+# after the first call was never used and every embed failed upstream. Now a
+# keyless call raises `_EmbeddingDisabled` (the same degrade path as non-real
+# mode) and builds nothing; the next call reads the key again.
 _client: genai.Client | None = None
+_client_lock = threading.Lock()
 
 
 def _get_client() -> genai.Client:
     global _client
-    if _client is None:
-        _client = genai.Client(
-            api_key=os.getenv("GEMINI_API_KEY", "") or "dummy-key-for-import",
-            http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
-        )
+    if _client is not None:
+        return _client
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if not api_key:
+        raise _EmbeddingDisabled("embedding skipped: GEMINI_API_KEY is unset")
+    with _client_lock:
+        if _client is None:
+            _client = genai.Client(
+                api_key=api_key,
+                http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS),
+            )
     return _client
 
 
