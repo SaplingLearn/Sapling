@@ -47,15 +47,45 @@ export function FlashcardImportModal({
   const [topic, setTopic] = React.useState<string>(defaultTopic ?? "");
   const [committing, setCommitting] = React.useState(false);
 
-  React.useEffect(() => {
+  // Request scope (#769). Every tab switch and every open starts a new scope;
+  // a tab's async import (URL fetch, AI generate, OCR, cloze…) writes the
+  // shared deck only if it resolves inside the scope it started in. Without
+  // this, a request from a tab you left — or from before the modal was
+  // closed and reopened — landed late and overwrote the deck on screen. A
+  // monotonic counter (not the tab name) so leaving and re-entering a tab
+  // doesn't revive the old tab's request.
+  const [scope, setScope] = React.useState(0);
+  const scopeRef = React.useRef(scope);
+  React.useLayoutEffect(() => { scopeRef.current = scope; }, [scope]);
+  const onTabCards = React.useCallback((next: ParsedCard[]) => {
+    if (scopeRef.current === scope) setCards(next);
+  }, [scope]);
+  const selectTab = (next: TabKey) => {
+    if (next === tab) return;
+    setTab(next);
+    setScope(s => s + 1);
+  };
+
+  // Reset on the open TRANSITION only (#769). The old effect also keyed on
+  // `courses`/defaults, so a parent re-render that rebuilt the courses array
+  // wiped the deck mid-edit. Adjusted during render (the Study.tsx
+  // StudyModePanel pattern) so the reset lands with the opening render.
+  const [wasOpen, setWasOpen] = React.useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setCards([]);
       setReverse(false);
       setTab("paste");
       setCourseId(defaultCourseId ?? courses[0]?.course_id ?? "");
       setTopic(defaultTopic ?? "");
+      setScope(s => s + 1);
     }
-  }, [open, defaultCourseId, defaultTopic, courses]);
+  }
+  // Courses that arrive AFTER opening still fill an empty pick — filling a
+  // blank never touches the deck, unlike the old full reset.
+  const fallbackCourseId = defaultCourseId ?? courses[0]?.course_id ?? "";
+  if (open && !courseId && fallbackCourseId) setCourseId(fallbackCourseId);
 
   const validCards = cards.filter(isValid);
   const finalCards = React.useMemo(() => {
@@ -117,7 +147,7 @@ export function FlashcardImportModal({
           {TABS.map(t => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => selectTab(t.key)}
               style={{
                 padding: "8px 14px", fontSize: 13, fontWeight: tab === t.key ? 600 : 500,
                 color: tab === t.key ? "var(--accent)" : "var(--text-dim)",
@@ -128,11 +158,11 @@ export function FlashcardImportModal({
           ))}
         </div>
 
-        {tab === "paste" && <PasteTab cards={cards} onCards={setCards} />}
-        {tab === "upload" && <UploadTab onCards={setCards} />}
-        {tab === "url" && <UrlTab onCards={setCards} />}
-        {tab === "ai" && <AiTab documents={documents} onCards={setCards} />}
-        {tab === "photo" && <PhotoTab onCards={setCards} />}
+        {tab === "paste" && <PasteTab cards={cards} onCards={onTabCards} />}
+        {tab === "upload" && <UploadTab onCards={onTabCards} />}
+        {tab === "url" && <UrlTab onCards={onTabCards} />}
+        {tab === "ai" && <AiTab documents={documents} onCards={onTabCards} />}
+        {tab === "photo" && <PhotoTab onCards={onTabCards} />}
 
         <ParsedCardsTable
           cards={cards}
