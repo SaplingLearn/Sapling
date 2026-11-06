@@ -14,12 +14,33 @@ import {
   type EnrolledCourse,
   type OnboardingCourse,
   type UploadEvent,
+  type UploadResultData,
 } from "@/lib/api";
 
 const MAX_FILES = 5;
 const MAX_SIZE = 100 * 1024 * 1024;
 const ALLOWED = /\.(pdf|docx|pptx)$/i;
 const UPLOAD_TIMEOUT_MS = 4 * 60 * 1000;
+const TIMEOUT_MESSAGE = "Processing took longer than 4 minutes — try a smaller file.";
+const CANCELLED_MESSAGE = "Upload cancelled.";
+
+/**
+ * Why an upload's AbortController fired (#759): the 4-minute timer, or the
+ * user closing the modal / the parent closing it. Kept beside the controller
+ * rather than read off `signal.reason`, which not every runtime carries.
+ */
+type AbortReason = "timeout" | "cancelled";
+const abortReasons = new WeakMap<AbortController, AbortReason>();
+function abortWith(ac: AbortController, reason: AbortReason) {
+  if (!abortReasons.has(ac)) abortReasons.set(ac, reason);
+  ac.abort();
+}
+
+function mintRequestId(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 type UploadStatus = "pending" | "uploading" | "processed" | "error" | "aborted";
 
@@ -37,12 +58,16 @@ interface UploadItem {
   /** Latest progress message from the SSE stream (visible while uploading). */
   progress?: string;
   /**
-   * X-Request-ID minted for the current upload attempt. Captured before the
-   * stream starts so a failed row can surface a "Reference: …" line for
-   * support, and so retries can mint a fresh ID (the backend's idempotency
-   * cache would otherwise short-circuit on the failed one).
+   * X-Request-ID of the current upload attempt, surfaced on a failed row as
+   * "Reference: …" for support. Retry of the SAME file to the SAME course
+   * reuses it (#759), so a document the server saved after the client gave
+   * up (timeout, dropped connection) comes back through the backend's
+   * idempotent replay instead of being processed twice; a failure persists
+   * nothing, so a reused id simply re-runs. Re-analyze mints a fresh one.
    */
   requestId?: string;
+  /** The course `requestId` was minted for; a course change mints anew. */
+  requestCourseId?: string;
 }
 
 interface Props {
@@ -79,18 +104,28 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   // just-added course must be merged locally to be selectable right away.
   const [extraCourses, setExtraCourses] = React.useState<CourseOption[]>([]);
 
+  // Every in-flight upload's controller, so any route that closes the modal
+  // — including the parent flipping `open` itself — aborts them (#759).
+  const controllersRef = React.useRef(new Set<AbortController>());
+  const abortAll = React.useCallback(() => {
+    controllersRef.current.forEach(ac => abortWith(ac, "cancelled"));
+    controllersRef.current.clear();
+  }, []);
+
   React.useEffect(() => setMounted(true), []);
+  React.useEffect(() => abortAll, [abortAll]);
 
   useScrollLock(open);
 
   React.useEffect(() => {
     if (!open) {
+      abortAll();
       setItems([]);
       setCourseQuery("");
       setCourseResults([]);
       setExtraCourses([]);
     }
-  }, [open]);
+  }, [open, abortAll]);
 
   React.useEffect(() => {
     if (!courseQuery.trim()) { setCourseResults([]); return; }
@@ -107,12 +142,24 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
 
   const activeUploads = items.filter(it => it.status === "uploading").length;
 
+  /**
+   * Every close route (Done, Cancel, X, backdrop) ends here (#759): abort
+   * what is still running, and tell the parent to refresh whenever this
+   * session changed something it shows — a processed upload, or a course
+   * added inline. onComplete receives the processed rows only.
+   */
+  const finish = () => {
+    abortAll();
+    const processed = items.filter(i => i.status === "processed");
+    if (processed.length > 0 || extraCourses.length > 0) onComplete(processed);
+    onClose();
+  };
+
   const handleClose = () => {
     if (activeUploads > 0) {
       if (!window.confirm(`${activeUploads} upload${activeUploads === 1 ? "" : "s"} still running. Abort and close?`)) return;
-      items.forEach(it => it.abort?.abort());
     }
-    onClose();
+    finish();
   };
 
   const addFiles = (fileList: File[]) => {
@@ -140,77 +187,76 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     setItems(prev => [...prev, ...candidates]);
   };
 
-  const startUpload = async (item: UploadItem) => {
+  const startUpload = async (item: UploadItem, opts: { reuseRequestId?: boolean } = {}) => {
     if (!item.courseId) {
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "error", error: "Pick a course first." } : i));
       return;
     }
     const ac = new AbortController();
-    const timeout = setTimeout(() => ac.abort(), UPLOAD_TIMEOUT_MS);
-    // Mint a fresh request_id per attempt so retries don't collide with the
-    // backend's idempotency cache (which keys on X-Request-ID).
+    controllersRef.current.add(ac);
+    const timeout = setTimeout(() => abortWith(ac, "timeout"), UPLOAD_TIMEOUT_MS);
     const requestId =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      opts.reuseRequestId && item.requestId && item.requestCourseId === item.courseId
+        ? item.requestId
+        : mintRequestId();
+    // Every attempt starts from a clean row: a re-analyze must not keep the
+    // previous run's docId/summary/concepts on screen (#759).
     setItems(prev => prev.map(i => i.id === item.id ? {
-      ...i, status: "uploading", abort: ac, progress: "Starting upload…", requestId,
+      ...i,
+      status: "uploading", abort: ac, progress: "Starting upload…",
+      requestId, requestCourseId: item.courseId,
+      error: undefined, docId: undefined, category: undefined,
+      summary: undefined, conceptNames: undefined,
     } : i));
+    const settle = (patch: Partial<UploadItem>) =>
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: undefined, ...patch } : i));
     try {
       const fd = new FormData();
       fd.append("file", item.file);
       fd.append("course_id", item.courseId);
       fd.append("user_id", userId);
-      const resp = await uploadDocumentStream(fd, (ev: UploadEvent) => {
-        // Mirror backend SaplingEvent.message into the row's live label.
-        if (ev.type === "status" && ev.step === "done") return; // final state covered below
-
-        // Capture any backend-supplied request_id (matches what we sent, but
-        // some events may carry the canonical one if the backend re-issues).
+      const outcome = await uploadDocumentStream(fd, (ev: UploadEvent) => {
+        // Terminal events are read off the resolved outcome below; the row
+        // only mirrors the live message here (no toasts — one per failure).
+        if (ev.type === "status" && ev.step === "done") return;
         const evRid = (ev.data as { request_id?: unknown } | undefined)?.request_id;
-        if (typeof evRid === "string" && evRid.length > 0) {
-          setItems(prev => prev.map(i => i.id === item.id ? { ...i, requestId: evRid } : i));
-        }
-
-        if (ev.type === "error") {
-          // The streaming route's only error step is "failed" — terminal
-          // (#151b retired the legacy pipeline and its step === "fallback"
-          // event with it). Anything else we treat as informational and skip
-          // toasting to avoid double-firing alongside the catch-block toast.
-          if (ev.step === "failed") {
-            toast.error(`Upload failed: ${ev.message}`);
-          }
-          setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
-          return;
-        }
-
-        setItems(prev => prev.map(i => i.id === item.id ? { ...i, progress: ev.message } : i));
+        setItems(prev => prev.map(i => i.id === item.id ? {
+          ...i,
+          progress: ev.message,
+          ...(typeof evRid === "string" && evRid.length > 0 ? { requestId: evRid } : {}),
+        } : i));
       }, ac.signal, requestId);
+      if (outcome.kind === "processed") {
+        const resp = outcome.result;
+        settle({
+          status: "processed",
+          docId: outcome.documentId,
+          category: resp.classification?.category || "other",
+          summary: resp.summary?.abstract || undefined,
+          conceptNames: extractConceptNames(resp),
+        });
+      } else {
+        // The server's error is the row's error, shown once (#759) — also
+        // after a `result`: that means nothing was saved.
+        settle({
+          status: "error",
+          error: outcome.message,
+          ...(outcome.requestId ? { requestId: outcome.requestId } : {}),
+        });
+        toast.error(`Upload failed: ${outcome.message}`);
+      }
+    } catch (err: unknown) {
+      const reason = abortReasons.get(ac);
+      if (reason) {
+        settle({ status: "aborted", error: reason === "timeout" ? TIMEOUT_MESSAGE : CANCELLED_MESSAGE });
+      } else {
+        const errorMsg = String((err as { message?: unknown } | null)?.message || err);
+        settle({ status: "error", error: errorMsg });
+        toast.error(`Upload failed: ${errorMsg}`);
+      }
+    } finally {
       clearTimeout(timeout);
-      setItems(prev => prev.map(i => i.id === item.id ? {
-        ...i,
-        status: "processed",
-        progress: undefined,
-        docId: resp?.id,
-        category: resp?.classification?.category || resp?.category || "other",
-        summary: resp?.summary?.abstract ?? resp?.summary,
-        conceptNames: extractConceptNames(resp),
-      } : i));
-    } catch (err: any) {
-      clearTimeout(timeout);
-      const aborted = ac.signal.aborted;
-      const errorMsg = aborted
-        ? "Processing took longer than 4 minutes — try a smaller file."
-        : String(err?.message || err);
-      setItems(prev => prev.map(i => i.id === item.id ? {
-        ...i,
-        status: aborted ? "aborted" : "error",
-        progress: undefined,
-        error: errorMsg,
-      } : i));
-      // Toast on terminal stream failure (the catch covers cases where the
-      // SSE stream throws or aborts, distinct from in-band error events).
-      if (!aborted) toast.error(`Upload failed: ${errorMsg}`);
+      controllersRef.current.delete(ac);
     }
   };
 
@@ -218,32 +264,18 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
     items.filter(i => i.status === "pending").forEach(i => { void startUpload(i); });
   };
 
+  /** Re-run a processed file as a NEW analysis: fresh request id, clean row. */
   const reanalyze = (item: UploadItem) => {
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: "pending", error: undefined } : i));
-    void startUpload({ ...item, status: "pending" });
+    void startUpload(item);
   };
 
   /**
-   * Retry a failed or aborted upload. Resets the row to a clean "pending"
-   * state — including clearing the previous requestId so startUpload mints
-   * a fresh one (the old one would short-circuit in the backend's
-   * idempotency cache).
+   * Retry a failed or aborted upload. Reuses the attempt's request id while
+   * the course is unchanged, so a document the server saved after the client
+   * gave up is replayed rather than processed twice (#759).
    */
   const retry = (item: UploadItem) => {
-    setItems(prev => prev.map(i => i.id === item.id ? {
-      ...i,
-      status: "pending",
-      error: undefined,
-      progress: undefined,
-      requestId: undefined,
-    } : i));
-    void startUpload({
-      ...item,
-      status: "pending",
-      error: undefined,
-      progress: undefined,
-      requestId: undefined,
-    });
+    void startUpload(item, { reuseRequestId: true });
   };
 
   const setItemField = (id: string, updater: (prev: UploadItem) => UploadItem) => {
@@ -283,11 +315,6 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
   };
 
   const allFinished = items.length > 0 && items.every(i => i.status !== "uploading" && i.status !== "pending");
-
-  const done = () => {
-    onComplete(items);
-    onClose();
-  };
 
   if (!open || !mounted) return null;
 
@@ -523,7 +550,7 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
           <div style={{ display: "flex", gap: 8 }}>
             <button data-testid="upload-modal-cancel" className="btn btn--ghost btn--sm" onClick={handleClose}>Cancel</button>
             {allFinished ? (
-              <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={done}>Done</button>
+              <button data-testid="upload-modal-done" className="btn btn--sm btn--primary" onClick={finish}>Done</button>
             ) : (
               <button
                 data-testid="upload-modal-submit"
@@ -543,25 +570,16 @@ export function DocumentUploadModal({ open, userId, courses, onClose, onComplete
 }
 
 /**
- * Pull concept names out of either the orchestrator result shape
- * ({ concepts: { concepts: [{ name, ... }] } }) or the persisted-row
- * shape ({ concept_notes: [{ name }] }) that idempotent replays and
- * /upload/sync responses carry. Returns at most a flat string[].
+ * Concept names off a stream `result` ({ concepts: { concepts: [{ name }] } }).
+ * One shape since #759: the backend normalises an idempotent replay to the
+ * fresh DocumentProcessingResult keys instead of sending the DB row.
  */
-function extractConceptNames(resp: any): string[] {
-  const fromOrchestrator = resp?.concepts?.concepts;
-  if (Array.isArray(fromOrchestrator)) {
-    return fromOrchestrator
-      .map((c: { name?: unknown }) => c?.name)
-      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
-  }
-  const fromRow = resp?.concept_notes;
-  if (Array.isArray(fromRow)) {
-    return fromRow
-      .map((n: { name?: unknown }) => n?.name)
-      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
-  }
-  return [];
+function extractConceptNames(resp: UploadResultData): string[] {
+  const concepts = resp.concepts?.concepts;
+  if (!Array.isArray(concepts)) return [];
+  return concepts
+    .map(c => c?.name)
+    .filter((n): n is string => typeof n === "string" && n.length > 0);
 }
 
 function StatusBadge({ status }: { status: UploadStatus }) {

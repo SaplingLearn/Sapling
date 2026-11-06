@@ -386,6 +386,36 @@ def _existing_doc_by_request_id(user_id: str, request_id: str) -> dict | None:
     return row
 
 
+def _replay_result_payload(row: dict) -> dict:
+    """The idempotent-replay `result.data`, shaped like a fresh run's (#759).
+
+    A fresh stream sends `DocumentProcessingResult.model_dump()`; the replay
+    used to send the raw documents row under the same `result` event —
+    `summary` a string instead of `{abstract}`, `concept_notes` instead of
+    `concepts.concepts`, a top-level `category`. One event type now carries
+    one shape. Only what the row persists can be reproduced: `headline`,
+    `key_points`, confidence and rationale are absent, never invented.
+    `id` and `replayed` are additions on top of the fresh keys; the
+    document id is also on the trailing `status:done`, as on a fresh run.
+    """
+    category = row.get("category") or "other"
+    notes = row.get("concept_notes")
+    concepts = [
+        {"name": n["name"], "description": n.get("description") or ""}
+        for n in (notes if isinstance(notes, list) else [])
+        if isinstance(n, dict) and n.get("name")
+    ]
+    return {
+        "classification": {"category": category, "is_syllabus": category == "syllabus"},
+        "summary": {"abstract": row.get("summary") or ""},
+        "concepts": {"concepts": concepts},
+        "syllabus": None,
+        "graph_updated": False,
+        "id": row.get("id"),
+        "replayed": True,
+    }
+
+
 #: PostgREST's code for "column not found in the schema cache", plus the
 #: Postgres wording it wraps. Either shape means a column is genuinely absent
 #: rather than the row being bad.
@@ -688,8 +718,8 @@ async def upload_document_sync(
 
     # Idempotency: if the client retries with the same X-Request-ID,
     # short-circuit to the previously persisted document instead of
-    # re-running the orchestrator.
-    existing = _existing_doc_by_request_id(user_id, request_id)
+    # re-running the orchestrator. Threaded: a sync PostgREST round trip.
+    existing = await asyncio.to_thread(_existing_doc_by_request_id, user_id, request_id)
     if existing:
         response = dict(existing)
         response.setdefault("categories", [])
@@ -761,7 +791,9 @@ async def upload_document_sync(
     )
 
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
-    background_tasks.add_task(update_course_context, course_id)
+    # update_course_context aggregates an OFFERING's enrollments (#759: the
+    # abstract course id matched none, so it only cleared the cache).
+    background_tasks.add_task(update_course_context, offering_id)
     background_tasks.add_task(_check_upload_achievements, user_id)
     # #482: this route never indexed. Gradebook syllabus uploads come through
     # it, so none of them reached RAG. Same entry point as the streaming route.
@@ -845,13 +877,17 @@ async def upload_document(
 
             # Idempotency: a client retry with the same X-Request-ID
             # should not re-run the orchestrator. Emit a result+done pair
-            # built from the previously persisted row instead.
-            existing = _existing_doc_by_request_id(user_id, request_id)
+            # built from the previously persisted row instead — in the fresh
+            # result's shape (#759). Threaded: a sync PostgREST round trip
+            # on the loop stalls every other open stream.
+            existing = await asyncio.to_thread(
+                _existing_doc_by_request_id, user_id, request_id,
+            )
             if existing:
                 yield sapling_event_to_sse(SaplingEvent(
                     type="result", step="finalize",
                     message="Already processed (idempotent replay).",
-                    data=existing,
+                    data=_replay_result_payload(existing),
                 ))
                 yield sapling_event_to_sse(SaplingEvent(
                     type="status", step="done",
@@ -1022,7 +1058,9 @@ async def upload_document(
             # with the legacy pipeline (ADR 0024). Emit the exact
             # error:failed + status:done tail the deleted fallback used on
             # double-failure, so clients need no new case. Retry is safe —
-            # nothing was persisted, and a retry mints a fresh X-Request-ID.
+            # nothing was persisted, so a retry (the modal reuses the same
+            # X-Request-ID for the same file, #759) finds no row to replay
+            # and re-runs the pipeline.
             logger.warning(
                 "Agent guardrails tripped during stream for '%s'; failing",
                 filename, exc_info=e,
@@ -1078,29 +1116,33 @@ async def upload_document(
                 user_id=user_id, course_id=course_id,
                 filename=filename, result=final_output,
             )
-            doc_id, _ = await asyncio.to_thread(
-                _persist_document,
-                user_id=user_id, offering_id=offering_id,
-                filename=filename, result=final_output,
-                request_id=request_id,
-                course_id=course_id,
-                char_count=len(extracted_text) if extracted_text is not None else None,
-                extracted_text=extracted_text,
-            )
-
-            # BackgroundTasks runs after response close — useless for SSE since
-            # the stream IS the response. _spawn_post_roll uses create_task
-            # but attaches a done-callback so exceptions land in the log
-            # instead of disappearing.
-            _spawn_post_roll(
-                ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
-                ("update_course_context", update_course_context, course_id),
-                ("check_upload_achievements", _check_upload_achievements, user_id),
-                # #482: the id only. The indexer reads everything else off the
-                # stored row, which is what lets the sweeper re-drive this same
-                # work if the attempt below dies with the process.
-                ("index_document", index_document, doc_id),
-            )
+            try:
+                doc_id, _ = await asyncio.to_thread(
+                    _persist_document,
+                    user_id=user_id, offering_id=offering_id,
+                    filename=filename, result=final_output,
+                    request_id=request_id,
+                    course_id=course_id,
+                    char_count=len(extracted_text) if extracted_text is not None else None,
+                    extracted_text=extracted_text,
+                )
+                adopted = False
+            except Exception:
+                # #759: the replay lookup at the top is check-then-act. Two
+                # attempts sharing an X-Request-ID can both miss it; the
+                # unique (user_id, request_id) index then rejects the
+                # loser's insert. That document WAS saved — by the winner —
+                # so adopt its row rather than report it lost.
+                winner = await asyncio.to_thread(
+                    _existing_doc_by_request_id, user_id, request_id,
+                )
+                if not winner or not winner.get("id"):
+                    raise
+                doc_id, adopted = winner["id"], True
+                logger.info(
+                    "Upload '%s' lost the request_id race; adopting %s",
+                    filename, doc_id,
+                )
         except Exception:
             logger.exception(
                 "Post-result persistence failed for '%s' — result already "
@@ -1118,6 +1160,30 @@ async def upload_document(
                 message="Failed.",
             ))
             return
+
+        # The row exists from here on, so nothing below may turn this stream
+        # into error:failed — the client would show "not saved" for a
+        # document sitting in the library (#759). The side effects are
+        # best-effort; the winner of a request_id race already spawned them.
+        #
+        # BackgroundTasks runs after response close — useless for SSE since
+        # the stream IS the response. _spawn_post_roll holds each task and
+        # logs its exception; drain_post_roll waits for them at shutdown.
+        if not adopted:
+            try:
+                _spawn_post_roll(
+                    ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
+                    # update_course_context aggregates an OFFERING (#759).
+                    ("update_course_context", update_course_context, offering_id),
+                    ("check_upload_achievements", _check_upload_achievements, user_id),
+                    # #482: the id only. The indexer reads everything else off
+                    # the stored row, which is what lets the sweeper re-drive
+                    # this same work if the attempt below dies with the process.
+                    ("index_document", index_document, doc_id),
+                )
+            except Exception:
+                logger.exception("Post-roll spawn failed for '%s' (document %s saved)",
+                                 filename, doc_id)
 
         yield sapling_event_to_sse(SaplingEvent(
             type="status", step="done",
@@ -1155,15 +1221,50 @@ def _check_upload_achievements(user_id: str) -> None:
         pass
 
 
+#: In-flight post-roll tasks (#759). The event loop holds only a WEAK
+#: reference to a task, so an unreferenced create_task result can be
+#: garbage-collected mid-flight; this set is the strong reference. Each task
+#: removes itself when done, and drain_post_roll waits on what remains.
+_POST_ROLL_TASKS: set[asyncio.Task] = set()
+
+#: Shutdown budget for drain_post_roll. The work is best-effort and
+#: re-drivable (the index sweeper picks up an unindexed row), so this bounds
+#: how long a deploy waits rather than guaranteeing completion.
+POST_ROLL_DRAIN_TIMEOUT_S = 15.0
+
+
 def _spawn_post_roll(*tasks: tuple) -> None:
     """Fire-and-forget post-roll work for SSE / non-FastAPI-BackgroundTasks
     contexts. Each tuple is (label, callable, *args). Exceptions in the
     spawned task are logged via a done-callback so they don't disappear
-    silently the way bare asyncio.create_task(...) lets them.
+    silently the way bare asyncio.create_task(...) lets them; each task is
+    held in _POST_ROLL_TASKS until it finishes.
     """
     for label, fn, *args in tasks:
-        task = asyncio.create_task(asyncio.to_thread(fn, *args))
+        task = asyncio.create_task(asyncio.to_thread(fn, *args), name=f"post_roll:{label}")
+        _POST_ROLL_TASKS.add(task)
+        task.add_done_callback(_POST_ROLL_TASKS.discard)
         task.add_done_callback(lambda t, _label=label: _log_post_roll_exc(t, _label))
+
+
+async def drain_post_roll(timeout: float = POST_ROLL_DRAIN_TIMEOUT_S) -> None:
+    """Wait (bounded) for in-flight post-roll tasks — called from the app
+    lifespan at shutdown so an upload's indexing / course-context refresh is
+    not cut off by a deploy. Only this loop's tasks are awaited. Never raises.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        pending = [t for t in _POST_ROLL_TASKS if not t.done() and t.get_loop() is loop]
+        if not pending:
+            return
+        _, still = await asyncio.wait(pending, timeout=timeout)
+        if still:
+            logger.warning(
+                "%d upload post-roll task(s) still running after %.0fs at shutdown",
+                len(still), timeout,
+            )
+    except Exception:
+        logger.debug("post-roll drain failed", exc_info=True)
 
 
 def _log_post_roll_exc(task: "asyncio.Task", label: str) -> None:

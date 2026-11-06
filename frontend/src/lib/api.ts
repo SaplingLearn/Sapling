@@ -804,14 +804,46 @@ export interface UploadEvent {
   data?: Record<string, unknown> | null;
 }
 
+/**
+ * How an upload stream ended (#759) — a function of the server's terminal
+ * events alone:
+ *   - `error:failed` (with or without an earlier `result`) → `failed`, with
+ *     the server's message. A post-result failure means nothing was saved.
+ *   - `result` then `status:done` carrying a `document_id` → `processed`.
+ *   - `status:done` without a saved document → `failed`.
+ * `result` is the `result` event's data: a DocumentProcessingResult dump
+ * (an idempotent replay sends the same shape plus `id`/`replayed`).
+ */
+export interface UploadResultData {
+  id?: string;
+  replayed?: boolean;
+  classification?: { category?: string; is_syllabus?: boolean };
+  summary?: { abstract?: string };
+  concepts?: { concepts?: Array<{ name?: string; description?: string }> };
+  [key: string]: unknown;
+}
+
+export type UploadOutcome =
+  | { kind: 'processed'; documentId: string; result: UploadResultData }
+  | { kind: 'failed'; message: string; requestId?: string; afterResult: boolean };
+
+/**
+ * Streams POST /api/documents/upload. Resolves to an UploadOutcome whenever
+ * the server reached a terminal event; rejects only on transport failure
+ * (HTTP error before the stream opened, network drop, abort) or a stream
+ * that closed with no terminal event.
+ */
 export async function uploadDocumentStream(
   formData: FormData,
   onEvent: (event: UploadEvent) => void,
   signal?: AbortSignal,
   requestId?: string,
-): Promise<any> {
+): Promise<UploadOutcome> {
   const { streamSSE } = await import('./sse');
-  let finalDoc: any = null;
+  let result: UploadResultData | null = null;
+  let failure: { message: string; requestId?: string } | null = null;
+  let done = false;
+  let documentId: string | undefined;
   const headers: Record<string, string> = {};
   if (requestId) headers['X-Request-ID'] = requestId;
   for await (const e of streamSSE<UploadEvent>(
@@ -819,21 +851,38 @@ export async function uploadDocumentStream(
     { method: 'POST', body: formData, signal, credentials: 'include', headers },
   )) {
     onEvent(e.data);
+    const data = (e.data.data ?? {}) as Record<string, unknown>;
     if (e.event === 'result') {
-      // result.data carries the full DocumentProcessingResult (orchestrator)
-      // OR the legacy-fallback persisted row. Both expose `id`/`document_id`.
-      finalDoc = e.data.data ?? null;
-    }
-    if (e.event === 'status' && e.data.step === 'done') {
-      // The done event carries { document_id } when the row persisted.
-      const docIdFromDone = (e.data.data as { document_id?: string } | undefined)?.document_id;
-      if (docIdFromDone && finalDoc && typeof finalDoc === 'object' && !('id' in finalDoc)) {
-        finalDoc = { ...finalDoc, id: docIdFromDone };
+      result = data as UploadResultData;
+    } else if (e.event === 'error' && e.data.step === 'failed') {
+      failure = {
+        message: e.data.message,
+        requestId: typeof data.request_id === 'string' ? data.request_id : undefined,
+      };
+    } else if (e.event === 'status' && e.data.step === 'done') {
+      done = true;
+      if (typeof data.document_id === 'string' && data.document_id) {
+        documentId = data.document_id;
       }
     }
   }
-  if (!finalDoc) throw new Error('Upload stream ended without a result event.');
-  return finalDoc;
+  if (failure) {
+    return {
+      kind: 'failed',
+      message: failure.message || 'Document processing failed. Please try again.',
+      requestId: failure.requestId,
+      afterResult: result !== null,
+    };
+  }
+  if (result && documentId) return { kind: 'processed', documentId, result };
+  if (done) {
+    return {
+      kind: 'failed',
+      message: 'The server finished without saving the document. Please try again.',
+      afterResult: result !== null,
+    };
+  }
+  throw new Error('Upload stream ended before the server finished.');
 }
 
 export const updateDocumentCategory = (documentId: string, userId: string, category: string) =>
