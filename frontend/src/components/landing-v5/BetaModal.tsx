@@ -25,7 +25,7 @@
  */
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { SaplingWordmark } from '@/components/SaplingWordmark';
+import Image from 'next/image';
 import { HeroCard } from '@/components/marketing/HeroCard';
 import { useScrollLock } from '@/lib/useScrollLock';
 
@@ -37,7 +37,7 @@ const SANS = "var(--font-suse), 'SUSE', system-ui, sans-serif";
  *  Waitlist perks first, the newsletter's last — phones show only the
  *  first two. */
 const PERKS = [
-  { dot: '#445D22', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
+  { dot: '#1B6C42', title: 'New features, first.', body: 'Every study mode, knowledge tool, and capability before anyone else sees it.' },
   { dot: '#8A63D2', title: 'Your input shapes what we build.', body: 'Early polls, roadmap previews, and a direct line to the people building it.' },
   { dot: '#D97706', title: 'Real notes from the team.', body: "What we're figuring out as we build. Honest, occasional, and worth opening." },
 ];
@@ -162,7 +162,10 @@ export function BetaModal({
 
         {/* ── left: brand + beta tester role ── */}
         <div className="hero-surface ld-beta-left" style={{ padding: '36px 36px 32px', display: 'flex', flexDirection: 'column', gap: 22 }}>
-          <SaplingWordmark width={88} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Image src="/sapling-icon.svg" alt="Sapling" width={22} height={22} />
+            <span style={{ fontFamily: SERIF, fontWeight: 700, fontSize: 17, color: 'var(--brand-forest)', letterSpacing: '-0.02em' }}>Sapling</span>
+          </div>
 
           <div>
             <div style={{ fontFamily: MONO, fontSize: 10.5, color: '#6b7280', letterSpacing: '0.22em', marginBottom: 14, textTransform: 'uppercase', fontWeight: 600 }}>
@@ -269,7 +272,7 @@ export function BetaModal({
                 width: '100%', padding: '14px 16px', borderRadius: 10,
                 background: subscribing ? '#4b5563' : 'var(--brand-forest)', color: '#fff',
                 fontSize: 14, fontWeight: 600, letterSpacing: '0.02em',
-                boxShadow: '0 8px 24px rgba(68,93,34,0.3)',
+                boxShadow: '0 8px 24px rgba(27,108,66,0.3)',
                 border: 'none', cursor: subscribing ? 'default' : 'pointer',
                 transition: 'all 0.18s', display: 'flex', alignItems: 'center',
                 justifyContent: 'center', gap: 8, fontFamily: SANS,
