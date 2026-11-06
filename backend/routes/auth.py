@@ -207,26 +207,35 @@ def _pending_token_email(token: str) -> str | None:
     return claims["email"] if claims else None
 
 
-def _claim_welcome(user_id: str) -> bool:
-    """Atomically claim this account's welcome email.
+def _welcome_due(user_id: str) -> bool:
+    """Whether this account still needs its welcome email (`welcomed_at` NULL).
 
-    A conditional PATCH (`welcomed_at=is.null`) that returns the row only to
-    the ONE sign-in that flipped it, so two concurrent first sign-ins cannot
-    both send. Backfilled for every account approved before the email system
-    existed (migration *_email.sql), so existing students are never welcomed
-    late. Best-effort: a failure (including the column not existing yet during
-    a deploy) just means no welcome, never a broken sign-in.
+    Read-only: `welcomed_at` is stamped by `_mark_welcomed` only AFTER a `sent`
+    outcome, so a welcome that was `skipped` (no RESEND_API_KEY yet) or
+    `failed` is retried on a later sign-in (#763). Two concurrent first
+    sign-ins can both get here; the `welcome:<user_id>` dedupe key in
+    `email_sends` keeps it to one delivery. Backfilled for every account
+    approved before the email system existed (migration *_email.sql), so
+    existing students are never welcomed late. Best-effort: a failure
+    (including the column not existing yet during a deploy) just means no
+    welcome this time, never a broken sign-in.
     """
-    from datetime import datetime, timezone
     try:
-        rows = table("users").update(
-            {"welcomed_at": datetime.now(timezone.utc).isoformat()},
-            filters={"id": f"eq.{user_id}", "welcomed_at": "is.null"},
-        )
+        rows = table("users").select("welcomed_at", filters={"id": f"eq.{user_id}"}, limit=1)
     except Exception:
-        logger.warning("welcome claim failed for %r", user_id, exc_info=True)
+        logger.warning("welcome check failed for %r", user_id, exc_info=True)
         return False
-    return bool(rows)
+    return bool(rows) and not rows[0].get("welcomed_at")
+
+
+def _mark_welcomed(user_id: str) -> None:
+    """Stamp `welcomed_at` once the welcome has gone out. Conditional on NULL
+    so the first delivery's time sticks; raises are swallowed by the caller."""
+    from datetime import datetime, timezone
+    table("users").update(
+        {"welcomed_at": datetime.now(timezone.utc).isoformat()},
+        filters={"id": f"eq.{user_id}", "welcomed_at": "is.null"},
+    )
 
 
 def _stamp_last_sign_in_for_test(user_id: str) -> None:
@@ -754,14 +763,16 @@ def google_callback(
     if not is_approved:
         return _not_approved(email, first_name)
 
-    # Welcome email, once per account, on the first sign-in that gets in. The
-    # claim happens here; the send runs after the redirect is returned.
-    if _claim_welcome(user_id):
+    # Welcome email, once per account, on the first sign-in that gets in (or a
+    # later one, if that send was skipped or failed). The send runs after the
+    # redirect is returned and stamps welcomed_at only once it is `sent`.
+    if _welcome_due(user_id):
         email_service.queue_welcome(
             background_tasks,
             email=email,
             user_id=user_id,
             first_name=(user_info.get("given_name") or first_name or None),
+            on_sent=lambda: _mark_welcomed(user_id),
         )
 
     # First-login achievement (F7). The login-streak achievements ("First Steps"
