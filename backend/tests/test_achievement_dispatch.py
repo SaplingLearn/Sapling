@@ -59,7 +59,8 @@ class TestAwardXpDispatch:
             [{"amount": total_xp + 30}], 1,
         )
         handles["users"].select.return_value = [{"total_xp": total_xp, "level": level}]
-        handles["users"].update.return_value = []
+        # The cache write is a compare-and-set (#767): a matched row comes back.
+        handles["users"].update.return_value = [{"id": "u1"}]
         return _tables(handles), handles
 
     def test_fires_xp_in_day_on_every_award(self):
