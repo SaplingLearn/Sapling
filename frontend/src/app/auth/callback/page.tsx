@@ -7,6 +7,30 @@ import { API_URL } from '@/lib/api';
 import { postSignInRoute } from '@/lib/localSeed';
 import { stashPendingToken } from '@/lib/pendingToken';
 
+interface MeBody {
+  onboarding_completed?: boolean;
+  name?: string;
+  avatar_url?: string;
+}
+
+/** Backoff between GET /api/auth/me attempts; one more attempt than delays. */
+const ME_RETRY_DELAYS_MS = [300, 1000];
+
+/** GET /api/auth/me with retries (#757). Network errors, 5xx and 429 are
+ * retried; any other non-OK answer (401/403/404: no live account) is final.
+ * Null when the profile could not be read. */
+async function fetchMe(): Promise<MeBody | null> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const r = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
+      if (r.ok) return (await r.json()) as MeBody;
+      if (r.status < 500 && r.status !== 429) return null;
+    } catch {}
+    if (attempt >= ME_RETRY_DELAYS_MS.length) return null;
+    await new Promise((resolve) => setTimeout(resolve, ME_RETRY_DELAYS_MS[attempt]));
+  }
+}
+
 function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -78,29 +102,26 @@ function CallbackInner() {
         return;
       }
 
-      // #191: only a confirmed GET /api/auth/me makes the identity durable.
-      // On failure the sign-in still completes for this tab (the session
-      // cookie was minted above), but nothing is persisted to localStorage —
-      // the provider's cookie fallback reconciles on the next full load. If
-      // the session itself is dead (repeatable 401/404), the provider's
-      // reconciliation clears the tab and bounces shell routes to sign-in.
-      let meOk = false;
-      let onboardingCompleted = true;
-      let name = '';
-      let avatar = avatarParam || '';
-      try {
-        const r = await fetch(`${API_URL}/api/auth/me`, { credentials: 'include' });
-        if (r.ok) {
-          const data = await r.json();
-          meOk = true;
-          onboardingCompleted = !!data.onboarding_completed;
-          name = data.name || '';
-          avatar = data.avatar_url || avatar;
-        }
-      } catch {}
+      // #191 + #757: GET /api/auth/me decides where this sign-in lands (its
+      // `onboarding_completed`) and is what makes the identity durable, so
+      // it is never guessed. A transient failure is retried; if it still
+      // can't be read, the sign-in fails visibly — it used to default to
+      // "onboarded" and silently skip onboarding for a new account. The
+      // half-made session is dropped so a retry starts clean.
+      const me = await fetchMe();
+      if (!me) {
+        try {
+          await fetch('/api/auth/session', { method: 'DELETE', credentials: 'include' });
+        } catch {}
+        fail('signin_failed');
+        return;
+      }
+      const onboardingCompleted = !!me.onboarding_completed;
+      const name = me.name || '';
+      const avatar = me.avatar_url || avatarParam || '';
 
       if (!isPopup) {
-        setActiveUser(userId, name, avatar, { persist: meOk });
+        setActiveUser(userId, name, avatar, { persist: true });
         confirmApproved();
       }
 
@@ -110,7 +131,7 @@ function CallbackInner() {
         name,
         avatar,
         onboardingCompleted,
-        profileConfirmed: meOk,
+        profileConfirmed: true,
       })) return;
 
       // #715: a new account on a local backend waits for its sample data;
