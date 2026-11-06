@@ -35,6 +35,7 @@ from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
 from services import quiz_config, quiz_errors
+from services.feature_flags import nav_feature_gate
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services import otel_fastapi_compat
 from services.request_context import (
@@ -353,17 +354,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         headers={"X-Request-ID": rid} if rid else {},
     )
 
+# #771: a hidden nav feature (`hide_<feature>` "on") 404s on its API too, not
+# just in the nav. Which routers each flag gates — and the paths another
+# visible surface still needs — is services/feature_flags.py::NAV_FEATURE_API.
 app.include_router(graph.router,       prefix="/api/graph")
 app.include_router(topic_checklist_router, prefix="/api/topic-checklist")
 app.include_router(learn.router,       prefix="/api/learn")
-app.include_router(quiz.router,        prefix="/api/quiz")
-app.include_router(calendar.router,    prefix="/api/calendar")
-app.include_router(social.router,      prefix="/api/social")
+app.include_router(quiz.router,        prefix="/api/quiz", dependencies=nav_feature_gate("/api/quiz"))
+app.include_router(calendar.router,    prefix="/api/calendar", dependencies=nav_feature_gate("/api/calendar"))
+app.include_router(social.router,      prefix="/api/social", dependencies=nav_feature_gate("/api/social"))
 app.include_router(extract.router,     prefix="/api/extract")
 app.include_router(auth.router,        prefix="/api/auth")
 app.include_router(documents.router,   prefix="/api/documents")
-app.include_router(flashcards.router,  prefix="/api/flashcards")
-app.include_router(study_guide.router, prefix="/api/study-guide")
+app.include_router(flashcards.router,  prefix="/api/flashcards", dependencies=nav_feature_gate("/api/flashcards"))
+app.include_router(study_guide.router, prefix="/api/study-guide", dependencies=nav_feature_gate("/api/study-guide"))
 app.include_router(feedback.router,    prefix="/api")
 app.include_router(careers.router,     prefix="/api/careers")
 app.include_router(onboarding.router,  prefix="/api/onboarding")
@@ -380,11 +384,11 @@ app.include_router(newsletter_router,  prefix="/api/newsletter")
 # Public, no session: the unsubscribe page linked from every email (and the
 # RFC 8058 one-click POST). Token-authenticated; see routes/email.py.
 app.include_router(email_router,       prefix="/api/email")
-app.include_router(gradebook.router,   prefix="/api/gradebook")
+app.include_router(gradebook.router,   prefix="/api/gradebook", dependencies=nav_feature_gate("/api/gradebook"))
 app.include_router(gradescope.router,  prefix="/api/gradescope")
-app.include_router(notes.router,       prefix="/api/notes")
+app.include_router(notes.router,       prefix="/api/notes", dependencies=nav_feature_gate("/api/notes"))
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
-app.include_router(gamification.router, prefix="/api/gamification")
+app.include_router(gamification.router, prefix="/api/gamification", dependencies=nav_feature_gate("/api/gamification"))
 # Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
 # session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
 app.include_router(internal_metrics_router, prefix="/api/internal")
