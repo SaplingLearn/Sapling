@@ -4,20 +4,17 @@ Paths relative to `frontend/src/` unless noted; specs in `frontend/e2e/`; seed =
 
 **Seed users:** `rich-user-active` (6 courses, graph in all 4 tiers, sessions `rich-sess-cs-recursion` 4 msgs + `rich-sess-math-vectors` 2 msgs, streak 12) · `rich-user-second` (2 courses) · `rich-user-new` (no enrollments → empty states). Frozen clock 2026-03-11.
 
-**Global switches (localStorage):** `sapling_layout` = `sidebar` (default) | `topnav` (legacy 3-col dashboard) · `sapling.kg.mode` = `2d|3d` · `sapling_disclaimer_ack=true` · `sapling_model_pref` = `fast|smart` · `sapling_shared_ctx` · `sapling_learn_rail_open` = `1|0`. Mobile = < 768px (`lib/useIsMobile.ts`). Route transitions show `app/(shell)/loading.tsx` (`shell-loading`). No flag/role gating in these three screens. `components/companion/*` is public-pages only.
+**Global switches (localStorage):** `sapling_layout` = `sidebar` (default) | `topnav` (legacy 3-col dashboard) · `sapling_disclaimer_ack=true` · `sapling_model_pref` = `fast|smart` · `sapling_shared_ctx` · `sapling_learn_rail_open` = `1|0`. Mobile = < 768px (`lib/useIsMobile.ts`). Route transitions show `app/(shell)/loading.tsx` (`shell-loading`). No flag/role gating in these three screens. `components/companion/*` is public-pages only.
 
 ## Shared: KnowledgeGraph
 
 | State id | What the user sees | Trigger | File:line | testids |
 |---|---|---|---|---|
-| graph/2d-populated | SVG force graph, course hubs, concept nodes (opacity by tier), zoom panel (+ − ⟲), "2D" pill | seeded user | graph/KnowledgeGraph2D.tsx:481-708 | graph-container, graph-node, graph-edge, graph-zoom-*, graph-mode-toggle, graph-node-activate |
-| graph/2d-empty | Blank canvas + zoom panel + toggle, no empty copy | `rich-user-new` / filters exclude all | KnowledgeGraph2D.tsx:481 | graph-container |
+| graph/2d-populated | SVG force graph, course hubs, concept nodes (opacity by tier), zoom panel (+ − ⟲) | seeded user | graph/KnowledgeGraph2D.tsx:481-708 | graph-container, graph-node, graph-edge, graph-zoom-*, graph-node-activate |
+| graph/2d-empty | Blank canvas + zoom panel, no empty copy | `rich-user-new` / filters exclude all | KnowledgeGraph2D.tsx:481 | graph-container |
 | graph/node-hover-tooltip | Card: name, course dot + subject, Mastery % bar, tier · last studied | hover node | KnowledgeGraph2D.tsx:710-775 | — |
 | graph/highlight-pulse | Animated ring on highlighted node | `highlightId` (suggest/selection) | KnowledgeGraph2D.tsx:573-582 | — |
 | graph/node-dragging | Node pinned, tooltip hidden | drag node | KnowledgeGraph2D.tsx:366-377 | — |
-| graph/3d | WebGL sphere graph, toggle "3D" | toggle / `sapling.kg.mode=3d` | graph/KnowledgeGraph3D.tsx:160-203 | graph-mode-toggle |
-| graph/no-webgl | 2D, toggle dimmed "3D requires WebGL" | stub webgl2 → null | graph/KnowledgeGraph.tsx:264-300 | graph-mode-toggle[aria-disabled] |
-| graph/crash-fallback | "The graph couldn't render here." + Try again | renderer throws (inject) | KnowledgeGraph.tsx:160-207 | graph-crash-fallback, graph-crash-retry |
 
 ## /dashboard (`components/screens/Dashboard.tsx`)
 

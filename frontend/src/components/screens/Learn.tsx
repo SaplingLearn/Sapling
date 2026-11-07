@@ -150,8 +150,8 @@ export function mergeGraphDelta(
     // real id. The raw payload carries no course_id, so anchor it to the
     // session's active course when there is one. Mirrors `addConcept`
     // (~:892): resolve color + subject from the course's subject-root node
-    // instead of a hardcoded `var(--…)` (the 3D rail can't resolve CSS
-    // custom properties — lib/data.ts:78-79 — so that rendered black). The
+    // instead of a hardcoded `var(--…)` (a CSS custom property can't be
+    // shaded per node — see `shadeFor` in lib/graph/nodeStyle.ts). The
     // root-anchoring edge is added separately by `deltaPlaceholderEdges`,
     // not here.
     const id = `stream-${normalizeConceptName(name)}`;
