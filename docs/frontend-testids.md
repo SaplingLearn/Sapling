@@ -309,10 +309,11 @@ quiz journey is what drives them.
 
 | testid | element |
 | --- | --- |
-| `graph-container` | graph wrapper root (sized box holding 2D or 3D) |
-| `graph-mode-toggle` | 2D ⇄ 3D toggle |
-| `graph-node-items` | hidden a11y node list (`<ul>`) — the whole-list handle; mirrors the rendered nodes 1:1 (2D and 3D) |
-| `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course (2D and 3D) |
+| `graph-container` | graph wrapper root (sized box holding the 2D graph) |
+| `graph-color-toggle` | "Mastery colors" switch (`aria-pressed`) — flips every graph between course colours and the per-tier mastery palette; persisted as `sapling.kg.colors` |
+| `graph-color-legend` | tier legend (Mastered/Learning/Struggling/Unexplored), shown only in mastery colours |
+| `graph-node-items` | hidden a11y node list (`<ul>`) — the whole-list handle; mirrors the rendered nodes 1:1 |
+| `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course |
 | `graph-node-activate` | the activation `<button>` inside an a11y entry (when the graph is clickable) |
 | `graph-node` | 2D SVG node group (`<g>`); carries `data-node-id={node.id}` |
 | `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
@@ -321,7 +322,7 @@ quiz journey is what drives them.
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
-| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when the renderer throws; never contains a graph |
 | `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate

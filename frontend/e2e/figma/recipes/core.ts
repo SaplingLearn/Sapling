@@ -276,25 +276,6 @@ async function startFakeSession(page: Page, topic: string, courseCode?: string):
   await expect(page.getByTestId("tutor-messages")).toContainText("What do you already know", { timeout: 30_000 });
 }
 
-/** Stub WebGL. `mode: "all"` = no WebGL at all; `"renderer"` = the capability
- *  probe (getContext("webgl2") with no attributes) succeeds but the renderer's
- *  attributed getContext returns null → three throws → graph crash boundary. */
-async function stubWebgl(page: Page, mode: "all" | "renderer"): Promise<void> {
-  await page.addInitScript((m) => {
-    const orig = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (
-      this: HTMLCanvasElement,
-      kind: string,
-      ...rest: unknown[]
-    ) {
-      const gl = kind === "webgl" || kind === "webgl2" || kind === "experimental-webgl";
-      if (gl && (m === "all" || (rest.length > 0 && rest[0] !== undefined))) return null;
-      return (orig as (this: HTMLCanvasElement, k: string, ...a: unknown[]) => unknown).call(this, kind, ...rest);
-    } as typeof HTMLCanvasElement.prototype.getContext;
-    window.localStorage.setItem("sapling.kg.mode", "3d");
-  }, mode);
-}
-
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
 const FENCE = "```";
@@ -505,7 +486,6 @@ export const RECIPES_CORE: RecipeBook = {
     run: async (page) => {
       await openTree(page);
       await visible(page, "graph-zoom-in");
-      await expect(page.getByTestId("graph-mode-toggle")).toHaveText("2D");
     },
   },
 
@@ -556,34 +536,6 @@ export const RECIPES_CORE: RecipeBook = {
       await freeze(page);
       // Drag hides the hover card.
       await expect(page.getByText("Mastery", { exact: true })).toHaveCount(0);
-    },
-  },
-
-  "graph/3d": {
-    run: async (page) => {
-      await storage(page, { "sapling.kg.mode": "3d" });
-      await page.goto("/tree");
-      await expect(page.getByTestId("graph-mode-toggle")).toHaveText("3D", { timeout: 30_000 });
-      await expect(page.getByTestId("graph-container").locator("canvas").first()).toBeVisible({ timeout: 30_000 });
-      await page.waitForTimeout(2_000);
-    },
-  },
-
-  "graph/no-webgl": {
-    run: async (page) => {
-      await stubWebgl(page, "all");
-      await openTree(page);
-      await expect(page.getByTestId("graph-mode-toggle")).toHaveAttribute("aria-disabled", "true");
-      await expect(page.getByTestId("graph-mode-toggle")).toHaveAttribute("title", "3D requires WebGL");
-    },
-  },
-
-  "graph/crash-fallback": {
-    run: async (page) => {
-      await stubWebgl(page, "renderer");
-      await page.goto("/tree");
-      await visible(page, "graph-crash-fallback");
-      await visible(page, "graph-crash-retry");
     },
   },
 

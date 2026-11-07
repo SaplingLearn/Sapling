@@ -276,24 +276,6 @@
   "nth": 0
  },
  {
-  "from": "graph/2d-populated",
-  "label": "2D",
-  "to": "graph/3d",
-  "nth": 0
- },
- {
-  "from": "graph/3d",
-  "label": "3D",
-  "to": "graph/2d-populated",
-  "nth": 0
- },
- {
-  "from": "graph/crash-fallback",
-  "label": "Try again",
-  "to": "graph/2d-populated",
-  "nth": 0
- },
- {
   "from": "dashboard/populated-sidebar",
   "label": "Search",
   "to": "lib/grid",
