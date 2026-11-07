@@ -127,7 +127,9 @@ export function Study() {
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
       <TopBar
         title="Study"
-        subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
+        // Every Study tool carries a one-line description (Flashcards here, Quiz
+        // in QuizScreen) so the header doesn't jump when switching between them.
+        subtitle={mode === "guide" ? "Exam-ready guides built from your course materials" : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
       <StudyModePanel mode={mode}>
