@@ -534,15 +534,13 @@ function NotetakerScreen() {
           style={{
             display: "flex",
             flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
             height: "100%",
             padding: 32,
-            textAlign: "center",
             gap: 12,
           }}
         >
-          <div className="label-micro">Notetaker</div>
+          <div style={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 16 }}><div className="label-micro">Notetaker</div></div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12 }}>
           <h2
             className="h-serif"
             style={{
@@ -580,6 +578,7 @@ function NotetakerScreen() {
               Add a course first to start taking notes.
             </p>
           )}
+          </div>
         </div>
         {pickerOpen && (
           <CoursePickerModal

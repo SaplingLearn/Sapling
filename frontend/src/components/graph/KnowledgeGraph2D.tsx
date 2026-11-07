@@ -65,6 +65,8 @@ type Props = {
    * simulation's spacing, which the full tree depends on.
    */
   initialZoom?: number;
+  /** Top offset of the zoom stack (default 12, flush with the corner). */
+  zoomControlsTop?: number;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -107,6 +109,7 @@ function KnowledgeGraph2DImpl({
   comparisonColor = "#8a7bc4",
   comparisonLabel,
   initialZoom = 1,
+  zoomControlsTop = 12,
 }: Props) {
   const comparisonByName = React.useMemo(() => {
     const map = new Map<string, GraphComparisonEntry>();
@@ -656,9 +659,10 @@ function KnowledgeGraph2DImpl({
       </svg>
 
       <div
+        data-testid="graph-zoom-controls"
         style={{
           position: "absolute",
-          top: 12,
+          top: zoomControlsTop,
           right: 12,
           display: "flex",
           flexDirection: "column",

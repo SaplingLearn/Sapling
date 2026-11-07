@@ -131,6 +131,9 @@ type Props = {
   height?: number;
   highlightId?: string;
   onNodeClick?: (n: GraphNode) => void;
+  /** 2D only: top offset of the zoom stack, for a host that puts its own
+   *  control (the Tree's Fullscreen icon) in the corner above it. */
+  zoomControlsTop?: number;
 };
 
 const SR_ONLY: React.CSSProperties = {

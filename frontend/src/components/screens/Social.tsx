@@ -1464,7 +1464,7 @@ export function Social() {
         display: "flex", flexDirection: "column", flexShrink: 0,
       }}>
         <div style={{ padding: "18px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><div className="h-serif" style={{ fontSize: 18, fontWeight: 500 }}>Study Rooms</div></div>
           <CreateJoinBar onDone={load} />
           <button
             data-testid="social-directory-open"
