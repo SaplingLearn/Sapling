@@ -242,6 +242,34 @@ describe("SideNav — active vs inactive", () => {
   });
 });
 
+describe("SideNav — light green rail (handoff 7a)", () => {
+  it("rounds only the right edge and keeps every row square", () => {
+    const rail = renderRail();
+    expect(rail.style.borderRadius).toMatch(/^0(px)? 36px 36px 0(px)?$/);
+    for (const a of Array.from(rail.querySelectorAll<HTMLElement>("a.sidenav-row"))) {
+      expect(a.style.borderRadius).toBe("0px");
+    }
+  });
+
+  it("marks the active row with a 3px olive left bar and nothing else", () => {
+    mockedUsePathname.mockReturnValue("/dashboard");
+    renderRail();
+    const active = screen.getByText("Dashboard").closest("a")!;
+    expect(active.hasAttribute("data-active")).toBe(true);
+    expect(active.style.boxShadow).toContain("inset 3px 0 0");
+    const idle = screen.getByText("Tree").closest("a")!;
+    expect(idle.hasAttribute("data-active")).toBe(false);
+    expect(idle.style.boxShadow).toBe("");
+  });
+
+  it("shows the full-colour logo, not the cream recolour", () => {
+    const rail = renderRail();
+    const logo = rail.querySelector("img")!;
+    expect(logo.getAttribute("src")).toBe("/design/sapling/sapling-logo-v2.png");
+    expect(logo.style.filter).toBe("");
+  });
+});
+
 describe("SideNav — collapsed state", () => {
   it("centres rows by padding, never justify-content, so the move can tween", () => {
     const rows = () =>
@@ -251,16 +279,20 @@ describe("SideNav — collapsed state", () => {
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
       expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("12px");
+      // 22px in, so the icon lines up with the logo and the avatar.
+      expect(r.style.paddingLeft).toBe("22px");
+      expect(r.style.paddingRight).toBe("12px");
       expect(r.style.transition).toMatch(/padding/);
     }
     cleanup();
     renderRail(true);
-    // 64px rail − 2×6px padding = 52px; a 15px icon centred → 18.5px.
+    // The rail has no horizontal padding: a 15px icon centred in the 64px
+    // rail → 24.5px each side.
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");
       expect(r.style.marginLeft).toBe("0px");
-      expect(r.style.paddingLeft).toBe("18.5px");
+      expect(r.style.paddingLeft).toBe("24.5px");
+      expect(r.style.paddingRight).toBe("24.5px");
     }
   });
 

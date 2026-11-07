@@ -39,13 +39,17 @@ const RULE_INSET = 8;
  * centring in the narrow rail is expressed as a computed left padding, so
  * margin and padding tween on the same curve and duration as the rail's
  * width and every icon glides from its wide position to the centre. */
-const RAIL_PAD_X = { wide: 10, narrow: 6 };
-const RAIL_INNER_NARROW = SIDE_NAV_COLLAPSED - 2 * RAIL_PAD_X.narrow;
 const ICON_SIZE = 15;
+/* The rail carries no horizontal padding: rows run flush to both edges so the
+   highlight bars span the full width. Wide rows put the icon 22px in (lined up
+   with the logo and the avatar); narrow rows centre it in the 64px rail. */
 const ROW = {
-  wide: { inset: 0, padX: 12 },
-  narrow: { inset: 0, padX: (RAIL_INNER_NARROW - ICON_SIZE) / 2 },
+  wide: { inset: 0, padL: 22, padR: 12 },
+  narrow: { inset: 0, padL: (SIDE_NAV_COLLAPSED - ICON_SIZE) / 2, padR: (SIDE_NAV_COLLAPSED - ICON_SIZE) / 2 },
 };
+/* Rail corner radius (right edge only; the left edge sits square on the
+   window). */
+const RAIL_RADIUS = 36;
 /* Wide-rail group header slot: space above the label, the label's line, and
    space below it before the first row. Kept tight so the groups read as one
    list with light dividers, not as separate blocks. */
@@ -59,7 +63,7 @@ function rowGeometry(collapsed: boolean): React.CSSProperties {
   return {
     marginLeft: r.inset,
     marginRight: r.inset,
-    padding: `6px ${r.padX}px`,
+    padding: `6px ${r.padR}px 6px ${r.padL}px`,
     overflow: "hidden",
   };
 }
@@ -75,17 +79,16 @@ function fade(collapsed: boolean): React.CSSProperties {
   };
 }
 
-/* Active/hover surfaces.
+/* Active/hover surfaces (square, full-width bars — no radius).
  *
- * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
- * which inside the olive rail resolves to a translucent cream wash (see
- * [data-app-sidenav] in globals.css), with the label in bold cream.
- * No rail, no hue on the label: the fill IS the treatment.
- *
- * Hover is the same colour at half strength, so it is unmistakably the
- * weaker, transient state and never reads as a second selection. */
+ * The selected row is a flat paper (`--bg-soft`, #FAF8F3 inside the rail) fill
+ * with a 3px olive bar on its left edge, drawn as an inset shadow so the row's
+ * geometry never shifts. The label goes bold. Hover is a paler green wash
+ * (`--sidenav-hover`), clearly the weaker, transient state, and never applies
+ * to the active row. Tokens live under [data-app-sidenav] in globals.css. */
 const NAV_ACTIVE_BG = "var(--bg-soft)";
-const NAV_HOVER_BG = "color-mix(in srgb, var(--bg-soft) 50%, transparent)";
+const NAV_ACTIVE_BAR = "inset 3px 0 0 var(--sidenav-active-bar)";
+const NAV_HOVER_BG = "var(--sidenav-hover)";
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/" || pathname.startsWith("/dashboard");
@@ -124,10 +127,13 @@ export function SideNav() {
         minWidth: width,
         height: "100%",
         background: "var(--sidenav-bg)",
-        borderRadius: "0 var(--r-lg) var(--r-lg) 0",
+        borderRadius: `0 ${RAIL_RADIUS}px ${RAIL_RADIUS}px 0`,
+        boxShadow: "0 0 0 1px rgba(74,90,56,0.06), 6px 0 24px -6px rgba(25,37,11,0.10)",
         position: "relative",
         zIndex: 1,
-        padding: `16px ${collapsed ? RAIL_PAD_X.narrow : RAIL_PAD_X.wide}px`,
+        // Vertical only: horizontal padding lives in the rows (see ROW) so the
+        // highlight bars run edge to edge.
+        padding: "16px 0",
         display: "flex",
         flexDirection: "column",
         gap: NAV_GAP,
@@ -144,15 +150,18 @@ export function SideNav() {
         style={{
           display: "flex",
           alignItems: "center",
-          padding: "0 0 14px 6px",
+          justifyContent: "flex-start",
+          // 12px of padding + 10px of margin puts the logo's left edge 22px
+          // from the rail edge, lined up with the nav icons.
+          padding: "6px 0 14px 12px",
+          margin: "0 10px 8px",
           overflow: "hidden",
           borderBottom: "1px solid var(--border)",
-          marginBottom: 8,
           textDecoration: "none",
           pointerEvents: collapsed ? "none" : undefined,
         }}
       >
-        <SaplingWordmark width={112} decorative tone="light" style={fade(collapsed)} />
+        <SaplingWordmark width={112} decorative tone="full" style={fade(collapsed)} />
       </Link>
 
       {/* The destinations scroll on their own when the viewport is too short
@@ -193,7 +202,7 @@ export function SideNav() {
           >
             <div
               className="label-micro"
-              style={{ position: "absolute", left: 10, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
+              style={{ position: "absolute", left: 20, bottom: HEADER.below, lineHeight: `${HEADER.line}px`, ...fade(collapsed) }}
             >
               {section.label}
             </div>
@@ -237,6 +246,7 @@ export function SideNav() {
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : undefined}
         onClick={() => setCollapsed(!collapsed)}
+        className="sidenav-row"
         style={{
           display: "flex",
           alignItems: "center",
@@ -245,7 +255,7 @@ export function SideNav() {
           minHeight: NAV_ITEM_MIN_HEIGHT,
           marginTop: 6,
           ...rowGeometry(collapsed),
-          borderRadius: "var(--r-xs)",
+          borderRadius: 0,
           color: "var(--text-dim)",
           fontSize: 13,
           textAlign: "left",
@@ -260,7 +270,9 @@ export function SideNav() {
           e.currentTarget.style.color = "var(--text-dim)";
         }}
       >
-        <PanelToggleIcon collapsed={collapsed} />
+        <span className="sidenav-icon" style={{ display: "inline-flex", flexShrink: 0 }}>
+          <PanelToggleIcon collapsed={collapsed} />
+        </span>
         <span aria-hidden style={{ flex: 1, ...fade(collapsed) }}>Collapse</span>
       </button>
 
@@ -308,8 +320,9 @@ export function SideNav() {
                 gap: 10,
                 flex: 1,
                 minWidth: 0,
-                // Wide: 12px in. Narrow: centred (computed, so it tweens).
-                padding: `6px ${collapsed ? (RAIL_INNER_NARROW - 30) / 2 : 12}px`,
+                // Wide: 22px in, so the avatar lines up with the nav icons.
+                // Narrow: centred (computed, so it tweens).
+                padding: `6px ${collapsed ? (SIDE_NAV_COLLAPSED - 30) / 2 : 22}px`,
                 borderRadius: "var(--r-sm)",
                 textAlign: "left",
                 overflow: "hidden",
@@ -346,6 +359,8 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
     <Link
       href={entry.href}
       data-testid={`nav-link-${entry.href.slice(1)}`}
+      data-active={active ? "" : undefined}
+      className="sidenav-row"
       title={collapsed ? entry.label : undefined}
       aria-label={collapsed ? entry.label : undefined}
       style={{
@@ -356,12 +371,13 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         // the content box on its own and the margins below actually inset it.
         // `width: 100%` would have added to them and overflowed instead.
         minHeight: NAV_ITEM_MIN_HEIGHT,
-        // Wide: the pill runs the rail's full width and the icon sits 12px
-        // inside it, on the same line as the avatar below. Narrow: the icon
+        // Wide: the bar runs the rail's full width and the icon sits 22px
+        // inside it, on the same line as the logo and avatar. Narrow: the icon
         // is centred. See ROW.
         ...rowGeometry(collapsed),
-        borderRadius: "var(--r-xs)",
+        borderRadius: 0,
         background: active ? NAV_ACTIVE_BG : "transparent",
+        boxShadow: active ? NAV_ACTIVE_BAR : undefined,
         color: active ? "var(--text)" : "var(--text-dim)",
         fontWeight: active ? 600 : 400,
         fontSize: 13,
@@ -379,7 +395,7 @@ function NavLink({ entry, active, collapsed }: { entry: Entry; active: boolean; 
         e.currentTarget.style.color = "var(--text-dim)";
       }}
     >
-      <span style={{ display: "inline-flex", flexShrink: 0 }}>
+      <span className="sidenav-icon" style={{ display: "inline-flex", flexShrink: 0 }}>
         <Icon name={entry.icon} size={ICON_SIZE} />
       </span>
       <span aria-hidden={collapsed || undefined} style={{ flex: 1, ...fade(collapsed) }}>
