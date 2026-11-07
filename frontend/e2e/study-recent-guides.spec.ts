@@ -28,7 +28,7 @@ const examPicker = (page: import("@playwright/test").Page) =>
 test("opening a recent guide keeps the exam selected, so Regenerate is usable", async ({
   page,
 }) => {
-  await page.goto("/study?mode=guide");
+  await page.goto("/study");
 
   // Before any selection the exam picker reads "Select a course first", so the
   // rail entry is the only thing named for the exam.
