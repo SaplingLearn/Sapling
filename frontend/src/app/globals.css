@@ -566,23 +566,6 @@ body { font-size: 14px; line-height: 1.5; }
   right: 24px;
   z-index: 20;
 }
-/* Study landing page (StudyHub): each tool card is one link. */
-.study-hub-card {
-  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-}
-.study-hub-card:hover,
-.study-hub-card:focus-visible {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-md, var(--shadow-sm));
-  transform: translateY(-1px);
-}
-.study-hub-card:hover .study-hub-card__cta { text-decoration: underline; text-underline-offset: 3px; }
-.study-back-link {
-  color: var(--text-muted);
-  text-decoration: none;
-}
-.study-back-link:hover,
-.study-back-link:focus-visible { color: var(--accent); }
 .study-tabs {
   display: inline-flex;
   gap: 3px;

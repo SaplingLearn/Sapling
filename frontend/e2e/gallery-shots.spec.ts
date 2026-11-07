@@ -134,7 +134,7 @@ const RECIPES: Record<string, (page: Page) => Promise<void>> = {
   },
 
   "shot-guide": async (page) => {
-    await page.goto("/study?mode=guide");
+    await page.goto("/study");
     await expect(page.getByText("Study Guide", { exact: true })).toBeVisible({
       timeout: 30_000,
     });

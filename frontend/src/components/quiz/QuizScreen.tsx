@@ -19,7 +19,6 @@ import type { CSSProperties } from "react";
 import { useSearchParams } from "next/navigation";
 import { StudyTabs } from "../StudyTabs";
 import { TopBar } from "../TopBar";
-import { StudyBackLink } from "../StudyBackLink";
 import { FullHeightScreen } from "../FullHeightScreen";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { DisclaimerModal } from "../DisclaimerModal";
@@ -209,7 +208,7 @@ export function QuizScreen() {
   return (
     <FullHeightScreen className="quiz-root" style={rootStyle}>
       <DisclaimerModal />
-      <TopBar breadcrumb={<StudyBackLink />} title="Quiz" subtitle="Test what you know." actions={<><AIDisclaimerChip /><StudyTabs mode="quiz" /></>} />
+      <TopBar title="Study" subtitle="Test what you know." actions={<><AIDisclaimerChip /><StudyTabs mode="quiz" /></>} />
       <div className={`quiz-body quiz-body--${layout}`}>
         {/* Home is full-bleed: its resume strip has to reach both edges under
             the TopBar, so the screen wraps its own content (`.quiz-col--home`

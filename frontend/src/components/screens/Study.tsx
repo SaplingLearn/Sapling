@@ -4,7 +4,6 @@ import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { StudyTabs } from "../StudyTabs";
 import { TopBar } from "../TopBar";
-import { StudyBackLink } from "../StudyBackLink";
 import { AIDisclaimerChip } from "../chat/AIDisclaimerChip";
 import { Icon } from "../Icon";
 import { FilterPills } from "@/components/ui";
@@ -128,8 +127,7 @@ export function Study() {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
       <TopBar
-        breadcrumb={<StudyBackLink />}
-        title={mode === "guide" ? "Study Guide" : "Flashcards"}
+        title="Study"
         subtitle={mode === "guide" ? undefined : "Spaced review with ratings and a 3D flip"}
         actions={actions}
       />
