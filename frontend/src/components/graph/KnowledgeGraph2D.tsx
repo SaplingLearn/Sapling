@@ -70,6 +70,8 @@ type Props = {
   /** `course` (default): course colours, tier as opacity. `mastery`: one
    *  colour per mastery tier, hubs brown, edges blend between their ends. */
   colorMode?: GraphColorMode;
+  /** Top offset of the zoom stack (default 12, flush with the corner). */
+  zoomControlsTop?: number;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -113,6 +115,7 @@ function KnowledgeGraph2DImpl({
   comparisonLabel,
   initialZoom = 1,
   colorMode = "course",
+  zoomControlsTop = 12,
 }: Props) {
   const mastery = colorMode === "mastery";
   // Per-instance prefix for the edge-gradient ids: several graphs can share
@@ -696,9 +699,10 @@ function KnowledgeGraph2DImpl({
       </svg>
 
       <div
+        data-testid="graph-zoom-controls"
         style={{
           position: "absolute",
-          top: 12,
+          top: zoomControlsTop,
           right: 12,
           display: "flex",
           flexDirection: "column",
