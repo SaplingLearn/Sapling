@@ -257,7 +257,6 @@ export function Tree() {
     return edges.filter(e => ids.has(typeof e.source === "string" ? e.source : "") && ids.has(typeof e.target === "string" ? e.target : ""));
   }, [edges, filteredNodes]);
 
-  const conceptCount = filteredNodes.filter(n => !n.is_subject_root).length;
 
   const sessionsForSelected = React.useMemo(() => {
     if (!selected) return [];
@@ -445,10 +444,10 @@ export function Tree() {
         subtitle="The living map of what you've learned, organized by course."
       />
 
-      {/* One toolbar: search, course, mastery status, then Add concept and the
-          count. Course is a dropdown so the row never wraps however many
-          courses a student has; the status pills stay pills because their
-          colours double as the graph's legend. */}
+      {/* One toolbar. Left: search, course, and Add concept (it needs a single
+          course). Right: the mastery-status pills, kept as pills because their
+          colours double as the graph's legend. Course is a dropdown so the row
+          never wraps however many courses a student has. */}
       <div
         data-testid="tree-toolbar"
         style={{
@@ -499,19 +498,6 @@ export function Tree() {
             })),
           ]}
         />
-        <FilterPills
-          options={[
-            { value: "all" as Tier, label: "All" },
-            ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
-              value: t as Tier,
-              label: TIER_META[t].label,
-              color: TIER_META[t].color,
-            })),
-          ]}
-          value={tier}
-          onChange={setTier}
-        />
-        <div style={{ flex: 1 }} />
         {courseFilter !== "all" && (
           addingConcept ? (
             <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
@@ -549,8 +535,20 @@ export function Tree() {
             </button>
           )
         )}
-        <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {conceptCount} node{conceptCount === 1 ? "" : "s"}
+        {/* Right side: the mastery-status filter (its colours are the legend). */}
+        <div style={{ marginLeft: "auto" }}>
+          <FilterPills
+            options={[
+              { value: "all" as Tier, label: "All" },
+              ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
+                value: t as Tier,
+                label: TIER_META[t].label,
+                color: TIER_META[t].color,
+              })),
+            ]}
+            value={tier}
+            onChange={setTier}
+          />
         </div>
       </div>
 
