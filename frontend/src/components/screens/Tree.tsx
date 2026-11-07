@@ -575,19 +575,26 @@ export function Tree() {
                 height={size.h}
                 highlightId={suggestId || selected?.id}
                 onNodeClick={(n) => setSelected(n)}
+                zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
               />
-              {/* Lives on the graph it enlarges, top-right, just left of the
-                  zoom stack (top 12 / right 12 in KnowledgeGraph2D). */}
+              {/* The graph's own top-right corner: a Fullscreen icon the
+                  width of the zoom stack, which sits directly below it. */}
               <button
+                type="button"
                 data-testid="graph-fullscreen"
-                className="btn btn--sm"
+                aria-label="Fullscreen"
+                title="Fullscreen"
+                className="btn btn--ghost btn--sm"
                 onClick={() => setFullscreen(true)}
                 style={{
-                  position: "absolute", top: 12, right: 60, zIndex: 5,
-                  background: "var(--bg-panel)", boxShadow: "var(--shadow-sm)",
+                  position: "absolute", top: FULLSCREEN_BTN.top, right: 12, zIndex: 5,
+                  width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h, padding: 0,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-panel)", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-sm)", boxShadow: "var(--shadow-sm)",
                 }}
               >
-                <Icon name="max" size={13} /> Fullscreen
+                <Icon name="max" size={13} />
               </button>
             </>
           )}
@@ -678,6 +685,10 @@ function FullscreenGraph({
     </div>
   );
 }
+
+/** The graph-corner Fullscreen icon: as wide as the 2D zoom stack (36px:
+ *  4px padding + 26px buttons + 1px borders) so the two read as one column. */
+const FULLSCREEN_BTN = { top: 12, w: 36, h: 32 };
 
 /** A course row in the Tree's course dropdown: colour dot + code. "All
  *  courses" passes no colour and gets a hollow dot so the labels align. */
