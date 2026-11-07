@@ -1,7 +1,6 @@
 "use client";
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { PageActions } from "../ShellActions";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
@@ -512,7 +511,6 @@ export function Dashboard() {
           >
             <Icon name="sparkle" size={13} /> Start learning
           </button>
-          <PageActions />
         </div>
       )}
 
