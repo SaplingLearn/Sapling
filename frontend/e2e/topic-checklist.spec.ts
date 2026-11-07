@@ -6,6 +6,7 @@ const recursionId = createHash("sha256").update("recursion").digest("hex").slice
 
 test("course checklist persists study checks without manufacturing mastery", async ({ page }) => {
   await page.goto("/tree");
+  await page.getByTestId("graph-course-filter").click();
   await page.getByTestId("graph-course-filter-rich-course-cs101").click();
   await page.getByTestId("topic-checklist-toggle").click();
   const checkbox = page.getByTestId(`topic-checklist-check-${recursionId}`);
@@ -26,6 +27,7 @@ test("course checklist persists study checks without manufacturing mastery", asy
   expect(Number(graph[0].mastery_score)).toBe(0.25);
 
   await page.reload();
+  await page.getByTestId("graph-course-filter").click();
   await page.getByTestId("graph-course-filter-rich-course-cs101").click();
   await page.getByTestId("topic-checklist-toggle").click();
   await expect(page.getByTestId(`topic-checklist-check-${recursionId}`)).toBeChecked();
