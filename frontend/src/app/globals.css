@@ -35,7 +35,7 @@
   --brand-forest-bright: #597536;
   --brand-forest-bright-hover: #4B6627;
   /* The SideNav rail's fill; read by the rail and the ShellFrame corners. */
-  --sidenav-bg: var(--brand-forest);
+  --sidenav-bg: #dce8ce;
 
   /* Brand greens — the original ramp's lightness/chroma steps, re-hued onto
      the olive (OKLCH h≈129) so tints and the brand anchor read as one family. */
@@ -587,19 +587,37 @@ body { font-size: 14px; line-height: 1.5; }
 }
 .study-tabs a:hover { color: var(--accent); }
 
-/* The rail is the one olive-filled surface in the shell. Rather than thread
-   light-on-dark colours through every row, it re-declares the semantic tokens
-   its children already read (text, border, the --bg-soft active fill, the
-   focus --accent), so SideNav keeps speaking in shell tokens and the swap
-   lives here. Text steps hold ≥4.5:1 on #445D22. Its fill, --sidenav-bg, is
-   declared on :root so every shell layout uses the same rail fill. */
+/* The rail is a light green surface (sidebar handoff 7a). It re-declares the
+   semantic tokens its children already read (text, border, the --bg-soft
+   active fill, the focus --accent), so SideNav keeps speaking in shell tokens
+   and the swap lives here. Measured contrast on #DCE8CE: headings #4A5A38
+   5.86:1, idle icons #416207 5.54:1; active icon #416207 on #FAF8F3 6.4:1;
+   hover icon #597536 on #EBF0E1 4.50:1. Its fill, --sidenav-bg, is declared
+   on :root so every shell layout uses the same rail fill. */
 [data-app-sidenav] {
-  --text:        #faf8f3;
-  --text-dim:    rgba(250, 248, 243, 0.86);
-  --text-muted:  rgba(250, 248, 243, 0.72);
-  --border:      rgba(250, 248, 243, 0.14);
-  --bg-soft:     rgba(250, 248, 243, 0.16);
-  --accent:      #faf8f3;
+  --text:        #1a1814;
+  --text-dim:    #3f3b31;
+  --text-muted:  #4a5a38;
+  --border:      rgba(74, 90, 56, 0.22);
+  --bg-soft:     #faf8f3;
+  --accent:      #445d22;
+  --sidenav-hover:       #ebf0e1;
+  --sidenav-icon:        #416207;
+  --sidenav-icon-hover:  #597536;
+  --sidenav-active-bar:  #445d22;
+  /* Progressive enhancement: the squircle curve where supported, a plain
+     circular arc (the border-radius set on the rail) everywhere else. */
+  corner-shape: squircle;
+}
+
+/* Nav icons take their own colour, separate from the label: green at rest,
+   a step brighter on hover. The active row keeps the resting green. */
+[data-app-sidenav] .sidenav-icon {
+  color: var(--sidenav-icon);
+  transition: color var(--dur-fast) var(--ease);
+}
+[data-app-sidenav] .sidenav-row:not([data-active]):hover .sidenav-icon {
+  color: var(--sidenav-icon-hover);
 }
 
 /* Settings' "label on the left, control on the right" profile rows. */
