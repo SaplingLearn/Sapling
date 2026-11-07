@@ -72,10 +72,14 @@ function renderRail(collapsed = false) {
 /** Every nav row is an <a> inside the rail. The logo is the one <a> that is
  *  not a nav row (it keeps its aria-label in both states, so filter on that
  *  rather than on text — the wordmark is dropped when collapsed). */
+// Destination rows only: the logo and the account block (the Settings button
+// in the footer) are links too, but neither is a nav row.
+const isNavRow = (a: Element) =>
+  a.getAttribute("aria-label") !== "Sapling — home" &&
+  a.getAttribute("data-testid") !== "nav-link-settings";
+
 function navRows(rail: HTMLElement): HTMLElement[] {
-  return Array.from(rail.querySelectorAll("a")).filter(
-    (a) => a.getAttribute("aria-label") !== "Sapling — home",
-  ) as HTMLElement[];
+  return Array.from(rail.querySelectorAll("a")).filter(isNavRow) as HTMLElement[];
 }
 
 beforeEach(() => {
@@ -165,15 +169,43 @@ describe("SideNav — interactive row height floor", () => {
   });
 });
 
+describe("SideNav — the logo", () => {
+  const symbolOf = (rail: HTMLElement) =>
+    rail.querySelector<HTMLElement>("[data-sidenav-symbol]")!;
+
+  it("shows the wordmark wide and the Sapling symbol narrow, both as a live home link", () => {
+    let rail = renderRail(false);
+    let home = screen.getByRole("link", { name: "Sapling — home" });
+    expect(home.getAttribute("href")).toBe("/dashboard");
+    expect(symbolOf(rail).style.opacity).toBe("0");
+    cleanup();
+    rail = renderRail(true);
+    home = screen.getByRole("link", { name: "Sapling — home" });
+    expect(symbolOf(rail).style.opacity).toBe("1");
+    expect(home.contains(symbolOf(rail))).toBe(true);
+    // Reachable in the narrow rail too: it is the only logo left on screen.
+    expect(home.getAttribute("tabindex")).toBeNull();
+    expect(home.style.pointerEvents).toBe("");
+  });
+});
+
 describe("SideNav — the account footer", () => {
   const footerOf = (rail: HTMLElement) =>
     rail.querySelector<HTMLElement>("[data-sidenav-footer]")!;
+
+  it("makes the whole account block the Settings button", () => {
+    const rail = renderRail();
+    const settings = screen.getByRole("link", { name: "Settings" });
+    expect(settings.getAttribute("href")).toBe("/settings");
+    expect(footerOf(rail).contains(settings)).toBe(true);
+    // The avatar is inside the link, not beside it.
+    expect(settings.contains(screen.getByTestId("avatar"))).toBe(true);
+  });
 
   it("opens the account footer with one full-width rule", () => {
     const rail = renderRail();
     const footer = footerOf(rail);
     expect(footer.style.borderTop).toBe("1px solid var(--border)");
-    expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
 
     // The profile block (the one holding the avatar) owns no rule of its own.
     let node: HTMLElement | null = screen.getByTestId("avatar").closest("div[style]");
@@ -188,14 +220,15 @@ describe("SideNav — the account footer", () => {
     mockUser.isAdmin = true;
     const rail = renderRail();
     const admin = screen.getByText("Admin").closest("a")!;
-    expect(footerOf(rail).firstElementChild).toBe(admin);
+    // Collapse opens the footer; Admin follows it, under the same rule.
+    expect(footerOf(rail).firstElementChild?.nextElementSibling).toBe(admin);
     expect(admin.parentElement).toBe(footerOf(rail));
   });
 
-  it("puts the collapse toggle directly above the footer rule in both widths", () => {
+  it("puts the collapse toggle just under the footer rule in both widths", () => {
     let rail = renderRail(false);
     const collapse = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(footerOf(rail).previousElementSibling).toBe(collapse);
+    expect(footerOf(rail).firstElementChild).toBe(collapse);
     // Wide rail: a labelled row. Narrow rail: the chevron alone (the label
     // stays mounted so it can fade, but is invisible and aria-hidden).
     const collapseLabel = within(collapse).getByText("Collapse");
@@ -203,7 +236,7 @@ describe("SideNav — the account footer", () => {
     cleanup();
     rail = renderRail(true);
     const expand = screen.getByRole("button", { name: "Expand sidebar" });
-    expect(footerOf(rail).previousElementSibling).toBe(expand);
+    expect(footerOf(rail).firstElementChild).toBe(expand);
     expect(within(expand).getByText("Collapse").style.opacity).toBe("0");
   });
 
@@ -246,7 +279,7 @@ describe("SideNav — collapsed state", () => {
   it("centres rows by padding, never justify-content, so the move can tween", () => {
     const rows = () =>
       Array.from(document.querySelectorAll<HTMLElement>("[data-app-sidenav] a[href^='/']"))
-        .filter((a) => a.getAttribute("aria-label") !== "Sapling — home");
+        .filter(isNavRow);
     renderRail(false);
     for (const r of rows()) {
       expect(r.style.justifyContent).toBe("");

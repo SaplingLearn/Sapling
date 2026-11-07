@@ -557,6 +557,15 @@ body { font-size: 14px; line-height: 1.5; }
 @media (pointer: coarse) {
   .shell-action { width: 44px; height: 44px; }
 }
+/* The sidebar layout's one Report button: pinned to the content column's
+   bottom-right corner (ShellFrame), the same spot on every page. Above page
+   content; dialogs (z 200+) still cover it. */
+.shell-corner-actions {
+  position: absolute;
+  bottom: 20px;
+  right: 24px;
+  z-index: 20;
+}
 .study-tabs {
   display: inline-flex;
   gap: 3px;

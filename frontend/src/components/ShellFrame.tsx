@@ -3,6 +3,7 @@
 import React, { Suspense } from "react";
 import { TopNav } from "./TopNav";
 import { SideNav } from "./SideNav";
+import { ShellCornerActions } from "./ShellActions";
 import { FeedbackFlow } from "./FeedbackFlow";
 import { SessionFeedbackGlobal } from "./SessionFeedbackGlobal";
 import { AchievementUnlockWatcher } from "./AchievementUnlockWatcher";
@@ -58,6 +59,8 @@ export function ShellFrame({ children }: { children: React.ReactNode }) {
           >
             <NavFeatureGate>{children}</NavFeatureGate>
           </main>
+          {/* Outside <main>, so it never scrolls with the page. */}
+          <ShellCornerActions />
         </div>
         <Suspense fallback={null}>
           <FeedbackFlow />
