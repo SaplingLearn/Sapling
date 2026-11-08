@@ -234,7 +234,9 @@ const CHANNEL_LABEL: Record<string, string> = {
   free_response: "Free response",
   mc_reasoned: "Choice + reason",
   teachback_llm: "Teach-back",
-  mc: "Multiple choice",
+  // The quiz writes every format under `mc` (spec §13 A10), and nothing else
+  // writes it; its stated confidence arrives with A132.
+  mc: "Quiz",
   chat_turn: "Chat turn",
 };
 const LEVEL_LABEL: Record<string, string> = {
@@ -270,7 +272,7 @@ function ConfidenceRows({ id, label, report }: { id: string; label: string; repo
 }
 
 /** Spec §13 A127: do students know what they know? The confidence a student
- *  stated on a check, probe or review answer ("Guessing" / "Fairly sure" /
+ *  stated on a check, probe, review or quiz answer ("Guessing" / "Fairly sure" /
  *  "Sure") against whether it was right, per channel — the students' own
  *  calibration, beside the model's. Overconfidence above 0: surer than right. */
 function ConfidenceCalibrationTable({ data }: { data: LearningLoopKpisData["confidence_calibration"] }) {

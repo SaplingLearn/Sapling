@@ -25,6 +25,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnswerOption, Badge, Button, ProgressDots, type AnswerState } from "@/components/ui";
 import { ConceptNode } from "@/components/graph/ConceptNode";
+import { ConfidenceControl } from "@/components/learn/ConfidenceControl";
 import { Skeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/ToastProvider";
 import type { QuizActions } from "@/lib/quiz/useQuizSession";
@@ -111,6 +112,7 @@ export function QuizQuestion({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
+  const confidenceRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   const askRef = useRef<HTMLButtonElement>(null);
   const shortToastRef = useRef<string | null>(null);
@@ -239,6 +241,12 @@ export function QuizQuestion({
     if (askOpen || phase === "confirm-leave") return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (isTypingTarget(e.target)) return;
+    // The confidence group owns its keys (learning-loop spec §13 A127 (b),
+    // A132): Enter or Space on a level chooses it rather than submitting, and
+    // a letter there is not an answer shortcut. Escape still leaves.
+    if (e.key !== "Escape" && e.target instanceof Node && confidenceRef.current?.contains(e.target)) {
+      return;
+    }
 
     if (e.key === "Escape") {
       if (phase !== "active" && phase !== "answered") return;
@@ -455,6 +463,20 @@ export function QuizQuestion({
             />
           ))}
         </div>}
+
+        {/* Learning-loop spec §13 A132: A127's optional "How sure are you?" on
+            every quiz question, either format. Choosing makes no request — the
+            level rides this question's `/answer` — and Submit never waits on
+            it. Rendered in every live phase so nothing moves when the verdict
+            lands; it stops taking changes once the answer is sent. */}
+        <div ref={confidenceRef} className="quiz-question__confidence">
+          <ConfidenceControl
+            testIdPrefix="quiz-confidence"
+            value={item?.confidence ?? null}
+            onChange={level => actions.setConfidence?.(level)}
+            disabled={!selectable || item?.verdict != null}
+          />
+        </div>
 
         <div
           ref={feedbackRef}
