@@ -30,6 +30,8 @@ import { humanizeError } from "@/lib/errorMessage";
 import { withheldNotice } from "@/lib/integrityNotice";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
+import { CrisisSupportCard, useCrisisSupport } from "@/components/safety/CrisisSupportCard";
+import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 
 type Mastery = "mastered" | "learning" | "struggling" | "unexplored";
 
@@ -134,6 +136,8 @@ function NotetakerScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
+  // docs/safety/crisis-support.md: a note action the crisis screen answered
+  const crisis = useCrisisSupport();
 
   const [courses, setCourses] = React.useState<Course[]>([]);
   const [notes, setNotes] = React.useState<Note[]>([]);
@@ -370,9 +374,10 @@ function NotetakerScreen() {
     await runAction(noteId, "summarize", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        const { summary } = await summarizeNote(noteId, userId);
+        const res = await summarizeNote(noteId, userId);
+        if (crisis.intercept(res)) return; // no summary was made or saved
         setNotes((prev) =>
-          prev.map((n) => (n.id === noteId ? { ...n, lastSummary: summary } : n)),
+          prev.map((n) => (n.id === noteId ? { ...n, lastSummary: res.summary ?? n.lastSummary } : n)),
         );
       } catch (e) {
         console.error("Summarize failed", e);
@@ -388,6 +393,7 @@ function NotetakerScreen() {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
         const res = await extractNoteConcepts(noteId, userId);
+        if (crisis.intercept(res)) return; // nothing was extracted or linked
         // spec §13 A125: names held back for giving away an open check's answer
         if (res?.withheld) toast.warn(withheldNotice(res.withheld, "concept"));
         await refreshActiveConcepts();
@@ -419,9 +425,10 @@ function NotetakerScreen() {
     await runAction(noteId, "tutor", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        const { topic, course_id } = await sendNoteToTutor(noteId, userId);
+        const res = await sendNoteToTutor(noteId, userId);
+        if (crisis.intercept(res)) return; // the card instead of a tutor session
         router.push(
-          `/learn?topic=${encodeURIComponent(topic)}&course=${encodeURIComponent(course_id)}`,
+          `/learn?topic=${encodeURIComponent(res.topic ?? "")}&course=${encodeURIComponent(res.course_id ?? "")}`,
         );
       } catch (e) {
         console.error("Send to tutor failed", e);
@@ -697,6 +704,7 @@ function NotetakerScreen() {
           onClose={() => setConceptPickerOpen(false)}
         />
       )}
+      {crisis.dialog}
     </div>
   );
 }
@@ -1773,7 +1781,7 @@ function ConceptPickerModal({
   );
 }
 
-type ChatMessage = { role: "user" | "ai"; text: string };
+type ChatMessage = { role: "user" | "ai"; text: string; crisis?: CrisisSupport };
 
 function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
@@ -1811,9 +1819,10 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
     setError(null);
     setSending(true);
     try {
-      const { reply } = await noteChat(sentFor, userId, text);
+      const res = await noteChat(sentFor, userId, text);
       if (currentNoteRef.current !== sentFor) return;
-      setMessages((prev) => [...prev, { role: "ai", text: reply }]);
+      const crisis = crisisSupportIn(res); // docs/safety/crisis-support.md
+      setMessages((prev) => [...prev, { role: "ai", text: res.reply, ...(crisis ? { crisis } : {}) }]);
     } catch (e) {
       console.error("Chat failed", e);
       if (currentNoteRef.current !== sentFor) return;
@@ -1880,7 +1889,9 @@ function AIChatPanel({ noteId, userId }: { noteId: string; userId: string }) {
             check a definition, or surface related ideas.
           </div>
         ) : (
-          messages.map((m, i) => (
+          messages.map((m, i) => m.crisis ? (
+            <CrisisSupportCard key={i} support={m.crisis} />
+          ) : (
             <div
               key={i}
               style={{

@@ -38,6 +38,7 @@ vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] 
 import { ApiError } from "@/lib/api";
 import { __resetFeedbackPacingForTests, feedbackHeld } from "@/lib/feedbackPacing";
 import { DueQueue } from "./DueQueue";
+import crisisFixture from "@/test-utils/crisisSupport.json";
 
 const SR = { stage: "acquire", correct: 0, target: 3 } as const;
 const next = (item: unknown, remaining = 600, due = item ? 1 : 0) => ({
@@ -245,6 +246,29 @@ describe("DueQueue", () => {
       expect.objectContaining({ kind: "flashcard", item_id: "f1", rating: 2 }),
     );
     expect(await screen.findByTestId("review-next")).toBeTruthy();
+  });
+
+  it("shows the crisis-support card instead of a grade; the item stays due (docs/safety/crisis-support.md)", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer
+      // the route's neutral keys: nothing recorded (`unavailable`), the item stays due
+      .mockResolvedValueOnce({ correct: null, unavailable: true, refused: false, reply: "…", crisis_support: crisisFixture })
+      .mockResolvedValueOnce(graded());
+    render(<DueQueue userId="u1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "i want to die");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(crisisFixture.title);
+    expect(screen.queryByTestId("review-hint")).toBeNull(); // nothing was graded
+    expect(screen.queryByTestId("review-next")).toBeNull();
+    await userEvent.click(screen.getByTestId("crisis-support-dismiss"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // still answerable, the typed text cleared
+    expect((screen.getByTestId("review-answer-input") as HTMLInputElement).value).toBe("");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect((await screen.findByTestId("review-hint")).textContent).toContain("Correct.");
   });
 
   it("asks for the student's own words after a refusal and lets them answer again", async () => {

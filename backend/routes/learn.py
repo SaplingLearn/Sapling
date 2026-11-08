@@ -20,7 +20,7 @@ from agents.usage import record_agent_usage, served_model_name
 from db.connection import table
 from services.session_modes import NOT_REVIEW, REVIEW_MODE
 from learning.gate import learning_loop_for_request
-from services import ai_budget, events_service
+from services import ai_budget, crisis_support, events_service
 from services.academics import offering_course_id, resolve_offering
 from models import StartSessionBody, ChatBody, EndSessionBody, ActionBody, ModeSwitchBody, RenameSessionBody
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
@@ -1023,9 +1023,20 @@ async def _start_session_agent(
     }
 
 
+def _start_texts(body: StartSessionBody) -> tuple[str | None, ...]:
+    """The student-written text a session start hands the opener model."""
+    return (body.topic, body.goal.text if body.goal is not None else None)
+
+
 @router.post("/start-session")
 async def start_session(body: StartSessionBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    # docs/safety/crisis-support.md: before the rate limit, the budget and the
+    # loop delegation; no session is opened (nothing is stashed or written)
+    if crisis := await crisis_support.screen_async(body.user_id, "tutor_start", *_start_texts(body)):
+        return crisis_support.json_body(
+            crisis, session_id=None, initial_message=crisis.reply, graph_state=None
+        )
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
     ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the
@@ -1386,6 +1397,10 @@ async def _chat_turn_json(
 @router.post("/chat")
 async def chat(body: ChatBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    # docs/safety/crisis-support.md: before the session checks, the rate limit,
+    # the budget and the loop delegation; nothing of the turn is written
+    if crisis := await crisis_support.screen_async(body.user_id, "tutor_chat", body.message):
+        return crisis_support.turn_json(crisis)
     # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
     _require_turn_session(body.session_id, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
@@ -1421,6 +1436,8 @@ async def chat_stream(body: ChatBody, request: Request):
     persisted is replayed (here and on /chat) instead of run again.
     """
     await guard_off_loop(require_self, body.user_id, request)
+    if crisis := await crisis_support.screen_async(body.user_id, "tutor_chat", body.message):
+        return crisis_support.sse_response(crisis, request)
     # #761 entry checks (not discarded, owned) before the rate-limit read (A93 review)
     _require_turn_session(body.session_id, body.user_id)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
@@ -1574,6 +1591,8 @@ async def start_session_stream(body: StartSessionBody, request: Request):
     a fresh session.
     """
     await guard_off_loop(require_self, body.user_id, request)
+    if crisis := await crisis_support.screen_async(body.user_id, "tutor_start", *_start_texts(body)):
+        return crisis_support.sse_response(crisis, request, session_id=None)
     # A20: one rate-limit read for both paths, AFTER the ownership check (A93 review).
     ai_budget.enforce_rate_limit_for(body.user_id)
     # Learning loop (spec §7): delegate when the gate is true (the default); below is the

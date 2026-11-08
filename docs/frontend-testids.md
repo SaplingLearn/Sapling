@@ -98,6 +98,7 @@ renders the element.
 | Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) |
 | Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
+| Crisis support | `crisis-support` | `frontend/src/components/safety/CrisisSupportCard.tsx` (the card shown instead of an AI turn when the crisis screen fired, inline or in its dialog — docs/safety/crisis-support.md) |
 | Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
 | Admin allowlist | `allowlist` | `frontend/src/components/screens/admin/AllowlistTab.tsx` (the `allowlist` tab: waitlist with status filters, row selection + bulk approve behind a confirm dialog, per-row "you're in" invite status) |
@@ -686,6 +687,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-no-course-link` | the knowledge-map link inside `loop-no-course` |
 | `loop-start-error` | a new session could not start (a 429 or an error on `/start-session`) — never an empty probe |
 | `loop-start-retry` | retry the start |
+| `loop-start-crisis` | `/start-session` answered with the crisis-support card (no session was opened); the card's `crisis-support-dismiss` starts a fresh session on the course (docs/safety/crisis-support.md) |
 | `loop-topic-offer` | a `?topic=` deep link arrived while a session is open: the session resumed, the topic is offered |
 | `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
@@ -831,6 +833,22 @@ button/input/textarea), just the two list cards and their rows.
 | `adminfb-feedback-row` | one feedback entry (repeated, no suffix — read-only list, no per-row action to select) |
 | `adminfb-issues-card` | issue-report list card root |
 | `adminfb-issue-row` | one issue report (repeated, no suffix) |
+
+### `crisis-support`
+
+The crisis-support card (docs/safety/crisis-support.md). Owner:
+`frontend/src/components/safety/CrisisSupportCard.tsx`. Inline it renders in
+a conversation (`tutor-messages`, the quiz's Ask panel, the notes chat); its
+dialog form is `role="dialog"`, labelled by the card's title, over a surface
+with no conversation. All its text comes from the backend payload, so a
+journey asserts the payload's strings, never literals written in the spec.
+
+| testid | element |
+| --- | --- |
+| `crisis-support-card` | the card's root (`<section>`, labelled by its title) |
+| `crisis-support-resource-{id}` | one resource; `id` is the payload's (`lifeline_988`, `crisis_text_line`, `campus_counseling`, `emergency`, `international`) |
+| `crisis-support-action` | one tappable way to reach a resource (`tel:`, `sms:` or `https:` link; repeated) |
+| `crisis-support-dismiss` | "Back to studying": closes the dialog (or, on the loop's start, starts a fresh session) |
 
 ## Enforcement
 

@@ -10,6 +10,12 @@ model, and model text stating one's key is never served. send-to-tutor and
 generate-quiz call no model: they hand the client a topic or a concept node, and
 the tutor that topic opens is the loop's, whose served turns it scans itself
 (A88/A93).
+
+Before any of that, the four actions that hand note text to a model or the
+tutor (chat, summarize, extract-concepts, send-to-tutor) screen it for crisis
+language (docs/safety/crisis-support.md). On a match the support card is the
+response: the integrity guard never opens, so a student in crisis is never
+answered with an integrity refusal, and no posed-items read is made.
 """
 from __future__ import annotations
 
@@ -30,7 +36,7 @@ from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
 from learning.gate import learning_loop_for_request
-from services import events_service, integrity_guard
+from services import crisis_support, events_service, integrity_guard
 from services.academics import offering_course_id, resolve_offering, term_id_for_label
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
@@ -361,6 +367,12 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
+def _note_texts(note: dict) -> tuple[str | None, ...]:
+    """The student-written note text an agent action hands a model (the title
+    and body; `last_summary` is model output, not the student's words)."""
+    return (note.get("title"), note.get("body"))
+
+
 async def _integrity_guard(
     user_id: str, surface: str, texts: Iterable[str | None]
 ) -> integrity_guard.Guard:
@@ -395,6 +407,11 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # docs/safety/crisis-support.md: no summary is generated or saved. The
+    # crisis screen runs BEFORE the A125 integrity guard: a student in crisis
+    # gets the card, never a refusal, and no posed-items read is made for them.
+    if crisis := await crisis_support.screen_async(body.user_id, "note_summarize", *_note_texts(note)):
+        return crisis_support.json_body(crisis)
     # spec §13 A125: a note holding one of the student's posed checks is never
     # handed to the model; a summary stating one's key is never saved or served
     guard = await _integrity_guard(
@@ -427,6 +444,12 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # crisis support: no concepts are extracted, merged or linked (the crisis
+    # screen first, then the A125 integrity guard, as in summarize)
+    if crisis := await crisis_support.screen_async(
+        body.user_id, "note_extract_concepts", *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis)
     # spec §13 A125: as summarize; a concept name the note itself holds is the
     # student's own word (never scanned), any other name stating a posed
     # check's key is dropped before it is filed or returned
@@ -477,6 +500,12 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # crisis support: the message, and the note the chat agent reads (the
+    # crisis screen first, then the A125 integrity guard, as in summarize)
+    if crisis := await crisis_support.screen_async(
+        body.user_id, "note_chat", body.message, *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis, degraded=False)
     # spec §13 A125: the message and the note the agent grounds in (its
     # read_active_note tool serves this very row, deps.note) are checked against
     # the student's posed items before any model call; the reply after it
@@ -529,6 +558,11 @@ async def send_to_tutor(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # crisis support: nothing is handed to the tutor (no topic, no preface)
+    if crisis := await crisis_support.screen_async(
+        body.user_id, "note_send_to_tutor", *_note_texts(note)
+    ):
+        return crisis_support.json_body(crisis)
     title = (note.get("title") or "").strip() or "Untitled note"
     topic = title.splitlines()[0][:80]
     preface_parts: list[str] = []

@@ -80,6 +80,8 @@ import { readResumeParam } from "./resumeParam";
 import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary, GoalEditor } from "./LearningScope";
 import { ReportQuestion } from "./ReportQuestion";
+import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
+import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -181,6 +183,9 @@ const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.p
 export function LoopLearn() {
   const { userId } = useUser();
   const toast = useToast();
+  // docs/safety/crisis-support.md: an action with no conversation to answer in
+  // (a session start, a goal, a probe answer, a hint attempt) shows the card here
+  const { intercept: interceptCrisis, dialog: crisisDialog } = useCrisisSupport();
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -201,6 +206,12 @@ export function LoopLearn() {
   // A route the current view is waiting on failed (not a budget pause): the
   // panel offers a retry instead of sitting empty.
   const [loadError, setLoadError] = useState<"start" | "probe" | "plan" | null>(null);
+  // docs/safety/crisis-support.md: a session start answered with the card (no
+  // session was opened) shows it where the session would be
+  const [startCrisis, setStartCrisis] = useState<CrisisSupport | null>(null);
+  // A chat message the budget pause answered (no reply) comes back to the
+  // composer: ChatPanel applies `text` whenever `key` changes.
+  const [chatDraft, setChatDraft] = useState<{ text: string; key: number }>({ text: "", key: 0 });
 
   // Goals are session-owned. New sessions start whole-course; typed topic text
   // never silently selects targets, and nothing is inherited across courses.
@@ -467,6 +478,7 @@ export function LoopLearn() {
     setGoalError(null);
     setStarting(false);
     setLoadError(null);
+    setStartCrisis(null);
     setProbeItem(null);
     setProbeDraft(EMPTY_DRAFT);
     setProbeReference(null);
@@ -656,6 +668,8 @@ export function LoopLearn() {
     try {
       const r = await startLoopSession(userId, courseId, topic || course?.course_name || "", mode);
       if (g !== gen.current) return;
+      const crisisSupport = crisisSupportIn(r);
+      if (crisisSupport) { setStartCrisis(crisisSupport); return; } // no session was opened
       setSessionId(r.session_id);
       sessionRef.current = r.session_id;
       applyLearningScope(r);
@@ -832,6 +846,7 @@ export function LoopLearn() {
     try {
       const r = await answerLoopProbe(sessionId, userId, probeItem.question_hash, a);
       if (g !== gen.current) return;
+      if (interceptCrisis(r)) { setProbeDraft(EMPTY_DRAFT); return; } // still posed, ungraded
       await applyProbeAnswer(r, g);
     } catch (err) {
       if (g === gen.current) {
@@ -859,6 +874,7 @@ export function LoopLearn() {
     try {
       const response = await setLoopGoal(sid, userId, requested);
       if (g !== gen.current) return;
+      if (interceptCrisis(response)) return; // the goal was not stored
       applyLearningScope(response);
       setGoalProgress(response.goal_progress ?? null);
       setScopeReady(true);
@@ -942,7 +958,7 @@ export function LoopLearn() {
 
   const runTurn = useCallback(async (
     run: (h: StreamChatHandlers) => Promise<LoopTurnResult>,
-    { submission = false }: { submission?: boolean } = {},
+    { submission = false, onPaused }: { submission?: boolean; onPaused?: () => void } = {},
   ): Promise<LoopTurnResult | null> => {
     // A hint may still be in flight when the learner submits or continues.
     // Its previous phase/question must never overwrite the newer turn.
@@ -1002,6 +1018,16 @@ export function LoopLearn() {
         if ((submission || feedbackStarted || recoveringFeedback) && sid) void reconcile(sid, g, epoch);
         return null;
       }
+      // docs/safety/crisis-support.md: the card instead of a tutor turn — nothing
+      // was graded or recorded, so phase, check item and learner state stay as
+      // they were (an answered item stays posed)
+      const crisisSupport = crisisSupportIn(res);
+      if (crisisSupport) {
+        setMessages((prev) => [...prev, { ...asMsg("assistant", res.reply ?? ""), crisisSupport }]);
+        if (submission) setAttempt(EMPTY_DRAFT);
+        setCheckNote(null);
+        return res;
+      }
       // done.reply is always the final, leak-stripped text (A46) — never the tokens
       const text = res.reply ?? streamed;
       if (text) setMessages((prev) => [...prev, asMsg("assistant", text)]);
@@ -1038,8 +1064,12 @@ export function LoopLearn() {
       if ((submission || feedbackStarted || recoveringFeedback) && sid && !closed) void reconcile(sid, g, epoch);
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
-      if (hardSeen) return null;
+      if (hardSeen) {
+        onPaused?.();
+        return null;
+      }
       if (submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return null;
+      if (budgetPauseOf(err)) onPaused?.(); // a 429: reportError shows the pause banner
       reportError(err, "The tutor couldn't answer. Try again.");
       return null;
     } finally {
@@ -1051,10 +1081,20 @@ export function LoopLearn() {
   }, [applyActivated, reportError, reconcile, invalidateHint, feedbackPending]);
 
   const send = (text: string) => {
-    if (!sessionId || paused || starting || scopeLoading || pendingGrade) return;
+    // A budget pause does not stop a message: the server screens it for a crisis
+    // before any budget or rate limit, so a paused student in crisis still gets
+    // the support card (docs/safety/crisis-support.md). Anything else the pause
+    // answers with no reply, and the message goes back into the composer.
+    if (!sessionId || starting || scopeLoading || pendingGrade) return;
     setPlanJustApproved(false);
-    setMessages((prev) => [...prev, asMsg("user", text)]);
-    void runTurn((h) => streamLoopChat(sessionId, userId, text, h));
+    const userMsg = asMsg("user", text);
+    setMessages((prev) => [...prev, userMsg]);
+    void runTurn((h) => streamLoopChat(sessionId, userId, text, h), {
+      onPaused: () => {
+        setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+        setChatDraft((d) => ({ text, key: d.key + 1 }));
+      },
+    });
   };
 
   const stop = () => streamAbort.current?.abort();
@@ -1141,6 +1181,7 @@ export function LoopLearn() {
         if (draft && countedAttempt.current !== `${qh}:${draft}`) {
           const recorded = await postLoopAttempt(sessionId, userId, qh, draft);
           if (!ownsHint()) return;
+          if (interceptCrisis(recorded)) { setAttempt(EMPTY_DRAFT); return; } // no hint, nothing counted
           if (recorded.counted) countedAttempt.current = `${qh}:${draft}`;
         }
         const r = await requestLoopHint(sessionId, userId, qh);
@@ -1620,6 +1661,14 @@ export function LoopLearn() {
         </div>
       </div>
     );
+  } else if (startCrisis && !sessionId) {
+    // "Back to studying" starts a session on the course itself: the deep-link
+    // topic may be the very text the card answered.
+    body = (
+      <CenteredCard testId="loop-start-crisis">
+        <CrisisSupportCard support={startCrisis} onDismiss={() => void newSession({ mode: deepLink.mode })} />
+      </CenteredCard>
+    );
   } else if (loadError === "start" && !sessionId) {
     body = (
       <CenteredCard testId="loop-start-error">
@@ -1766,8 +1815,10 @@ export function LoopLearn() {
           header={chatHeader}
           streamingText={streamingText}
           onStop={stop}
-          disabled={!!paused || starting || scopeLoading}
+          disabled={starting || scopeLoading}
           placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
+          draftSeed={chatDraft.text}
+          draftSeedKey={chatDraft.key}
         />
       </div>
     );
@@ -1778,6 +1829,7 @@ export function LoopLearn() {
   return (
     <FullHeightScreen className={styles.screen}>
       <DisclaimerModal />
+      {crisisDialog}
       <div
         data-testid="loop-phase"
         data-phase={state.phase}

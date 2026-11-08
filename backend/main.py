@@ -35,7 +35,7 @@ from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
-from services import ai_budget, quiz_config, quiz_errors
+from services import ai_budget, crisis_support, quiz_config, quiz_errors
 from services.feature_flags import nav_feature_gate
 from services.logfire_scrubber import EXTRA_PATTERNS, scrub_value
 from services.ops_logging import install_accounting_logfire_bridge
@@ -375,6 +375,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 # PKG-06b (spec §3.5, A20): an over-budget model call answers 429 {"detail": "ai budget reached", "reset_at": …}.
 app.add_exception_handler(ai_budget.AIBudgetExceeded, ai_budget.budget_exceeded_handler)
+# docs/safety/crisis-support.md: a crisis screen dependency ends the request
+# with the card, ahead of the rate limit (a 200, not an error).
+app.add_exception_handler(crisis_support.CrisisAnswered, crisis_support.answered_handler)
 
 # #771: a hidden nav feature (`hide_<feature>` "on") 404s on its API too, not
 # just in the nav. Which routers each flag gates — and the paths another

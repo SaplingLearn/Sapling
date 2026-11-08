@@ -16,6 +16,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 import { ChatPanel, tutorStepLabel, type ChatMsg } from "./ChatPanel";
+import crisisFixture from "@/test-utils/crisisSupport.json";
+import { crisisSupportOf } from "@/lib/crisisSupport";
 
 vi.mock("../Icon", () => ({ Icon: () => null }));
 // MarkdownChat is lazy-loaded via next/dynamic (heavy markdown stack); render
@@ -147,5 +149,32 @@ describe("tutorStepLabel", () => {
 
   it("returns null for a step it does not know, so Thinking… stays", () => {
     expect(tutorStepLabel("final_result")).toBeNull();
+  });
+});
+
+describe("ChatPanel crisis-support turn (docs/safety/crisis-support.md)", () => {
+  it("renders the calm card in place of a tutor bubble, keeping the composer open", () => {
+    const support = crisisSupportOf(crisisFixture)!;
+    const onSend = vi.fn();
+    render(
+      <ChatPanel
+        messages={[
+          { id: "u-1", role: "user", content: "what I typed" },
+          { id: "a-1", role: "assistant", content: "the card's copy as text", crisisSupport: support },
+        ]}
+        onSend={onSend}
+      />,
+    );
+    const card = screen.getByTestId("crisis-support-card");
+    expect(card.textContent).toContain(support.title);
+    // the card, not the markdown bubble: the text rendering is not shown twice
+    expect(screen.queryByText("the card's copy as text")).toBeNull();
+    expect(screen.getByText("what I typed")).toBeTruthy();
+    // "whenever you're ready": the student keeps studying from the same composer
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+    fireEvent.change(input, { target: { value: "ok, back to hash tables" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(onSend).toHaveBeenCalledWith("ok, back to hash tables");
   });
 });

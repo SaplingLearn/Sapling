@@ -5,6 +5,7 @@ import { answerRetentionCheck, startRetentionCheck, type EnrolledCourse, type Re
 import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import styles from "./LoopLearn.module.css";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
 
 /** Opening a post-test commits its pose. Only an explicit learner action may
  * call it; eligibility and delayed/assisted credit remain entirely server-owned. */
@@ -30,6 +31,8 @@ export function RetentionCheck({ userId, courses, initialCourseId = "" }: {
 }
 
 function RetentionSession({ userId, courseId }: { userId: string; courseId: string }) {
+  // docs/safety/crisis-support.md: an answer the crisis screen answered
+  const crisis = useCrisisSupport();
   const [items, setItems] = useState<RetentionItem[] | null>(null);
   const [index, setIndex] = useState(0);
   const [answer, setAnswer] = useState("");
@@ -70,6 +73,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
       const response = await answerRetentionCheck({ user_id: userId, node_id: item.node_id, question_hash: item.question_hash, idk,
         ...(idk ? {} : item.format === "mc_reason" ? { selected_option: choice, reason } : { answer }) });
       if (!mounted.current || mine !== request.current) return;
+      if (crisis.intercept(response)) { setAnswer(""); setReason(""); return; } // nothing graded; still open
       if ("correct" in response) setResult(response.correct);
       else setError("Answer in your own words. Nothing was recorded; you can try again.");
     } catch (err) {
@@ -84,6 +88,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   };
   const canSubmit = !!item && !busy && (item.format === "mc_reason" ? !!choice && !!reason.trim() : !!answer.trim());
   return <>
+    {crisis.dialog}
     <button type="button" data-testid="retention-open" className="btn btn--sm" disabled={!courseId || busy} onClick={() => void open()}>{busy ? "Checking…" : "Open eligible retention checks"}</button>
     {error && <p role="alert" style={{ margin: 0, fontSize: 13 }}>{error}</p>}
     {items?.length === 0 && <p data-testid="retention-empty" role="status">No eligible unseen retention checks are available for this course. Checks open at fixed times after you first study a concept; you may need more time or new check material.</p>}

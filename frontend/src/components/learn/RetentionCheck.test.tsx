@@ -8,6 +8,7 @@ vi.mock("@/lib/api", async (original) => ({ ...await original<typeof import("@/l
 import { ApiError } from "@/lib/api";
 import { __resetFeedbackPacingForTests, feedbackHeld } from "@/lib/feedbackPacing";
 import { RetentionCheck } from "./RetentionCheck";
+import crisisFixture from "@/test-utils/crisisSupport.json";
 const courses = [{ course_id: "c1", course_name: "Computer Science" }, { course_id: "c2", course_name: "Mathematics" }] as EnrolledCourse[];
 const item = { node_id: "n1", question_hash: "qh", format: "free", difficulty: 1, prompt: "What do you remember?" };
 beforeEach(() => { vi.resetAllMocks(); });
@@ -113,4 +114,24 @@ it("does not silently reopen an expired/already-graded pose", async () => {
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.queryByTestId("retention-item")).toBeNull();
   expect(api.startRetentionCheck).toHaveBeenCalledTimes(1);
+});
+
+it("shows the crisis-support card instead of a result; the check stays open (docs/safety/crisis-support.md)", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck
+    .mockResolvedValueOnce({ graded: false, reply: "…", crisis_support: crisisFixture })
+    .mockResolvedValueOnce({ correct: true, confidence: 0.9 });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  await open();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "i want to end my life" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.textContent).toContain(crisisFixture.title);
+  expect(screen.queryByTestId("retention-result")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull(); // the card is not an error
+  fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
+  expect((screen.getByTestId("retention-answer") as HTMLTextAreaElement).value).toBe("");
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "My own remembered explanation" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  expect(await screen.findByTestId("retention-result")).toBeTruthy();
 });
