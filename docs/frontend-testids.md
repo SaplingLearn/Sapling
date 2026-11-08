@@ -684,6 +684,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-tree-link` | link to `/tree` (`?node=<id>` once a `learner_state` event names the concept) |
 | `loop-rail` | the knowledge-map rail (wide screens only; the tree link stands in on narrow ones) |
 | `loop-learner-state` | the current concept's belief; `data-node-id`, `data-p-known`, `data-band` (present, empty, before any event) |
+| `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
 | `loop-probe-item` | the current probe card; `data-question-hash` |
 | `loop-probe-input` | free/teachback probe answer textarea |
 | `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22) |
