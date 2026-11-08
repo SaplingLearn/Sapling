@@ -381,6 +381,8 @@ BACKEND_RPCS = frozenset({
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
     "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
+    "llm_budget_status",             # services/llm_budget.py (#119, 20261108213311)
+    "llm_cost_per_active_user_weekly",  # routes/admin_analytics.py (#119, 20261108213311)
     "match_course_chunks",           # services/rag_service.py
     "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
 })
