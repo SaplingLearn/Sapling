@@ -119,7 +119,7 @@ const queue = (items: AdminCheckItemEntry[], over: Partial<AdminCheckItemQueue> 
 const itemStats = (over: Partial<ItemStats> = {}): ItemStats => ({
   n: 42, correct: 39, p_value: 39 / 42, p_ci_low: 0.81, p_ci_high: 0.98,
   discrimination: 0.05, discrimination_n: 38, flags: ["too_easy", "low_discrimination"],
-  last_observed_at: "2026-11-07T10:00:00+00:00",
+  numbers_changed_at: "2026-11-07T10:00:00+00:00",
   ...over,
 });
 
@@ -128,7 +128,7 @@ const statsReport = (over: Partial<AdminItemStatsReport> = {}): AdminItemStatsRe
   rows_scanned: 512, truncated: false,
   items: [
     { id: "i1", concept_key: "recursion", question_hash: "qh1", format: "mc_reason", difficulty: 2, ...itemStats() },
-    { id: "i9", concept_key: "recursion", question_hash: "qh9", format: "free", difficulty: 1, ...itemStats({ n: 0, correct: 0, p_value: null, p_ci_low: null, p_ci_high: null, discrimination: null, discrimination_n: 0, flags: [], last_observed_at: null }) },
+    { id: "i9", concept_key: "recursion", question_hash: "qh9", format: "free", difficulty: 1, ...itemStats({ n: 0, correct: 0, p_value: null, p_ci_low: null, p_ci_high: null, discrimination: null, discrimination_n: 0, flags: [], numbers_changed_at: null }) },
   ],
   flagged: [
     { ...entry({ id: "i7", question_hash: "qh7", prompt: "A question nobody flagged otherwise" }), stats: itemStats({ flags: ["negative_discrimination"], discrimination: -0.3 }) },
@@ -421,6 +421,26 @@ describe("AdminCheckItems — key audit (spec §13 A124)", () => {
     expect(screen.getByTestId("admin-items-filter-data").textContent).toBe("Flagged by data (0)");
     fireEvent.click(screen.getByTestId("admin-items-filter-queue"));
     expect(screen.getByTestId("admin-items-row-i1")).toBeTruthy();
+  });
+
+  it("after deciding the whole page it offers the rest, never 'nothing flagged'", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([]));
+    api.adminCheckItemStats
+      .mockResolvedValueOnce(statsReport({ flagged_count: 3, page_size: 1 }))
+      .mockResolvedValueOnce(statsReport({ flagged_count: 2, page_size: 1 }));
+    api.adminRetireCheckItem.mockResolvedValue({ id: "i7", status: "retired", items: 1, students: 0, voided: 0 });
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-empty");
+    await loadStats();
+    fireEvent.click(screen.getByTestId("admin-items-filter-data"));
+    const retire = screen.getByTestId("admin-items-retire-i7");
+    fireEvent.click(retire);
+    fireEvent.click(retire);
+    expect((await screen.findByTestId("admin-items-data-more")).textContent).toContain("2 more flagged");
+    expect(screen.queryByTestId("admin-items-data-empty")).toBeNull();
+    fireEvent.click(screen.getByTestId("admin-items-data-reload"));
+    await waitFor(() => expect(api.adminCheckItemStats).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("admin-items-row-i7")).toBeTruthy();
   });
 
   it("says when a question has no unassisted first attempt yet", async () => {

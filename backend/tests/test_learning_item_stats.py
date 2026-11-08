@@ -216,13 +216,64 @@ def test_void_and_quiz_rows_are_left_out_everywhere():
     assert stats[(COURSE, "A")]["discrimination"] == pytest.approx(1.0)
 
 
-def test_last_observed_at_is_the_newest_first_attempt():
+def test_numbers_changed_at_is_the_newest_attempt_its_numbers_count():
     rows = [
         _row("s1", "A", True, at="2026-11-01T00:00:00+00:00"),
         _row("s2", "A", True, at="2026-11-05T00:00:00+00:00"),
         _row("s1", "A", False, at="2026-11-09T00:00:00+00:00"),  # a later attempt: not counted
     ]
-    assert item_statistics(rows)[(COURSE, "A")]["last_observed_at"] == "2026-11-05T00:00:00+00:00"
+    assert item_statistics(rows)[(COURSE, "A")]["numbers_changed_at"] == "2026-11-05T00:00:00+00:00"
+
+
+def test_a_new_answer_on_the_concepts_other_items_changes_the_numbers():
+    """The discrimination reads the same students' other items, so a first
+    attempt there changes the item's numbers without a new attempt on it."""
+    rows = [
+        _row("s1", "A", True, at="2026-11-01T00:00:00+00:00"),
+        _row("s2", "A", False, at="2026-11-01T00:00:01+00:00"),
+        _row("s1", "B", True, at="2026-11-06T00:00:00+00:00"),
+        _row("s2", "B", False, at="2026-11-07T00:00:00+00:00"),
+        _row("s3", "B", True, at="2026-11-08T00:00:00+00:00"),  # no answer on A: not in its numbers
+    ]
+    a = item_statistics(rows)[(COURSE, "A")]
+    assert a["discrimination_n"] == 2 and a["numbers_changed_at"] == "2026-11-07T00:00:00+00:00"
+
+
+def test_a_retire_that_voids_a_rest_score_attempt_changes_the_numbers():
+    """A staff retire takes its item's attempts out of every rest score the
+    moment it is decided (the void rule reads the decision), so its decision
+    time is a change of the other items' numbers."""
+    from datetime import datetime, timezone
+
+    rows = [
+        _row("s1", "A", True, at="2026-11-01T00:00:00+00:00"),
+        _row("s1", "C", True, at="2026-11-02T00:00:00+00:00"),
+        _row("s2", "A", False, at="2026-11-01T00:00:01+00:00"),
+        _row("s2", "B", False, at="2026-11-02T00:00:01+00:00"),
+    ]
+    decided = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    stats = item_statistics(rows, retired={(COURSE, "C"): decided})
+    a = stats[(COURSE, "A")]
+    assert (COURSE, "C") not in stats and a["discrimination_n"] == 1  # s1 lost its only other item
+    assert a["numbers_changed_at"] == decided.isoformat()
+    # without a decision time (a plain set) the void rule still holds, with no time to report
+    assert item_statistics(rows, retired={(COURSE, "C")})[(COURSE, "A")]["numbers_changed_at"] == (
+        "2026-11-02T00:00:01+00:00"
+    )
+
+
+@pytest.mark.parametrize("students,right,out_of", [(37, 9, 10), (41, 1, 5), (35, 1, 3)])
+def test_a_constant_rest_score_has_no_discrimination(students, right, out_of):
+    """Every student's rest score is the same fraction: r is undefined, never
+    float noise. A variance computed from a mean of 0.9 over 37 students is
+    ~1e-32, not 0, and its "r" (≈ −5e-17) would have read as negative
+    discrimination; over 41 students at 0.2, as low discrimination."""
+    rows = []
+    for i in range(students):
+        rows.append(_row(f"s{i}", "K", i % 2 == 0))
+        rows += [_row(f"s{i}", f"O{j}", j < right) for j in range(out_of)]
+    k = item_statistics(rows)[(COURSE, "K")]
+    assert k["discrimination"] is None and k["flags"] == []
 
 
 # ── the flags ────────────────────────────────────────────────────────────────
@@ -296,7 +347,6 @@ def stats_client(monkeypatch):
     monkeypatch.setattr(admin, "require_admin", lambda request: None)
     monkeypatch.setattr(admin.item_reports, "report_counts", lambda: {})
     monkeypatch.setattr(admin.item_reports, "reviews", lambda: {})
-    monkeypatch.setattr(admin.item_reports, "retired_items", lambda: set())
     monkeypatch.setattr(admin, "items_by_ids", lambda ids: [])
     writes = []
     monkeypatch.setattr(admin, "log_event", lambda *a, **k: writes.append(a))
@@ -352,6 +402,48 @@ def test_an_approval_on_these_numbers_clears_the_data_flag_until_a_newer_attempt
 
     assert decided("2026-11-02T00:00:00+00:00")["flagged"] == []  # approved after every attempt
     assert len(decided("2026-11-01T00:00:10+00:00")["flagged"]) == 1  # newer attempts since
+
+
+def test_an_approval_before_the_concepts_newer_answers_does_not_hide_the_item(stats_client, monkeypatch):
+    """Staff approved K on day 1; its own attempts are older, but the same
+    students then answered the concept's other item, which turned K's
+    discrimination negative — K is back in the flagged view."""
+    import routes.admin_check_items as admin
+
+    n = params.ITEM_STATS_MIN_N
+    evidence = []
+    for i in range(n):
+        strong = i % 2 == 0
+        evidence.append(_row(f"u{i}", "K", not strong, at="2026-11-01T00:00:00+00:00"))
+        evidence.append(_row(f"u{i}", "O", strong, at="2026-11-03T00:00:00+00:00"))
+    monkeypatch.setattr(admin, "_course_evidence", lambda c: (evidence, False))
+    monkeypatch.setattr(admin, "course_item_rows", lambda c: [_stored("i-k", "K"), _stored("i-o", "O")])
+    monkeypatch.setattr(
+        admin.item_reports,
+        "reviews",
+        lambda: {(COURSE, "K"): {"status": "approved", "reviewed_at": "2026-11-02T00:00:00+00:00"}},
+    )
+    body = stats_client.get(f"{ADMIN}/stats", params={"course_id": COURSE}).json()
+    k = next(e for e in body["flagged"] if e["id"] == "i-k")
+    assert "negative_discrimination" in k["stats"]["flags"]
+    assert k["stats"]["numbers_changed_at"] == "2026-11-03T00:00:00+00:00"
+
+
+def test_the_route_voids_a_retired_items_attempts_and_dates_the_change(stats_client, monkeypatch):
+    """The retired items come from the review decisions the route reads anyway
+    (status 'retired', the void rule's key), with their decision time."""
+    import routes.admin_check_items as admin
+
+    evidence = [_row("s1", "A", True), _row("s1", "R", True), _row("s2", "A", False), _row("s2", "B", False)]
+    monkeypatch.setattr(admin, "_course_evidence", lambda c: (evidence, False))
+    monkeypatch.setattr(admin, "course_item_rows", lambda c: [_stored("i-a", "A")])
+    monkeypatch.setattr(
+        admin.item_reports,
+        "reviews",
+        lambda: {(COURSE, "R"): {"status": "retired", "reviewed_at": "2026-12-01T00:00:00+00:00"}},
+    )
+    (a,) = stats_client.get(f"{ADMIN}/stats", params={"course_id": COURSE}).json()["items"]
+    assert a["discrimination_n"] == 1 and a["numbers_changed_at"] == "2026-12-01T00:00:00+00:00"
 
 
 def test_held_and_retire_pending_items_lead_the_flagged_view(stats_client, monkeypatch):

@@ -327,7 +327,21 @@ function QueueBody() {
         </>
       )}
       {showData ? (
-        stats.flagged.length === 0 ? (
+        stats.flagged.length === 0 && stats.flagged_count > 0 ? (
+          // every question of the page was decided; more are flagged beyond it
+          <div data-testid="admin-items-data-more" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+            <span>{stats.flagged_count} more flagged — load the statistics again to see them.</span>
+            <button
+              type="button"
+              data-testid="admin-items-data-reload"
+              className="btn btn--sm"
+              disabled={statsLoading}
+              onClick={() => void loadStats(stats.course_id)}
+            >
+              Load again
+            </button>
+          </div>
+        ) : stats.flagged.length === 0 ? (
           <div data-testid="admin-items-data-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
             The numbers flag no question in {stats.course_id}.
           </div>

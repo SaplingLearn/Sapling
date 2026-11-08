@@ -482,6 +482,7 @@ file entered the lint block new, so there is no baselined backlog.
 | `admin-items-stats-summary` / `admin-items-stats-error` | A131: what the statistics count (students' first unassisted attempts), from how many graded answers, the minimum students a flag needs, and a cut-short read; or the failed read |
 | `admin-items-filter-queue` / `admin-items-filter-data` | A131: the two views once a course's statistics are loaded — the review queue, or "Flagged by data (N)": the course's questions the numbers flag, queued or not (`aria-pressed` on the shown one) |
 | `admin-items-data-empty` | A131: the numbers flag no question in the course |
+| `admin-items-data-more` / `admin-items-data-reload` | A131: every question of the loaded page was decided while more are flagged beyond it — "N more flagged" and "Load again" (re-reads the course's statistics) |
 | `admin-items-stats-{itemId}` | A131: a question's numbers — n first unassisted attempts, the share right with its Wilson 95% interval, the item–rest discrimination and its n — or "No unassisted first attempt yet." |
 | `admin-items-data-flag-{itemId}-{flag}` | A131: what the numbers flag (`too_easy` / `too_hard` / `low_discrimination` / `negative_discrimination`); a prompt to review, never written to the question |
 | `admin-audit` | the Key audit tab's root (spec §13 A124: a stratified sample of one course's stored keys) |

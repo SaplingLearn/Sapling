@@ -379,14 +379,27 @@ def _course_evidence(course_id: str) -> tuple[list[dict], bool]:
 
 
 def _decided_on_these_numbers(entry: dict, stats: dict) -> bool:
-    """Staff approved the item at or after the newest first attempt its
-    statistics count — they decided on the numbers shown — so it leaves the
-    "flagged by data" view until a newer attempt changes them (the queue's
-    rule for reports, A113). A held or retire-pending item always stays."""
+    """Staff approved the item at or after its numbers last changed
+    (`numbers_changed_at`: its newest counted attempt, its students' newest
+    attempt on the concept's other items, or a retire that voided one) — they
+    decided on the numbers shown — so it leaves the "flagged by data" view
+    until they change again (the queue's rule for reports, A113). A held or
+    retire-pending item always stays."""
     if entry["status"] != item_reports.APPROVED or entry["held"] or entry["retire_pending"]:
         return False
-    reviewed, last = parse_ts(entry["reviewed_at"]), parse_ts(stats["last_observed_at"])
-    return reviewed is not None and last is not None and last <= reviewed
+    reviewed, changed = parse_ts(entry["reviewed_at"]), parse_ts(stats["numbers_changed_at"])
+    return reviewed is not None and changed is not None and changed <= reviewed
+
+
+def _retired_at(decisions: dict) -> dict:
+    """The staff-retired course items (the void rule's key, A123) with their
+    decision time: the review decisions with status 'retired' — the same
+    rows `item_reports.retired_items` reads, so no read of its own."""
+    return {
+        key: parse_ts(d.get("reviewed_at"))
+        for key, d in decisions.items()
+        if d.get("status") == item_reports.RETIRED
+    }
 
 
 @router.get("/stats")
@@ -403,21 +416,19 @@ def item_statistics_report(request: Request, course_id: str) -> dict:
     each as the review queue lists an item (its reports, decision, hold) with
     its statistics, worst first — held and retire-pending first, then by the
     worst flag — leaving out an item staff approved on these numbers (at or
-    after its newest counted attempt); the first QUEUE_PAGE carry their
-    decrypted text so staff can approve or retire them here. Nothing is
-    written: no flag reaches lint_flags or a hold — staff decide. 503 when a
-    read failed."""
+    after they last changed); the first QUEUE_PAGE carry their decrypted text
+    so staff can approve or retire them here. Nothing is written: no flag
+    reaches lint_flags or a hold — staff decide. 503 when a read failed."""
     require_admin(request)
     try:
         stored = course_item_rows(course_id)
         evidence, truncated = _course_evidence(course_id)
-        retired = item_reports.retired_items() if evidence else set()
         counts = item_reports.report_counts()
         decisions = item_reports.reviews()
     except Exception:
         logger.warning("check item statistics unavailable (course %s)", course_id, exc_info=True)
         raise HTTPException(status_code=503, detail="Item statistics unavailable; try again.") from None
-    stats = item_statistics(evidence, retired=retired)
+    stats = item_statistics(evidence, retired=_retired_at(decisions))
     items: list[dict] = []
     flagged: list[dict] = []
     for row in stored:

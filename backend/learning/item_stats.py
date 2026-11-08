@@ -47,8 +47,10 @@ read is left out — its first attempt is unknown.
 
 A row graded against an item staff retired is void evidence (A123): left out
 everywhere — the item's own outcomes and every rest score. The caller passes
-the retired items (`item_reports.retired_items`). A row with no check item (a
-quiz question) is no check-item attempt.
+the retired items (the review decisions with status 'retired', the rows
+`item_reports.retired_items` reads), as a mapping to their decision times when
+it has them, so `numbers_changed_at` can date the change a retire makes. A
+row with no check item (a quiz question) is no check-item attempt.
 
 A report for staff: it never writes, never gates, never touches lint_flags or
 a hold. Staff read the numbers in the review queue and decide.
@@ -194,9 +196,13 @@ def first_unassisted(
 
 def _pearson(pairs: list[tuple[float, float]]) -> float | None:
     """The Pearson correlation of the pairs; None with fewer than two or when
-    either side does not vary."""
+    either side does not vary. "Does not vary" is decided on the values
+    themselves, never on a computed variance: a constant rest score such as
+    1/3 leaves a variance of float noise (~1e-32), not 0, and its "r" would be
+    noise read as a (negative) discrimination. Equal shares are equal floats
+    (division is correctly rounded), so the set test is exact."""
     n = len(pairs)
-    if n < 2:
+    if n < 2 or len({x for x, _ in pairs}) < 2 or len({y for _, y in pairs}) < 2:
         return None
     mx = sum(x for x, _ in pairs) / n
     my = sum(y for _, y in pairs) / n
@@ -237,8 +243,32 @@ def empty_stats() -> dict:
         "discrimination": None,
         "discrimination_n": 0,
         "flags": [],
-        "last_observed_at": None,
+        "numbers_changed_at": None,
     }
+
+
+def _void_times(
+    rows: Iterable[Mapping[str, Any]], retired: Collection[ItemKey]
+) -> dict[tuple[str, str], datetime]:
+    """(student, node) → when a staff retire last removed some of that
+    student's attempts on the node from the statistics: the newest retire
+    decision among the items its void rows were graded against. Only when
+    `retired` maps each retired item to its decision time; a retire changes
+    the numbers the moment it is decided (the void rule reads the decision,
+    not the sweep)."""
+    if not isinstance(retired, Mapping):
+        return {}
+    out: dict[tuple[str, str], datetime] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or not is_void_row(row, retired):
+            continue
+        user, node, at = _user(row), row.get("node_id"), retired.get(graded_item(row))
+        if user is None or not node or not isinstance(at, datetime):
+            continue
+        key = (user, node)
+        if key not in out or at > out[key]:
+            out[key] = at
+    return out
 
 
 def item_statistics(
@@ -246,14 +276,22 @@ def item_statistics(
 ) -> dict[ItemKey, dict]:
     """(course_id, question_hash) → its statistics (module docstring), for
     every course item some student has a first unassisted attempt on.
-    `last_observed_at` is the newest of those attempts (ISO): the statistics
-    change only when a newer one arrives, so a review decided at or after it
-    was decided on the numbers shown."""
+    `retired`: the staff-retired items — a mapping of each to its decision
+    time when the caller has it (for `numbers_changed_at`), else a set.
+
+    `numbers_changed_at` (ISO) is when the item's numbers last changed: the
+    newest first attempt they count — the item's own AND every other-item
+    attempt in its students' rest scores, since a new answer on the concept
+    changes the discrimination too — or the newest retire that voided some of
+    its students' attempts on the concept. Nothing else changes them, so a
+    review decided at or after it was decided on the numbers shown."""
+    rows = list(rows)
     observations = first_unassisted(rows, retired=retired)
-    by_student_node: dict[tuple[str, str], dict[ItemKey, int]] = defaultdict(dict)
+    voided_at = _void_times(rows, retired)
+    by_student_node: dict[tuple[str, str], dict[ItemKey, dict]] = defaultdict(dict)
     by_item: dict[ItemKey, list[dict]] = defaultdict(list)
     for ob in observations:
-        by_student_node[(ob["user_id"], ob["node_id"])][ob["item"]] = ob["outcome"]
+        by_student_node[(ob["user_id"], ob["node_id"])][ob["item"]] = ob
         by_item[ob["item"]].append(ob)
     out: dict[ItemKey, dict] = {}
     for item, obs in by_item.items():
@@ -261,12 +299,15 @@ def item_statistics(
         correct = sum(ob["outcome"] for ob in obs)
         ci = wilson(correct, n)
         pairs = []
+        changed = max(ob["at"] for ob in obs)
         for ob in obs:
-            others = [
-                x for other, x in by_student_node[(ob["user_id"], ob["node_id"])].items() if other != item
-            ]
+            student_node = (ob["user_id"], ob["node_id"])
+            others = [other for key, other in by_student_node[student_node].items() if key != item]
             if others:
-                pairs.append((float(ob["outcome"]), sum(others) / len(others)))
+                pairs.append((float(ob["outcome"]), sum(o["outcome"] for o in others) / len(others)))
+                changed = max(changed, *(o["at"] for o in others))
+            if student_node in voided_at:
+                changed = max(changed, voided_at[student_node])
         p_value = correct / n
         discrimination = _pearson(pairs)
         out[item] = {
@@ -278,6 +319,6 @@ def item_statistics(
             "discrimination": discrimination,
             "discrimination_n": len(pairs),
             "flags": flags_for(n, p_value, len(pairs), discrimination),
-            "last_observed_at": max(ob["at"] for ob in obs).isoformat(),
+            "numbers_changed_at": changed.isoformat(),
         }
     return out

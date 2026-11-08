@@ -2249,7 +2249,9 @@ export interface ItemStats {
   discrimination: number | null;
   discrimination_n: number;
   flags: ItemStatsFlag[];
-  last_observed_at: string | null;
+  /** When its numbers last changed (an attempt they count, or a retire that
+   *  voided one); an approval at or after it hides the item from "Flagged by data". */
+  numbers_changed_at: string | null;
 }
 export interface AdminItemStatsRow extends ItemStats {
   id: string;
