@@ -266,6 +266,10 @@ KNOWN_403: dict[tuple[str, str], str] = {
     ("POST", "/api/social/friends/requests/{request_id}/accept"): "social.py _load_request: not your request",
     ("POST", "/api/social/friends/requests/{request_id}/decline"): "social.py _load_request",
     ("DELETE", "/api/social/friends/requests/{request_id}"): "social.py: sender check after load",
+    ("POST", "/api/social/rooms/{room_id}/leave"):
+        "social.py: membership check (the delete's own result; #115 fixed the non-member write)",
+    ("POST", "/api/social/rooms/{room_id}/messages/{message_id}/reactions"):
+        "social.py: membership check, then the message must be in room_id (#115)",
 }
 
 #: Resource cases whose correct answer today is not 404 and not a leak.
@@ -284,10 +288,6 @@ RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
         ((400, 404), "400 'Category not in your gradebook' (404 if B has no current CS enrollment)"),
     ("POST", "/api/calendar/export"):
         ((400, 401), "Google not configured (400) / B not connected (401), before any scoping"),
-    ("POST", "/api/social/rooms/{room_id}/leave"):
-        ((200,), "B was never a member; see KNOWN_LEAKS for the write"),
-    ("POST", "/api/social/rooms/{room_id}/messages/{message_id}/reactions"):
-        ((200,), "see KNOWN_LEAKS"),
 }
 
 #: Swap cases whose correct answer is not 403.
@@ -308,16 +308,10 @@ SWAP_SKIP: dict[tuple[str, str], str] = {
 #: its own PR. STRICT: a case listed here that stops leaking FAILS, so the
 #: entry is removed in the fix PR. Key: (group, method, path).
 KNOWN_LEAKS: dict[tuple[str, str, str], str] = {
-    ("resource", "POST", "/api/social/rooms/{room_id}/messages/{message_id}/reactions"):
-        "toggle_reaction (social.py:655) checks neither room membership nor that the message "
-        "is in room_id: B adds a reaction row to a message in A's private room",
-    ("resource", "POST", "/api/social/rooms/{room_id}/leave"):
-        "leave_room (social.py:428) runs for a non-member: bumps A's rooms.updated_at "
-        "(_touch_room) and invalidates the room summary; returns owner_id",
-    ("probe", "POST", "/api/social/rooms/{room_id}/messages"):
-        "send_room_message (social.py:592) stores reply_to_id unchecked and get_room_messages "
-        "(social.py:549) loads reply snippets by id with no room filter: B reads A's "
-        "private-room message through a reply in a shared room",
+    # Empty. The three W1b entries (toggle_reaction, leave_room as a
+    # non-member, and the cross-room reply_to_id read) were fixed by the #115
+    # leak-fix PR; the reply_to probe in the integration lane now judges that
+    # path strictly.
 }
 
 #: Bodies the signature cannot describe (a ``body: dict`` handler) or whose
