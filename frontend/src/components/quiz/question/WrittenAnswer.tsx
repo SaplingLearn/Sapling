@@ -21,6 +21,7 @@
  */
 
 import React from "react";
+import { flushSync } from "react-dom";
 import type { QuestionType } from "@/lib/quiz/types";
 import {
   expressionParts,
@@ -88,18 +89,28 @@ export function WrittenAnswer({
   const inputRef = React.useRef<HTMLInputElement>(null);
   const keys = type === "numeric" ? NUMERIC_KEYS : type === "symbolic" ? SYMBOLIC_KEYS : [];
 
-  /** Put `key` in at the cursor (replacing any selection) and keep typing. */
+  /** Put `key` in at the cursor (replacing any selection) and keep typing.
+   *
+   *  The new value is committed and the cursor placed in the click's own
+   *  task, so the next keystroke can only land where the key left it. Writing
+   *  the value moves the cursor to the END of the input; placing it in a later
+   *  animation frame let keys typed before that frame go in at the end, and
+   *  then moved the cursor back behind them ("2", "( )", "x + 1" read
+   *  "2( 1)x +"). A cursor worked out for an older value is never applied
+   *  after newer typing. */
   const insert = (key: Key) => {
     const input = inputRef.current;
     const start = input?.selectionStart ?? value.length;
     const end = input?.selectionEnd ?? value.length;
-    onChange(value.slice(0, start) + key.insert + value.slice(end));
+    const next = value.slice(0, start) + key.insert + value.slice(end);
     const caret = start + (key.caret ?? key.insert.length);
-    // After React has written the new value back into the input.
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(caret, caret);
-    });
+    flushSync(() => onChange(next));
+    const written = inputRef.current;
+    if (!written) return;
+    written.focus();
+    // A write the owner refused (an answer already being submitted) keeps
+    // the old value, and the cursor the student left in it.
+    if (written.value === next) written.setSelectionRange(caret, caret);
   };
 
   const readBack = (() => {
