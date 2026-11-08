@@ -8,7 +8,8 @@ Mode is selected by the SAPLING_EVAL_MODE env var:
   - "live": run live; do not record. Useful for one-off experimentation.
 
 Every mode runs without a database: the AI budget reads an empty in-memory
-store (`hermetic_budget`, below).
+store (`hermetic_budget`, below), and a model run's usage is captured, never
+enqueued (`usage_log`; SAPLING_EVAL_USAGE_LOG writes it to a file).
 """
 
 from __future__ import annotations
@@ -128,6 +129,50 @@ def hermetic_budget() -> Iterator[BudgetStore]:
     finally:
         ai_budget.table, ai_budget.rpc = saved
         ai_budget.reset_for_tests()
+
+
+#: spec §13 A137: SAPLING_EVAL_USAGE_LOG=<path> appends one JSON line per model
+#: run a record or live evaluation makes (dataset, task, model, prompt /
+#: completion / cached / thinking tokens, requests, cost_usd as llm_usage would
+#: cost it), so a re-record measures what scripts/project_loop_cost.py has to
+#: assume. Replay makes no run and writes nothing. Set or not, a run's usage
+#: never reaches the events queue: the harness has no database.
+USAGE_LOG_ENV = "SAPLING_EVAL_USAGE_LOG"
+
+
+@contextlib.contextmanager
+def usage_log(dataset: str) -> Iterator[list[dict]]:
+    """Capture every `events_service.log_llm_usage` call of the block (each agent
+    run reports through it) instead of enqueueing it; yield the captured rows."""
+    from services import events_service
+
+    rows: list[dict] = []
+    path = os.getenv(USAGE_LOG_ENV)
+    saved = events_service.log_llm_usage
+
+    def capture(*, feature, task, model, usage, provider=None, user_id=None, request_id=None,
+                cached_tokens=None, thinking_tokens=None, session_id=None, requests=None,
+                course_id=None):
+        row = events_service.build_llm_usage_row(
+            feature=feature, task=task, model=model, usage=usage, provider=provider,
+            cached_tokens=cached_tokens, thinking_tokens=thinking_tokens, requests=requests,
+        )
+        line = {
+            "dataset": dataset,
+            **{k: row[k] for k in ("feature", "task", "model", "prompt_tokens", "completion_tokens",
+                                   "total_tokens", "cached_tokens", "thinking_tokens", "cost_usd")},
+            "requests": requests or getattr(usage, "requests", None),
+        }
+        rows.append(line)
+        if path:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(line, sort_keys=True, default=str) + "\n")
+
+    events_service.log_llm_usage = capture
+    try:
+        yield rows
+    finally:
+        events_service.log_llm_usage = saved
 
 
 def _safe_filename(name: str) -> str:
@@ -253,7 +298,7 @@ def evaluate_dataset(make_dataset, run_fn, *, update: bool, print_report: bool =
     import sys
 
     dataset = make_dataset()
-    with hermetic_budget():
+    with hermetic_budget(), usage_log(getattr(dataset, "name", None) or "unknown"):
         report = asyncio.run(dataset.evaluate(run_fn))
     if print_report:
         report.print(include_input=False, include_output=True)

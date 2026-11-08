@@ -137,11 +137,14 @@ Sonnet tutor it costs $0.0914 and $1.121.
   (Gemini Flash and Haiku, as today) is the cheapest way to keep A22 and A124.
   Moving them onto Sonnet costs more than the whole Haiku tutor.
 - **Before the defaults move**, the A111 re-record measures what this
-  projection assumes. It should capture per call: thinking tokens, retry
-  rates, cache reads and writes (`llm_usage.cached_tokens`), and the real
-  context sizes. After launch, Admin > Analytics > Learning loop > "What did it
-  cost?" reports measured $ per active student-month, per session, per matched
-  pair and per gain point, overall and per course (A137).
+  projection assumes. Run it with `SAPLING_EVAL_USAGE_LOG=<path>`
+  (`tests/evals/_replay.py::usage_log`). That writes one JSON line per model
+  run: the dataset, the task, the model, and prompt, completion, cached and
+  thinking tokens, requests and cost, priced as `llm_usage` prices them. Those
+  lines replace this projection's characters / 4, thinking and retry
+  assumptions with measurements. After launch, Admin > Analytics > Learning
+  loop > "What did it cost?" reports measured $ per active student-month, per
+  session, per matched pair and per gain point, overall and per course (A137).
 
 ## Re-running
 

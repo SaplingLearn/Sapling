@@ -272,9 +272,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_grade:
         # No database here either: the grader's budget check reads the eval
         # harness's empty store (tests/evals/_replay.py::hermetic_budget).
-        from tests.evals._replay import hermetic_budget
+        from tests.evals._replay import hermetic_budget, usage_log
 
-        with hermetic_budget():
+        with hermetic_budget(), usage_log("grader_agreement"):
             records = asyncio.run(grade_all(records))
     if args.out:
         args.out.write_text("".join(json.dumps(r) + "\n" for r in records))

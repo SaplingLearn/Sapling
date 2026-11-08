@@ -6,10 +6,15 @@ read `llm_usage` through PostgREST with an empty SUPABASE_URL, failed with
 WARNING (31 per `grader` replay in the `evals` CI job); with a developer's
 backend/.env loaded it read that database instead. The harness now answers the
 budget's reads from an empty in-memory store, and the production warning stays.
+
+The usage a record run's model calls report is captured the same way
+(`_replay.usage_log`, spec §13 A137): never enqueued for the database, and
+written to SAPLING_EVAL_USAGE_LOG when set, so a re-record measures tokens.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -139,3 +144,74 @@ def test_grader_agreement_grades_inside_the_hermetic_budget(monkeypatch, tmp_pat
     assert ga.main([str(path)]) == 0
     assert len(seen) == 1 and isinstance(getattr(seen[0], "__self__", None), replay.BudgetStore)
     assert ai_budget.table is dbconn.table
+
+
+# ── spec §13 A137: a run's usage is captured, never enqueued ─────────────────
+
+
+class _Usage:
+    input_tokens = 1200
+    output_tokens = 300
+    total_tokens = 1500
+    cache_read_tokens = 1000
+    cache_write_tokens = 0
+    requests = 2
+
+
+class _Result:
+    output = "x"
+
+    def usage(self):
+        return _Usage()
+
+    @property
+    def response(self):
+        return SimpleNamespace(model_name="claude-haiku-5-5")
+
+
+def test_a_runs_usage_is_written_to_the_log_and_never_enqueued(monkeypatch, tmp_path):
+    from agents.usage import record_agent_usage
+    from services import events_service
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setenv(replay.USAGE_LOG_ENV, str(log))
+    enqueued = []
+    monkeypatch.setattr(events_service, "_enqueue", lambda *a: enqueued.append(a))
+    with replay.usage_log("grader") as rows:
+        record_agent_usage(_Result(), feature="loop_check", task="grader", user_id="eval-user",
+                           course_id="eval-course")
+    assert enqueued == []
+    (line,) = [json.loads(x) for x in log.read_text().splitlines()]
+    assert line == rows[0]
+    assert line["dataset"] == "grader" and line["task"] == "grader" and line["model"] == "claude-haiku-5-5"
+    assert (line["prompt_tokens"], line["completion_tokens"], line["requests"]) == (1200, 300, 2)
+    assert line["cached_tokens"] == 1000 and line["cost_usd"] > 0
+    assert events_service.log_llm_usage is not None and "capture" not in events_service.log_llm_usage.__name__
+
+
+def test_without_the_variable_nothing_is_written_and_replay_logs_nothing(monkeypatch, tmp_path):
+    monkeypatch.delenv(replay.USAGE_LOG_ENV, raising=False)
+    monkeypatch.chdir(tmp_path)
+    with replay.usage_log("d") as rows:
+        pass
+    assert rows == [] and list(tmp_path.iterdir()) == []
+
+
+def test_every_evaluation_runs_inside_the_usage_capture(monkeypatch):
+    from services import events_service
+
+    monkeypatch.delenv(replay.RUNS_LOG_ENV, raising=False)
+    seen = []
+
+    async def run(_case_input):
+        seen.append(events_service.log_llm_usage.__name__)
+
+    class Dataset:
+        name = "usage_probe"
+
+        async def evaluate(self, run_fn):
+            await run_fn(None)
+            return SimpleNamespace(cases=[], failures=[], print=lambda **_k: None)
+
+    replay.evaluate_dataset(Dataset, run, update=False, print_report=False)
+    assert seen == ["capture"] and events_service.log_llm_usage.__name__ == "log_llm_usage"
