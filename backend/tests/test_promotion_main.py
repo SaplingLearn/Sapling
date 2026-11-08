@@ -395,7 +395,7 @@ def scratch_repo(tmp_path, monkeypatch):
     git("branch", "production")
     commit("app.py", "v2\n", "feature on main")
     # A promotion: main merged into production with a merge commit that
-    # exists ONLY on production (what `gh pr merge --merge` does in stage 6).
+    # exists ONLY on production (what `gh pr merge --merge` does in stage 7).
     git("checkout", "-q", "production")
     git("merge", "-q", "--no-ff", "-m", "promote", "main")
     git("checkout", "-q", "main")
