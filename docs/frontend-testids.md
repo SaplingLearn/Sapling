@@ -463,7 +463,7 @@ file entered the lint block new, so there is no baselined backlog.
 | `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate) |
 | `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer and the reference (`<details>`) |
 | `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
-| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`) |
+| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), or what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`) |
 | `admin-items-approve-{itemId}` | Approve — reviewed, OK; every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
 | `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course |
 
