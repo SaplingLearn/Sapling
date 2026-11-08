@@ -11,19 +11,27 @@
 // A check item's reference answer never reaches the client until the server returns it
 // in the corrective `hint` after a wrong answer; an mc_reason item's options are shown
 // in their stored order and the UI never infers which one is correct (A22).
+//
+// "Report this question" (spec §13 A113; #695), while the `item_reports` flag is on:
+// a check item — answered or not — can be reported with a reason from a short list;
+// the server stops serving it to this student and the panel moves to the next item.
 import React from "react";
 import {
   answerReview,
   budgetPauseOf,
   getReviewNext,
   getReviewSummary,
+  reportCheckItem,
   type LoopBudgetPause,
+  type LoopReportReason,
   type ReviewAnswerResponse,
   type ReviewNextResponse,
   type ReviewSummaryResponse,
 } from "@/lib/api";
+import { useFlag } from "@/context/FlagsContext";
 import { extractErrorDetail } from "@/lib/errorMessage";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
+import { ReportQuestion } from "./ReportQuestion";
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
 // won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
@@ -53,6 +61,9 @@ const RATINGS: { n: number; label: string }[] = [
 ];
 
 export function DueQueue({ userId, courseId }: { userId: string; courseId?: string }) {
+  const reportsOn = useFlag("item_reports") === "on";
+  // the last item was reported: say so above the next one
+  const [reported, setReported] = React.useState(false);
   const [next, setNext] = React.useState<ReviewNextResponse | null>(null);
   const [answer, setAnswer] = React.useState("");
   const [choice, setChoice] = React.useState("");
@@ -86,6 +97,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     const mine = ++seq.current;
     setBusy(true);
     setError(null);
+    setReported(false);
     void refreshSummary(mine);
     try {
       const r = await getReviewNext(userId, courseId);
@@ -163,6 +175,37 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     if (mine === seq.current) setBusy(false);
   };
 
+  /** spec §13 A113: report the served check item; the queue then moves on (the
+   *  server never serves it to this student again). */
+  const report = async (reason: LoopReportReason): Promise<boolean> => {
+    if (!next || !item || item.kind !== "check") return false;
+    const mine = seq.current;
+    try {
+      await reportCheckItem({
+        surface: "review",
+        user_id: userId,
+        session_id: next.session_id,
+        item_id: item.id,
+        course_id: courseId,
+        reason,
+      });
+    } catch (err) {
+      if (mine !== seq.current) return false;
+      if (extractErrorDetail(err).status === 409) {
+        // a new day began, or the item was withdrawn meanwhile: the queue moved on
+        await load();
+        return true;
+      }
+      console.error("review report failed", err);
+      setError("Couldn't report that question.");
+      return false;
+    }
+    if (mine !== seq.current) return true;
+    await load();
+    setReported(true);
+    return true;
+  };
+
   // After a refusal or an outage nothing was recorded: the item stays answerable.
   const retryable = result !== null && result.unavailable;
   const answered = alreadyGraded || (result !== null && !result.unavailable);
@@ -201,6 +244,11 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       ) : null}
 
       {error && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{error}</div>}
+      {reported && (
+        <div data-testid="review-reported" role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          Thanks — that question is reported and won&apos;t be shown to you again.
+        </div>
+      )}
 
       {next && !item && next.due_total > 0 && (
         <div data-testid="review-budget-spent" style={{ fontSize: 14, color: "var(--text-muted)" }}>
@@ -270,6 +318,9 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                 >
                   {retryable ? "Try again" : "Check"}
                 </button>
+              )}
+              {reportsOn && (
+                <ReportQuestion key={item.id} testIdPrefix="review-report" disabled={busy} onReport={report} />
               )}
             </>
           ) : (
