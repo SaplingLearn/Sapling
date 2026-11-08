@@ -45,6 +45,11 @@ def pytest_configure(config):
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
         "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
     )
+    config.addinivalue_line(
+        "markers",
+        "real_course_enrollment: run the REAL course-enrollment check on course-keyed "
+        "writes (#115) instead of the hermetic bypass (_bypass_course_enrollment).",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -490,6 +495,26 @@ def live_accounts(monkeypatch):
     from services import auth_guard
 
     monkeypatch.setattr(auth_guard, "_read_account_state", lambda _uid: auth_guard.ACCOUNT_ACTIVE)
+
+
+@pytest.fixture(autouse=True)
+def _bypass_course_enrollment(request, monkeypatch):
+    """#115: course-keyed writes (upload, course scan-concepts, notes create)
+    call `academics.require_course_enrollment`. Tests that mock `table()` for
+    the route's own logic predate it and do not model enrollments, so — like
+    the auth guard below — it is a no-op at the route import sites unless the
+    test opts in with `@pytest.mark.real_course_enrollment` (or runs against a
+    real DB: integration / e2e_staging)."""
+    if (request.node.get_closest_marker("real_course_enrollment")
+            or request.node.get_closest_marker("e2e_staging")
+            or request.node.get_closest_marker("integration")):
+        return
+    for mod_name in list(sys.modules):
+        if not mod_name.startswith("routes."):
+            continue
+        mod = sys.modules[mod_name]
+        if hasattr(mod, "require_course_enrollment"):
+            monkeypatch.setattr(mod, "require_course_enrollment", lambda *_a, **_k: None)
 
 
 @pytest.fixture(autouse=True)

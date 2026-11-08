@@ -32,6 +32,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded, UnexpectedModelBehavior
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering
+from services.academics import require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_present, decrypt_json
 from services.extraction_service import extract_text_from_file
@@ -685,6 +686,8 @@ async def upload_document_sync(
     frontend that hasn't migrated to the SSE /upload route keeps working."""
     await guard_off_loop(require_self, user_id, request)
     _validate_user(user_id)
+    # #115: only into a course the uploader is enrolled in (else 404).
+    await asyncio.to_thread(require_course_enrollment, user_id, course_id)
 
     # ── Validation ────────────────────────────────────────────────────────────
     filename = file.filename or ""
@@ -829,6 +832,8 @@ async def upload_document(
     """
     await guard_off_loop(require_self, user_id, request)
     _validate_user(user_id)
+    # #115: only into a course the uploader is enrolled in (else 404).
+    await asyncio.to_thread(require_course_enrollment, user_id, course_id)
 
     filename = file.filename or ""
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -1401,4 +1406,5 @@ def scan_course_concepts(course_id: str, request: Request, body: dict = Body(...
         raise HTTPException(status_code=400, detail="user_id is required.")
     require_self(user_id, request)
     _validate_user(user_id)
+    require_course_enrollment(user_id, course_id)  # #115
     return _scan_concepts_for_course(user_id, course_id)

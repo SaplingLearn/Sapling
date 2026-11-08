@@ -5,6 +5,7 @@ generate quiz, send to tutor) come in Phase 4 below.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,6 +22,7 @@ from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
 from services.academics import offering_course_id, resolve_offering, term_id_for_label
+from services.academics import require_course_enrollment
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
     create_note,
@@ -183,6 +185,8 @@ async def list_user_notes(
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
+    # #115: only under a course the student is enrolled in (else 404).
+    await asyncio.to_thread(require_course_enrollment, body.user_id, body.course_id)
     # Abstract course id from the client → the current-term offering the note
     # is stored against (create=True so a fresh note lands in the real term).
     # CREATE path: deliberately NOT semester-scoped (#141) — new content

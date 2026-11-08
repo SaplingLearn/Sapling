@@ -23,6 +23,7 @@ from datetime import date
 from functools import lru_cache
 
 import httpx
+from fastapi import HTTPException
 
 from db.connection import table
 from db.scope import runs_as_service, service_scope
@@ -310,6 +311,36 @@ def user_offering_ids_for_course(user_id: str, course_id: str) -> list[str]:
         "offering_id", filters={"user_id": f"eq.{user_id}"}
     ) or []
     return [e["offering_id"] for e in enr if e.get("offering_id") in off_ids]
+
+
+#: The answer a course-keyed write gives a caller who is not enrolled. The
+#: same 404 for a course that does not exist, so it is no existence oracle.
+COURSE_NOT_ENROLLED_DETAIL = "Course not found."
+
+
+def is_enrolled_in_course(user_id: str, course_id: str) -> bool:
+    """Whether ``user_id`` holds an enrollment in ANY offering (any term) of
+    the abstract ``course_id`` (#115).
+
+    Any term, not just the current one: the upload/notes pickers list every
+    course the student holds (``graph_service.get_courses`` collapses terms),
+    and a write into a past-term course is theirs to make. Not cached:
+    enrollments mutate (add/drop course), and a stale "no" right after the
+    inline add-course in the upload modal would refuse a legitimate upload.
+    A failed read raises (never a silent "not enrolled").
+    """
+    if not user_id or not course_id:
+        return False
+    return bool(user_offering_ids_for_course(user_id, course_id))
+
+
+def require_course_enrollment(user_id: str, course_id: str) -> None:
+    """Refuse a course-keyed write by a student not enrolled in the course
+    (#115): 404 ``COURSE_NOT_ENROLLED_DETAIL``, the codebase's "not yours"
+    answer. Without it a student could push documents into another class's
+    shared RAG pool, file notes under it, or spend model quota scanning it."""
+    if not is_enrolled_in_course(user_id, course_id):
+        raise HTTPException(status_code=404, detail=COURSE_NOT_ENROLLED_DETAIL)
 
 
 @lru_cache(maxsize=4096)
