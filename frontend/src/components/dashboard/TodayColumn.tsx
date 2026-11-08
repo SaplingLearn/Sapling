@@ -310,7 +310,8 @@ export function TodayColumn(props: {
   relTime: (iso: string | null | undefined) => string;
   navigate: (href: string) => void;
   openCourses: () => void;
-  /** Per-course progress rows, rendered at the foot of the mastery card. */
+  /** Per-course progress rows, rendered at the foot of the mastery card,
+   *  under a "Courses · Manage →" header (the Courses & Semesters hub). */
   courseRows?: React.ReactNode;
 }) {
   const { sessions, nodes, assignments, hasCourses, stats, bestStreak, xpDays, today, weekDays, nowMs, courseLabel, relTime, navigate, openCourses, courseRows } = props;
@@ -428,48 +429,65 @@ export function TodayColumn(props: {
         </div>
       </div>
 
-      {/* Today's plan */}
-      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
-          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
-          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
-        </div>
-        <div
-          role="progressbar"
-          aria-label="Today's plan"
-          aria-valuemin={0}
-          aria-valuemax={checkable.length}
-          aria-valuenow={doneCount}
-          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
-        >
-          <div
-            style={{
-              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
-              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
-              transition: "width var(--dur) var(--ease)",
-            }}
-          />
-        </div>
-        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
-            below don't jump as the plan fills up. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
-          {plan.map((item) => (
-            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
-          ))}
-        </div>
-      </div>
-
-      {/* Mastery */}
-      {/* flex: 1 — the last card takes the rest of the column, so the column
-          runs the full height of the graph beside it. */}
+      {/* Courses, then mastery */}
+      {/* flex: 1 — this card takes the column's spare height, so the column
+          runs the full height of the graph beside it (its course rows spread
+          into it). Today's plan sits below it, at its natural height. */}
       <div
         className="card"
         data-testid="dashboard-mastery"
-        // 28px at the bottom keeps the last course bar above the floating
-        // report button, which is pinned over this card's bottom-right corner.
-        style={{ padding: "16px 18px 28px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        {/* The course list's own header, like "Upcoming · Calendar →": a
+            label on the left so the link never sits alone on its line. */}
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          }}
+        >
+          <div className="label-micro">Courses</div>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            data-testid="dashboard-courses-manage"
+            onClick={openCourses}
+            title="Add or remove courses, switch semester"
+            style={{ marginRight: -8, fontSize: 12, height: 24, padding: "0 8px" }}
+          >
+            Manage →
+          </button>
+        </div>
+        {!courseRows && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+            {hasCourses ? "Nothing enrolled this semester." : "No courses yet."}
+          </div>
+        )}
+        {courseRows && (
+          // basis 0 + grow: the rows take the card's spare height (up to
+          // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
+          // space-between spreads them. minHeight 0 + overflow: a student with
+          // many courses scrolls this list instead of stretching the page.
+          <div
+            data-testid="dashboard-course-rows"
+            style={{
+              marginTop: 4,
+              // basis auto, not 0: with no definite card height (mobile stacks
+              // the column) a 0 basis collapsed the rows to nothing.
+              flex: "1 1 auto", minHeight: 0, overflowY: "auto",
+              maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
+              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
+            }}
+          >
+            {courseRows}
+          </div>
+        )}
+        {/* Below the courses: the mastery summary across them, divided off. */}
+        <div
+          style={{
+            display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8,
+            marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--border)",
+          }}
+        >
           {stats.total > 0 ? (
             <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
               <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
@@ -507,25 +525,39 @@ export function TodayColumn(props: {
             </div>
           </>
         )}
-        {courseRows && (
-          // basis 0 + grow: the rows take the card's spare height (up to
-          // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
-          // space-between spreads them. minHeight 0 + overflow: a student with
-          // many courses scrolls this list instead of stretching the page.
+      </div>
+
+      {/* Today's plan */}
+      {/* Last card: 28px at the bottom keeps its last item above the floating
+          report button, which is pinned over the column's bottom-right corner. */}
+      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px 28px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
+          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Today's plan"
+          aria-valuemin={0}
+          aria-valuemax={checkable.length}
+          aria-valuenow={doneCount}
+          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
+        >
           <div
-            data-testid="dashboard-course-rows"
             style={{
-              marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
-              // basis auto, not 0: with no definite card height (mobile stacks
-              // the column) a 0 basis collapsed the rows to nothing.
-              flex: "1 1 auto", minHeight: 0, overflowY: "auto",
-              maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
-              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
+              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
+              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
+              transition: "width var(--dur) var(--ease)",
             }}
-          >
-            {courseRows}
-          </div>
-        )}
+          />
+        </div>
+        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
+            below don't jump as the plan fills up. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
+          {plan.map((item) => (
+            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
+          ))}
+        </div>
       </div>
     </div>
   );

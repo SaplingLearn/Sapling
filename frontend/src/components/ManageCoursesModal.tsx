@@ -122,7 +122,9 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
       onClick={onClose}
       style={{
         position: "fixed", inset: 0, background: "rgba(25, 37, 11,0.45)",
-        zIndex: 200, display: "grid", placeItems: "center", padding: 20,
+        // Anchored near the top, not centred: a centred card re-centres (jumps)
+        // every time its content changes height.
+        zIndex: 200, display: "grid", placeItems: "start center", padding: "10vh 20px 20px",
       }}
     >
       <div
@@ -131,10 +133,7 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
         style={{ width: "min(620px, 100%)", maxHeight: "80vh", overflow: "hidden", padding: 0, display: "flex", flexDirection: "column" }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
-          <div>
-            <div className="label-micro">Manage</div>
-            <div className="h-serif" style={{ fontSize: 20 }}>Courses & Semesters</div>
-          </div>
+          <div className="h-serif" style={{ fontSize: 20 }}>Courses & Semesters</div>
           <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">
             <Icon name="x" size={14} />
           </button>
@@ -220,7 +219,9 @@ export function ManageCoursesModal({ open, userId, courses, onClose, onChanged }
               }}
             />
           </div>
-          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", maxHeight: 220, overflowY: "auto" }}>
+          {/* Fixed height: "Searching…" swapping in for the results must not
+              resize the modal (it made the whole card jump as it opened). */}
+          <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", height: 220, overflowY: "auto" }}>
             {loading && <div style={{ padding: 12, fontSize: 12, color: "var(--text-muted)" }}>Searching…</div>}
             {!loading && results.length === 0 && (
               <div style={{ padding: 12, fontSize: 12, color: "var(--text-muted)" }}>No matches.</div>

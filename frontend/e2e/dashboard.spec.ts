@@ -7,8 +7,8 @@
  *
  * Selectors anchor on the `dashboard` testid surface (docs/frontend-testids.md,
  * minted with this journey): the "My courses" key on the default sidebar
- * layout starts collapsed, so the spec opens it via
- * `dashboard-courses-key-toggle`, then asserts the seeded course inside the
+ * layout is always open, so the spec waits for `dashboard-courses-key`, then
+ * asserts the seeded course inside the
  * `dashboard-course-code` row labels. The course itself is asserted by seeded
  * DATA, not copy: `rich-course-math210` ("MATH210" — Linear Algebra,
  * db/seed_local_rich.py) is rich-user-active's spring-2026 enrollment, and
@@ -23,10 +23,9 @@ test("seeded session lands on dashboard with a seeded course visible", async ({
 }) => {
   await page.goto("/dashboard");
 
-  // Expand the "My courses" key overlay (collapsed by default). The toggle
-  // only mounts once enrollments have loaded, so Playwright's auto-wait on
-  // the click doubles as the "dashboard data arrived" gate.
-  await page.getByTestId("dashboard-courses-key-toggle").click();
+  // The "My courses" key only mounts once enrollments have loaded, so waiting
+  // for it doubles as the "dashboard data arrived" gate.
+  await expect(page.getByTestId("dashboard-courses-key")).toBeVisible({ timeout: 30_000 });
 
   // One row label carries the seeded course code (course_code wins over
   // course_name in the row renderer). `dashboard-course-code` repeats per

@@ -20,6 +20,8 @@ export interface GraphEdge {
   source: string;
   target: string;
   strength: number;
+  /** Absent on synthesized course spokes and on older payloads. */
+  relationship_type?: "related" | "prerequisite" | "builds_on" | "part_of";
 }
 
 export interface KnowledgeGraph {
