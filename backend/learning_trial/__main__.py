@@ -3,12 +3,12 @@
     power    the power simulation of the primary analysis -> markdown.
              Full mode (default): 7 sample sizes (60-300) x 4 effects x 4 attrition
              levels at 1000 synthetic trials per cell; larger sample sizes (400-3200)
-             for the non-zero effects at 400 per cell, so where 80% power is reached
-             is simulated rather than extrapolated; one-change sensitivity
-             scenarios; and checks of the extrapolated minimum detectable effects.
-             About half an hour on 10 cores. --fast: a small grid with 100 trials
-             per cell, seconds, for CI and smoke runs. Deterministic for a given
-             --seed whatever --workers is.
+             at 400 per cell for every effect that has not reached 80% power by
+             n = 300, so where it is reached is simulated rather than extrapolated;
+             sensitivity scenarios; and checks of the extrapolated minimum
+             detectable effects. Tens of minutes on 10 cores. --fast: a small grid
+             with 100 trials per cell, seconds, for CI and smoke runs.
+             Deterministic for a given --seed whatever --workers is.
     analyze  the preregistered analyses of an exported long table -> markdown.
 """
 
@@ -30,12 +30,13 @@ FULL = {
     "reps": 1000,
 }
 FAST = {"students": (60, 120, 200), "effects": (0.0, 0.2), "attritions": (0.3,), "reps": 100}
-#: larger trials, simulated for the non-zero effects only (2/5 of --reps per cell)
+#: larger trials (2/5 of --reps per cell), for each non-zero effect whose power
+#: has not reached 80% at the base sample sizes (simulate.unreached)
 EXTENDED_STUDENTS = (400, 600, 800, 1200, 1600, 2400, 3200)
-#: one-change scenarios against simulate.Design(), run at SENSITIVITY_ATTRITION:
-#: concepts per student (the trial's main lever), the student-ability SD (the
-#: effect scale's denominator), an easier post-test, and a three-item post-test
-#: per concept (the product poses one item today)
+#: scenarios against simulate.Design(), run at SENSITIVITY_ATTRITION: concepts
+#: per student (the trial's main lever), the student-ability SD (the effect
+#: scale's denominator), an easier post-test, a three-item post-test per concept
+#: (the product poses one item today), and the two levers together
 SENSITIVITY = (
     {"concepts_per_student": 10},
     {"concepts_per_student": 30},
@@ -44,6 +45,7 @@ SENSITIVITY = (
     {"sd_student": 1.4},
     {"control_post_rate": 0.7},
     {"items_per_posttest": 3},
+    {"concepts_per_student": 40, "items_per_posttest": 3},
 )
 SENSITIVITY_ATTRITION = 0.3
 #: the scenarios' effects (the null for calibration) and their larger sample sizes
@@ -85,10 +87,15 @@ def power_main(args: argparse.Namespace) -> int:
     tasks = simulate.grid(base, students=students, effects=effects, attritions=attritions)
     cells = simulate.run_cells(tasks, reps=reps, seed=args.seed, workers=workers)
     if full and not args.no_extended:
-        # large n only for the effects: where 80% power is reached is simulated, not extrapolated
-        tasks = simulate.grid(
-            base, students=EXTENDED_STUDENTS, effects=[e for e in effects if e > 0], attritions=attritions
-        )
+        # larger n where 80% power was not reached: simulated, never extrapolated
+        open_groups = simulate.unreached(cells)
+        tasks = [
+            (d, e)
+            for d, e in simulate.grid(
+                base, students=EXTENDED_STUDENTS, effects=[e for e in effects if e > 0], attritions=attritions
+            )
+            if simulate.scenario_key(d, e) in open_groups
+        ]
         cells += simulate.run_cells(tasks, reps=ext_reps, seed=args.seed, workers=workers)
     sensitivity: list[simulate.CellResult] = []
     if full and not args.no_sensitivity:
@@ -99,15 +106,20 @@ def power_main(args: argparse.Namespace) -> int:
                 design, students=students, effects=SENSITIVITY_EFFECTS, attritions=(SENSITIVITY_ATTRITION,)
             )
         sensitivity = simulate.run_cells(tasks, reps=sens_reps, seed=args.seed, workers=workers)
+        open_groups = simulate.unreached(sensitivity)
         tasks = []
         for overrides in SENSITIVITY:
             design = dataclasses.replace(base, **overrides)
-            tasks += simulate.grid(
-                design,
-                students=SENSITIVITY_EXTENDED,
-                effects=[e for e in SENSITIVITY_EFFECTS if e > 0],
-                attritions=(SENSITIVITY_ATTRITION,),
-            )
+            tasks += [
+                (d, e)
+                for d, e in simulate.grid(
+                    design,
+                    students=SENSITIVITY_EXTENDED,
+                    effects=[e for e in SENSITIVITY_EFFECTS if e > 0],
+                    attritions=(SENSITIVITY_ATTRITION,),
+                )
+                if simulate.scenario_key(d, e) in open_groups
+            ]
         sensitivity += simulate.run_cells(tasks, reps=ext_reps, seed=args.seed, workers=workers)
     checks: list[simulate.CellResult] = []
     if full and not args.no_checks:

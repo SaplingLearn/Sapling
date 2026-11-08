@@ -126,6 +126,13 @@ def test_students_for_power_interpolates_and_never_extrapolates():
     assert already.label() == "≤ 600"
 
 
+def test_only_groups_short_of_the_target_need_larger_trials():
+    reached = _cells_from_curve(0.12, (400, 600, 800), effect=0.2)  # 80% near n = 545
+    short = _cells_from_curve(0.12, (60, 120, 200), effect=0.15)
+    null = [dataclasses.replace(c, effect_sd=0.0) for c in short]
+    assert simulate.unreached(reached + short + null) == {simulate.scenario_key(short[0].design, 0.15)}
+
+
 def test_detectable_effect_inverts_the_curve_in_the_effect():
     z = norm_ppf(0.975)
     slope = 9.0  # probit(power) + z = slope * d at this n

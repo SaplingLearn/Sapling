@@ -391,6 +391,24 @@ class SampleSize:
         return f"~{int(math.ceil(self.n_students / 10.0) * 10)}"
 
 
+def scenario_key(design: Design, effect_sd: float) -> tuple[Design, float]:
+    """The (design apart from n, effect) group a cell belongs to."""
+    return dataclasses.replace(design, n_students=2), effect_sd
+
+
+def unreached(cells: Iterable[CellResult], *, target: float = 0.8) -> set[tuple[Design, float]]:
+    """The groups (`scenario_key`) with an effect > 0 none of whose simulated
+    sample sizes reached `target` power: the ones only a larger n can settle.
+    Simulating larger n for any other group would not change
+    `students_for_power`, which reads the first crossing."""
+    best: dict[tuple[Design, float], float] = {}
+    for c in cells:
+        if c.effect_sd > 0:
+            key = scenario_key(c.design, c.effect_sd)
+            best[key] = max(best.get(key, 0.0), c.power)
+    return {key for key, power in best.items() if power < target}
+
+
 def _probit(p: float) -> float:
     return norm_ppf(min(max(p, 1e-4), 1.0 - 1e-4))
 
@@ -406,7 +424,7 @@ def students_for_power(cells: Iterable[CellResult], *, target: float = 0.8) -> l
     groups: dict[tuple[Design, float], list[CellResult]] = defaultdict(list)
     for c in cells:
         if c.effect_sd > 0:
-            groups[(dataclasses.replace(c.design, n_students=2), c.effect_sd)].append(c)
+            groups[scenario_key(c.design, c.effect_sd)].append(c)
     out = []
     for (_, effect), members in groups.items():
         members.sort(key=lambda c: c.n_students)
@@ -610,7 +628,7 @@ def render_markdown(
             "",
             f"### Sensitivity, attrition {_pct(sensitivity[0].attrition)}",
             "",
-            "One assumption changed at a time; "
+            "One assumption changed at a time (the last row changes two); "
             + "/".join(str(r) for r in sens_reps)
             + " synthetic trials per cell. Students for 80% power, the minimum detectable effect at "
             f"n = {mde_students} (ability SDs), and the false-positive rate pooled over the scenario's "
