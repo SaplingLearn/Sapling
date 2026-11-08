@@ -217,7 +217,16 @@ readiness record before merging. The ordered lists:
   closed to "no release");
   `backend/db/migrations/20261108185101_learning_varied_practice.sql` (A140,
   A141: four nullable `check_items` columns; before either flag is turned
-  on, and either side of the code while both are off); and
+  on, and either side of the code while both are off);
+  `backend/db/migrations/20261108205812_learning_varied_practice_review.sql`
+  (A141: the closed multi-concept CHECK, added NOT VALID, and
+  `node_mastery_events.multi_concept` with `learning_evidence_commit`
+  admitting it; **before** the code — the item statistics read selects the
+  column; lock_timeout 5s, so a lock that does not come in time fails the
+  file, which is safe to run again);
+  `backend/db/migrations/20261108224511_learning_varied_practice_validate.sql`
+  (validates that CHECK in its own transaction, blocking no read or write;
+  right after it, in the same run); and
   `backend/db/migrations/20261108193927_learning_report_course_key.sql`
   (A142: the per-course-item report key and the owner check in
   `misconception_record`; either side of the code). Rolling back while a

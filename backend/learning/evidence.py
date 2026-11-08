@@ -173,10 +173,12 @@ class Evidence(BaseModel):
     student_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     same_session_recheck: bool = False
     # Spec §13 A141: the observation is a multi-concept item's, recorded on its
-    # apex concept — evidence_weight applies WEIGHT_MULTI_CONCEPT. No column
-    # journals it: the journal keeps the derived weight (as for every factor),
-    # and the item's row says what it combines. Absent from the fingerprint
-    # when False (learning.evidence_transaction._semantic).
+    # apex concept — evidence_weight applies WEIGHT_MULTI_CONCEPT. The journal
+    # keeps the derived weight (as for every factor) and, since migration
+    # 20261108205812, the flag itself: node_mastery_events.multi_concept is
+    # true on such a row and NULL on every other (graph_service names the key
+    # only then), because the item's own row can be withdrawn or retired.
+    # Absent from the dump, so from the fingerprint, when False.
     multi_concept: bool = False
     grader_backend: GraderBackend | None = None  # A22 provenance; PKG-05 reopen of PKG-03
     # PKG-10 reopen of PKG-03 (spec §5): the rule's verdict (None when it did not
