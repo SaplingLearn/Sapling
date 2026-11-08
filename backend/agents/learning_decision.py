@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModelSettings
 
-from agents._providers import model_for
+from agents._providers import model_for, settings_for_slot
 from agents.deps import SaplingDeps
 
 
@@ -61,7 +61,9 @@ learning_decision_agent = Agent[SaplingDeps, DecisionYesNoOutput](
     output_type=DecisionYesNoOutput,  # default; services/learning_decisions.py passes output_type= per run
     retries=2,  # #153 output-validation budget; tool-less, so retries= is that budget
     system_prompt=_SYSTEM_PROMPT,
-    model_settings=_DECISION_SETTINGS,
+    # A claude-* slot sends nothing extra: no thinking budget on Claude 5.x;
+    # the slot's `effort` (agents/_providers.py) is its thinking dial.
+    model_settings=settings_for_slot("learning_decision", google=_DECISION_SETTINGS, anthropic=None),
     metadata={"prompt_version": _PROMPT_HASH, "agent": "learning_decision"},
 )
 

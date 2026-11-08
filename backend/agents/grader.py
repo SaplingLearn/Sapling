@@ -85,12 +85,13 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
-from agents._providers import model_for
+from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from services.ai_trace_privacy import content_free_tracer_provider
@@ -123,6 +124,19 @@ ANSWER_REFUSED_EVENT = "learn.answer_refused"
 _SECOND_OPINION_SETTINGS = GoogleModelSettings(
     google_thinking_config=ThinkingConfig(thinking_budget=0),
 )
+# The same run on a claude-* grader_second (ADR 0030): no thinking budget (a
+# 400 on Claude 5.x; the slot's `effort` is the dial) and the Claude ceiling,
+# restated so a Gemini-sized agent cap can never truncate its adaptive thinking.
+_SECOND_OPINION_SETTINGS_CLAUDE = AnthropicModelSettings(max_tokens=ANTHROPIC_MAX_TOKENS)
+
+
+def _second_opinion_settings():
+    """The second opinion's run settings, shaped for the provider its slot serves on."""
+    return settings_for_slot(
+        GRADER_SECOND_OPINION_SLOT,
+        google=_SECOND_OPINION_SETTINGS,
+        anthropic=_SECOND_OPINION_SETTINGS_CLAUDE,
+    )
 
 # The ways one grader call can fail that are a grader failure, not a bug in
 # the caller: the request budget (GRADER_LIMITS), output that never validated
@@ -391,8 +405,17 @@ grader_agent = Agent[SaplingDeps, GraderOutput](
     output_type=GraderOutput,
     # Applies to every primary/second/span/context run. Per-run thinking
     # settings merge with these bounds; post-response usage caps stay enabled.
-    model_settings=GoogleModelSettings(
-        max_tokens=GRADER_OUTPUT_MAX_TOKENS, timeout=GRADER_REQUEST_TIMEOUT_S
+    # On a claude-* grader slot the output cap is the Claude ceiling instead:
+    # adaptive thinking counts against max_tokens there (GRADER_LIMITS still
+    # bounds the run's total tokens either way).
+    model_settings=settings_for_slot(
+        "grader",
+        google=GoogleModelSettings(
+            max_tokens=GRADER_OUTPUT_MAX_TOKENS, timeout=GRADER_REQUEST_TIMEOUT_S
+        ),
+        anthropic=AnthropicModelSettings(
+            max_tokens=ANTHROPIC_MAX_TOKENS, timeout=GRADER_REQUEST_TIMEOUT_S
+        ),
     ),
     retries=2,  # #153 output-validation budget; tool-less so retries= is that budget
     system_prompt=_SYSTEM_PROMPT,
@@ -752,7 +775,7 @@ async def _run_once(
     per_run = (
         {  # A22: another model, same agent and prompt, own limits and usage row
             "model": model_for(GRADER_SECOND_OPINION_SLOT),
-            "model_settings": _SECOND_OPINION_SETTINGS,
+            "model_settings": _second_opinion_settings(),
         }
         if second_opinion
         else {}

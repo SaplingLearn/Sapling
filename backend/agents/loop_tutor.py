@@ -43,7 +43,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import ToolDefinition
 
-from agents._providers import model_for
+from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, slot_provider
 from agents.chat_tutor import _ACADEMIC_INTEGRITY, _build_tools
 from agents.deps import SaplingDeps
 from learning.ladder import Rung, intent
@@ -124,7 +124,15 @@ def tier_run_kwargs(tier: str, *, tool_choice: str | None = None) -> dict:
     from pydantic_ai.models.google import GoogleModelSettings
 
     slot = LOOP_TIER_SLOTS[tier]  # KeyError for "none": a template turn has no model
-    if tier == "lite":
+    if slot_provider(slot) == "anthropic":
+        # ADR 0030 on a claude-* tier: no thinking budget (a 400 on Claude 5.x;
+        # the tier's `effort` is the dial) and the Claude ceiling, because
+        # adaptive thinking counts against max_tokens. The visible reply is
+        # still bounded by the turn shape's validator and LOOP_LIMITS.
+        from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+        settings = AnthropicModelSettings(max_tokens=ANTHROPIC_MAX_TOKENS)
+    elif tier == "lite":
         settings = GoogleModelSettings(max_tokens=LOOP_MAX_VISIBLE_TOKENS)
     else:
         budget = LOOP_PRO_THINKING_BUDGET if tier == "deep" else LOOP_FLASH_THINKING_BUDGET

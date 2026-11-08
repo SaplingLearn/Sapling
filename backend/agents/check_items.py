@@ -30,7 +30,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
-from agents._providers import model_for
+from agents._providers import model_for, settings_for_slot
 from agents.deps import SaplingDeps
 from agents.usage import UnfinishedRun, record_agent_usage
 from learning.checks import CheckItemDraft
@@ -240,8 +240,13 @@ check_items_agent = Agent[SaplingDeps, CheckItemsOutput](
 
 def _flex_settings() -> ModelSettings | None:
     """Background prefill runs on Gemini's Flex tier (A23). pydantic-ai 1.107
-    maps the unified `service_tier='flex'` onto the Gemini API request."""
-    return ModelSettings(service_tier="flex", timeout=FLEX_TIMEOUT_S)
+    maps the unified `service_tier='flex'` onto the Gemini API request. Flex is
+    a Gemini tier: a claude-* check_items slot keeps only the long timeout."""
+    return settings_for_slot(
+        "check_items",
+        google=ModelSettings(service_tier="flex", timeout=FLEX_TIMEOUT_S),
+        anthropic=ModelSettings(timeout=FLEX_TIMEOUT_S),
+    )
 
 
 async def _backoff(attempt: int) -> None:

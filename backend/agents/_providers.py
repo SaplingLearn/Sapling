@@ -857,6 +857,29 @@ def model_name_for(task: AgentTask) -> str:
     return os.getenv(f"SAPLING_MODEL_{task.upper()}") or _DEFAULTS[task]
 
 
+#: The Claude request ceiling every claude-* slot carries (thinking included);
+#: public so a per-run setting that must REPLACE a Gemini-sized cap can restate it.
+ANTHROPIC_MAX_TOKENS = _ANTHROPIC_MAX_TOKENS
+
+
+def slot_provider(task: AgentTask) -> ProviderName:
+    """The provider a slot resolves to now (its SAPLING_MODEL_* override, else its
+    default). A config read like `model_name_for`; it never builds a Model."""
+    return provider_for_model(model_name_for(task))
+
+
+def settings_for_slot(task: AgentTask, *, google: Any, anthropic: Any) -> Any:
+    """Agent- or run-level settings shaped for the provider `task` serves on.
+
+    The knobs do not translate (see the per-task settings above): a Gemini
+    thinking BUDGET is a 400 on Claude 5.x, the Gemini Flex `service_tier` is
+    not an Anthropic tier, and a Gemini-sized `max_tokens` truncates a Claude
+    reply, whose adaptive thinking counts against it. A slot that sets any of
+    these states both shapes here, so flipping its model between providers is
+    a configuration change, not a code change. Either shape may be None."""
+    return anthropic if slot_provider(task) == "anthropic" else google
+
+
 def provider_model(name: str, *, task: AgentTask | None = None) -> "Model":
     """A real, loop-safe model for a bare model name, on the provider the name
     implies, carrying `task`'s per-provider default settings when given.
