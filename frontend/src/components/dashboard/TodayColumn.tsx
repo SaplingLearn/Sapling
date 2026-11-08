@@ -429,7 +429,7 @@ export function TodayColumn(props: {
         </div>
       </div>
 
-      {/* Mastery */}
+      {/* Courses, then mastery */}
       {/* flex: 1 — this card takes the column's spare height, so the column
           runs the full height of the graph beside it (its course rows spread
           into it). Today's plan sits below it, at its natural height. */}
@@ -438,50 +438,11 @@ export function TodayColumn(props: {
         data-testid="dashboard-mastery"
         style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-          {stats.total > 0 ? (
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-              <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>of {stats.total} concepts mastered</span>
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 3 }}>
-              No concepts yet. They appear as you study and upload course material.
-            </div>
-          )}
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            data-testid="dashboard-mastery-tree"
-            onClick={() => navigate("/tree")}
-            style={{ flexShrink: 0, marginRight: -8, marginTop: -2, fontSize: 12, height: 24, padding: "0 8px" }}
-          >
-            Open Tree →
-          </button>
-        </div>
-        {stats.total > 0 && (
-          <>
-            <div style={{ display: "flex", height: 8, borderRadius: 99, overflow: "hidden", gap: 2, marginTop: 8 }}>
-              {legend.map(([label, n, color]) => (
-                <span key={label} style={{ flex: n, background: color }} />
-              ))}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
-              {legend.map(([label, n, color]) => (
-                <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
-                  {n} {label}
-                </span>
-              ))}
-            </div>
-          </>
-        )}
         {/* The course list's own header, like "Upcoming · Calendar →": a
             label on the left so the link never sits alone on its line. */}
         <div
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-            marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
           }}
         >
           <div className="label-micro">Courses</div>
@@ -519,6 +480,50 @@ export function TodayColumn(props: {
           >
             {courseRows}
           </div>
+        )}
+        {/* Below the courses: the mastery summary across them, divided off. */}
+        <div
+          style={{
+            display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8,
+            marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)",
+          }}
+        >
+          {stats.total > 0 ? (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
+              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>of {stats.total} concepts mastered</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 3 }}>
+              No concepts yet. They appear as you study and upload course material.
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            data-testid="dashboard-mastery-tree"
+            onClick={() => navigate("/tree")}
+            style={{ flexShrink: 0, marginRight: -8, marginTop: -2, fontSize: 12, height: 24, padding: "0 8px" }}
+          >
+            Open Tree →
+          </button>
+        </div>
+        {stats.total > 0 && (
+          <>
+            <div style={{ display: "flex", height: 8, borderRadius: 99, overflow: "hidden", gap: 2, marginTop: 8 }}>
+              {legend.map(([label, n, color]) => (
+                <span key={label} style={{ flex: n, background: color }} />
+              ))}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+              {legend.map(([label, n, color]) => (
+                <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
+                  {n} {label}
+                </span>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
