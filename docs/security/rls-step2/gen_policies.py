@@ -98,6 +98,7 @@ BUCKETS = {
         "events", "llm_usage", "feature_flags", "feature_flag_targets", "admin_audit_log",
         "email_broadcasts", "email_sends", "email_suppressions", "newsletter_emails",
         "job_applications", "encryption_key_check", "schema_migrations", "jobs",
+        "document_uploads",
     ],
 }
 # room_messages is bucket C but gets its policy and grants in step 2e (the
