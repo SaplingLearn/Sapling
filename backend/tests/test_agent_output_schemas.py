@@ -127,6 +127,9 @@ EXPECTED_STRUCTURED_AGENTS = {
     "note_summary_agent",
     "quiz_agent",
     "quiz_context_agent",
+    # learning-loop spec §13 A144: the planned quiz writer — PlannedQuiz, the
+    # quiz's flat question list plus a per-option tag list; retries=2 (no tools)
+    "quiz_planned_agent",
     # learning loop PKG-09: flat 4-field SessionClose; retries=2 is the shape validator's
     "session_close_agent",
     "social_summary_agent",

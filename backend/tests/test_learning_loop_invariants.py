@@ -58,7 +58,6 @@ SERIES_AGENT_TASKS = (
     "check_items",
     "check_items_verify",  # A119: the drafted items' alignment check (request path in function mode)
     "check_items_solve",  # A124: the drafted items' key check (request path in function mode)
-    "quiz_check",  # A145: the quiz item gates' checks (request path with quiz_item_gates on)
     "grader",
     "grader_second",
     "learning_decision",
