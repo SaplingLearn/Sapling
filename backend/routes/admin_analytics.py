@@ -23,7 +23,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from db.connection import table
+from db.connection import rpc, table
 from services.auth_guard import require_admin
 from services.events_service import SYSTEM_CATEGORY
 from services.llm_pricing import COST_SCALE
@@ -150,6 +150,29 @@ class ErrorsPage(BaseModel):
     # series only and stays False when no bucket was requested.
     truncated: bool = False
     series: list[DayCount] | None = None
+
+
+class CostWeek(BaseModel):
+    week: int  # 0 = the last 7 days, 1-4 = the trailing four weeks
+    from_: str = Field(validation_alias="from", serialization_alias="from")
+    to: str
+    usd: float
+    active_users: int
+    usd_per_active_user: float | None
+
+
+class CostPerActiveUser(BaseModel):
+    """#119 / plan Targets: weekly LLM cost per active user + the 2x jump."""
+    as_of: str
+    threshold: float
+    usd_per_active_user_7d: float | None
+    baseline_usd_per_active_user: float | None
+    baseline_weeks: int
+    ratio: float | None
+    # True when this week's per-user cost is at least `threshold` times the
+    # trailing 4-week average; None when either side had no active users.
+    jump: bool | None
+    weeks: list[CostWeek]
 
 
 # ── Date range helpers ───────────────────────────────────────────────────────
@@ -447,6 +470,27 @@ def llm_cost(
         rows=cost_rows, totals=totals, truncated=truncated,
         series=_cost_series(rows) if bucket else None,
     )
+
+
+@router.get("/llm/cost-per-active-user", response_model=CostPerActiveUser)
+def llm_cost_per_active_user(request: Request, response: Response) -> CostPerActiveUser:
+    """Weekly LLM cost per active user and the "2x jump" alert signal (#119).
+
+    One call to the SQL function `llm_cost_per_active_user_weekly()`
+    (migration 20261108213311) — the same definition Canopy's metrics should
+    read, so the two never disagree. Cost = priced `llm_usage` rows; active =
+    distinct non-system `events` users, as `distinct_active_users` above.
+    503 when the database can't answer: never a made-up zero."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    try:
+        payload = rpc("llm_cost_per_active_user_weekly", {})
+        if isinstance(payload, list):
+            payload = payload[0] if payload else None
+        return CostPerActiveUser.model_validate(payload)
+    except Exception as exc:
+        logger.warning("llm cost-per-active-user unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="LLM cost signal unavailable") from exc
 
 
 @router.get("/errors", response_model=ErrorsPage)
