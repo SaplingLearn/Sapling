@@ -33,6 +33,8 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
+# pg_dump backups (make backup-db / make promote, Trov #114): real data, never commit
+/backups/
 
 # ---- RAG data (large files — stored in Supabase Storage) ----
 backend/data/*.json
