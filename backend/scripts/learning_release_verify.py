@@ -95,6 +95,14 @@ REQUIRED_COLUMNS = {
         "claim": "text",
         "claimed_at": "timestamp with time zone",
         "answered_at": "timestamp with time zone",
+        # spec §13 A112: fixed follow-up windows and the recorded outcome
+        "window_days": "integer",
+        "anchor_event_id": "text",
+        "anchor_at": "timestamp with time zone",
+        "last_evidence_at": "timestamp with time zone",
+        "days_since_evidence": "double precision",
+        "correct": "boolean",
+        "max_rung": "smallint",
     },
 }
 # This fence must not manufacture historical activity during migration.

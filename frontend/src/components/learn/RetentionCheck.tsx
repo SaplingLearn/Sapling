@@ -83,7 +83,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   return <>
     <button type="button" data-testid="retention-open" className="btn btn--sm" disabled={!courseId || busy} onClick={() => void open()}>{busy ? "Checking…" : "Open eligible retention checks"}</button>
     {error && <p role="alert" style={{ margin: 0, fontSize: 13 }}>{error}</p>}
-    {items?.length === 0 && <p data-testid="retention-empty" role="status">No eligible unseen retention checks are available for this course. You may need more time away or new check material.</p>}
+    {items?.length === 0 && <p data-testid="retention-empty" role="status">No eligible unseen retention checks are available for this course. Checks open at fixed times after you first study a concept; you may need more time or new check material.</p>}
     {items && items.length > 0 && !item && <p data-testid="retention-finished" role="status">This set is finished. A few answers do not establish mastery; keep checking what you retain over time.</p>}
     {item && <div data-testid="retention-item" style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
       <p style={{ margin: 0, fontSize: 12 }}>Question {index + 1} of {items?.length}</p>

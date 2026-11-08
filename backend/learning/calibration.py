@@ -17,9 +17,9 @@ the same exclusions the mastery gate applies (bkt.is_mastered counts only
 strong unassisted evidence).
 
 The post-test subset (no session, strong channel) is the cleanest signal: a
-fresh reserve item, ≥ POSTTEST_MIN_AGE_DAYS after the last evidence, graded
-with no tutor, RAG or brief. Its calibration is the rung-3 validity check of
-`p_known` itself.
+fresh reserve item, at a fixed window (POSTTEST_WINDOWS_DAYS) after the
+concept's first graded evidence (spec §13 A112), graded with no tutor, RAG or
+brief. Its calibration is the rung-3 validity check of `p_known` itself.
 
 Nothing here writes, gates or changes belief. It is a report for the admin KPI.
 """

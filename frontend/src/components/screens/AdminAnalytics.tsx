@@ -42,7 +42,13 @@ import {
   type AnalyticsQuery,
   type AnalyticsRangeValue,
 } from "@/lib/useAdminAnalytics";
-import type { CostDayPoint, LearningLoopKpisData, LlmCostGroupBy, LoopCalibrationReport } from "@/lib/types";
+import type {
+  CostDayPoint,
+  LearningLoopKpisData,
+  LlmCostGroupBy,
+  LoopCalibrationReport,
+  LoopGainSummary,
+} from "@/lib/types";
 
 const PRESETS = [
   { days: 7, label: "7d" },
@@ -218,6 +224,71 @@ function CalibrationTable({ title, report, testid }: { title: string; report: Lo
   );
 }
 
+/** A paired change in percentage points (post − pre), signed; "—" when n = 0. */
+const fmtPp = (v: number | null) => (v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)} pp`);
+
+function GainRow({ testid, label, s, posttests }: {
+  testid: string;
+  label: string;
+  s: LoopGainSummary;
+  posttests?: number;
+}) {
+  return (
+    <tr data-testid={testid}>
+      <td style={td}>{label}</td>
+      <td style={tdNum}>{posttests ?? "—"}</td>
+      <td style={tdNum}>{s.n}</td>
+      <td style={tdNum}>{fmtRate(s.pre_correct_rate)}</td>
+      <td style={tdNum}>{fmtRate(s.post_correct_rate)}</td>
+      <td style={tdNum}>{fmtPp(s.paired_difference)}</td>
+      <td style={tdNum}>{`${s.improved} / ${s.same} / ${s.worse}`}</td>
+    </tr>
+  );
+}
+
+/** Pre/post learning gain per fixed post-test window (spec §13 A112): each
+ *  concept's unaided probe pretest against its unaided delayed post-test, with
+ *  the "no practice for a while before the post-test" stratum under each
+ *  window. Observed answers only — never the mastery estimate. */
+function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain"] }) {
+  if (!gain.windows.some(w => w.posttests > 0)) {
+    return (
+      <div data-testid="admin-loop-gain" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+        No unaided post-test outcomes in this range.
+      </div>
+    );
+  }
+  return (
+    <div data-testid="admin-loop-gain" style={scrollX}>
+      <table style={{ borderCollapse: "collapse", minWidth: 560 }}>
+        <thead>
+          <tr>
+            <th style={th}>Window</th>
+            <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
+            <th style={{ ...th, textAlign: "right" }}>Pairs</th>
+            <th style={{ ...th, textAlign: "right" }}>Pre-test correct</th>
+            <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
+            <th style={{ ...th, textAlign: "right" }}>Paired change</th>
+            <th style={{ ...th, textAlign: "right" }}>Improved / same / worse</th>
+          </tr>
+        </thead>
+        <tbody>
+          {gain.windows.map(w => (
+            <React.Fragment key={w.window_days}>
+              <GainRow testid={`admin-loop-gain-${w.window_days}`} label={`${w.window_days} days`} s={w} posttests={w.posttests} />
+              <GainRow
+                testid={`admin-loop-gain-${w.window_days}-delayed`}
+                label={`↳ no practice in the ${gain.delayed_min_days} days before`}
+                s={w.delayed}
+              />
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
   return (
     <>
@@ -237,12 +308,18 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
       <h3 className="h-serif" style={{ fontSize: 15, margin: "8px 0" }}>Are the mastery estimates right?</h3>
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
         BKT&apos;s predicted chance of a correct unaided answer, against what students actually did.
-        The delayed post-test (fresh item, no tutor, ≥ 7 days) is the cleanest check.
+        The delayed post-test (fresh item, no tutor, at fixed follow-up windows) is the cleanest check.
       </p>
       <div style={{ display: "grid", gap: 16 }}>
         <CalibrationTable title="Delayed post-test" report={d.calibration.posttest} testid="admin-loop-calibration-posttest" />
         <CalibrationTable title="All independent evidence" report={d.calibration.all} testid="admin-loop-calibration-all" />
       </div>
+      <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Did students learn?</h3>
+      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
+        Each concept&apos;s first unaided probe answer (the pretest) against its unaided delayed post-test,
+        at fixed windows after the concept was first graded. Answers only, never the mastery estimate.
+      </p>
+      <LearningGainTable gain={d.learning_gain} />
     </>
   );
 }

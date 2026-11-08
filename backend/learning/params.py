@@ -493,13 +493,24 @@ GATE_CEILING_COMPLIANCE_MIN = 0.95
 # counts as earnest-blocked (a /hint denied by the ceiling or the H6 gate on a
 # step with a genuine attempt) is Sapling's operationalisation, not the paper's.
 GATE_EARNEST_REVISE_MAX = 0.05
-# † rung 3 is tool-removed and delayed. Raised from 2 to 7 days on 2026-11-07
-# (docs/research/learning-loop/2026-11-07-direction-audit.md, rec. 2): retention
-# claims rest on ≥ 1-week delays (Roediger & Karpicke 2006 test vs restudy at
-# 1 week; Oreopoulos et al. 2026 NBER w35621 one-week delayed test), and a
-# 2-day item mostly measures short-term retrieval. FSRS reviews still run
-# between; a review is journaled evidence, so it restarts this clock.
-POSTTEST_MIN_AGE_DAYS = 7
+# † rung 3 is tool-removed and delayed, at FIXED follow-up windows (spec §13 A112;
+# docs/research/learning-loop/2026-11-07-direction-audit.md rec. 2, and the
+# 2026-10-18 foundation audit: "a study needs fixed follow-up windows"). Window w
+# opens w days after the concept's FIRST graded evidence — the earliest
+# node_mastery_events evidence row, which practice can never move (the journal
+# is append-only) — and runs until the next window opens; the last stays open.
+# Each window is posed at most once per (student, concept, window); a window the
+# student was away for is skipped, never posed late under its label. 7 = the
+# ≥ 1-week delay A110 (b) adopted (Roediger & Karpicke 2006 test vs restudy at
+# 1 week; Oreopoulos et al. 2026 NBER w35621 one-week delayed test); 28 = the
+# audit's 4-week follow-up. Strictly increasing. Unvalidated choices.
+POSTTEST_WINDOWS_DAYS = (7, 28)  # †
+# † A112: practice no longer postpones a window (A110 (b)'s "a review restarts
+# the clock" is gone), so a pose may follow recent practice. Every pose records
+# the days since the concept's last evidence; the learning-gain report's
+# "delayed" stratum keeps the outcomes whose concept had no evidence for at
+# least this long before the pose (A110 (b)'s 1-week rule, now a stratum).
+POSTTEST_DELAYED_MIN_DAYS = 7  # †
 POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
 # † PKG-14 (spec §13 A89, owner): an unanswered post-test pose is void after this
 # long — it may be re-posed, and a late answer to it is refused (409)

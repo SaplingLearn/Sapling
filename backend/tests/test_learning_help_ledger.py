@@ -333,7 +333,7 @@ def test_an_expired_pose_keeps_its_item_bound_to_the_node(gate_on, one_item):
     with patch("routes.learn_loop.record_posed") as posed:
         items = client.post(_post.START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert [i["question_hash"] for i in items] == ["q2"]
-    pose = one_item["poses"][("u", "n1")]
+    pose = one_item["poses"][("u", "n1", _post.W1)]  # A112: renewed in its own window
     assert pose["question_hash"] == "q2" and pose["posed_at"] == _post.NOW.isoformat()
     posed.assert_called_once_with("u", "q2", source="posttest")
 

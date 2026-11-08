@@ -36,6 +36,7 @@ from __future__ import annotations
 import enum
 import logging
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, table
@@ -222,6 +223,52 @@ def recent_evidence(user_id: str, node_id: str, *, since: str) -> list[dict] | N
         }
         for row in rows or []
     ]
+
+
+class EvidenceSpan(NamedTuple):
+    """One concept's journaled evidence span (spec §13 A112)."""
+
+    first_id: str  # node_mastery_events.id of the FIRST evidence row: the post-test anchor
+    first_at: datetime  # its time; the journal is append-only, so practice never moves it
+    last_at: datetime  # the latest evidence time (what a pose's delay is measured from)
+
+
+def _journal_time(raw) -> datetime:
+    """A journal created_at as an aware datetime; an unreadable one raises
+    (a timestamp the database wrote has no honest default)."""
+    ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def evidence_spans(user_id: str, course_id: str) -> dict[str, EvidenceSpan]:
+    """A112: node id → its EvidenceSpan, for every node of the student's course
+    that has evidence rows (event_type='evidence'), read in the journal's total
+    order (created_at, evidence_seq, id — read_planning_history's), paged and
+    owner- and course-scoped through the graph_nodes!inner embed. Propagation is
+    never journaled, so it neither anchors a concept nor refreshes its last
+    evidence (learner_state.last_evidence_at is the DECAY anchor, which a
+    propagation can set — HANDOFF-03). A failed read raises."""
+    spans: dict[str, EvidenceSpan] = {}
+    for row in page_all(
+        _MasteryEventsRead(),
+        "id,node_id,created_at,evidence_seq,graph_nodes!inner(user_id,course_id)",
+        filters={
+            "graph_nodes.user_id": f"eq.{user_id}",
+            "graph_nodes.course_id": f"eq.{course_id}",
+            "event_type": "eq.evidence",
+        },
+        order="created_at.asc,evidence_seq.asc.nullslast,id.asc",
+    ):
+        node = row.get("node_id")
+        if not node or not row.get("id"):
+            continue
+        at = _journal_time(row.get("created_at"))
+        span = spans.get(node)
+        if span is None:
+            spans[node] = EvidenceSpan(str(row["id"]), at, at)
+        elif at > span.last_at:
+            spans[node] = span._replace(last_at=at)
+    return spans
 
 
 def seen_hashes(user_id: str) -> set[str]:

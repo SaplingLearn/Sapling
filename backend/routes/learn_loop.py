@@ -112,7 +112,7 @@ from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.served_scan import ScanSet
 from learning.learner_brief import course_concept_names, store_brief
-from learning.learner_state import LearnerState, read_states, states_last_evidence_before
+from learning.learner_state import LearnerState, read_states
 from learning.misconceptions import (
     attempts_for_node,
     attempts_of,
@@ -128,6 +128,7 @@ from learning.misconceptions import (
 from learning.loop_state_store import (
     LoopStateConflict,
     LoopSessionClosed,
+    evidence_spans,
     load_loop_state,
     recent_evidence,
     revealed_hashes,
@@ -169,8 +170,8 @@ from learning.params import (
     LOOP_FAILED_ANCHORS_MAX,
     PLAN_ORDER,
     POSTTEST_MAX_ITEMS,
-    POSTTEST_MIN_AGE_DAYS,
     POSTTEST_POSE_TTL_HOURS,
+    POSTTEST_WINDOWS_DAYS,
     PROBE_MAX_SKILLS,
     PROBE_SESSION_CAP,
     REVIEW_DAILY_BUDGET_MIN,
@@ -3790,21 +3791,18 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
     return {"ok": True}
 
 
-# ── Tool-removed post-test (PKG-14; spec §10 rung 3, A16, A23) ─────────────
+# ── Tool-removed post-test (PKG-14; spec §10 rung 3, A16, A23, A112) ───────
 
 #: Every value `zpd.step.phase` may carry (PKG-06's Phase; spec §13 A8 adds
 #: "posttest"). The `sessions.close_phase` CHECK is NOT widened: posttest is a
 #: step phase only.
 STEP_PHASES: tuple[str, ...] = get_args(zpd_events.Phase)
 _NOT_A_POSTTEST_ITEM = "not a post-test item"
+_ONE_DAY = timedelta(days=1)
 
 
 def _posttest_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _posttest_cutoff(now: datetime) -> datetime:
-    return now - timedelta(days=POSTTEST_MIN_AGE_DAYS)
 
 
 def _iso_z(ts: datetime) -> str:
@@ -3812,17 +3810,15 @@ def _iso_z(ts: datetime) -> str:
     return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _due_for_posttest(last_evidence_at, cutoff: datetime) -> bool:
-    """Taught long enough ago: the last evidence is at or before the cutoff. A
-    concept with no evidence, or an unreadable timestamp, is never due."""
-    if not last_evidence_at:
-        return False
-    try:
-        ts = datetime.fromisoformat(str(last_evidence_at).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-    return ts <= cutoff
+def _posttest_window(anchor: datetime, now: datetime) -> int | None:
+    """A112: the fixed follow-up window `now` falls in — the largest
+    POSTTEST_WINDOWS_DAYS entry w with anchor + w days ≤ now, where `anchor` is
+    the concept's FIRST graded evidence (practice cannot move it). A window runs
+    until the next one opens (the last stays open), so a window the student was
+    away for is skipped, never posed late under its label. None before the
+    first window opens."""
+    opened = [w for w in POSTTEST_WINDOWS_DAYS if anchor + timedelta(days=w) <= now]
+    return max(opened) if opened else None
 
 
 def posttest_item(items: list, excluded: set[str]):
@@ -3869,13 +3865,18 @@ def _course_nodes(user_id: str, course_id: str) -> dict[str, str]:
     }
 
 
-def _read_poses(user_id: str, course_id: str) -> dict[str, dict]:
-    """node id → the student's post-test pose row in the course (A87)."""
+def _read_poses(user_id: str, course_id: str) -> dict[str, dict[int, dict]]:
+    """node id → window → the student's post-test pose rows in the course (A87;
+    one row per (student, node, window) since A112)."""
     rows = table(_POSES).select(
-        "node_id,question_hash,posed_at,answered_at,claim,claimed_at",
+        "node_id,window_days,question_hash,posed_at,answered_at,claim,claimed_at",
         filters={"user_id": f"eq.{user_id}", "course_id": f"eq.{course_id}"},
     )
-    return {r["node_id"]: r for r in rows or [] if r.get("node_id")}
+    poses: dict[str, dict[int, dict]] = {}
+    for r in rows or []:
+        if r.get("node_id"):
+            poses.setdefault(r["node_id"], {})[int(r["window_days"])] = r
+    return poses
 
 
 def _pose_open(pose: dict | None, now: datetime) -> bool:
@@ -3887,40 +3888,126 @@ def _pose_open(pose: dict | None, now: datetime) -> bool:
     return posed is not None and posed >= now - timedelta(hours=POSTTEST_POSE_TTL_HOURS)
 
 
+def _posed_order(pose: dict) -> tuple:
+    """Earliest posed first; an unreadable posed_at sorts first; then the window."""
+    return (_ts(pose.get("posed_at")) or datetime.min.replace(tzinfo=timezone.utc), int(pose["window_days"]))
+
+
+def _open_posed_item(node_poses: dict[int, dict], items: list, now: datetime):
+    """(pose, item) of the node's OPEN pose whose item is still in the bank — the
+    earliest posed, should a race have left two (A87: returned as posed, never
+    re-chosen); None when there is none. An open pose whose item was withdrawn
+    counts as no pose, as it did before A112."""
+    by_hash = {i.question_hash: i for i in items}
+    posed = [
+        (p, by_hash[p.get("question_hash")])
+        for p in node_poses.values()
+        if _pose_open(p, now) and p.get("question_hash") in by_hash
+    ]
+    return min(posed, key=lambda pi: _posed_order(pi[0]), default=None)
+
+
+def _bound_item(items: list, node_poses: dict[int, dict], excluded: set[str]):
+    """A93 (minor 6), across windows since A112: the node's newest UNANSWERED
+    pose (expired, or open with a withdrawn item) keeps its item bound to the
+    node — the next pose, a renewal in its window or a later window's, is that
+    SAME item, never a fresh one to dodge it — while the item is still fresh
+    (A23: neither seen nor revealed since; a stale item would grade practice as
+    a delayed outcome). None → posttest_item chooses."""
+    unanswered = [p for p in node_poses.values() if not p.get("answered_at")]
+    if not unanswered:
+        return None
+    qh = max(unanswered, key=_posed_order).get("question_hash")
+    if qh in excluded:
+        return None
+    return next((i for i in items if i.question_hash == qh), None)
+
+
+def _new_pose(user_id: str, course_id: str, node: str, window: int, item, span, now: datetime) -> dict:
+    """A112: a pose row — its window, the window's fixed anchor (the concept's
+    first graded evidence: journal row id and time), and the concept's last
+    evidence before the pose with the days since it, the delay an analysis
+    stratifies on (truly delayed vs recently practised — practice no longer
+    postpones a window). The outcome (`correct`, `max_rung`) stays NULL until
+    the pose is answered. Hashes, ids, times and numbers only."""
+    return {
+        "user_id": user_id,
+        "node_id": node,
+        "course_id": course_id,
+        "window_days": window,
+        "question_hash": item.question_hash,
+        "posed_at": now.isoformat(),
+        "answered_at": None,
+        "claim": None,
+        "claimed_at": None,
+        "anchor_event_id": span.first_id,
+        "anchor_at": span.first_at.isoformat(),
+        "last_evidence_at": span.last_at.isoformat(),
+        "days_since_evidence": max(0.0, (now - span.last_at) / _ONE_DAY),
+        "correct": None,
+        "max_rung": None,
+    }
+
+
 def _record_poses(rows: list[dict]) -> None:
-    """Open (or replace, once the node is due again) the poses — one upsert."""
+    """Open (or renew, A89/A93) the poses — one upsert, one row per (student,
+    node, window) (A112)."""
     if rows:
-        table(_POSES).upsert(rows, on_conflict="user_id,node_id")
+        table(_POSES).upsert(rows, on_conflict="user_id,node_id,window_days")
 
 
-def _claim_pose(user_id: str, node_id: str, question_hash: str, claim: str, now: datetime) -> bool:
+def _claim_pose(
+    user_id: str, node_id: str, question_hash: str, claim: str, now: datetime
+) -> dict | None:
     """The DB claim (A87): one conditional UPDATE — the OPEN pose of this item
     (unanswered, posed within POSTTEST_POSE_TTL_HOURS, A89), unclaimed, with no
     claim time (m10) or under a claim older than LOOP_GRADING_CLAIM_STALE_S — so
     only one submission grades it, whatever the number of backend processes.
-    Returns the claimed row (its posed_at), or None."""
+    A112: a node has one row per window, so the open pose's window is read first
+    (the earliest posed, should a race have left two) and the UPDATE names it:
+    one answer never closes two windows. Returns the claimed row (its posed_at
+    and window_days), or None."""
+    open_pose = {
+        "user_id": f"eq.{user_id}",
+        "node_id": f"eq.{node_id}",
+        "question_hash": f"eq.{question_hash}",
+        "answered_at": "is.null",
+        "posed_at": f"gte.{_iso_z(now - timedelta(hours=POSTTEST_POSE_TTL_HOURS))}",
+    }
+    posed = table(_POSES).select("window_days,posed_at", filters=open_pose) or []
+    if not posed:
+        return None
+    window = int(min(posed, key=_posed_order)["window_days"])
     stale = _iso_z(now - timedelta(seconds=LOOP_GRADING_CLAIM_STALE_S))
     rows = table(_POSES).update(
         {"claim": claim, "claimed_at": now.isoformat()},
         filters={
-            "user_id": f"eq.{user_id}",
-            "node_id": f"eq.{node_id}",
-            "question_hash": f"eq.{question_hash}",
-            "answered_at": "is.null",
-            "posed_at": f"gte.{_iso_z(now - timedelta(hours=POSTTEST_POSE_TTL_HOURS))}",
+            **open_pose,
+            "window_days": f"eq.{window}",
             "or": f"(claim.is.null,claimed_at.is.null,claimed_at.lt.{stale})",
         },
     )
     return rows[0] if rows else None
 
 
-def _answer_pose(user_id: str, node_id: str, claim: str, now: datetime) -> bool:
+def _answer_pose(
+    user_id: str, node_id: str, claim: str, now: datetime, *, correct: bool, max_rung: int
+) -> bool:
     """m1/m2: re-validate the claim and CLOSE the pose before the one flush —
-    a conditional UPDATE on this claim, still unanswered. True → the pose is
-    answered for good (a later failure never reopens it: fail closed); False →
-    the claim was taken over, and nothing may be written."""
+    a conditional UPDATE on this claim, still unanswered. The same write records
+    the post-test OUTCOME (A112): `correct` and the rung the grade carries
+    (`max_rung`, the floor after the in-claim re-read; above 0 it is no clean
+    delayed outcome). True → the pose is answered for good (a later failure
+    never reopens it: fail closed); False → the claim was taken over, and
+    nothing may be written."""
     rows = table(_POSES).update(
-        {"answered_at": now.isoformat(), "claim": None, "claimed_at": None},
+        {
+            "answered_at": now.isoformat(),
+            "claim": None,
+            "claimed_at": None,
+            "correct": bool(correct),
+            "max_rung": int(max_rung),
+        },
         filters={
             "user_id": f"eq.{user_id}",
             "node_id": f"eq.{node_id}",
@@ -3946,68 +4033,58 @@ def _release_pose(user_id: str, node_id: str, claim: str) -> None:
 
 @router.post("/posttest/start", dependencies=_RATE_LIMITED)
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
-    """Rung 3 (spec §10): this student's post-test items for one course — one
-    per concept whose last evidence is at least POSTTEST_MIN_AGE_DAYS old, its
-    reserve item unless seen or revealed (A23), oldest evidence first, at most
-    POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the posed item is recorded,
-    and a repeat start returns the same item for a node with an open pose —
-    never a fresh one. The pose only: the prompt verbatim and an mc_reason
-    item's options, never a key or a reference. No brief, no RAG, no tutor, no
-    session row, no model call. Rate-limited (A20)."""
+    """Rung 3 (spec §10) at FIXED follow-up windows (A112): this student's
+    post-test items for one course. A concept is due when `now` falls in one of
+    POSTTEST_WINDOWS_DAYS counted from its FIRST graded evidence (the journal's
+    earliest evidence row: practice cannot postpone it) and that window is not
+    answered yet — each window is posed at most once per student, concept and
+    window, and a window the student was away for is skipped. The item is the
+    concept's reserve unless seen or revealed (A23); an unanswered pose's item
+    stays bound to the node while it is fresh (A93). Open poses first, then the
+    earliest-opened windows, at most POSTTEST_MAX_ITEMS. It COMMITS when opened
+    (A87): the pose records its window, its anchor and the days since the
+    concept's last evidence, and a repeat start returns the same item for a
+    node with an open pose — never a fresh one. The pose only: the prompt
+    verbatim and an mc_reason item's options, never a key or a reference. No
+    brief, no RAG, no tutor, no session row, no model call. Rate-limited (A20)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
     now = _posttest_now()
-    cutoff = _posttest_cutoff(now)
-    due = [
-        r
-        for r in states_last_evidence_before(body.user_id, cutoff)
-        if r.get("node_id") and _due_for_posttest(r.get("last_evidence_at"), cutoff)
-    ]
-    poses = _read_poses(body.user_id, body.course_id)
-    open_nodes = {n for n, p in poses.items() if _pose_open(p, now)}  # A89: expired → void
     nodes = _course_nodes(body.user_id, body.course_id)
-    due_ids = {r["node_id"] for r in due}
-    # an open pose stays posed until answered or expired, even if its node is no longer due
-    rows = [r for r in due if nodes.get(r["node_id"])] + [
-        {"node_id": n, "last_evidence_at": ""} for n in sorted(open_nodes - due_ids) if nodes.get(n)
-    ]
-    if not rows:
+    poses = _read_poses(body.user_id, body.course_id)
+    spans = evidence_spans(body.user_id, body.course_id)
+    due: dict[str, int | None] = {}  # candidate node → its due, unanswered window (or None)
+    for node in nodes:
+        node_poses = poses.get(node) or {}
+        span = spans.get(node)
+        window = _posttest_window(span.first_at, now) if span is not None else None
+        if window is not None and (node_poses.get(window) or {}).get("answered_at"):
+            window = None  # answered: a window is posed at most once
+        # an open pose stays posed until answered or expired, even when no window is due
+        if window is not None or any(_pose_open(p, now) for p in node_poses.values()):
+            due[node] = window
+    if not due:
         return {"items": []}
-    by_key = items_for_concepts(body.course_id, sorted({nodes[r["node_id"]] for r in rows}))
-    excluded = _posttest_excluded(body.user_id)
+    by_key = items_for_concepts(body.course_id, sorted({nodes[n] for n in due}))
+    plans = []  # (order, node, the open pose's item or None, the window to pose or None)
+    for node, window in due.items():
+        current = _open_posed_item(poses.get(node) or {}, by_key.get(nodes[node]) or [], now)
+        if current is not None:
+            plans.append(((0, _posed_order(current[0])[0], node), node, current[1], None))
+        elif window is not None:  # no open pose (or its item was withdrawn): pose the window
+            opened = spans[node].first_at + timedelta(days=window)
+            plans.append(((1, opened, node), node, None, window))
+    excluded = _posttest_excluded(body.user_id) if any(p[2] is None for p in plans) else set()
     out: list[dict] = []
     new: list[dict] = []
-    for r in sorted(rows, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
-        node = r["node_id"]
-        items = by_key.get(nodes[node]) or []
-        pose = poses.get(node)
-        item = None
-        if _pose_open(pose, now):
-            item = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
-        bound = None
-        if item is None and pose is not None and not pose.get("answered_at"):
-            # A93 (minor 6): an EXPIRED, unanswered pose keeps its item bound to the
-            # node — a re-pose renews the same item, never a fresh one to dodge it
-            bound = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
-        if item is None:  # no open pose (or its item was withdrawn): pose one now
-            if node not in due_ids:
-                continue
-            item = bound or posttest_item(items, excluded)
+    for _, node, item, window in sorted(plans, key=lambda p: p[0]):
+        if item is None:
+            items = by_key.get(nodes[node]) or []
+            item = _bound_item(items, poses.get(node) or {}, excluded) or posttest_item(items, excluded)
             if item is None:
-                continue  # nothing unseen left for this concept: skipped
-            new.append(
-                {
-                    "user_id": body.user_id,
-                    "node_id": node,
-                    "course_id": body.course_id,
-                    "question_hash": item.question_hash,
-                    "posed_at": now.isoformat(),
-                    "answered_at": None,
-                    "claim": None,
-                    "claimed_at": None,
-                }
-            )
+                continue  # nothing fresh left for this concept: skipped
+            new.append(_new_pose(body.user_id, body.course_id, node, window, item, spans[node], now))
         out.append({"node_id": node, **_pose_payload(item)})
         if len(out) >= POSTTEST_MAX_ITEMS:
             break
@@ -4118,7 +4195,14 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         floor = Rung(
             _refloor(deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor))
         )
-        answered = _answer_pose(body.user_id, body.node_id, claim, _posttest_now())
+        answered = _answer_pose(
+            body.user_id,
+            body.node_id,
+            claim,
+            _posttest_now(),
+            correct=bool(outcome.correct),
+            max_rung=int(floor),
+        )
         if not answered:
             raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
         changes = flush_pending(deps, course_id)  # ONE call: the post-test's only evidence write
