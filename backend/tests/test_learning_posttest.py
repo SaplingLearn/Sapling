@@ -1,5 +1,5 @@
 """PKG-14 rung 3: tool-removed, delayed post-test (spec §10; research §"Measure
-learning…"; A16, A23, A33).
+learning…"; A16, A23, A33), at FIXED follow-up windows since spec §13 A112.
 
 Below the route: the REAL grade_answer builds the Evidence (the grader call it
 makes, agents.tools.check._rubric_grade / _reason_grade, is patched) and the
@@ -16,15 +16,17 @@ from fastapi.testclient import TestClient
 from agents.grader import GradeResult
 from learning import params
 from learning.checks import CheckItem, Option, RubricItem, WrongReason
+from learning.loop_state_store import EvidenceSpan
 from main import app
 from services import ai_budget
 
 client = TestClient(app)
 
 NOW = datetime(2026, 9, 26, tzinfo=timezone.utc)
-OLD = (NOW - timedelta(days=params.POSTTEST_MIN_AGE_DAYS + 1)).isoformat()
-EDGE = (NOW - timedelta(days=params.POSTTEST_MIN_AGE_DAYS)).isoformat()  # exactly due
-FRESH = (NOW - timedelta(hours=1)).isoformat()
+W1, W2 = params.POSTTEST_WINDOWS_DAYS  # A112: the 1-week and the 4-week window
+OLD = NOW - timedelta(days=W1 + 1)  # first evidence: inside the first window
+EDGE = NOW - timedelta(days=W1)  # the first window opens exactly now
+FRESH = NOW - timedelta(hours=1)
 MID = params.CHECK_ITEM_DIFFICULTIES[1]
 START = "/api/learn/loop/posttest/start"
 ANSWER = "/api/learn/loop/posttest/answer"
@@ -96,23 +98,19 @@ def gate_off():
 
 @pytest.fixture
 def tables():
-    """learner_state / graph_nodes rows (user "u") and CheckItem models, served
-    to every read the route makes."""
+    """The journal's evidence spans, graph_nodes rows (user "u") and CheckItem
+    models, served to every read the route makes."""
     t = {
-        "learner_state": [],
+        "spans": {},  # A112: node id → EvidenceSpan (its first and last journaled evidence)
         "graph_nodes": [],
         "check_items": [],
-        "poses": {},
+        "poses": {},  # (user, node, window) → pose row
         "claims": [],
         "evidence_since": [],  # A89: the node's evidence journaled after the pose
     }
 
-    def _states(user_id, cutoff):  # the route re-applies the cutoff itself
-        return [
-            {"node_id": r["node_id"], "last_evidence_at": r["last_evidence_at"]}
-            for r in t["learner_state"]
-            if r["user_id"] == user_id
-        ]
+    def _spans(user_id, course_id):  # the route keeps only its course's nodes itself
+        return dict(t["spans"]) if user_id == "u" else {}
 
     def _items(course_id, keys):
         keys = list(keys)
@@ -134,43 +132,55 @@ def tables():
             if r.get("course_id") == course_id and user_id == "u"
         }
 
-    # spec §13 A87: posttest_poses, in memory, with the route helpers' semantics
+    # spec §13 A87/A112: posttest_poses, in memory — one row per (user, node,
+    # window) — with the route helpers' semantics
     def _read(user_id, course_id):
-        return {
-            n: dict(p)
-            for (u, n), p in t["poses"].items()
-            if u == user_id and p["course_id"] == course_id
-        }
+        out: dict = {}
+        for (u, n, w), p in t["poses"].items():
+            if u == user_id and p["course_id"] == course_id:
+                out.setdefault(n, {})[w] = dict(p)
+        return out
 
     def _record(rows):
         for r in rows:
-            t["poses"][(r["user_id"], r["node_id"])] = dict(r)
+            t["poses"][(r["user_id"], r["node_id"], r["window_days"])] = dict(r)
+
+    def _node_poses(user_id, node_id):
+        return [p for (u, n, _), p in t["poses"].items() if (u, n) == (user_id, node_id)]
 
     def _claim(user_id, node_id, qh, claim, now):
-        p = t["poses"].get((user_id, node_id))
         t["claims"].append((user_id, node_id, qh))
-        if not p or p["question_hash"] != qh or p.get("answered_at") or p.get("claim"):
+        ttl = now - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
+        posed = [  # A89: an expired pose is void
+            p
+            for p in _node_poses(user_id, node_id)
+            if p["question_hash"] == qh
+            and not p.get("answered_at")
+            and datetime.fromisoformat(p["posed_at"]) >= ttl
+        ]
+        if not posed:
             return None
-        posed = datetime.fromisoformat(p["posed_at"])
-        if posed < now - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS):
-            return None  # A89: an expired pose is void
+        p = min(posed, key=lambda p: (p["posed_at"], p["window_days"]))  # the earliest posed
+        if p.get("claim"):
+            return None
         p["claim"] = claim
         return dict(p)
 
-    def _answer_pose(user_id, node_id, claim, now):
-        p = t["poses"].get((user_id, node_id))
-        if not p or p.get("claim") != claim or p.get("answered_at"):
-            return False
-        p["claim"], p["answered_at"] = None, now.isoformat()
-        return True
+    def _answer_pose(user_id, node_id, claim, now, *, correct, max_rung):
+        for p in _node_poses(user_id, node_id):
+            if p.get("claim") == claim and not p.get("answered_at"):
+                p["claim"], p["answered_at"] = None, now.isoformat()
+                p["correct"], p["max_rung"] = correct, max_rung
+                return True
+        return False
 
     def _release(user_id, node_id, claim):
-        p = t["poses"].get((user_id, node_id))
-        if p and p.get("claim") == claim and not p.get("answered_at"):
-            p["claim"] = None
+        for p in _node_poses(user_id, node_id):
+            if p.get("claim") == claim and not p.get("answered_at"):
+                p["claim"] = None
 
     with (
-        patch("routes.learn_loop.states_last_evidence_before", side_effect=_states),
+        patch("routes.learn_loop.evidence_spans", side_effect=_spans),
         patch("routes.learn_loop.items_for_concepts", side_effect=_items),
         patch("routes.learn_loop.table", side_effect=_table),
         patch("routes.learn_loop.read_states", return_value={}),
@@ -189,16 +199,23 @@ def tables():
         yield t
 
 
-def _pose(t, node="n1", qh="q1", course="c", answered=None, posed=None):
-    t["poses"][("u", node)] = {
+def _pose(t, node="n1", qh="q1", course="c", answered=None, posed=None, window=W1):
+    t["poses"][("u", node, window)] = {
         "user_id": "u",
         "node_id": node,
         "course_id": course,
+        "window_days": window,
         "question_hash": qh,
         "posed_at": (posed or NOW - timedelta(hours=1)).isoformat(),
         "answered_at": answered,
         "claim": None,
     }
+
+
+def _span(first=OLD, last=None, first_id="ev-first"):
+    """A112: a concept's journaled evidence — its first row (the anchor) and its
+    last evidence time (the first one when not given)."""
+    return EvidenceSpan(first_id, first, last or first)
 
 
 @pytest.fixture
@@ -291,8 +308,9 @@ def captured_events():
         yield events
 
 
-def _due(*nodes, at=OLD):
-    return [{"user_id": "u", "node_id": n, "last_evidence_at": at} for n in nodes]
+def _due(*nodes, first=OLD, last=None):
+    """tables["spans"] for nodes whose first graded evidence was at `first`."""
+    return {n: _span(first, last, first_id=f"ev-{n}") for n in nodes}
 
 
 def _answer(**kw):
@@ -323,16 +341,17 @@ def test_both_posttest_routes_are_rate_limited():
 # ── /posttest/start ──────────────────────────────────────────────────────────
 
 
-def test_start_serves_only_concepts_taught_long_enough_ago(
+def test_start_serves_only_concepts_whose_first_window_has_opened(
     gate_on, tables, freeze_now, seen_revealed
 ):
+    """A112: due once the first window has opened after the concept's FIRST
+    graded evidence; a concept with no journaled evidence is never due."""
     freeze_now(NOW)
-    tables["learner_state"] = [
-        *_due("n-old"),
-        *_due("n-edge", at=EDGE),
-        *_due("n-fresh", at=FRESH),
-        {"user_id": "u", "node_id": "n-none", "last_evidence_at": None},
-    ]
+    tables["spans"] = {
+        **_due("n-old"),
+        **_due("n-edge", first=EDGE),
+        **_due("n-fresh", first=FRESH),
+    }  # n-none: no evidence row at all
     tables["graph_nodes"] = [
         {"id": "n-old", "course_id": "c", "concept_name": "old"},
         {"id": "n-edge", "course_id": "c", "concept_name": "edge"},
@@ -363,7 +382,7 @@ def test_start_serves_only_concepts_taught_long_enough_ago(
 
 def test_start_skips_nodes_of_another_course(gate_on, tables, freeze_now, seen_revealed):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1", "n2")
+    tables["spans"] = _due("n1", "n2")
     tables["graph_nodes"] = [
         {"id": "n1", "course_id": "c", "concept_name": "k1"},
         {"id": "n2", "course_id": "other", "concept_name": "k2"},
@@ -377,7 +396,7 @@ def test_start_serves_the_reserve_and_never_a_seen_or_revealed_item(
     gate_on, tables, freeze_now, seen_revealed
 ):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1", "n2", "n3", "n4")
+    tables["spans"] = _due("n1", "n2", "n3", "n4")
     tables["graph_nodes"] = [
         {"id": f"n{i}", "course_id": "c", "concept_name": f"k{i}"} for i in (1, 2, 3, 4)
     ]
@@ -405,7 +424,7 @@ def test_start_never_serves_an_item_without_a_final_answer(
     """A34: an item without a structured final answer is not servable — not even
     as the † fallback."""
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1", final_answer=None)]
     assert client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"] == []
@@ -413,7 +432,7 @@ def test_start_never_serves_an_item_without_a_final_answer(
 
 def test_start_serves_mc_reason_options_without_keys(gate_on, tables, freeze_now, seen_revealed):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1", fmt="mc_reason")]
     (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
@@ -421,33 +440,26 @@ def test_start_serves_mc_reason_options_without_keys(gate_on, tables, freeze_now
     assert "correct_option" not in served and "reference_answer" not in served
 
 
-def test_start_caps_items_oldest_first(gate_on, tables, freeze_now, seen_revealed):
+def test_start_caps_items_earliest_opened_window_first(gate_on, tables, freeze_now, seen_revealed):
     freeze_now(NOW)
     n = params.POSTTEST_MAX_ITEMS + 2
-    tables["learner_state"] = [
-        {
-            "user_id": "u",
-            "node_id": f"n{i}",
-            "last_evidence_at": (
-                NOW - timedelta(days=params.POSTTEST_MIN_AGE_DAYS + i)
-            ).isoformat(),
-        }
-        for i in range(n)
-    ]
+    tables["spans"] = {
+        f"n{i}": _span(NOW - timedelta(days=W1 + i), first_id=f"ev-{i}") for i in range(n)
+    }
     tables["graph_nodes"] = [
         {"id": f"n{i}", "course_id": "c", "concept_name": f"k{i}"} for i in range(n)
     ]
     tables["check_items"] = [item(f"k{i}", f"q{i}") for i in range(n)]
     items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert len(items) == params.POSTTEST_MAX_ITEMS
-    assert items[0]["node_id"] == f"n{n - 1}"  # oldest evidence first
+    assert items[0]["node_id"] == f"n{n - 1}"  # its window opened longest ago
 
 
 def test_start_runs_no_model_writes_no_evidence_and_records_the_pose(
     gate_on, tables, freeze_now, seen_revealed, applied, captured_events
 ):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1")]
     with (
@@ -460,7 +472,7 @@ def test_start_runs_no_model_writes_no_evidence_and_records_the_pose(
     rag.assert_not_called()
     brief.assert_not_called()
     assert applied == [] and captured_events == []
-    pose = tables["poses"][("u", "n1")]
+    pose = tables["poses"][("u", "n1", W1)]
     assert pose["question_hash"] == "q1" and pose["answered_at"] is None  # A87: committed
 
 
@@ -470,7 +482,7 @@ def test_a_repeat_start_returns_the_same_item_never_a_fresh_one(
     """A87: no shopping — the open pose is returned even after the item was
     revealed or seen since (its grade then carries no unassisted credit)."""
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "a-res"), item("k1", "b-other")]
     first = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
@@ -484,7 +496,7 @@ def test_an_open_pose_stays_posed_when_the_node_is_no_longer_due(
     gate_on, tables, freeze_now, seen_revealed
 ):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1", at=FRESH)
+    tables["spans"] = _due("n1", first=FRESH)
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1")]
     _pose(tables)
@@ -492,20 +504,166 @@ def test_an_open_pose_stays_posed_when_the_node_is_no_longer_due(
     assert [i["question_hash"] for i in items] == ["q1"]
 
 
-def test_an_answered_node_is_posed_again_only_when_due_again(
+# ── A112: fixed follow-up windows ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "age,window",
+    [
+        (timedelta(days=W1) - timedelta(seconds=1), None),  # before the first window
+        (timedelta(days=W1), W1),  # it opens exactly at anchor + W1 days
+        (timedelta(days=W2) - timedelta(seconds=1), W1),  # runs until the next one opens
+        (timedelta(days=W2), W2),
+        (timedelta(days=10 * W2), W2),  # the last window stays open
+    ],
+)
+def test_the_window_is_counted_from_the_fixed_anchor(age, window):
+    from routes import learn_loop
+
+    assert learn_loop._posttest_window(NOW - age, NOW) == window
+
+
+def test_the_windows_are_strictly_increasing_positive_days():
+    windows = params.POSTTEST_WINDOWS_DAYS
+    assert windows and all(type(w) is int and w > 0 for w in windows)
+    assert list(windows) == sorted(set(windows))
+
+
+def test_practice_never_postpones_a_window(gate_on, tables, freeze_now, seen_revealed):
+    """The pre-A112 rule (last evidence ≥ 7 days old) let every review push the
+    post-test back. Now the anchor is the FIRST evidence: a concept practised an
+    hour ago is still posed in its open window."""
+    freeze_now(NOW)
+    tables["spans"] = _due("n1", first=OLD, last=FRESH)
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1")]
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+
+
+def test_the_pose_records_its_window_anchor_and_delay(gate_on, tables, freeze_now, seen_revealed):
+    """Analysis stratifies on the delay since the concept's LAST evidence (truly
+    delayed vs recently practised); the window is counted from its FIRST."""
+    freeze_now(NOW)
+    last = NOW - timedelta(days=3, hours=12)
+    tables["spans"] = {"n1": _span(OLD, last, first_id="ev-anchor")}
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1")]
+    client.post(START, json={"course_id": "c", "user_id": "u"})
+    pose = tables["poses"][("u", "n1", W1)]
+    assert pose["window_days"] == W1
+    assert pose["anchor_event_id"] == "ev-anchor" and pose["anchor_at"] == OLD.isoformat()
+    assert pose["last_evidence_at"] == last.isoformat()
+    assert pose["days_since_evidence"] == pytest.approx(3.5)
+    assert pose["correct"] is None and pose["max_rung"] is None  # set when answered
+
+
+def test_a_window_is_posed_at_most_once_then_the_next_one_opens(
     gate_on, tables, freeze_now, seen_revealed
 ):
     freeze_now(NOW)
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1"), item("k1", "q2")]
-    _pose(tables, answered=FRESH)
-    tables["learner_state"] = _due("n1", at=FRESH)  # the post-test answer was its last evidence
+    _pose(tables, answered=FRESH.isoformat())  # the first window, answered
+    tables["spans"] = _due("n1", first=OLD, last=FRESH)
     assert client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"] == []
-    tables["learner_state"] = _due("n1")  # old enough again
-    seen_revealed(seen={"q1"})
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2 + 1), last=FRESH)
+    seen_revealed(seen={"q1"})  # the first window's answer made its item seen
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q2"]  # a fresh item, never a seen one
+    assert tables["poses"][("u", "n1", W2)]["answered_at"] is None
+    assert tables["poses"][("u", "n1", W1)]["answered_at"] == FRESH.isoformat()  # kept
+
+
+def test_a_window_the_student_was_away_for_is_skipped(gate_on, tables, freeze_now, seen_revealed):
+    """First seen W2 + 2 days ago and never posed: the first window is over, so
+    only the second is posed — never a "1-week" outcome measured weeks late."""
+    freeze_now(NOW)
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2 + 2))
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1")]
+    client.post(START, json={"course_id": "c", "user_id": "u"})
+    assert list(tables["poses"]) == [("u", "n1", W2)]
+
+
+def test_an_open_pose_is_returned_across_a_window_boundary(
+    gate_on, tables, freeze_now, seen_revealed
+):
+    """A87: the first window's pose, still open when the second window opens, is
+    returned as posed; no second pose of the node until it is answered or void."""
+    freeze_now(NOW)
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2))
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1"), item("k1", "q2")]
+    _pose(tables, qh="q2")
     items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert [i["question_hash"] for i in items] == ["q2"]
-    assert tables["poses"][("u", "n1")]["answered_at"] is None
+    assert list(tables["poses"]) == [("u", "n1", W1)]
+
+
+def test_an_expired_pose_binds_its_item_into_the_next_window(
+    gate_on, tables, freeze_now, seen_revealed
+):
+    """A93 across windows: letting the first window's pose expire never buys a
+    fresh item in the next window; the expired row stays as the missed window."""
+    freeze_now(NOW)
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2 + 1))
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1"), item("k1", "q2")]
+    expired = NOW - timedelta(days=W2 - W1)
+    _pose(tables, qh="q2", posed=expired)
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q2"]
+    assert tables["poses"][("u", "n1", W2)]["posed_at"] == NOW.isoformat()
+    missed = tables["poses"][("u", "n1", W1)]
+    assert missed["answered_at"] is None and missed["posed_at"] == expired.isoformat()
+
+
+@pytest.mark.parametrize("stale", ["seen", "revealed"])
+def test_a_bound_item_that_is_no_longer_fresh_is_never_reposed(
+    gate_on, tables, freeze_now, seen_revealed, stale
+):
+    """A23 holds for every NEW pose: a bound item answered or revealed since the
+    pose expired would grade practice as a delayed outcome, so a fresh item is
+    chosen instead (an OPEN pose is still returned as posed, A87)."""
+    freeze_now(NOW)
+    tables["spans"] = _due("n1")
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = [item("k1", "q1"), item("k1", "q2")]
+    _pose(tables, qh="q2", posed=NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS + 1))
+    seen_revealed(**{stale: {"q2"}})
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+
+
+def test_evidence_spans_read_the_journal_first_and_last_per_node():
+    """The anchor is the journal's FIRST evidence row (read in its total order,
+    scoped to the student's course); the last time is its newest row."""
+    from unittest.mock import MagicMock
+
+    from learning import loop_state_store
+
+    t0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    rows = [
+        {"id": "e1", "node_id": "n1", "created_at": t0.isoformat(), "evidence_seq": 0},
+        {"id": "e2", "node_id": "n2", "created_at": (t0 + timedelta(days=1)).isoformat()},
+        {"id": "e3", "node_id": "n1", "created_at": (t0 + timedelta(days=9)).isoformat()},
+        {"id": "e4", "node_id": "n1", "created_at": (t0 + timedelta(days=4)).isoformat()},
+    ]
+    handle = MagicMock()
+    handle.select_with_count.return_value = (rows, len(rows))
+    with patch("learning.loop_state_store.table", return_value=handle) as tbl:
+        spans = loop_state_store.evidence_spans("u", "c")
+    tbl.assert_called_with("node_mastery_events")
+    kw = handle.select_with_count.call_args.kwargs
+    assert kw["filters"] == {
+        "graph_nodes.user_id": "eq.u",
+        "graph_nodes.course_id": "eq.c",
+        "event_type": "eq.evidence",
+    }
+    assert kw["order"] == "created_at.asc,evidence_seq.asc.nullslast,id.asc"
+    assert spans["n1"] == EvidenceSpan("e1", t0, t0 + timedelta(days=9))
+    assert spans["n2"].first_id == "e2" and spans["n2"].first_at == spans["n2"].last_at
 
 
 # ── /posttest/answer ─────────────────────────────────────────────────────────
@@ -514,7 +672,7 @@ def test_an_answered_node_is_posed_again_only_when_due_again(
 @pytest.fixture
 def one_item(tables, freeze_now, seen_revealed):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1")]
     _pose(tables)  # A87: the answer grades the open pose
@@ -542,6 +700,17 @@ def test_answer_grades_through_grade_answer_and_records_unassisted_evidence(
     assert "tier" not in p  # no tutor turn ran: omitted, never zeroed
 
 
+@pytest.mark.parametrize("correct", [True, False])
+def test_the_answer_records_the_outcome_on_the_pose(gate_on, one_item, grader_says, applied, correct):
+    """A112: the conditional UPDATE that closes the pose records the outcome —
+    `correct` and the rung the grade carried (0: an unassisted delayed outcome)."""
+    grader_says(correct=correct, confidence=0.9)
+    assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answered_at"] is not None and pose["claim"] is None
+    assert pose["correct"] is correct and pose["max_rung"] == 0
+
+
 def test_answer_idk_is_incorrect_idk_evidence(
     gate_on, one_item, grader_says, grader_calls, applied
 ):
@@ -557,7 +726,7 @@ def test_answer_mc_reason_uses_the_option_and_the_reason(
     gate_on, tables, freeze_now, seen_revealed, grader_says, grader_calls, applied
 ):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1", fmt="mc_reason")]
     _pose(tables)
@@ -576,7 +745,7 @@ def test_answer_mc_reason_without_an_option_is_422(
     gate_on, tables, freeze_now, seen_revealed, applied
 ):
     freeze_now(NOW)
-    tables["learner_state"] = _due("n1")
+    tables["spans"] = _due("n1")
     tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
     tables["check_items"] = [item("k1", "q1", fmt="mc_reason")]
     assert client.post(ANSWER, json=_answer(reason="why")).status_code == 422
@@ -639,7 +808,7 @@ def test_an_answer_without_an_open_pose_is_409_and_never_graded(
 def test_an_answered_pose_is_never_graded_twice(gate_on, one_item, grader_says, applied):
     grader_says(correct=True, confidence=0.9)
     assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
-    assert one_item["poses"][("u", "n1")]["answered_at"] is not None
+    assert one_item["poses"][("u", "n1", W1)]["answered_at"] is not None
     assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 409
     assert len(applied) == 1
 
@@ -673,11 +842,14 @@ def test_an_open_pose_revealed_or_worked_since_grades_with_no_unassisted_credit(
     assert (
         step["payload"]["max_rung_used"] == step["payload"]["ceiling"] == params.RUNG_NO_CREDIT_MIN
     )
+    # A112: the pose's outcome says so too — no clean delayed outcome
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["correct"] is True and pose["max_rung"] == params.RUNG_NO_CREDIT_MIN
 
 
 def test_a_refusal_or_an_outage_releases_the_claim(gate_on, one_item, grader_unavailable, applied):
     assert client.post(ANSWER, json=_answer(answer="a loop")).status_code == 503
-    pose = one_item["poses"][("u", "n1")]
+    pose = one_item["poses"][("u", "n1", W1)]
     assert pose["claim"] is None and pose["answered_at"] is None  # the student may answer again
 
 
@@ -727,16 +899,16 @@ def test_an_expired_pose_may_be_re_posed(gate_on, one_item):
     )
     items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert [i["question_hash"] for i in items] == ["q1"]
-    pose = one_item["poses"][("u", "n1")]
+    pose = one_item["poses"][("u", "n1", W1)]
     assert pose["question_hash"] == "q1" and pose["posed_at"] == NOW.isoformat()
 
 
 def test_an_open_pose_within_the_ttl_is_returned_again(gate_on, one_item):
     _pose(one_item, posed=NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS - 1))
-    posed_at = one_item["poses"][("u", "n1")]["posed_at"]
+    posed_at = one_item["poses"][("u", "n1", W1)]["posed_at"]
     items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert [i["question_hash"] for i in items] == ["q1"]
-    assert one_item["poses"][("u", "n1")]["posed_at"] == posed_at  # never re-posed
+    assert one_item["poses"][("u", "n1", W1)]["posed_at"] == posed_at  # never re-posed
 
 
 def test_a_taken_over_claim_writes_nothing(gate_on, one_item, grader_says, applied):
@@ -757,7 +929,7 @@ def test_a_failed_flush_never_reopens_the_answered_pose(gate_on, one_item, grade
         pytest.raises(RuntimeError),
     ):
         client.post(ANSWER, json=_answer(answer="its lexical scope"))
-    assert one_item["poses"][("u", "n1")]["answered_at"] is not None
+    assert one_item["poses"][("u", "n1", W1)]["answered_at"] is not None
 
 
 def test_an_unreadable_evidence_journal_grades_assisted(
@@ -774,7 +946,7 @@ def test_the_floor_reads_the_journal_from_posed_at(gate_on, one_item, grader_say
     grader_says(correct=True, confidence=0.9)
     with patch("routes.learn_loop.recent_evidence", return_value=[]) as journal:
         assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
-    posed = datetime.fromisoformat(one_item["poses"][("u", "n1")]["posed_at"])
+    posed = datetime.fromisoformat(one_item["poses"][("u", "n1", W1)]["posed_at"])
     assert journal.call_args.kwargs["since"] == learn_loop_iso_z(posed)
 
 
@@ -796,7 +968,7 @@ def test_answer_unknown_item_is_404(gate_on, one_item, applied):
 def test_a_second_submit_while_the_first_holds_the_claim_is_409(gate_on, one_item, applied):
     """A87: the claim is one conditional UPDATE in the database, so two
     submissions — in one process or many — never both grade."""
-    one_item["poses"][("u", "n1")]["claim"] = "someone-else"
+    one_item["poses"][("u", "n1", W1)]["claim"] = "someone-else"
     assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 409
     assert applied == []
 
@@ -810,22 +982,54 @@ def test_claim_pose_is_one_conditional_update():
     from routes import learn_loop
 
     handle = MagicMock()
+    handle.select.return_value = [{"window_days": W1, "posed_at": NOW.isoformat()}]
     handle.update.return_value = [{"node_id": "n1", "posed_at": NOW.isoformat()}]
     with patch("routes.learn_loop.table", return_value=handle) as tbl:
         assert learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW) == handle.update.return_value[0]
     tbl.assert_called_with("posttest_poses")
+    handle.update.assert_called_once()
     (data,) = handle.update.call_args.args[:1]
     filters = handle.update.call_args.kwargs["filters"]
     assert data["claim"] == "c-1"
     assert filters["answered_at"] == "is.null" and filters["question_hash"] == "eq.q1"
+    assert filters["window_days"] == f"eq.{W1}"  # A112: the open pose's own window
     # m10: a claim with no claimed_at is claimable; the stale time is ISO-Z (no '+')
     assert filters["or"].startswith("(claim.is.null,claimed_at.is.null,claimed_at.lt.")
     assert "+" not in filters["or"]
     ttl = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
     assert filters["posed_at"] == f"gte.{learn_loop._iso_z(ttl)}"  # A89
+    # the window read asks for the same open pose: this item, unanswered, within the TTL
+    read = handle.select.call_args.kwargs["filters"]
+    assert {k: read[k] for k in ("question_hash", "answered_at", "posed_at")} == {
+        k: filters[k] for k in ("question_hash", "answered_at", "posed_at")
+    }
     handle.update.return_value = []
     with patch("routes.learn_loop.table", return_value=handle):
         assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
+
+
+def test_a_claim_names_one_window_and_none_without_an_open_pose():
+    """A112: should a race have left two open poses of the item, the earliest
+    posed is claimed, alone — one answer never closes two windows; no open pose
+    → no UPDATE at all."""
+    from unittest.mock import MagicMock
+
+    from routes import learn_loop
+
+    handle = MagicMock()
+    handle.select.return_value = [
+        {"window_days": W2, "posed_at": (NOW - timedelta(minutes=1)).isoformat()},
+        {"window_days": W1, "posed_at": (NOW - timedelta(minutes=2)).isoformat()},
+    ]
+    handle.update.return_value = [{"node_id": "n1"}]
+    with patch("routes.learn_loop.table", return_value=handle):
+        learn_loop._claim_pose("u", "n1", "q1", "c-1", NOW)
+    assert handle.update.call_args.kwargs["filters"]["window_days"] == f"eq.{W1}"
+    handle.reset_mock()
+    handle.select.return_value = []
+    with patch("routes.learn_loop.table", return_value=handle):
+        assert learn_loop._claim_pose("u", "n1", "q1", "c-2", NOW) is None
+    handle.update.assert_not_called()
 
 
 def test_answer_release_and_record_poses():
@@ -836,23 +1040,45 @@ def test_answer_release_and_record_poses():
     handle = MagicMock()
     handle.update.return_value = [{"node_id": "n1"}]
     with patch("routes.learn_loop.table", return_value=handle):
-        assert learn_loop._answer_pose("u", "n1", "c-1", NOW) is True
+        assert learn_loop._answer_pose("u", "n1", "c-1", NOW, correct=True, max_rung=0) is True
         answered = handle.update.call_args
         learn_loop._release_pose("u", "n1", "c-1")
         released = handle.update.call_args
         learn_loop._record_poses([{"user_id": "u", "node_id": "n1"}])
         learn_loop._record_poses([])
-    assert answered.args[0] == {"answered_at": NOW.isoformat(), "claim": None, "claimed_at": None}
+    assert answered.args[0] == {
+        "answered_at": NOW.isoformat(),
+        "claim": None,
+        "claimed_at": None,
+        "correct": True,  # A112: the outcome, in the write that closes the pose
+        "max_rung": 0,
+    }
     assert answered.kwargs["filters"]["claim"] == "eq.c-1"
     assert answered.kwargs["filters"]["answered_at"] == "is.null"  # m1: re-validated
     assert released.args[0] == {"claim": None, "claimed_at": None}
     assert released.kwargs["filters"]["answered_at"] == "is.null"  # never reopens an answer
     handle.upsert.assert_called_once_with(
-        [{"user_id": "u", "node_id": "n1"}], on_conflict="user_id,node_id"
+        [{"user_id": "u", "node_id": "n1"}], on_conflict="user_id,node_id,window_days"
     )
     handle.update.return_value = []
     with patch("routes.learn_loop.table", return_value=handle):
-        assert learn_loop._answer_pose("u", "n1", "c-1", NOW) is False
+        assert learn_loop._answer_pose("u", "n1", "c-1", NOW, correct=False, max_rung=4) is False
+
+
+def test_read_poses_keys_each_node_by_window():
+    from unittest.mock import MagicMock
+
+    from routes import learn_loop
+
+    handle = MagicMock()
+    handle.select.return_value = [
+        {"node_id": "n1", "window_days": W1, "question_hash": "q1"},
+        {"node_id": "n1", "window_days": W2, "question_hash": "q2"},
+    ]
+    with patch("routes.learn_loop.table", return_value=handle):
+        poses = learn_loop._read_poses("u", "c")
+    assert {w: p["question_hash"] for w, p in poses["n1"].items()} == {W1: "q1", W2: "q2"}
+    assert "window_days" in handle.select.call_args.args[0].split(",")
 
 
 def test_course_nodes_are_paged():
@@ -877,6 +1103,35 @@ def test_the_pose_migration_is_backend_only():
     )
     sql = mig.read_text()
     assert "PRIMARY KEY (user_id, node_id)" in sql and "ENABLE ROW LEVEL SECURITY" in sql
+
+
+def test_the_windows_migration_rekeys_the_poses_and_maps_old_rows_to_the_first_window():
+    """A112: a NEW migration (the A87 one is immutable): one row per (student,
+    node, window); every pre-window row becomes the 7-day window; the anchor,
+    the delay and the outcome columns; the outcome only on an answered pose."""
+    import pathlib
+
+    (mig,) = sorted(
+        (pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations").glob(
+            "*_learning_posttest_windows.sql"
+        )
+    )
+    sql = mig.read_text()
+    assert "PRIMARY KEY (user_id, node_id, window_days)" in sql
+    assert "UPDATE posttest_poses SET window_days = 7 WHERE window_days IS NULL" in sql
+    assert "ALTER COLUMN window_days SET NOT NULL" in sql
+    assert W1 == 7  # the mapping above names the first window
+    for column in (
+        "anchor_event_id text",
+        "anchor_at timestamptz",
+        "last_evidence_at timestamptz",
+        "days_since_evidence double precision",
+        "correct boolean",
+        "max_rung smallint",
+    ):
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in sql
+    assert "(correct IS NULL OR answered_at IS NOT NULL)" in sql
+    assert "NOTIFY pgrst" in sql
 
 
 # ── the phase value ──────────────────────────────────────────────────────────

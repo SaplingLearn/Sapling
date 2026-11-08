@@ -35,6 +35,7 @@ def _now() -> datetime:
 
 
 def _open_pose() -> str:
+    from learning.params import POSTTEST_WINDOWS_DAYS
     from routes.learn_loop import _record_poses
 
     node = f"it-node-{uuid.uuid4().hex[:10]}"
@@ -44,6 +45,7 @@ def _open_pose() -> str:
                 "user_id": USER,
                 "node_id": node,
                 "course_id": COURSE,
+                "window_days": POSTTEST_WINDOWS_DAYS[0],  # A112: one row per window
                 "question_hash": QH,
                 "posed_at": _now().isoformat(),
                 "answered_at": None,
@@ -90,7 +92,7 @@ def test_a_release_never_reopens_an_answered_pose(db_conn):
     node = _open_pose()
     now = _now()
     assert _claim_pose(USER, node, QH, "c1", now) is not None
-    assert _answer_pose(USER, node, "c1", now) is True
+    assert _answer_pose(USER, node, "c1", now, correct=True, max_rung=0) is True
     answered = _row(db_conn, node)["answered_at"]
     _release_pose(USER, node, "c1")
     assert _row(db_conn, node)["answered_at"] == answered
@@ -123,7 +125,9 @@ def test_concurrent_submissions_answer_the_pose_once(db_conn):
         claim = f"c{i}"
         try:
             barrier.wait(timeout=10)
-            if _claim_pose(USER, node, QH, claim, now) is not None and _answer_pose(USER, node, claim, now):
+            if _claim_pose(USER, node, QH, claim, now) is not None and _answer_pose(
+                USER, node, claim, now, correct=True, max_rung=0
+            ):
                 with lock:
                     closed.append(claim)
         except BaseException as exc:  # surfaced below
