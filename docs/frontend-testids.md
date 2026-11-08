@@ -456,6 +456,9 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-loop-gain-{window}-post-ci` / `-diff-ci` / `admin-loop-gain-{window}-hidden` / `admin-loop-gain-ci-note` | spec §13 A126 in the learning-gain table: a window's bootstrap intervals under its post-test rate and paired change, its "page hidden while answering" stratum row, and the note naming the interval method |
 | `admin-loop-funnel` / `admin-loop-funnel-{window}` / `admin-loop-funnel-{window}-skipped` | A126: the funnel of the post-test windows that opened in the range (due, opened, answered, expired, open, skipped by reason, never opened, still open); the container says so when the funnel could not be read |
 | `admin-loop-delay` / `admin-loop-delay-{loDays}` | A126: the pairs binned by the days from the concept's first graded answer to the post-test answer |
+| `admin-loop-cost` / `admin-loop-cost-student-month` / `-tutor-month` / `-session` / `-total` | spec §13 A137 (`AdminLoopCost.tsx`): the "What did it cost?" section and its figures — $ per active student-month against the §3.5 target, the tutor share, $ per session, the loop spend — each with its n |
+| `admin-loop-cost-windows` / `admin-loop-cost-window-{window}` (`-pair-ci`, `-gain`, `-gain-ci`) | A137: per post-test window, pairs, gain points, $ per pair and per gain point with their bootstrap intervals ("unbounded" upper bound; "no net gain") |
+| `admin-loop-cost-courses` / `admin-loop-cost-course-{courseId}` / `admin-loop-cost-unattributed` / `admin-loop-cost-note` / `admin-loop-cost-unavailable` | A137: the per-course table, the spend with no course on record, the method note, and the state when the spend could not be read |
 
 ### `admin-items`
 
