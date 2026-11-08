@@ -283,8 +283,12 @@ unfinished engineering requirement.
    (A113), `20261108041742_learning_posttest_windows.sql` (A112),
    `20261108050630_learning_grader_backend_claude.sql` (A116; apply it before
    any grader slot is flipped to Claude, or a `claude` evidence row fails its
-   batch closed), `20261108051912_learning_item_alignment.sql` (A119) and
-   `20261108073631_learning_item_keys.sql` (A124). The verifier's `--db-audit`
+   batch closed), `20261108051912_learning_item_alignment.sql` (A119),
+   `20261108073631_learning_item_keys.sql` (A124) and
+   `20261108092032_learning_student_confidence.sql` (A127; it re-creates
+   `learning_evidence_commit` to admit `student_confidence` — before it, a grade
+   that carries a stated confidence fails its batch closed, and the admin
+   learning-loop KPI scan reads the column). The verifier's `--db-audit`
    requires the columns they add.
 2. Rolling back to pre-A120 code while an A120 probe grade checkpoint is in
    flight cannot open that checkpoint (503). Roll forward only, or drain probe
