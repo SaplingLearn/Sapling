@@ -16,6 +16,10 @@ real Supabase (`_hermetic_supabase_client`, #210) or a real model
 session-scoped `_hermetic_egress_floor` refuses the same egress (plus Jev and
 Resend) for the whole run, so a test that calls `monkeypatch.undo()` still
 cannot reach the network.
+
+A `live_llm` test is billable, so `pytest_collection_modifyitems` skips every
+one of them unless a RUN_LIVE_<LANE>=1 opt-in is set (tests/live_opt_in.py):
+a plain `pytest tests/` never calls a model, whatever keys backend/.env holds.
 """
 import sys
 import os
@@ -70,12 +74,34 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "live_llm: this test deliberately calls a REAL model (billable). Bypasses the "
-        "hermetic LLM fixture; pair it with a skipif so it only runs when a key is set.",
+        "hermetic LLM fixture. Skipped unless a RUN_LIVE_<LANE>=1 opt-in is set (conftest "
+        "enforces it); pair it with a skipif on its own lane's variable. "
+        "live_llm(offline=True): lifts the guard but calls no model, so it always runs.",
     )
     config.addinivalue_line(
         "markers",
         "kill_switch: legacy /api/learn path under LEARNING_LOOP_ENABLED=false (spec §11.5)",
     )
+
+
+def pytest_collection_modifyitems(config, items):
+    """No billable model call from a plain `pytest tests/` (tests/live_opt_in.py).
+
+    Without a RUN_LIVE_<LANE>=1 opt-in, every `live_llm` test that may call a
+    model is skipped, whatever keys config.py's load_dotenv put in the
+    environment. A key alone used to be enough for tests/test_ocr_pipeline.py's
+    live tests to run, which made real calls from any checkout with a filled
+    backend/.env."""
+    from tests.live_opt_in import billable, live_opt_in
+
+    if live_opt_in(os.environ):
+        return
+    skip = pytest.mark.skip(
+        reason="billable live-model test: opt in with its RUN_LIVE_<LANE>=1 variable"
+    )
+    for item in items:
+        if billable(item.get_closest_marker("live_llm")):
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
