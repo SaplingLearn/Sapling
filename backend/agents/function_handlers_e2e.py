@@ -949,7 +949,11 @@ E2E_LOOP_ANSWER_REPLY = render_turn(
 #     the answer above it ("The answer: …", learning/prequestion.answer_lead),
 #     then this turn (E2E_LOOP_PREQUESTION_REPLY, labelled as any default teach
 #     turn is). The seeded prequestion items (db/seed_learning_teach_prompts.py)
-#     are multiple choice with B correct.
+#     are multiple choice with B correct, and B is their OWN sentinel,
+#     E2E_LOOP_PREQUESTION_ANSWER — never E2E_LOOP_FINAL_ANSWER, so the
+#     learn_loop oracle tells a prequestion's release from a check's (review
+#     fix: one shared sentinel let the first answered prequestion count as a
+#     release of every check's answer).
 #   • A139: the first model turn after a self-explanation reply opens its body
 #     with an acknowledgement — the phase's own turn with its body replaced by
 #     E2E_LOOP_SELF_EXPLAIN_ACK_BODY. The prompts themselves are code's text
@@ -964,6 +968,7 @@ E2E_LOOP_PREQUESTION_TURN = {
     "question": "What would you check first on a question like this next time?",
 }
 E2E_LOOP_PREQUESTION_REPLY = render_turn(E2E_LOOP_PREQUESTION_TURN)
+E2E_LOOP_PREQUESTION_ANSWER = "the papa sentinel phrase"
 E2E_LOOP_SELF_EXPLAIN_ACK_PATTERN = "The student has answered your last 'why' question"
 E2E_LOOP_SELF_EXPLAIN_ACK_BODY = "Thanks for putting that step into your own words."
 

@@ -92,9 +92,12 @@ const LOOP_PREQUESTION_REPLY =
   "Key idea: [e2e-function-model] Deterministic prequestion explanation: the answer rests on the one idea the question tests.\n\n" +
   "Set your guess beside the answer above and find where they part.\n\n" +
   "What would you check first on a question like this next time?";
-/** What the explanation leads with, from code: the seeded multiple-choice
- *  guess's key (backend/db/seed_learning_teach_prompts.py — B is correct). */
-const PREQUESTION_ANSWER_LEAD = "The answer: B. the kilo sentinel phrase";
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PREQUESTION_ANSWER:
+ *  the seeded prequestion items' OWN key (backend/db/seed_learning_teach_prompts.py
+ *  — B is correct), never a check's, so the oracle judges each release apart. */
+const PREQUESTION_ANSWER = "the papa sentinel phrase";
+/** What the explanation leads with, from code: the guess's key. */
+const PREQUESTION_ANSWER_LEAD = `The answer: B. ${PREQUESTION_ANSWER}`;
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_SELF_EXPLAIN_ACK_BODY
  *  (spec §13 A139: the turn after a reply acknowledges it, flag on). */
 const LOOP_SELF_EXPLAIN_ACK_BODY = "Thanks for putting that step into your own words.";
@@ -948,7 +951,7 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
     await expect(card).toHaveAttribute("data-answered", "false");
     await expect(card).toContainText("isn't scored");
     await expect(page.getByTestId("loop-teach-start")).toHaveCount(0);
-    await expect(page.getByTestId("loop-prequestion-option-B")).toContainText("the kilo sentinel phrase");
+    await expect(page.getByTestId("loop-prequestion-option-B")).toContainText(PREQUESTION_ANSWER);
     const guessHash = await card.getAttribute("data-question-hash");
     expect(guessHash).toBeTruthy();
     const sessionId = await phase.getAttribute("data-session-id");
