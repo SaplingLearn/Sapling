@@ -540,3 +540,40 @@ def test_the_e2e_handler_answers_the_plain_and_the_varied_drafter(monkeypatch):
         mine = [(i["surface_representation"], i["surface_context"]) for i in varied if i["concept"] == concept]
         assert len({r for r, _ in mine}) == len(mine) and len({c for _, c in mine}) == len(mine)
     assert all("answer_kind" not in i and "stepwise" not in i for i in varied)
+
+
+def test_an_alignment_re_tag_carries_the_surface_descriptor():
+    """The A119 backfill re-keys an item it re-tags: the moved row keeps the
+    A140 descriptor as stored (the context still ciphertext), and the backfill
+    reads it."""
+    from learning.item_alignment import CONCEPT_RETAGGED, Alignment
+    from services import check_item_service as svc
+    from services.encryption import decrypt_if_present, encrypt_if_present
+    from tests.test_learning_check_items import _item
+    from tests.test_learning_item_keys import _row
+
+    assert {"surface_representation", "surface_context"} <= set(svc._ALIGN_COLUMNS.split(","))
+    item = _item(concept_key="recursion")
+    context = encrypt_if_present("e2e step sizes")
+    row = _row(item) | {
+        "key_checked_at": "2026-11-08T01:00:00+00:00",
+        "aligned_at": None,
+        "surface_representation": "numeric",
+        "surface_context": context,
+    }
+    retag = Alignment((0,), "base case", (CONCEPT_RETAGGED,))
+    factory, mocks = _cached_tables({})
+    with patch("services.check_item_service.table", side_effect=factory):
+        svc.apply_item_alignment(row, item, retag, at="2026-11-08T02:00:00+00:00")
+    ((moved,),) = mocks["check_items"].upsert.call_args[0][:1]
+    assert moved["concept_key"] == "base case" and moved["id"] != item.id
+    assert moved["surface_representation"] == "numeric"
+    assert moved["surface_context"] == context  # copied untouched
+    assert decrypt_if_present(moved["surface_context"]) == "e2e step sizes"
+    # an item drafted before A140 moves without one, as before
+    bare = _row(item) | {"key_checked_at": None, "aligned_at": None}
+    factory, mocks = _cached_tables({})
+    with patch("services.check_item_service.table", side_effect=factory):
+        svc.apply_item_alignment(bare, item, retag, at="2026-11-08T02:00:00+00:00")
+    ((moved,),) = mocks["check_items"].upsert.call_args[0][:1]
+    assert "surface_representation" not in moved and "surface_context" not in moved
