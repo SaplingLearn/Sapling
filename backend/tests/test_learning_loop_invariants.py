@@ -76,6 +76,10 @@ SERIES_AGENT_MODULES = (
     # prompt stack on the check_items model slot
     "check_items_varied.py",
     "check_items_varied_topup.py",
+    # A141: the multi-concept drafter (check_items slot) and its alignment
+    # check (check_items_verify slot), each its own agent and prompt stack
+    "check_items_combo.py",
+    "check_items_combo_verify.py",
     "grader.py",
     "learning_decision.py",
     "loop_tutor.py",

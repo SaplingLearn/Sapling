@@ -55,12 +55,18 @@ UNASKED_RUBRIC = "rubric: the question asks for none of the item's criteria (ali
 NO_CONCEPT = "concept: the question tests none of the listed course concepts (alignment check)"
 OUT_OF_SCOPE = "concept: the alignment check named a concept outside the course's list"
 UNVERIFIED = "unverified: the alignment check gave no complete verdict for this item"
+#: Spec §13 A141: a multi-concept draft one of whose components the question
+#: does not need (align_components).
+NOT_COMBINED = (
+    "concept: the question does not need every concept it combines (alignment check)"
+)
 #: A short code per reason, for output that must carry no text (the backfill).
 REASON_CODES = {
     UNASKED_RUBRIC: "no_asked_criterion",
     NO_CONCEPT: "tests_no_concept",
     OUT_OF_SCOPE: "concept_out_of_scope",
     UNVERIFIED: "unverified",
+    NOT_COMBINED: "not_combined",
 }
 
 
@@ -156,6 +162,75 @@ def align(
     if tested != own_key:
         flags.append(CONCEPT_RETAGGED)
     return Alignment(keep, tested, tuple(flags))
+
+
+# ── multi-concept items (spec §13 A141) ─────────────────────────────────────
+#
+# A multi-concept item is filed under its combination (learning/
+# multi_concept.py), never re-tagged: the check answers, per item, the A119
+# criteria question and, for EVERY component it combines, whether a student
+# needs that concept to answer the question. Every component must be needed:
+# an item that does not combine what it claims is rejected (NOT_COMBINED),
+# never stored under a narrower tag.
+
+
+class ComponentVerdict(NamedTuple):
+    """The multi-concept check's answers for one item (`collect_components`)."""
+
+    asked: Mapping[str, bool]  # criterion id -> asked
+    required: Mapping[str, bool]  # component id ("k1", "k2", ...) -> needed
+
+
+def component_ids(count: int) -> list[str]:
+    """The ids the check sees an item's components under, in order (apex first)."""
+    return [f"k{i}" for i in range(1, count + 1)]
+
+
+def collect_components(
+    criteria: Iterable[tuple[str, str, bool]], components: Iterable[tuple[str, str, bool]]
+) -> dict[str, ComponentVerdict]:
+    """(item, criterion, asked) and (item, component, required) rows as one
+    verdict per item id. An item answered twice in disagreement on either
+    gets none (unverified, as `collect`), and so does an item with criteria
+    rows but no component row, or the reverse."""
+    asked: dict[str, dict[str, bool]] = {}
+    needed: dict[str, dict[str, bool]] = {}
+    conflicted: set[str] = set()
+    for table, rows in ((asked, criteria), (needed, components)):
+        for item, key, value in rows:
+            item, key = str(item).strip(), str(key).strip().lower()
+            seen = table.setdefault(item, {})
+            if key in seen and seen[key] != bool(value):
+                conflicted.add(item)
+            seen[key] = bool(value)
+    return {
+        item: ComponentVerdict(asked[item], needed[item])
+        for item in asked.keys() & needed.keys()
+        if item not in conflicted
+    }
+
+
+def align_components(
+    criteria_count: int, component_count: int, own_key: str, verdict: ComponentVerdict | None
+) -> Alignment:
+    """Apply one multi-concept item's verdict: an unasked criterion dropped,
+    no content criterion left → rejected; a component not needed → rejected
+    (NOT_COMBINED); a criterion or a component unanswered → unverified. Never
+    re-tagged: the item keeps `own_key` (its combination's key)."""
+    ids, kids = criterion_ids(criteria_count), component_ids(component_count)
+    if (
+        verdict is None
+        or any(cid not in verdict.asked for cid in ids)
+        or any(kid not in verdict.required for kid in kids)
+    ):
+        return Alignment((), own_key, (), UNVERIFIED, unverified=True)
+    keep = tuple(i for i, cid in enumerate(ids) if verdict.asked[cid])
+    if not keep:
+        return Alignment(keep, own_key, (), UNASKED_RUBRIC)
+    if not all(verdict.required[kid] for kid in kids):
+        return Alignment(keep, own_key, (), NOT_COMBINED)
+    flags = (RUBRIC_UNASKED_DROPPED,) if len(keep) < criteria_count else ()
+    return Alignment(keep, own_key, flags)
 
 
 def merge_flags(*flag_sets: Iterable[str] | None) -> list[str]:

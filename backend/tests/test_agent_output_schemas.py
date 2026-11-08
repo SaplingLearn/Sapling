@@ -98,6 +98,10 @@ EXPECTED_STRUCTURED_AGENTS = {
     # fields traded for the surface descriptor; see the exceptions)
     "check_items_varied_agent",
     "check_items_varied_topup_agent",
+    # A141 multi-concept drafter (the plain CheckItemsOutput, the schema recorded live)
+    # and its alignment check (two flat lists of small rows, 4 + 4 fields, 10 properties)
+    "check_items_combo_agent",
+    "check_items_combo_verify_agent",
     # A119 alignment check: two flat lists of small rows (4 + 3 fields), 9 properties
     "check_items_verify_agent",
     # A124 key check: the blind solve (one flat list of 4-field rows, 5 properties) and the
