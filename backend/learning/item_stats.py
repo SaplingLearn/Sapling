@@ -249,19 +249,26 @@ def empty_stats() -> dict:
 
 
 def _void_times(
-    rows: Iterable[Mapping[str, Any]], retired: Collection[ItemKey]
+    rows: Iterable[Mapping[str, Any]],
+    retired: Collection[ItemKey],
+    combos: Collection[ItemKey] = frozenset(),
 ) -> dict[tuple[str, str], datetime]:
     """(student, node) → when a staff retire last removed some of that
     student's attempts on the node from the statistics: the newest retire
     decision among the items its void rows were graded against. Only when
     `retired` maps each retired item to its decision time; a retire changes
     the numbers the moment it is decided (the void rule reads the decision,
-    not the sweep)."""
+    not the sweep). Spec §13 A141: a multi-concept item's void rows (`combos`)
+    are left out — no other item's numbers ever counted them (a concept's
+    items leave every combination out of their rest scores, a combination
+    reads its components' own items)."""
     if not isinstance(retired, Mapping):
         return {}
     out: dict[tuple[str, str], datetime] = {}
     for row in rows:
         if not isinstance(row, Mapping) or not is_void_row(row, retired):
+            continue
+        if combos and graded_item(row) in combos:
             continue
         user, node, at = _user(row), row.get("node_id"), retired.get(graded_item(row))
         if user is None or not node or not isinstance(at, datetime):
@@ -270,6 +277,20 @@ def _void_times(
         if key not in out or at > out[key]:
             out[key] = at
     return out
+
+
+def journaled_combinations(rows: Iterable[Mapping[str, Any]]) -> frozenset[ItemKey]:
+    """Spec §13 A141: the course items the journal says a multi-concept item
+    graded (`multi_concept` true on a row, written since the review migration
+    20261108205812) — known even after the item's own row was withdrawn (A23)
+    or retired (A123), which the stored rows no longer show."""
+    return frozenset(
+        item
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("multi_concept") is True
+        and (item := graded_item(row)) is not None
+    )
 
 
 def multi_concept_rests(stored: Iterable[Mapping[str, Any]]) -> dict[ItemKey, frozenset[ItemKey]]:
@@ -319,12 +340,17 @@ def item_statistics(
     evidence is its apex's, but it measures every component together). A
     single-concept item's rest score leaves every multi-concept item out: an
     integration item is another construct, so a concept's items are
-    discriminated against the concept's own. None (no multi-concept item):
+    discriminated against the concept's own. A combination the journal names
+    (journaled_combinations) but `multi` does not — its row withdrawn or
+    retired since — is left out the same way, and so are its voids from every
+    change time (_void_times). None (no multi-concept item, none journaled):
     exactly the rule above."""
     rows = list(rows)
     observations = first_unassisted(rows, retired=retired)
-    voided_at = _void_times(rows, retired)
     combos = dict(multi or {})
+    for item in journaled_combinations(rows):
+        combos.setdefault(item, frozenset())  # its row is gone: no rest read
+    voided_at = _void_times(rows, retired, frozenset(combos))
     by_student_node: dict[tuple[str, str], dict[ItemKey, dict]] = defaultdict(dict)
     by_student: dict[str, dict[ItemKey, dict]] = defaultdict(dict)
     by_item: dict[ItemKey, list[dict]] = defaultdict(list)

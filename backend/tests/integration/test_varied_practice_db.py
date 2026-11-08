@@ -14,6 +14,12 @@ varied_practice.sql on the local stack.
   under its combination's key with its apex and components; concept_surfaces,
   multi_concept_items and course_has_items read them back.
 
+And the review's migration 20261108205812_learning_varied_practice_review.sql:
+the closed multi-concept CHECK refuses what the first let through (a NULL,
+empty or repeated component, a separator inside one, an array not
+one-dimensional from index 1), and learning_evidence_commit journals
+`multi_concept` on a multi-concept item's row only.
+
 Run inside the flock'd local-stack cycle with RUN_INTEGRATION=1."""
 
 from __future__ import annotations
@@ -169,3 +175,64 @@ def test_the_checks_refuse_what_the_code_never_writes(db_conn):
             upd.format("concept_key = %s, component_keys = %s"),
             (SEP.join([apex, other, pre]), [apex, other, pre], combo),
         )
+
+
+# ── migration 20261108205812_learning_varied_practice_review.sql ─────────────
+
+
+def test_the_closed_shape_refuses_the_rows_the_first_let_through(db_conn):
+    """The review's CHECK: no NULL, empty or repeated component, no separator
+    inside one, a one-dimensional array from index 1 — and a concept's own
+    key still never holds the separator. What the code writes still passes."""
+    from learning.multi_concept import combo_key
+
+    definition = db_conn.execute(
+        "SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint "
+        "WHERE conname = 'check_items_multi_concept_shape'"
+    ).fetchone()["d"]
+    assert "array_position" in definition and "COALESCE" in definition
+    tag = uuid.uuid4().hex[:8]
+    apex, pre, other = f"it ra {tag}", f"it rb {tag}", f"it rc {tag}"
+    (combo,) = _store(combo_key([apex, pre]), [_draft(f"Review combo {tag}?", "x", difficulty=3)])
+    upd = "UPDATE check_items SET concept_key = %s, component_keys = %s WHERE id = %s"
+    # the hole: array_to_string skips a NULL, so the key equalled the apex's own
+    _refused(db_conn, upd, (apex, [apex, None], combo))
+    _refused(db_conn, upd, (SEP.join([apex, apex]), [apex, apex], combo))  # repeated
+    _refused(db_conn, upd, (SEP.join([apex, pre, apex]), [apex, pre, apex], combo))
+    _refused(db_conn, upd, (SEP.join([apex, pre, pre]), [apex, pre, pre], combo))
+    _refused(db_conn, upd, (apex + SEP, [apex, ""], combo))  # empty
+    inner = f"{pre}{SEP}{other}"  # a separator inside a component
+    _refused(db_conn, upd, (SEP.join([apex, inner]), [apex, inner], combo))
+    _refused(
+        db_conn,
+        "UPDATE check_items SET concept_key = %s, component_keys = %s::text[] WHERE id = %s",
+        (SEP.join([apex, pre]), "[0:1]={" + f'"{apex}","{pre}"' + "}", combo),
+    )
+    _refused(
+        db_conn,
+        "UPDATE check_items SET concept_key = %s, component_keys = %s::text[] WHERE id = %s",
+        (SEP.join([apex, pre]), "{{" + f'"{apex}","{pre}"' + "}}", combo),
+    )
+    with db_conn.transaction():  # what the code writes
+        db_conn.execute(upd, (SEP.join([apex, other, pre]), [apex, other, pre], combo))
+        db_conn.execute(upd, (SEP.join([apex, pre]), [apex, pre], combo))
+
+
+def test_the_journal_says_which_rows_a_combination_graded(db_conn):
+    """learning_evidence_commit admits, checks and inserts `multi_concept`:
+    a multi-concept item's row journals true at the partial weight; every
+    other row journals NULL, as before the column existed."""
+    from learning.params import WEIGHT_MULTI_CONCEPT
+    from tests.integration.test_learning_evidence_transaction_db import apply, evidence, journal
+    from tests.integration.test_learning_goals_db import _node
+
+    definition = db_conn.execute(
+        "SELECT prosrc FROM pg_proc WHERE proname = 'learning_evidence_commit'"
+    ).fetchone()["prosrc"]
+    assert "'multi_concept'" in definition and "ev.multi_concept" in definition
+    node = _node(f"Journal flag {uuid.uuid4().hex[:8]}")
+    apply(evidence(node, multi_concept=True))
+    apply(evidence(node, tagged=False))
+    rows = journal(db_conn, node)
+    assert [r["multi_concept"] for r in rows] == [True, None]
+    assert rows[0]["weight"] == WEIGHT_MULTI_CONCEPT and rows[1]["weight"] == 1.0

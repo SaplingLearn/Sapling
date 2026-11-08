@@ -343,11 +343,13 @@ def audit(item_id: str, body: AuditBody, request: Request) -> dict:
 #: the item and the student (the node's owner and course), the outcome, and
 #: what decides an unassisted first attempt — the help and rung, the re-check
 #: flag (journaled since A123; on an older row the planning envelope's, or the
-#: weight with the grader's confidence) — plus the journal's total order.
+#: weight with the grader's confidence) — plus the journal's total order, and
+#: whether a multi-concept item graded the row (spec §13 A141: its own row may
+#: be gone; migration 20261108205812).
 _STATS_EVIDENCE_COLUMNS = (
     "id,node_id,question_hash,check_item_id,channel,reason,correct,assisted,max_rung,weight,"
     "confidence,same_session_recheck,planning_recheck:planning_observation->same_session_recheck,"
-    "created_at,evidence_seq,graph_nodes!inner(user_id,course_id)"
+    "created_at,evidence_seq,multi_concept,graph_nodes!inner(user_id,course_id)"
 )
 #: The most evidence rows one statistics read scans (admin analytics' scan cap).
 STATS_SCAN_CAP = 100_000

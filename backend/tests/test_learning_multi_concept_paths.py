@@ -56,6 +56,9 @@ def test_a_staff_retire_of_a_combination_voids_its_apex_evidence_exactly(monkeyp
     db, _ = run(monkeypatch, ops)
     combo_rows = [r for r in db.journal if r["question_hash"] == "q-combo"]
     assert [r["weight"] for r in combo_rows] == [params.WEIGHT_MULTI_CONCEPT] * 2
+    # the journal says which rows a combination graded; every other row names no flag
+    assert [r.get("multi_concept") for r in combo_rows] == [True, True]
+    assert all("multi_concept" not in r for r in db.journal if r["question_hash"] != "q-combo")
     assert combo_rows[0]["propagated_to"] == ["n-a"]  # a correct apex answer credits its prerequisite
     _assert_replay_matches(db, _replay(db, _journal(db)))  # the replay reads the journaled weight
 
@@ -274,6 +277,64 @@ def test_a_combinations_discrimination_reads_its_components_and_a_concepts_leave
     # with no combination stored, the numbers are exactly the A131 ones
     singles = [r for r in rows if r["question_hash"] != "x1"]
     assert item_statistics(singles, multi=None) == item_statistics(singles)
+
+
+def _combo_rows():
+    """u1..u3 on the apex's own a1 and a2 and the combination x1, whose rows
+    the journal flags (its evidence sits on the apex node)."""
+    rows = []
+    for user, (a1, a2, x1) in {
+        "u1": (True, True, True),
+        "u2": (False, False, False),
+        "u3": (True, False, False),
+    }.items():
+        rows += [
+            _ev(user, f"{user}-apex", "a1", a1, 1),
+            _ev(user, f"{user}-apex", "a2", a2, 2),
+            {**_ev(user, f"{user}-apex", "x1", x1, 4), "multi_concept": True},
+        ]
+    return rows
+
+
+def test_a_withdrawn_combination_stays_out_of_the_apex_items_rest_scores():
+    """A23: consent withdrawal deletes the combination's row, so the stored
+    rows no longer name it; the journal still does, and the apex's own items
+    keep reading only each other — their numbers are the ones they had while
+    it was stored."""
+    from learning.item_stats import item_statistics, journaled_combinations, multi_concept_rests
+
+    rows = _combo_rows()
+    assert journaled_combinations(rows) == {("c1", "x1")}
+    stored = [
+        {"course_id": "c1", "concept_key": APEX, "question_hash": "a1"},
+        {"course_id": "c1", "concept_key": APEX, "question_hash": "a2"},
+        {"course_id": "c1", "concept_key": KEY, "question_hash": "x1"},
+    ]
+    while_stored = item_statistics(rows, multi=multi_concept_rests(stored))
+    withdrawn = item_statistics(rows, multi=multi_concept_rests(stored[:2]) or None)
+    for item in (("c1", "a1"), ("c1", "a2")):
+        assert withdrawn[item] == while_stored[item]
+    # the same rows with no journal flag read x1 as an apex item: what A141 forbids
+    unflagged = [{k: v for k, v in r.items() if k != "multi_concept"} for r in rows]
+    assert item_statistics(unflagged)[("c1", "a1")] != while_stored[("c1", "a1")]
+
+
+def test_a_retired_combination_changes_no_apex_items_numbers():
+    """A123: a staff retire of a combination voids its rows on the apex; the
+    apex's own items never counted them, so their numbers_changed_at stays —
+    an item staff approved on its numbers does not come back as flagged."""
+    from learning.item_stats import item_statistics
+
+    rows = _combo_rows()
+    before = item_statistics(rows)
+    decided = T0.replace(hour=5)
+    after = item_statistics(rows, retired={("c1", "x1"): decided})
+    for item in (("c1", "a1"), ("c1", "a2")):
+        assert after[item] == before[item]
+        assert after[item]["numbers_changed_at"] < decided.isoformat()
+    # a single-concept item's retire still dates its siblings' change, as A131 does
+    after_single = item_statistics(rows, retired={("c1", "a2"): decided})
+    assert after_single[("c1", "a1")]["numbers_changed_at"] == decided.isoformat()
 
 
 def test_the_stats_route_names_a_combinations_components(monkeypatch):

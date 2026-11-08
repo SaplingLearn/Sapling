@@ -77,6 +77,14 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
         ),
         # A123 × A127: the union of the two above; it adds nothing of its own
         "20261108103333_learning_evidence_commit_reconcile.sql": Change(),
+        # A141: a multi-concept item's row says so, admitted, checked, journaled
+        "20261108205812_learning_varied_practice_review.sql": Change(
+            requires=(
+                "'multi_concept'))",
+                "jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null')",
+                "ev.multi_concept,",
+            )
+        ),
     },
     ("check_item_report", 6): {
         # A113 — its signature, kept for a backend deployed before A123. Its
