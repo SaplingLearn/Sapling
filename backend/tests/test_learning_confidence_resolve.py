@@ -485,12 +485,15 @@ def test_the_migration_adds_the_column_and_the_commit_function_admits_it():
     assert "GRANT EXECUTE ON FUNCTION learning_evidence_commit" in sql
 
 
-#: The A123 × A127 reconcile: the LAST definition of learning_evidence_commit.
+#: The A123 × A127 reconcile, the definition A141's review re-creates.
 RECONCILE = (
     BACKEND / "db" / "migrations" / "20261108103333_learning_evidence_commit_reconcile.sql"
 )
 #: A123's definition, the one A127's three edits are applied to.
 A123_VOID = BACKEND / "db" / "migrations" / "20261108072715_learning_evidence_void.sql"
+#: Spec §13 A141's review: the LAST definition of learning_evidence_commit, the
+#: reconcile's with the journal's multi_concept key.
+A141_REVIEW = BACKEND / "db" / "migrations" / "20261108205812_learning_varied_practice_review.sql"
 
 
 def _commit_body(text: str) -> str:
@@ -501,10 +504,12 @@ def _commit_body(text: str) -> str:
 def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
     """Re-created, never rewritten. A127's own migration re-created the
     pre-A123 body (20261019141950) plus the key, which, applied after A123's,
-    dropped A123's item lock and retired refusal. The function the database
-    runs is the reconcile's: with A127's three edits taken out, it is
-    byte-identical to A123's definition, and no later migration re-creates
-    it."""
+    dropped A123's item lock and retired refusal. The reconcile's definition,
+    with A127's three edits taken out, is byte-identical to A123's. The
+    function the database runs is A141's review's (20261108205812): with its
+    three edits taken out (the multi_concept key admitted, checked and
+    inserted), it is byte-identical to the reconcile's, and no later
+    migration re-creates it."""
     new = _commit_body(RECONCILE.read_text())
     new = new.replace(
         "'retention','same_session_recheck','propagated_to',\n                'student_confidence'))\n"
@@ -522,13 +527,31 @@ def test_the_function_the_database_runs_is_a123s_plus_the_new_key():
         "ev.retention,ev.same_session_recheck,ev.propagated_to);",
     )
     assert new == _commit_body(A123_VOID.read_text())
+    review = _commit_body(A141_REVIEW.read_text())
+    for edited, original in (
+        (
+            "                'student_confidence',\n                'multi_concept'))",
+            "                'student_confidence'))",
+        ),
+        (
+            "           OR NOT (ev.student_confidence IS NULL OR ev.student_confidence BETWEEN 0 AND 1)\n"
+            "           -- spec §13 A141: a multi-concept item's row says so: a JSON boolean, or absent/null\n"
+            "           OR (x ? 'multi_concept' AND jsonb_typeof(x->'multi_concept') NOT IN ('boolean','null')) THEN",
+            "           OR NOT (ev.student_confidence IS NULL OR ev.student_confidence BETWEEN 0 AND 1) THEN",
+        ),
+        ("            multi_concept,\n            student_confidence)", "            student_confidence)"),
+        ("            ev.multi_concept,\n            ev.student_confidence);", "            ev.student_confidence);"),
+    ):
+        assert review.count(edited) == 1, edited
+        review = review.replace(edited, original)
+    assert review == _commit_body(RECONCILE.read_text())
     later = [
         p.name
         for p in sorted((BACKEND / "db" / "migrations").glob("*.sql"))
         if p.name > RECONCILE.name
         and "CREATE OR REPLACE FUNCTION learning_evidence_commit" in p.read_text()
     ]
-    assert later == [], "a later migration re-creates the function: re-pin it here"
+    assert later == [A141_REVIEW.name], "a later migration re-creates the function: re-pin it here"
 
 
 # ── 4. the resolution rule ──────────────────────────────────────────────────
