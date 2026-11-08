@@ -192,7 +192,11 @@ export function LoopLearn() {
   const toast = useToast();
   // docs/safety/crisis-support.md: an action with no conversation to answer in
   // (a session start, a goal, a probe answer, a hint attempt) shows the card here
-  const { intercept: interceptCrisis, dialog: crisisDialog } = useCrisisSupport();
+  const {
+    intercept: interceptCrisis,
+    dialog: crisisDialog,
+    support: crisisDialogSupport,
+  } = useCrisisSupport();
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -1523,7 +1527,21 @@ export function LoopLearn() {
     </div>
   );
 
-  const notices = (paused || noCheckItems || materialsNote || topicOffer || practiceUnavailable.length > 0) && (
+  // docs/safety/crisis-support.md × spec §13 A128: while a crisis-support card is
+  // on screen (the start card, the dialog, or the latest reply in the
+  // conversation), the degraded-mode notes stand aside, so nothing operational
+  // shows beside the card. They come back once the card is no longer the
+  // latest thing on screen. (The budget pause stays: it is the real state.)
+  const crisisOnScreen =
+    (!!startCrisis && !sessionId) ||
+    crisisDialogSupport !== null ||
+    messages[messages.length - 1]?.crisisSupport != null;
+  const showPreparing = noCheckItems === "preparing" && !crisisOnScreen;
+  const showMaterialsNote = materialsNote && !crisisOnScreen;
+  const notices = (
+    paused || noCheckItems === "none" || showPreparing || showMaterialsNote || topicOffer ||
+    practiceUnavailable.length > 0
+  ) && (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
       {paused && (
         <BudgetPausedBanner
@@ -1551,7 +1569,7 @@ export function LoopLearn() {
           {NO_CHECK_ITEMS_COPY}
         </div>
       )}
-      {noCheckItems === "preparing" && (
+      {showPreparing && (
         <div
           data-testid="loop-preparing-items"
           role="status"
@@ -1560,7 +1578,7 @@ export function LoopLearn() {
           {PREPARING_COPY}
         </div>
       )}
-      {materialsNote && (
+      {showMaterialsNote && (
         <div
           data-testid="loop-materials-unavailable"
           role="status"

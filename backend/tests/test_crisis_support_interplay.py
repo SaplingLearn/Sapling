@@ -11,6 +11,8 @@ base, that order holds against two later changes:
 - A121's turn template. A crisis session start gets the card, never the
   probe-phase template opener, and stashes no session. A crisis chat turn runs
   no activation trial and poses no check.
+- A128's embeddings breaker. With it open, a crisis turn still gets the card,
+  and no retrieval is attempted (no materials note, no trial call).
 
 Each case is paired with its control: the same request without the crisis
 reaches the A125 guard, the A121 template or the activation trial. No model
@@ -176,3 +178,33 @@ def test_a_crisis_chat_turn_runs_no_activation_trial_and_poses_no_check(
         body, _ = _chat()
     assert trial.called
     assert body["check"]["question_hash"] == ITEM.question_hash
+
+
+# ── A128: the embeddings breaker is open ─────────────────────────────────────
+
+
+def test_with_the_breaker_open_a_crisis_turn_gets_the_card_and_retrieves_nothing(
+    crisis_flag, gate_on, seams
+):
+    """Spec §13 A128's embeddings breaker is open, so a turn's retrieval would
+    fail and the turn would carry the materials note. A crisis message gets
+    the card and nothing else: no context assembly, so no retrieval is even
+    attempted, no note, and the breaker is left as it was (no trial call)."""
+    from services import rag_service
+
+    seams.store["doc"] = _plan_state(teach_turns=0)  # a teach turn: the model runs
+    for _ in range(rag_service.EMBED_BREAKER_FAILURES):
+        rag_service._BREAKER.failed(RuntimeError("embeddings down"))
+    assert rag_service.embedding_blocked()
+    retrieval = MagicMock(side_effect=AssertionError("a retrieval ran on a crisis turn"))
+    with patch("routes.learn_loop.retrieve_chunks_detailed", retrieval):
+        r = client.post("/api/learn/loop/chat", json={**CHAT, "message": CRISIS})
+        assert r.status_code == 200, r.text
+        assert r.json()["crisis_support"] and "materials_unavailable" not in r.json()
+        seams.blocks.assert_not_called()  # the context assembly, where retrieval runs
+        retrieval.assert_not_called()
+        assert rag_service.embedding_breaker_state() == "open"
+
+        # control: an ordinary message on the same session assembles the context
+        _chat()
+    seams.blocks.assert_called_once()

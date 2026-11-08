@@ -666,6 +666,42 @@ describe("LoopLearn — A26", () => {
     await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
   });
 
+  // docs/safety/crisis-support.md: nothing operational shows beside a crisis card
+  it("A128 × crisis support: the materials note stands aside while a crisis card is the latest reply", async () => {
+    const crisisTurn = { reply: "the card as text", graph_update: {}, mastery_changes: [], crisis_support: crisisFixture };
+    api.streamLoopChat
+      .mockResolvedValueOnce(turn({ reply: "Here is the idea.", phase: "teach", materials_unavailable: true }))
+      .mockResolvedValueOnce(crisisTurn)
+      .mockResolvedValueOnce(turn({ reply: "And the next step.", phase: "teach" }));
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByTestId("loop-materials-unavailable");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByTestId("crisis-support-card");
+    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("And the next step.");
+    expect(screen.getByTestId("loop-materials-unavailable")).toBeTruthy(); // the session's note again
+  });
+
+  it("A128 × crisis support: the preparing note stands aside while a crisis card is the latest reply", async () => {
+    const crisisTurn = { reply: "the card as text", graph_update: {}, mastery_changes: [], crisis_support: crisisFixture };
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true, preparing: true });
+    api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
+    api.streamLoopChat.mockResolvedValue(crisisTurn);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-preparing-items");
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByTestId("crisis-support-card");
+    expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
+  });
+
   it("A128: the opener's failed retrieval shows the note from the first turn", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([]));
     api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Welcome.", materials_unavailable: true });
