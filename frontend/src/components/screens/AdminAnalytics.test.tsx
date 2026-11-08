@@ -57,6 +57,7 @@ vi.mock("next/dynamic", async () =>
 );
 
 import { AdminAnalytics, LearningLoopPanelBody } from "./AdminAnalytics";
+import type { LoopFunnelWindow, LoopGainWindow, LoopLearningGain } from "@/lib/types";
 
 const RANGE = { from: "2026-06-30T12:00:00.000Z", to: "2026-07-30T12:00:00.000Z" };
 
@@ -112,18 +113,38 @@ const emptyGain = {
   n: 0, pre_correct_rate: null, post_correct_rate: null, paired_difference: null,
   improved: 0, same: 0, worse: 0,
 };
-const learningGain = {
-  delayed_min_days: 7,
-  windows: [
-    {
-      window_days: 7, posttests: 6, excluded_retired: 0,
-      n: 5, pre_correct_rate: 0.4, post_correct_rate: 0.8, paired_difference: 0.4,
-      improved: 2, same: 3, worse: 0,
-      delayed: { n: 2, pre_correct_rate: 0.5, post_correct_rate: 1, paired_difference: 0.5, improved: 1, same: 1, worse: 0 },
-    },
-    { window_days: 28, posttests: 0, excluded_retired: 0, ...emptyGain, delayed: emptyGain },
-  ],
+/** spec §13 A126: a window's intervals and visibility stratum — none by default. */
+const noExtras = {
+  students: 0, post_correct_ci: null, paired_difference_ci: null,
+  visibility_loss: emptyGain, visibility_unreported: 0,
 };
+const emptyWindow = (window_days: number, excluded_retired = 0) => ({
+  window_days, posttests: 0, excluded_retired, ...emptyGain, ...noExtras, delayed: emptyGain,
+});
+const funnelRow = (window_days: number, counts: Partial<LoopFunnelWindow> = {}): LoopFunnelWindow => ({
+  window_days, due: 0, opened: 0, answered: 0, unassisted: 0, expired: 0, open: 0, skipped: 0,
+  skip_reasons: { no_items: 0, exhausted: 0, reported: 0 }, not_opened: 0, still_open: 0, ...counts,
+});
+const gainOf = (windows: LoopGainWindow[], extra: Partial<LoopLearningGain> = {}): LoopLearningGain => ({
+  delayed_min_days: 7,
+  ci: { method: "student_cluster_bootstrap_percentile", level: 0.95, resamples: 2000, seed: "s" },
+  windows,
+  delay_bins: [7, 14, 28, 42].map((lo, i, all) => ({ lo_days: lo, hi_days: all[i + 1] ?? null, posttests: 0, ...emptyGain })),
+  delay_unknown: 0,
+  delay_out_of_range: 0,
+  funnel: [funnelRow(7), funnelRow(28)],
+  ...extra,
+});
+const learningGain = gainOf([
+  {
+    window_days: 7, posttests: 6, excluded_retired: 0,
+    n: 5, pre_correct_rate: 0.4, post_correct_rate: 0.8, paired_difference: 0.4,
+    improved: 2, same: 3, worse: 0,
+    ...noExtras,
+    delayed: { n: 2, pre_correct_rate: 0.5, post_correct_rate: 1, paired_difference: 0.5, improved: 1, same: 1, worse: 0 },
+  },
+  emptyWindow(28),
+]);
 const loopFixture = {
   range: RANGE,
   steps_total: 40, banded_steps: 20, in_band: 15, in_band_share: 0.75,
@@ -411,27 +432,17 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
   });
 
   it("says so when no unaided post-test was answered in the range", () => {
-    const none = {
-      ...loopFixture,
-      learning_gain: {
-        delayed_min_days: 7,
-        windows: [7, 28].map(window_days => ({
-          window_days, posttests: 0, excluded_retired: 0, ...emptyGain, delayed: emptyGain,
-        })),
-      },
-    };
+    const none = { ...loopFixture, learning_gain: gainOf([emptyWindow(7), emptyWindow(28)]) };
     render(<LearningLoopPanelBody d={none} />);
     expect(screen.getByTestId("admin-loop-gain").textContent).toContain("No unaided post-test outcomes in this range.");
     expect(screen.queryByTestId("admin-loop-gain-7")).toBeNull();
+    expect(screen.queryByTestId("admin-loop-funnel")).toBeNull(); // nothing came due either
   });
 
   it("shows per window how many outcomes a retired item left out (spec §13 A112 × A113)", () => {
     const withRetired = {
       ...loopFixture,
-      learning_gain: {
-        ...learningGain,
-        windows: [{ ...learningGain.windows[0], excluded_retired: 2 }, learningGain.windows[1]],
-      },
+      learning_gain: gainOf([{ ...learningGain.windows[0], excluded_retired: 2 }, learningGain.windows[1]]),
     };
     render(<LearningLoopPanelBody d={withRetired} />);
     expect(screen.getByText("Excluded: item retired")).toBeTruthy();
@@ -443,18 +454,99 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
   });
 
   it("keeps the table when every outcome in range was left out for a retired item", () => {
-    const allRetired = {
-      ...loopFixture,
-      learning_gain: {
-        delayed_min_days: 7,
-        windows: [
-          { window_days: 7, posttests: 0, excluded_retired: 3, ...emptyGain, delayed: emptyGain },
-          { window_days: 28, posttests: 0, excluded_retired: 0, ...emptyGain, delayed: emptyGain },
-        ],
-      },
-    };
+    const allRetired = { ...loopFixture, learning_gain: gainOf([emptyWindow(7, 3), emptyWindow(28)]) };
     render(<LearningLoopPanelBody d={allRetired} />);
     expect(screen.getByTestId("admin-loop-gain").textContent).not.toContain("No unaided post-test outcomes");
     expect(screen.getByTestId("admin-loop-gain-7-excluded").textContent).toBe("3");
+  });
+
+  // ── spec §13 A126: intervals, the visibility stratum, the delay, the funnel ──
+
+  it("shows each window's bootstrap intervals under its rates", () => {
+    const withCi = {
+      ...loopFixture,
+      learning_gain: gainOf([
+        { ...learningGain.windows[0], students: 4, post_correct_ci: [0.6, 1] as [number, number],
+          paired_difference_ci: [0.1, 0.7] as [number, number] },
+        learningGain.windows[1],
+      ]),
+    };
+    render(<LearningLoopPanelBody d={withCi} />);
+    expect(screen.getByTestId("admin-loop-gain-7-post-ci").textContent).toBe("60% to 100%");
+    expect(screen.getByTestId("admin-loop-gain-7-diff-ci").textContent).toBe("+10.0 pp to +70.0 pp");
+    expect(screen.queryByTestId("admin-loop-gain-28-post-ci")).toBeNull(); // no interval: no line
+    expect(within(screen.getByTestId("admin-loop-gain-7")).getByText("80%")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-gain-ci-note").textContent).toContain("2,000-resample bootstrap over students");
+  });
+
+  it("reports the page-hidden stratum beside the whole, excluding nothing", () => {
+    const hidden = {
+      ...loopFixture,
+      learning_gain: gainOf([
+        { ...learningGain.windows[0], visibility_unreported: 1,
+          visibility_loss: { n: 1, pre_correct_rate: 0, post_correct_rate: 1, paired_difference: 1, improved: 1, same: 0, worse: 0 } },
+        learningGain.windows[1],
+      ]),
+    };
+    render(<LearningLoopPanelBody d={hidden} />);
+    const row = screen.getByTestId("admin-loop-gain-7-hidden");
+    expect(within(row).getByText("↳ page hidden while answering")).toBeTruthy();
+    expect(within(row).getByText("+100.0 pp")).toBeTruthy();
+    expect(within(screen.getByTestId("admin-loop-gain-7")).getByText("5")).toBeTruthy(); // the pairs stand
+    expect(screen.getByTestId("admin-loop-gain-ci-note").textContent).toContain("1 outcomes have no page-visibility record");
+  });
+
+  it("bins the outcomes by the delay they actually had", () => {
+    const binned = {
+      ...loopFixture,
+      learning_gain: gainOf(learningGain.windows, {
+        delay_bins: [
+          { lo_days: 7, hi_days: 14, posttests: 3, ...emptyGain, n: 2, post_correct_rate: 0.5 },
+          { lo_days: 42, hi_days: null, posttests: 1, ...emptyGain },
+        ],
+        delay_unknown: 2,
+      }),
+    };
+    render(<LearningLoopPanelBody d={binned} />);
+    const week = screen.getByTestId("admin-loop-delay-7");
+    expect(within(week).getByText("7–13")).toBeTruthy();
+    expect(within(week).getByText("50%")).toBeTruthy();
+    expect(within(screen.getByTestId("admin-loop-delay-42")).getByText("42+")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-delay").textContent).toContain("2 with no recorded anchor");
+  });
+
+  it("counts every window that came due, answered or not, with the skip reasons", () => {
+    const funnel = {
+      ...loopFixture,
+      learning_gain: gainOf(learningGain.windows, {
+        funnel: [
+          funnelRow(7, { due: 10, opened: 6, answered: 5, unassisted: 4, expired: 1, skipped: 2,
+            skip_reasons: { no_items: 1, exhausted: 1, reported: 0 }, not_opened: 2, still_open: 3 }),
+          funnelRow(28),
+        ],
+      }),
+    };
+    render(<LearningLoopPanelBody d={funnel} />);
+    const week = screen.getByTestId("admin-loop-funnel-7");
+    expect(within(week).getByText("10")).toBeTruthy();
+    expect(within(week).getByText("5 (4)")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-funnel-7-skipped").textContent).toBe("2no items: 1, all seen: 1");
+  });
+
+  it("shows the funnel even with no outcome at all — the missing data is the finding", () => {
+    const missing = {
+      ...loopFixture,
+      learning_gain: gainOf([emptyWindow(7), emptyWindow(28)], {
+        funnel: [funnelRow(7, { due: 4, not_opened: 4 }), funnelRow(28)],
+      }),
+    };
+    render(<LearningLoopPanelBody d={missing} />);
+    expect(screen.getByTestId("admin-loop-gain").textContent).toContain("No unaided post-test outcomes in this range.");
+    expect(within(screen.getByTestId("admin-loop-funnel-7")).getAllByText("4").length).toBe(2);
+  });
+
+  it("says the funnel is unknown when the backend could not read it", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, learning_gain: gainOf(learningGain.windows, { funnel: null }) }} />);
+    expect(screen.getByTestId("admin-loop-funnel").textContent).toContain("the funnel is unknown");
   });
 });

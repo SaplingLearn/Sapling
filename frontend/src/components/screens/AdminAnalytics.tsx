@@ -228,12 +228,24 @@ function CalibrationTable({ title, report, testid }: { title: string; report: Lo
 /** A paired change in percentage points (post − pre), signed; "—" when n = 0. */
 const fmtPp = (v: number | null) => (v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)} pp`);
 
-function GainRow({ testid, label, s, posttests, excludedRetired }: {
+/** A126: a bootstrap interval under its estimate, in the estimate's own unit. */
+function CiLine({ ci, fmt, testid }: { ci?: [number, number] | null; fmt: (v: number) => string; testid: string }) {
+  if (!ci) return null;
+  return (
+    <div data-testid={testid} style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+      {`${fmt(ci[0])} to ${fmt(ci[1])}`}
+    </div>
+  );
+}
+
+function GainRow({ testid, label, s, posttests, excludedRetired, postCi, diffCi }: {
   testid: string;
   label: string;
   s: LoopGainSummary;
   posttests?: number;
   excludedRetired?: number;
+  postCi?: [number, number] | null;
+  diffCi?: [number, number] | null;
 }) {
   return (
     <tr data-testid={testid}>
@@ -244,60 +256,186 @@ function GainRow({ testid, label, s, posttests, excludedRetired }: {
       </td>
       <td style={tdNum}>{s.n}</td>
       <td style={tdNum}>{fmtRate(s.pre_correct_rate)}</td>
-      <td style={tdNum}>{fmtRate(s.post_correct_rate)}</td>
-      <td style={tdNum}>{fmtPp(s.paired_difference)}</td>
+      <td style={tdNum}>
+        <span>{fmtRate(s.post_correct_rate)}</span>
+        <CiLine ci={postCi} fmt={(v) => fmtRate(v)} testid={`${testid}-post-ci`} />
+      </td>
+      <td style={tdNum}>
+        <span>{fmtPp(s.paired_difference)}</span>
+        <CiLine ci={diffCi} fmt={(v) => fmtPp(v)} testid={`${testid}-diff-ci`} />
+      </td>
       <td style={tdNum}>{`${s.improved} / ${s.same} / ${s.worse}`}</td>
     </tr>
   );
 }
 
-/** Pre/post learning gain per fixed post-test window (spec §13 A112): each
- *  concept's unaided probe pretest against its unaided delayed post-test, with
- *  the "no practice for a while before the post-test" stratum under each
- *  window. Observed answers only — never the mastery estimate. */
-function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain"] }) {
-  // an outcome excluded for a retired item still shows the table: the drop stays visible
-  if (!gain.windows.some(w => w.posttests > 0 || w.excluded_retired > 0)) {
+const SKIP_REASON_LABEL: Record<string, string> = {
+  no_items: "no items",
+  exhausted: "all seen",
+  reported: "only reported left",
+};
+
+/** A126: what happened to every post-test window that opened in the range —
+ *  the missing outcomes, counted and never imputed. */
+function FunnelTable({ funnel }: { funnel: LearningLoopKpisData["learning_gain"]["funnel"] }) {
+  if (funnel == null) {
     return (
-      <div data-testid="admin-loop-gain" style={{ color: "var(--text-muted)", fontSize: 13 }}>
-        No unaided post-test outcomes in this range.
+      <div data-testid="admin-loop-funnel" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+        The windows that came due could not be read; the funnel is unknown for this range.
       </div>
     );
   }
   return (
-    <div data-testid="admin-loop-gain" style={scrollX}>
+    <div data-testid="admin-loop-funnel" style={scrollX}>
       <table style={{ borderCollapse: "collapse", minWidth: 560 }}>
         <thead>
           <tr>
             <th style={th}>Window</th>
-            <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
-            <th style={{ ...th, textAlign: "right" }}>Excluded: item retired</th>
-            <th style={{ ...th, textAlign: "right" }}>Pairs</th>
-            <th style={{ ...th, textAlign: "right" }}>Pre-test correct</th>
-            <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
-            <th style={{ ...th, textAlign: "right" }}>Paired change</th>
-            <th style={{ ...th, textAlign: "right" }}>Improved / same / worse</th>
+            <th style={{ ...th, textAlign: "right" }}>Due</th>
+            <th style={{ ...th, textAlign: "right" }}>Opened</th>
+            <th style={{ ...th, textAlign: "right" }}>Answered (unaided)</th>
+            <th style={{ ...th, textAlign: "right" }}>Expired</th>
+            <th style={{ ...th, textAlign: "right" }}>Open now</th>
+            <th style={{ ...th, textAlign: "right" }}>Skipped</th>
+            <th style={{ ...th, textAlign: "right" }}>Never opened</th>
+            <th style={{ ...th, textAlign: "right" }}>Window still open</th>
           </tr>
         </thead>
         <tbody>
-          {gain.windows.map(w => (
-            <React.Fragment key={w.window_days}>
-              <GainRow
-                testid={`admin-loop-gain-${w.window_days}`}
-                label={`${w.window_days} days`}
-                s={w}
-                posttests={w.posttests}
-                excludedRetired={w.excluded_retired}
-              />
-              <GainRow
-                testid={`admin-loop-gain-${w.window_days}-delayed`}
-                label={`↳ no practice in the ${gain.delayed_min_days} days before`}
-                s={w.delayed}
-              />
-            </React.Fragment>
+          {funnel.map(f => {
+            const reasons = Object.entries(f.skip_reasons).filter(([, n]) => n > 0);
+            return (
+              <tr key={f.window_days} data-testid={`admin-loop-funnel-${f.window_days}`}>
+                <td style={td}>{`${f.window_days} days`}</td>
+                <td style={tdNum}>{f.due}</td>
+                <td style={tdNum}>{f.opened}</td>
+                <td style={tdNum}>{`${f.answered} (${f.unassisted})`}</td>
+                <td style={tdNum}>{f.expired}</td>
+                <td style={tdNum}>{f.open}</td>
+                <td style={tdNum} data-testid={`admin-loop-funnel-${f.window_days}-skipped`}>
+                  <span>{f.skipped}</span>
+                  {reasons.length > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                      {reasons.map(([r, n]) => `${SKIP_REASON_LABEL[r] ?? r}: ${n}`).join(", ")}
+                    </div>
+                  )}
+                </td>
+                <td style={tdNum}>{f.not_opened}</td>
+                <td style={tdNum}>{f.still_open}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A126: every window's pairs by the delay the outcome actually had. */
+function DelayTable({ gain }: { gain: LearningLoopKpisData["learning_gain"] }) {
+  return (
+    <div data-testid="admin-loop-delay" style={scrollX}>
+      <table style={{ borderCollapse: "collapse", minWidth: 420 }}>
+        <thead>
+          <tr>
+            <th style={th}>Days from first graded answer</th>
+            <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
+            <th style={{ ...th, textAlign: "right" }}>Pairs</th>
+            <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
+            <th style={{ ...th, textAlign: "right" }}>Paired change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {gain.delay_bins.map(b => (
+            <tr key={b.lo_days} data-testid={`admin-loop-delay-${b.lo_days}`}>
+              <td style={td}>{b.hi_days == null ? `${b.lo_days}+` : `${b.lo_days}–${b.hi_days - 1}`}</td>
+              <td style={tdNum}>{b.posttests}</td>
+              <td style={tdNum}>{b.n}</td>
+              <td style={tdNum}>{fmtRate(b.post_correct_rate)}</td>
+              <td style={tdNum}>{fmtPp(b.paired_difference)}</td>
+            </tr>
           ))}
         </tbody>
       </table>
+      {(gain.delay_unknown > 0 || gain.delay_out_of_range > 0) && (
+        <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 4 }}>
+          {`Not binned: ${gain.delay_unknown} with no recorded anchor, ${gain.delay_out_of_range} answered before day ${gain.delay_bins[0]?.lo_days ?? 0}.`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Pre/post learning gain per fixed post-test window (spec §13 A112): each
+ *  concept's unaided probe pretest against its unaided delayed post-test, with
+ *  the "no practice for a while before the post-test" and "page hidden while
+ *  answering" strata under each window, the bootstrap intervals, the actual
+ *  delay and the funnel of windows that came due (A126). Observed answers
+ *  only — never the mastery estimate. */
+function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain"] }) {
+  const due = (gain.funnel ?? []).some(f => f.due > 0);
+  // an outcome excluded for a retired item still shows the table: the drop stays visible
+  if (!gain.windows.some(w => w.posttests > 0 || w.excluded_retired > 0)) {
+    return (
+      <div style={{ display: "grid", gap: 12 }}>
+        <div data-testid="admin-loop-gain" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          No unaided post-test outcomes in this range.
+        </div>
+        {/* A126: windows came due with no outcome — the missing data is the finding */}
+        {(due || gain.funnel === null) && <FunnelTable funnel={gain.funnel} />}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div data-testid="admin-loop-gain" style={scrollX}>
+        <table style={{ borderCollapse: "collapse", minWidth: 560 }}>
+          <thead>
+            <tr>
+              <th style={th}>Window</th>
+              <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
+              <th style={{ ...th, textAlign: "right" }}>Excluded: item retired</th>
+              <th style={{ ...th, textAlign: "right" }}>Pairs</th>
+              <th style={{ ...th, textAlign: "right" }}>Pre-test correct</th>
+              <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
+              <th style={{ ...th, textAlign: "right" }}>Paired change</th>
+              <th style={{ ...th, textAlign: "right" }}>Improved / same / worse</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gain.windows.map(w => (
+              <React.Fragment key={w.window_days}>
+                <GainRow
+                  testid={`admin-loop-gain-${w.window_days}`}
+                  label={`${w.window_days} days`}
+                  s={w}
+                  posttests={w.posttests}
+                  excludedRetired={w.excluded_retired}
+                  postCi={w.post_correct_ci}
+                  diffCi={w.paired_difference_ci}
+                />
+                <GainRow
+                  testid={`admin-loop-gain-${w.window_days}-delayed`}
+                  label={`↳ no practice in the ${gain.delayed_min_days} days before`}
+                  s={w.delayed}
+                />
+                <GainRow
+                  testid={`admin-loop-gain-${w.window_days}-hidden`}
+                  label="↳ page hidden while answering"
+                  s={w.visibility_loss}
+                />
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: 12, margin: 0 }} data-testid="admin-loop-gain-ci-note">
+        {`Under each rate: a ${Math.round(gain.ci.level * 100)}% interval from a ${gain.ci.resamples.toLocaleString()}-resample bootstrap over students (each student's answers resampled together; fixed seed). No interval below two students.`}
+        {gain.windows.some(w => w.visibility_unreported > 0) &&
+          ` ${gain.windows.reduce((n, w) => n + w.visibility_unreported, 0)} outcomes have no page-visibility record.`}
+      </p>
+      <FunnelTable funnel={gain.funnel} />
+      <DelayTable gain={gain} />
     </div>
   );
 }
@@ -330,8 +468,9 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
       <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Did students learn?</h3>
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
         Each concept&apos;s first unaided probe answer (the pretest) against its unaided delayed post-test,
-        at fixed windows after the concept was first graded. Answers only, never the mastery estimate.
-        An answer to a question later retired as broken is left out and counted under &ldquo;Excluded&rdquo;.
+        at fixed windows after the concept was first graded (the last one closes too). Answers only, never
+        the mastery estimate. An answer to a question later retired as broken is left out and counted under
+        &ldquo;Excluded&rdquo;. The funnel below counts every window that opened in the range, answered or not.
       </p>
       <LearningGainTable gain={d.learning_gain} />
       {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}

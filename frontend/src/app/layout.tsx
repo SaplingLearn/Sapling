@@ -4,6 +4,7 @@ import localFont from 'next/font/local';
 import { resolveSiteUrl } from '@/lib/deployGuard';
 import { UserProvider } from '@/context/UserContext';
 import { FlagsProvider } from '@/context/FlagsContext';
+import { RetentionDueProvider } from '@/context/RetentionDueContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import './globals.css';
@@ -127,7 +128,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ErrorBoundary>
           <ToastProvider>
             <UserProvider>
-              <FlagsProvider>{children}</FlagsProvider>
+              <FlagsProvider>
+                <RetentionDueProvider>{children}</RetentionDueProvider>
+              </FlagsProvider>
             </UserProvider>
           </ToastProvider>
         </ErrorBoundary>

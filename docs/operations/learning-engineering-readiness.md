@@ -283,12 +283,20 @@ unfinished engineering requirement.
    (A113), `20261108041742_learning_posttest_windows.sql` (A112),
    `20261108050630_learning_grader_backend_claude.sql` (A116; apply it before
    any grader slot is flipped to Claude, or a `claude` evidence row fails its
-   batch closed), `20261108051912_learning_item_alignment.sql` (A119) and
-   `20261108073631_learning_item_keys.sql` (A124). The verifier's `--db-audit`
-   requires the columns they add.
+   batch closed), `20261108051912_learning_item_alignment.sql` (A119),
+   `20261108073631_learning_item_keys.sql` (A124) and
+   `20261108093359_learning_posttest_outcomes.sql` (A126). The verifier's
+   `--db-audit` requires the columns they add and the `posttest_anchors`
+   function. Code ahead of the A126 migration fails `/posttest/start` (its pose
+   upsert names the new columns) and leaves the admin funnel `null`; never
+   deploy it first.
 2. Rolling back to pre-A120 code while an A120 probe grade checkpoint is in
    flight cannot open that checkpoint (503). Roll forward only, or drain probe
    checkpoints first.
+3. A126's `retention_due_badge` flag ships off. Turning it on moves the
+   delayed post-test from pull to push for the students it reaches — a change
+   to the measurement protocol — so switch it on at a trial boundary, record
+   when, and keep it on for the whole cohort.
 
 ### Kill-switch and rollback drill
 

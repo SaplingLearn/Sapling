@@ -677,8 +677,57 @@ export interface LoopGainWindow extends LoopGainSummary {
   /** unassisted outcomes left out of the window: their item was later retired
    *  through spec §13 A113's review path (retired as broken — no valid measurement) */
   excluded_retired: number;
+  /** spec §13 A126: the students behind the pairs, and the student-cluster
+   *  bootstrap intervals [lo, hi] (null below two students) */
+  students: number;
+  post_correct_ci: [number, number] | null;
+  paired_difference_ci: [number, number] | null;
   /** the pairs whose concept had no evidence for ≥ delayed_min_days before the pose */
   delayed: LoopGainSummary;
+  /** A126: the pairs whose page was hidden while the item was on screen (a
+   *  stratum: nothing is excluded for it), and the outcomes with no record */
+  visibility_loss: LoopGainSummary;
+  visibility_unreported: number;
+}
+
+/** A126: every window's pairs by the days from the concept's first graded
+ *  evidence to the answer — the delay the outcome actually had. */
+export interface LoopDelayBin extends LoopGainSummary {
+  lo_days: number;
+  /** null: open-ended */
+  hi_days: number | null;
+  posttests: number;
+}
+
+/** A126: what happened to the post-test windows that OPENED in the range —
+ *  every due window is answered, expired, open, skipped or never opened. */
+export interface LoopFunnelWindow {
+  window_days: number;
+  due: number;
+  opened: number;
+  answered: number;
+  /** answered with no help (the outcomes the gain report can use) */
+  unassisted: number;
+  expired: number;
+  open: number;
+  skipped: number;
+  /** no_items | exhausted | reported */
+  skip_reasons: Record<string, number>;
+  not_opened: number;
+  /** unanswered windows not closed yet: their state can still change */
+  still_open: number;
+}
+
+/** The learning-gain report (spec §13 A112, A126). */
+export interface LoopLearningGain {
+  delayed_min_days: number;
+  ci: { method: string; level: number; resamples: number; seed: string };
+  windows: LoopGainWindow[];
+  delay_bins: LoopDelayBin[];
+  delay_unknown: number;
+  delay_out_of_range: number;
+  /** null: the windows' anchors could not be read (unknown — never zeros) */
+  funnel: LoopFunnelWindow[] | null;
 }
 
 /** GET /api/admin/analytics/learning-loop — spec §10 KPIs and gates. */
@@ -702,8 +751,9 @@ export interface LearningLoopKpisData {
   };
   gates: { zero_leaks: boolean; ceiling_compliance_ok: boolean; earnest_revise_ok: boolean | null };
   calibration: { all: LoopCalibrationReport; posttest: LoopCalibrationReport };
-  /** post-tests answered in the range, per fixed window (spec §13 A112) */
-  learning_gain: { delayed_min_days: number; windows: LoopGainWindow[] };
+  /** post-tests answered in the range, per fixed window (spec §13 A112), and
+   *  the funnel of the windows that opened in it (A126) */
+  learning_gain: LoopLearningGain;
   truncated: boolean;
 }
 

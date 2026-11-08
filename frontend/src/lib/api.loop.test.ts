@@ -6,7 +6,9 @@ import {
   answerLoopProbe,
   budgetPauseOf,
   closeLoopSession,
+  fetchRetentionDue,
   getLoopPlan,
+  markRetentionShown,
   getLoopSessionStatus,
   getLoopStatus,
   listLoopSessions,
@@ -140,6 +142,21 @@ describe('loop JSON clients (routes/learn_loop.py shapes; no model_pref, spec §
     await postLoopAttempt('s', 'u', 'qh', 'my work');
     expect(urlOf()).toContain('/api/learn/loop/step/attempt');
     expect(bodyOf()).toEqual({ session_id: 's', user_id: 'u', question_hash: 'qh', attempt_text: 'my work' });
+  });
+
+  it('markRetentionShown posts the displayed pose only (spec §13 A126)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ served: true }));
+    await expect(markRetentionShown({ user_id: 'u', node_id: 'n', question_hash: 'qh' })).resolves.toEqual({ served: true });
+    expect(urlOf()).toContain('/api/learn/loop/posttest/shown');
+    expect(initOf().method).toBe('POST');
+    expect(bodyOf()).toEqual({ user_id: 'u', node_id: 'n', question_hash: 'qh' });
+  });
+
+  it('fetchRetentionDue reads GET /posttest/due for the student (read-only, A126)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ due: true, course_ids: ['c1'] }));
+    await expect(fetchRetentionDue('u 1')).resolves.toEqual({ due: true, course_ids: ['c1'] });
+    expect(urlOf()).toContain('/api/learn/loop/posttest/due?user_id=u+1');
+    expect(initOf()?.method ?? 'GET').toBe('GET');
   });
 
   it('nextLoopCheck posts "Check me" (A27)', async () => {

@@ -1502,10 +1502,23 @@ export type RetentionAnswerResult =
 /** Explicitly opening commits a delayed pose; never call during page load. */
 export const startRetentionCheck = (userId: string, courseId: string) =>
   loopPost<{ items: RetentionItem[] }>('/posttest/start', { user_id: userId, course_id: courseId });
+/** `hidden_count` / `hidden_s` (spec §13 A126): how often and how long the page
+ *  was hidden while the item was on screen — telemetry the server clamps and
+ *  never grades. */
 export const answerRetentionCheck = (body: {
   user_id: string; node_id: string; question_hash: string;
   answer?: string; selected_option?: string; reason?: string; idk: boolean;
+  hidden_count?: number; hidden_s?: number;
 }) => loopPost<RetentionAnswerResult>('/posttest/answer', body);
+/** A126: the item is on screen — the server stamps its first display (the
+ *  answer's latency is measured from it). Writes nothing else. */
+export const markRetentionShown = (body: { user_id: string; node_id: string; question_hash: string }) =>
+  loopPost<{ served: boolean }>('/posttest/shown', body);
+/** A126: whether a retention check is due now (read-only, cached by the
+ *  server; 404 while the `retention_due_badge` flag is off). */
+export interface RetentionDue { due: boolean; course_ids: string[] }
+export const fetchRetentionDue = (userId: string) =>
+  fetchJSON<RetentionDue>(`/api/learn/loop/posttest/due?${new URLSearchParams({ user_id: userId })}`);
 
 // Flashcard import
 export interface ImportCard { front: string; back: string }

@@ -3,7 +3,9 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { EnrolledCourse } from "@/lib/api";
-const api = vi.hoisted(() => ({ startRetentionCheck: vi.fn(), answerRetentionCheck: vi.fn() }));
+const api = vi.hoisted(() => ({ startRetentionCheck: vi.fn(), answerRetentionCheck: vi.fn(), markRetentionShown: vi.fn() }));
+/** Spec §13 A126: what an answer reports beside itself when the page stayed visible. */
+const VISIBLE = { hidden_count: 0, hidden_s: 0 };
 vi.mock("@/lib/api", async (original) => ({ ...await original<typeof import("@/lib/api")>(), ...api }));
 import { ApiError } from "@/lib/api";
 import { __resetFeedbackPacingForTests, feedbackHeld } from "@/lib/feedbackPacing";
@@ -67,7 +69,7 @@ it("grades only the explicitly submitted item and does not infer mastery", async
   fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "My own remembered explanation" } });
   fireEvent.click(screen.getByTestId("retention-submit"));
   expect(await screen.findByTestId("retention-result")).toBeTruthy();
-  expect(api.answerRetentionCheck).toHaveBeenCalledWith({ user_id: "u1", node_id: "n1", question_hash: "qh", answer: "My own remembered explanation", idk: false });
+  expect(api.answerRetentionCheck).toHaveBeenCalledWith({ user_id: "u1", node_id: "n1", question_hash: "qh", answer: "My own remembered explanation", idk: false, ...VISIBLE });
   expect(screen.getByTestId("retention-result").textContent).toContain("not proof of mastery");
   expect(screen.queryByTestId("retention-answer")).toBeNull();
   fireEvent.click(screen.getByTestId("retention-next"));
@@ -85,9 +87,95 @@ it("sends stored option letters/reason, and honest unknown sends no answer", asy
   expect((screen.getByTestId("retention-idk") as HTMLButtonElement).disabled).toBe(false);
   fireEvent.change(screen.getByTestId("retention-reason"), { target: { value: "My reasoning" } });
   fireEvent.click(screen.getByTestId("retention-submit")); await screen.findByTestId("retention-result");
-  expect(api.answerRetentionCheck).toHaveBeenLastCalledWith({ user_id: "u1", node_id: "n1", question_hash: "qh", selected_option: "B", reason: "My reasoning", idk: false });
+  expect(api.answerRetentionCheck).toHaveBeenLastCalledWith({ user_id: "u1", node_id: "n1", question_hash: "qh", selected_option: "B", reason: "My reasoning", idk: false, ...VISIBLE });
   fireEvent.click(screen.getByTestId("retention-next")); fireEvent.click(screen.getByTestId("retention-idk"));
-  await waitFor(() => expect(api.answerRetentionCheck).toHaveBeenLastCalledWith({ user_id: "u1", node_id: "n1", question_hash: "next", idk: true }));
+  await waitFor(() => expect(api.answerRetentionCheck).toHaveBeenLastCalledWith({ user_id: "u1", node_id: "n1", question_hash: "next", idk: true, ...VISIBLE }));
+});
+
+// ── spec §13 A126: the display stamp and the page-hidden telemetry ───────────
+
+function setVisibility(state: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+it("stamps each item's first display, once, and never before an explicit open", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item, { ...item, question_hash: "next" }] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+  api.markRetentionShown.mockResolvedValue({ served: true });
+  render(<RetentionCheck userId="u1" courses={courses} />);
+  expect(api.markRetentionShown).not.toHaveBeenCalled(); // the entry card is not a display
+  await open();
+  await waitFor(() => expect(api.markRetentionShown).toHaveBeenCalledWith({ user_id: "u1", node_id: "n1", question_hash: "qh" }));
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+  fireEvent.click(screen.getByTestId("retention-submit")); await screen.findByTestId("retention-result");
+  expect(api.markRetentionShown).toHaveBeenCalledTimes(1); // a re-render is not a new display
+  fireEvent.click(screen.getByTestId("retention-next"));
+  await waitFor(() => expect(api.markRetentionShown).toHaveBeenLastCalledWith({ user_id: "u1", node_id: "n1", question_hash: "next" }));
+  expect(api.markRetentionShown).toHaveBeenCalledTimes(2);
+});
+
+it("stamps a display once even when React mounts the effect twice (StrictMode)", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.markRetentionShown.mockResolvedValue({ served: true });
+  render(<React.StrictMode><RetentionCheck userId="u1" courses={courses} /></React.StrictMode>);
+  await open();
+  await act(async () => {});
+  expect(api.markRetentionShown).toHaveBeenCalledTimes(1);
+});
+
+it("counts the page-hidden time of each item from its own display", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item, { ...item, question_hash: "next" }] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  await act(async () => {});
+  setVisibility("hidden");
+  setVisibility("visible");
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+  fireEvent.click(screen.getByTestId("retention-submit")); await screen.findByTestId("retention-result");
+  expect(api.answerRetentionCheck.mock.calls[0][0].hidden_count).toBe(1);
+  fireEvent.click(screen.getByTestId("retention-next"));
+  await act(async () => {});
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "y" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  await waitFor(() => expect(api.answerRetentionCheck).toHaveBeenCalledTimes(2));
+  expect(api.answerRetentionCheck.mock.calls[1][0]).toMatchObject({ question_hash: "next", hidden_count: 0, hidden_s: 0 });
+});
+
+it("a failed display stamp never blocks the check", async () => {
+  api.startRetentionCheck.mockResolvedValue({ items: [item] });
+  api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+  api.markRetentionShown.mockRejectedValue(new ApiError("unavailable", 503));
+  render(<RetentionCheck userId="u1" courses={courses} />); await open();
+  fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+  fireEvent.click(screen.getByTestId("retention-submit"));
+  expect(await screen.findByTestId("retention-result")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("reports how often and how long the page was hidden while the item was on screen", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] });
+  try {
+    api.startRetentionCheck.mockResolvedValue({ items: [item] });
+    api.answerRetentionCheck.mockResolvedValue({ correct: true, confidence: 0.9 });
+    render(<RetentionCheck userId="u1" courses={courses} />); await open();
+    await act(async () => {});
+    setVisibility("hidden");
+    vi.setSystemTime(Date.now() + 30_000);
+    setVisibility("visible");
+    setVisibility("hidden");
+    vi.setSystemTime(Date.now() + 12_000);
+    setVisibility("visible");
+    fireEvent.change(screen.getByTestId("retention-answer"), { target: { value: "x" } });
+    fireEvent.click(screen.getByTestId("retention-submit")); await screen.findByTestId("retention-result");
+    const sent = api.answerRetentionCheck.mock.calls[0][0];
+    expect(sent.hidden_count).toBe(2);
+    expect(sent.hidden_s).toBeGreaterThanOrEqual(42);
+    expect(sent.hidden_s).toBeLessThan(43);
+  } finally {
+    setVisibility("visible");
+    vi.useRealTimers();
+  }
 });
 
 it("preserves an ungraded answer on refusal/outage and requires an explicit retry", async () => {
