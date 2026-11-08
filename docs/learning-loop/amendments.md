@@ -22,8 +22,7 @@ finding); "reopen" means the row changed a package that was already built;
 **Numbering.** Rows run from A1 to A142. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
 repository cites those numbers; since A142 the spec's table says so where
-they would be), and A138–A141 are wave 4's (below). There are 128 rows on
-this page; with wave 4, 132.
+they would be). There are 132 rows, all indexed below.
 
 **Status markers.** Most rows are in force. These are not, or not wholly:
 
@@ -49,10 +48,13 @@ atomic evidence ([0037](../decisions/0037-atomic-learning-evidence.md)) and
 replayable grade checkpoints ([0038](../decisions/0038-replayable-grade-checkpoints.md)).
 Read those alongside the rows below.
 
-**Wave 4 (in progress).** Four amendments are being built in parallel and are
-not indexed yet: A138 (segment prequestion), A139 (self-explanation prompts),
-A140 (surface-varied isomorphs) and A141 (multi-concept items). They will be
-added here when they merge.
+**Wave 4.** A138 (segment prequestion), A139 (self-explanation prompts),
+A140 (surface-varied isomorphs) and A141 (multi-concept items) are merged,
+each behind its own per-student flag that ships off (`segment_prequestion`,
+`self_explanation_prompts`, `varied_isomorphs`, `multi_concept_items`).
+Off, each is byte-identical to the code before it; on, each waits for a live
+eval recording of its new prompts. A142 reconciled the spec, this guide and
+the code, and left the two owner questions at the end of this page.
 
 "Main code" is the single best place to start reading; most rows touch more
 files, which the row lists. A dash means the row has no code of its own.
@@ -99,7 +101,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A130 | post-test | A matched pretest form, behind the `probe_matched_pretest` flag | `backend/learning/checks.py::pretest_form` |
 | A133 | metrics | Help abuse is measured (bottom-outs, pace, the attempts that bought them) | `backend/learning/help_abuse.py::help_abuse` |
 
-### Item quality (14)
+### Item quality (16)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -117,8 +119,10 @@ files, which the row lists. A dash means the row has no code of its own.
 | A124 | keys | Keys are checked by an independent blind solve; a disputed key is held; staff audit a sample | `backend/learning/item_keys.py::compare` |
 | A129 | selection | Every picker prefers a confirmed key, then clean lint | `backend/learning/checks.py::serve_quality` |
 | A131 | lint/review | Classical item statistics in the staff review queue | `backend/learning/item_stats.py::item_statistics` |
+| A140 | surface | Surface-varied isomorphs and the cue-familiarity dial, behind the `varied_isomorphs` flag | `backend/learning/surface.py::familiarity_by_hash` |
+| A141 | multi-concept | Multi-concept items, gated on proficiency in every component, one half-weight observation on the apex, behind the `multi_concept_items` flag | `backend/learning/multi_concept.py::gate_open` |
 
-### Teaching policy (27)
+### Teaching policy (29)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -149,6 +153,8 @@ files, which the row lists. A dash means the row has no code of its own.
 | A121 | tutor turn | The tutor's turn template; v2 behind the `loop_tutor_v2` flag | `backend/agents/loop_tutor.py::variant_run_args` |
 | A122 | bands | The band controller and worked-example-first, wired into the plan | `backend/learning/policy.py::band_verdict` |
 | A134 | gates | A stricter genuine-attempt gate, behind the `help_gate_strict` flag | `backend/learning/gates.py::strict_genuine_attempt` |
+| A138 | prequestion | A teaching segment opens on one ungraded prequestion, and its answer and explanation follow at once, behind the `segment_prequestion` flag | `backend/learning/prequestion.py::segment_open` |
+| A139 | self-explanation | At a code-decided juncture the turn's question becomes "why does this follow?"; the reply is stored for diagnosis only, behind the `self_explanation_prompts` flag | `backend/learning/self_explain.py::juncture` |
 
 ### Safety and integrity (20)
 
@@ -353,6 +359,10 @@ files, which the row lists. A dash means the row has no code of its own.
 | A135 | Operations and process | a11y | The student UI is accessible, and an axe lane keeps it so |
 | A136 | Operations and process | schema | Every float the backend reads through PostgREST is exact |
 | A137 | Cost and model routing | cost | Cost readiness for the Claude move, and the loop's cost per learning gain |
+| A138 | Teaching policy | prequestion | A teaching segment opens on one ungraded prequestion, and its answer and explanation follow at once, behind the `segment_prequestion` flag |
+| A139 | Teaching policy | self-explanation | At a code-decided juncture the turn's question becomes "why does this follow?"; the reply is stored for diagnosis only, behind the `self_explanation_prompts` flag |
+| A140 | Item quality | surface | Surface-varied isomorphs and the cue-familiarity dial, behind the `varied_isomorphs` flag |
+| A141 | Item quality | multi-concept | Multi-concept items, gated on proficiency in every component, one half-weight observation on the apex, behind the `multi_concept_items` flag |
 | A142 | Operations and process | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) |
 
 ## Where the spec and the code disagree

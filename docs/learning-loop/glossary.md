@@ -17,7 +17,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Channel | The kind of check an observation came from: `free_response`, `mc_reasoned` (multiple choice plus a reason), `mc`, `teachback_llm`, `chat_turn`. The channel is always the item's, never the student's choice. | `backend/learning/params.py::CHANNELS` |
 | Strong channel | A channel hard to pass by guessing (`free_response`, `mc_reasoned`). Mastery needs three strong unassisted observations. | `backend/learning/params.py::STRONG_CHANNELS` |
 | idk | An explicit "I don't know". It is a flag, not a channel: an incorrect observation with a near-zero slip (`S_IDK`), A1. | `backend/learning/evidence.py::Evidence` |
-| Weight | How much one observation moves the belief. 1.0 is full; a correct answer after H1–H3 (assisted), a re-check and a grader confidence below 0.6 each halve it; a correct answer after H4–H6 gets 0 (no upward credit). Help never discounts a wrong answer. Derived from the flags in code, never taken from the caller. | `backend/learning/evidence.py::evidence_weight` |
+| Weight | How much one observation moves the belief. 1.0 is full; a correct answer after H1–H3 (assisted), a re-check and a grader confidence below 0.6 each halve it, and so does a multi-concept answer, right or wrong (A141); a correct answer after H4–H6 gets 0 (no upward credit). Help never discounts a wrong answer. Derived from the flags in code, never taken from the caller. | `backend/learning/evidence.py::evidence_weight` |
 | Propagation | One hop along prerequisite edges, asymmetric: a correct answer adds a weak (`chat_turn`-strength, half-weight) correct observation to each direct prerequisite; a wrong answer adds a wrong observation to each direct dependent. | `backend/learning/bkt.py::propagate_prereq` |
 | Decay at read | Belief drifts back toward the prior between checks along the forgetting curve; it is computed when read, not stored. | `backend/learning/bkt.py::decayed_p` |
 | Band | A coarse level from `p_known`: novice (below 0.30), develop (0.30 to below 0.80), profic (0.80 and up). The band sets how much help is allowed. | `backend/learning/bkt.py::band` |
@@ -56,6 +56,13 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Unsourced item | An item drafted from a document's extracted text because indexing failed, so it has no passage to show at H2, A128. | `backend/learning/checks.py::unsourced` |
 | Isomorph | Another item on the same concept, in the same format and difficulty, with a different hash: the same question in a different surface. | `backend/learning/policy.py::next_isomorph` |
 | Serve quality | The tie-break every picker applies: a confirmed key first, then clean lint, then sourced over unsourced, A129. | `backend/learning/checks.py::serve_quality` |
+| Surface descriptor | How a varied item presents its idea: a representation (`verbal`, `symbolic`, `numeric`, `visual`, `applied`; plaintext) and a scenario label of at most four words (encrypted), A140. | `backend/learning/surface.py::surface_of` |
+| Cue familiarity | How many of an item's surface parts (representation, scenario) the student has already met on the concept; pickers prefer the least familiar among items otherwise equal. An item with no descriptor is neutral. A140. | `backend/learning/surface.py::familiarity_by_hash` |
+| Definitional item | A difficulty-1 check item (recall or definition). With `varied_isomorphs` on, review never interleaves it, A140. | `backend/learning/params.py::INTERLEAVE_DEFINITIONAL_DIFFICULTY` |
+| Multi-concept item, combination | One question that combines an **apex** concept with one or two of its direct prerequisites (its **components**) and can be answered only by using them all; stored under the components' joined keys, A141. | `backend/learning/multi_concept.py::combo_key` |
+| Component gate | A multi-concept item is posed only when every component is proficient: p ≥ 0.95 with a strong unassisted observation behind it. | `backend/learning/multi_concept.py::gate_open` |
+| Ideas-combined dial | When a multi-concept item may replace a concept's next check: at most once a session per concept, after a graded check on the concept, while its difficulty is at the top, never in a goal session. | `backend/learning/multi_concept.py::dial_open` |
+| Apex observation | The one half-weight observation a multi-concept answer records, on the apex only; the components move only by propagation. | `backend/learning/params.py::WEIGHT_MULTI_CONCEPT` |
 
 ## A session
 
@@ -85,6 +92,11 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Turn activity | Prose-free timing and fencing for a tutor turn, so an interrupted turn cannot earn help-gate time (ADR 0036). | `backend/learning/turn_activity.py::begin` |
 | Feedback turn | One tutor turn after a graded answer, opening with the verdict, never ending on the answer. | `backend/routes/learn_loop.py::_LoopTurn` |
 | Close | The end-of-session record: a summary, a self-evaluation prompt and an "If …, then …" plan, stored encrypted on `sessions.close_json`. | `backend/learning/session_close.py::build_close` |
+| Segment | The stretch of a session spent on one concept, from the moment the plan's cursor reaches it until it moves on. | `backend/learning/prequestion.py::segment_open` |
+| Segment prequestion | One ungraded guess at a vetted question when a segment opens, followed at once by the answer and why. Never evidence; the item becomes revealed. A138, flag `segment_prequestion`. | `backend/learning/prequestion.py::choose` |
+| Pool rule | A prequestion item is taken only if enough fresh items stay for the segment's graded checks (`PREQUESTION_MIN_CHECKS_LEFT`). | `backend/learning/params.py::PREQUESTION_MIN_CHECKS_LEFT` |
+| Self-explanation prompt | A "why does this follow?" question that replaces the turn's own question at a code-decided juncture; the reply is stored for diagnosis only, never evidence. A139, flag `self_explanation_prompts`. | `backend/learning/self_explain.py::PROMPTS` |
+| Juncture | Where a self-explanation prompt may appear: a worked example (H4), a released solution (H5, H6 or answer feedback), or a first unhelped correct answer. At most one per concept per session. | `backend/learning/self_explain.py::juncture` |
 
 ## Help: the ladder and its gates
 
@@ -128,7 +140,7 @@ area; within a group, the order follows the order you meet them. "Spec" is
 | Slip / misconception / novice | The three readings of a wrong answer: a careless error, a stable wrong belief (same wrong key on two isomorphs, or a confident wrong answer) or not yet knowing. Each gets a different response. | `backend/learning/misconceptions.py::slip_or_misconception` |
 | Confront | A feedback turn that names the wrong belief and contrasts it with the right one. | `backend/learning/misconceptions.py::confront_of` |
 | Isomorph re-ask | After an unknown or released answer, the next check on the concept is an isomorph. | `backend/learning/misconceptions.py::owed_isomorph` |
-| Re-check after release | An item served after its concept's answer was shown counts as a re-check, at reduced weight, A76. | `backend/learning/misconceptions.py::recheck_after_release` |
+| Re-check after release | An item served after its concept's answer was shown counts as a re-check, at reduced weight, A76. An answered segment prequestion is such a release (A138). | `backend/learning/misconceptions.py::recheck_after_release` |
 | Resolve | An open misconception closes on a correct unassisted answer to an isomorph, or when its evidence is voided, A127, A123. | `backend/learning/misconceptions.py::resolve` |
 | Rollup | Per course concept, the wrong keys held by at least five students (never per student). | `backend/learning/misconceptions.py::rollup` |
 

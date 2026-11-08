@@ -46,18 +46,28 @@ percentage rollout → stored default. Reads come from a 30-second snapshot
 
 | Flag | What `on` does | Visible to client | Who turns it on, and when |
 |---|---|---|---|
-| `item_reports` | Students see "Report this question" on loop and review cards; `POST /api/learn/loop/report` accepts reports. Reports already made keep excluding their items whatever the flag says (A113). | yes | Owner, any time. Its registry description still says two reporters "retire" an item; since A123 they put it on a reversible hold. |
+| `item_reports` | Students see "Report this question" on loop and review cards; `POST /api/learn/loop/report` accepts reports. Two reporters put an item on a reversible hold (A123). Reports already made keep excluding their items whatever the flag says (A113). | yes | Owner, any time. |
 | `retention_due_badge` | A "retention check due" badge on Study and the Dashboard, and `GET /posttest/due` (404 while off). Turns the delayed post-test from pull to push (A126). | yes | Owner, **at a trial boundary only**, recorded, kept for the whole cohort: it changes the measurement protocol. |
 | `probe_matched_pretest` | The probe opens a new concept on a form parallel to its post-test reserves, so pre/post pairs match (A130). One extra `posttest_anchors` read per `/probe/next`. | no | Owner, **at a trial boundary only**, as above. |
 | `upload_prereq_edges` | Uploads ask concept extraction for prerequisite relations and write validated prerequisite edges (A118). Changes propagation, bands, wheelspin repair and plan order for upload-built graphs. Off: the upload is byte-identical to before. | no | Owner, after reviewing the effect on plan order. |
 | `loop_tutor_v2` | The tutor's v2 turn template: verdict first, "Key idea:" only on new content, the plan's current concept on every teach turn (A121). Off: the tutor request is byte-identical. | no | Only after the `loop_tutor` and `misconception_confront` eval datasets are re-recorded live with `LOOP_EVAL_VARIANT=v2` and pass. |
 | `help_gate_strict` | The strict genuine-attempt rule for hints: time alone with the latest hint, novelty, no stem paste (A134). | no | Owner's pedagogy decision, judged by the help-abuse report's "by gate" rows. |
+| `segment_prequestion` | Each new concept in a session opens on one ungraded guess at a vetted question, and the answer and an explanation follow at once (A138). It makes the segment's first graded check a half-weight re-check (A76). | no | Only after the explaining turn's prompt is recorded live in the `loop_tutor` evals (owner-approved spend). |
+| `self_explanation_prompts` | At a worked example, a shown solution or a first unhelped correct answer, the turn's question becomes "why does this follow?" with a reply box; replies are stored for analysis only (A139). | no | Only after the acknowledgement line is recorded live in the `loop_tutor` evals; judge it by the admin "Do students explain their steps?" panel. |
+| `varied_isomorphs` | The uploader's items are drafted with varied scenarios and representations and a stored surface descriptor; the student's picks prefer a surface not yet met; difficulty-1 items are kept out of the review interleave (A140). Read per uploader for drafting and per student for picks. | no | Only after the varied drafter's eval dataset is recorded live and passes. |
+| `multi_concept_items` | The uploader's uploads also draft items combining a concept with its direct prerequisites; a student proficient in every component is served one, at most once a session per concept, counted as a half-weight observation on the apex (A141). | no | Only after the combination drafter and its alignment check are recorded live; it drafts nothing unless the uploader also has `upload_prereq_edges`. |
 | `crisis_support` | A message stating suicidal ideation, self-harm or acute danger gets a fixed resources card instead of a model turn, on every tutor, loop and notes surface. | no | Owner, after reviewing the copy (`docs/safety/crisis-support.md`). |
 | `decision_router` | Main's observe-only tutor router (ADR 0027). Not part of the loop; acts on nothing. | no | — |
 
 A flag is resolved once per request, turn or upload and the answer carried
 down (`backend/routes/learn_loop.py::_tutor_v2_on`,
-`backend/routes/learn_loop.py::_help_gate_strict_on`).
+`backend/routes/learn_loop.py::_help_gate_strict_on`,
+`backend/routes/learn_loop.py::_prequestion_on`,
+`backend/routes/learn_loop.py::_self_explain_on`;
+`backend/services/check_item_service.py::drafting_flags` reads the two
+drafting flags once per run for the uploader, and the backfill, which has no
+student, always drafts plain). All four wave-4 flags are off by default and,
+off, byte-identical to the code before them.
 
 ## Model slots
 
@@ -124,6 +134,13 @@ Measured cost, after launch, is the `cost_per_gain` block of
 active student-month, per session and per matched pre/post pair, each with
 its n. It needs `llm_usage.course_id` (A137's migration) to attribute
 session-less spend.
+
+The projection predates wave 4. With its flags on, a prequestion adds one
+explaining tutor turn per segment (a normal, budget-checked turn; a template
+at the hard level), a self-explanation prompt adds none (code serves it; only
+the next turn carries a one-line acknowledgement), and multi-concept drafting
+adds a drafting call and an alignment check per batch of combinations, billed
+to the uploader like all drafting (A44). None of this has been costed yet.
 
 ### Per-student budget
 
@@ -192,6 +209,20 @@ readiness record before merging. The ordered lists:
   then run the float probe below) and
   `backend/db/migrations/20261108163653_learning_llm_usage_course_id.sql` (A137; before the code,
   though code ahead of it loses no usage row).
+- **Wave 4**, in filename order and one run (the readiness record's single
+  "wave-4 rollout ordering" section):
+  `backend/db/migrations/20261108184825_learning_teach_prompts.sql` (A138,
+  A139: the prequestion and self-explanation tables; **before** the code —
+  code ahead of it still grades as before, since A76's release read fails
+  closed to "no release");
+  `backend/db/migrations/20261108185101_learning_varied_practice.sql` (A140,
+  A141: four nullable `check_items` columns; before either flag is turned
+  on, and either side of the code while both are off); and
+  `backend/db/migrations/20261108193927_learning_report_course_key.sql`
+  (A142: the per-course-item report key and the owner check in
+  `misconception_record`; either side of the code). Rolling back while a
+  multi-concept grade checkpoint is in flight cannot replay it as written:
+  roll forward, or drain checkpoints first.
 
 Exact wording, the consequences of a wrong order and the rollback notes for
 each are in the readiness record's rollout sections. The data model each
@@ -210,7 +241,7 @@ only its `--output` file (created new, mode 0600, never overwritten). Run from
 | (no flags) | Local inventory: the sha256 of every migration file. Status `plan_only_no_live_checks`. |
 | `--probe --api-base … --web-base … --expected-commit SHA` | `/api/health` on both origins: service name, model mode (`--expect-model-mode`), and the reported commit prefix. |
 | `--expect-loop enabled\|disabled --session-token-file F --user-id U` | `GET /api/learn/loop/status` with a fixed nonexistent session: 200 `active: true`, or the gate's exact 404. A 401 or a generic 404 fails. |
-| `--db-audit --db-url-env VAR --expected-db-host H --expected-db-port 5432` | Read-only: no pending or orphan migrations, required learning columns and RPC signatures, `extra_float_digits=3`, applied files unchanged against `--migration-reference`. |
+| `--db-audit --db-url-env VAR --expected-db-host H --expected-db-port 5432` | Read-only: no pending or orphan migrations, required learning columns (`REQUIRED_COLUMNS`, which includes the two wave-4 tables and the four new `check_items` columns) and RPC signatures, `extra_float_digits=3`, applied files unchanged against `--migration-reference`. It reads no function body, so A142's re-created functions show only through the ledger check. |
 | `--rest-float-probe --rest-url-env VAR --rest-key-env VAR --expected-rest-host H` | One GET of `learning_float_probe()` through PostgREST: are floats exact (A136)? |
 | `--log FILE` | Counts named failure signals in a bounded deploy log (event or usage drops, failed accounting hooks, stream failures, platform spend alerts). |
 
@@ -225,7 +256,7 @@ readiness record, "Safe additional verifier".
 | **Integration** (real local Postgres) | SQL functions, locks, races, migration replay, the evidence transaction, voids, post-test claims, recovery | `supabase start`; `cd backend && SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres python -m db.migrate`; then `SAPLING_MODEL_MODE=function SAPLING_FUNCTION_HANDLERS=agents.function_handlers_e2e RUN_INTEGRATION=1 python -m pytest -m integration -q` | `.github/workflows/integration.yml`, every PR and push to main |
 | **Eval replay** | Recorded model outputs still pass every evaluator against current prompts and schemas (a changed prompt makes a recording stale) | `cd backend && python tests/evals/run_all.py` (one dataset: `python tests/evals/loop_tutor.py`) | `.github/workflows/evals.yml`, PRs touching `backend/agents/**`, `backend/tests/evals/**`, `backend/learning/**`, `backend/routes/learn_loop.py`, the learning decision seam and the few services the datasets read (A142) |
 | **Eval record** (live, billable, owner-run) | Re-records cassettes against live models | `SAPLING_EVAL_MODE=record python tests/evals/run_all.py`, then `SAPLING_EVAL_UPDATE_BASELINES=1 python tests/evals/run_all.py`; commit cassettes and `baselines.json` together | none |
-| **E2E default lane** | The browser journey on function-mode models: probe → plan → check → hint → feedback → close, resume, budget pause, review, retention check, recovery | see the stack below; `cd frontend && npx playwright test e2e/learn-loop.spec.ts` | `.github/workflows/e2e.yml`, push to main and manual (not a PR gate) |
+| **E2E default lane** | The browser journey on function-mode models: probe → plan → check → hint → feedback → close, resume, budget pause, review, retention check, recovery; with each wave-4 flag turned on for a seeded student, the prequestion and self-explanation journeys (`frontend/e2e/learn-loop.spec.ts`) and varied and multi-concept practice (`frontend/e2e/learn-varied-practice.spec.ts`) | see the stack below; `cd frontend && npx playwright test e2e/learn-loop.spec.ts e2e/learn-varied-practice.spec.ts` | `.github/workflows/e2e.yml`, push to main and manual (not a PR gate) |
 | **E2E kill-switch lane** | The legacy Learn screen and tutor return when the loop is off | the same, with `LEARNING_LOOP_ENABLED=false` exported in the same shell for the stack and Playwright | `e2e.yml` matrix `lane: kill-switch` |
 | **Accessibility and keyboard** | WCAG 2.1 A/AA scans of every student surface; a keyboard-only loop journey (A135) | `cd frontend && npx playwright test e2e/a11y.spec.ts e2e/learn-keyboard.spec.ts` | inside `e2e.yml` |
 | **Oracles** | Database-level judges after a run: evidence without learner state, any `zpd.leak`, mirror drift, a graded step without evidence, a seeded answer served before release, and more | `cd backend && venv/bin/python -m e2e_oracles` (`--check learn_loop` for the loop judge) | inside `e2e.yml`, both lanes |
@@ -235,7 +266,12 @@ readiness record, "Safe additional verifier".
 What no lane proves: that a real provider's output is as good as the recorded
 one (replay is frozen; eight loop slots were recorded on Gemini), that a
 hosted deploy and a rolling restart behave, or that students learn. The
-readiness record lists what still needs owner infrastructure.
+readiness record lists what still needs owner infrastructure. The wave-4
+flag-on prompts — the prequestion's explaining turn, the self-explanation
+acknowledgement, the varied drafter and top-up, the combination drafter and
+its alignment check — have **no live recording yet**; they run only in
+function mode and the offline tests until the owner approves the spend, and
+each flag waits on its recording.
 
 ### Hermetic guards
 
@@ -317,13 +353,22 @@ separately. The full E2E guide is [docs/e2e-exploration.md](../e2e-exploration.m
   unassisted success, caught leaks and served reveals, unscanned turns,
   ceiling compliance, earnest-revise, the gates, BKT and stated-confidence
   calibration, the learning gain and post-test funnel, cost per gain, slot
-  warnings and help abuse. Every rate carries its n; a missing figure is
-  `null`, never zero.
+  warnings and help abuse, and since wave 4 `self_explanation` (prompts
+  shown, replied, skipped; the reply rate and median length; the next item's
+  unassisted success after a reply or not, per juncture —
+  `backend/learning/self_explain_report.py`) and `multi_concept` (items
+  stored and held, served, answered and correct with a Wilson interval, per
+  course — `backend/learning/multi_concept_report.py`). Every rate carries its
+  n; a missing figure is `null`, never zero, and a failed read of one block
+  leaves the rest of the report standing.
 - **Check-item review queue:** `/api/admin/check-items` — flagged, reported
   and held items, approve, retire, the key audit (`/audit/sample`,
-  `/audit/summary`) and item statistics (`/stats`).
+  `/audit/summary`) and item statistics (`/stats`); a multi-concept item
+  names its components ("Combines A + B"), and its statistics use the
+  components' own items for the rest score (A131, A141).
 - **Events:** `zpd.*`, `learn.*`, `review.*`, `ai.*` and `decision.*` rows in
-  `events` (payloads are ids, counts and enums only); every model run is an
+  `events` (payloads are ids, counts and enums only; wave 4 added
+  `learn.prequestion` and `learn.multi_concept_served`); every model run is an
   `llm_usage` row with its session and course where known.
 - **Nightly metrics:** `cd backend && python scripts/derive_zpd_metrics.py --dry-run`
   (drop `--dry-run` to write the four derived `learner_state` columns).

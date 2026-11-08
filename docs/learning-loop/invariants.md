@@ -58,14 +58,29 @@ on `/step/attempt` or a hint request is never graded. When the grader cannot
 give a verdict — it is down, invalid or capped — **nothing** is recorded, for
 a correct answer and for a wrong one alike.
 
+**Wave 4: two kinds of student answer that are never evidence.** A segment
+prequestion's guess (`/prequestion/answer`, A138) and a self-explanation
+reply (`/self-explain`, A139) are explicit student text, but they are
+learning activities, not measurements: no grader runs, no `Evidence` is
+built, nothing reaches the writer, no misconception or help-ledger rung is
+recorded, and the band controller never sees them. The prequestion's one
+effect on grading is indirect and deliberate: its answer is shown, so the
+item is revealed and A76 makes the concept's next graded item a half-weight
+re-check.
+
 **Why.** Grading chat would reward talking, and the tutor would grade its own
 teaching. Recording only one side of an outage (say, only the wrong answers
-that failed fast) would bias the belief in a direction no one could see.
+that failed fast) would bias the belief in a direction no one could see. A
+guess made before teaching, or an explanation after help, is not an
+independent attempt; counting it would turn practice into evidence.
 
 **Enforced by.** `inv_26_evidence_only_from_explicit_submission` (an AST
-allow-list of the handlers that may flush, plus a route test);
+allow-list of the handlers that may flush, plus a route test — the
+prequestion and self-explanation handlers are not on it);
 `inv_28_symmetric_missingness`; `inv_19_review_grades_through_grader_only`;
-the grading claim (one grade per posed item, A52).
+the grading claim (one grade per posed item, A52);
+`backend/tests/test_learning_teach_prompts_routes.py` (a guess is stored,
+revealed and explained, never graded; a reply is stored and never graded).
 
 ## 3. Belief changes only by the model's arithmetic
 
@@ -76,13 +91,28 @@ weights. Weights are derived from the evidence's flags in code
 lowers credit (assisted: half; H4 and above: none); help never discounts a
 wrong answer.
 
+**The multi-concept apex observation (A141).** An answer to an item that
+combines a concept with its prerequisites is **one** observation, on the
+**apex** concept only, at `WEIGHT_MULTI_CONCEPT` (half) whether it is right or
+wrong. The prerequisite components move only through the existing one-hop
+propagation, which credits them weakly on a correct answer and blames none on
+a wrong one. Never write a separate row per component.
+
 **Why.** These are the research-backed choices (BKT guess/slip per channel,
 FSRS at 90% retention); letting a caller pass a weight would let any route
-award credit.
+award credit. For a combined item, a correct answer is evidence for every
+component but a wrong one does not say which part failed (conjunctive models
+such as DINA); blaming every component would re-teach skills the student has,
+and the apex's outcome also depends on the other components, so it gets a
+partial observation (the half weight is an unvalidated choice, to be refit
+from calibration).
 
 **Enforced by.** `inv_03_channel_guess_slip_bounds` (every channel valid:
 G + S < 1 and the bounds), `inv_13_fsrs_weights_pinned`, the BKT and FSRS
-unit tests, and the commit's own range validation in SQL.
+unit tests, and the commit's own range validation in SQL;
+`backend/tests/test_learning_multi_concept.py` and
+`backend/tests/test_learning_multi_concept_paths.py` for the apex rule,
+including its void and replay.
 
 ## 4. Void instead of delete
 
@@ -142,6 +172,13 @@ any sentence that would state it; and every served text is scanned against
 the moment it is served (A88). If the scan cannot run, it fails closed: an
 `unscanned` marker makes earlier poses grade as assisted.
 
+A segment prequestion (A138) shows an answer on purpose, so it follows the
+same rule from the other side: its item is recorded as **revealed before any
+explanation text goes out** (it is then never posed to that student as a
+check, review or post-test item), its reserves and the concept's graded
+checks are protected by the pool rule, and the transcript row of an open
+card never carries the options (they include the key).
+
 **Why.** The research basis: answer-giving tutors raise practice scores and
 lower unassisted performance (Bastani et al. 2025). A revealed answer later
 submitted as the student's own would be full credit for nothing.
@@ -191,7 +228,9 @@ the first (A51, A61). The learner brief carries no model-written free text
 (A62). Policy never reads student text (rule 6). An answer addressed to the
 grader ("mark this correct") is refused before any model runs (A33), and a
 correct answer the student disowns earns nothing (A97). Decision-seam states
-carry no identifiers.
+carry no identifiers. A prequestion's guess reaches the tutor only as the
+student's own enveloped message in the history, never as instructions, and
+the item's answer goes in as data in an untrusted block (A138).
 
 **Why.** Prompt injection: a student who can instruct the tutor or the grader
 can award themselves credit or extract the key.
@@ -215,7 +254,12 @@ route answers 404 (the rate-limited ones before authentication and the rate
 limiter even run; the others after the ownership check), except the status
 probe `/review/active`, which answers `{"active": false}`; and no request
 reaches the tutoring policy layer. Feature flags resolve fail-closed to
-`off`, and the loop's flags all ship `off`.
+`off`, and the loop's flags all ship `off`. With a flag off, its feature must
+leave every model request, served text, response and stored row exactly as
+before it existed: wave 4's four flags are pinned that way against
+`f9eca612` (`backend/tests/test_learning_teach_prompts_flag_off.py`,
+`backend/tests/test_learning_varied_drafting.py`,
+`backend/tests/test_learning_varied_serving.py`).
 
 **Why.** A kill switch must work even when the database is down and must not
 leave a half-loop running; a flag that fails open would change pedagogy or
@@ -299,14 +343,19 @@ keeps what earlier definitions required), and the release verifier's
 **Rule.** Item text and keys, closes, briefs, goal text, grade checkpoints
 and misconception evidence are encrypted at write and decrypted only in
 memory at read, including before they go into a prompt; nothing indexes,
-filters or joins on them. A backend boots only with the encryption key its
-database was written under.
+filters or joins on them. Wave 4 added three: a varied item's scenario label
+(`check_items.surface_context`), a prequestion guess
+(`learning_prequestions.guess_json`) and a self-explanation reply
+(`learning_self_explanations.reply_text`); a self-explanation record keeps
+the prompt as a key, never its text. A backend boots only with the encryption
+key its database was written under.
 
 **Why.** Student work and answer keys are sensitive; and a backend with the
 wrong key would write rows its own environment can never read.
 
-**Enforced by.** `inv_09_no_unique_or_eq_on_encrypted_learning_columns`; the
-ciphertext oracle (`backend/e2e_oracles/gather.py`);
+**Enforced by.** `inv_09_no_unique_or_eq_on_encrypted_learning_columns` (its
+column list does not yet name the three wave-4 columns); the ciphertext
+oracle (`backend/e2e_oracles/gather.py`, which does);
 `backend/tests/test_learning_check_items_ciphertext.py`;
 `backend/tests/test_encryption_canary.py`. Item ids and lookups use plaintext
 hashes of the plaintext (`question_hash`), computed before encryption.

@@ -81,7 +81,7 @@ The arrows are imports or calls. Two rules shape them:
 
 ## `backend/learning/` — policy, math and stores
 
-51 modules plus `backend/learning/__init__.py`. The tables group them by job and mark each **pure** (imports only
+59 modules plus `backend/learning/__init__.py`. The tables group them by job and mark each **pure** (imports only
 the standard library, pydantic and other `learning` modules — no database, no
 agent, no network) or **IO** (reads or writes the database through
 `backend/db/connection.py::table` / `rpc`, or reads config or encryption).
@@ -91,7 +91,7 @@ agent, no network) or **IO** (reads or writes the database through
 Two tests police imports, and they are the reason the layout above holds:
 
 - **`PURE_MODULES`** in `backend/tests/test_learning_loop_invariants.py::PURE_MODULES`
-  lists 22 modules that must import nothing whose top-level package is
+  lists 28 modules that must import nothing whose top-level package is
   `agents`, `pydantic_ai`, `google` or `db` — followed transitively through
   other `learning` modules (`test_inv_02_pure_modules_import_nothing_impure`).
   `backend/learning/ladder.py` additionally may not import `services`, `routes`, `httpx` or
@@ -151,7 +151,7 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/policy.py` | pure (listed) | Ceiling, evidence per rung, band control and verdicts, wheelspin, worked-example-first, prerequisite repair, model tier, context policy, isomorph choice. Typed state in, decisions out; never student text. |
 | `backend/learning/gates.py` | pure (listed) | Genuine attempt (standard and strict), rung unlock, the H6 gate, the hint offer. The only policy code that reads student text, through fixed phrase lists. |
 | `backend/learning/ladder.py` | pure (listed) | The rungs H0–H6, their intent text, the check pose and deterministic help content. |
-| `backend/learning/leak.py` | pure (listed) | Deterministic answer-leak detector and stripper (n-gram, final answer, stem rules). |
+| `backend/learning/leak.py` | pure (listed) | Deterministic answer-leak detector (n-gram, final answer, stem rules) and the served path's span check (`leak_spans`). It masks nothing in place: the unused stripper was removed (A142). |
 | `backend/learning/turn_shape.py` | pure | The tutor's structured turn (`LoopTurnOut`, `LoopTurnOutV2`), its limits and rendering. |
 | `backend/learning/probe.py` | pure (listed) | The adaptive diagnostic: next item, stop rules, novice floor, summaries. |
 | `backend/learning/planner.py` | pure (listed) | Outer fringe, goal scope, the session plan. |
@@ -166,6 +166,10 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/session_close.py` | IO | Close draft, deterministic fallback, normalisation, encrypted store; the insert-if-missing session helper. |
 | `backend/learning/review.py` | IO | The daily review queue: due items, budget, interleaving, claims, grading. |
 | `backend/learning/gate.py` | config | The kill switch: `learning_loop_active`, `learning_loop_for_request`. |
+| `backend/learning/prequestion.py` | pure (listed) | The segment prequestion (A138): when a segment opens, the skip rules, the item choice with its pool rule, the pose and the answer lead. |
+| `backend/learning/prequestion_store.py` | IO (encryption) | `learning_prequestions`: one row per answered prequestion, the guess encrypted; also the release read A76's re-check rule makes. |
+| `backend/learning/self_explain.py` | pure (listed) | Self-explanation prompts (A139): the junctures decided in code, the four prompts, the once-per-concept cap. |
+| `backend/learning/self_explain_store.py` | IO (encryption) | `learning_self_explanations`: one row per served prompt; the reply encrypted. |
 
 ### Answer withholding and integrity
 
@@ -190,6 +194,8 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/item_audit.py` | pure (listed) | Stratified audit sample and the Wilson key-error rate (A124). |
 | `backend/learning/item_stats.py` | pure (listed) | Classical item statistics from the journal (A131). |
 | `backend/learning/item_reports.py` | IO | Student reports and staff review decisions (A113, A123). |
+| `backend/learning/surface.py` | pure (listed) | The surface descriptor (representation and scenario) of a varied item, and the cue-familiarity dial pickers rank by (A140). |
+| `backend/learning/multi_concept.py` | pure (listed) | Multi-concept items (A141): the combination key, which combinations to draft, the proficiency gate and the session dial. |
 
 ### Measurement
 
@@ -201,10 +207,12 @@ but not yet alone. The layer decides how much help a turn may give.
 | `backend/learning/help_abuse.py` | pure (listed) | Bottom-outs and their pace (A133). |
 | `backend/learning/earnest_revise.py` | pure | The earnest-revise gate's reader (A109). |
 | `backend/learning/cost_per_gain.py` | pure (listed) | Loop spend against learning-gain pairs (A137). |
+| `backend/learning/self_explain_report.py` | pure (listed) | The self-explanation report: prompts shown, replied, skipped, and the next item's unassisted success after a reply or not (A139). |
+| `backend/learning/multi_concept_report.py` | pure (listed) | Multi-concept items stored, held, served and answered, with a Wilson interval on the correct rate (A141). |
 
 ## `backend/routes/learn_loop.py` — the loop's HTTP surface
 
-One 8,000-line module, mounted at `/api/learn/loop` by `backend/main.py`. Its
+One 8,900-line module, mounted at `/api/learn/loop` by `backend/main.py`. Its
 docstring states its rules; the main ones:
 
 - Every route is `require_self` (the session user must be the `user_id` in the
@@ -235,8 +243,10 @@ The file is organised in banner-commented sections (`# ── … ──`). In o
 | Served reveals of open, posed items | `posed_items`, `stated_items`, `_persist_reveals`, `_reveal_floor` (A88, A93) |
 | The served session close | `served_close`, `close_states_answer` |
 | The turn | `_LoopTurn` (one turn, JSON and streamed), the misconception confrontation line |
-| Item activation and the current concept | `_activate_next_item`, `_advance_cursor`, `_isomorph_after_unknown` (A27) |
+| Item activation and the current concept | `_activate_next_item`, `_advance_cursor`, `_isomorph_after_unknown` (A27); the multi-concept pick and the familiarity order (A140, A141) |
 | Band control on the plan | `_apply_band_control`, `_repair_cursor`, `plan_focus` (A122) |
+| The segment prequestion | `_pose_prequestion`, `_posed_prequestion`, `_undo_pose` (A138) |
+| The segment prequestion's answer; the self-explanation reply | `_prequestion_answer`, `_prequestion_turn`; `self_explain_reply` (A138, A139) |
 | Run sites | `_run_turn_json`, `_stream_turn`, `_continue_turn` — where models actually run, each after `ai_budget.check` |
 | Endpoints | the route handlers below |
 
@@ -263,6 +273,8 @@ The file is organised in banner-commented sections (`# ── … ──`). In o
 | `GET /review/summary`, `GET /review/active` | `review_summary`, `review_active` | Read-only summary; the loop status probe the frontend uses |
 | `POST /posttest/start`, `/posttest/answer`, `/posttest/shown` | `posttest_start`, `posttest_answer`, `posttest_shown` | The delayed, tool-removed post-test |
 | `GET /posttest/due` | `posttest_due` | Is a retention check due (flag `retention_due_badge`) |
+| `POST /prequestion/answer`, `/prequestion/answer/stream` | `prequestion_answer`, `prequestion_answer_stream` | Record the segment prequestion's guess (never graded) and serve the turn that explains the answer (flag `segment_prequestion`, A138) |
+| `POST /self-explain` | `self_explain_reply` | Store a reply to a self-explanation prompt, or a skip (never graded; flag `self_explanation_prompts`, A139) |
 
 `end_session` has no route of its own: `backend/routes/learn.py` calls it
 when the legacy end-session route delegates. The legacy routes
@@ -283,8 +295,8 @@ effort per slot (`_ANTHROPIC_EFFORT`), the slots still on Gemini
 
 | Slot | Agent module | Job | Default model | Claude effort | Pending Claude eval | Function-mode handler |
 |---|---|---|---|---|---|---|
-| `check_items` | `backend/agents/check_items.py` | Draft items for up to a few concepts per call; also the `mc_reason` top-up (`backend/agents/check_items_topup.py`) | `gemini-2.5-flash-lite` | medium | yes | `_structured_output` (fixed items) |
-| `check_items_verify` | `backend/agents/check_items_verify.py` | Alignment check: is each rubric criterion asked; which concept does the item test | `claude-haiku-5-5` | low | no | `_verify_handler` |
+| `check_items` | `backend/agents/check_items.py` | Draft items for up to three concepts per call. Four more drafters ride this slot: the `mc_reason` top-up (`backend/agents/check_items_topup.py`), and behind their flags the varied drafter and its top-up (`backend/agents/check_items_varied.py`, `backend/agents/check_items_varied_topup.py`, A140) and the combination drafter (`backend/agents/check_items_combo.py`, A141) | `gemini-2.5-flash-lite` | medium | yes | `_check_items_handler` (fixed items; varied surfaces and combinations when asked) |
+| `check_items_verify` | `backend/agents/check_items_verify.py` | Alignment check: is each rubric criterion asked; which concept does the item test. The combination check (`backend/agents/check_items_combo_verify.py`, A141: is every component needed?) rides this slot | `claude-haiku-5-5` | low | no | `_verify_handler` (both) |
 | `check_items_solve` | `backend/agents/check_items_solve.py` | Blind solve of each drafted item (never sees the key); the free-text key match (`backend/agents/check_items_key_match.py`) rides this slot | `claude-haiku-5-5` | medium | no | `_solve_handler` (both) |
 | `grader` | `backend/agents/grader.py` | Rubric grading, one yes/no per criterion, with quoted support | `gemini-2.5-flash-lite` | low | yes | `_grader_handler` |
 | `grader_second` | `backend/agents/grader.py` (same agent) | The second opinion and the span checks, on a different model | `gemini-2.5-flash` | medium | yes | `_grader_handler` |
@@ -305,6 +317,13 @@ system prompt and one `Agent(` construction per module; tier and
 second-opinion slots pick the model per run. The tutor's rules ride
 `instructions=` so they reach every turn (A61), and student text reaches it
 only inside a nonce-delimited envelope (`backend/agents/loop_tutor.py::student_envelope`, A51).
+Wave 4 added two flag-on prompt lines to the tutor, both unrecorded in the
+evals so far: `backend/agents/loop_tutor.py::PREQUESTION_LINE` for the turn
+that explains a prequestion's answer (with the answer as data in
+`prequestion_answer_block`, A138) and
+`backend/agents/loop_tutor.py::SELF_EXPLAIN_ACK_LINE`, which acknowledges a
+self-explanation reply once (A139). The self-explanation prompt itself is
+served by code and changes no request.
 
 Two non-agent helpers matter as much as the agents:
 
@@ -322,7 +341,8 @@ Two non-agent helpers matter as much as the agents:
 | Service | Role in the loop |
 |---|---|
 | `backend/services/graph_service.py` | `apply_graph_update`, the single writer of evidence, learner state and the graph mirror; `_apply_void` for voids. |
-| `backend/services/check_item_service.py` | Check-item storage (encrypted columns), drafting pipeline, holds on read, retire and confirm, drafting status. |
+| `backend/services/check_item_service.py` | Check-item storage (encrypted columns), drafting pipeline, holds on read, retire and confirm, drafting status; the drafting flags read once per run (`drafting_flags`) and the surfaces a concept's items use (`concept_surfaces`). |
+| `backend/services/varied_practice.py` | The two wave-4 practice dials for the student being served: the cue-familiarity order (`varied_on`, `familiarity_for`, A140) and the multi-concept pick (`multi_concept_on`, `multi_concept_pick`, A141). Each fails to the plain pick on a read error. |
 | `backend/services/learning_decisions.py` | The loop's typed decision seam; backends and Jev shadowing; `evidence_backend` names the grader provenance. |
 | `backend/services/ai_budget.py` | Per-student caps, degradation ladder, rate limit, daily tutor-call count. Checked before every loop model run. |
 | `backend/services/integrity_guard.py` | Guards the AI surfaces outside the loop against posed items (A125). |
@@ -349,13 +369,16 @@ Two non-agent helpers matter as much as the agents:
 | `frontend/src/components/learn/LearningScope.tsx` | Goal editor and diagnosis summary. |
 | `frontend/src/components/learn/ConfidenceControl.tsx` | The 3-point stated confidence (A127). |
 | `frontend/src/components/learn/ReportQuestion.tsx` | "Report this question" (A113). |
+| `frontend/src/components/learn/PrequestionCard.tsx` | The segment prequestion card: "Take a guess first — this one isn't scored", a choice or a text box, "No idea" (A138). |
+| `frontend/src/components/learn/SelfExplainCard.tsx` | The reply box for a "why does this follow?" prompt, with a skip (A139). |
+| `frontend/src/components/learn/OptionList.tsx` | The multiple-choice options as one accessible radio group, shared by the cards (A135, A138). |
 | `frontend/src/components/learn/BudgetPausedBanner.tsx` | The budget-pause banner (A20, A26). |
 | `frontend/src/components/learn/DueQueue.tsx` | The daily review queue on Study. |
 | `frontend/src/components/learn/RetentionCheck.tsx` | The delayed post-test on Study; records page-visibility telemetry (A126). |
 | `frontend/src/context/RetentionDueContext.tsx`, `frontend/src/components/RetentionDueDot.tsx` | The "retention check due" badge, behind `retention_due_badge`. |
 | `frontend/src/components/screens/Study.tsx` | Mounts DueQueue and RetentionCheck when the loop is active. |
-| `frontend/src/components/screens/AdminCheckItems.tsx` | The staff review queue: flagged, reported and held items; approve, retire, audit, statistics. |
-| `frontend/src/components/screens/AdminAnalytics.tsx` | The admin learning-loop panel (`GET /api/admin/analytics/learning-loop`), with `frontend/src/components/screens/admin/HelpAbusePanel.tsx` and `frontend/src/components/screens/AdminLoopCost.tsx`. |
+| `frontend/src/components/screens/AdminCheckItems.tsx` | The staff review queue: flagged, reported and held items; approve, retire, audit, statistics. A multi-concept item reads "Combines A + B" (A141). |
+| `frontend/src/components/screens/AdminAnalytics.tsx` | The admin learning-loop panel (`GET /api/admin/analytics/learning-loop`), with `frontend/src/components/screens/admin/HelpAbusePanel.tsx`, `frontend/src/components/screens/AdminLoopCost.tsx`, `frontend/src/components/screens/admin/SelfExplanationPanel.tsx` ("Do students explain their steps?", A139) and `frontend/src/components/screens/admin/MultiConceptPanel.tsx` (A141). |
 | `frontend/src/lib/api.ts` | Every `/api/learn/loop/*` call. |
 
 ## How the pieces connect
