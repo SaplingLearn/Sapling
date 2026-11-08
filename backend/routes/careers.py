@@ -3,7 +3,6 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from starlette.concurrency import run_in_threadpool
 from typing import Optional
 
 from db.connection import SUPABASE_URL, SUPABASE_KEY, table
@@ -62,8 +61,11 @@ def _upload_resume(file: UploadFile, content: bytes) -> str:
     return path
 
 
+# #117: a plain `def` -- FastAPI runs it in the threadpool once, so the
+# spooled-file read (`file.file.read`), the Storage PUT and the insert never
+# block the event loop. The form is parsed before the handler runs.
 @router.post("/apply")
-async def apply(
+def apply(
     position: str = Form(...),
     full_name: str = Form(...),
     email: str = Form(...),
@@ -87,12 +89,10 @@ async def apply(
 
     resume_path = None
     if resume is not None and resume.filename:
-        # #117: an async handler runs on the event loop -- the spooled-file
-        # read, the Storage PUT and the insert below each hop off it.
-        content = await run_in_threadpool(_validate_resume, resume)
-        resume_path = await run_in_threadpool(_upload_resume, resume, content)
+        content = _validate_resume(resume)
+        resume_path = _upload_resume(resume, content)
 
-    row = await run_in_threadpool(table("job_applications").insert, {
+    row = table("job_applications").insert({
         "position": position,
         "full_name": full_name,
         "email": email,

@@ -9,7 +9,6 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
-from starlette.concurrency import run_in_threadpool
 
 from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import refresh_course_context
@@ -29,7 +28,7 @@ from models import (
 )
 from services.academics import school_peer_user_ids
 from services.analytics_consent import clear_analytics_consent_cache
-from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id, guard_off_loop
+from services.auth_guard import clear_account_state_cache, require_self, get_session_user_id
 from services.http_cache import cached_json, conditional, make_etag
 from services.posthog_client import delete_person as delete_posthog_person
 from services.storage_service import upload_avatar
@@ -494,11 +493,12 @@ class _AvatarUploadBody(BaseModel):
 
 
 @router.post("/{user_id}/avatar")
-async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
-    await guard_off_loop(require_self, user_id, request)
-    # #117: an async handler runs on the event loop; every PostgREST and
-    # Storage call below hops off it.
-    await run_in_threadpool(_get_user_or_404, user_id)
+def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Request):
+    # #117: a plain `def` -- FastAPI runs it in the threadpool once, so the
+    # guard's account read, the PostgREST calls and the Storage PUT below
+    # never block the event loop (it awaited nothing else).
+    require_self(user_id, request)
+    _get_user_or_404(user_id)
 
     # `file_b64` may arrive as a bare base64 string OR as a data URL
     # (`data:image/png;base64,...`) depending on how the client encoded
@@ -527,13 +527,12 @@ async def upload_user_avatar(user_id: str, body: _AvatarUploadBody, request: Req
             detail=f"File too large. Maximum size is {MAX_AVATAR_SIZE // (1024 * 1024)} MB",
         )
 
-    avatar_url = await run_in_threadpool(upload_avatar, user_id, file_bytes, body.content_type)
+    avatar_url = upload_avatar(user_id, file_bytes, body.content_type)
 
     # avatar_url moved to user_profiles in migration 0024.
-    await run_in_threadpool(_get_or_create_profile, user_id)  # ensure a row exists to update
-    await run_in_threadpool(
-        table("user_profiles").update,
-        {"avatar_url": avatar_url}, filters={"user_id": f"eq.{user_id}"},
+    _get_or_create_profile(user_id)  # ensure a row exists to update
+    table("user_profiles").update(
+        {"avatar_url": avatar_url}, filters={"user_id": f"eq.{user_id}"}
     )
     return {"avatar_url": avatar_url}
 

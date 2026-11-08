@@ -14,6 +14,9 @@ The five handlers the design measured: ``quiz.generate_quiz``,
 ``admin_documents.reindex``, ``careers.apply``,
 ``gradescope.save_credentials_via_bu_sso``, ``profile.upload_user_avatar``;
 plus ``extract`` (its limiter becomes a DB call under ``stateless_rate_limit``).
+``careers.apply`` and ``profile.upload_user_avatar`` awaited nothing but their
+hops, so they are plain ``def`` handlers now (one threadpool hop, by FastAPI);
+the rest hop with ``run_in_threadpool`` -- one pool, AnyIO's 40-token limiter.
 """
 from __future__ import annotations
 
@@ -69,6 +72,16 @@ def wire(monkeypatch, no_sync_db_on_loop):
         f"sync PostgREST request(s) sent from the event loop: {w.calls}")
 
 
+def test_handlers_with_nothing_to_await_are_plain_defs():
+    import inspect
+
+    import routes.careers as careers
+    import routes.profile as profile
+
+    assert not inspect.iscoroutinefunction(careers.apply)
+    assert not inspect.iscoroutinefunction(profile.upload_user_avatar)
+
+
 def test_careers_apply(wire):
     wire.rows[("POST", "job_applications")] = [{"id": "app-1"}]
     r = client.post("/api/careers/apply", data={
@@ -78,6 +91,28 @@ def test_careers_apply(wire):
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True, "id": "app-1"}
     assert wire.to("POST", "job_applications") == [False]
+
+
+def test_careers_apply_with_a_resume_reads_the_spooled_file_off_the_loop(wire, monkeypatch):
+    import routes.careers as careers
+
+    wire.rows[("POST", "job_applications")] = [{"id": "app-2"}]
+    seen = []
+
+    def _upload(file, content):
+        seen.append((content, asyncio._get_running_loop() is not None))
+        return "r.pdf"
+    monkeypatch.setattr(careers, "_upload_resume", _upload)
+    form = {"position": "Engineer", "full_name": "Ada", "email": "ada@example.com",
+            "linkedin_url": "https://linkedin.com/in/ada"}
+    r = client.post("/api/careers/apply", data=form,
+                    files={"resume": ("cv.pdf", b"%PDF-1.4", "application/pdf")})
+    assert r.status_code == 200, r.text
+    assert seen == [(b"%PDF-1.4", False)]
+    big = b"x" * (careers.MAX_RESUME_SIZE + 1)  # the size bound is unchanged
+    r = client.post("/api/careers/apply", data=form,
+                    files={"resume": ("cv.pdf", big, "application/pdf")})
+    assert r.status_code == 413
 
 
 def test_profile_upload_user_avatar(wire, monkeypatch):
