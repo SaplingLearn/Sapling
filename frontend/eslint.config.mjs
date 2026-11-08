@@ -93,6 +93,12 @@ const eslintConfig = [
       // The stated-confidence control (spec §13 A127), shared by the loop's check
       // and probe cards and the review card; its testids are passed in. New file.
       "src/components/learn/ConfidenceControl.tsx",
+      // The shared multiple-choice radio group (spec §13 A135; moved out of
+      // LoopLearn for A138), the segment prequestion card (A138) and the
+      // self-explanation card (A139). New files, no baselined backlog.
+      "src/components/learn/OptionList.tsx",
+      "src/components/learn/PrequestionCard.tsx",
+      "src/components/learn/SelfExplainCard.tsx",
       "src/components/screens/Library.tsx",
       "src/components/screens/Calendar.tsx",
       "src/components/screens/Gradebook/Landing.tsx",
@@ -104,6 +110,8 @@ const eslintConfig = [
       "src/components/screens/AdminAnalytics.tsx",
       // The learning-loop help-abuse section (spec §13 A133). New file, no backlog.
       "src/components/screens/admin/HelpAbusePanel.tsx",
+      // The learning-loop self-explanation section (spec §13 A139). New file, no backlog.
+      "src/components/screens/admin/SelfExplanationPanel.tsx",
       // The Learning loop panel's cost per learning gain (spec §13 A137). New file, no backlog.
       "src/components/screens/AdminLoopCost.tsx",
       // The /admin/check-items review queue (spec §13 A113). New file, no backlog.

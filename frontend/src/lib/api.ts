@@ -1238,6 +1238,46 @@ export interface LoopProbeItem extends LoopCheckItem {
   node_id: string;
   prompt: string;
 }
+/** Spec §13 A138 (`segment_prequestion` on): the ungraded guess that opens a
+ *  teaching segment — a vetted item of the concept, asked before any teaching
+ *  on it; "No idea" is always allowed and nothing is graded. Served options
+ *  are never marked correct (A22). `text` is the exact assistant row the
+ *  server saved for the pose: the log hides that row while the card shows it.
+ *  `answered` (GET /status only): the guess is saved and its explanation is
+ *  still owed — the card offers to show it. */
+export interface LoopPrequestion {
+  question_hash: string;
+  format: 'mc_reason' | 'free';
+  difficulty: number;
+  prompt: string;
+  options: LoopOption[] | null;
+  text: string;
+  answered?: boolean;
+}
+/** A guess at the prequestion. `no_idea` sends no answer fields; once a guess
+ *  is saved the server ignores these and re-serves the explanation. */
+export interface LoopPrequestionGuess {
+  answer?: string;
+  option?: string;
+  reason?: string;
+  no_idea: boolean;
+}
+/** Spec §13 A139 (`self_explanation_prompts` on): the turn's single question is
+ *  a "why does this follow?" prompt at a juncture code chose. `prompt` is the
+ *  turn's last line (already in the turn's reply text). The reply is stored for
+ *  diagnosis only: never graded, never evidence. */
+export interface LoopSelfExplain {
+  prompt_id: string;
+  juncture: 'worked_example' | 'released_solution' | 'first_correct';
+  prompt: string;
+}
+/** POST /self-explain: the reply (or skip) recorded; `prequestion` is the next
+ *  segment's guess when the closed prompt was holding it back (A138/A139: one
+ *  open prompt at a time). */
+export type LoopSelfExplainResult = WithCrisisSupport & (
+  | { recorded: true; status: 'replied' | 'skipped'; prequestion?: LoopPrequestion | null }
+  // docs/safety/crisis-support.md: the card instead of a recorded reply
+  | { recorded: false });
 /** Opaque saved grading result; never includes the answer, key or checkpoint. */
 export interface LoopPendingGrade { kind: 'check' | 'probe'; question_hash: string }
 export type LoopProbeNext = LoopLearningScope & (
@@ -1302,6 +1342,12 @@ export interface LoopTurnResult extends ChatResult {
   refused?: boolean;
   /** PKG-14: present (true) on the graded check that reached ZPD_RATING_EVERY_N_CHECKS. */
   ask_rating?: boolean;
+  /** Spec §13 A138: this turn opened a new segment on its ungraded guess (present only then). */
+  prequestion?: LoopPrequestion | null;
+  /** Spec §13 A139: this turn's question is a self-explanation prompt (present only then). */
+  self_explain?: LoopSelfExplain | null;
+  /** Spec §13 A138: the prequestion answer route's turn (its guess is saved). */
+  prequestion_answered?: boolean;
 }
 /** The perceived-difficulty answer (spec §3.4, §6 zpd.rating). */
 export type LoopRating = 'too_easy' | 'appropriate' | 'too_hard';
@@ -1428,6 +1474,10 @@ export interface LoopSessionStatus extends LoopLearningScope {
   active_question_hash?: string | null;
   check?: LoopCheckItem | null;
   pending_grade?: LoopPendingGrade | null;
+  /** Spec §13 A138: the open segment-opening guess (absent when none). */
+  prequestion?: LoopPrequestion | null;
+  /** Spec §13 A139: the open self-explanation prompt (absent when none). */
+  self_explain?: LoopSelfExplain | null;
 }
 export const getLoopSessionStatus = (sessionId: string, userId: string) =>
   fetchJSON<LoopSessionStatus>(
@@ -1461,7 +1511,8 @@ export const getLoopPlan = (sessionId: string, userId: string) =>
   fetchJSON<LoopPlan>(`/api/learn/loop/plan?${new URLSearchParams({ session_id: sessionId, user_id: userId })}`);
 
 export const approveLoopPlan = (sessionId: string, userId: string, conceptIds: string[], goalVersion?: number) =>
-  loopPost<{ phase: LoopPhase; concept_ids: string[] }>('/plan/approve', {
+  // spec §13 A138: `prequestion` — the first segment opens on an ungraded guess
+  loopPost<{ phase: LoopPhase; concept_ids: string[]; prequestion?: LoopPrequestion | null }>('/plan/approve', {
     session_id: sessionId, user_id: userId, concept_ids: conceptIds,
     ...(goalVersion !== undefined ? { goal_version: goalVersion } : {}),
   });
@@ -1479,8 +1530,41 @@ export const streamLoopCheckAnswer = (
     session_id: sessionId, user_id: userId, question_hash: questionHash, ...loopAnswerFields(a),
   }, handlers) as Promise<LoopTurnResult>;
 
+/** Spec §13 A138: the guess at a segment's ungraded prequestion, then — in the
+ *  same stream — its explanation turn (the answer first, from code). Nothing is
+ *  graded. `answer` only for a free item, `option` (+ an optional `reason`) only
+ *  for multiple choice, `no_idea: true` with no answer fields. */
+export const streamLoopPrequestionAnswer = (
+  sessionId: string, userId: string, questionHash: string, guess: LoopPrequestionGuess,
+  handlers: StreamChatHandlers = {},
+) =>
+  consumeChatStream('/api/learn/loop/prequestion/answer/stream', {
+    session_id: sessionId,
+    user_id: userId,
+    question_hash: questionHash,
+    ...(guess.no_idea
+      ? {}
+      : guess.option !== undefined
+        ? { option: guess.option, ...(guess.reason ? { reason: guess.reason } : {}) }
+        : guess.answer !== undefined ? { answer: guess.answer } : {}),
+    no_idea: guess.no_idea,
+  }, handlers) as Promise<LoopTurnResult>;
+
+/** Spec §13 A139: the student's reply to a self-explanation prompt, or a skip.
+ *  Stored for diagnosis only — never graded, never evidence. */
+export const postLoopSelfExplain = (
+  sessionId: string, userId: string, promptId: string, body: { reply?: string; skip: boolean },
+) =>
+  loopPost<LoopSelfExplainResult>('/self-explain', {
+    session_id: sessionId,
+    user_id: userId,
+    prompt_id: promptId,
+    ...(body.skip ? {} : { reply: body.reply ?? '' }),
+    skip: body.skip,
+  });
+
 /** Records a genuine attempt for hint unlocking only (never stored, never graded). */
-export const postLoopAttempt = (sessionId: string, userId: string, questionHash: string, attemptText: string) =>
+export const postLoopAttempt =(sessionId: string, userId: string, questionHash: string, attemptText: string) =>
   loopPost<LoopAttemptResult>('/step/attempt', {
     session_id: sessionId, user_id: userId, question_hash: questionHash, attempt_text: attemptText,
   });

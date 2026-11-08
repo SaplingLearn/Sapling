@@ -678,3 +678,14 @@ describe("Learning loop panel — cost per learning gain (spec §13 A137)", () =
     expect(screen.queryByTestId("admin-loop-cost")).toBeNull();
   });
 });
+
+describe("Learning loop panel — self-explanation prompts (spec §13 A139)", () => {
+  it("shows the section, unavailable when unread, and nothing for an older backend", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, self_explanation: null }} />);
+    expect(screen.getByText("Do students explain their steps?")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-self-explain-unavailable")).toBeTruthy();
+    cleanup();
+    render(<LearningLoopPanelBody d={{ ...loopFixture, self_explanation: undefined }} />);
+    expect(screen.queryByTestId("admin-loop-self-explain")).toBeNull();
+  });
+});

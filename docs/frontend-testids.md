@@ -96,7 +96,7 @@ renders the element.
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
 | Landing product surfaces | `landing-surface` | `frontend/src/components/marketing/surfaces/*.tsx` (the seven in-page recreations the bands and bento mount, #344 step 2) |
-| Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) |
+| Learning loop | `loop` | `frontend/src/components/learn/LoopLearn.tsx` (the loop-path Learn screen `Learn()` renders when the loop status probe reports `{active: true}`; build phase: staff/QA toggle, after launch: every student — PKG-13) + `frontend/src/components/learn/BudgetPausedBanner.tsx` (the shared pause banner; the testid is passed in) + `OptionList.tsx` (the shared multiple-choice radio group; its prefix is passed in — `loop-probe-option`, `loop-attempt-option`, `loop-prequestion-option`) + `PrequestionCard.tsx` (the segment prequestion, spec §13 A138) + `SelfExplainCard.tsx` (the self-explanation prompt, spec §13 A139) |
 | Review queue | `review` | `frontend/src/components/learn/DueQueue.tsx` (the learning loop's "Due today" panel, rendered at the top of Study → Flashcards only while the loop is on — PKG-12; the launch Study surface, spec §11.3) |
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Crisis support | `crisis-support` | `frontend/src/components/safety/CrisisSupportCard.tsx` (the card shown instead of an AI turn when the crisis screen fired, inline or in its dialog — docs/safety/crisis-support.md) |
@@ -466,6 +466,10 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-loop-cost` / `admin-loop-cost-student-month` / `-tutor-month` / `-session` / `-total` | spec §13 A137 (`AdminLoopCost.tsx`): the "What did it cost?" section and its figures — $ per active student-month against the §3.5 target, the tutor share, $ per session, the loop spend — each with its n |
 | `admin-loop-cost-windows` / `admin-loop-cost-window-{window}` (`-pair-ci`, `-gain`, `-gain-ci`) | A137: per post-test window, pairs, gain points, $ per pair and per gain point with their bootstrap intervals ("unbounded" upper bound; "no net gain") |
 | `admin-loop-cost-courses` / `admin-loop-cost-course-{courseId}` / `admin-loop-cost-unattributed` / `admin-loop-cost-note` / `admin-loop-cost-unavailable` | A137: the per-course table, the spend with no course on record, the method note, and the state when the spend could not be read |
+| `admin-loop-self-explain` / `-unavailable` / `-empty` | spec §13 A139 (`screens/admin/SelfExplanationPanel.tsx`): the "Do students explain their steps?" section, the note when its reads failed, and the note when no prompt was shown in the range |
+| `admin-loop-self-explain-shown` / `-reply-rate` / `-reply-chars` | A139: prompts shown (replied / skipped / unanswered), the reply rate (n = shown) and the median reply length in characters (n = replies) |
+| `admin-loop-self-explain-next-replied` / `-next-not-replied` | A139: the next graded item on the concept, right with no help, after a reply against after none — each with its n and the prompts with no next item yet |
+| `admin-loop-self-explain-by-juncture` / `admin-loop-self-explain-juncture-{juncture}` | A139: the per-juncture table (`worked_example` / `released_solution` / `first_correct`) and its rows |
 
 ### `admin-items`
 
@@ -765,6 +769,20 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-check-report-reason-{reason}` | one reason — `wrong_answer` / `unclear` / `not_from_my_course` — posts `/api/learn/loop/report` (`surface: loop`, the pose's `question_hash`); the card goes and "Check me" brings another |
 | `loop-check-report-cancel` | closes the reasons without reporting |
 | `loop-check-reported` | the status line after a report ("…won't be shown to you again. Use Check me for another."); cleared by the next check |
+| `loop-prequestion` | spec §13 A138 (`PrequestionCard.tsx`, the `segment_prequestion` flag): the ungraded guess that opens a teaching segment — "Take a guess first — this one isn't scored"; a region named by its heading, in place of the Continue / Check me row; `data-question-hash`, `data-format` (`mc_reason` / `free`), `data-difficulty`, `data-answered` (`true`: the guess is saved and its explanation is owed — a resume) |
+| `loop-prequestion-prompt` | the guess's question (names the options' radio group, describes the guess box) |
+| `loop-prequestion-options` / `loop-prequestion-option-{letter}` | the multiple-choice guess: a radio group named by the question (spec §13 A135; never marked correct, A22) and one option, "{letter}. {text}" |
+| `loop-prequestion-reason` | the optional one-line "Why?" beside a multiple-choice guess |
+| `loop-prequestion-input` | the typed guess (a free item) |
+| `loop-prequestion-submit` | "Submit guess": posts `/prequestion/answer/stream` — the guess, then in the same stream the explanation turn (the answer first, from code); nothing is graded |
+| `loop-prequestion-no-idea` | "No idea": the same stream with `no_idea: true` and no guess — no penalty |
+| `loop-prequestion-explain` | "Show the explanation" in the `data-answered` state: the same stream again (the saved guess stands) |
+| `loop-self-explain` | spec §13 A139 (`SelfExplainCard.tsx`, the `self_explanation_prompts` flag): the "why does this follow?" prompt — inside the check card under a worked-example or solution hint, or in place of the Continue / Check me row after feedback; `data-juncture` (`worked_example` / `released_solution` / `first_correct`), `data-prompt-id` |
+| `loop-self-explain-prompt` | the prompt (the turn's own last line; it describes the reply box) |
+| `loop-self-explain-input` | the reply box (after feedback, lost focus moves here) |
+| `loop-self-explain-send` | "Send": posts `/self-explain` with the reply — stored for diagnosis only, never graded |
+| `loop-self-explain-skip` | "Skip": posts `/self-explain` with `skip: true` |
+| `loop-self-explain-saved` | "Saved — thanks." in a polite live region that is always on the page (cleared by the next turn) |
 | `loop-continue` | "Continue" after feedback — sends the next chat turn |
 | `loop-rating` | PKG-14: the perceived-difficulty prompt, shown when a graded check's `done` carries `ask_rating` (every `ZPD_RATING_EVERY_N_CHECKS` checks); hidden after one click |
 | `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |

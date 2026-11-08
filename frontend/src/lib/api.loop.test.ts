@@ -400,3 +400,39 @@ describe('Report this question and the review queue (spec §13 A113)', () => {
     expect(initOf(2).method).toBe('POST');
   });
 });
+
+describe('the segment prequestion and self-explanation prompts (spec §13 A138, A139)', () => {
+  it('a multiple-choice guess posts the option (and a reason only when given) to its own stream, never /chat/stream', async () => {
+    const { streamLoopPrequestionAnswer } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(sseBody([done])));
+    await streamLoopPrequestionAnswer('s', 'u', 'pq', { option: 'B', reason: 'it repeats', no_idea: false });
+    await streamLoopPrequestionAnswer('s', 'u', 'pq', { option: 'B', no_idea: false });
+    expect(urlOf(0)).toContain('/api/learn/loop/prequestion/answer/stream');
+    expect(urlOf(0)).not.toContain('/chat/stream');
+    expect(bodyOf(0)).toEqual({ session_id: 's', user_id: 'u', question_hash: 'pq', option: 'B', reason: 'it repeats', no_idea: false });
+    expect(bodyOf(1)).toEqual({ session_id: 's', user_id: 'u', question_hash: 'pq', option: 'B', no_idea: false });
+  });
+  it('a typed guess posts the answer; "No idea" and the owed explanation post no guess at all', async () => {
+    const { streamLoopPrequestionAnswer } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(sseBody([done])));
+    await streamLoopPrequestionAnswer('s', 'u', 'pq', { answer: 'a base case', no_idea: false });
+    await streamLoopPrequestionAnswer('s', 'u', 'pq', { answer: 'ignored', option: 'A', no_idea: true });
+    await streamLoopPrequestionAnswer('s', 'u', 'pq', { no_idea: false });
+    expect(bodyOf(0)).toEqual({ session_id: 's', user_id: 'u', question_hash: 'pq', answer: 'a base case', no_idea: false });
+    expect(bodyOf(1)).toEqual({ session_id: 's', user_id: 'u', question_hash: 'pq', no_idea: true });
+    expect(bodyOf(2)).toEqual({ session_id: 's', user_id: 'u', question_hash: 'pq', no_idea: false });
+  });
+  it('a "why" reply posts the reply; a skip posts no reply text', async () => {
+    const { postLoopSelfExplain } = await import('./api');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ recorded: true, status: 'replied' }))
+      .mockResolvedValueOnce(json({ recorded: true, status: 'skipped' }));
+    expect(await postLoopSelfExplain('s', 'u', 'se-1', { reply: 'Because it repeats.', skip: false }))
+      .toEqual({ recorded: true, status: 'replied' });
+    await postLoopSelfExplain('s', 'u', 'se-1', { reply: 'not sent', skip: true });
+    expect(urlOf(0)).toContain('/api/learn/loop/self-explain');
+    expect(initOf(0).method).toBe('POST');
+    expect(bodyOf(0)).toEqual({ session_id: 's', user_id: 'u', prompt_id: 'se-1', reply: 'Because it repeats.', skip: false });
+    expect(bodyOf(1)).toEqual({ session_id: 's', user_id: 'u', prompt_id: 'se-1', skip: true });
+  });
+});
