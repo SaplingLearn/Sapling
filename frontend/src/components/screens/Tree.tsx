@@ -13,6 +13,7 @@ import { useUser } from "@/context/UserContext";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { getGraph, getCourses, getSessions, addGraphNode, deleteGraphNode, type EnrolledCourse, type Session } from "@/lib/api";
+import { CoursesKey, courseProgressFor } from "../graph/CoursesKey";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
@@ -69,6 +70,11 @@ export function Tree() {
   const focusNodeId = search.get("node");
 
   const [courseFilter, setCourseFilter] = React.useState<string>("all");
+  // The "My courses" key and the graph, wired together: hovering a course row
+  // fades the other courses; hovering a concept lights its course's row;
+  // clicking a row filters to that course (the same state as the dropdown).
+  const [keyHoverCourse, setKeyHoverCourse] = React.useState<string | null>(null);
+  const [graphHoverCourse, setGraphHoverCourse] = React.useState<string | null>(null);
   const [tier, setTier] = React.useState<Tier>("all");
   const [query, setQuery] = React.useState("");
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
@@ -242,6 +248,17 @@ export function Tree() {
     () => (activeSemester ? courses.filter((c) => courseInTerm(c, activeSemester)) : courses),
     [courses, activeSemester],
   );
+
+  const courseProgress = React.useMemo(
+    () => courseProgressFor(scopedCourses, nodes),
+    [scopedCourses, nodes],
+  );
+  const pickCourse = (courseId: string) => {
+    // Clicking the chosen course again goes back to all courses.
+    setCourseFilter((cur) => (cur === courseId ? "all" : courseId));
+    setAddingConcept(false);
+    setNewConceptName("");
+  };
 
   const filteredNodes = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -578,7 +595,24 @@ export function Tree() {
                 onNodeClick={(n) => setSelected(n)}
                 zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
                 legible
+                focusCourseId={courseFilter === "all" ? keyHoverCourse : null}
+                onHoverCourse={setGraphHoverCourse}
               />
+              {scopedCourses.length > 1 && (
+                <CoursesKey
+                  courseProgress={courseProgress}
+                  hasCourses={courses.length > 0}
+                  semesterActive={!!activeSemester}
+                  placement="top-left"
+                  defaultCollapsed={false}
+                  testIdPrefix="tree"
+                  activeCourseId={keyHoverCourse ?? graphHoverCourse}
+                  selectedCourseId={courseFilter === "all" ? null : courseFilter}
+                  onHoverCourse={setKeyHoverCourse}
+                  onSelectCourse={pickCourse}
+                  selectHint="Click to show only this course; click again for all"
+                />
+              )}
               {/* The graph's own top-right corner: a Fullscreen icon the
                   width of the zoom stack, which sits directly below it. */}
               <button

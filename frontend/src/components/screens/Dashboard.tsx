@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
 import { MiniStat } from "../MiniStat";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
+import { CoursesKey, courseProgressFor, type CourseProgressEntry } from "../graph/CoursesKey";
 import { ManageCoursesModal } from "../ManageCoursesModal";
 import { DashboardSkeleton } from "../Skeleton";
 import { useUser } from "@/context/UserContext";
@@ -246,6 +247,14 @@ export function Dashboard() {
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
+  // The "My courses" key and the graph, wired together: hovering a course row
+  // fades the other courses; hovering a concept lights its course's row;
+  // clicking a row zooms the graph to that course.
+  const [keyHoverCourse, setKeyHoverCourse] = React.useState<string | null>(null);
+  const [graphHoverCourse, setGraphHoverCourse] = React.useState<string | null>(null);
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string; seq: number } | null>(null);
+  const zoomToCourse = (courseId: string) =>
+    setZoomRequest((r) => ({ courseId, seq: (r?.seq ?? 0) + 1 }));
   const [mobileTab, setMobileTab] = React.useState<"courses" | "stats">("courses");
 
   // Graph container is now flex-filled, so there's no "correct" initial
@@ -405,25 +414,10 @@ export function Dashboard() {
     [courses, activeSemester],
   );
 
-  const courseProgress = React.useMemo(() => {
-    return scopedCourses.map(c => {
-      const courseNodes = nodes.filter(n => n.course_id === c.course_id && !n.is_subject_root);
-      const mastered = courseNodes.filter(n => n.mastery_tier === "mastered").length;
-      const learning = courseNodes.filter(n => n.mastery_tier === "learning").length;
-      const struggling = courseNodes.filter(n => n.mastery_tier === "struggling").length;
-      const unexplored = courseNodes.filter(n => n.mastery_tier === "unexplored" || !n.mastery_tier).length;
-      const total = courseNodes.length;
-      return {
-        course: c,
-        mastered,
-        learning,
-        struggling,
-        unexplored,
-        total,
-        progress: total ? mastered / total : 0,
-      };
-    });
-  }, [scopedCourses, nodes]);
+  const courseProgress = React.useMemo(
+    () => courseProgressFor(scopedCourses, nodes),
+    [scopedCourses, nodes],
+  );
 
   const suggestNode = React.useMemo(() => {
     if (!suggest) return null;
@@ -479,12 +473,31 @@ export function Dashboard() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => (
-            <div key={c.course_id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
-              <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
-              {c.course_code || c.course_name}
-            </div>
-          ))}
+          {useLegacyPanels && scopedCourses.slice(0, 5).map((c) => {
+            const lit = (keyHoverCourse ?? graphHoverCourse) === c.course_id;
+            return (
+              <button
+                key={c.course_id}
+                type="button"
+                data-testid="dashboard-graph-course-chip"
+                data-course-id={c.course_id}
+                title="Click to zoom to this course"
+                onPointerEnter={() => setKeyHoverCourse(c.course_id)}
+                onPointerLeave={() => setKeyHoverCourse(null)}
+                onFocus={() => setKeyHoverCourse(c.course_id)}
+                onBlur={() => setKeyHoverCourse(null)}
+                onClick={() => zoomToCourse(c.course_id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, fontSize: 11,
+                  color: lit ? "var(--text)" : "var(--text-dim)", fontWeight: lit ? 600 : 400,
+                  background: "transparent", border: 0, padding: "2px 4px", cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: c.color || "var(--accent)" }} />
+                {c.course_code || c.course_name}
+              </button>
+            );
+          })}
           <button
             className="btn btn--ghost btn--sm"
             onClick={() => setFullscreen(true)}
@@ -503,6 +516,9 @@ export function Dashboard() {
           height={size.h}
           highlightId={suggestNode?.id}
           onNodeClick={(n) => router.push(learnHrefForNode(n))}
+          focusCourseId={keyHoverCourse}
+          onHoverCourse={setGraphHoverCourse}
+          zoomRequest={zoomRequest}
         />
         {/* Courses key — sidebar layout only. Top-nav layout uses the
             full My Courses panel in the left column instead. */}
@@ -512,6 +528,10 @@ export function Dashboard() {
             hasCourses={courses.length > 0}
             semesterActive={!!activeSemester}
             onManage={() => setCoursesOpen(true)}
+            activeCourseId={keyHoverCourse ?? graphHoverCourse}
+            onHoverCourse={setKeyHoverCourse}
+            onSelectCourse={zoomToCourse}
+            selectHint="Click to zoom to this course"
           />
         )}
         <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
@@ -1002,15 +1022,6 @@ function FullscreenGraph({
   );
 }
 
-type CourseProgressEntry = {
-  course: EnrolledCourse;
-  mastered: number;
-  learning: number;
-  struggling: number;
-  unexplored: number;
-  total: number;
-  progress: number;
-};
 
 // One "My courses" line: colour dot, course code, mastery percentage and the
 // four-segment mastery bar.
@@ -1077,179 +1088,3 @@ function CourseProgressRow({
   return <div style={{ marginBottom: spacing }}>{body}</div>;
 }
 
-function CoursesKey({
-  courseProgress,
-  hasCourses,
-  semesterActive,
-  onManage,
-}: {
-  courseProgress: CourseProgressEntry[];
-  hasCourses: boolean;
-  semesterActive: boolean;
-  onManage: () => void;
-}) {
-  const [collapsed, setCollapsed] = React.useState(true);
-
-  // No enrolled courses at all → nothing to key, render nothing (the original
-  // null case). But when courses exist and the active semester merely has none
-  // of them, keep the panel so the "Nothing enrolled this semester." empty
-  // state below is reachable.
-  if (courseProgress.length === 0 && !(hasCourses && semesterActive)) return null;
-
-  // A thick white outline painted BEHIND the glyphs, plus a soft halo.
-  // `paint-order: stroke fill` pushes the stroke under the fill so
-  // letters stay clean-edged. Works against any background colour
-  // (graph nodes, edges, labels) without needing a backdrop.
-  const legibleText: React.CSSProperties = {
-    WebkitTextStroke: "3px rgba(255,255,255,0.95)",
-    paintOrder: "stroke fill" as React.CSSProperties["paintOrder"],
-    textShadow:
-      "0 0 4px rgba(255,255,255,0.95), " +
-      "0 0 2px rgba(255,255,255,1), " +
-      "0 0 8px rgba(255,255,255,0.6)",
-  };
-  // Progress-bar track gets a white ring so the bar geometry reads
-  // even when a colored graph node passes right behind it.
-  const legibleBar: React.CSSProperties = {
-    boxShadow: "0 0 0 1.5px rgba(255,255,255,0.95), 0 0 6px rgba(255,255,255,0.6)",
-  };
-  const legibleDot: React.CSSProperties = {
-    boxShadow: "0 0 0 2px rgba(255,255,255,0.95)",
-  };
-  // Soft white halo around each icon — blurred drop-shadows stacked at
-  // the same origin so the glow follows the icon's shape with no hard
-  // edges. Button itself stays transparent.
-  const paddedIconBtn: React.CSSProperties = {
-    padding: 0,
-    background: "transparent",
-    border: "none",
-    fontSize: 10,
-    lineHeight: 0,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    filter:
-      "drop-shadow(0 0 2px rgba(255,255,255,1)) " +
-      "drop-shadow(0 0 4px rgba(255,255,255,0.85)) " +
-      "drop-shadow(0 0 6px rgba(255,255,255,0.55))",
-  };
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        bottom: 14,
-        right: 14,
-        width: collapsed ? "auto" : 300,
-        maxWidth: "calc(100% - 28px)",
-        background: "transparent",
-        border: "none",
-        borderRadius: 0,
-        boxShadow: "none",
-        padding: collapsed ? "8px 12px" : "14px 16px 12px",
-        zIndex: 2,
-        fontSize: 13,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          marginBottom: collapsed ? 0 : 12,
-        }}
-      >
-        <div className="label-micro" style={{ fontSize: 11, ...legibleText }}>My courses</div>
-        <div style={{ display: "flex", gap: 6 }}>
-          {!collapsed && (
-            <button
-              className="btn btn--ghost btn--sm"
-              onClick={onManage}
-              title="Courses & Semesters"
-              aria-label="Courses & Semesters"
-              style={paddedIconBtn}
-              data-testid="dashboard-courses-manage"
-            >
-              <Icon name="cog" size={13} />
-            </button>
-          )}
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={() => setCollapsed(c => !c)}
-            aria-label={collapsed ? "Expand courses key" : "Collapse courses key"}
-            style={paddedIconBtn}
-            data-testid="dashboard-courses-key-toggle"
-          >
-            <Icon name={collapsed ? "plus" : "x"} size={13} />
-          </button>
-        </div>
-      </div>
-
-      {!collapsed && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {courseProgress.map(({ course, mastered, learning, struggling, unexplored, total, progress }) => {
-            const pct = Math.round(progress * 100);
-            const baseColor = course.color || "var(--accent)";
-            const segs = [
-              { count: mastered,   color: baseColor,         opacity: 1 },
-              { count: learning,   color: baseColor,         opacity: 0.78 },
-              { count: struggling, color: baseColor,         opacity: 0.55 },
-              { count: unexplored, color: "var(--bg-soft)",  opacity: 1 },
-            ];
-            return (
-              <div key={course.course_id}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, gap: 8 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <span style={{ width: 11, height: 11, borderRadius: "50%", background: baseColor, flexShrink: 0, ...legibleDot }} />
-                    <strong
-                      data-testid="dashboard-course-code"
-                      style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...legibleText }}
-                    >
-                      {course.course_code || course.course_name}
-                    </strong>
-                  </span>
-                  <span className="mono" style={{ color: "var(--text-dim)", fontSize: 12, ...legibleText }}>{pct}%</span>
-                </div>
-                {total > 0 ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      height: 8,
-                      background: "var(--bg-soft)",
-                      borderRadius: "var(--r-full)",
-                      overflow: "hidden",
-                      ...legibleBar,
-                    }}
-                    title={`Mastered ${mastered} · Learning ${learning} · Struggling ${struggling} · Unexplored ${unexplored}`}
-                  >
-                    {segs.map((s, i) => s.count > 0 && (
-                      <div
-                        key={i}
-                        style={{
-                          width: `${(s.count / total) * 100}%`,
-                          background: s.color,
-                          opacity: s.opacity,
-                          transition: "width var(--dur) var(--ease)",
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ height: 8, background: "var(--bg-soft)", borderRadius: "var(--r-full)", ...legibleBar }} />
-                )}
-              </div>
-            );
-          })}
-
-          {courseProgress.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--text-dim)", ...legibleText }}>
-              Nothing enrolled this semester.
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}

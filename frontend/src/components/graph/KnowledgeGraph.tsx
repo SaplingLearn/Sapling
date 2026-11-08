@@ -91,6 +91,10 @@ type Props = {
   /** 2D only: Obsidian-style legibility (hover focus, zoom-faded labels,
    *  importance sizing, arrows, course legend). The Tree turns it on. */
   legible?: boolean;
+  /** 2D legible: course focus / hover / zoom, wired to the host's course key. */
+  focusCourseId?: string | null;
+  onHoverCourse?: (courseId: string | null) => void;
+  zoomRequest?: { courseId: string; seq: number } | null;
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];

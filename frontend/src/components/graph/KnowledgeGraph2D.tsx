@@ -90,6 +90,12 @@ type Props = {
    * with direction arrows when zoomed in or focused.
    */
   legible?: boolean;
+  /** Legible: fade every course but this one (a hovered "My courses" row). */
+  focusCourseId?: string | null;
+  /** Legible: the course of the concept under the pointer, or null on leave. */
+  onHoverCourse?: (courseId: string | null) => void;
+  /** Legible: zoom to a course; a new `seq` asks again for the same course. */
+  zoomRequest?: { courseId: string; seq: number } | null;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -146,6 +152,9 @@ function KnowledgeGraph2DImpl({
   colorMode = "course",
   zoomControlsTop = 12,
   legible = false,
+  focusCourseId = null,
+  onHoverCourse,
+  zoomRequest = null,
 }: Props) {
   const mastery = colorMode === "mastery";
   const legibleRef = React.useRef(legible);
@@ -443,21 +452,25 @@ function KnowledgeGraph2DImpl({
     const rootOfCourse = new Map(roots.map((r) => [r.course_id, r.id]));
     return { concept, plan, outer, roots, rootOfCourse };
   }, [nodes, edges, width, height]);
-  // Legend hover: one course stays bright, the rest fade.
-  const [legendFocus, setLegendFocus] = React.useState<string | null>(null);
-  const courseRootOf = (n: GraphNode) =>
-    n.is_subject_root ? n.id : planned.rootOfCourse.get(n.course_id) ?? null;
-  const inLegendFocus = (n: GraphNode) => !legendFocus || courseRootOf(n) === legendFocus;
-  const zoomToCourse = (rootId: string) => {
-    const c = planned.plan.centers.get(rootId);
-    if (!c) return;
+  // A hovered "My courses" row (the host's key): that course stays bright.
+  const inLegendFocus = (n: GraphNode) => !focusCourseId || n.course_id === focusCourseId;
+  // The host's key asked to zoom to a course (Dashboard: click a row).
+  const zoomSeq = zoomRequest?.seq;
+  const zoomCourse = zoomRequest?.courseId;
+  React.useEffect(() => {
+    if (zoomSeq == null || !zoomCourse) return;
+    const rootId = planned.rootOfCourse.get(zoomCourse);
+    const c = rootId ? planned.plan.centers.get(rootId) : undefined;
+    if (!rootId || !c) return;
     const reach = (planned.outer.get(rootId) ?? 60) + 50;
     // Fit the course, but never so far out that its labels are still faded.
     const fit = Math.min(width / (reach * 2), height / (reach * 2));
     const scale = Math.min(MAX_ZOOM, Math.max(1.05, fit));
     viewTouchedRef.current = true;
     setView({ tx: width / 2 - c.x * scale, ty: height / 2 - c.y * scale, scale });
-  };
+    // Only a new request zooms; layout changes alone don't re-zoom.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomSeq, zoomCourse]);
   const focusSet = React.useMemo(() => {
     const set = new Set<string>();
     if (!focusId) return set;
@@ -827,8 +840,12 @@ function KnowledgeGraph2DImpl({
                     // under the cursor, not at a stale spot.
                     setTooltipPos({ x: ev.clientX, y: ev.clientY });
                     setHovered(n);
+                    if (legible) onHoverCourse?.(n.course_id);
                   }}
-                  onPointerLeave={() => setHovered((h) => (h?.id === n.id ? null : h))}
+                  onPointerLeave={() => {
+                    setHovered((h) => (h?.id === n.id ? null : h));
+                    if (legible) onHoverCourse?.(null);
+                  }}
                   onClick={(ev) => {
                     ev.stopPropagation();
                     if (movedRef.current) return;
@@ -984,64 +1001,6 @@ function KnowledgeGraph2DImpl({
           ⟲
         </button>
       </div>
-
-      {/* One course needs no key; the course is just the dot in the middle. */}
-      {legible && planned.roots.length > 1 && (
-        <div
-          data-testid="graph-course-legend"
-          onPointerLeave={() => setLegendFocus(null)}
-          style={{
-            // Top-left, under the wrapper's Mastery colors toggle: the
-            // bottom-right corner belongs to the app's bug-report button.
-            position: "absolute",
-            left: 12,
-            top: 44,
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            padding: 6,
-            boxShadow: "var(--shadow-sm)",
-            fontSize: 12,
-          }}
-        >
-          {planned.roots.map((r) => {
-            const [code, ...rest] = r.name.split(" - ");
-            const active = legendFocus === r.id;
-            return (
-              <button
-                key={r.id}
-                data-testid="graph-course-legend-item"
-                data-node-id={r.id}
-                type="button"
-                title={`${rest.join(" - ") || r.subject} · click to zoom`}
-                onPointerEnter={() => setLegendFocus(r.id)}
-                onFocus={() => setLegendFocus(r.id)}
-                onBlur={() => setLegendFocus(null)}
-                onClick={() => zoomToCourse(r.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "4px 8px",
-                  border: 0,
-                  borderRadius: "var(--r-sm)",
-                  background: active ? "var(--bg-subtle, rgba(0,0,0,0.05))" : "transparent",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontWeight: active ? 600 : 500,
-                }}
-              >
-                <span style={{ width: 10, height: 10, borderRadius: "50%", background: r.color || "var(--c-sage)", flex: "none" }} />
-                {code}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {hovered && !dragRef.current && (
         <div

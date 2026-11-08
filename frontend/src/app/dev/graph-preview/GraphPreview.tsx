@@ -2,6 +2,7 @@
 
 import React from "react";
 import { KnowledgeGraph } from "@/components/graph/KnowledgeGraph";
+import { CoursesKey, courseProgressFor } from "@/components/graph/CoursesKey";
 import { paletteFor, type GraphEdge, type GraphNode } from "@/lib/data";
 
 // "Name < A, B" = A and B are prerequisites of Name.
@@ -163,6 +164,18 @@ export default function GraphPreview() {
     return () => ro.disconnect();
   }, []);
 
+  // The Dashboard's wiring: hover a row to fade the other courses, hover a
+  // concept to light its row, click a row to zoom to the course.
+  const [keyHover, setKeyHover] = React.useState<string | null>(null);
+  const [graphHover, setGraphHover] = React.useState<string | null>(null);
+  const [zoomRequest, setZoomRequest] = React.useState<{ courseId: string; seq: number } | null>(null);
+  const keyCourses = React.useMemo(
+    () => COURSES.slice(0, courseCount).map((c) => ({
+      course_id: c.id, course_code: c.code, course_name: c.title, color: paletteFor(c.id),
+    })),
+    [courseCount],
+  );
+
   const data = React.useMemo(
     () => build(COURSES.slice(0, courseCount), links),
     [courseCount, links],
@@ -184,7 +197,7 @@ export default function GraphPreview() {
           {conceptCount} concepts · {linkCount} concept links · hover a concept · scroll to zoom · dev only, made-up data
         </span>
       </div>
-      <div ref={wrapRef} style={{ flex: 1, minHeight: 0 }}>
+      <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* The same wrapper the Tree and Dashboard mount (Mastery colors
             toggle, crash boundary), not the bare 2D renderer. */}
         <KnowledgeGraph
@@ -194,7 +207,24 @@ export default function GraphPreview() {
           width={size.w}
           height={size.h}
           legible={legible}
+          focusCourseId={keyHover}
+          onHoverCourse={setGraphHover}
+          zoomRequest={zoomRequest}
         />
+        {legible && courseCount > 1 && (
+          <CoursesKey
+            courseProgress={courseProgressFor(keyCourses, data.nodes)}
+            hasCourses
+            semesterActive={false}
+            placement="top-left"
+            defaultCollapsed={false}
+            testIdPrefix="preview"
+            activeCourseId={keyHover ?? graphHover}
+            onHoverCourse={setKeyHover}
+            onSelectCourse={(id) => setZoomRequest((r) => ({ courseId: id, seq: (r?.seq ?? 0) + 1 }))}
+            selectHint="Click to zoom to this course"
+          />
+        )}
       </div>
     </div>
   );
