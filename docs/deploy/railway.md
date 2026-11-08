@@ -8,7 +8,7 @@ Every step below is for Andres to run, staging first.
 
 | File | What it is |
 | --- | --- |
-| `backend/Dockerfile` | One file, four stages: `api`, `heavy`, `worker`, `full`. The last line picks one from the `SAPLING_IMAGE_TARGET` build argument (default `full`). |
+| `backend/Dockerfile` | One file, five stages: `target-check`, `api`, `heavy`, `worker`, `full`. The last stage picks one from the `SAPLING_IMAGE_TARGET` build argument (unset or empty = `full`; anything but `api`/`worker`/`full` fails the build in `target-check`). |
 | `backend/requirements.txt` | The API's dependencies. `requirements.lock` is exactly this file compiled (the lock did not change in the split). |
 | `backend/requirements-worker.txt` | The worker-only extras: Docling, transformers, torch. Never in the lock (CPU torch index, see the Dockerfile). |
 | `.railway/railway.ts` | Railway Infrastructure as Code: the `worker` service, and the API service behind `MANAGE_API`. Unverified against the live project. |
@@ -21,19 +21,26 @@ Every step below is for Andres to run, staging first.
 | `worker` | `api`'s packages + `requirements-worker.txt` (CPU torch) + tesseract + Chromium | `python -m worker` | torch, Chromium |
 | `full` | the same as `worker` | `uvicorn main:app --port 5000` | torch, Chromium |
 
-`full` is byte-for-byte the image Railway builds today (same apt packages,
-same torch step, same lock constraints, same Chromium), and it is still what a
-plain `docker build backend` produces. Nothing changes on Railway until a
-service sets `SAPLING_IMAGE_TARGET`.
+`full` is the image Railway builds today (same apt packages, same torch step,
+same lock constraints, same Chromium) plus one line, `/etc/sapling-image-target`,
+naming the target it was built as; it is still what a plain
+`docker build backend` produces. Nothing changes on Railway until a service
+sets `SAPLING_IMAGE_TARGET`.
 
 Choosing one:
 
 - Railway: set the service variable `SAPLING_IMAGE_TARGET` to `api`, `worker`
   or `full`. Railway hands a service variable to the Docker build when the
   Dockerfile declares an `ARG` of that name, and the Dockerfile's last stage is
-  `FROM ${SAPLING_IMAGE_TARGET}`. Unset means `full`. (Railway has no
-  build-target setting; this is how the target gets chosen.) Changing it needs
-  a redeploy, not just a restart: it is a build input.
+  `FROM ${SAPLING_IMAGE_TARGET:-full}`. Unset OR EMPTY means `full` (a plain
+  `${SAPLING_IMAGE_TARGET}` with an empty value left the build with no `FROM`
+  at all). Any other value fails the build: the first stage, `target-check`,
+  exits 1 with "SAPLING_IMAGE_TARGET='<value>' is not a backend image target:
+  use api, worker or full". (Under BuildKit, which resolves stages in parallel,
+  the failure may instead surface as a pull error for the unknown `FROM` name;
+  either way nothing is built.) Railway has no build-target setting; this is
+  how the target gets chosen. Changing it needs a redeploy, not just a
+  restart: it is a build input.
 - Locally / CI: `docker build --target api backend` (or
   `--build-arg SAPLING_IMAGE_TARGET=api`). Podman/buildah accepts the same.
 
@@ -69,7 +76,15 @@ What I could not verify offline (check in the plan output):
   current root directory;
 - that `domains: []` leaves the worker with no public networking;
 - that a reference value such as `${{backend.SUPABASE_URL}}` is accepted as a
-  literal `env` value (it is Railway's reference-variable syntax in the UI).
+  literal `env` value (it is Railway's reference-variable syntax in the UI). The
+  IaC reference (docs.railway.com/infrastructure-as-code/reference, read
+  2026-11-08) documents literal strings and the object form
+  `<service>.env.<VAR>` for references, and does not mention a raw `${{...}}`
+  string either way; if the plan shows the literal text instead of a
+  reference, switch `ref()` to the object form;
+- what a reference to a variable the API service does not set resolves to: the
+  variables docs do not say (empty string, literal text or a failed deploy).
+  Hence `NOT_ON_API` (step 3): never leave a reference dangling.
 
 ## Runbook
 
@@ -101,14 +116,31 @@ overrides the Dockerfile `CMD`; keep it as it is (the image's CMD is
 
 ### 3. Plan, staging
 
+First list what the API service actually sets, and put every name from the
+worker's lists (`BOOT_VARIABLES`, `HANDLER_VARIABLES`, `FLAG_KILL_SWITCHES`,
+`MODEL_SLOT_VARIABLES`) that is NOT in it into `NOT_ON_API` in
+`.railway/railway.ts`, so the worker never holds a reference to a variable that
+does not exist:
+
+```sh
+railway variables --service backend --kv | cut -d= -f1 | sort   # the API's names
+```
+
+Most of the optional names (model-slot overrides, kill switches, OCR tuning)
+will be unset; that is normal and they then take their code defaults, in the
+worker as in the API. `NOT_ON_API` may differ per environment: plan and apply
+staging and production separately, each with its own list.
+
 ```sh
 railway config plan
 ```
 
-The plan must show exactly: create service `worker` (source, start command,
-replicas, the variables listed in `SHARED_VARIABLES` as references). Anything
-else, and above all any **delete**, means a constant is wrong: stop and fix the
-file. Never pass `--confirm-destructive`.
+The plan must show exactly: create service `worker` with its source, start
+command and replicas, `SAPLING_IMAGE_TARGET=worker`, and one reference per
+name in `SHARED_VARIABLES` (the four lists above minus `NOT_ON_API`; 54 names
+before that filter, `backend/tests/test_railway_worker_env.py` pins what they
+must cover). Anything else, and above all any **delete**, means a constant is
+wrong: stop and fix the file. Never pass `--confirm-destructive`.
 
 ### 4. Apply, staging
 
@@ -172,17 +204,31 @@ set it to `full`) and redeploy. That rebuilds today's image.
 
 ## Worker variables
 
-The worker runs the same code as the API and boots through the same checks
-(`worker/__main__.py::boot`: model-mode freeze, `validate_config()`, the
-encryption-key canary), so it needs at least `APP_ENV`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`, `SESSION_SECRET`,
-`ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (the `SHARED_VARIABLES` block). Add to
-that list every variable the API service has set that a job handler can read:
-`SAPLING_MODEL_MODE`, `LOGFIRE_TOKEN`, the `POSTHOG_*` set, `REDIS_URL`,
-`OCR_ENGINE`, `GOT_OCR_*`, `GEMINI_VISION_OCR_*`, `EVENTS_LOGGING_ENABLED`,
-`EVENTS_QUEUE_MAX`, any `SAPLING_FLAG_*` kill switch, `SUPABASE_JWT_SIGNING_KEY`
-/ `SUPABASE_ANON_KEY` if set. A reference to a variable the API does not have
-resolves to an empty string, which every one of these treats as unset.
+The worker runs the same code as the API (its boot checks, the job handlers
+`document.process`, `document.index`, `course_context.refresh`, `jobs.prune`,
+`gradescope.sync` once it lands, and the agents they call), so a variable set
+only on the API is silently missing in the worker. `.railway/railway.ts`
+therefore references, from the API service, every variable those code paths
+read. The list was derived by grepping `os.getenv` / `os.environ` reads in
+those modules, and `backend/tests/test_railway_worker_env.py` re-derives it on
+every PR: a new env read on a worker path fails CI until it is shared or
+excluded with a reason.
+
+| List | What | Why the worker needs it |
+| --- | --- | --- |
+| `BOOT_VARIABLES` | `APP_ENV`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`, `SESSION_SECRET`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `SAPLING_MODEL_MODE`, `SUPABASE_JWT_SIGNING_KEY`, `SUPABASE_ANON_KEY` | `worker/__main__.py::boot`: `validate_config()` and the key canary (a missing one exits 2), the model-mode freeze, the boot-time `db_user_scope` key warning |
+| `HANDLER_VARIABLES` | `OCR_ENGINE`, `GEMINI_VISION_OCR_*`, `GOT_OCR_*`, `REDIS_URL`, `INDEX_MAX_ATTEMPTS`, `INDEX_LEASE_SECONDS`, `DBOS_*`, `EVENTS_LOGGING_ENABLED`, `EVENTS_QUEUE_MAX`, the `POSTHOG_*` set, the `FEATURE_FLAGS_*_S` TTLs, `LOGFIRE_TOKEN` | extraction/OCR, the shared OCR cache, indexing, events + LLM usage, PostHog mirror and erasure, flag caching |
+| `FLAG_KILL_SWITCHES` | `SAPLING_FLAG_<KEY>` for every non-nav flag | a switch thrown on the API must hold in the worker too |
+| `MODEL_SLOT_VARIABLES` | `SAPLING_MODEL_<TASK>` + `SAPLING_MODEL_FALLBACK_<TASK>` for classifier, summary, concepts, syllabus, ocr_vision, course_summary | a slot rolled back on the API must not keep running the default in the worker |
+
+Not shared, on purpose: HTTP-only settings (`PORT`, `FRONTEND_URL`,
+`SECURE_COOKIES`, Google OAuth, `ALLOWED_EMAIL_DOMAINS`), email (`RESEND_API_KEY`,
+`EMAIL_*`: no job sends mail), `CANOPY_METRICS_TOKEN`, `ACCOUNT_SYNC_*`,
+`OCR_ASYNC_ENABLED` and `UPLOAD_JOB_PICKUP_GRACE_SECONDS` (the API's side of an
+upload), `DB_USER_SCOPE_SHADOW_SAMPLE_RATE` (per request; the worker runs as
+service role), `SAPLING_FUNCTION_HANDLERS` (E2E only) and the commit SHA
+(Railway sets `RAILWAY_GIT_COMMIT_SHA` on every service). The reasons are in
+the test's `EXCLUDED`.
 
 Worker-only tuning (all optional; the CLI flags override them):
 
@@ -190,7 +236,33 @@ Worker-only tuning (all optional; the CLI flags override them):
 | --- | --- | --- |
 | `JOBS_POLL_INTERVAL_SECONDS` | 5 | sleep when the queue is empty |
 | `JOBS_BATCH` | 10 | most jobs per pass |
-| `JOBS_LEASE_SECONDS` | 300 | a claim's lease; heartbeated every lease/3 while the handler runs |
+| `JOBS_LEASE_SECONDS` | 300 | a claim's lease. At least 300 (`MIN_LEASE_SECONDS`): a lower value is refused at boot (exit 2). See "The lease rule" below. |
 | `JOBS_MAX_HEARTBEAT_SECONDS` | 3600 | stop heartbeating after this, so a hung handler's job is re-offered |
-| `JOBS_PRUNE_AFTER_DAYS` | 14 | delete `succeeded` jobs older than this, from an hourly `jobs.prune` job (0 = never). Dead letters are never pruned. |
+| `JOBS_PRUNE_AFTER_DAYS` | 14 | delete `succeeded` jobs older than this, from an hourly `jobs.prune` job (0 = never). Only `succeeded` rows are ever deleted: queued, failed, running and dead rows are untouchable. |
 | `JOBS_LOG_FORMAT` | text | `json` for structured logs |
+
+`JOBS_PRUNE_AFTER_DAYS` is an operational knob, not a feature flag, on
+purpose: deleting finished job rows past their retention is queue upkeep, no
+student sees it, and the SQL cannot reach unfinished work or dead letters.
+Every worker that claims `jobs.prune` asks for a run once an hour, but a run
+is only enqueued when no `jobs.prune` row is queued, failed or running and
+none succeeded in the last hour (plus an hour-bucketed dedupe key for two
+replicas racing), so N replicas give about one prune run per hour, not N.
+
+### The lease rule
+
+`claim_jobs` re-offers a running job once `locked_at` plus the CLAIMING
+worker's lease has passed, not the lease of the worker running it. A heartbeat
+therefore only protects a job from claimers whose lease is longer than the gap
+between beats. So every worker:
+
+1. refuses a lease under `MIN_LEASE_SECONDS` (300 s, `services/jobs.py`):
+   `JOBS_LEASE_SECONDS` / `--lease-seconds` below it exits 2 at boot;
+2. heartbeats every `MIN_LEASE_SECONDS / 3` (100 s) whatever its own lease.
+
+Then a live job's `locked_at` is never more than 100 s old, and no worker in
+the fleet, whatever lease it runs with, can re-claim it even if two beats are
+lost. A longer lease only delays how soon THAT worker's claims pick up a job
+whose heartbeat stopped (a crash, or a hung handler past
+`JOBS_MAX_HEARTBEAT_SECONDS`). Changing `MIN_LEASE_SECONDS` itself needs every
+worker on the new image (stop the old ones first).

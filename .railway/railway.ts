@@ -38,13 +38,20 @@ const DEFAULT_BRANCH = "main";
 const MANAGE_API = false;
 
 /** Variables the worker takes from the API service, by reference (no secret
- * is written here, and the two cannot drift). The first block is what
- * `validate_config()` and the key canary require at boot: a worker missing
- * one exits 2. Add every other variable the API service has set that the
- * worker's code paths read (see the runbook's "Worker variables"); a
- * reference to a variable the API does not have resolves to "". */
-const SHARED_VARIABLES = [
-  // required at boot
+ * is written here, and the two cannot drift). Derived by grepping every
+ * `os.getenv` / `os.environ` / config read on the code paths a worker runs:
+ * boot (worker/__main__.py::boot), the job handlers (document.process,
+ * document.index, course_context.refresh, jobs.prune, and gradescope.sync
+ * once it lands) and the agents they call. Keep it in step with
+ * backend/tests/test_railway_worker_env.py, which pins it.
+ *
+ * Railway does not document what a reference to a variable the API service
+ * does NOT set becomes (docs.railway.com/variables, read 2026-11-08), so do
+ * not leave one dangling: list every name the API lacks in NOT_ON_API below
+ * (runbook step 3) and it is left out. Everything here treats unset as its
+ * default. */
+const BOOT_VARIABLES = [
+  // validate_config() and the key canary: a worker missing one exits 2.
   "APP_ENV",
   "SUPABASE_URL",
   "SUPABASE_SERVICE_KEY",
@@ -52,11 +59,90 @@ const SHARED_VARIABLES = [
   "SESSION_SECRET",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
-  // read by job handlers (confirm each is set on the API service first)
+  // read at boot: freeze_model_mode(), config's db_user_scope key warning.
   "SAPLING_MODEL_MODE",
-  "LOGFIRE_TOKEN",
-  "POSTHOG_PROJECT_TOKEN",
+  "SUPABASE_JWT_SIGNING_KEY",
+  "SUPABASE_ANON_KEY",
 ];
+
+const HANDLER_VARIABLES = [
+  // services/extraction_service.py + extraction_backends/ (document.process)
+  "OCR_ENGINE",
+  "GEMINI_VISION_OCR_ENABLED",
+  "GEMINI_VISION_OCR_MAX_PAGES",
+  "GOT_OCR_ENABLED",
+  "GOT_OCR_MODEL_PATH",
+  // services/cache.py: the content-addressed OCR cache, shared with the API
+  "REDIS_URL",
+  // services/document_indexing.py (document.index)
+  "INDEX_MAX_ATTEMPTS",
+  "INDEX_LEASE_SECONDS",
+  // services/durable.py (imported on the upload pipeline's path)
+  "DBOS_ENABLED",
+  "DBOS_DATABASE_URL",
+  // services/events_service.py: handlers record events + LLM usage
+  "EVENTS_LOGGING_ENABLED",
+  "EVENTS_QUEUE_MAX",
+  // services/posthog_client.py + config.py: the usage mirror and erasure
+  "POSTHOG_PROJECT_TOKEN",
+  "POSTHOG_HOST",
+  "POSTHOG_API_HOST",
+  "POSTHOG_PROJECT_ID",
+  "POSTHOG_PERSONAL_API_KEY",
+  "POSTHOG_DISABLED",
+  // services/feature_flags.py: the same snapshot/roles TTLs as the API
+  // (VERSION_CHECK_S arrives with the stateless-flags change above this one)
+  "FEATURE_FLAGS_SNAPSHOT_TTL_S",
+  "FEATURE_FLAGS_ROLES_TTL_S",
+  "FEATURE_FLAGS_VERSION_CHECK_S",
+  // config.py (read on import; the worker does not configure Logfire yet)
+  "LOGFIRE_TOKEN",
+];
+
+/** Every server-side flag's env kill switch (services/feature_flags.py
+ * REGISTRY, `SAPLING_FLAG_<KEY>`): a switch thrown on the API must hold in
+ * the worker too, or the queue keeps doing what the API was told to stop.
+ * The nav `hide_*` flags are frontend-only and left out. Includes the flags
+ * the stack above this branch adds (llm_budget, llm_outage_drill,
+ * async_db_client, stateless_rate_limit), so it is right at every step. */
+const FLAG_KILL_SWITCHES = [
+  "decision_router",
+  "product_analytics",
+  "llm_fallback",
+  "jobs_queue",
+  "db_user_scope",
+  "realtime_rls",
+  "llm_budget",
+  "llm_outage_drill",
+  "async_db_client",
+  "stateless_rate_limit",
+].map((key) => `SAPLING_FLAG_${key.toUpperCase()}`);
+
+/** Per-slot model overrides (agents/_providers.py: `SAPLING_MODEL_<TASK>`,
+ * `SAPLING_MODEL_FALLBACK_<TASK>`) for the agent tasks a worker runs:
+ * classifier/summary/concepts/syllabus (document.process), ocr_vision
+ * (page OCR), course_summary (course_context.refresh). Without them a slot
+ * rolled back on the API would still run the default model in the worker. */
+const WORKER_AGENT_TASKS = [
+  "classifier", "summary", "concepts", "syllabus", "ocr_vision", "course_summary",
+];
+const MODEL_SLOT_VARIABLES = WORKER_AGENT_TASKS.flatMap((task) => [
+  `SAPLING_MODEL_${task.toUpperCase()}`,
+  `SAPLING_MODEL_FALLBACK_${task.toUpperCase()}`,
+]);
+
+/** Names from the lists above that the API service does NOT set in this
+ * project (runbook step 3 fills it from `railway variables`). They are not
+ * referenced. Never put a BOOT_VARIABLES name here except the three optional
+ * ones (SAPLING_MODEL_MODE, SUPABASE_JWT_SIGNING_KEY, SUPABASE_ANON_KEY). */
+const NOT_ON_API: string[] = [];
+
+const SHARED_VARIABLES = [
+  ...BOOT_VARIABLES,
+  ...HANDLER_VARIABLES,
+  ...FLAG_KILL_SWITCHES,
+  ...MODEL_SLOT_VARIABLES,
+].filter((name) => !NOT_ON_API.includes(name));
 
 // ── Services ────────────────────────────────────────────────────────────────
 
