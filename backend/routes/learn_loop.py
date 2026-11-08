@@ -6706,6 +6706,14 @@ def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str
 PROBE_MATCHED_PRETEST_FLAG = "probe_matched_pretest"
 
 
+def _probe_history(doc: dict) -> list:
+    """The probe's recorded observations, read without touching the document
+    (`_probe_doc` fills defaults in place; this reads only)."""
+    pr = doc.get("probe")
+    history = pr.get("history") if isinstance(pr, dict) else None
+    return history if isinstance(history, list) else []
+
+
 def _unanchored_skills(user_id: str, skills: list[str], history: list) -> frozenset[str]:
     """Spec §13 A130: the probe's skills whose next graded answer is their
     pretest — no graded answer in this session's probe history
@@ -6952,7 +6960,7 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     # this session and no anchor in the journal — start on a form parallel to
     # their post-test reserves. Off: no anchors read, nothing steered.
     unanchored = (
-        _unanchored_skills(body.user_id, skills, _probe_doc(dict(state)).get("history") or [])
+        _unanchored_skills(body.user_id, skills, _probe_history(state))
         if items and flag_on(PROBE_MATCHED_PRETEST_FLAG, body.user_id)
         else frozenset()
     )
