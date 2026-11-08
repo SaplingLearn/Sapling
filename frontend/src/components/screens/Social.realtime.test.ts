@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeLatestMessages, planMessageRealtimeAction, roomRealtimeMaySubscribe } from './Social';
+import { mergeLatestMessages, planMessageRealtimeAction, planRoomRealtime } from './Social';
 
 /**
  * #124: room_messages realtime payloads carry ciphertext `text`. The component
@@ -79,17 +79,33 @@ describe('mergeLatestMessages (#764)', () => {
 });
 
 /**
- * RLS step 2e (#115): under `realtime_rls` the room channel waits for the
- * minted token; with the flag off it subscribes at once with the anon key,
- * exactly as before the flag existed.
+ * RLS step 2e (#115): how the study-room channels may join. Flags still
+ * loading: nothing (a flagged student never first joins with the anon key).
+ * Flag off: the anon subscription exactly as before the flag existed, whatever
+ * the token lifecycle says (it is never started). Flag on: only on an applied
+ * token, or the anon fallback once the token is permanently unavailable.
  */
-describe('roomRealtimeMaySubscribe (RLS step 2e)', () => {
-  it('flag off: subscribes immediately (anon key, unchanged)', () => {
-    expect(roomRealtimeMaySubscribe(false, false)).toBe(true);
+describe('planRoomRealtime (RLS step 2e)', () => {
+  it('flags loading: waits, flag on or off', () => {
+    for (const mode of ['off', 'pending', 'token', 'anon'] as const) {
+      expect(planRoomRealtime(false, false, mode)).toBe('wait');
+      expect(planRoomRealtime(false, true, mode)).toBe('wait');
+    }
   });
 
-  it('flag on: waits until the minted token is applied', () => {
-    expect(roomRealtimeMaySubscribe(true, false)).toBe(false);
-    expect(roomRealtimeMaySubscribe(true, true)).toBe(true);
+  it('flag off: the unchanged anon subscription', () => {
+    for (const mode of ['off', 'pending', 'token', 'anon'] as const) {
+      expect(planRoomRealtime(true, false, mode)).toBe('anon');
+    }
+  });
+
+  it('flag on: waits for the minted token (first fetch, or after expiry)', () => {
+    expect(planRoomRealtime(true, true, 'off')).toBe('wait');
+    expect(planRoomRealtime(true, true, 'pending')).toBe('wait');
+    expect(planRoomRealtime(true, true, 'token')).toBe('token');
+  });
+
+  it('flag on, token permanently unavailable (404/503): falls back to anon', () => {
+    expect(planRoomRealtime(true, true, 'anon')).toBe('anon');
   });
 });
