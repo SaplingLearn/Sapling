@@ -175,7 +175,7 @@ row with the same drafter, alignment and solve models.
 4. These are upper bounds per student-month, as above: one 10-concept upload
    per student-month, while check items are course assets every student in
    the course shares.
-5. The live eval recording each flag waits for (spec §13 A140 (i), A141 (i))
+5. The live eval recording each flag waits for (spec §13 A140 (g), A141 (i))
    can log usage with `SAPLING_EVAL_USAGE_LOG`. Those lines replace this
    estimate's characters / 4, thinking and verdict-size assumptions with
    measurements.
