@@ -37,7 +37,7 @@ from services.encryption import encrypt_if_present, encrypt_json, decrypt_if_pre
 from services.extraction_service import extract_text_from_file
 from services.calendar_service import save_assignments_to_db
 from services.graph_service import apply_graph_update
-from services.course_context_service import update_course_context
+from services.course_context_service import refresh_course_context
 from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
@@ -801,7 +801,7 @@ async def upload_document_sync(
     background_tasks.add_task(_invalidate_study_guide_cache, user_id, offering_id)
     # update_course_context aggregates an OFFERING's enrollments (#759: the
     # abstract course id matched none, so it only cleared the cache).
-    background_tasks.add_task(update_course_context, offering_id)
+    background_tasks.add_task(_refresh_course_context, offering_id, user_id)
     background_tasks.add_task(_check_upload_achievements, user_id)
     # #482: this route never indexed. Gradebook syllabus uploads come through
     # it, so none of them reached RAG. Same entry point as the streaming route.
@@ -1182,7 +1182,7 @@ async def upload_document(
                 _spawn_post_roll(
                     ("invalidate_study_guide_cache", _invalidate_study_guide_cache, user_id, offering_id),
                     # update_course_context aggregates an OFFERING (#759).
-                    ("update_course_context", update_course_context, offering_id),
+                    ("update_course_context", _refresh_course_context, offering_id, user_id),
                     ("check_upload_achievements", _check_upload_achievements, user_id),
                     # #482: the id only. The indexer reads everything else off
                     # the stored row, which is what lets the sweeper re-drive
@@ -1219,6 +1219,12 @@ def _invalidate_study_guide_cache(user_id: str, offering_id: str) -> None:
             "Failed to invalidate study guides cache for user=%s offering=%s",
             user_id, offering_id,
         )
+
+
+def _refresh_course_context(offering_id: str, user_id: str) -> None:
+    """Post-upload class-aggregate refresh: inline, or a queued job when the
+    `jobs_queue` flag is on for the uploader (#116)."""
+    refresh_course_context(offering_id, user_id=user_id)
 
 
 def _check_upload_achievements(user_id: str) -> None:

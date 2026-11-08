@@ -87,6 +87,16 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "When an agent's LLM provider is down (retries exhausted or its "
             "circuit breaker open), retry the call on the other provider's "
             "model. Global: per-user rules and rollouts do not apply.", False),
+    # #116: move background work onto the Postgres job queue. Server-only.
+    # Resolved for the student whose action triggered the work. Today it
+    # covers course-context aggregation (course_context_service.
+    # refresh_course_context). On WITHOUT a running `python -m worker`, that
+    # work only queues: class aggregates stop refreshing until a worker
+    # starts. Hence default off.
+    FlagDef("jobs_queue", ("off", "on"),
+            "Run course-context aggregation on the job queue instead of in the "
+            "request. Needs a running `python -m worker`; without one the work "
+            "only queues.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

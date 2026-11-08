@@ -1004,7 +1004,7 @@ class TestShareClassContextToggleRefresh:
         with (
             _mock_self(),
             patch("routes.profile.table", side_effect=self._tables()),
-            patch("routes.profile.update_course_context") as refresh,
+            patch("routes.profile.refresh_course_context") as refresh,
         ):
             r = client.patch(
                 f"/api/profile/{USER_ID}/settings", json={"share_class_context": False}
@@ -1013,6 +1013,8 @@ class TestShareClassContextToggleRefresh:
         # TestClient runs BackgroundTasks after the response: one refresh per
         # distinct offering.
         assert sorted(c.args[0] for c in refresh.call_args_list) == ["off-1", "off-2"]
+        # #116: resolved for the student who flipped the toggle.
+        assert {c.kwargs.get("user_id") for c in refresh.call_args_list} == {USER_ID}
 
     def test_toggling_share_class_context_resyncs_chunk_visibility(self):
         """#629: the toggle also has to reach rows already in `course_chunks`.
@@ -1022,7 +1024,7 @@ class TestShareClassContextToggleRefresh:
         with (
             _mock_self(),
             patch("routes.profile.table", side_effect=self._tables()),
-            patch("routes.profile.update_course_context"),
+            patch("routes.profile.refresh_course_context"),
             patch("routes.profile.resync_user_chunk_visibility") as resync,
         ):
             r = client.patch(
@@ -1035,7 +1037,7 @@ class TestShareClassContextToggleRefresh:
         with (
             _mock_self(),
             patch("routes.profile.table", side_effect=self._tables()),
-            patch("routes.profile.update_course_context"),
+            patch("routes.profile.refresh_course_context"),
             patch("routes.profile.resync_user_chunk_visibility") as resync,
         ):
             r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
@@ -1046,7 +1048,7 @@ class TestShareClassContextToggleRefresh:
         with (
             _mock_self(),
             patch("routes.profile.table", side_effect=self._tables()),
-            patch("routes.profile.update_course_context") as refresh,
+            patch("routes.profile.refresh_course_context") as refresh,
         ):
             r = client.patch(f"/api/profile/{USER_ID}/settings", json={"theme": "dark"})
         assert r.status_code == 200

@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
 
 from services.chunk_visibility import resync_user_chunk_visibility
-from services.course_context_service import update_course_context
+from services.course_context_service import refresh_course_context
 from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
@@ -543,7 +543,8 @@ def update_settings(
             "offering_id", filters={"user_id": f"eq.{user_id}"}
         )
         for offering_id in {r["offering_id"] for r in enrollment_rows or []}:
-            background_tasks.add_task(update_course_context, offering_id)
+            background_tasks.add_task(
+                refresh_course_context, offering_id, user_id=user_id)
         # #629: the aggregates above are recomputed from scratch, so dropping
         # out of them is enough. RAG rows are not — an upload that already
         # landed in the shared course pool stays there until something flips
