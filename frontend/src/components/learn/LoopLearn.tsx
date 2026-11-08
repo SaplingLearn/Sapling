@@ -1735,7 +1735,7 @@ export function LoopLearn() {
   if (sessionsError) {
     body = (
       <CenteredCard testId="loop-sessions-error">
-        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Couldn&apos;t load your sessions</div>
+        <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Couldn&apos;t load your sessions</h2>
         <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
           Nothing was started. Try again to pick up where you left off.
         </p>
@@ -1747,7 +1747,7 @@ export function LoopLearn() {
   } else if (noCourses) {
     body = (
       <CenteredCard testId="loop-no-course">
-        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Add a course to start learning</div>
+        <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Add a course to start learning</h2>
         <p style={{ color: "var(--text-dim)", fontSize: 14, margin: 0 }}>
           The tutor works course by course — add one from your{" "}
           <Link data-testid="loop-no-course-link" href="/tree">knowledge map</Link>.
@@ -1812,7 +1812,7 @@ export function LoopLearn() {
   } else if (loadError === "start" && !sessionId) {
     body = (
       <CenteredCard testId="loop-start-error">
-        <div className="h-serif" style={{ fontSize: 20, marginBottom: 6 }}>Couldn&apos;t start a session</div>
+        <h2 className="h-serif" style={{ margin: "0 0 6px", fontSize: 20 }}>Couldn&apos;t start a session</h2>
         <p style={{ color: "var(--text-dim)", fontSize: 14, margin: "0 0 16px" }}>
           Nothing was started. Try again in a moment.
         </p>
@@ -1951,7 +1951,10 @@ export function LoopLearn() {
             </span>
           </div>
         )}
-        {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
+        {/* Always in the DOM, so a close that must wait is announced (spec §13 A135). */}
+        <div aria-live="polite">
+          {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
+        </div>
       </div>
     );
     body = (
@@ -2050,10 +2053,27 @@ function isOpenPhase(phase: LoopPhase): boolean {
 
 // ── Pieces ─────────────────────────────────────────────────────────────────
 
+/** A card that stands in for the screen: an error, the saved-grade recovery,
+ *  no course, the start's crisis-support card, a session closed elsewhere.
+ *  Spec §13 A135: when it replaces the control the student used (focus was left
+ *  on the page, or on a control the action disabled), its heading takes focus,
+ *  so it is read out and Tab continues from it. */
 function CenteredCard({ testId, children }: { testId: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (modalOpen() || (active && active !== document.body && !active.matches(":disabled"))) return;
+    const heading = ref.current?.querySelector<HTMLElement>("h2, h3");
+    if (!heading) {
+      ref.current?.focus();
+      return;
+    }
+    if (!heading.hasAttribute("tabindex")) heading.tabIndex = -1;
+    heading.focus();
+  }, []);
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
-      <div data-testid={testId} className="card" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
+      <div ref={ref} tabIndex={-1} data-testid={testId} className="card" style={{ maxWidth: 520, margin: "24px auto", padding: "var(--pad-xl)" }}>
         {children}
       </div>
     </div>

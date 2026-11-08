@@ -2690,3 +2690,31 @@ describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
     expect(region).toContainElement(await screen.findByTestId("loop-materials-unavailable"));
   });
 });
+
+describe("LoopLearn — cards that stand in for the screen (spec §13 A135)", () => {
+  it("a failed start's card takes focus with its heading; its retry leads on to the first question", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession
+      .mockRejectedValueOnce(new ApiError("x", 503, { body: { detail: "temporarily unavailable" } }))
+      .mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-start-error");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Couldn't start a session" })).toHaveFocus());
+    fireEvent.click(screen.getByTestId("loop-start-retry"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveFocus());
+  });
+
+  it("does not take focus a student is using elsewhere", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    let fail: (error: unknown) => void = () => {};
+    api.startLoopSession.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalled());
+    const elsewhere = screen.getByTestId("loop-tree-link");
+    elsewhere.focus();
+    await act(async () => { fail(new ApiError("x", 503, { body: { detail: "temporarily unavailable" } })); });
+    await screen.findByTestId("loop-start-error");
+    expect(elsewhere).toHaveFocus();
+  });
+});
