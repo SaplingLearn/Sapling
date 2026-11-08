@@ -271,6 +271,24 @@ describe('streamLoopCheckAnswer (spec §13 A16: explicit submissions only)', () 
     await streamLoopCheckAnswer('s', 'u', 'qh', { idk: true });
     expect(bodyOf()).toEqual({ session_id: 's', user_id: 'u', question_hash: 'qh', idk: true });
   });
+  // spec §13 A127: the stated confidence, only when chosen and never with an idk
+  it('a chosen confidence is posted with the answer', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(sseBody([done])));
+    await streamLoopCheckAnswer('s', 'u', 'qh', { answer: 'my answer', idk: false, confidence: 'fairly_sure' });
+    expect(bodyOf()).toEqual({
+      session_id: 's', user_id: 'u', question_hash: 'qh', answer: 'my answer', idk: false, confidence: 'fairly_sure',
+    });
+  });
+  it.each([null, undefined])('no confidence (%s) posts no confidence field', async (confidence) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(sseBody([done])));
+    await streamLoopCheckAnswer('s', 'u', 'qh', { answer: 'my answer', idk: false, confidence });
+    expect(bodyOf()).not.toHaveProperty('confidence');
+  });
+  it('an idk never posts a confidence', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ graded: true, correct: false }));
+    await answerLoopProbe('s', 'u', 'qh', { idk: true, confidence: 'sure' });
+    expect(bodyOf()).toEqual({ session_id: 's', user_id: 'u', question_hash: 'qh', idk: true });
+  });
 });
 
 describe('budgetPauseOf (spec §3.5 / A20 429 body, A39 session_capped)', () => {

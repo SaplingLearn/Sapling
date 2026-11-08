@@ -1107,6 +1107,8 @@ export interface ReviewAnswerBody {
   selected_option?: string;
   reason?: string;
   rating?: number;
+  /** Spec §13 A127: a check's stated confidence, only when chosen (never a flashcard's). */
+  confidence?: StudentConfidence;
 }
 export interface ReviewAnswerResponse {
   correct: boolean | null;
@@ -1324,8 +1326,19 @@ export interface LoopCloseRecord {
   model_written: boolean;
 }
 export interface LoopCloseResponse { close: LoopCloseRecord; model_written: boolean; close_phase: string | null }
+/** Spec §13 A127: the student's stated confidence ("Guessing" / "Fairly sure" /
+ *  "Sure") — the answer bodies' enum (backend learning.evidence.StudentConfidence).
+ *  Optional: a skip sends nothing, never a default. */
+export type StudentConfidence = 'guessing' | 'fairly_sure' | 'sure';
 /** PKG-07's LoopCheckAnswerBody answer fields (the probe takes the same ones). */
-export interface LoopCheckAnswer { answer?: string; option?: string; reason?: string; idk: boolean }
+export interface LoopCheckAnswer {
+  answer?: string;
+  option?: string;
+  reason?: string;
+  idk: boolean;
+  /** A127: sent only when chosen, and never with an idk (which states none). */
+  confidence?: StudentConfidence | null;
+}
 export interface LoopBudgetPause { resetAt: string | null; sessionCapped: boolean }
 
 const loopPost = <T>(path: string, body: Record<string, unknown>) =>
@@ -1334,6 +1347,7 @@ const loopPost = <T>(path: string, body: Record<string, unknown>) =>
 const loopAnswerFields = (a: LoopCheckAnswer): Record<string, unknown> => ({
   ...(a.idk ? {} : a.option !== undefined ? { option: a.option, reason: a.reason ?? '' } : { answer: a.answer ?? '' }),
   idk: a.idk,
+  ...(!a.idk && a.confidence ? { confidence: a.confidence } : {}),
 });
 
 function loopBudgetNoticeOf(data: unknown): LoopBudgetNotice {

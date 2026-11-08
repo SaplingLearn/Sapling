@@ -2100,3 +2100,89 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
     expect(await screen.findByText(PULSE)).toBeTruthy();
   });
 });
+
+describe("LoopLearn — stated confidence (spec §13 A127)", () => {
+  /** The answer object the last check submission sent. */
+  const sentCheck = () => api.streamLoopCheckAnswer.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+  const sentProbe = () => api.answerLoopProbe.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+
+  it("the check card offers an optional control; a skip sends no confidence and never blocks Submit", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ phase: "feedback", graded: true, verdict: "correct" }));
+    await withCheckItem();
+    const group = screen.getByTestId("loop-check-confidence");
+    expect(group.getAttribute("role")).toBe("radiogroup");
+    expect(group.querySelectorAll('[role="radio"]').length).toBe(3);
+    expect(group.querySelectorAll('[aria-checked="true"]').length).toBe(0); // nothing chosen
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    expect((screen.getByTestId("loop-attempt-submit") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalled());
+    expect(sentCheck()).toEqual({ answer: "n == 0", idk: false });
+    expect("confidence" in sentCheck()).toBe(false); // absent, never a default
+  });
+
+  it("a chosen confidence rides the check answer", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ phase: "feedback", graded: true, verdict: "not_yet" }));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-confidence-sure"));
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 1" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(sentCheck()).toEqual({ answer: "n == 1", idk: false, confidence: "sure" }));
+  });
+
+  it("an mc_reason check answer carries it beside the option and reason", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem({ ...pose, format: "mc_reason", options: [{ letter: "A", text: "x" }, { letter: "B", text: "y" }] });
+    fireEvent.click(screen.getByTestId("loop-attempt-option-B"));
+    fireEvent.click(screen.getByTestId("loop-check-confidence-fairly_sure"));
+    fireEvent.change(screen.getByTestId("loop-attempt-reason"), { target: { value: "since y" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() =>
+      expect(sentCheck()).toEqual({ option: "B", reason: "since y", idk: false, confidence: "fairly_sure" }),
+    );
+  });
+
+  it("'I don't know' never carries a confidence, even one already chosen", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true, verdict: "idk" }));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-confidence-sure"));
+    fireEvent.click(screen.getByTestId("loop-attempt-idk"));
+    await waitFor(() => expect(sentCheck()).toEqual({ idk: true }));
+  });
+
+  it("a cleared choice is a skip again", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(turn({ graded: true }));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-confidence-guessing"));
+    fireEvent.click(screen.getByTestId("loop-check-confidence-clear"));
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(sentCheck()).toEqual({ answer: "n == 0", idk: false }));
+  });
+
+  it("the probe card carries the control too, and the next probe item starts with none chosen", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: false, p_known: 0.2, probe_done: false, novice_floor: false, reference_answer: "ref" });
+    render(<LoopLearn />);
+    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "a loop" } });
+    fireEvent.click(screen.getByTestId("loop-probe-confidence-guessing"));
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    await waitFor(() => expect(sentProbe()).toEqual({ answer: "a loop", idk: false, confidence: "guessing" }));
+    fireEvent.click(await screen.findByTestId("loop-probe-next"));
+    await waitFor(() => expect(api.nextLoopProbe).toHaveBeenCalledTimes(2));
+    await screen.findByTestId("loop-probe-confidence");
+    expect(screen.getByTestId("loop-probe-confidence-guessing").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("a probe answer with no choice sends none", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.answerLoopProbe.mockResolvedValue({ graded: true, correct: true, p_known: 0.6, probe_done: false, novice_floor: false });
+    render(<LoopLearn />);
+    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "the base case" } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalled());
+    expect("confidence" in sentProbe()).toBe(false);
+  });
+});

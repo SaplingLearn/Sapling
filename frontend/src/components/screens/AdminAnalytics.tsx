@@ -48,6 +48,7 @@ import type {
   LearningLoopKpisData,
   LlmCostGroupBy,
   LoopCalibrationReport,
+  LoopConfidenceReport,
   LoopGainSummary,
 } from "@/lib/types";
 
@@ -228,6 +229,90 @@ function CalibrationTable({ title, report, testid }: { title: string; report: Lo
 /** A paired change in percentage points (post − pre), signed; "—" when n = 0. */
 const fmtPp = (v: number | null) => (v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)} pp`);
 
+/** Spec §13 A127's channels and levels, in words (an unknown id is shown as is). */
+const CHANNEL_LABEL: Record<string, string> = {
+  free_response: "Free response",
+  mc_reasoned: "Choice + reason",
+  teachback_llm: "Teach-back",
+  mc: "Multiple choice",
+  chat_turn: "Chat turn",
+};
+const LEVEL_LABEL: Record<string, string> = {
+  guessing: "Guessing",
+  fairly_sure: "Fairly sure",
+  sure: "Sure",
+};
+
+function ConfidenceRows({ id, label, report }: { id: string; label: string; report: LoopConfidenceReport }) {
+  return (
+    <>
+      {report.levels.map((lv) => {
+        const name = lv.level == null ? `Other (${fmtRate(lv.stated)})` : (LEVEL_LABEL[lv.level] ?? lv.level);
+        return (
+          <tr key={`${id}-${lv.level ?? lv.stated}`} data-testid={`admin-loop-confidence-${id}-${lv.level ?? "other"}`}>
+            <td style={td}>{label}</td>
+            <td style={td}>{name}</td>
+            <td style={tdNum}>{lv.n}</td>
+            <td style={tdNum}>{fmtRate(lv.stated)}</td>
+            <td style={tdNum}>{fmtRate(lv.observed)}</td>
+          </tr>
+        );
+      })}
+      <tr data-testid={`admin-loop-confidence-${id}-all`}>
+        <td style={td}>{label}</td>
+        <td style={{ ...td, fontWeight: 600 }}>All</td>
+        <td style={tdNum}>{report.n}</td>
+        <td style={tdNum}>{fmtRate(report.mean_stated)}</td>
+        <td style={tdNum}>{fmtRate(report.observed_rate)}</td>
+      </tr>
+    </>
+  );
+}
+
+/** Spec §13 A127: do students know what they know? The confidence a student
+ *  stated on a check, probe or review answer ("Guessing" / "Fairly sure" /
+ *  "Sure") against whether it was right, per channel — the students' own
+ *  calibration, beside the model's. Overconfidence above 0: surer than right. */
+function ConfidenceCalibrationTable({ data }: { data: LearningLoopKpisData["confidence_calibration"] }) {
+  const all = data.all;
+  return (
+    <div data-testid="admin-loop-confidence">
+      <div className="label-micro" style={{ marginBottom: 6 }}>Students&apos; stated confidence</div>
+      {all.n === 0 ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>No answers with a stated confidence in this range.</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 8 }}>
+            <Stat label="Answers" value={all.n} />
+            <Stat label="Stated" value={fmtRate(all.mean_stated)} />
+            <Stat label="Correct" value={fmtRate(all.observed_rate)} />
+            <Stat label="Overconfidence" value={fmtPp(all.overconfidence)} />
+            <Stat label="Brier" value={fmtNum(all.brier)} />
+          </div>
+          <div style={scrollX}>
+            <table style={{ borderCollapse: "collapse", minWidth: 480 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Channel</th>
+                  <th style={th}>Stated confidence</th>
+                  <th style={{ ...th, textAlign: "right" }}>Answers</th>
+                  <th style={{ ...th, textAlign: "right" }}>Stated</th>
+                  <th style={{ ...th, textAlign: "right" }}>Correct</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.channels.map((c) => (
+                  <ConfidenceRows key={c.channel} id={c.channel} label={CHANNEL_LABEL[c.channel] ?? c.channel} report={c} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function GainRow({ testid, label, s, posttests, excludedRetired }: {
   testid: string;
   label: string;
@@ -327,6 +412,13 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
         <CalibrationTable title="Delayed post-test" report={d.calibration.posttest} testid="admin-loop-calibration-posttest" />
         <CalibrationTable title="All independent evidence" report={d.calibration.all} testid="admin-loop-calibration-all" />
       </div>
+      <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Do students know what they know?</h3>
+      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
+        How sure students said they were (Guessing / Fairly sure / Sure — optional, so only the answers that stated one)
+        against how often those answers were right, per kind of question. A well-calibrated &ldquo;Sure&rdquo; is right
+        most of the time; overconfidence is the stated confidence minus the share correct.
+      </p>
+      <ConfidenceCalibrationTable data={d.confidence_calibration} />
       <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>Did students learn?</h3>
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
         Each concept&apos;s first unaided probe answer (the pretest) against its unaided delayed post-test,
