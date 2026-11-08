@@ -27,6 +27,7 @@ from services.flashcard_import_service import (
     scrape_quizlet_url,
     extract_cards_from_image,
     QuizletBlocked,
+    QuizletURLRejected,
     gemini_generate_cards,
     gemini_cleanup_cards,
     gemini_cloze,
@@ -527,6 +528,8 @@ def import_parse(body: ImportParseBody, request: Request):
     if body.source == "url":
         try:
             cards = scrape_quizlet_url(body.payload)
+        except QuizletURLRejected as e:
+            raise HTTPException(status_code=400, detail=str(e))
         except QuizletBlocked as e:
             raise HTTPException(status_code=422, detail=str(e))
         return {"cards": cards, "errors": []}

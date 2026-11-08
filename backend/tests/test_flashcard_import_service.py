@@ -6,6 +6,7 @@ import zipfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, UnexpectedModelBehavior
 
@@ -241,6 +242,40 @@ _QUIZLET_PAYLOAD = """
 """
 
 
+_PUBLIC_ADDRINFO = [(2, 1, 6, "", ("104.16.1.1", 443))]
+
+
+def _addrinfo(ip):
+    family = 10 if ":" in ip else 2
+    return [(family, 1, 6, "", (ip, 443))]
+
+
+@pytest.fixture(autouse=False)
+def public_dns():
+    """Hermetic DNS: every lookup answers one public address."""
+    with patch(
+        "services.flashcard_import_service.socket.getaddrinfo",
+        return_value=_PUBLIC_ADDRINFO,
+    ) as gai:
+        yield gai
+
+
+def _mock_transport_get(handler):
+    """A stand-in for httpx.get that drives a real httpx.Client over a
+    MockTransport, so status codes, Location headers and the
+    follow_redirects kwarg all behave exactly as in production."""
+    seen = []
+
+    def _get(url, **kwargs):
+        seen.append(str(url))
+        with httpx.Client(transport=httpx.MockTransport(handler)) as c:
+            return c.get(url, **kwargs)
+
+    _get.seen = seen
+    return _get
+
+
+@pytest.mark.usefixtures("public_dns")
 class TestScrapeQuizlet:
     def test_extracts_terms_from_set_page_data(self):
         resp = MagicMock(status_code=200, text=_QUIZLET_PAYLOAD)
@@ -262,6 +297,179 @@ class TestScrapeQuizlet:
         with patch("services.flashcard_import_service.httpx.get", return_value=resp):
             with pytest.raises(svc.QuizletBlocked):
                 svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+
+
+@pytest.mark.usefixtures("public_dns")
+class TestScrapeQuizletSSRF:
+    """The URL is user-supplied: only https quizlet.com hosts resolving to
+    public addresses may be fetched, at every redirect hop."""
+
+    def test_allowlisted_url_fetched_with_redirects_disabled(self):
+        def handler(request):
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get) as p:
+            cards = svc.scrape_quizlet_url("https://www.quizlet.com/123/abc")
+        assert len(cards) == 2
+        assert p.call_args.kwargs["follow_redirects"] is False
+        assert get.seen == ["https://www.quizlet.com/123/abc"]
+
+    def test_follows_allowlisted_redirect(self):
+        def handler(request):
+            if request.url.host == "quizlet.com":
+                return httpx.Response(301, headers={"location": "https://www.quizlet.com/123/abc"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get):
+            cards = svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert len(cards) == 2
+        assert get.seen == ["https://quizlet.com/123/abc", "https://www.quizlet.com/123/abc"]
+
+    def test_relative_redirect_stays_on_host(self):
+        def handler(request):
+            if request.url.path == "/old":
+                return httpx.Response(302, headers={"location": "/123/abc"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get):
+            svc.scrape_quizlet_url("https://quizlet.com/old")
+        assert get.seen[-1] == "https://quizlet.com/123/abc"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://evil.example.com/123/abc",
+            "https://quizlet.com.evil.example/123",
+            "https://notquizlet.com/123",
+            "https://quizlet.com@evil.example/123",
+            "https://user:pw@quizlet.com/123",
+            "https://quizlet.com:8443/123",
+            "http://quizlet.com/123/abc",
+            "ftp://quizlet.com/123",
+            "file:///etc/passwd",
+            "https://127.0.0.1/",
+            "https://localhost/",
+            "http://169.254.169.254/latest/meta-data/",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://[::1]/",
+            "https://10.0.0.5/",
+            "not a url",
+            "",
+        ],
+    )
+    def test_rejects_non_quizlet_urls_without_fetching(self, url):
+        with patch("services.flashcard_import_service.httpx.get") as p:
+            with pytest.raises(svc.QuizletURLRejected):
+                svc.scrape_quizlet_url(url)
+        p.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "location",
+        [
+            "http://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/admin",
+            "https://[::1]/",
+            "https://localhost:8000/api/internal/metrics",
+            "http://www.quizlet.com/123/abc",
+            "https://evil.example.com/",
+        ],
+    )
+    def test_redirect_to_disallowed_target_refused(self, location):
+        def handler(request):
+            if request.url.host == "quizlet.com":
+                return httpx.Response(302, headers={"location": location})
+            raise AssertionError(f"disallowed hop was fetched: {request.url}")
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get):
+            with pytest.raises(svc.QuizletURLRejected):
+                svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert get.seen == ["https://quizlet.com/123/abc"]
+
+    def test_redirect_chain_over_cap_refused(self):
+        def handler(request):
+            n = int(request.url.params.get("n", "0"))
+            return httpx.Response(302, headers={"location": f"https://quizlet.com/loop?n={n + 1}"})
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get):
+            with pytest.raises(svc.QuizletURLRejected, match="redirects"):
+                svc.scrape_quizlet_url("https://quizlet.com/loop")
+        assert len(get.seen) == svc._QUIZLET_MAX_REDIRECTS + 1
+
+    def test_redirect_chain_at_cap_allowed(self):
+        cap = svc._QUIZLET_MAX_REDIRECTS
+
+        def handler(request):
+            n = int(request.url.params.get("n", "0"))
+            if n < cap:
+                return httpx.Response(302, headers={"location": f"https://quizlet.com/s?n={n + 1}"})
+            return httpx.Response(200, text=_QUIZLET_PAYLOAD)
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get):
+            assert len(svc.scrape_quizlet_url("https://quizlet.com/s")) == 2
+
+    @pytest.mark.parametrize(
+        "ip",
+        [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.9",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "240.0.0.1",
+            "::1",
+            "::",
+            "fe80::1",
+            "fc00::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+        ],
+    )
+    def test_allowlisted_host_resolving_to_internal_ip_refused(self, public_dns, ip):
+        public_dns.return_value = _addrinfo(ip)
+        with patch("services.flashcard_import_service.httpx.get") as p:
+            with pytest.raises(svc.QuizletURLRejected):
+                svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        p.assert_not_called()
+
+    def test_any_internal_address_in_answer_refused(self, public_dns):
+        public_dns.return_value = _PUBLIC_ADDRINFO + _addrinfo("10.0.0.1")
+        with patch("services.flashcard_import_service.httpx.get") as p:
+            with pytest.raises(svc.QuizletURLRejected):
+                svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        p.assert_not_called()
+
+    def test_redirect_hop_rechecks_dns(self, public_dns):
+        # First hop resolves public; the redirect target's lookup answers a
+        # metadata address — the hop must be refused before it is fetched.
+        public_dns.side_effect = [_PUBLIC_ADDRINFO, _addrinfo("169.254.169.254")]
+
+        def handler(request):
+            if request.url.host == "quizlet.com":
+                return httpx.Response(301, headers={"location": "https://www.quizlet.com/123/abc"})
+            raise AssertionError("internal hop was fetched")
+
+        get = _mock_transport_get(handler)
+        with patch("services.flashcard_import_service.httpx.get", side_effect=get):
+            with pytest.raises(svc.QuizletURLRejected):
+                svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+
+    def test_dns_failure_is_blocked_not_rejected(self, public_dns):
+        import socket as _socket
+
+        public_dns.side_effect = _socket.gaierror("nope")
+        with pytest.raises(svc.QuizletBlocked) as ei:
+            svc.scrape_quizlet_url("https://quizlet.com/123/abc")
+        assert not isinstance(ei.value, svc.QuizletURLRejected)
 
 
 # ── flashcard agent helpers (#146) ───────────────────────────────────────────

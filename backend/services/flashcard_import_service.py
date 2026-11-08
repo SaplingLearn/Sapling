@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import base64
 import io
+import ipaddress
 import json
 import logging
 import math
 import os
 import re
+import socket
 import sqlite3
 import time
 import zipfile
@@ -180,18 +182,117 @@ _QUIZLET_PAYLOAD_RE = re.compile(
 )
 
 
+class QuizletURLRejected(QuizletBlocked):
+    """Raised when a URL (the submitted one or any redirect hop) fails the
+    SSRF policy: not https, not an allowlisted Quizlet host, a non-default
+    port, embedded credentials, or a host that resolves to a non-public IP.
+    The route maps it to a 400 (a client error), unlike the 422 a plain
+    QuizletBlocked scrape failure gets."""
+
+
+# The ONLY hosts the server will fetch for a Quizlet import. Quizlet serves
+# sets from the apex and www; country/mobile subdomains are not accepted —
+# a student can paste the canonical quizlet.com link instead.
+_QUIZLET_HOSTS = frozenset({"quizlet.com", "www.quizlet.com"})
+_QUIZLET_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_URL_REJECTED_MSG = "Only https://quizlet.com set links can be imported."
+
+
+def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True only for a globally routable unicast address.
+
+    ``is_global`` alone is not enough: it is True for multicast (224/4), so
+    every disqualifying property is checked explicitly. An IPv4-mapped IPv6
+    address (``::ffff:127.0.0.1``) is judged as the IPv4 address it wraps."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _resolve_public(host: str) -> None:
+    """Resolve ``host`` and refuse it unless EVERY address is public.
+
+    Residual risk: httpx re-resolves the name when it connects, so a DNS
+    answer that changes between this check and the connect (rebinding) is
+    not covered. The host allowlist above is the primary control — the name
+    being resolved is always quizlet.com/www.quizlet.com — so this check is
+    defence in depth against a poisoned/odd answer for those names."""
+    try:
+        infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError) as e:
+        raise QuizletBlocked(f"Could not reach Quizlet: {e}")
+    if not infos:
+        raise QuizletBlocked("Could not reach Quizlet: no addresses")
+    for info in infos:
+        addr = str(info[4][0]).split("%", 1)[0]  # drop an IPv6 zone id
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            raise QuizletURLRejected(_URL_REJECTED_MSG)
+        if not _is_public_ip(ip):
+            logger.warning("quizlet import refused: %s resolved to %s", host, ip)
+            raise QuizletURLRejected(_URL_REJECTED_MSG)
+
+
+def _validate_quizlet_url(url: str | httpx.URL) -> httpx.URL:
+    """Return the parsed URL if it passes the SSRF policy, else raise
+    QuizletURLRejected. Applied to the submitted URL AND every redirect hop."""
+    try:
+        parsed = url if isinstance(url, httpx.URL) else httpx.URL(str(url).strip())
+    except (httpx.InvalidURL, TypeError, ValueError):
+        raise QuizletURLRejected(_URL_REJECTED_MSG)
+    host = (parsed.host or "").lower().rstrip(".")
+    if (
+        parsed.scheme != "https"
+        or host not in _QUIZLET_HOSTS
+        or parsed.port not in (None, 443)
+        or parsed.userinfo
+    ):
+        raise QuizletURLRejected(_URL_REJECTED_MSG)
+    _resolve_public(host)
+    return parsed
+
+
 def scrape_quizlet_url(url: str) -> list[Card]:
     """Best-effort fetch of a public Quizlet set. Raises QuizletBlocked on
-    bot wall, login redirect, or unparseable payload."""
-    try:
-        resp = httpx.get(
-            url,
-            timeout=15.0,
-            headers={"User-Agent": "Mozilla/5.0 (Sapling flashcard import)"},
-            follow_redirects=True,
-        )
-    except httpx.HTTPError as e:
-        raise QuizletBlocked(f"Could not reach Quizlet: {e}")
+    bot wall, login redirect, or unparseable payload, and QuizletURLRejected
+    (a QuizletBlocked subclass) when the URL or any redirect hop is not an
+    https Quizlet URL resolving to a public address.
+
+    Redirects are followed by hand (never ``follow_redirects=True``) so each
+    hop is re-validated before it is fetched — the input is user-supplied, so
+    an unchecked hop is a server-side request forgery."""
+    current = _validate_quizlet_url(url)
+    for _ in range(_QUIZLET_MAX_REDIRECTS + 1):
+        try:
+            resp = httpx.get(
+                current,
+                timeout=15.0,
+                headers={"User-Agent": "Mozilla/5.0 (Sapling flashcard import)"},
+                follow_redirects=False,
+            )
+        except httpx.HTTPError as e:
+            raise QuizletBlocked(f"Could not reach Quizlet: {e}")
+        if resp.status_code not in _REDIRECT_STATUSES:
+            break
+        location = resp.headers.get("location")
+        if not location:
+            raise QuizletBlocked(f"Quizlet returned status {resp.status_code}")
+        try:
+            next_url = current.join(location)
+        except (httpx.InvalidURL, TypeError, ValueError):
+            raise QuizletURLRejected(_URL_REJECTED_MSG)
+        current = _validate_quizlet_url(next_url)
+    else:
+        raise QuizletURLRejected("Too many redirects fetching the Quizlet set.")
 
     if resp.status_code != 200:
         raise QuizletBlocked(f"Quizlet returned status {resp.status_code}")
