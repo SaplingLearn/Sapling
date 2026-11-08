@@ -170,6 +170,33 @@ def test_the_recorded_quiz_cassettes_flag_rates():
     }
 
 
+def test_the_e2e_quiz_fixtures_lint_clean():
+    """The function-mode quiz (agents/function_handlers_e2e.py) feeds journeys
+    that count one evidence per question; a flagged fixture would silently
+    drop one. Both its multiple-choice and its written questions lint clean."""
+    from agents.function_handlers_e2e import _E2E_QUIZ_QUESTIONS
+    from routes.quiz import _agent_question_to_wire
+
+    for i, raw in enumerate(_E2E_QUIZ_QUESTIONS, start=1):
+        wire = _agent_question_to_wire(QuizQuestion.model_validate(raw), i)
+        assert quiz_evidence.lint_question(wire) == [], raw["question"]
+    for kind in ("short_answer", "numeric", "symbolic"):
+        stem = f"E2E written question 1: enter the {kind} fixture answer."
+        assert quiz_evidence.lint_question({"question": stem, "options": []}) == []
+
+
+def test_the_e2e_mirror_of_the_confidence_levels():
+    """frontend/e2e/support/quiz.ts asserts the stored values against its own
+    copy of STUDENT_CONFIDENCE_LEVELS; pin the copy to the source."""
+    import re
+
+    src = (Path(__file__).resolve().parents[2] / "frontend/e2e/support/quiz.ts").read_text()
+    match = re.search(r"export const CONFIDENCE_LEVELS = \{([^}]*)\} as const;", src)
+    assert match, "CONFIDENCE_LEVELS missing from frontend/e2e/support/quiz.ts"
+    mirror = {k: float(v) for k, v in re.findall(r"(\w+): ([0-9.]+)", match.group(1))}
+    assert mirror == LEVELS
+
+
 # ── The answer body ─────────────────────────────────────────────────────────
 
 

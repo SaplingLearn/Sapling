@@ -19,6 +19,10 @@
  *   exits                   nothing lands on /learn; every way out is deliberate
  *                           (R-10).
  *   keyboard                the whole quiz is playable without a mouse (§5 B2).
+ *   stated confidence       "How sure are you?" rides each answer to the stored
+ *                           response and the mastery evidence, survives a
+ *                           leave-and-resume, and a skip stores none
+ *                           (learning-loop spec §13 A132).
  *
  * ── THE GENERATION BUDGET (read before adding a test) ─────────────────────
  *
@@ -56,6 +60,7 @@ import { expect, test } from "./support/fixtures";
 import { USER_ACTIVE } from "./support/stack";
 import {
   CONCEPT_NAME,
+  CONFIDENCE_LEVELS,
   CORRECT_LABELS,
   COURSE_CODE_CS,
   COURSE_ID_CS,
@@ -883,4 +888,110 @@ test("#537: Done drops the deep link and returns a clean quiz home", async ({ pa
     timeout: SUBMIT_TIMEOUT,
   });
   await expect(page.getByTestId("quiz-results")).toHaveCount(0);
+});
+
+// ── 8. Stated confidence (learning-loop spec §13 A132) ─────────────────────
+
+/** True for the POST that records one quiz answer. */
+function isAnswerPost(request: { method(): string; url(): string }): boolean {
+  return request.method() === "POST"
+    && /^\/api\/quiz\/attempts\/[^/]+\/answer$/.test(new URL(request.url()).pathname);
+}
+
+test("stated confidence: a level rides its answer to the response and the evidence, survives leave-and-resume, and a skip stores none", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  let answerPosts = 0;
+  page.on("request", request => {
+    if (isAnswerPost(request)) answerPosts += 1;
+  });
+  await preAckDisclaimer(page);
+  await openQuizHome(page, TREE_ENTRY);
+  await startQuiz(page);
+
+  // ── Q1: "Sure", chosen with the mouse; nothing is chosen for the student ──
+  const level = (name: keyof typeof CONFIDENCE_LEVELS) => page.getByTestId(`quiz-confidence-${name}`);
+  await expect(page.getByTestId("quiz-confidence")).toBeVisible();
+  for (const name of Object.keys(CONFIDENCE_LEVELS) as (keyof typeof CONFIDENCE_LEVELS)[]) {
+    await expect(level(name)).toHaveAttribute("aria-checked", "false");
+  }
+  await level("sure").click();
+  await expect(level("sure")).toHaveAttribute("aria-checked", "true");
+  // Choosing makes no request: the level rides the answer.
+  expect(answerPosts).toBe(0);
+  const first = page.waitForRequest(isAnswerPost);
+  await chooseAndSubmit(page, CORRECT_LABELS[0]);
+  expect((await first).postDataJSON()).toMatchObject({ question_index: 0, confidence: "sure" });
+
+  // ── Q2: "Guessing", chosen from the keyboard (A127 (b)) ───────────────────
+  await expectOnQuestion(page, 2);
+  // A new question starts with no level.
+  await expect(level("sure")).toHaveAttribute("aria-checked", "false");
+  // One tab stop: the first level while none is chosen; the arrows move AND choose.
+  await tabUntilFocused(page, "quiz-confidence-guessing");
+  await page.keyboard.press("ArrowRight");
+  await expect(level("fairly_sure")).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => focusedTestId(page)).toBe("quiz-confidence-fairly_sure");
+  await page.keyboard.press("ArrowLeft");
+  await expect(level("guessing")).toHaveAttribute("aria-checked", "true");
+  // Enter on a level chooses it — it is not the footer's submit there.
+  await page.keyboard.press("Enter");
+  await expect(level("guessing")).toHaveAttribute("aria-checked", "true");
+  await expectOnQuestion(page, 2);
+  expect(answerPosts).toBe(1);
+
+  // ── Leave before answering it, and come back ──────────────────────────────
+  await page.getByTestId("quiz-leave").click();
+  await page.getByTestId("quiz-leave-confirm").click();
+  await expectLocation(page, TREE_RETURN);
+  await openQuizHome(page, "/quiz");
+  await page.getByTestId("quiz-resume").click();
+  await expectOnQuestion(page, 2);
+  // The unsent choice came back with the session the browser saved.
+  await expect(level("guessing")).toHaveAttribute("aria-checked", "true");
+  const second = page.waitForRequest(isAnswerPost);
+  await chooseAndSubmit(page, wrongLabelFor(2));
+  expect((await second).postDataJSON()).toMatchObject({ question_index: 1, confidence: "guessing" });
+
+  // ── Q3: skipped — no key on the wire, and Submit never waited on it ───────
+  await expectOnQuestion(page, 3);
+  const third = page.waitForRequest(isAnswerPost);
+  await chooseAndSubmit(page, CORRECT_LABELS[2]);
+  const thirdBody = (await third).postDataJSON() as Record<string, unknown>;
+  expect(thirdBody.question_index).toBe(2);
+  expect("confidence" in thirdBody).toBe(false);
+  await expectResults(page);
+  await expect(page.getByTestId("quiz-results-score")).toHaveText(`2 of ${QUIZ_LENGTH} correct`, {
+    timeout: SUBMIT_TIMEOUT,
+  });
+
+  // ── The stored floats: the response rows (real) and the evidence (double) ─
+  const [{ id: attemptId }] = await appAttempts();
+  const responses = await queryRaw(
+    "SELECT question_index, confidence FROM quiz_responses WHERE attempt_id = $1 ORDER BY question_index",
+    [attemptId],
+  );
+  expect(responses).toHaveLength(QUIZ_LENGTH);
+  expect(Number(responses[0].confidence)).toBeCloseTo(CONFIDENCE_LEVELS.sure, 6);
+  expect(Number(responses[1].confidence)).toBeCloseTo(CONFIDENCE_LEVELS.guessing, 6);
+  expect(responses[2].confidence).toBeNull();
+
+  // The student's stated confidence, beside — never instead of — the
+  // grader's `confidence`, and the exact level, not a float4 neighbour of it.
+  const evidence = await queryRaw(
+    `SELECT correct, student_confidence, confidence
+       FROM node_mastery_events
+      WHERE node_id = $1 AND event_type = 'evidence'
+      ORDER BY created_at, evidence_seq`,
+    [NODE_ID],
+  );
+  expect(evidence).toHaveLength(QUIZ_LENGTH);
+  expect(evidence.map(e => e.correct)).toEqual([true, false, true]);
+  expect(evidence.map(e => (e.student_confidence === null ? null : Number(e.student_confidence)))).toEqual([
+    CONFIDENCE_LEVELS.sure,
+    CONFIDENCE_LEVELS.guessing,
+    null,
+  ]);
+  for (const e of evidence) expect(e.confidence).toBeNull();
 });
