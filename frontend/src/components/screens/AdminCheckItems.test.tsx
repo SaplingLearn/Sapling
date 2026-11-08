@@ -95,6 +95,19 @@ describe("AdminCheckItems", () => {
     expect(screen.getByTestId("admin-items-flag-i2-negative_stem").textContent).toBe("Negatively worded");
   });
 
+  it("names what the alignment check changed (spec §13 A119)", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(
+      queue([entry({ lint_flags: ["rubric_unasked_dropped", "concept_retagged"] })]),
+    );
+    render(<AdminCheckItems />);
+    expect((await screen.findByTestId("admin-items-flag-i1-rubric_unasked_dropped")).textContent).toBe(
+      "Criteria the question never asks for were dropped",
+    );
+    expect(screen.getByTestId("admin-items-flag-i1-concept_retagged").textContent).toBe(
+      "Moved to the concept it tests",
+    );
+  });
+
   it("approves an item and every row of its course question leaves the queue", async () => {
     api.adminCheckItemQueue.mockResolvedValue(
       queue([entry(), entry({ id: "i1b", concept_key: "base case" }), entry({ id: "i3", question_hash: "qh3" })]),

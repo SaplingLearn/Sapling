@@ -2041,14 +2041,17 @@ export const adminLearningLoopKpis = (params?: { from?: string; to?: string }) =
   fetchJSON<LearningLoopKpisData>(`/api/admin/analytics/learning-loop${analyticsQuery(params)}`);
 
 // Admin — learning-loop check-item review queue (spec §13 A113;
-// backend/routes/admin_check_items.py). Items the item-flaw linter flagged or
-// students reported; the text comes decrypted for the first `page_size` only.
+// backend/routes/admin_check_items.py). Items the item-flaw linter flagged,
+// the alignment check changed (A119: the last two codes) or students reported;
+// the text comes decrypted for the first `page_size` only.
 export type CheckItemLintFlag =
   | 'correct_longest'
   | 'correct_repeats_stem'
   | 'all_or_none_of_above'
   | 'duplicate_options'
-  | 'negative_stem';
+  | 'negative_stem'
+  | 'rubric_unasked_dropped'
+  | 'concept_retagged';
 export interface AdminCheckItemEntry {
   id: string;
   course_id: string;
