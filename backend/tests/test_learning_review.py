@@ -1229,23 +1229,31 @@ def test_load_or_create_review_session_inserts_once(monkeypatch):
         }
     )
     handles["sessions"].upsert.assert_not_called()
-    assert state == {"sr": {}, "review": {"spent_s": 0, "served_hashes": []}}
+    assert state == {"sr": {}, "review": {"spent_s": 0, "served_hashes": []}, "open": {}}
     ((et, kw),) = events
     assert et == "review.session_started" and "content" not in kw
     assert kw["payload"] == {"session_id": sid, "offering_id": "off-1"}
 
-    # existing row: no insert, no event, its state comes back
-    stored = {"sr": {"n1": {"correct": 1, "target": 3, "served": 1}}, "review": {"spent_s": 45}}
-    factory, handles = _tables(
-        {"sessions": [{"id": sid, "user_id": USER, "loop_state": {**stored, "v": 1}}]}
-    )
+    # existing row: no insert, no event, its state comes back — the served items
+    # ("open") included (spec §13 A115), as a copy of the row, never an alias
+    stored = {
+        "sr": {"n1": {"correct": 1, "target": 3, "served": 1}},
+        "review": {"spent_s": 45, "served_hashes": ["qh-1"]},
+        "open": {"n1": {"item_id": "ci-qh-1", "served_at": 1.0}},
+    }
+    row_doc = copy.deepcopy({**stored, "v": 1})
+    factory, handles = _tables({"sessions": [{"id": sid, "user_id": USER, "loop_state": row_doc}]})
     monkeypatch.setattr(review, "table", factory)
     events.clear()
     _, state = review.load_or_create_review_session(USER, COURSE, NOW)
     handles["sessions"].insert.assert_not_called()
     assert events == []
     assert state["sr"] == stored["sr"] and state["review"]["spent_s"] == 45
-    assert state["review"]["served_hashes"] == []
+    assert state["review"]["served_hashes"] == ["qh-1"] and state["open"] == stored["open"]
+    state["open"]["n1"]["claim"] = "c"
+    state["sr"]["n1"]["correct"] = 2
+    state["review"]["served_hashes"].append("qh-2")
+    assert row_doc == {**stored, "v": 1}  # the view's in-memory deltas never touch the row
 
 
 def test_load_or_create_review_session_without_a_course_omits_the_offering(monkeypatch):
@@ -1733,6 +1741,7 @@ def test_peek_review_session_never_inserts(monkeypatch):
     assert review.peek_review_session(USER, COURSE, NOW) == {
         "sr": {},
         "review": {"spent_s": 0, "served_hashes": []},
+        "open": {},
     }
     handles["sessions"].insert.assert_not_called()
     handles["sessions"].select.return_value = [
@@ -1790,19 +1799,34 @@ def _sid(course=COURSE):
     return review.review_session_id(USER, course, datetime.now(timezone.utc))
 
 
-def _session(monkeypatch, loop_state=None, sid=None):
+def _stored_row(store, sid: str, user_id: str = USER) -> dict:
+    """Today's `sessions` row as `_read_session` reads it: the in-memory CAS
+    store's CURRENT document (what every `_persist_loop_state` write landed in)."""
+    return {"id": sid, "user_id": user_id, "loop_state": store.state.to_json()}
+
+
+def _session(monkeypatch, loop_state=None):
+    """The routes read today's review session through the REAL loader
+    (load_or_create_review_session → _session_view) over the CAS store's
+    document, read at request time: the view a route sees is exactly what the
+    store holds — "open" included. (Before spec §13 A115 this helper handed the
+    route a hand-built view while `_opened` wrote "open" into the store only,
+    which is how the view dropping "open" went unnoticed.) `loop_state`, when
+    given, seeds the stored document."""
     from learning import review
 
-    state = loop_state if loop_state is not None else {"sr": {}, "review": {"spent_s": 0}}
+    store = review.update_loop_state  # the autouse `store` fixture's CAS stand-in
+    assert isinstance(store, _Store), "_session needs the autouse store fixture"
+    if loop_state is not None:
+        store.state.extra = copy.deepcopy(loop_state)
     # the student is enrolled in COURSE (the routes 404 any other course)
     monkeypatch.setattr(
         "routes.learn_loop.user_offering_ids_for_course",
         lambda uid, cid: ["off-1"] if cid == COURSE else [],
     )
     monkeypatch.setattr(
-        review, "load_or_create_review_session", lambda u, c, now: (sid or _sid(c), state)
+        review, "_read_session", lambda sid, user_id: [_stored_row(store, sid, user_id)]
     )
-    return state
 
 
 @pytest.mark.parametrize(
@@ -2420,33 +2444,40 @@ def test_review_summary_counts_by_kind(client, monkeypatch):
 # ── Fix round: stable open item, course scope, the cheap probe, event honesty ──
 
 
-def _real_session(monkeypatch, store):
-    """load_or_create_review_session over the in-memory CAS store: every GET sees
-    what the previous one wrote (the store IS the session's loop_state)."""
-    from learning import review
+def _tables_with_session(data: dict, store):
+    """`_tables` plus a `sessions` handle whose select is today's row over the CAS
+    store's current document: `load_or_create_review_session` and
+    `_read_session` both run for real, exactly as in production."""
+    factory, handles = _tables(data)
 
-    def load(u, c, now):
-        return _sid(c), review._session_view(copy.deepcopy(store.state.extra)) | {
-            "open": copy.deepcopy(store.state.extra.get("open") or {})
-        }
+    def table(name):
+        handle = factory(name)
+        if name == "sessions":
+            handle.select.side_effect = lambda *a, **kw: [
+                _stored_row(store, kw["filters"]["id"].removeprefix("eq."))
+            ]
+        return handle
 
-    monkeypatch.setattr(review, "load_or_create_review_session", load)
+    return table, handles
 
 
 def test_refreshing_review_next_reserves_the_same_item_and_writes_once(client, monkeypatch, store):
-    """MAJOR 2: a refresh never shops for another item — the served, unanswered
-    item comes back, with no second write and no second review.served."""
+    """MAJOR 2 + spec §13 A115 (regression): a refresh never shops for another item
+    — the served, unanswered item comes back, with no second write and no second
+    review.served. Through the REAL loader: before A115 `_session_view` dropped
+    "open", so every refresh in production served a new item (q1, q2, q3, …)."""
     from learning import review
 
     past = (NOW - timedelta(days=3)).isoformat()
-    factory, _ = _tables(
+    table, handles = _tables_with_session(
         {
             "flashcards": [],
             "learner_state": [_due_row("n1", 0.5, past)],
             "graph_nodes": [{"id": "n1", "course_id": COURSE, "concept_name": "N1"}],
-        }
+        },
+        store,
     )
-    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "table", table)
     pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q1", "q2", "q3")]
     monkeypatch.setattr(review, "list_items", lambda course, key, **kw: pool)
     monkeypatch.setattr(
@@ -2455,7 +2486,6 @@ def test_refreshing_review_next_reserves_the_same_item_and_writes_once(client, m
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     events = []
     monkeypatch.setattr(review, "log_event", lambda et, **kw: events.append(et))
-    _real_session(monkeypatch, store)
     with _loop():
         ids = [
             client.get(f"{REVIEW}/next?user_id={USER}&course_id={COURSE}").json()["item"]["id"]
@@ -2464,12 +2494,118 @@ def test_refreshing_review_next_reserves_the_same_item_and_writes_once(client, m
     assert ids == ["ci-q1"] * 4
     assert len(store.calls) == 1 and events == ["review.served"]
     assert store.state.extra["review"]["served_hashes"] == ["q1"]
+    handles["sessions"].insert.assert_not_called()  # every GET read the stored row
+    assert handles["sessions"].select.call_count == 4
 
     # answered (graded) → the next GET chooses a new item and opens it
     store.state.extra["open"]["n1"]["graded_at"] = NOW.timestamp()
     with _loop():
         after = client.get(f"{REVIEW}/next?user_id={USER}&course_id={COURSE}").json()
     assert after["item"]["id"] == "ci-q2" and len(store.calls) == 2
+
+
+_SERVED_AT = datetime(2026, 11, 7, 9, 30, tzinfo=timezone.utc)
+
+
+def _answer_through_the_real_loader(client, monkeypatch, store, *, floor_reads=None):
+    """POST /review/answer for the check item today's session served at
+    _SERVED_AT, the session read by the REAL loader (`table()` mocked). The
+    grade is faked; it runs the route's `refloor` callback the way grade_review
+    does right before its one write. Returns what the grade was called with."""
+    from learning import review
+    from learning.review import ReviewOutcome
+
+    item = _check_item("n-due", "qh-1")
+    _check_answer_seams(monkeypatch, item)
+    table, _ = _tables_with_session({"learner_state": []}, store)
+    monkeypatch.setattr(review, "table", table)
+    store.state.extra = {
+        "sr": {},
+        "review": {"spent_s": 0, "served_hashes": ["qh-1"], "retention": 0.9},
+        "open": {"n-due": {"item_id": "ci-qh-1", "served_at": _SERVED_AT.timestamp()}},
+    }
+    seen: dict = {}
+
+    async def fake_grade(user_id, served, **kw):
+        ev = {"question_hash": "qh-1", "max_rung": kw["max_rung"], "assisted": False}
+        seen.update(kw, refloored=kw["refloor"](ev), evidence=ev)
+        return ReviewOutcome(correct=True, rating=3, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    monkeypatch.setattr("routes.learn_loop._ledger", lambda *a, **kw: None)
+    with _loop():
+        r = client.post(
+            f"{REVIEW}/answer",
+            json={
+                "user_id": USER,
+                "session_id": _sid(),
+                "course_id": COURSE,
+                "kind": "check",
+                "item_id": "ci-qh-1",
+                "answer": "because",
+            },
+        )
+    assert r.status_code == 200, r.text
+    return seen
+
+
+def test_review_answer_reads_the_real_served_at(client, monkeypatch, store):
+    """Spec §13 A115 (regression): `_review_posed_at` reads the serve time off the
+    view the REAL loader builds, for both help-floor reads (before the grade and
+    the `refloor` inside its claim). Before A115 the view had no "open" and both
+    got None."""
+    posed: list = []
+
+    def floor(user_id, item, posed_at=None):
+        posed.append(posed_at)
+        return 0
+
+    monkeypatch.setattr("routes.learn_loop._reveal_floor", floor)
+    _answer_through_the_real_loader(client, monkeypatch, store)
+    assert posed == [_SERVED_AT, _SERVED_AT]
+
+
+@pytest.mark.parametrize(
+    "marker_at,expected",
+    [
+        (_SERVED_AT - timedelta(minutes=5), 0),  # before the serve: never this item's
+        (_SERVED_AT, params.RUNG_ASSISTED_MIN),  # at the serve: unscanned since it
+        (_SERVED_AT + timedelta(minutes=5), params.RUNG_ASSISTED_MIN),
+    ],
+)
+def test_the_unscanned_marker_floors_only_from_the_serve_on(
+    client, monkeypatch, store, marker_at, expected
+):
+    """Spec §13 A93 (A88's unscanned rule) with the serve time known (A115): an
+    'unscanned' marker means served text went out unchecked AT `at`, so it
+    floors this grade to RUNG_ASSISTED_MIN only when it lands at or after the
+    item was served; a marker from before the serve does not. No earlier ungraded
+    pose (the ledger's posed row was lost: the DB-down rule), no recorded help.
+    `unscanned_since` keeps its contract (a marker at or after the anchor; None =
+    any), pinned on its own in test_learning_teach_reveal."""
+    monkeypatch.setattr("routes.learn_loop.max_help", lambda u, h: 0)
+    monkeypatch.setattr("routes.learn_loop.revealed_hashes", lambda u: set())
+    monkeypatch.setattr("routes.learn_loop.earliest_open_pose", lambda u, h: None)
+    monkeypatch.setattr(
+        "routes.learn_loop.unscanned_since",
+        lambda u, anchor: anchor is None or marker_at >= anchor,
+    )
+    seen = _answer_through_the_real_loader(client, monkeypatch, store)
+    assert seen["max_rung"] == expected and seen["refloored"] == expected
+    assert seen["evidence"]["max_rung"] == expected
+
+
+def test_help_recorded_before_the_serve_still_floors_the_grade(client, monkeypatch, store):
+    """Spec §13 A93: the help floor proper is the most help EVER recorded for
+    (student, item) — a hint given in a tutor session before today's serve still
+    floors the review grade. Only the unscanned-marker rule is anchored on the
+    serve time."""
+    monkeypatch.setattr("routes.learn_loop.max_help", lambda u, h: 2)
+    monkeypatch.setattr("routes.learn_loop.revealed_hashes", lambda u: set())
+    monkeypatch.setattr("routes.learn_loop.earliest_open_pose", lambda u, h: None)
+    monkeypatch.setattr("routes.learn_loop.unscanned_since", lambda u, anchor: False)
+    seen = _answer_through_the_real_loader(client, monkeypatch, store)
+    assert seen["max_rung"] == 2 and seen["refloored"] == 2
 
 
 def test_an_open_item_left_under_a_stale_claim_is_replaced(store):

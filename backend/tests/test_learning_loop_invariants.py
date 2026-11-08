@@ -32,6 +32,7 @@ PURE_MODULES = (
     "arms.py",  # PKG-14: variant_for (ids + the arm label in, a variant out)
     "calibration.py",  # BKT predictions vs unassisted outcomes (admin KPI report)
     "learning_gain.py",  # A112: pre/post outcomes per fixed post-test window (admin KPI report)
+    "interleave.py",  # A114: confusable partners + the review serve order (keys in, order out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
@@ -2061,7 +2062,8 @@ MISCONCEPTIONS_IMPORTERS_ALLOWED = {
     # the narrower AST guard below forbids any store/read/write hook here.
     "learning/grade_checkpoint.py",
     # PKG-10 fix round 3 (R3-1, spec §13 A76): the review grades through
-    # recheck_after_release — the one re-check decision — and imports nothing else
+    # recheck_after_release — the one re-check decision; spec §13 A114: its queue
+    # reads open_for (shared open wrong_keys mark confusable concepts). Nothing else.
     "learning/review.py",
 }
 
