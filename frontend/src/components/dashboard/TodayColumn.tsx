@@ -415,11 +415,11 @@ export function TodayColumn(props: {
           })}
         </div>
         <div style={{ fontSize: 11.5, color: "var(--warn)", marginTop: 10 }}>
-          {todayDone
-            ? "Today counted. Nice work."
-            : stats.streak > 0
-              ? "One session today keeps it alive."
-              : "One session today starts your streak."}
+          {/* Keyed on the server's streak first: activity alone (a session row,
+              a concept's last_studied_at) doesn't prove the streak advanced. */}
+          {stats.streak > 0
+            ? todayDone ? "Today counted. Nice work." : "One session today keeps it alive."
+            : todayDone ? "Nice work today." : "One session today starts your streak."}
         </div>
       </div>
 
