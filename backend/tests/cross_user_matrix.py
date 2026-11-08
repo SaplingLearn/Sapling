@@ -22,11 +22,12 @@ The spec is ``docs/security/rls-step2-plan.md`` section 5. The groups:
   or 404, never a session-authorised answer.
 * ``allowlist``: the intentional cross-user reads. 200 with no private field.
 
-Only the flag-``off`` mode exists today (``MODES``). When the
-``db_user_scope`` flag lands, ``enforce`` joins ``MODES``; under it the
-``KNOWN_403`` entries that are load-then-``require_self`` must turn into 404s
-(RLS hides the row first). The membership 403s in ``social.py`` are computed
-by code from ``room_members`` and stay 403 under either mode.
+The lane runs every group under each ``db_user_scope`` flag mode in
+``MODES`` (``off`` and ``enforce``). Under ``enforce`` the ``KNOWN_403``
+entries in ``ENFORCE_404`` (load-then-``require_self``) must turn into 404s:
+RLS hides the row before the handler can see whose it is. The membership 403s
+in ``social.py`` are computed by code from ``room_members`` (and the social
+router runs as service role until step 2e) and keep their off-mode answer.
 
 Nothing here imports the app at module scope: the integration conftest must
 load ``backend/.env`` before ``config`` is imported.
@@ -40,10 +41,11 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-#: Flag modes the integration matrix runs under. "enforce" is added by the
-#: workstream that ships the `db_user_scope` flag (plan section 4.4); see the
-#: KNOWN_403 note above.
-MODES = ["off"]
+#: `db_user_scope` flag modes the integration matrix runs under (plan section
+#: 4.4), applied through the flag's env override SAPLING_FLAG_DB_USER_SCOPE.
+#: "shadow" is not a mode of its own here: its answers are the service role's
+#: by construction, i.e. "off".
+MODES = ["off", "enforce"]
 
 #: The enumeration must find at least this many routes. 233 on 2026-11-08; a
 #: walk that silently stops descending (a FastAPI internals change) would find
@@ -271,6 +273,17 @@ KNOWN_403: dict[tuple[str, str], str] = {
     ("POST", "/api/social/rooms/{room_id}/messages/{message_id}/reactions"):
         "social.py: membership check, then the message must be in room_id (#115)",
 }
+
+#: The KNOWN_403 entries that are "load the row, then require_self": under
+#: `enforce` the row is invisible to B's token before the handler runs, so the
+#: answer must be exactly 404 (``_expected`` in the integration test).
+ENFORCE_404: frozenset[tuple[str, str]] = frozenset({
+    ("GET", "/api/quiz/attempts/{attempt_id}"),
+    ("POST", "/api/quiz/attempts/{attempt_id}/answer"),
+    ("POST", "/api/quiz/attempts/{attempt_id}/abandon"),
+    ("POST", "/api/quiz/submit"),
+    ("POST", "/api/gradebook/syllabus/apply"),
+})
 
 #: Resource cases whose correct answer today is not 404 and not a leak.
 RESOURCE_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {

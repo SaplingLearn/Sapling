@@ -193,11 +193,34 @@ def _send(client, case: m.Case):
 
 
 def _expected(case: m.Case, mode: str) -> tuple[int, ...]:
-    """The statuses `case` may answer under `mode`. Only "off" exists today.
-    When the `db_user_scope` flag lands, "enforce" narrows the load-then-
-    require_self KNOWN_403 entries to (404,) here (RLS hides the row before
-    the handler can see whose it is); the social.py membership 403s stay."""
+    """The statuses `case` may answer under `mode`. Under "enforce" the
+    load-then-require_self KNOWN_403 entries (``m.ENFORCE_404``) narrow to
+    (404,): RLS hides the row before the handler can see whose it is. The
+    social.py membership 403s keep their off-mode answer (code, not RLS; the
+    social router runs as service role until step 2e)."""
+    if mode == "enforce" and case.group == "resource" and case.key in m.ENFORCE_404:
+        return (404,)
     return case.expect
+
+
+@pytest.fixture(autouse=True)
+def _db_user_scope_mode(request, monkeypatch):
+    """Apply the parametrized `mode` through the flag's env override, which
+    `feature_flags.explain` reads per call (no cache to clear) and
+    `db/scope.py` resolves once per REQUEST — so the in-process app sees it
+    from the next request on. The signing/anon keys enforce needs come from
+    the local stack's defaults (tests/integration/conftest.py)."""
+    from db import user_jwt
+
+    mode = getattr(getattr(request.node, "callspec", None), "params", {}).get("mode", "off")
+    monkeypatch.setenv("SAPLING_FLAG_DB_USER_SCOPE", mode)
+    user_jwt.clear_token_cache()
+    if mode == "enforce":
+        assert not user_jwt.config_problems(), (
+            f"enforce needs the local signing + anon keys: {user_jwt.config_problems()}"
+        )
+    yield
+    user_jwt.clear_token_cache()
 
 
 def _run(client, db_conn, cases: list[m.Case], mode: str, *,

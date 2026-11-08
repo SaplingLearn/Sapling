@@ -29,6 +29,22 @@ if _RUN:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
 
+#: The local Supabase stack's PUBLIC demo values (#115, db_user_scope=enforce):
+#: the anon key every `supabase start` ships, and the CLI's default HS256 JWT
+#: secret as an oct JWK (both local keys are signed with it). Defaults only —
+#: a value already in the env (or .env, loaded above) wins — and only against
+#: a loopback SUPABASE_URL, so nothing here can ever reach a remote project.
+LOCAL_ANON_KEY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24i"
+    "LCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+)
+LOCAL_JWT_SIGNING_KEY = (
+    '{"kty":"oct","k":"c3VwZXItc2VjcmV0LWp3dC10b2tlbi13aXRoLWF0LWxlYXN0LTMyLWNoYXJhY3RlcnMtbG9uZw"}'
+)
+if _RUN and any(h in (os.getenv("SUPABASE_URL") or "") for h in ("127.0.0.1", "localhost")):
+    os.environ.setdefault("SUPABASE_ANON_KEY", LOCAL_ANON_KEY)
+    os.environ.setdefault("SUPABASE_JWT_SIGNING_KEY", LOCAL_JWT_SIGNING_KEY)
+
 
 # Ids mirror db/seed_local_rich. Kept as literals so importing that module — and
 # transitively `config` — stays deferred to fixture bodies, preserving the
