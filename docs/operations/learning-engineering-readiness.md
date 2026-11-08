@@ -407,10 +407,14 @@ off.
    self-explanation prompt; the reply encrypted in `reply_text`). Both are
    backend-only: RLS on, `service_role` holds SELECT + INSERT on the first and
    SELECT + INSERT + UPDATE on the second, nothing else. Apply it BEFORE the
-   code. Code ahead of it still grades exactly as before: A76's re-check rule
-   reads `learning_prequestions` on every grade and a failed read decides
-   nothing, and with both flags off nothing writes either table.
-   `--db-audit` requires both tables' 26 columns (`REQUIRED_COLUMNS`).
+   code, without exception: since the review fixes, `revealed_hashes` reads
+   `learning_prequestions` on every selection and grade whatever the flags say
+   (an answered prequestion's item stays revealed after its flag goes off), and
+   that read fails closed. So code ahead of the migration grades every answer
+   with no credit until the table exists. A76's re-check read decides nothing
+   on a failure, and with both flags off nothing writes either table.
+   `--db-audit` requires both tables' 26 columns (`REQUIRED_COLUMNS`) and
+   refuses the wrong order.
 2. The flags `segment_prequestion` and `self_explanation_prompts` ship OFF.
    Off, the loop is byte-identical to the wave-4 base: every tutor request,
    served text and response (pinned by
@@ -423,8 +427,9 @@ off.
    a worked answer before teaching. Judge `self_explanation_prompts` by the
    Learning loop panel's "Do students explain their steps?" section.
 3. Rollback: the flags off (the admin flags API, or `SAPLING_FLAG_*`). The
-   tables stay; nothing reads them but A76's release rule and the admin
-   report, and rows written meanwhile keep their meaning.
+   tables stay; nothing reads them but A76's release rule, the revealed set
+   and the admin report, and rows written meanwhile keep their meaning: an
+   answered prequestion stays a release and a reveal.
 
 #### Varied practice (A140, A141)
 
