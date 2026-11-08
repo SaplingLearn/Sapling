@@ -75,9 +75,10 @@ port 6543 is transaction mode and breaks DDL. `scripts/pooler_url.py` builds it.
 Promotion (repo root; full runbook backend/promotion/README.md):
 
 ```
-make promote                          # staging -> prod: preflight, migrate, confirm, merge, verify
+make promote                          # staging -> prod: preflight, BACKUP, migrate, confirm, merge, verify
 make promote ARGS="--verify-only"     # re-check the live deploy only (wait + smoke)
 make promote ARGS="--yes"             # skip the confirmation prompt (CI)
+make backup-db ENV=<staging|prod|local>  # pg_dump -Fc into gitignored backups/ (prod/staging have NO platform backups)
 ```
 
 Docker (full stack from repo root):
