@@ -17,6 +17,7 @@ import sqlite3
 import time
 import zipfile
 from pathlib import Path
+from collections.abc import Callable
 from typing import TypedDict
 
 import httpx
@@ -301,13 +302,22 @@ def _run_flashcard_agent(prompt: str) -> list[Card]:
     return out
 
 
-def extract_cards_from_image(file_bytes: bytes, filename: str = "image.png") -> list[Card]:
+def extract_cards_from_image(
+    file_bytes: bytes,
+    filename: str = "image.png",
+    *,
+    screen: Callable[[str], None] | None = None,
+) -> list[Card]:
     """OCR the image via the existing extraction pipeline, then ask the agent
-    to split the markdown into Q/A pairs."""
+    to split the markdown into Q/A pairs. `screen(markdown)` runs between the
+    two — the route's integrity guard (spec §13 A125), which raises to stop
+    the text reaching the agent."""
     content_type = _guess_content_type(filename)
     markdown = extraction_service.extract_text_from_file(file_bytes, filename, content_type) or ""
     if not markdown.strip():
         return []
+    if screen is not None:
+        screen(markdown)
     prompt = _load_prompt("flashcard_ocr_split.txt").replace("{markdown}", markdown)
     return _run_flashcard_agent(prompt)
 

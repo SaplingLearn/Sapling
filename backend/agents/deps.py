@@ -80,6 +80,16 @@ class SaplingDeps:
             round 2, N1): `.leaks(text) -> bool` and `.retried`. The
             output validator re-runs a leaking turn ONCE with the problem
             named; None → no leak check (no active item, or released).
+        note: The note row the notes-chat route read and screened for the
+            student's posed items (spec §13 A125, services/integrity_guard.py).
+            `read_active_note` serves THIS snapshot instead of reading the
+            note again, so an edit landing mid-run cannot hand the model text
+            the screen never saw. None → the tool reads the note.
+        integrity: The request's `services.integrity_guard.Guard` (A125), on
+            a surface outside the loop whose agent can write what the student
+            later sees: `apply_graph_update_tool` drops a concept name that
+            states a posed item's key (as the route drops it from
+            extract-concepts). None → no screen (every other agent).
     """
 
     user_id: str
@@ -97,3 +107,5 @@ class SaplingDeps:
     pending_evidence: list = field(default_factory=list)
     loop_turn: Any = None
     loop_leak: Any = None
+    note: Any = None
+    integrity: Any = None

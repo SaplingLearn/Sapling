@@ -718,9 +718,13 @@ def test_routes_import_fsrs_only_behind_the_gate():
 
 
 #: PKG-14b (spec §11.2): flashcards are FSRS-scheduled for every student after
-#: the cutover — the route's gate was removed by design, and the kill switch
-#: does not bring the legacy list order back (spec §11.6).
-UNGATED_FSRS_ROUTES = frozenset({"flashcards.py"})
+#: the cutover — their FSRS use reads no gate, by design, and the kill switch
+#: does not bring the legacy list order back (spec §11.6). Spec §13 A125:
+#: routes/flashcards.py reads the gate again — for the integrity guard of its
+#: generators, not for FSRS — so it meets this per-module PRESENCE rule and its
+#: exemption ("flashcards.py") was retired as stale; the rule never proved that
+#: every fsrs use sits under the gate (HANDOFF-02 Known gaps), and still does not.
+UNGATED_FSRS_ROUTES: frozenset[str] = frozenset()
 
 
 # --- successive relearning --------------------------------------------------

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -15,12 +16,14 @@ from learning.bkt import is_weak
 from db.connection import table
 from learning.flashcard_fsrs import flashcard_fsrs_update
 from learning.fsrs import order_due
+from learning.gate import learning_loop_for_request
 from learning.params import FLASHCARD_RATING_TO_FSRS
-from services import events_service
+from services import events_service, integrity_guard
 from services.academics import resolve_offering, term_id_for_label
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
 from services.encryption import decrypt_if_present, decrypt_json, encrypt_if_present
+from services.request_context import current_request_id
 from services.timestamps import parse_ts
 from services.tutor_sessions import session_owned_by
 from services.flashcard_import_service import (
@@ -228,6 +231,56 @@ def _get_weak_concepts(user_id: str, course_name: str) -> list[str]:
         return []
 
 
+# ── Integrity guard (spec §13 A125) ─────────────────────────────────────────────
+# Every generator below hands the flashcard model text the student sent with the
+# request (a topic, pasted notes, a paragraph, card texts, a photographed page),
+# and every card it returns is a question with its answer. The learning loop's
+# integrity guard therefore runs around each: text quoting one of the student's
+# posed checks never reaches the model (409), and a card stating one's key is
+# withheld. A library document is the student's stored course material, not
+# request text (the loop treats course material as open-book), so the
+# library_doc source is not guarded.
+
+_CLOZE_BLANK = re.compile(r"\{\{.*?\}\}")
+
+
+def _integrity_guard(user_id: str, texts) -> integrity_guard.Guard:
+    """One read of the student's posed items and the pre-call check of the text
+    they sent; 409 (nothing generated) when it quotes one. Off with the loop
+    (the gate is read here, at route entry, once)."""
+    guard = integrity_guard.open_guard(
+        user_id,
+        surface="flashcards",
+        texts=list(texts),
+        active=learning_loop_for_request(user_id),
+        request_id=current_request_id(),
+    )
+    if guard.refused:
+        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
+    return guard
+
+
+def _card_text(card: dict) -> str:
+    """A card as the student reads it: a cloze front gets its blank filled
+    with the back (so a cloze of the student's own sentence reads as that
+    sentence — the served scan's provenance rule then sees the copy)."""
+    front, back = str(card.get("front") or ""), str(card.get("back") or "")
+    if _CLOZE_BLANK.search(front):
+        return _CLOZE_BLANK.sub(lambda _m: back, front, count=1)
+    return f"{front}\n{back}"
+
+
+def _screen_cards(guard: integrity_guard.Guard, cards: list) -> tuple[list, int]:
+    """The cards the guard lets through and how many it withheld (each stating a
+    posed check's key; help is recorded on those checks). 409 when it withheld
+    every card: nothing is left to serve."""
+    keep = guard.screen_each([_card_text(c) for c in cards])
+    kept = [c for c, ok in zip(cards, keep) if ok]
+    if cards and not kept:
+        raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
+    return kept, len(cards) - len(kept)
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.post("/generate")
@@ -237,6 +290,8 @@ def generate(body: GenerateFlashcardsBody, request: Request):
     Pulls library documents + weak concepts from the knowledge graph automatically.
     """
     require_self(body.user_id, request)
+    # spec §13 A125: the topic is the text this request sends the model
+    guard = _integrity_guard(body.user_id, (body.topic,))
 
     # 1. Session summary (optional extra context). require_self only proves
     #    the caller is body.user_id; the session must ALSO be theirs, or this
@@ -275,6 +330,7 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+    cards, withheld = _screen_cards(guard, cards)  # A125: before anything is stored
 
     now = datetime.now(timezone.utc).isoformat()
     rows_to_insert = [
@@ -331,13 +387,16 @@ def generate(body: GenerateFlashcardsBody, request: Request):
         for row in rows_to_insert
     ]
 
-    return {
+    out = {
         "flashcards": response_cards,
         "context_used": {
             "documents_found": len(documents),
             "weak_concepts_found": len(weak_concepts),
         }
     }
+    if withheld:
+        out["withheld"] = withheld  # A125: cards held back for stating a posed check's key
+    return out
 
 
 _LEGACY_LIST_COLS = (
@@ -575,6 +634,7 @@ def import_parse(body: ImportParseBody, request: Request):
         if len(file_bytes) > _MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="File exceeds 5MB limit")
 
+        withheld = 0
         try:
             if body.source == "xlsx":
                 cards = parse_xlsx(file_bytes)
@@ -582,14 +642,26 @@ def import_parse(body: ImportParseBody, request: Request):
                 cards = parse_anki_apkg(file_bytes)
             else:  # ocr
                 filename = (body.options or {}).get("filename", "image.png")
-                cards = extract_cards_from_image(file_bytes, filename=filename)
+                # spec §13 A125: the photographed page's text is what this request
+                # sends the card model — guarded once it is text, before the model
+                guards: list[integrity_guard.Guard] = []
+                cards = extract_cards_from_image(
+                    file_bytes,
+                    filename=filename,
+                    screen=lambda text: guards.append(_integrity_guard(body.user_id, (text,))),
+                )
+                if guards:
+                    cards, withheld = _screen_cards(guards[0], cards)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Parser error: {e}")
-        return {"cards": cards, "errors": []}
+        out = {"cards": cards, "errors": []}
+        if withheld:
+            out["withheld"] = withheld
+        return out
 
     if body.source == "url":
         try:
@@ -613,11 +685,13 @@ def import_generate(body: ImportGenerateBody, request: Request):
             headers={"Retry-After": str(retry)},
         )
 
+    guard = None
     if body.source == "paste":
         if not body.text:
             raise HTTPException(status_code=400, detail="`text` is required for paste source")
         source_text = body.text
-    else:  # library_doc
+        guard = _integrity_guard(body.user_id, (source_text,))  # spec §13 A125
+    else:  # library_doc: stored course material, not request text (A125: unguarded)
         if not body.document_id:
             raise HTTPException(status_code=400, detail="`document_id` is required for library_doc source")
         rows = table("documents").select(
@@ -648,6 +722,9 @@ def import_generate(body: ImportGenerateBody, request: Request):
         cards = gemini_generate_cards(source_text, count=body.count, difficulty=body.difficulty)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+    withheld = 0
+    if guard is not None:
+        cards, withheld = _screen_cards(guard, cards)
 
     # #117 taxonomy (+ the ADR 0028 PostHog mirror): this IS the AI
     # generation (the cards come back for review; /import/commit only
@@ -667,7 +744,7 @@ def import_generate(body: ImportGenerateBody, request: Request):
             },
         )
 
-    return {"cards": cards}
+    return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}
 
 
 @router.post("/import/cleanup")
@@ -683,10 +760,18 @@ def import_cleanup(body: ImportCleanupBody, request: Request):
         )
 
     cards = [{"front": c.front, "back": c.back} for c in body.cards]
+    # spec §13 A125: the cards' own text is what this request sends the model
+    guard = _integrity_guard(body.user_id, [t for c in cards for t in (c["front"], c["back"])])
     try:
         out = gemini_cleanup_cards(cards)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
+    keep = guard.screen_each([_card_text(c) for c in out])
+    if not all(keep):
+        # A cleaned card stating a posed check's key: the cleanup is withheld
+        # whole and the student's own cards come back as they sent them — a
+        # cleanup must never lose a card the student wrote.
+        return {"cards": cards, "withheld": keep.count(False)}
     return {"cards": out}
 
 
@@ -702,8 +787,10 @@ def import_cloze(body: ImportClozeBody, request: Request):
             headers={"Retry-After": str(retry)},
         )
 
+    guard = _integrity_guard(body.user_id, (body.paragraph,))  # spec §13 A125
     try:
         cards = gemini_cloze(body.paragraph)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Gemini error: {e}")
-    return {"cards": cards}
+    cards, withheld = _screen_cards(guard, cards)
+    return {"cards": cards, "withheld": withheld} if withheld else {"cards": cards}

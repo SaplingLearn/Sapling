@@ -11,7 +11,12 @@ the first docstring and the migration's header comment listed more):
   served as H6 (`_LoopTurn._record_planned_help`);
 - an H4 sibling payload, on the SIBLING, at RUNG_NO_CREDIT_MIN;
 - a quiz "Ask about this" session, on the quiz question, at RUNG_NO_CREDIT_MIN
-  (spec §13 A99, services/quiz_ask.py).
+  (spec §13 A99, services/quiz_ask.py);
+- an AI surface OUTSIDE the loop that the student took a posed item to — their
+  text quoted its stem (the model was not called) or the model's text stated its
+  key (withheld) — at INTEGRITY_HELP_RUNG (spec §13 A125,
+  services/integrity_guard.py; the one row written for help that was sought,
+  not served: a refusal and a withholding are yes/no answers about the item).
 
 A served-text reveal is a 'reveal' row (reveal_store), which `max_help` reads as
 RUNG_NO_CREDIT_MIN. What writes NO help row, on purpose: a POST-GRADE release —
@@ -46,8 +51,9 @@ from learning.params import LADDER_MAX_RUNG, RUNG_NO_CREDIT_MIN
 
 _LEDGER = "learning_reveals"
 
-#: where a unit of help or a pose came from (`source`)
-SOURCES = ("loop", "review", "posttest", "probe", "scan", "quiz")  # "quiz": A99 quiz-ask
+#: where a unit of help or a pose came from (`source`); "quiz": A99 quiz-ask;
+#: "outside": an AI surface outside the loop the student took the item to (A125)
+SOURCES = ("loop", "review", "posttest", "probe", "scan", "quiz", "outside")
 
 
 def _now_iso() -> str:

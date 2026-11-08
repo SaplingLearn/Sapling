@@ -3658,8 +3658,23 @@ _PKG06_SANCTIONED_IMPORTS = {
 # served-text scan, compiled once per turn on leak's prepared served-mode API
 # (served_rules / served_text / served_leaked). Nothing imports it but
 # routes/learn_loop.py — the same gated router.
+#
+# Spec §13 A125: services/integrity_guard.py is the loop's integrity guard on the AI
+# surfaces outside it (routes/notes.py, routes/flashcards.py, agents/tools/graph.py
+# through deps). Its PKG-06 reach — the served scan, learning/stem_match.py (leak's
+# stem rule) and the zpd_events emitter — is imported INSIDE the methods of an ACTIVE
+# guard only, i.e. after the route's learning_loop_for_request returned True; an
+# inactive guard (the kill switch) imports nothing of it. The app-load probe below
+# proves boot loads none of it; tests/test_learning_outside_integrity.py proves an
+# inactive guard does not either. learning/stem_match.py is reached only from there.
 _PKG06_SANCTIONED_IMPORTERS = frozenset(
-    {"routes/learn_loop.py", "learning/review.py", "learning/served_scan.py"}
+    {
+        "routes/learn_loop.py",
+        "learning/review.py",
+        "learning/served_scan.py",
+        "services/integrity_guard.py",
+        "learning/stem_match.py",
+    }
 )
 
 # What the real app may load from the PKG-06 layer at boot (PKG-06b): the one sanctioned import

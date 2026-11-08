@@ -11,7 +11,9 @@ same value as the events row's request_id column (request_context accepts up
 to 128 chars). Emitted by nobody in PKG-06; PKG-07, PKG-08 and PKG-10 call
 them. zpd.step's `earnest_blocked` key (spec §13 A109) is read by
 `learning.earnest_revise`, outside this layer (the admin KPI and the nightly
-metrics script must not import a PKG-06 module).
+metrics script must not import a PKG-06 module). The leak family's one event
+outside zpd.*, learn.outside_leak (spec §13 A125: the integrity guard of the AI
+surfaces outside the loop), is emitted here too, through the same text guard.
 """
 
 from __future__ import annotations
@@ -258,5 +260,47 @@ def emit_zpd_reveal(
             "unscanned": unscanned,
             "phase": phase,
             "session_id": session_id,
+        },
+    )
+
+
+#: spec §13 A125: where an AI surface OUTSIDE the loop met the student's
+#: posed-and-ungraded items (services/integrity_guard.py)
+OutsideStage = Literal["request", "reply", "unscanned"]
+
+
+def emit_outside_leak(
+    *,
+    user_id: str,
+    request_id: str | None,
+    surface: str,
+    stage: OutsideStage,
+    question_hashes: list[str],
+    help_recorded: bool,
+) -> None:
+    """Spec §13 A125: an AI surface outside the loop (`surface`, an enum of
+    services.integrity_guard.SURFACES) met the student's posed items —
+    `request`: the student's own text quoted their stems, so the model was not
+    called; `reply`: the model's text stated their keys, so it was withheld;
+    `unscanned`: the items could not be read (the text was served under an
+    'unscanned' marker). `help_recorded`: the A93 help rows were written.
+
+    Its own event, not zpd.leak or zpd.reveal: nothing here was served, so it
+    must not move the zero-leak gate (zpd.reveal, A90) nor the launch watch's
+    abort criterion and caught-leak count (zpd.leak: the LOOP's active-item
+    leak, spec §11.7). Hashes and enums only — never the student's or the
+    model's text."""
+    _emit(
+        "learn.outside_leak",
+        "audit",
+        user_id,
+        request_id,
+        lambda: {
+            "surface": surface,
+            "stage": stage,
+            "question_hashes": sorted(question_hashes),
+            "count": len(question_hashes),
+            "help_recorded": help_recorded,
+            "request_id": request_id,
         },
     )

@@ -67,11 +67,15 @@ async def apply_graph_update_tool(
 
     Call this when a new topic comes up that isn't already tracked.
     """
-    new_nodes = [
-        {"concept_name": name.strip(), "initial_mastery": 0.0}
-        for name in update.concepts
-        if name and name.strip()
-    ]
+    names = [name.strip() for name in update.concepts if name and name.strip()]
+    guard = getattr(ctx.deps, "integrity", None)
+    if guard is not None and names:
+        # spec §13 A125: a surface outside the loop (the notes chat) never files
+        # a concept name stating one of the student's posed checks' keys — the
+        # student would read it in their graph; their own words pass unscanned
+        keep = await asyncio.to_thread(guard.screen_each, names, own=guard.own_text)
+        names = [name for name, ok in zip(names, keep) if ok]
+    new_nodes = [{"concept_name": name, "initial_mastery": 0.0} for name in names]
     if not new_nodes:
         return "Graph update skipped: no concepts to add."
     await asyncio.to_thread(
