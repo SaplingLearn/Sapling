@@ -436,7 +436,7 @@ export function TodayColumn(props: {
       <div
         className="card"
         data-testid="dashboard-mastery"
-        style={{ padding: "16px 18px 24px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
         {/* The course list's own header, like "Upcoming · Calendar →": a
             label on the left so the link never sits alone on its line. */}
@@ -485,7 +485,7 @@ export function TodayColumn(props: {
         <div
           style={{
             display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8,
-            marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)",
+            marginTop: 18, paddingTop: 12, borderTop: "1px solid var(--border)",
           }}
         >
           {stats.total > 0 ? (
