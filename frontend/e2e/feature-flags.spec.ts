@@ -49,9 +49,10 @@ test("admin sets a user rule on hide_quiz and the student gets it (#620)", async
   await adminCtx.close();
 });
 
-test("hiding a feature drops it from the nav and redirects its route (#620)", async ({ browser, page }) => {
-  await page.goto(`${FRONTEND_URL}/dashboard`);
-  await expect(page.getByTestId("nav-link-quiz")).toBeVisible();
+test("hiding Quiz removes its Study option and redirects its route (#620)", async ({ browser, page }) => {
+  await page.goto(`${FRONTEND_URL}/study`);
+  await expect(page.getByRole("navigation", { name: "Study tools" }).getByRole("link", { name: "Quiz" })).toBeVisible();
+  await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 
   // Hide Quiz for everyone, through the API the /admin tab uses.
   const adminState = await mintStorageState(USER_ADMIN, "Ada Admin");
@@ -65,6 +66,7 @@ test("hiding a feature drops it from the nav and redirects its route (#620)", as
   // Flags load once per page load: a fresh load picks the change up.
   await page.reload();
   await expect(page.getByTestId("nav-link-tree")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Study tools" }).getByRole("link", { name: "Quiz" })).toHaveCount(0);
   await expect(page.getByTestId("nav-link-quiz")).toHaveCount(0);
 
   // A typed URL (and anything below it) lands on the dashboard.

@@ -299,7 +299,6 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-error-retry` / `quiz-error-back` | its "Try again" and "Back" |
 | `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block (`screens/Tree.tsx`) |
 | `tree-node-recent-quiz-{attemptId}` | one row in it, suffixed with the attempt's `quiz_id` per the stable-domain-id rule |
-| `dashboard-review-due` | the "Review what's due" quiz entry point (`screens/Dashboard.tsx`) — three call sites, but exactly one mounts for a given layout/viewport |
 
 The last three carry another surface's prefix because they render in that
 surface's file. They are listed here because they are quiz entry points, and a
@@ -394,10 +393,12 @@ never collide in the DOM.
 | `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
 | `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
 | `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
-| `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
-
-`dashboard-review-due` also lives in `screens/Dashboard.tsx`; it is documented
-with the `quiz` surface it links into.
+| `dashboard-resume-{sessionId}` | Today's plan session item — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
+| `dashboard-today-column` / `dashboard-streak` / `dashboard-plan` / `dashboard-mastery` | the sidebar layout's right column and its three cards (`dashboard/TodayColumn.tsx`) |
+| `dashboard-plan-progress` | the plan's "N of M done today" line |
+| `dashboard-plan-quiz` / `dashboard-plan-first-session` / `dashboard-plan-due-{assignmentId}` | plan items other than the session resume |
+| `dashboard-action-start` / `dashboard-action-calendar` | the greeting row's Start learning / Calendar buttons |
+| `dashboard-course-rows` / `dashboard-mastery-tree` | the mastery card's per-course rows and its Open Tree link |
 
 ### `calendar`
 

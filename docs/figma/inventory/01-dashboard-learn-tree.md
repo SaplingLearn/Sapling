@@ -25,8 +25,6 @@ Paths relative to `frontend/src/` unless noted; specs in `frontend/e2e/`; seed =
 | dashboard/populated-sidebar | Typewriter greeting + quote; graph card "N concepts across M courses"; right col Review/Search/Start learning, Streak/Mastered, Where you left off (≤3), Upcoming (≤4) | `rich-user-active`, desktop | Dashboard.tsx:974-1041, 518-715 | dashboard-review-due, dashboard-resume-{id} |
 | dashboard/greeting-typing | Greeting mid-type, blinking cursor, quote hidden | first ~1–2s | Dashboard.tsx:62-126, 694-713 | — |
 | dashboard/greeting-no-name | "Welcome back" | user w/o name | Dashboard.tsx:343-348 | — |
-| dashboard/review-due-count | "⚡ Review what's due · N" | due nodes | Dashboard.tsx:513-516 | dashboard-review-due |
-| dashboard/review-quiz | "⚡ Quiz" | none due | Dashboard.tsx:516 | dashboard-review-due |
 | dashboard/streak-zero / streak-active | "0 days" default / orange number | streak 0 / >0 | Dashboard.tsx:551-566 | — |
 | dashboard/mastered-empty | "0 · no concepts yet" | 0 nodes | Dashboard.tsx:575-577 | — |
 | dashboard/sessions-empty | "No recent sessions — start learning…" | no sessions | Dashboard.tsx:593-596 | — |

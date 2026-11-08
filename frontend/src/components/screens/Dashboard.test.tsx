@@ -25,6 +25,7 @@ import { ACTIVE_SEMESTER_STORAGE_KEY } from "@/lib/useActiveSemester";
 const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/dashboard",
   useRouter: () => ({ push, replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -52,6 +53,8 @@ vi.mock("@/lib/api", () => ({
   getUpcomingAssignments: vi.fn(),
   getSessions: vi.fn(),
   getRecommendations: vi.fn(),
+  fetchActivity: vi.fn(async () => ({ week: [] })),
+  fetchGamificationMe: vi.fn(async () => null),
 }));
 
 import { Dashboard } from "./Dashboard";

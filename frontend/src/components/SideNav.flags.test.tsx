@@ -34,15 +34,15 @@ describe("SideNav hide_* flags", () => {
 
   it("shows every destination when no flag is on", () => {
     renderRail();
-    for (const r of ["dashboard", "learn", "quiz", "course-planner"]) {
+    for (const r of ["dashboard", "learn", "study", "course-planner"]) {
       expect(screen.getByTestId(`nav-link-${r}`)).toBeTruthy();
     }
   });
 
   it("drops a hidden destination and keeps the rest", () => {
-    flagState = { flags: { hide_quiz: "on", hide_tree: "off" }, ready: true };
+    flagState = { flags: { hide_study: "on", hide_tree: "off" }, ready: true };
     renderRail();
-    expect(screen.queryByTestId("nav-link-quiz")).toBeNull();
+    expect(screen.queryByTestId("nav-link-study")).toBeNull();
     expect(screen.getByTestId("nav-link-tree")).toBeTruthy();
   });
 
@@ -58,7 +58,7 @@ describe("SideNav hide_* flags", () => {
     renderRail();
     expect(screen.getByTestId("nav-link-dashboard")).toBeTruthy();
     expect(screen.getByTestId("nav-link-settings")).toBeTruthy();
-    expect(screen.queryByTestId("nav-link-quiz")).toBeNull();
+    expect(screen.queryByTestId("nav-link-study")).toBeNull();
     expect(screen.queryByTestId("nav-link-learn")).toBeNull();
   });
 });

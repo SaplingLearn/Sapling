@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { TopBar } from "../TopBar";
 import { Icon } from "../Icon";
 import { useScrollLock } from "@/lib/useScrollLock";
-import { Pill } from "../Pill";
+import { CustomSelect } from "../CustomSelect";
 import { FilterPills } from "@/components/ui";
 import { KnowledgeGraph } from "../graph/KnowledgeGraph";
 import { FullHeightScreen } from "../FullHeightScreen";
@@ -257,7 +257,6 @@ export function Tree() {
     return edges.filter(e => ids.has(typeof e.source === "string" ? e.source : "") && ids.has(typeof e.target === "string" ? e.target : ""));
   }, [edges, filteredNodes]);
 
-  const conceptCount = filteredNodes.filter(n => !n.is_subject_root).length;
 
   const sessionsForSelected = React.useMemo(() => {
     if (!selected) return [];
@@ -443,14 +442,14 @@ export function Tree() {
       <TopBar
         title="Your Knowledge Tree"
         subtitle="The living map of what you've learned, organized by course."
-        actions={
-          <button className="btn btn--sm" onClick={() => setFullscreen(true)}>
-            <Icon name="max" size={13} /> Fullscreen
-          </button>
-        }
       />
 
+      {/* One toolbar. Left: search, course, and Add concept (it needs a single
+          course). Right: the mastery-status pills, kept as pills because their
+          colours double as the graph's legend. Course is a dropdown so the row
+          never wraps however many courses a student has. */}
       <div
+        data-testid="tree-toolbar"
         style={{
           padding: "14px 32px",
           display: "flex",
@@ -462,11 +461,12 @@ export function Tree() {
           flexShrink: 0,
         }}
       >
-        <div style={{ position: "relative", flex: "0 1 260px" }}>
+        <div style={{ position: "relative", flex: "0 1 220px" }}>
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search concepts…"
+            aria-label="Search concepts"
             style={{
               width: "100%", padding: "5px 10px 5px 28px", fontSize: 12,
               border: "1px solid var(--border)", borderRadius: "var(--r-full)",
@@ -477,54 +477,30 @@ export function Tree() {
             <Icon name="search" size={12} />
           </span>
         </div>
-        <FilterPills
+        <CustomSelect<string>
+          size="sm"
+          ariaLabel="Course"
+          testId="graph-course-filter"
+          value={courseFilter}
+          onChange={(v) => { setCourseFilter(v); setAddingConcept(false); setNewConceptName(""); }}
+          style={{ flex: "0 0 auto", minWidth: 150 }}
+          triggerStyle={{ borderRadius: "var(--r-full)", background: "var(--bg-panel)", padding: "5px 12px" }}
           options={[
-            { value: "all" as Tier, label: "All" },
-            ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
-              value: t as Tier,
-              label: TIER_META[t].label,
-              color: TIER_META[t].color,
+            { value: "all", label: <CourseOptionLabel>All courses</CourseOptionLabel> },
+            ...scopedCourses.map((c) => ({
+              value: c.course_id,
+              testId: `graph-course-filter-${c.course_id}`,
+              label: (
+                <CourseOptionLabel color={c.color || "var(--accent)"}>
+                  {c.course_code || c.course_name}
+                </CourseOptionLabel>
+              ),
             })),
           ]}
-          value={tier}
-          onChange={setTier}
         />
-        <div style={{ flex: 1 }} />
-        <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {conceptCount} node{conceptCount === 1 ? "" : "s"}
-        </div>
-      </div>
-
-      <div
-        style={{
-          padding: "12px 32px 0",
-          display: "flex",
-          gap: 8,
-          borderBottom: "1px solid var(--border)",
-          flexWrap: "wrap",
-          paddingBottom: 12,
-        }}
-      >
-        <Pill active={courseFilter === "all"} onClick={() => setCourseFilter("all")}>All courses</Pill>
-        {scopedCourses.map((c) => (
-          <Pill
-            key={c.course_id}
-            testId={`graph-course-filter-${c.course_id}`}
-            active={courseFilter === c.course_id}
-            onClick={() => setCourseFilter(c.course_id)}
-            color={c.color || undefined}
-          >
-            <span style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: courseFilter === c.course_id ? "#fff" : c.color || "var(--accent)",
-              display: "inline-block",
-            }} />
-            {c.course_code || c.course_name}
-          </Pill>
-        ))}
         {courseFilter !== "all" && (
           addingConcept ? (
-            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
               <input
                 data-testid="graph-add-concept-input"
                 autoFocus
@@ -536,7 +512,7 @@ export function Tree() {
                   if (e.key === "Escape") { setAddingConcept(false); setNewConceptName(""); }
                 }}
                 style={{
-                  fontSize: 13, padding: "5px 10px", border: "1px solid var(--border)",
+                  fontSize: 12, padding: "5px 10px", border: "1px solid var(--border)",
                   borderRadius: "var(--r-full)", background: "var(--bg-panel)", width: 180,
                 }}
               />
@@ -553,13 +529,27 @@ export function Tree() {
             <button
               data-testid="graph-add-concept"
               className="btn btn--sm"
-              style={{ marginLeft: "auto" }}
               onClick={() => setAddingConcept(true)}
             >
               ＋ Add concept
             </button>
           )
         )}
+        {/* Right side: the mastery-status filter (its colours are the legend). */}
+        <div style={{ marginLeft: "auto" }}>
+          <FilterPills
+            options={[
+              { value: "all" as Tier, label: "All" },
+              ...(Object.keys(TIER_META) as Array<Exclude<Tier, "all">>).map((t) => ({
+                value: t as Tier,
+                label: TIER_META[t].label,
+                color: TIER_META[t].color,
+              })),
+            ]}
+            value={tier}
+            onChange={setTier}
+          />
+        </div>
       </div>
 
       {courseFilter !== "all" && userId && (
@@ -577,14 +567,36 @@ export function Tree() {
           {loading ? (
             <GraphPanelSkeleton />
           ) : (
-            <KnowledgeGraph
-              nodes={filteredNodes}
-              edges={filteredEdges}
-              width={size.w}
-              height={size.h}
-              highlightId={suggestId || selected?.id}
-              onNodeClick={(n) => setSelected(n)}
-            />
+            <>
+              <KnowledgeGraph
+                nodes={filteredNodes}
+                edges={filteredEdges}
+                width={size.w}
+                height={size.h}
+                highlightId={suggestId || selected?.id}
+                onNodeClick={(n) => setSelected(n)}
+                zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
+              />
+              {/* The graph's own top-right corner: a Fullscreen icon the
+                  width of the zoom stack, which sits directly below it. */}
+              <button
+                type="button"
+                data-testid="graph-fullscreen"
+                aria-label="Fullscreen"
+                title="Fullscreen"
+                className="btn btn--ghost btn--sm"
+                onClick={() => setFullscreen(true)}
+                style={{
+                  position: "absolute", top: FULLSCREEN_BTN.top, right: 12, zIndex: 5,
+                  width: FULLSCREEN_BTN.w, height: FULLSCREEN_BTN.h, padding: 0,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-panel)", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-sm)", boxShadow: "var(--shadow-sm)",
+                }}
+              >
+                <Icon name="max" size={13} />
+              </button>
+            </>
           )}
         </div>
         {selected && !isMobile && (
@@ -671,5 +683,28 @@ function FullscreenGraph({
         onNodeClick={onNodeClick}
       />
     </div>
+  );
+}
+
+/** The graph-corner Fullscreen icon: as wide as the 2D zoom stack (36px:
+ *  4px padding + 26px buttons + 1px borders) so the two read as one column. */
+const FULLSCREEN_BTN = { top: 12, w: 36, h: 32 };
+
+/** A course row in the Tree's course dropdown: colour dot + code. "All
+ *  courses" passes no colour and gets a hollow dot so the labels align. */
+function CourseOptionLabel({ color, children }: { color?: string; children: React.ReactNode }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }}>
+      <span
+        aria-hidden
+        style={{
+          width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+          background: color || "transparent",
+          border: color ? "none" : "1px solid var(--text-muted)",
+          boxSizing: "border-box",
+        }}
+      />
+      {children}
+    </span>
   );
 }
