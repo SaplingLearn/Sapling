@@ -146,7 +146,7 @@ def test_ladder_rungs_are_h0_to_h6_with_intent():
 # ── policy: ceiling table (spec §3.3, every row) ──────────────────────────────
 
 
-def _learner(band, prereq=True, p=0.5, un=None, opps=0, streak=0):
+def _learner(band, prereq=True, p=0.5, un=None, opps=0, streak=0, strong=None):
     from learning.policy import LearnerView
 
     return LearnerView(
@@ -156,6 +156,7 @@ def _learner(band, prereq=True, p=0.5, un=None, opps=0, streak=0):
         unassisted_next=un,
         opps=opps,
         streak_unassisted=streak,
+        n_strong_unassisted=strong,
     )
 
 
@@ -194,6 +195,43 @@ CEILING_CASES = [
     ("novice", False, 1, False, False, "H5", "NOVICE_PREREQ_GAP"),
     ("novice", False, 0, True, False, "H4", "NOVICE_WORKED_FIRST"),  # floor never lowers
 ]
+
+
+UNCONFIRMED_CASES = [
+    # A110 (c): profic belief, strong unassisted count -> rung, reason
+    (0, 0, False, False, "H3", "PROFIC_UNCONFIRMED"),
+    (0, 1, False, False, "H4", "PROFIC_UNCONFIRMED"),
+    (0, 2, False, False, "H6", "PROFIC_UNCONFIRMED"),
+    (0, 0, False, True, "H1", "EXAM"),  # exam mode still wins
+    (1, 0, False, False, "H1", "PROFIC"),  # one strong unassisted answer confirms it
+    (3, 2, False, False, "H3", "PROFIC_ESCALATED"),
+    (None, 0, False, False, "H1", "PROFIC"),  # not supplied: the profic row unchanged
+]
+
+
+@pytest.mark.parametrize("strong,fails,showed,exam,rung,reason", UNCONFIRMED_CASES)
+def test_unconfirmed_profic_gets_the_develop_row(strong, fails, showed, exam, rung, reason):
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason, ceiling_with_reason
+
+    learner = _learner("profic", True, p=0.9, strong=strong)
+    step = _step(fails=fails, showed_work=showed, exam=exam)
+    assert ceiling_with_reason(learner, step) == (Rung[rung], CeilingReason[reason])
+
+
+def test_unconfirmed_profic_never_raises_past_the_profic_teach_cap():
+    from learning.ladder import Rung
+    from learning.policy import ceiling_with_reason
+
+    learner = _learner("profic", True, p=0.9, strong=0)
+    rung, _ = ceiling_with_reason(learner, _step(fails=0), teach_attempt=True)
+    assert rung == Rung.H3  # already at the profic cap: no teach-attempt raise
+
+
+def test_the_confirm_threshold_is_a_named_constant():
+    from learning import params
+
+    assert params.CEILING_PROFIC_CONFIRM_MIN_STRONG == 1
 
 
 @pytest.mark.parametrize("band,prereq,fails,showed,exam,rung,reason", CEILING_CASES)

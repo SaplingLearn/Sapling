@@ -30,6 +30,7 @@ PURE_MODULES = (
     "probe.py",
     "planner.py",
     "arms.py",  # PKG-14: variant_for (ids + the arm label in, a variant out)
+    "calibration.py",  # BKT predictions vs unassisted outcomes (admin KPI report)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)

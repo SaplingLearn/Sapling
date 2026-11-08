@@ -100,7 +100,8 @@ def _step(
     }
 
 
-def _evidence(i, *, node="n1", session, correct=True, assisted=False, max_rung=0):
+def _evidence(i, *, node="n1", session, correct=True, assisted=False, max_rung=0,
+              channel="free_response", p_before=None, weight=1.0):
     return {
         "id": f"e{i}",
         "node_id": node,
@@ -111,6 +112,9 @@ def _evidence(i, *, node="n1", session, correct=True, assisted=False, max_rung=0
         "max_rung": max_rung,
         "question_hash": "q",
         "created_at": f"2026-07-10T01:{i:02d}:00+00:00",
+        "channel": channel,
+        "p_before": p_before,
+        "weight": weight,
     }
 
 
@@ -457,3 +461,46 @@ def test_earnest_revise_without_graded_steps_is_inconclusive(monkeypatch):
     assert b["earnest_revise"]["rate"] is None
     assert b["earnest_revise"]["gate"] == "inconclusive"
     assert b["gates"]["earnest_revise_ok"] is None, "inconclusive, never a pass"
+
+
+def test_calibration_reports_bkt_predictions_against_unassisted_outcomes(monkeypatch):
+    evidence = [
+        _evidence(1, session=None, correct=True, p_before=0.95),  # post-test, came true
+        _evidence(2, session=None, correct=False, p_before=0.95),  # post-test, did not
+        _evidence(3, session="s1", correct=True, p_before=0.4),  # in-session, independent
+        _evidence(4, session="s1", correct=True, p_before=0.4, assisted=True),  # helped
+        _evidence(5, session="s1", correct=True, p_before=0.4, channel="mc"),  # weak
+    ]
+    _serve(monkeypatch, {"events": [], "node_mastery_events": evidence})
+    b = client.get(URL, params=RANGE).json()
+    cal = b["calibration"]
+    assert cal["all"]["n"] == 3
+    assert cal["posttest"]["n"] == 2
+    assert cal["posttest"]["observed_rate"] == pytest.approx(0.5)
+    assert cal["posttest"]["brier"] is not None
+    assert len(cal["all"]["bins"]) == params.CALIBRATION_BINS
+
+
+def test_calibration_is_empty_not_zero_without_independent_evidence(monkeypatch):
+    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    cal = client.get(URL, params=RANGE).json()["calibration"]
+    assert cal["all"]["n"] == 0 and cal["all"]["brier"] is None
+    assert cal["posttest"]["observed_rate"] is None
+
+
+def test_the_evidence_scan_reads_the_calibration_columns(monkeypatch):
+    calls = []
+
+    class _Rec(_FakeTable):
+        def __init__(self, name):
+            super().__init__([])
+            self.name = name
+
+        def select_with_count(self, columns="*", filters=None, **kw):
+            calls.append((self.name, columns))
+            return [], 0
+
+    monkeypatch.setattr(analytics, "table", _Rec)
+    assert client.get(URL, params=RANGE).status_code == 200
+    cols = dict(calls)["node_mastery_events"].split(",")
+    assert {"channel", "p_before", "weight"} <= set(cols)

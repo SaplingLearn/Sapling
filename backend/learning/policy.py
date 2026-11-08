@@ -42,6 +42,8 @@ class CeilingReason(str, Enum):
     EXAM = "exam"
     PROFIC = "profic"
     PROFIC_ESCALATED = "profic_escalated"
+    # A110 (c): profic belief with no strong unassisted observation behind it
+    PROFIC_UNCONFIRMED = "profic_unconfirmed"
     DEVELOP = "develop"
     DEVELOP_H6 = "develop_h6"
     NOVICE_PREREQ_OK = "novice_prereq_ok"
@@ -77,6 +79,9 @@ class LearnerView:
     unassisted_next: float | None
     opps: int
     streak_unassisted: int
+    # Strong-channel unassisted observations behind the belief (learner_state).
+    # None = the caller did not supply it: the profic row applies unchanged.
+    n_strong_unassisted: int | None = None
 
 
 class RungEvidence(NamedTuple):
@@ -127,7 +132,23 @@ def ceiling_with_reason(
         raise ValueError(f"unknown band {learner.band!r}")
     if step.exam_mode:
         return Rung.H1, CeilingReason.EXAM
-    if learner.band == "profic":
+    unconfirmed = (
+        learner.band == "profic"
+        and learner.n_strong_unassisted is not None
+        and learner.n_strong_unassisted < params.CEILING_PROFIC_CONFIRM_MIN_STRONG
+    )
+    if unconfirmed:
+        # A110 (c): a profic belief that no strong unassisted answer has confirmed
+        # (it rests on quiz mc, propagation or assisted work) gets the develop
+        # row. Help is asymmetric (Tetzlaff et al. 2025): withholding it from a
+        # novice who only looks proficient costs more than offering it to an
+        # expert, so uncertainty resolves toward help.
+        if fails >= params.CEILING_DEVELOP_H6_FAILS:
+            rung = Rung.H6
+        else:
+            rung = Rung(min(int(Rung.H3) + fails, int(Rung.H6)))
+        reason = CeilingReason.PROFIC_UNCONFIRMED
+    elif learner.band == "profic":
         if fails >= params.CEILING_PROFIC_ESCALATE_FAILS:
             rung, reason = Rung.H3, CeilingReason.PROFIC_ESCALATED
         else:

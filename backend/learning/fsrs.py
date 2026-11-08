@@ -323,6 +323,12 @@ def order_due(
 ) -> list:
     """Stable sort by |R − REVIEW_ORDER_THRESHOLD| ascending (DASH threshold).
 
+    The threshold is the DASH study's item-selection policy, not part of the
+    DASH memory model: Lindsey, Shroyer, Pashler & Mozer (2014) reviewed the
+    items whose predicted recall was nearest 0.33, a value from the Khajah,
+    Lindsey & Mozer (2013) simulations. With FSRS's 0.90 retention target most
+    due items sit above 0.33, so in practice this serves the most-overdue first.
+
     Returns a new list; the input is not reordered. Rows with no FSRS state
     (R = 1.0) sort last.
     """

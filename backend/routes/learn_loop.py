@@ -762,6 +762,7 @@ def _learner_view(state: LearnerState | None, *, band: str, prereq_proficient: b
         unassisted_next=st.unassisted_next,
         opps=st.opps,
         streak_unassisted=st.streak_unassisted,
+        n_strong_unassisted=st.n_strong_unassisted,
     )
 
 
