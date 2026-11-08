@@ -43,8 +43,12 @@ from learning.params import (
 Channel = Literal["free_response", "mc_reasoned", "mc", "teachback_llm", "chat_turn"]
 
 #: Which backend produced an evidence verdict (spec §5, §13 A22). "jev" is PKG-15's.
+#: A model verdict names the provider of the grader slot whose run it stands on,
+#: `_second` for grader_second (spec §13 A116: agents.grader.run_backend).
 #: Equal to the node_mastery_events.grader_backend CHECK list (pinned by test).
-GraderBackend = Literal["deterministic", "gemini", "gemini_second", "jev"]
+GraderBackend = Literal[
+    "deterministic", "gemini", "gemini_second", "claude", "claude_second", "jev"
+]
 
 #: PKG-10 (spec §3.3): the slip / misconception / novice rule's verdict on one
 #: graded attempt — the six §3.3 verdicts plus "none" for a plain correct

@@ -91,7 +91,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS
-from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot
+from agents._providers import ANTHROPIC_MAX_TOKENS, model_for, settings_for_slot, slot_provider
 from agents.deps import SaplingDeps
 from agents.usage import record_agent_usage
 from services.ai_trace_privacy import content_free_tracer_provider
@@ -282,10 +282,34 @@ class Withdrawals(BaseModel):
     )
 
 
+#: Which grading run a verdict stands on (A22 provenance), named for the provider
+#: its slot serves on (spec §13 A116); `_second` marks the grader_second slot.
+#: learning.evidence.GraderBackend is these plus `deterministic` and `jev`.
+GraderRunBackend = Literal["gemini", "gemini_second", "claude", "claude_second"]
+_RUN_BACKENDS: dict[tuple[str, bool], GraderRunBackend] = {
+    ("google", False): "gemini",
+    ("google", True): "gemini_second",
+    ("anthropic", False): "claude",
+    ("anthropic", True): "claude_second",
+}
+
+
+def run_backend(*, second_opinion: bool = False) -> GraderRunBackend:
+    """A22 provenance (spec §13 A116): the provider of the slot whose run a verdict
+    stands on — `grader`, or the grader_second slot — read from that slot's
+    configuration when grade() returns, so a SAPLING_MODEL_GRADER(_SECOND) flip is
+    honoured. It was once fixed to Gemini, so Claude-graded evidence said
+    `gemini`. Function mode (the E2E lanes) records the provider of the slot its
+    FunctionModel stands in for."""
+    slot = GRADER_SECOND_OPINION_SLOT if second_opinion else "grader"
+    return _RUN_BACKENDS[(slot_provider(slot), second_opinion)]
+
+
 @dataclass
 class GradeResult:
     """Code-side result of grade(); `unavailable=True` is the ADR 0024 degrade.
-    `backend` names the run whose verdict is used (A22 provenance). `refused`
+    `backend` names the run whose verdict is used (A22 provenance): its slot's
+    provider, `_second` for the grader_second slot (`run_backend`, A116). `refused`
     (A33) names why the answer was not graded; a refused result is also
     `unavailable`, so a caller that reads only that flag still records nothing.
     `budget_capped` (A39): unavailable because the grader cap was hard, before any
@@ -300,7 +324,7 @@ class GradeResult:
     matched_wrong_key: str = ""
     feedback_hint: str = ""
     low_confidence: bool = False
-    backend: Literal["gemini", "gemini_second"] | None = None
+    backend: GraderRunBackend | None = None
 
 
 _SYSTEM_PROMPT = (
@@ -973,7 +997,7 @@ def _unavailable_after(exc: BaseException) -> GradeResult:
 async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) -> GradeResult:
     """Grade one answer. Honest degrade (ADR 0024): budget, behaviour or provider
     failure → GradeResult(unavailable=True) + WARNING, never a second prompt
-    stack. The single Gemini grader: PKG-05b wraps it without changing the prompt.
+    stack. The single grader: PKG-05b wraps it without changing the prompt.
     Every grading and support-check field must explicitly answer each requested
     label once with yes/no. A returned primary with invalid labelled fields may
     use the same ONE second-opinion allowance as low confidence, as a complete
@@ -1040,7 +1064,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         item, format=format, student_answer=student_answer, labels=labels
     )
     suspicious = bool(answer_guard.suspicion(student_answer, **terms))
-    backend: Literal["gemini", "gemini_second"] = "gemini"
+    second_opinion = False  # set once the verdict stands on the grader_second run (A22)
     confirming = False
     try:
         runs = [await _run_once(message, deps)]
@@ -1067,7 +1091,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
             runs.append(await _run_once(message, deps, second_opinion=True))
             if _invalid_verdict_fields(runs[-1], labels):
                 raise UnexpectedModelBehavior("grader returned invalid verdicts")
-            backend = "gemini_second"
+            second_opinion = True
     except _GRADER_FAILURES as exc:
         logger.warning("grader unavailable for item %s: %s", item.id, exc)
         return _unavailable_after(exc)
@@ -1099,7 +1123,7 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         logger.warning("grader unavailable for item %s: %s", item.id, why)
         return GradeResult(unavailable=True)
     results = parse_labelled(out.item_results, labels)
-    if backend == "gemini_second" and _conflicted(out, results, item):
+    if second_opinion and _conflicted(out, results, item):
         # A33 (round a33): the second opinion's all-yes contradicts its own
         # report, so it is no verdict. Replacing a first run too unsure to use,
         # nothing else is left; asked to confirm one, it confirms nothing (live,
@@ -1242,5 +1266,6 @@ async def grade(item, *, format: str, student_answer: str, deps: SaplingDeps) ->
         matched_wrong_key=matched,
         feedback_hint=hint,
         low_confidence=confidence < GRADER_LOW_CONFIDENCE,
-        backend=backend,
+        # A116: the provider of the slot this verdict's run used, read now
+        backend=run_backend(second_opinion=second_opinion),
     )

@@ -13,7 +13,8 @@ check via `reason_is_correct` — each one agents.grader.grade() call with the
 same format and answer as before, so grader prompts and llm_usage rows are
 byte-identical — and the numeric clear-mismatch via
 `deterministic_yes_no("numeric_gate", False)`. `grader_backend` comes from the
-verdict's provenance (`decisions.evidence_backend`).
+verdict's provenance (`decisions.evidence_backend`): the provider of the grading
+run's slot (spec §13 A116), or `deterministic` for the numeric gate.
 
 Spec §13 A33 (CodeRabbit PR #673): an answer that addresses the grader (grading
 directives, role or format markers — before any model call, or on the grader's
@@ -169,12 +170,12 @@ def _maps(item) -> dict:
 
 def _via_seam(verdict) -> tuple[GradeResult, GraderBackend | None]:
     """PKG-05b: verdict → (GradeResult, grader_backend). None = honest degrade: unavailable, no
-    evidence for either outcome (inv 28). GradeResult.backend marks a grader_second verdict.
+    evidence for either outcome (inv 28). GradeResult.backend names the grading run — its
+    slot's provider, `_second` for grader_second (A116) — and evidence_backend carries it.
     A `decisions.Refused` verdict carries its GradeResult with `refused` set (A33)."""
     if verdict is None:
         return GradeResult(unavailable=True), None
-    second = verdict.result.backend == "gemini_second"
-    return verdict.result, decisions.evidence_backend(verdict, second_opinion=second)
+    return verdict.result, decisions.evidence_backend(verdict)
 
 
 async def _rubric_grade(item, *, format: str, student_answer: str, deps: SaplingDeps):

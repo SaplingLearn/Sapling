@@ -86,6 +86,7 @@ def test_report_counts_no_verdict_and_splits_formats():
         (json.dumps({"format": "free", "human_a": True, "prompt": "p",
                      "reference_answer": "r", "answer": "a", "rubric": []}), True),
         (json.dumps({"format": "free", "human_a": True}), False),  # --no-grade needs grader
+        (json.dumps({"format": "free", "human_a": True, "grader": True, "grader_backend": 1}), False),
     ],
 )
 def test_bad_lines_are_input_errors(line, need_item):
@@ -116,6 +117,36 @@ def test_grade_all_runs_the_grader_and_maps_unavailable_to_no_verdict():
     assert [r["grader"] for r in out] == [True, False, None]
     assert out[2]["grader_refused"] == "addresses_grader"
     assert calls[0] == ("a1", "free", "because x", ["r1"])
+
+
+def test_grade_all_records_the_provider_each_verdict_stands_on():
+    """Spec §13 A116: each verdict carries GradeResult.backend; no verdict, no backend."""
+    async def fake_grade(item, *, format, student_answer, deps):
+        if student_answer == "unsure":
+            return SimpleNamespace(unavailable=True, all_yes=False, refused=None, backend=None)
+        backend = "claude_second" if student_answer == "because x, I think" else "claude"
+        return SimpleNamespace(unavailable=False, all_yes=True, refused=None, backend=backend)
+
+    records = [_full(1), _full(2, "because x, I think"), _full(3, "unsure")]
+    out = asyncio.run(ga.grade_all(records, grade=fake_grade, deps=object()))
+    assert [r["grader_backend"] for r in out] == ["claude", "claude_second", None]
+
+
+def test_report_splits_by_backend_and_leaves_unlabelled_lines_out_of_it():
+    records = [
+        {**_rec(1, True, True), "grader_backend": "gemini"},
+        {**_rec(2, False, True), "grader_backend": "gemini"},
+        {**_rec(3, True, True), "grader_backend": "claude"},
+        {**_rec(4, True, True), "grader_backend": "claude_second"},
+        _rec(5, True, True),  # scored before A116: in `overall`, under no backend
+        {**_rec(6, None, True), "grader_backend": None},  # no verdict
+    ]
+    rep = ga.report(records)
+    assert rep["graded"] == 5 and rep["overall"]["n"] == 5
+    assert set(rep["by_backend"]) == {"claude", "claude_second", "gemini"}
+    assert rep["by_backend"]["gemini"]["n"] == 2
+    assert rep["by_backend"]["gemini"]["false_reject_rate"] == pytest.approx(0.5)
+    assert rep["by_backend"]["claude"]["agreement"] == pytest.approx(1.0)
 
 
 def test_main_no_grade_prints_a_report(tmp_path, capsys):

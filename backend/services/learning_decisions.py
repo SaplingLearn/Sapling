@@ -10,7 +10,12 @@ answered — in which case the caller records nothing, for either outcome
 Backends:
 - `gemini` (the default): grading delegates to agents/grader.py's `grade()`
   (no second prompt stack, ADR 0024); every other decision runs
-  agents/learning_decision.py's `learning_decision_agent`.
+  agents/learning_decision.py's `learning_decision_agent`. `gemini` names the
+  model backend as a SELECTION (`DECISION_BACKEND_*`, `Selection`,
+  `decision.fallback`) whichever provider its slots serve on; a `Verdict` it
+  answered names that provider (spec §13 A116): `claude` for a run on a
+  claude-* slot (the grading run's slot for a grade, `learning_decision` for
+  the rest), else `gemini`.
 - `function`: `SAPLING_MODEL_MODE=function` (the E2E lane) — the same agents on
   the FunctionModel seam; the env selection is ignored and Jev is never built.
 - `deterministic`: code-computed (`deterministic_yes_no`); no model, no
@@ -62,7 +67,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai.usage import RunUsage
 
 from agents import GRADER_LIMITS, _jev, grader
-from agents._providers import model_mode
+from agents._providers import model_mode, slot_provider
 from agents.learning_decision import (
     QUESTION_ITEM_ANSWERABLE,
     QUESTION_JUDGE_LEAK,
@@ -116,7 +121,10 @@ JEV_SERVABLE = frozenset({"match_wrong_reason", "item_answerable", "judge_leak"}
 JEV_SHADOWABLE = JEV_SERVABLE | {"grade_rubric_items", "reason_is_correct"}
 
 # ── vocabulary ────────────────────────────────────────────────────────────────
-Backend = Literal["deterministic", "gemini", "jev", "function"]
+# A selection (DECISION_BACKEND_*, Selection, decision.fallback) names the model
+# backend "gemini"; a Verdict names who answered (spec §13 A116), so a model answer
+# is "claude" when the slot it ran on serves on Anthropic.
+Backend = Literal["deterministic", "gemini", "claude", "jev", "function"]
 DecisionName = Literal[
     "grade_rubric_items",
     "reason_is_correct",
@@ -464,9 +472,31 @@ def _refused(decision: str, sel: Selection, result: GradeResult, t0: float, deps
     return verdict
 
 
-def _yes_no(value: bool, conf: float, sel: Selection, ms: int) -> YesNo:
+#: The provider a model answer names (spec §13 A116), by `slot_provider`.
+_PROVIDER_BACKEND: dict[str, Backend] = {"google": "gemini", "anthropic": "claude"}
+
+
+def _answered_by(sel: Selection, provider: Backend | None) -> Backend:
+    """A verdict's provenance (spec §13 A116): when the model backend served (selection
+    "gemini", a Jev fallback included), the provider of the run that answered; `function`
+    (the E2E lane) names itself. With no provider known, the selection."""
+    return provider if sel.served == "gemini" and provider is not None else sel.served
+
+
+def _decision_provider() -> Backend:
+    """The provider the learning_decision slot serves on, read now."""
+    return _PROVIDER_BACKEND[slot_provider("learning_decision")]
+
+
+def _grade_provider(result: GradeResult) -> Backend | None:
+    """The provider of the grading run `result` stands on: GradeResult.backend without
+    its `_second` (agents.grader.run_backend). None when the result names no run."""
+    return result.backend.removesuffix("_second") if result.backend else None
+
+
+def _yes_no(value: bool, conf: float, sel: Selection, ms: int, backend: Backend) -> YesNo:
     return YesNo(
-        backend=sel.served,
+        backend=backend,
         confidence=conf,
         latency_ms=ms,
         fallback=sel.fallback_reason is not None,
@@ -493,14 +523,16 @@ async def grade_rubric_items(
     if result.unavailable:
         return _unavailable("grade_rubric_items", sel, deps, budget=result.budget_capped)
     ms = _ms(t0)
+    backend = _answered_by(sel, _grade_provider(result))  # A116: the grading run's provider
     verdict = RubricVerdict(
-        backend=sel.served,
+        backend=backend,
         confidence=result.confidence,
         latency_ms=ms,
         fallback=sel.fallback_reason is not None,
         result=result,
         items={
-            rid: _yes_no(ok, result.confidence, sel, ms) for rid, ok in result.item_results.items()
+            rid: _yes_no(ok, result.confidence, sel, ms, backend)
+            for rid, ok in result.item_results.items()
         },
     )
     _made("grade_rubric_items", verdict, deps)
@@ -529,7 +561,7 @@ async def reason_is_correct(
     ms = _ms(t0)
     value = result.all_yes
     verdict = ReasonVerdict(
-        backend=sel.served,
+        backend=_answered_by(sel, _grade_provider(result)),  # A116: the grading run's provider
         confidence=result.confidence,
         latency_ms=ms,
         fallback=sel.fallback_reason is not None,
@@ -566,12 +598,11 @@ async def match_wrong_reason(
         if reason == _REASON_BUDGET and prior is None:
             return _unavailable("match_wrong_reason", sel, deps, budget=True)
         sel = _jev_fell_back("match_wrong_reason", reason, deps)  # prior / Gemini serves
-    served = sel.served
     if prior is not None:
         key, conf, ms = prior.matched_wrong_key, prior.confidence, 0
-        # PKG-10 fix round: the key is the grader's — name the grader's backend
-        # (both grader slots are Gemini), not the seam's selected one
-        served = "gemini" if prior.backend in ("gemini", "gemini_second") else sel.served
+        # PKG-10 fix round: the key is the grader's — name the provider of the
+        # grading run it came from (A116), not the seam's selected backend
+        served = _grade_provider(prior) or sel.served
     else:
         out = await _run_decision("match_wrong_reason", state, deps)
         if out is None or out is BUDGET_CAPPED:
@@ -579,6 +610,7 @@ async def match_wrong_reason(
         # the model answers with the key it was SHOWN (agents.learning_decision.option_keys)
         shown = option_keys(state.wrong)
         key, conf, ms = shown.get(out.choice, NO_MATCH), out.confidence, _ms(t0)
+        served = _answered_by(sel, _decision_provider())
     key = key if key in state.wrong else NO_MATCH
     verdict = Pick(
         backend=served,
@@ -631,9 +663,10 @@ async def _yes_no_decision(
     ms = _ms(t0)
     if sel.shadow:
         _shadow(decision, state, deps, out.answer, out.confidence)
+    backend = _answered_by(sel, _decision_provider())  # A116
     if out.answer == "unclear":
         verdict = YesNo(
-            backend=sel.served,
+            backend=backend,
             confidence=out.confidence,
             latency_ms=ms,
             fallback=sel.fallback_reason is not None,
@@ -641,7 +674,7 @@ async def _yes_no_decision(
             p_yes=P_YES_UNCLEAR,
         )
     else:
-        verdict = _yes_no(out.answer == "yes", out.confidence, sel, ms)
+        verdict = _yes_no(out.answer == "yes", out.confidence, sel, ms, backend)
     _made(decision, verdict, deps)
     return verdict
 
@@ -1044,13 +1077,18 @@ def deterministic_yes_no(decision: str, value: bool, *, deps) -> YesNo:
     return verdict
 
 
-def evidence_backend(verdict: Verdict, *, second_opinion: bool = False) -> GraderBackend:
-    """Evidence.grader_backend (§4 CHECK). † function records as the Gemini slot it stands in
-    for: function mode runs the Gemini slots on FunctionModel, and PKG-05's CHECK has no
-    `function`."""
+def evidence_backend(verdict: Verdict) -> GraderBackend | None:
+    """Evidence.grader_backend (§4 CHECK; spec §13 A22, A116). `deterministic` and `jev`
+    name themselves. A grading verdict a model answered names the grader run it stands
+    on — GradeResult.backend, the provider of that run's slot as grade() read it
+    (`claude`, `claude_second`, `gemini`, `gemini_second`); it was once fixed to
+    `gemini`, so Claude-graded evidence said Gemini. † function mode records the
+    provider of the slot its FunctionModel stands in for (PKG-05's CHECK has no
+    `function`). None (journaled NULL) only for a verdict that names no grading run."""
     if verdict.backend in ("deterministic", "jev"):
         return verdict.backend
-    return "gemini_second" if second_opinion else "gemini"
+    result = getattr(verdict, "result", None)
+    return result.backend if result is not None else None
 
 
 # ── shadow plumbing (its one caller is _run_shadow, PKG-15) ──────────────────

@@ -99,7 +99,10 @@ zpd.step                      usage     concept_id, question_hash, phase, channe
                                         independent_time_ms, assisted, confidence, fsrs_rating,
                                         p_known_before, p_known_after, r_before, item_difficulty,
                                         earnest_blocked (bool, spec §13 A109);
-                                        optional tier, grader_backend (omitted when unknown)
+                                        optional tier, grader_backend (omitted when unknown;
+                                        deterministic / gemini / gemini_second / claude /
+                                        claude_second / jev — a model grade names the provider
+                                        of its slot, spec §13 A116)
                                         (learning loop PKG-06, spec §6)
 zpd.offer                     usage     accepted, band
 zpd.band_adjust               usage     direction, trigger, window_stats
@@ -111,7 +114,11 @@ decision.made                 usage     decision, backend, request_id, latency_m
                                         fallback, prior — one answered decision of the learning
                                         loop's typed decision seam (PKG-05b, spec §6, §13 A24);
                                         prior=true: answered from a result the caller held (no
-                                        model run; PKG-10 match_wrong_reason), backend = its source
+                                        model run; PKG-10 match_wrong_reason), backend = its source.
+                                        backend = who answered (deterministic / gemini / claude /
+                                        jev / function): a model answer names the provider its
+                                        slot serves on (spec §13 A116); decision.fallback's
+                                        from/to name selections, where the model backend is gemini
 decision.shadow               usage     decision, request_id, primary_value, shadow_value,
                                         primary_confidence, shadow_confidence, agreement,
                                         shadow_latency_ms, shadow_input_tokens, error_code —

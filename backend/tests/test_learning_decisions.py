@@ -630,13 +630,19 @@ def test_deterministic_and_evidence_backend(seam, events):
     assert seam.evidence_backend(v) == "deterministic"
     with pytest.raises(ValueError):
         seam.deterministic_yes_no("numeric_gate", True, deps=_deps())
-    g = seam.YesNo(backend="gemini", confidence=0.9, latency_ms=5, value=True, p_yes=0.9)
-    assert (
-        seam.evidence_backend(g)
-        == seam.evidence_backend(g.model_copy(update={"backend": "function"}))
-        == "gemini"
-    )
-    assert seam.evidence_backend(g, second_opinion=True) == "gemini_second"
+    # A116: a model-answered grading verdict names the grading run it stands on
+    # (GradeResult.backend), whichever label the seam gave the verdict itself
+    for run in ("gemini", "gemini_second", "claude", "claude_second"):
+        g = seam.ReasonVerdict(
+            backend="gemini", confidence=0.9, latency_ms=5, value=True, p_yes=0.9,
+            result=_grade_result(True, backend=run),
+        )
+        assert {
+            seam.evidence_backend(g.model_copy(update={"backend": b}))
+            for b in ("gemini", "claude", "function")
+        } == {run}
+    no_run = seam.YesNo(backend="gemini", confidence=0.9, latency_ms=5, value=True, p_yes=0.9)
+    assert seam.evidence_backend(no_run) is None  # never a guessed provider
     assert _kinds(events) == ["decision.made"]
 
 
@@ -1435,10 +1441,10 @@ def test_a_key_named_none_is_aliased_so_it_never_reads_as_no_match(seam, monkeyp
 def test_a_decision_answered_from_prior_is_tagged_with_the_priors_provenance(seam, events):
     """PKG-10 fix round (conformance 3): match_wrong_reason with `prior` runs no
     model; its decision.made says so (`prior: true`) and names the backend the
-    prior came from — the grader's, "gemini" for both grader slots — not the
-    seam's selected backend (which, on the function-mode lane, is "function")."""
+    prior came from — the provider of the grading run, either slot (A116) — not
+    the seam's selected backend (which, on the function-mode lane, is "function")."""
     st = seam.WrongReasonState(question=QUESTION, answer="it just loops", wrong=WRONG)
-    for backend in ("gemini", "gemini_second"):
+    for backend in ("gemini", "gemini_second", "claude", "claude_second"):
         asyncio.run(
             seam.match_wrong_reason(
                 st,
@@ -1449,4 +1455,6 @@ def test_a_decision_answered_from_prior_is_tagged_with_the_priors_provenance(sea
     assert [(kw["payload"]["prior"], kw["payload"]["backend"]) for _, kw in events] == [
         (True, "gemini"),
         (True, "gemini"),
+        (True, "claude"),
+        (True, "claude"),
     ]

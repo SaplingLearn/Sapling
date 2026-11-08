@@ -15,6 +15,12 @@ over answers that human experts scored independently, and reports:
     evidence: false credit inflates mastery, false rejection hides it
   - the same per answer format, plus how many answers the grader refused or
     could not grade (never counted as a verdict)
+  - the same per grader backend (`by_backend`): each verdict's provenance, the
+    provider of the slot whose run it stands on (`gemini`, `gemini_second`,
+    `claude`, `claude_second`; spec §13 A116), so a run on a flipped slot
+    (A111's runbook) reports under its own name, and two runs over the same
+    answers — one per provider, `--out` files concatenated, then `--no-grade` —
+    compare side by side
 
 Verdict = the answer is correct overall: every rubric item credited
 (`GradeResult.all_yes`), the same rule the loop's evidence uses for a free or
@@ -41,8 +47,9 @@ gated:
 
 Not a dataset: run_all.py runs only its explicit DATASETS list.
 
-`--no-grade` reads a previous run's per-answer verdicts (the `grader` field)
-and only recomputes the statistics. A REPORT <json> line is always printed.
+`--no-grade` reads a previous run's per-answer verdicts (the `grader` field, and
+`grader_backend` when the line has one) and only recomputes the statistics. A
+REPORT <json> line is always printed.
 
 Exit codes: 0 report printed; 2 bad input.
 """
@@ -150,14 +157,18 @@ def report(records: Iterable[dict]) -> dict:
         return out
 
     by_format: dict[str, list[dict]] = defaultdict(list)
+    by_backend: dict[str, list[dict]] = defaultdict(list)
     for r in graded:
         by_format[r["format"]].append(r)
+        if r.get("grader_backend"):  # a scored line from before A116 names none
+            by_backend[r["grader_backend"]].append(r)
     return {
         "answers": len(records),
         "graded": len(graded),
         "no_verdict": no_verdict,
         "overall": block(graded),
         "by_format": {f: block(rows) for f, rows in sorted(by_format.items())},
+        "by_backend": {b: block(rows) for b, rows in sorted(by_backend.items())},
     }
 
 
@@ -186,6 +197,8 @@ def parse_line(raw: str, lineno: int, *, need_item: bool) -> dict:
             raise InputError(f"line {lineno}: rubric must be a non-empty list")
     elif "grader" not in rec or (rec["grader"] is not None and not isinstance(rec["grader"], bool)):
         raise InputError(f"line {lineno}: --no-grade needs grader: true, false or null")
+    elif rec.get("grader_backend") is not None and not isinstance(rec["grader_backend"], str):
+        raise InputError(f"line {lineno}: grader_backend must be a string, null or absent")
     rec.setdefault("id", f"line-{lineno}")
     return rec
 
@@ -216,8 +229,10 @@ def _item(rec: dict):
 
 async def grade_all(records: list[dict], *, grade=None, deps=None) -> list[dict]:
     """Annotate each record with `grader` (bool, or None when refused or
-    unavailable) and `grader_refused`. Sequential: one answer at a time keeps
-    the provider's rate limit and the cost visible."""
+    unavailable), `grader_refused` and `grader_backend` (GradeResult.backend: the
+    provider of the run the verdict stands on, A116; None with no verdict).
+    Sequential: one answer at a time keeps the provider's rate limit and the cost
+    visible."""
     if grade is None:
         from agents.grader import grade
     if deps is None:
@@ -233,7 +248,12 @@ async def grade_all(records: list[dict], *, grade=None, deps=None) -> list[dict]
                              deps=deps)
         verdict = None if result.unavailable else bool(result.all_yes)
         refused = getattr(result, "refused", None)
-        out.append({**rec, "grader": verdict, "grader_refused": str(refused) if refused else None})
+        out.append({
+            **rec,
+            "grader": verdict,
+            "grader_refused": str(refused) if refused else None,
+            "grader_backend": None if verdict is None else getattr(result, "backend", None),
+        })
     return out
 
 
