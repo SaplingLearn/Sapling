@@ -13,6 +13,16 @@ import pytest
 MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 
+@pytest.fixture(autouse=True)
+def _alignment_passes_every_draft(monkeypatch):
+    """Spec §13 A119: every draft passes the alignment check exactly as
+    drafted here. These tests are about drafting and storage; the check is
+    tests/test_learning_item_alignment.py's (tests/alignment_fakes.py)."""
+    from tests.alignment_fakes import install_passthrough
+
+    install_passthrough(monkeypatch)
+
+
 def _migration() -> str:
     hits = sorted(MIG_DIR.glob("*_learning_check_items.sql"))
     assert len(hits) == 1, f"expected exactly one learning_check_items migration, got {hits}"
@@ -3353,7 +3363,7 @@ class TestDraftItems:
             return None
 
         monkeypatch.setattr(ci, "_backoff", no_wait)
-        monkeypatch.setattr(ci, "_flex_settings", lambda: {"timeout": 123.0})
+        monkeypatch.setattr(ci, "_flex_settings", lambda task="check_items": {"timeout": 123.0})
         seen = []
 
         def flaky(messages, info):
@@ -3701,7 +3711,7 @@ class TestMcTopUpAgent:
             return None
 
         monkeypatch.setattr(ci, "_backoff", no_wait)
-        monkeypatch.setattr(ci, "_flex_settings", lambda: {"timeout": 123.0})
+        monkeypatch.setattr(ci, "_flex_settings", lambda task="check_items": {"timeout": 123.0})
         seen = []
 
         def flaky(messages, info):

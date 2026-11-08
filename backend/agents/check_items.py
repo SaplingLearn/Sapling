@@ -30,7 +30,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
-from agents._providers import model_for, settings_for_slot
+from agents._providers import AgentTask, model_for, settings_for_slot
 from agents.deps import SaplingDeps
 from agents.usage import UnfinishedRun, record_agent_usage
 from learning.checks import CheckItemDraft
@@ -238,12 +238,13 @@ check_items_agent = Agent[SaplingDeps, CheckItemsOutput](
 )
 
 
-def _flex_settings() -> ModelSettings | None:
+def _flex_settings(task: AgentTask = "check_items") -> ModelSettings | None:
     """Background prefill runs on Gemini's Flex tier (A23). pydantic-ai 1.107
     maps the unified `service_tier='flex'` onto the Gemini API request. Flex is
-    a Gemini tier: a claude-* check_items slot keeps only the long timeout."""
+    a Gemini tier: a claude-* slot keeps only the long timeout. `task` is the
+    slot the run is on (check_items, or the A119 check_items_verify)."""
     return settings_for_slot(
-        "check_items",
+        task,
         google=ModelSettings(service_tier="flex", timeout=FLEX_TIMEOUT_S),
         anthropic=ModelSettings(timeout=FLEX_TIMEOUT_S),
     )
@@ -289,7 +290,9 @@ def build_prompt(concept_names: list[str], passages: list[dict]) -> str:
     )
 
 
-def _record_unfinished(usage: RunUsage, deps: SaplingDeps, feature: str) -> None:
+def _record_unfinished(
+    usage: RunUsage, deps: SaplingDeps, feature: str, task: AgentTask = "check_items"
+) -> None:
     """A run that raised still lands in llm_usage when the provider billed it
     (the A20 caps and the admin cost analytics read nothing else): an output
     that failed validation on every retry was billed for every request. A run
@@ -298,33 +301,36 @@ def _record_unfinished(usage: RunUsage, deps: SaplingDeps, feature: str) -> None
         record_agent_usage(
             UnfinishedRun(usage),
             feature=feature,
-            task="check_items",
+            task=task,
             user_id=deps.user_id or None,
         )
 
 
 async def run_drafting(
-    agent: Agent,  # check_items_agent or the A37 top-up agent (one prompt stack each)
+    agent: Agent,  # check_items_agent, the A37 top-up agent or the A119 verifier
     prompt: str,
     *,
     deps: SaplingDeps,
     flex: bool,
     feature: str,
-) -> CheckItemsOutput | CheckItemsUnavailable:
-    """One drafting run of `agent` on the check_items model slot. `flex=True`
-    (background prefill) runs on the Flex tier and repeats the SAME run on a
-    429/503, up to CHECK_ITEM_FLEX_RETRIES times; `flex=False` runs once on the
-    standard tier. Any failure returns CheckItemsUnavailable — never raises —
-    and records in llm_usage (task check_items, `feature`) whatever the
-    provider billed before it. Shared by draft_items and the A37 top-up."""
-    settings = _flex_settings() if flex else None
+    task: AgentTask = "check_items",
+):
+    """One background run of `agent` on the `task` model slot (check_items for
+    the drafting agents; check_items_verify for the A119 alignment check).
+    `flex=True` (background prefill) runs on the Flex tier and repeats the SAME
+    run on a 429/503, up to CHECK_ITEM_FLEX_RETRIES times; `flex=False` runs
+    once on the standard tier. Returns the run's output; any failure returns
+    CheckItemsUnavailable — never raises — and records in llm_usage (`task`,
+    `feature`) whatever the provider billed before it. Shared by draft_items,
+    the A37 top-up and the A119 verifier."""
+    settings = _flex_settings(task) if flex else None
     attempts = CHECK_ITEM_FLEX_RETRIES + 1 if flex else 1
     for attempt in range(1, attempts + 1):
         usage = RunUsage()  # passed in, so a run that raises still says what it cost
         try:
             result = await agent.run(prompt, deps=deps, model_settings=settings, usage=usage)
         except ModelHTTPError as exc:
-            _record_unfinished(usage, deps, feature)
+            _record_unfinished(usage, deps, feature, task)
             if exc.status_code in _FLEX_RETRY_STATUS and attempt < attempts:
                 logger.info(
                     "%s: HTTP %s under Flex, retrying the same run (%d/%d)",
@@ -340,12 +346,10 @@ async def run_drafting(
             )
             return CheckItemsUnavailable(reason=type(exc).__name__)
         except Exception as exc:  # honest degrade (ADR 0024): no second prompt
-            _record_unfinished(usage, deps, feature)
+            _record_unfinished(usage, deps, feature, task)
             logger.warning("%s unavailable: %s", feature, type(exc).__name__)
             return CheckItemsUnavailable(reason=type(exc).__name__)
-        record_agent_usage(
-            result, feature=feature, task="check_items", user_id=deps.user_id or None
-        )
+        record_agent_usage(result, feature=feature, task=task, user_id=deps.user_id or None)
         return result.output
     return CheckItemsUnavailable(reason="ModelHTTPError")  # pragma: no cover - loop always returns
 

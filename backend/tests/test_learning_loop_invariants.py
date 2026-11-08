@@ -34,11 +34,13 @@ PURE_MODULES = (
     "learning_gain.py",  # A112: pre/post outcomes per fixed post-test window (admin KPI report)
     "item_lint.py",  # A113: item-flaw flags of a check item (text in, codes out)
     "interleave.py",  # A114: confusable partners + the review serve order (keys in, order out)
+    "item_alignment.py",  # A119: the alignment check's answers applied (verdicts in, decisions out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
 SERIES_AGENT_TASKS = (
     "check_items",
+    "check_items_verify",  # A119: the drafted items' alignment check (request path in function mode)
     "grader",
     "grader_second",
     "learning_decision",
@@ -53,6 +55,8 @@ SERIES_AGENT_MODULES = (
     # A37 (coordinator's ruling, 2026-09-28): the mc_reason top-up, its own
     # agent and prompt stack on the check_items model slot
     "check_items_topup.py",
+    # A119: the alignment check, its own agent and prompt stack on its own slot
+    "check_items_verify.py",
     "grader.py",
     "learning_decision.py",
     "loop_tutor.py",

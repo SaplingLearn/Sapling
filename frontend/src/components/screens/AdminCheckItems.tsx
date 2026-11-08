@@ -4,7 +4,8 @@
  * Admin review queue for learning-loop check items (spec §13 A113; GitHub
  * #695), over /api/admin/check-items. A check item is drafted by a model from
  * a classmate's upload and keyed from peer material — no instructor reviewed
- * it — so this lists every item the item-flaw linter flagged or a student
+ * it — so this lists every item the item-flaw linter flagged, the alignment
+ * check changed (A119: a criterion dropped, a concept re-tagged) or a student
  * reported (counts by reason), worst first, with its text (decrypted by the
  * server for this page only) and two actions: Approve (reviewed, OK — it leaves
  * the queue until a newer report) and Retire (withdrawn for the whole course,
@@ -34,6 +35,9 @@ export const LINT_FLAG_LABELS: Record<CheckItemLintFlag, string> = {
   all_or_none_of_above: "All / none of the above",
   duplicate_options: "Duplicate options",
   negative_stem: "Negatively worded",
+  // spec §13 A119: what the alignment check changed before the item was stored
+  rubric_unasked_dropped: "Criteria the question never asks for were dropped",
+  concept_retagged: "Moved to the concept it tests",
 };
 
 export const REPORT_REASON_LABELS: Record<LoopReportReason, string> = {

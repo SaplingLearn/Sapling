@@ -696,6 +696,78 @@ def test_the_mc_reason_top_up_rides_the_check_items_handler(monkeypatch):
     assert concepts == {name for name, _, _ in E2E_DOC_CONCEPTS}
 
 
+def test_env_module_alignment_check_keeps_every_e2e_item_as_drafted(monkeypatch):
+    """Spec §13 A119: in function mode the alignment check runs on the upload's
+    request path after the drafting call, and an unavailable check stores
+    nothing — so the lane registers a handler, and it must leave every item
+    the check_items handler drafts exactly as drafted: every criterion asked,
+    each item testing the concept it was drafted for. Run through the REAL
+    agent, schema, prompt builder, parse and rules."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items import check_items_agent
+    from agents.check_items_verify import (
+        VerifyItem,
+        build_verify_prompt,
+        check_items_verify_agent,
+        verdicts,
+    )
+    from agents.function_handlers_e2e import (
+        E2E_DOC_CONCEPTS,
+        E2E_VERIFY_ASKS,
+        E2E_VERIFY_WHY,
+    )
+    from learning.item_alignment import align, concept_key
+
+    with check_items_agent.override(model=model_for("check_items")):
+        drafts = check_items_agent.run_sync("Concepts: e2e", deps=_deps()).output.items
+    items = [
+        VerifyItem(
+            str(n),
+            d.format,
+            d.prompt,
+            next((o.text for o in d.options if o.is_correct), None),
+            tuple(o.text for o in d.options if not o.is_correct),
+            tuple(d.rubric),
+        )
+        for n, d in enumerate(drafts, start=1)
+    ]
+    names = [name for name, _, _ in E2E_DOC_CONCEPTS]
+    with check_items_verify_agent.override(model=model_for("check_items_verify")):
+        out = check_items_verify_agent.run_sync(build_verify_prompt(names, items), deps=_deps()).output
+    assert {c.why for c in out.criteria} == {E2E_VERIFY_WHY}
+    assert {c.asks for c in out.concepts} == {E2E_VERIFY_ASKS}
+    found = verdicts(out)
+    scope = {concept_key(n): n for n in names}
+    for item, draft in zip(items, drafts):
+        result = align(len(draft.rubric), concept_key(draft.concept), found[item.id], scope)
+        assert result.reject is None and result.flags == (), (draft.concept, draft.format)
+        assert result.keep == tuple(range(len(draft.rubric)))
+        assert result.concept_key == concept_key(draft.concept)
+    assert "check_items_verify" in providers._FUNCTION_HANDLERS
+
+
+def test_e2e_alignment_handler_answers_none_for_an_unmarked_item(monkeypatch):
+    """An item without the E2E marker: the handler cannot tell what it tests,
+    so it says none (the check then rejects it) — it never guesses a concept."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    from agents.check_items_verify import (
+        VerifyItem,
+        build_verify_prompt,
+        check_items_verify_agent,
+        verdicts,
+    )
+
+    item = VerifyItem("1", "free", "What is a hash table?", None, (), ("Names buckets.", "Names keys."))
+    with check_items_verify_agent.override(model=model_for("check_items_verify")):
+        out = check_items_verify_agent.run_sync(
+            build_verify_prompt(["Hash Table"], [item]), deps=_deps()
+        ).output
+    assert verdicts(out)["1"].concept == "none"
+    assert dict(verdicts(out)["1"].asked) == {"c1": True, "c2": True}
+
+
 # ── Decision seam (learning loop PKG-05b) ─────────────────────────────────
 
 

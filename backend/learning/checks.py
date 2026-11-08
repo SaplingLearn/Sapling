@@ -1144,13 +1144,32 @@ def stored_rubric(draft: CheckItemDraft) -> list[RubricItem]:
     """The rubric an item is stored with: the draft's non-blank criteria as
     r1..rn, then — on an mc_reason item — MC_REASON_CRITERION as r(n+1). It is
     not the model's, so it never counts toward CHECK_ITEM_MIN_RUBRIC."""
+    return rubric_entries(draft.rubric, draft.format)
+
+
+def rubric_entries(criteria: Iterable[str], format: str) -> list[RubricItem]:
+    """`stored_rubric` over content criteria and a format: the non-blank
+    criteria as r1..rn, then MC_REASON_CRITERION on an mc_reason item. The
+    A119 alignment rewrites a stored item's rubric with it, so a trimmed
+    rubric is numbered and closed exactly as a freshly stored one."""
     rubric = [
         RubricItem(id=f"r{i}", text=text)
-        for i, text in enumerate((t for t in draft.rubric if t.strip()), start=1)
+        for i, text in enumerate((t for t in criteria if t.strip()), start=1)
     ]
-    if draft.format == _MC_REASON:
+    if format == _MC_REASON:
         rubric.append(RubricItem(id=f"r{len(rubric) + 1}", text=MC_REASON_CRITERION))
     return rubric
+
+
+def content_criteria(item) -> list[str]:
+    """A stored item's (decrypted CheckItem's) own criteria: its rubric texts
+    without the system-appended MC_REASON_CRITERION of an mc_reason item —
+    what the A119 alignment check judges."""
+    return [
+        r.text
+        for r in getattr(item, "rubric", None) or []
+        if not (getattr(item, "format", None) == _MC_REASON and r.text == MC_REASON_CRITERION)
+    ]
 
 
 def lettered_options(draft: CheckItemDraft, *, slot_key: bytes) -> tuple[list[Option], str]:
