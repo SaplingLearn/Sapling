@@ -218,6 +218,41 @@ def test_the_closed_shape_refuses_the_rows_the_first_let_through(db_conn):
         db_conn.execute(upd, (SEP.join([apex, pre]), [apex, pre], combo))
 
 
+def _validated(conn) -> bool:
+    return conn.execute(
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'check_items_multi_concept_shape'"
+    ).fetchone()["convalidated"]
+
+
+def test_the_check_is_added_not_valid_then_validated_in_its_own_transaction(db_conn):
+    """The second review: 20261108205812 sets a 5s lock_timeout and adds the
+    CHECK NOT VALID (no scan under its ACCESS EXCLUSIVE locks);
+    20261108224511 validates it. Each file run again here, in a rolled-back
+    transaction, as db/migrate.py runs it."""
+    import psycopg
+    from psycopg.rows import dict_row
+
+    migrations = Path(__file__).resolve().parents[2] / "db" / "migrations"
+    review = migrations / "20261108205812_learning_varied_practice_review.sql"
+    validate = migrations / "20261108224511_learning_varied_practice_validate.sql"
+    assert _validated(db_conn) is True  # after every migration
+    url = (os.getenv("SUPABASE_DB_URL") or "").strip()
+    _require_local_db_url(url)
+    with psycopg.connect(url, row_factory=dict_row) as conn:
+        try:
+            conn.execute(review.read_text(encoding="utf-8"))
+            assert _validated(conn) is False
+            assert conn.execute("SHOW lock_timeout").fetchone()["lock_timeout"] == "5s"
+        finally:
+            conn.rollback()
+        try:
+            conn.execute(validate.read_text(encoding="utf-8"))
+            assert _validated(conn) is True
+            assert conn.execute("SHOW lock_timeout").fetchone()["lock_timeout"] == "5s"
+        finally:
+            conn.rollback()
+
+
 def test_the_journal_says_which_rows_a_combination_graded(db_conn):
     """learning_evidence_commit admits, checks and inserts `multi_concept`:
     a multi-concept item's row journals true at the partial weight; every
