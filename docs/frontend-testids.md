@@ -657,7 +657,7 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-budget-spent` | no item while items are still due — today's review budget is spent (shows how many remain) |
 | `review-item` | the served item (a check's prompt, or a flashcard's front/back) |
 | `review-answer-input` | free-response answer textarea (a `free` check) |
-| `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22) |
+| `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22); the radio group is named by the question (spec §13 A135) |
 | `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
 | `review-confidence` | the optional "How sure are you?" radio group on a check, never a flashcard (spec §13 A127; shared `ConfidenceControl`); hidden once the answer is graded |
 | `review-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/review/answer` as `confidence` |
@@ -688,7 +688,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-status-error` | PKG-14b (spec §11.2): `Learn()`'s retry state — the status probe failed (5xx, network, timeout); "Couldn't reach the tutor. Try again." Never the legacy tree |
 | `loop-status-retry` | its button — re-runs `GET /api/learn/loop/review/active` |
 | `loop-phase` | root container; `data-phase` = probe / plan / teach / check / feedback / close (server-driven); `data-session-id` (empty until a session exists) |
-| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3) |
+| `loop-session-picker` | the open-sessions strip (`GET /api/learn/loop/sessions`, spec §11.3); `role="list"` ("Open sessions") only while it lists a session — empty, it holds the "None yet" line and no role (spec §13 A135) |
 | `loop-session-{sessionId}` | one open session (topic, start date); `aria-current="true"` on the one shown; a click resumes it |
 | `loop-new-session` | start a new session — the only path to a new probe while a session is open; it wraps up (`/close`) the open session being left first, so sessions do not pile up open (a 409 there starts nothing) |
 | `loop-course-select` | the course switcher (`CustomSelect`'s trigger; `testId` prop), shown with more than one enrolled course; options are `loop-course-select-option-{courseId}` |
@@ -703,6 +703,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-topic-start` | "Start a session on <topic>" (wraps up the open session first, like `loop-new-session`) |
 | `loop-readonly-transcript` | a `?resume=` session that is not an open loop session (a legacy one), shown read-only |
 | `loop-readonly-new-session` | "Start a new session" beside the read-only transcript |
+| `loop-notices` | the notices container — always on the page, `aria-live="polite"` and empty until a notice arrives, so each notice below is announced as it is added (spec §13 A135) |
 | `loop-budget-paused` | the budget pause banner (A20/A26/A39); `role="status"`, `data-reset-at` (ISO or empty), `data-session-capped` (`true`: "paused for this session", no reset time) |
 | `loop-budget-study-link` | link to `/study?mode=cards` inside the banner |
 | `loop-no-check-items` | "No check items for this course yet" (A23) |
@@ -712,7 +713,8 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-probe-greeting` | the session opener above the check-in (spec §13 A121: a template — a welcome and the check-in's intro, never teaching or a question) |
 | `loop-probe-item` | the current probe card; `data-question-hash` |
 | `loop-probe-input` | free/teachback probe answer textarea |
-| `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22) |
+| `loop-probe-options` | the options' radio group (`role="radiogroup"`, named by the question; spec §13 A135): one tab stop, the arrow keys move and choose, Home / End choose the ends |
+| `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22); `role="radio"`, named "{letter}. {text}" |
 | `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
 | `loop-probe-confidence` | the optional "How sure are you?" radio group on the probe card (spec §13 A127; `role="radiogroup"`, labelled by its question): one tab stop, arrow keys move and choose; nothing chosen = nothing sent |
 | `loop-probe-confidence-{guessing,fairly_sure,sure}` | one level (`role="radio"`, `aria-checked`); a chosen one rides `/probe/answer` as `confidence` (never with an idk) |
@@ -730,6 +732,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-check-me` | "Check me": posts `/check/next` when no item is current (A27) |
 | `loop-check-prompt` | the current check pose (`check.prompt`, A17/A27); `data-question-hash`, `data-format` |
 | `loop-attempt-input` | free/teachback attempt textarea |
+| `loop-attempt-options` | the attempt box's options radio group, as `loop-probe-options` |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
 | `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
 | `loop-check-confidence` | the optional "How sure are you?" radio group on the check card (spec §13 A127), as `loop-probe-confidence`; it never holds up `loop-attempt-submit` |
