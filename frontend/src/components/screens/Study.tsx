@@ -40,6 +40,7 @@ import { StudyGuideSkeleton, FlashcardsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { extractErrorDetail, humanizeError, isNotFound } from "@/lib/errorMessage";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { useUser } from "@/context/UserContext";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useLatestRequest } from "@/lib/useLatestRequest";
@@ -780,6 +781,7 @@ function FlashcardsMode({
       if (done && keepId) setDone(false);
       await load(keepId);
       toast.success(`Added ${r.flashcards.length} new card${r.flashcards.length === 1 ? "" : "s"}.`);
+      if (r.withheld) toast.warn(withheldNotice(r.withheld, "card")); // spec §13 A125
     } catch (err) {
       console.error("flashcard generate failed", err);
       toast.error(humanizeError(err, "Couldn't generate cards right now."));
