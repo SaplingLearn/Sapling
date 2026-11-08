@@ -563,27 +563,34 @@ def test_emit_zpd_step_payload_key_is_omitted_unless_failed(monkeypatch):
 
 
 def test_the_opener_carries_the_note_into_the_lazy_session(gate_on, seams):
+    """A MODEL opener whose retrieval failed — since spec §13 A121, a quiz-ask
+    session's first teach turn (A99) — serves the note and carries its key into
+    the lazy session. A121's probe-phase opener is a template: it runs no
+    model and assembles no context, so it never retrieves and never serves
+    the note."""
     from routes.learn_loop import PENDING_SESSIONS
+    from tests.test_quiz_ask_session import _opener
 
     seams.blocks.side_effect = _failing_retrieval
     agent, _ = _json_agent("Welcome. Ready?")
-    topic_p, offering_p, graph_p = _routes._opener_patches()
-    with (
-        patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
-        topic_p,
-        offering_p,
-        graph_p,
-    ):
-        r = client.post(
-            "/api/learn/loop/start-session", json={"user_id": "u1", "topic": "Recursion"}
-        )
+    r, _record = _opener("/api/learn/loop/start-session", agent=agent)
     body = r.json()
     assert body["materials_unavailable"] is True
     pending = PENDING_SESSIONS.pop(body["session_id"])
     assert pending["loop_state"]["materials_notice"] is True, (
         "the materialised session never serves the note a second time"
     )
+
+    seams.blocks.reset_mock()
+    topic_p, offering_p, graph_p = _routes._opener_patches()
+    with topic_p, offering_p, graph_p:
+        r = client.post(
+            "/api/learn/loop/start-session", json={"user_id": "u1", "topic": "Recursion"}
+        )
+    body = r.json()
+    assert "materials_unavailable" not in body
+    seams.blocks.assert_not_called()  # the template opener assembles no context
+    PENDING_SESSIONS.pop(body["session_id"])
 
 
 # ── unsourced items: provenance, the queue, selection ───────────────────────
@@ -639,6 +646,36 @@ def test_the_flag_survives_a_relint_and_reaches_the_review_queue():
     assert merge_flags(["unsourced"], ["negative_stem"]) == ["negative_stem", "unsourced"]
     assert kept_flags(["unsourced", "correct_longest"]) == ["unsourced"]
     assert lint_update(_item("a", flags=["unsourced"])) is None, "nothing to rewrite"
+
+
+def test_unsourced_is_no_hold_and_a_hold_still_withdraws_an_unsourced_item():
+    """A128 × A123/A124: `unsourced` is provenance, never a hold. An unsourced
+    item is servable and its queue entry is not held; a staff or key hold on
+    the same item still withdraws it. The stored order puts the staff holds
+    last, where the database's check_item_hold_flags appends them, so a write
+    and the trigger agree."""
+    from learning.checks import (
+        HOLD_FLAGS,
+        KEY_DISPUTED,
+        REPORTS_THRESHOLD,
+        STAFF_RETIRED,
+        UNSOURCED,
+        held_flags,
+        is_servable,
+    )
+    from learning.item_alignment import kept_flags, merge_flags
+
+    assert UNSOURCED not in HOLD_FLAGS
+    assert not held_flags([UNSOURCED], False)
+    assert is_servable(_item("a", flags=[UNSOURCED]))
+    for hold in (REPORTS_THRESHOLD, STAFF_RETIRED):
+        assert held_flags([UNSOURCED, hold], True), hold  # a confirmed key lifts no staff hold
+        assert not is_servable(_item("b", flags=[UNSOURCED, hold])), hold
+    assert held_flags([UNSOURCED, KEY_DISPUTED], False)
+    assert not is_servable(_item("c", flags=[UNSOURCED, KEY_DISPUTED]))
+    stored = merge_flags([REPORTS_THRESHOLD], [UNSOURCED, "negative_stem"], [KEY_DISPUTED])
+    assert stored == ["negative_stem", KEY_DISPUTED, UNSOURCED, REPORTS_THRESHOLD]
+    assert kept_flags(stored) == [KEY_DISPUTED, UNSOURCED, REPORTS_THRESHOLD]
 
 
 def _draft(chunk_ids=()):
