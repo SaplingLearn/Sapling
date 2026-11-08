@@ -1,5 +1,8 @@
--- Job queue upkeep (#116, docs/architecture-hardening-plan.md phase 2) and
--- its two Canopy numbers. Builds on 20261108095241_jobs_queue.sql.
+-- Job queue upkeep (#116, docs/architecture-hardening-plan.md phase 2), its
+-- two Canopy numbers, and the four Canopy numbers of the weekly LLM cost
+-- signal (#119). Builds on 20261108095241_jobs_queue.sql and
+-- 20261108213311_llm_budgets_and_cost_signal.sql. This is wave 2's ONE
+-- canopy_metrics() redefinition.
 --
 -- What this adds
 -- --------------
@@ -32,9 +35,11 @@
 --
 -- canopy_metrics(): CREATE OR REPLACE of the CURRENT definition
 -- (20261106055333_state_machines_audit.sql, the #760 block), copied verbatim
--- with exactly two keys added. The contract's key list and source rules live
--- in 20260921055024_canopy_metrics.sql's header (immutable); these two extend
--- it:
+-- except for six added keys, one added CTE (llm_cost) and a jsonb_strip_nulls
+-- around `totals` (every pre-existing totals key is a COUNT, never NULL, so
+-- the strip only ever drops the new llm_* keys). The contract's key list and
+-- source rules live in 20260921055024_canopy_metrics.sql's header
+-- (immutable); these six extend it:
 --   counts.jobs_dead_lettered  {24h,7d,30d}. `jobs` rows in status `dead`,
 --                              windowed on updated_at (when they died). The
 --                              plan's "jobs failed after all retries" measure
@@ -47,8 +52,43 @@
 --                              queued + failed (waiting out a retry backoff,
 --                              still owed a run) + running.
 -- Both read only `jobs`, which holds ids and statuses, never student content.
+--
+-- #119, all four read from ONE call of
+-- public.llm_cost_per_active_user_weekly() (20261108213311) so Canopy and
+-- GET /api/admin/analytics/llm/cost-per-active-user never disagree. Active
+-- users there are distinct non-empty events.user_id with category <> 'system'
+-- (admin analytics' definition), so they can differ slightly from canopy's
+-- own active_users. Cost is priced llm_usage rows (cost_usd > 0). JSON
+-- integers (the route accepts only integers in `totals`), each OMITTED when
+-- the database cannot answer it honestly (contract rule) — never a fake 0:
+--   totals.llm_microusd_per_user_7d       priced LLM cost per active user over
+--                                         the last 7 days, micro-USD (half-up).
+--                                         Omitted when the last 7 days have no
+--                                         priced rows or no active users.
+--   totals.llm_microusd_per_user_4w_base  mean per-user cost of the four 7-day
+--                                         windows before that (those with an
+--                                         answer), micro-USD. Omitted when none
+--                                         of the four has one.
+--   totals.llm_cost_jump_ratio_pct        floor(ratio * 100), ratio being the
+--                                         function's published 4-dp ratio, so
+--                                         >= 200 exactly when llm_cost_jump is
+--                                         1 (200 = doubled). Omitted when the
+--                                         ratio is unknown, or above 1e9 % (a
+--                                         near-zero baseline), which keeps it
+--                                         far inside the route's 1e12 cap.
+--   totals.llm_cost_jump                  1 when that same ratio >= 2.0, else
+--                                         0. Omitted when the ratio is unknown;
+--                                         still 1 when the ratio_pct itself is
+--                                         omitted for size.
+-- Both micro-USD keys are likewise omitted past the route's 1e12 cap ($1M
+-- per user per week: never real, but never a 503 either).
+-- Cost: the function re-reads 35 days of llm_usage and events once per
+-- hourly poll instead of reusing this function's 30-day `llm` / `active`
+-- passes (different window, different active-user rule); both scans are
+-- index range scans on created_at, so the extra pass is cheap.
+--
 -- The route (routes/internal_metrics.py) only validates and forwards: counts
--- stay within its 48-key cap, totals within 24.
+-- stay within its 48-key cap, totals within 24 (13 after this file).
 --
 -- All three functions are service_role only (REVOKE from PUBLIC/anon/
 -- authenticated, restated below as 20261108095241 does).
@@ -66,9 +106,12 @@
 --   DROP INDEX IF EXISTS public.jobs_dead_updated_idx;
 -- and restore the previous canopy_metrics() by re-running the "#760
 -- canopy_metrics" block of 20261106055333_state_machines_audit.sql (from its
--- CREATE OR REPLACE FUNCTION canopy_metrics() through its NOTIFY). Drop the
--- functions only with the worker stopped (or on an image without the
--- heartbeat): a running worker's heartbeat would log a warning per call.
+-- CREATE OR REPLACE FUNCTION canopy_metrics() through its NOTIFY). That
+-- restore removes all six keys above (jobs_* and llm_*) and is what must run
+-- BEFORE 20261108213311 is reversed (it drops the cost function this
+-- canopy_metrics() calls). Drop the functions only with the worker stopped
+-- (or on an image without the heartbeat): a running worker's heartbeat would
+-- log a warning per call.
 
 -- ── indexes ─────────────────────────────────────────────────────────────────
 
@@ -156,16 +199,23 @@ BEGIN
     END LOOP;
 END $$;
 
--- ── canopy_metrics(): + jobs_dead_lettered, + jobs_queue_depth ──────────────
+-- ── canopy_metrics(): + jobs_*, + llm_cost per active user ──────────────────
 --
 -- Everything below up to the NOTIFY is 20261106055333's #760 definition
--- verbatim except the two marked #116 additions.
+-- verbatim except the marked #116 and #119 additions.
 CREATE OR REPLACE FUNCTION canopy_metrics()
 RETURNS JSONB
 LANGUAGE sql STABLE
 SET search_path = public, pg_temp
 AS $$
 WITH
+-- #119 (20261108213623): one read of the weekly LLM cost signal, as numerics.
+llm_cost AS (
+    SELECT (s->>'usd_per_active_user_7d')::numeric       AS cur,
+           (s->>'baseline_usd_per_active_user')::numeric AS base,
+           (s->>'ratio')::numeric                        AS ratio
+    FROM (SELECT public.llm_cost_per_active_user_weekly() AS s) f
+),
 -- v1's definition, unchanged: distinct users with at least one attributed
 -- `events` row. NULL is the anonymous/system actor (0035); '' mirrors
 -- admin_analytics' truthiness test, so the two dashboards agree.
@@ -363,7 +413,9 @@ SELECT jsonb_build_object(
                     jsonb_object_agg(key, jsonb_build_object('24h', d1, '7d', d7, '30d', d30)),
                     '{}'::jsonb)
          FROM counts),
-    'totals', jsonb_build_object(
+    -- jsonb_strip_nulls: only the #119 keys below can be NULL (no honest
+    -- answer); stripping turns that into an omitted key, never a fake 0.
+    'totals', jsonb_strip_nulls(jsonb_build_object(
         'users',               (SELECT COUNT(*) FROM users
                                 WHERE google_id IS NOT NULL AND deleted_at IS NULL),
         'users_pending',       (SELECT COUNT(*) FROM users
@@ -379,8 +431,22 @@ SELECT jsonb_build_object(
         -- #116 (20261108213623): work not yet finished — waiting, waiting out
         -- a retry backoff, or in a worker's hands.
         'jobs_queue_depth',    (SELECT COUNT(*) FROM public.jobs
-                                WHERE status IN ('queued', 'failed', 'running'))
-    )
+                                WHERE status IN ('queued', 'failed', 'running')),
+        -- #119 (20261108213623): weekly LLM cost per active user. NULL (no
+        -- answer, or past the route's 1e12 cap) is stripped above.
+        'llm_microusd_per_user_7d',
+            (SELECT CASE WHEN cur * 1000000 <= 1000000000000
+                         THEN ROUND(cur * 1000000)::BIGINT END FROM llm_cost),
+        'llm_microusd_per_user_4w_base',
+            (SELECT CASE WHEN base * 1000000 <= 1000000000000
+                         THEN ROUND(base * 1000000)::BIGINT END FROM llm_cost),
+        -- FLOOR, not ROUND: pct >= 200 exactly when ratio >= 2.0 (the jump).
+        'llm_cost_jump_ratio_pct',
+            (SELECT CASE WHEN ratio * 100 <= 1000000000
+                         THEN FLOOR(ratio * 100)::BIGINT END FROM llm_cost),
+        'llm_cost_jump',
+            (SELECT CASE WHEN ratio >= 2.0 THEN 1 WHEN ratio < 2.0 THEN 0 END FROM llm_cost)
+    ))
 );
 $$;
 

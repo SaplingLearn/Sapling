@@ -67,9 +67,17 @@ def _usage(conn, tokens, *, ago="0 seconds", user=U, cost=None):
 # ── llm_budget_status ───────────────────────────────────────────────────────
 
 
-def test_no_rows_means_unlimited(world):
+def test_no_rows_falls_back_to_the_builtin_default_not_unlimited(world):
+    # A missing default row (deleted by hand, a truncated test database) must
+    # not silently switch the runaway guard off: unlimited is an explicit NULL.
     s = _status(world)
-    assert s["limit"] is None and s["source"] == "none" and s["used"] == 0
+    assert (s["limit"], s["source"], s["used"]) == (2000000, "default:builtin", 0)
+
+
+def test_an_explicit_null_default_is_unlimited(world):
+    _budget(world, "default", "", None)
+    s = _status(world)
+    assert s["limit"] is None and s["source"] == "default"
 
 
 def test_resolution_order_user_then_most_generous_role_then_default(world):
@@ -170,6 +178,98 @@ def test_no_active_users_gives_no_answer_rather_than_zero(world):
     assert s["usd_per_active_user_7d"] is None
     assert s["ratio"] is None and s["jump"] is None
     assert s["baseline_weeks"] == 0
+
+
+def _signal(conn) -> dict:
+    return conn.execute("SELECT public.llm_cost_per_active_user_weekly() AS s").fetchone()["s"]
+
+
+def _totals(conn) -> dict:
+    return conn.execute("SELECT public.canopy_metrics() AS m").fetchone()["m"]["totals"]
+
+
+LLM_TOTALS = ("llm_microusd_per_user_7d", "llm_microusd_per_user_4w_base",
+              "llm_cost_jump_ratio_pct", "llm_cost_jump")
+
+
+def test_a_window_with_no_priced_rows_is_unknown_not_zero(world):
+    # Active users, but only unpriced (NULL) and zero-cost rows this week: the
+    # per-user cost is unknown — never a measured $0 that would read as a
+    # 100% drop — and Canopy omits the key rather than reporting 0.
+    world.execute("DELETE FROM public.llm_usage")
+    world.execute("DELETE FROM public.events")
+    for week in range(1, 5):
+        ago = f"{7 * week + 3} days"
+        _active(world, "llmb-u1", ago)
+        _usage(world, 10, ago=ago, user="llmb-u1", cost=1.0)
+    _active(world, "llmb-u1", "1 day")
+    _usage(world, 10, ago="1 day", user="llmb-u1", cost=None)
+    _usage(world, 10, ago="1 day", user="llmb-u1", cost=0)
+    s = _signal(world)
+    assert s["usd_per_active_user_7d"] is None
+    assert s["weeks"][0]["priced_calls"] == 0 and s["weeks"][0]["active_users"] == 1
+    assert s["weeks"][0]["usd_per_active_user"] is None
+    assert float(s["baseline_usd_per_active_user"]) == pytest.approx(1.0)
+    assert s["ratio"] is None and s["jump"] is None
+    totals = _totals(world)
+    assert "llm_microusd_per_user_7d" not in totals
+    assert "llm_cost_jump_ratio_pct" not in totals and "llm_cost_jump" not in totals
+    assert totals["llm_microusd_per_user_4w_base"] == 1_000_000
+
+
+def test_canopy_llm_keys_agree_with_the_signal(world):
+    world.execute("DELETE FROM public.llm_usage")
+    world.execute("DELETE FROM public.events")
+    for week in range(1, 5):
+        ago = f"{7 * week + 3} days"
+        _active(world, "llmb-u1", ago)
+        _usage(world, 10, ago=ago, user="llmb-u1", cost=1.0)
+    _active(world, "llmb-u1", "1 day")
+    _usage(world, 10, ago="1 day", user="llmb-u1", cost=3.0)
+    s = _signal(world)
+    totals = _totals(world)
+    assert totals["llm_microusd_per_user_7d"] == 3_000_000
+    assert totals["llm_microusd_per_user_4w_base"] == 1_000_000
+    assert totals["llm_cost_jump_ratio_pct"] == 300
+    assert totals["llm_cost_jump"] == 1 and s["jump"] is True
+    assert all(type(totals[k]) is int for k in LLM_TOTALS)
+
+
+@pytest.mark.parametrize("cur,jump", [(1.99995, True), (1.99994, False), (2.0, True)])
+def test_jump_and_ratio_pct_come_from_the_same_rounded_ratio(world, cur, jump):
+    # 1.99995 rounds (4 dp) to a published ratio of 2.0000: jump must say so
+    # too, and ratio_pct must be >= 200 exactly when jump is 1.
+    world.execute("DELETE FROM public.llm_usage")
+    world.execute("DELETE FROM public.events")
+    for week in range(1, 5):
+        ago = f"{7 * week + 3} days"
+        _active(world, "llmb-u1", ago)
+        _usage(world, 10, ago=ago, user="llmb-u1", cost=1.0)
+    _active(world, "llmb-u1", "1 day")
+    _usage(world, 10, ago="1 day", user="llmb-u1", cost=cur)
+    s = _signal(world)
+    assert s["jump"] is jump
+    assert (float(s["ratio"]) >= 2.0) is jump
+    totals = _totals(world)
+    assert totals["llm_cost_jump"] == int(jump)
+    assert (totals["llm_cost_jump_ratio_pct"] >= 200) is jump
+
+
+def test_an_absurd_ratio_omits_ratio_pct_but_keeps_the_jump(world):
+    # A near-zero baseline must never push ratio_pct past the route's 1e12
+    # cap (a 503 for the whole document): the key is omitted instead.
+    world.execute("DELETE FROM public.llm_usage")
+    world.execute("DELETE FROM public.events")
+    _active(world, "llmb-u1", "10 days")
+    _usage(world, 10, ago="10 days", user="llmb-u1", cost=0.000001)  # the smallest NUMERIC(12,6) price
+    _active(world, "llmb-u1", "1 day")
+    _usage(world, 10, ago="1 day", user="llmb-u1", cost=100000)
+    s = _signal(world)
+    assert float(s["ratio"]) * 100 > 1e9 and s["jump"] is True
+    totals = _totals(world)
+    assert "llm_cost_jump_ratio_pct" not in totals
+    assert totals["llm_cost_jump"] == 1
+    assert all(0 <= v <= 10**12 for v in totals.values())
 
 
 # ── schema, privileges, idempotency ─────────────────────────────────────────

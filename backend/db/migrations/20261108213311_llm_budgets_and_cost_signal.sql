@@ -10,8 +10,12 @@
 --   ('user',    <users.id>) a per-user override
 -- daily_token_limit NULL = unlimited, 0 = no LLM work at all. Resolution, first
 -- match wins: user row -> the MOST GENEROUS of the user's role rows (NULL beats
--- any number) -> default row -> none (unlimited). Service-only (RLS bucket E):
--- RLS on, no policies, nothing granted to anon / authenticated.
+-- any number) -> default row -> the BUILT-IN default (2,000,000 tokens, source
+-- 'default:builtin'). A missing default row therefore never means "unlimited"
+-- (routes/admin_llm.py refuses to delete it for the same reason: unlimited is
+-- an explicit NULL default, never an accident); it re-appears as soon as an
+-- admin PUTs the default. Service-only (RLS bucket E): RLS on, no policies,
+-- nothing granted to anon / authenticated.
 --
 -- public.llm_budget_status(p_user_id) -> jsonb
 --   {user_id, limit, source, used, window_start, reset_at}: the resolved limit
@@ -25,16 +29,20 @@
 --   Weekly LLM cost per active user and the "2x jump" signal (plan Targets:
 --   "LLM cost per MAU, weekly, alert on a 2x jump, source = agent usage
 --   table"). Five rolling 7-day windows ending now (week 0 = the last 7 days,
---   weeks 1-4 the trailing four). Per window: usd = SUM(llm_usage.cost_usd)
---   over priced rows (cost_usd > 0, canopy_metrics' rule); active_users =
+--   weeks 1-4 the trailing four). Per window: priced_calls = llm_usage rows
+--   with cost_usd > 0 (canopy_metrics' "priced" sum rule); usd = their
+--   SUM(cost_usd), reported as 0 when there are none; active_users =
 --   COUNT(DISTINCT events.user_id), non-empty id, category <> 'system' (the
---   definition routes/admin_analytics.py uses for distinct_active_users).
---   ratio = week 0 per-user cost / the mean of weeks 1-4's per-user cost (the
---   weeks that had active users); jump = ratio >= 2.0. Both NULL when either
---   side has no active users (no honest answer). Read by
---   GET /api/admin/analytics/llm/cost-per-active-user, and written so the
---   Canopy owner can add its keys to canopy_metrics() without re-deriving it
---   (this file deliberately does NOT touch canopy_metrics()).
+--   definition routes/admin_analytics.py uses for distinct_active_users);
+--   usd_per_active_user = usd / active_users, NULL when the window has no
+--   priced rows OR no active users — a window nobody priced is "unknown",
+--   never a measured $0 per user. ratio = round(week 0 per-user cost / the
+--   mean of weeks 1-4's non-NULL per-user costs, 4); jump = (that SAME
+--   rounded ratio) >= 2.0, so the published ratio and jump cannot disagree.
+--   Both NULL when either side is NULL (no honest answer). Read by
+--   GET /api/admin/analytics/llm/cost-per-active-user and by canopy_metrics()
+--   (its four llm_* totals keys, added in 20261108213623_jobs_upkeep.sql), so
+--   the two never disagree.
 --
 -- Both functions: LANGUAGE sql STABLE, SECURITY INVOKER, search_path pinned
 -- to '', EXECUTE for service_role only (llm_usage / events are service-only).
@@ -46,7 +54,11 @@
 -- no existing data.
 --
 -- Reverse (by hand, as the migration role). Turn `llm_budget` off first
--- (SAPLING_FLAG_LLM_BUDGET=off), so nothing calls the status function, then:
+-- (SAPLING_FLAG_LLM_BUDGET=off), so nothing calls the status function, and
+-- reverse 20261108213623_jobs_upkeep.sql FIRST: its canopy_metrics() calls
+-- llm_cost_per_active_user_weekly(), and a LANGUAGE sql body records no
+-- dependency, so dropping the function under it would 503 the Canopy route
+-- instead of failing the DROP. Then:
 --   DROP FUNCTION IF EXISTS public.llm_cost_per_active_user_weekly();
 --   DROP FUNCTION IF EXISTS public.llm_budget_status(text);
 --   DROP TABLE IF EXISTS public.llm_budgets;   -- admin config only; no user data
@@ -145,6 +157,10 @@ AS $$
         SELECT b.daily_token_limit, 'default', 3
           FROM public.llm_budgets b
          WHERE b.scope = 'default'
+        UNION ALL
+        -- No default row (deleted by hand, or a truncated test database): the
+        -- seeded value still applies. Keep in step with the INSERT above.
+        SELECT 2000000::bigint, 'default:builtin', 4
     ),
     chosen AS (
         SELECT c.daily_token_limit, c.source FROM candidates c ORDER BY c.rank LIMIT 1
@@ -158,7 +174,7 @@ AS $$
     SELECT jsonb_build_object(
         'user_id',      p_user_id,
         'limit',        (SELECT daily_token_limit FROM chosen),
-        'source',       COALESCE((SELECT source FROM chosen), 'none'),
+        'source',       (SELECT source FROM chosen),
         'used',         (SELECT tokens FROM used),
         'window_start', (SELECT start FROM day),
         'reset_at',     (SELECT start FROM day) + interval '1 day'
@@ -179,12 +195,16 @@ AS $$
                now() - make_interval(days => 7 * w)       AS to_ts
           FROM generate_series(0, 4) AS w
     ),
+    -- Priced rows only (cost_usd > 0, in the join so an unpriced window keeps
+    -- its row with priced = 0 and usd NULL).
     cost AS (
         SELECT wk.w,
-               COALESCE(SUM(u.cost_usd) FILTER (WHERE u.cost_usd > 0), 0)::numeric AS usd
+               COUNT(u.cost_usd)         AS priced,
+               SUM(u.cost_usd)::numeric AS usd
           FROM weeks wk
           LEFT JOIN public.llm_usage u
                  ON u.created_at >= wk.from_ts AND u.created_at < wk.to_ts
+                AND u.cost_usd > 0
          GROUP BY wk.w
     ),
     active AS (
@@ -196,8 +216,10 @@ AS $$
                 AND e.category <> 'system'
          GROUP BY wk.w
     ),
+    -- per_user is NULL when the window has no priced rows (usd NULL) or no
+    -- active users: unknown, never a measured $0.
     per AS (
-        SELECT wk.w, wk.from_ts, wk.to_ts, c.usd, a.users,
+        SELECT wk.w, wk.from_ts, wk.to_ts, c.priced, c.usd, a.users,
                c.usd / NULLIF(a.users, 0) AS per_user
           FROM weeks wk
           JOIN cost c   ON c.w = wk.w
@@ -210,32 +232,37 @@ AS $$
         SELECT AVG(p.per_user) AS per_user, COUNT(p.per_user) AS weeks
           FROM per p
          WHERE p.w BETWEEN 1 AND 4
+    ),
+    -- ONE rounded ratio, published as-is and the only input to `jump`.
+    sig AS (
+        SELECT cur.per_user AS cur_per_user,
+               base.per_user AS base_per_user,
+               base.weeks,
+               round(cur.per_user / NULLIF(base.per_user, 0), 4) AS ratio
+          FROM cur, base
     )
     SELECT jsonb_build_object(
         'as_of',                        now(),
         'threshold',                    2.0,
-        'usd_per_active_user_7d',       round(cur.per_user, 6),
-        'baseline_usd_per_active_user', round(base.per_user, 6),
-        'baseline_weeks',               base.weeks,
-        'ratio',                        round(cur.per_user / NULLIF(base.per_user, 0), 4),
-        'jump',                         CASE
-                                            WHEN cur.per_user IS NULL OR NULLIF(base.per_user, 0) IS NULL
-                                            THEN NULL
-                                            ELSE cur.per_user >= 2.0 * base.per_user
-                                        END,
+        'usd_per_active_user_7d',       round(sig.cur_per_user, 6),
+        'baseline_usd_per_active_user', round(sig.base_per_user, 6),
+        'baseline_weeks',               sig.weeks,
+        'ratio',                        sig.ratio,
+        'jump',                         sig.ratio >= 2.0,
         'weeks', (
             SELECT jsonb_agg(jsonb_build_object(
                        'week',                p.w,
                        'from',                p.from_ts,
                        'to',                  p.to_ts,
-                       'usd',                 round(p.usd, 6),
+                       'priced_calls',        p.priced,
+                       'usd',                 round(COALESCE(p.usd, 0), 6),
                        'active_users',        p.users,
                        'usd_per_active_user', round(p.per_user, 6)
                    ) ORDER BY p.w)
               FROM per p
         )
     )
-      FROM cur, base;
+      FROM sig;
 $$;
 
 -- ── function privileges: service_role only ──────────────────────────────────
