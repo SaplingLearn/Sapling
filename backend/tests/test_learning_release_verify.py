@@ -158,6 +158,9 @@ class Cursor:
             self.rows = self.db.columns
         elif "pg_proc" in sql:
             self.rows = self.db.rpcs
+        elif "FROM pg_roles" in sql:
+            assert parameters == (sorted(verify.REQUIRED_ROLE_SETTINGS),)
+            self.rows = self.db.role_settings
         else:
             raise AssertionError("Unexpected metadata SQL")
 
@@ -183,6 +186,8 @@ class Database:
             for (table, column), expected in verify.REQUIRED_COLUMN_ATTRIBUTES.items()
         ]
         self.rpcs = [("sample", "p_user_id text, p_day date")]
+        # spec §13 A136: ALTER ROLE service_role SET extra_float_digits = 3
+        self.role_settings = [("service_role", ["statement_timeout=8s", "extra_float_digits=3"])]
         self.statements = []
 
     def cursor(self):
@@ -625,3 +630,161 @@ def test_db_flags_without_explicit_action_do_not_create_a_misleading_default_suc
     assert verify.main(["--expected-db-host", "127.0.0.1"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "failed" and report["release_authorized"] is False
+
+
+# ── spec §13 A136: exact floats through the backend's own path ───────────────
+
+#: what PostgREST answers for learning_float_probe() with the role setting
+#: applied (extra_float_digits = 3), and with the Supabase image's default (0):
+#: 15 and 6 significant digits.
+EXACT_PROBE = (
+    b'[{"float8_value":0.30000000000000004,"float4_value":0.12345679,'
+    b'"jsonb_value":0.30000000000000004,"digits":"3"}]'
+)
+ROUNDED_PROBE = b'[{"float8_value":0.3,"float4_value":0.123457,"jsonb_value":0.3,"digits":"0"}]'
+SERVICE_KEY = "eyJhbGciOiJIUzI1NiJ9.PRIVATE-SERVICE-KEY.signature"
+
+
+def test_db_audit_requires_the_service_role_float_setting():
+    db = Database()
+    assert audit(db)["missing_role_settings"] == []
+    db.role_settings = [("service_role", ["statement_timeout=8s"])]
+    result = audit(db)
+    assert result["status"] == "failed"
+    assert result["missing_role_settings"] == ["service_role.extra_float_digits=3"]
+    db.role_settings = []  # no role row at all (a plain Postgres)
+    assert audit(db)["missing_role_settings"] == ["service_role.extra_float_digits=3"]
+
+
+def test_float_probe_passes_only_when_every_value_reads_back_exactly():
+    passed = verify.float_probe_result(200, json.loads(EXACT_PROBE))
+    assert passed["status"] == "passed" and all(passed["exact"].values())
+    assert passed["extra_float_digits"] == "3"
+    rounded = verify.float_probe_result(200, json.loads(ROUNDED_PROBE))
+    assert rounded["status"] == "failed"
+    assert rounded["exact"] == {"float8": False, "float4": False, "float8_in_jsonb": False}
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("float8_value", 0.3),
+        ("float4_value", 0.123457),
+        ("jsonb_value", 0.3),
+        ("float8_value", "0.30000000000000004"),  # a string is not a JSON number
+        ("float4_value", None),
+    ],
+)
+def test_one_rounded_or_missing_value_fails_the_probe(field, value):
+    row = json.loads(EXACT_PROBE)[0] | {field: value}
+    assert verify.float_probe_result(200, [row])["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "status,body", [(404, {"message": "Could not find the function"}), (200, []), (200, {})]
+)
+def test_float_probe_without_the_function_is_an_error_naming_the_migration(status, body):
+    with pytest.raises(verify.VerificationError, match="20261108162223"):
+        verify.float_probe_result(status, body)
+
+
+def _rest_args(**overrides):
+    return SimpleNamespace(
+        **{
+            "rest_url_env": "RELEASE_QA_REST_URL",
+            "rest_key_env": "RELEASE_QA_SERVICE_KEY",
+            "expected_rest_host": "project.supabase.example",
+            "allow_loopback_http": False,
+            "timeout": 5,
+            **overrides,
+        }
+    )
+
+
+def test_float_probe_is_one_bounded_get_with_the_service_key_and_never_reports_it(monkeypatch):
+    requests = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read(self, limit):
+            assert limit == verify.MAX_RESPONSE_BYTES + 1
+            return EXACT_PROBE
+
+    class Opener:
+        def open(self, request, timeout):
+            assert timeout == 5 and request.get_method() == "GET" and request.data is None
+            assert request.full_url == (
+                "https://project.supabase.example/rest/v1/rpc/learning_float_probe"
+            )
+            assert request.get_header("Apikey") == SERVICE_KEY
+            assert request.get_header("Authorization") == f"Bearer {SERVICE_KEY}"
+            requests.append(request)
+            return Response()
+
+    monkeypatch.setenv("RELEASE_QA_REST_URL", "https://project.supabase.example")
+    monkeypatch.setenv("RELEASE_QA_SERVICE_KEY", SERVICE_KEY)
+    monkeypatch.setattr(verify, "build_opener", lambda *handlers: Opener())
+    result = verify.rest_float_audit(_rest_args())
+    assert result["status"] == "passed" and len(requests) == 1
+    assert "PRIVATE" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "url,key,match",
+    [
+        ("https://other.supabase.example", SERVICE_KEY, "expected host"),
+        ("http://project.supabase.example", SERVICE_KEY, "HTTPS"),
+        ("https://project.supabase.example/rest/v1", SERVICE_KEY, "origin"),
+        ("https://project.supabase.example", "", "unset or malformed"),
+        ("https://project.supabase.example", "PRIVATE key\r\nInjected: header", "malformed"),
+    ],
+)
+def test_float_probe_refuses_an_unexpected_target_or_key_before_any_request(
+    monkeypatch, url, key, match
+):
+    monkeypatch.setenv("RELEASE_QA_REST_URL", url)
+    monkeypatch.setenv("RELEASE_QA_SERVICE_KEY", key)
+    monkeypatch.setattr(verify, "build_opener", lambda *h: pytest.fail("no request"))
+    with pytest.raises(verify.VerificationError, match=match) as exc:
+        verify.rest_float_audit(_rest_args())
+    assert "PRIVATE" not in str(exc.value)
+
+
+def test_float_probe_cli_reports_a_rounded_stack_as_attention(monkeypatch, capsys):
+    monkeypatch.setenv("SUPABASE_URL", "http://127.0.0.1:54321")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", SERVICE_KEY)
+    args = ["--rest-float-probe", "--expected-rest-host", "127.0.0.1", "--allow-loopback-http"]
+    monkeypatch.setattr(
+        verify, "fetch_rest", lambda url, timeout, key: (200, json.loads(ROUNDED_PROBE))
+    )
+    assert verify.main(args) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "attention"
+    assert report["checks"]["rest_float_round_trip"]["status"] == "failed"
+    assert "PRIVATE" not in json.dumps(report)
+    monkeypatch.setattr(
+        verify, "fetch_rest", lambda url, timeout, key: (200, json.loads(EXACT_PROBE))
+    )
+    assert verify.main(args) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "requested_checks_passed_not_release_approval"
+    assert report["release_authorized"] is False
+
+
+def test_rest_target_without_the_probe_flag_fails_rather_than_passing(capsys):
+    assert verify.main(["--expected-rest-host", "127.0.0.1"]) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "failed"
+
+
+def test_the_probe_function_is_in_the_signature_inventory():
+    """The DB audit requires the function the probe reads: its migration is a
+    learning_ migration, so the signature inventory discovers it."""
+    rpcs = verify.required_rpcs(verify.BACKEND / "db" / "migrations")
+    assert rpcs[verify.FLOAT_PROBE_RPC] == [""]

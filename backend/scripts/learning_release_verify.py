@@ -2,8 +2,10 @@
 
 Default: inspect local migration inventory only, with no env loading or I/O to
 services. --probe uses bounded GETs; --db-audit uses the migration-operations
-metadata seam in a read-only transaction. No models, migrations, RPC execution,
-flag changes, token minting, learner writes or deployment actions are performed.
+metadata seam in a read-only transaction; --rest-float-probe makes one bounded
+GET of a constant-only, read-only function through PostgREST as the backend
+does. No models, migrations, business RPC execution, flag changes, token
+minting, learner writes or deployment actions are performed.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 import sys
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
@@ -197,6 +200,16 @@ REQUIRED_COLUMNS = {
 # This fence must not manufacture historical activity during migration.
 # Other column constraints/defaults remain outside this metadata-only contract.
 REQUIRED_COLUMN_ATTRIBUTES = {("learner_state", "evidence_touch_at"): ("YES", None)}
+# spec §13 A136: the role PostgREST runs the backend's requests as (the service
+# key) carries extra_float_digits = 3, so every float it reads is exact.
+REQUIRED_ROLE_SETTINGS = {"service_role": {"extra_float_digits": "3"}}
+# spec §13 A136: the constant-only function (20261108162223) the float probe reads
+# and the values it returns. A float8 is exact when its JSON parses back to the
+# same double, a real when it rounds back to the same single.
+FLOAT_PROBE_RPC = "learning_float_probe"
+FLOAT_PROBE_FLOAT8 = 0.1 + 0.2  # 0.30000000000000004: "0.3" at 15 significant digits
+FLOAT_PROBE_FLOAT4 = 0.12345679  # as a real: "0.123457" at 6 significant digits
+SERVICE_KEY_PATTERN = re.compile(r"[A-Za-z0-9_.-]{20,4096}")
 LOG_PATTERNS = {
     "event_or_usage_drop": re.compile(
         r"events queue full|events flush dropped|log_llm_usage failed; row dropped|events row insert failed",
@@ -386,6 +399,76 @@ def probe_loop(fetch, base: str, user_id: str, expectation: str) -> dict:
     }
 
 
+def fetch_rest(url: str, *, timeout: float, key: str) -> tuple[int, object]:
+    """One bounded GET through PostgREST with the service key, as the backend's
+    db/connection.py sends it. No redirects; the key is never returned or raised."""
+    request = Request(
+        url,
+        headers={"Accept": "application/json", "apikey": key, "Authorization": f"Bearer {key}"},
+        method="GET",
+    )
+    try:
+        response = build_opener(_NoRedirect()).open(request, timeout=timeout)
+    except HTTPError as error:
+        response = error  # a 404 (function missing) is a classification, not a crash
+    with response:
+        body = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise VerificationError("Response exceeded metadata bound")
+        try:
+            value = json.loads(body)
+        except ValueError:
+            raise VerificationError("Float probe answered something other than JSON") from None
+        return response.status, value
+
+
+def _same_double(value: object, expected: float) -> bool:
+    return isinstance(value, float) and value.hex() == expected.hex()
+
+
+def _same_single(value: object, expected: float) -> bool:
+    return isinstance(value, float) and struct.pack("<f", value) == struct.pack("<f", expected)
+
+
+def float_probe_result(status: int, body: object) -> dict:
+    """spec §13 A136: did a float8, a real and a float8 inside jsonb come back
+    through PostgREST as the values the database holds? Rounded output parses
+    to a different number: 0.3, 0.123457."""
+    if status != 200 or not isinstance(body, list) or len(body) != 1 or not isinstance(body[0], dict):
+        raise VerificationError(
+            "Float probe did not answer one row; is 20261108162223_learning_exact_floats.sql applied?"
+        )
+    row = body[0]
+    exact = {
+        "float8": _same_double(row.get("float8_value"), FLOAT_PROBE_FLOAT8),
+        "float4": _same_single(row.get("float4_value"), FLOAT_PROBE_FLOAT4),
+        "float8_in_jsonb": _same_double(row.get("jsonb_value"), FLOAT_PROBE_FLOAT8),
+    }
+    digits = row.get("digits")
+    return {
+        "status": "passed" if all(exact.values()) else "failed",
+        "path": f"PostgREST GET /rest/v1/rpc/{FLOAT_PROBE_RPC} with the service key",
+        "exact": exact,
+        "extra_float_digits": digits if isinstance(digits, str) and re.fullmatch(r"-?\d{1,2}", digits) else None,
+        "scope": "Proves float output for service_role requests; reads no table, writes nothing.",
+    }
+
+
+def rest_float_audit(args) -> dict:
+    """The float probe against the PostgREST origin and key in the NAMED env
+    variables, after the origin's host matches the explicitly expected one."""
+    origin = validate_origin(os.environ.get(args.rest_url_env, "").strip(), args.allow_loopback_http)
+    if urlsplit(origin).hostname != args.expected_rest_host:
+        raise VerificationError("PostgREST origin did not match the expected host")
+    key = os.environ.get(args.rest_key_env, "").strip()
+    if not SERVICE_KEY_PATTERN.fullmatch(key):
+        raise VerificationError("Service key variable is unset or malformed")
+    status, body = fetch_rest(
+        f"{origin}/rest/v1/rpc/{FLOAT_PROBE_RPC}", timeout=args.timeout, key=key
+    )
+    return float_probe_result(status, body)
+
+
 def audit_database(
     conn, inventory: dict[str, str], rpcs: dict[str, list[str]], reference: dict | None = None
 ) -> dict:
@@ -423,6 +506,20 @@ def audit_database(
             (list(rpcs),),
         )
         actual_rpcs = {(name, _arguments(args)) for name, args in cur.fetchall()}
+        cur.execute(
+            "SELECT rolname, rolconfig FROM pg_roles WHERE rolname = ANY(%s)",
+            (sorted(REQUIRED_ROLE_SETTINGS),),
+        )
+        role_settings = {
+            role: dict(item.split("=", 1) for item in (config or []) if "=" in item)
+            for role, config in cur.fetchall()
+        }
+    missing_role_settings = [
+        f"{role}.{name}={value}"
+        for role, settings in REQUIRED_ROLE_SETTINGS.items()
+        for name, value in settings.items()
+        if role_settings.get(role, {}).get(name) != value
+    ]
     missing_columns = [
         f"{table}.{column}:{kind}"
         for table, columns in REQUIRED_COLUMNS.items()
@@ -459,7 +556,13 @@ def audit_database(
     return {
         "status": "passed"
         if not (
-            pending or orphans or missing_columns or wrong_attributes or missing_rpcs or changed
+            pending
+            or orphans
+            or missing_columns
+            or wrong_attributes
+            or missing_rpcs
+            or missing_role_settings
+            or changed
         )
         else "failed",
         "read_only": True,
@@ -469,6 +572,8 @@ def audit_database(
         "missing_or_wrong_type_columns": missing_columns,
         "missing_or_wrong_column_attributes": wrong_attributes,
         "missing_rpc_signatures": missing_rpcs,
+        # spec §13 A136: the setting is stored; --rest-float-probe proves PostgREST applies it
+        "missing_role_settings": missing_role_settings,
         "changed_applied_reference_files": changed,
         "prior_reference_supplied": reference is not None,
         "prior_reference_covers_all_recorded": reference is not None
@@ -555,6 +660,15 @@ def main(argv=None) -> int:
         type=Path,
         help="Previously approved filename->SHA256 JSON, not a self-certified live schema",
     )
+    parser.add_argument(
+        "--rest-float-probe",
+        action="store_true",
+        help="One bounded GET of the read-only float probe through PostgREST with the service "
+        "key (spec §13 A136); reads only the named URL and key env vars",
+    )
+    parser.add_argument("--rest-url-env", default="SUPABASE_URL")
+    parser.add_argument("--rest-key-env", default="SUPABASE_SERVICE_KEY")
+    parser.add_argument("--expected-rest-host")
     parser.add_argument("--log", type=Path, action="append", default=[])
     parser.add_argument(
         "--output", type=Path, help="New JSON proof file; an existing proof is never overwritten"
@@ -638,6 +752,20 @@ def main(argv=None) -> int:
             raise VerificationError(
                 "Database target/reference arguments require explicit --db-audit"
             )
+        if args.rest_float_probe:
+            if (
+                not args.expected_rest_host
+                or not re.fullmatch(r"[A-Z][A-Z0-9_]*", args.rest_url_env)
+                or not re.fullmatch(r"[A-Z][A-Z0-9_]*", args.rest_key_env)
+                or not 0 < args.timeout <= 30
+            ):
+                raise VerificationError(
+                    "Float probe needs an expected host, URL and key variable names and a "
+                    "positive timeout at most 30 seconds"
+                )
+            report["checks"]["rest_float_round_trip"] = rest_float_audit(args)
+        elif args.expected_rest_host:
+            raise VerificationError("PostgREST target arguments require explicit --rest-float-probe")
         for index, path in enumerate(args.log):
             report["checks"][f"log_{index + 1}"] = audit_log(path)
         if migration_inventory(directory) != inventory:
@@ -649,7 +777,7 @@ def main(argv=None) -> int:
             )
             else (
                 "requested_checks_passed_not_release_approval"
-                if args.probe or args.db_audit or args.log
+                if args.probe or args.db_audit or args.rest_float_probe or args.log
                 else "plan_only_no_live_checks"
             )
         )
