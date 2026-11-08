@@ -470,25 +470,46 @@ def test_record_log_line_carries_no_student_text(caplog):
     assert all("my secret answer" not in r.getMessage() for r in caplog.records)
 
 
-def test_resolve_marks_open_rows():
+def test_resolve_marks_open_rows_of_another_item_in_one_conditional_update():
+    """Spec §13 A127: ONE UPDATE … RETURNING over the open rows of the keys,
+    recorded on another item than the one answered (an isomorph); the closed
+    rows come back without the encrypted evidence_text."""
     from learning import misconceptions
 
-    factory, mocks = _cached_tables({"misconceptions": [{"id": "m1"}]})
+    factory, mocks = _cached_tables({})
+    closed = [{"id": "m1", "node_id": "n1", "wrong_key": "k1", "check_item_id": "ci0", "count": 2}]
     with patch.object(misconceptions, "table", side_effect=factory):
-        assert misconceptions.resolve("u1", "n1", "k1") == 1
+        mocks_t = factory("misconceptions")
+        mocks_t.update.return_value = closed
+        assert misconceptions.resolve("u1", "n1", ["k1", "k1"], by_item="ci9") == closed
     upd = mocks["misconceptions"].update.call_args
     assert "resolved_at" in upd[0][0]
-    assert upd[1]["filters"]["resolved_at"] == "is.null"
-    assert upd[1]["filters"]["user_id"] == "eq.u1" and upd[1]["filters"]["wrong_key"] == "eq.k1"
+    f = upd[1]["filters"]
+    assert f["resolved_at"] == "is.null"
+    assert f["user_id"] == "eq.u1" and f["node_id"] == "eq.n1"
+    assert f["wrong_key"] == 'in.("k1")'
+    assert f["or"] == '(check_item_id.is.null,check_item_id.neq."ci9")'
+    assert "evidence_text" not in f["select"]
+    mocks["misconceptions"].select.assert_not_called()  # no read-then-write
+
+
+@pytest.mark.parametrize(
+    "keys,by_item", [([], "ci9"), (["Not A Key"], "ci9"), (["k1"], ""), (None, "ci9")]
+)
+def test_resolve_asks_nothing_without_a_key_or_an_item(keys, by_item):
+    from learning import misconceptions
+
+    with patch.object(misconceptions, "table", side_effect=AssertionError("no I/O")):
+        assert misconceptions.resolve("u1", "n1", keys, by_item=by_item) == []
 
 
 def test_resolve_never_raises():
     from learning import misconceptions
 
     boom = MagicMock()
-    boom.select.side_effect = RuntimeError("pg down")
+    boom.update.side_effect = RuntimeError("pg down")
     with patch.object(misconceptions, "table", return_value=boom):
-        assert misconceptions.resolve("u1", "n1", "k1") == 0
+        assert misconceptions.resolve("u1", "n1", ["k1"], by_item="ci9") == []
 
 
 def test_open_for_returns_keyed_counts_desc_and_skips_empty_input():
@@ -515,9 +536,10 @@ def test_open_for_returns_keyed_counts_desc_and_skips_empty_input():
 
 
 def test_open_for_lists_only_recently_seen_misconceptions():
-    """F6 (fix round): resolve() has no caller yet, so an open row would re-list
-    in every brief and close forever. open_for keeps only rows seen within
-    MISCONCEPTION_RECENT_DAYS (last_seen_at, a plaintext timestamp)."""
+    """F6 (fix round): an open row the student never meets again would re-list
+    in every brief and close forever (A127's resolution needs an isomorph
+    answer). open_for keeps only rows seen within MISCONCEPTION_RECENT_DAYS
+    (last_seen_at, a plaintext timestamp)."""
     from datetime import datetime, timedelta, timezone
 
     from learning import misconceptions
@@ -649,6 +671,7 @@ def test_hook_marks_a_record_on_misconception_and_sets_confront():
         "confront": marker,
         "cleared": None,
         "record": {"node_id": "n1", "check_item_id": "ci2", "wrong_key": "k1"},
+        "resolve": [],  # spec §13 A127: a wrong answer closes nothing
     }
 
 
@@ -741,8 +764,9 @@ def test_hook_keeps_the_attempt_log_free_of_student_text():
 
 
 def test_hook_a_misconception_without_a_key_records_nothing():
-    """The stated-confidence path (unreachable until a confidence field exists)
-    stamps the verdict but records nothing: the store keys on wrong_key."""
+    """The stated-confidence path (live since spec §13 A127: a "sure" wrong
+    answer with no matched key) stamps the verdict but records nothing: the
+    store keys on wrong_key."""
     from agents.tools import check as check_mod
     from agents.tools.check import GradeOutcome
 

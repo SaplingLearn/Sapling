@@ -268,6 +268,9 @@ def test_applied_migration_reference_detects_changed_history_but_is_not_live_sch
         ("check_items", "aligned_at", "timestamp without time zone"),
         ("check_items", "key_checked_at", "timestamp without time zone"),
         ("check_item_audits", "verdict", None),  # absent: no information_schema row
+        # spec §13 A127: the student's stated confidence on the evidence journal
+        ("node_mastery_events", "student_confidence", None),  # absent: not migrated
+        ("node_mastery_events", "student_confidence", "real"),
     ],
 )
 def test_durable_budget_and_evidence_metadata_types_are_required(table, column, wrong_type):
@@ -293,12 +296,13 @@ def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable,
 
 
 #: the learning-loop wave-2 migrations that add tables or columns (spec §13
-#: A112, A113, A119, A124). Extend this when a learning migration adds one.
+#: A112, A113, A119, A124, A127). Extend this when a learning migration adds one.
 _LEARNING_SCHEMA_MIGRATIONS = (
     "20261108041639_learning_item_quality.sql",  # A113
     "20261108041742_learning_posttest_windows.sql",  # A112
     "20261108051912_learning_item_alignment.sql",  # A119
     "20261108073631_learning_item_keys.sql",  # A124
+    "20261108092032_learning_student_confidence.sql",  # A127
 )
 #: SQL type -> information_schema.columns.data_type (an array column reads ARRAY)
 _DATA_TYPE = {
@@ -337,8 +341,10 @@ def test_every_column_the_learning_wave2_migrations_add_is_required():
     introduced = set()
     for name in _LEARNING_SCHEMA_MIGRATIONS:
         introduced |= _introduced_columns((directory / name).read_text())
-    # 7 post-test window/outcome columns (A112), 13 for A113, 1 for A119, 11 for A124
-    assert len(introduced) == 32
+    # 7 post-test window/outcome columns (A112), 13 for A113, 1 for A119, 11 for A124,
+    # 1 for A127 (node_mastery_events.student_confidence)
+    assert len(introduced) == 33
+    assert ("node_mastery_events", "student_confidence", "double precision") in introduced
     required = {
         (table, column, kind)
         for table, columns in verify.REQUIRED_COLUMNS.items()

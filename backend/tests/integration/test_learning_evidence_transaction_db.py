@@ -84,6 +84,21 @@ def test_real_atomic_batch_commits_canonical_math_and_receipt_then_replays_once(
     assert journal(db_conn, node)[1]["planning_observation"] is None
 
 
+def test_a_stated_confidence_is_journaled_beside_the_graders(db_conn):
+    """Spec §13 A127: learning_evidence_commit admits, validates and inserts
+    `student_confidence`; an evidence row that states none journals NULL, and
+    the grader's `confidence` keeps its own column."""
+    from learning.params import STUDENT_CONFIDENCE_LEVELS
+
+    node = _node("Stated confidence")
+    sure = STUDENT_CONFIDENCE_LEVELS["sure"]
+    apply(evidence(node, student_confidence=sure, confidence=0.9))
+    apply(evidence(node, tagged=False, confidence=0.8))
+    rows = journal(db_conn, node)
+    assert [r["student_confidence"] for r in rows] == [pytest.approx(sure), None]
+    assert [r["confidence"] for r in rows] == [pytest.approx(0.9), pytest.approx(0.8)]
+
+
 def test_lost_postcommit_ack_replays_same_payload_without_duplicate_bkt(db_conn, monkeypatch):
     from learning import evidence_transaction as tx
 

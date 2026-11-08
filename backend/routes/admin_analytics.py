@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from db.connection import pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
+from learning.calibration import confidence_calibration
 from learning.earnest_revise import earnest_revise
 from learning.item_reports import RETIRED, REVIEWS
 from learning.learning_gain import learning_gain, pose_item, posttest_outcome, pretest_outcome
@@ -531,7 +532,9 @@ _LEAK_EVENT = "zpd.leak"
 _REVEAL_EVENT = "zpd.reveal"  # spec §13 A88 (m5): a solution SERVED for an open posed item
 _EVIDENCE_COLS = (
     "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at,"
-    "channel,p_before,weight"
+    "channel,p_before,weight,"
+    # spec §13 A127: the student's stated confidence (metacognitive calibration)
+    "student_confidence"
 )
 TrendDirection = Literal["falling", "flat", "rising", "insufficient"]
 
@@ -606,6 +609,37 @@ class Calibration(BaseModel):
     posttest: CalibrationReport  # rung 3: fresh reserve item, tool-free, delayed
 
 
+class ConfidenceLevel(BaseModel):
+    """One stated-confidence level (learning/calibration.py, spec §13 A127)."""
+
+    level: str | None  # a STUDENT_CONFIDENCE_LEVELS label; None = a value no label names
+    stated: float  # the level's value on the 0..1 scale
+    n: int
+    correct: int
+    observed: float | None  # None when n = 0, never a zero
+
+
+class ConfidenceReport(BaseModel):
+    """The student's stated confidence against correctness (metacognitive
+    calibration, spec §13 A127). None rates mean nothing to judge."""
+
+    n: int
+    mean_stated: float | None
+    observed_rate: float | None
+    overconfidence: float | None  # mean stated − observed; above 0 = surer than right
+    brier: float | None
+    levels: list[ConfidenceLevel]
+
+
+class ChannelConfidenceReport(ConfidenceReport):
+    channel: str
+
+
+class ConfidenceCalibration(BaseModel):
+    all: ConfidenceReport
+    channels: list[ChannelConfidenceReport]  # only channels with a stated confidence
+
+
 class GainSummary(BaseModel):
     """Pre/post outcomes over (student, concept) pairs (learning/learning_gain.py,
     spec §13 A112): the probe's unassisted pretest against the unassisted
@@ -653,6 +687,8 @@ class LearningLoopKpis(BaseModel):
     earnest_revise: EarnestRevise
     gates: Gates
     calibration: Calibration
+    # spec §13 A127: do students know what they know? stated confidence vs correctness
+    confidence_calibration: ConfidenceCalibration
     learning_gain: LearningGain
     truncated: bool = False
 
@@ -916,7 +952,9 @@ def learning_loop_kpis(
 ) -> LearningLoopKpis:
     """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
     and the zero-leak, ceiling-compliance and earnest-revise (A109) gates; the
-    BKT calibration (A110) and the pre/post learning gain of the post-tests
+    BKT calibration (A110), the students' own confidence calibration per
+    channel (A127: stated confidence vs correctness, over the same evidence
+    scan) and the pre/post learning gain of the post-tests
     answered in the range, per fixed window (A112) — an outcome whose item
     A113's review path retired is left out and counted in `excluded_retired`;
     `truncated: true` means a scan cap cut the aggregation short."""
@@ -978,6 +1016,7 @@ def learning_loop_kpis(
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
         calibration=Calibration(**bkt_calibration(evidence)),
+        confidence_calibration=ConfidenceCalibration(**confidence_calibration(evidence)),
         learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired)),
         truncated=events_truncated or evidence_truncated or poses_truncated,
     )

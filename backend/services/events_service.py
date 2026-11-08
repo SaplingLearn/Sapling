@@ -143,6 +143,11 @@ learn.plan_approved           usage     concept_ids, n_reviews_first — the stu
 learn.session_closed          usage     session_id, concepts, misconceptions, has_if_then,
                                         model_written — a loop session's close was stored
                                         (PKG-09, spec §6, §13 A8); counts and bools only
+learn.misconception_resolved  usage     node_id, wrong_key, check_item_id, recorded_on, count,
+                                        surface (check / probe / review), session_id — a
+                                        correct, unassisted answer on an isomorph closed one
+                                        open misconception (spec §13 A127); ids, the
+                                        plaintext key, a count and enums only
 learn.check_item_reported     usage     course_id, question_hash, reason (wrong_answer /
                                         unclear / not_from_my_course), surface (loop /
                                         review), first, reporters — a student reported a
@@ -358,6 +363,13 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # PKG-09: a loop session's close was stored. Counts and bools only (never the
     # summary text); model_written is the ADR 0024 degrade signal (spec §13 A8).
     "learn.session_closed",
+    # Learning-loop spec §13 A127: a correct, unassisted answer on an isomorph
+    # closed one of the student's open misconceptions (one event per closed row,
+    # after the grade's flush and claimed save; learning/misconceptions.py
+    # resolve_after_grade). Payload ids, the plaintext key, a count and enums only:
+    # node_id, wrong_key, check_item_id (the answered item), recorded_on (the item
+    # it was recorded on), count, surface (check / probe / review), session_id.
+    "learn.misconception_resolved",
     # Learning loop PKG-12: the daily review queue. `served` once per kind in
     # a built queue (n = how many), `graded` per answer. Reviews are evidence,
     # so `graded` is the countable twin of the node_mastery_events row.

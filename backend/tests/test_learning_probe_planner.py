@@ -634,6 +634,10 @@ def _grader(*, correct=True, unavailable=False, refused=None):
             "confidence": conf,
             "grader_backend": backend,
         }
+        if answer.confidence is not None and not answer.idk:  # spec §13 A127, as grade_answer
+            from learning.evidence import stated_confidence
+
+            ev["student_confidence"] = stated_confidence(answer.confidence)
         deps.pending_evidence.append(ev)  # what grade_answer does (PKG-05)
         return SimpleNamespace(
             unavailable=False,

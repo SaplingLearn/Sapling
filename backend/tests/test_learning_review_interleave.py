@@ -484,6 +484,36 @@ def test_a_flashcard_anchor_reads_nothing_and_keeps_dash_order(queue_env):
     assert "graph_edges" not in handles and wrong_reads == []
 
 
+def test_a_resolved_misconception_no_longer_pairs_concepts(queue_env, monkeypatch):
+    """Spec §13 A127: the interleave reads PKG-10's open_for, which a resolved
+    row leaves — once the student closes the shared key on one concept, the two
+    concepts are no longer confusable and DASH order returns."""
+    from learning import misconceptions, review
+    from tests.test_learning_confidence_resolve import UNASSISTED, FakeMisconceptions
+
+    queue_env(["a", "x", "b"])
+    seen = NOW.isoformat()
+    fake = FakeMisconceptions(
+        [
+            {"id": f"m-{n}", "user_id": USER, "node_id": n, "check_item_id": f"ci-{n}",
+             "wrong_key": "confuses_a_with_b", "count": 1, "last_seen_at": seen,
+             "resolved_at": None}
+            for n in ("a", "b")
+        ]
+    )
+    monkeypatch.setattr(misconceptions, "table", lambda name: fake)
+    monkeypatch.setattr(misconceptions, "log_event", lambda *a, **k: None)
+    monkeypatch.setattr(review, "open_for", misconceptions.open_for)  # the real reader
+    monkeypatch.setattr(misconceptions, "_utcnow", lambda: NOW)
+    assert _served(review.due_queue(USER, COURSE, NOW)) == ["a", "b", "x"]
+    closed = misconceptions.resolve_after_grade(
+        USER, "a", keys=["confuses_a_with_b"], item_id="ci-a2", attempt=UNASSISTED,
+        surface="review",
+    )
+    assert closed == ["confuses_a_with_b"]
+    assert _served(review.due_queue(USER, COURSE, NOW)) == ["a", "x", "b"]
+
+
 def test_no_interleave_reads_when_no_two_concepts_could_pair(queue_env):
     from learning import review
 

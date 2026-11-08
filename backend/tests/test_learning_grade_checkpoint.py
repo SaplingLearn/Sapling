@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from learning.evidence import Evidence, PlanningPersistenceUnavailable
+from learning.params import STUDENT_CONFIDENCE_LEVELS
 from learning import grade_checkpoint as cp
 from services.encryption import decrypt, encrypt
 
@@ -334,22 +335,96 @@ def test_actual_valid_outcomes_help_and_rechecks_roundtrip(kind, correct, idk, r
     assert cp.open_checkpoint(cp.seal(checkpoint), **bindings(data)) == checkpoint
 
 
+#: spec §13 A127: the rich checkpoint's answer stated "sure"
+SURE = STUDENT_CONFIDENCE_LEVELS["sure"]
+
+
 def rich_diagnosis():
     return {"attempt": {"question_hash": "question-hash", "node_id": "node", "correct": False,
-        "wrong_key": "wrong_rule", "confidence": .9, "difficulty": 2, "idk": False,
+        "wrong_key": "wrong_rule", "confidence": SURE, "difficulty": 2, "idk": False,
         "isomorph_of": None, "released": True, "after_release": False},
         "confront": {"node_id": "node", "wrong_key": "wrong_rule", "check_item_id": "item"},
         "cleared": None,
-        "record": {"node_id": "node", "wrong_key": "wrong_rule", "check_item_id": "item"}}
+        "record": {"node_id": "node", "wrong_key": "wrong_rule", "check_item_id": "item"},
+        "resolve": []}
+
+
+def rich_payload():
+    """A check checkpoint whose answer stated "sure" (spec §13 A127): the
+    evidence's student_confidence, the answer's label and the attempt agree."""
+    data = payload()
+    data["evidence"][0]["student_confidence"] = SURE
+    data["continuation"]["answer"]["confidence"] = "sure"
+    data["continuation"]["diagnosis"] = rich_diagnosis()
+    return data
 
 
 def test_actual_rich_diagnosis_is_canonical_metadata_without_reference_fields():
-    data = payload()
-    data["continuation"]["diagnosis"] = rich_diagnosis()
+    data = rich_payload()
     checkpoint = cp.GradeCheckpoint.model_validate(data)
     recovered = cp.open_checkpoint(cp.seal(checkpoint), **bindings(data))
     assert recovered.continuation["diagnosis"] == rich_diagnosis()
-    assert set(recovered.continuation["diagnosis"]) == {"attempt", "confront", "cleared", "record"}
+    assert set(recovered.continuation["diagnosis"]) == {
+        "attempt", "confront", "cleared", "record", "resolve"}
+    assert recovered.continuation["answer"]["confidence"] == "sure"
+    assert recovered.evidence[0]["student_confidence"] == SURE
+
+
+@pytest.mark.parametrize(
+    "where,value",
+    [
+        ("answer", "guessing"),  # the answer's label is not the evidence's stated value
+        ("answer", None),
+        ("attempt", None),  # the rule's attempt is not the evidence's stated value
+        ("attempt", STUDENT_CONFIDENCE_LEVELS["fairly_sure"]),
+        ("evidence", None),
+        ("resolve", ["wrong_rule"]),  # a wrong answer closes nothing
+    ],
+)
+def test_the_stated_confidence_and_the_closable_keys_are_bound_to_the_evidence(where, value):
+    """Spec §13 A127: the answer's label, the attempt the §3.3 rule reads and the
+    evidence's student_confidence agree; only a correct answer lists keys to close."""
+    data = rich_payload()
+    if where == "answer":
+        data["continuation"]["answer"]["confidence"] = value
+    elif where == "attempt":
+        data["continuation"]["diagnosis"]["attempt"]["confidence"] = value
+    elif where == "evidence":
+        data["evidence"][0]["student_confidence"] = value
+    else:
+        data["continuation"]["diagnosis"]["resolve"] = value
+    with pytest.raises(ValidationError):
+        cp.GradeCheckpoint.model_validate(data)
+
+
+def test_a_correct_answer_carries_its_closable_keys_through_recovery():
+    data = rich_payload()
+    data["evidence"][0]["correct"] = True
+    data["continuation"].update(correct=True, verdict="correct")
+    data["continuation"]["graded"].update(last_correct=True, last_verdict="correct")
+    diagnosis = data["continuation"]["diagnosis"]
+    diagnosis.update(confront=None, record=None, resolve=["wrong_rule"])
+    diagnosis["attempt"].update(correct=True, wrong_key=None)
+    recovered = cp.open_checkpoint(
+        cp.seal(cp.GradeCheckpoint.model_validate(data)), **bindings(data)
+    )
+    assert recovered.continuation["diagnosis"]["resolve"] == ["wrong_rule"]
+    data["continuation"]["diagnosis"]["resolve"] = ["Not A Key"]
+    with pytest.raises(ValidationError):
+        cp.GradeCheckpoint.model_validate(data)
+
+
+def test_an_idk_answer_binds_no_stated_confidence():
+    """An idk states none: the answer's label (if any) never reaches the evidence."""
+    data = payload()
+    data["evidence"][0]["idk"] = True
+    data["continuation"]["answer"].update(idk=True, confidence="sure")
+    data["continuation"].update(verdict="idk", genuine=False)
+    data["continuation"]["graded"]["last_verdict"] = "idk"
+    cp.GradeCheckpoint.model_validate(data)  # the evidence states none: bound
+    data["evidence"][0]["student_confidence"] = STUDENT_CONFIDENCE_LEVELS["sure"]
+    with pytest.raises(ValidationError):
+        cp.GradeCheckpoint.model_validate(data)
 
 
 @pytest.mark.parametrize("section,key,value", [("attempt", "question_hash", "other-question"),
@@ -358,10 +433,8 @@ def test_actual_rich_diagnosis_is_canonical_metadata_without_reference_fields():
     ("confront", "node_id", "other-node"), ("record", "check_item_id", "other-item"),
     ("record", "rubric", "forbidden")])
 def test_diagnosis_is_typed_bound_and_cannot_carry_reference_or_rubric(section, key, value):
-    data = payload()
-    diagnosis = rich_diagnosis()
-    diagnosis[section][key] = value
-    data["continuation"]["diagnosis"] = diagnosis
+    data = rich_payload()
+    data["continuation"]["diagnosis"][section][key] = value
     with pytest.raises(ValidationError):
         cp.GradeCheckpoint.model_validate(data)
 

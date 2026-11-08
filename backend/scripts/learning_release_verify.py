@@ -39,6 +39,9 @@ REQUIRED_COLUMNS = {
         "planning_observation": "jsonb",
         "evidence_seq": "integer",
         "grader_backend": "text",
+        # spec §13 A127: the student's stated confidence (never the grader's
+        # `confidence`); learning_evidence_commit refuses the key without it
+        "student_confidence": "double precision",
     },
     "learner_state": {
         "p_known": "double precision",

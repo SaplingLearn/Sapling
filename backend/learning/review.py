@@ -69,7 +69,12 @@ from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
 from learning.interleave import confusable_partners, serve_order  # A114
 from learning.loop_state_store import update_loop_state
-from learning.misconceptions import open_for, recheck_after_release  # PKG-10 (A76, A114)
+from learning.misconceptions import (  # PKG-10 (A76, A114); A127's resolution
+    open_for,
+    recheck_after_release,
+    resolvable_keys,
+    resolve_after_grade,
+)
 from learning.params import (
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_S0_GOOD,
@@ -1121,11 +1126,11 @@ def _record(
     retention: float,
     claim: str | None = None,
     now: datetime | None = None,
-) -> dict:
+) -> tuple[dict, bool]:
     """Both kinds, after the grade is written: SR + budget, persisted (under the
     answer claim, which this write closes), then `review.graded` — only when the
     record was saved (a claim no longer held, or a missing row, records nothing
-    and emits nothing)."""
+    and emits nothing). Returns (the SR view, whether the record was saved)."""
     entry = _apply_grade(
         loop_state, item, correct=correct, session_id=session_id, retention=retention
     )
@@ -1144,7 +1149,7 @@ def _record(
     )
     if saved is None:
         logger.warning("review: record of %s not saved (claim lost or row missing)", item.id)
-        return _sr_view(entry)
+        return _sr_view(entry), False
     log_event(
         "review.graded",
         category="usage",
@@ -1152,7 +1157,7 @@ def _record(
         request_id=request_id,
         payload={"kind": item.kind, "correct": correct, "rating": rating},
     )
-    return _sr_view(entry)
+    return _sr_view(entry), True
 
 
 def _write_flashcard(
@@ -1191,6 +1196,7 @@ async def grade_review(
     card_row: dict | None = None,
     selected_option: str | None = None,
     reason: str | None = None,
+    confidence: str | None = None,
     deps=None,
     claim: str | None = None,
     max_rung: int = 0,
@@ -1202,10 +1208,19 @@ async def grade_review(
     apply_graph_update call; unavailable/refused writes nothing. A flashcard
     goes through flashcard_fsrs_update.
 
+    `confidence` (spec §13 A127): the student's stated confidence on a check
+    answer, journaled with its evidence (`student_confidence`) for the
+    calibration report; the review has no session attempt log, so it feeds no
+    §3.3 verdict. After the saved record, a correct unassisted answer closes
+    the misconceptions its item tests that were recorded on another item
+    (misconceptions.resolve_after_grade, over the FINAL evidence — after the
+    help floor).
+
     `claim` (the route's, from `claim_item`): every path that writes nothing —
     unavailable, refused, an error before the write — releases it; after the
     write only the record closes it."""
     written = False
+    outcome = None
     try:
         if item.kind == "flashcard":
             fsrs_rating, cols = _write_flashcard(
@@ -1226,6 +1241,7 @@ async def grade_review(
                     answer_text=answer or "",
                     selected_option=selected_option,
                     reason=reason,
+                    confidence=confidence,
                 ),
                 deps=deps,
                 node_id=item.node_id,
@@ -1266,7 +1282,7 @@ async def grade_review(
         if claim is not None and not written:  # nothing written: the student may answer again
             _release_claim(session_id, sr_key(item), claim)
         raise
-    sr = _record(
+    sr, saved = _record(
         user_id,
         item,
         correct=correct,
@@ -1278,6 +1294,24 @@ async def grade_review(
         claim=claim,
         now=now,
     )
+    if saved and item.kind == "check" and outcome is not None:
+        # spec §13 A127: after the one write AND the record under our claim; a
+        # diagnosis, never a gate — the graded answer stands whatever happens here
+        try:
+            resolve_after_grade(
+                user_id,
+                item.node_id,
+                keys=resolvable_keys(
+                    check_item, correct=correct, matched_wrong_key=outcome.matched_wrong_key
+                ),
+                item_id=check_item.id,
+                attempt=outcome.evidence,
+                surface="review",
+                session_id=session_id,
+                request_id=request_id,
+            )
+        except Exception:
+            logger.warning("review: misconception resolution unavailable after saved grade")
     if item.kind == "flashcard":  # the same achievement rate_card dispatches
         try:
             check_achievements(user_id, "flashcards_reviewed", {})

@@ -3056,3 +3056,185 @@ def test_review_next_moves_past_a_reported_open_item_through_the_real_loader(
     assert next_id() == "ci-q2"
     assert store.state.extra["open"]["n1"]["item_id"] == "ci-q2"  # opened in its place
     assert next_id() == "ci-q2" and len(store.calls) == 2  # and now it is the one re-served
+
+
+# ── spec §13 A127: the stated confidence and misconception resolution ────────
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"confidence": "very_sure"},
+        {"confidence": 0.85},
+        {"confidence": "SURE"},
+    ],
+)
+def test_a127_review_answer_refuses_a_confidence_off_the_scale(client, extra):
+    body = {"user_id": USER, "session_id": "s", "kind": "check", "item_id": "ci-1", "answer": "x"}
+    with _loop(), patch("learning.review.table", side_effect=_no_table):
+        r = client.post(f"{REVIEW}/answer", json={**body, **extra})
+    assert r.status_code == 422, r.text
+
+
+def test_a127_a_flashcard_answer_takes_no_confidence(client):
+    """Its own forgot / hard / easy self-rating already says how it went."""
+    body = {"user_id": USER, "session_id": "s", "kind": "flashcard", "item_id": "f1", "rating": 3}
+    with _loop(), patch("learning.review.table", side_effect=_no_table):
+        r = client.post(f"{REVIEW}/answer", json={**body, "confidence": "sure"})
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.parametrize("label", ["sure", None])
+def test_a127_review_answer_hands_the_label_to_the_grade(client, monkeypatch, store, label):
+    from learning import review
+    from learning.review import ReviewOutcome
+
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0, "retention": 0.9}})
+    _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
+    _opened(store, "n-due", "ci-qh-1")
+    seen = {}
+
+    async def fake_grade(user_id, item, **kw):
+        seen.update(kw)
+        return ReviewOutcome(correct=True, hint="Nice.", rating=3, sr={})
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    body = {
+        "user_id": USER,
+        "session_id": _sid(),
+        "course_id": COURSE,
+        "kind": "check",
+        "item_id": "ci-qh-1",
+        "answer": "because",
+    } | ({"confidence": label} if label else {})
+    with _loop():
+        r = client.post(f"{REVIEW}/answer", json=body)
+    assert r.status_code == 200, r.text
+    assert seen["confidence"] == label
+
+
+def _a127_review(monkeypatch, *, correct=True, matched=""):
+    """grade_review with the REAL grade_answer (its grader stubbed), the single
+    writer captured and the misconception store faked (the A127 rule runs for
+    real, after the saved record)."""
+    import agents.grader
+    from agents.grader import GradeResult
+    from learning import misconceptions, review
+    from tests.test_learning_confidence_resolve import FakeMisconceptions
+
+    async def _graded(item, *, format, student_answer, deps):
+        return GradeResult(
+            item_results={"r1": correct, "r2": correct},
+            all_yes=correct,
+            confidence=0.95,
+            matched_wrong_key=matched,
+            backend="gemini",
+        )
+
+    monkeypatch.setattr(agents.grader, "grade", _graded)
+    applied: list = []
+    monkeypatch.setattr(
+        review, "apply_graph_update", lambda uid, gu, **kw: applied.append(gu) or []
+    )
+    factory, _ = _tables({"learner_state": []})
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "log_event", lambda *a, **k: None)
+    fake = FakeMisconceptions(
+        [
+            {
+                "id": "m1",
+                "user_id": USER,
+                "node_id": "n1",
+                "check_item_id": "ci-0",  # recorded on another question of the concept
+                "wrong_key": "k1",
+                "count": 2,
+                "last_seen_at": NOW.isoformat(),
+                "resolved_at": None,
+            }
+        ]
+    )
+    events: list = []
+    monkeypatch.setattr(misconceptions, "table", lambda name: fake)
+    monkeypatch.setattr(misconceptions, "log_event", lambda et, **kw: events.append((et, kw)))
+    monkeypatch.setattr(misconceptions, "recent_evidence", lambda *a, **k: [])  # A76: no release
+    return applied, fake, events
+
+
+def _a127_check_item():
+    from learning.checks import WrongReason
+    from tests.test_learning_check_tool import _item as check_item
+
+    return check_item(
+        id="ci-q", question_hash="q", common_wrong=[WrongReason(key="k1", text="believes k1")]
+    )
+
+
+def _a127_deps():
+    from agents.deps import SaplingDeps
+
+    return SaplingDeps(
+        user_id=USER,
+        course_id=COURSE,
+        supabase=None,
+        request_id="req-1",
+        session_id="sess-1",
+        feature="loop_review",
+        learning_loop=True,
+    )
+
+
+def _a127_grade(store, **kw):
+    from learning import review
+
+    item = _serve_check(store)
+    review.claim_item("sess-1", "n1", "ci-q", "c1", NOW)
+    args = dict(answer="the base case returns 1", claim="c1", deps=_a127_deps())
+    args.update(kw)
+    return _grade_check(item, _a127_check_item(), {"sr": {}}, **args)
+
+
+def test_a127_a_review_answer_journals_its_stated_confidence(monkeypatch, store):
+    applied, _, _ = _a127_review(monkeypatch)
+    _a127_grade(store, confidence="sure")
+    [ev] = applied[0]["evidence"]
+    assert ev["student_confidence"] == params.STUDENT_CONFIDENCE_LEVELS["sure"]
+    assert ev["confidence"] == 0.95  # the grader's, in its own field
+
+
+def test_a127_a_correct_unassisted_review_answer_closes_the_key_after_its_record(
+    monkeypatch, store
+):
+    applied, fake, events = _a127_review(monkeypatch)
+    out = _a127_grade(store)
+    assert out.correct is True and len(applied) == 1
+    assert store.state.extra["open"]["n1"]["graded_at"] is not None  # the record was saved
+    assert fake.rows[0]["resolved_at"] is not None
+    [(event, kw)] = events
+    assert event == "learn.misconception_resolved"
+    assert kw["payload"] == {
+        "node_id": "n1",
+        "wrong_key": "k1",
+        "check_item_id": "ci-q",
+        "recorded_on": "ci-0",
+        "count": 2,
+        "surface": "review",
+        "session_id": "sess-1",
+    }
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["help_floor", "wrong", "reason_matched", "record_lost"],
+)
+def test_a127_a_review_answer_closes_nothing_unless_it_qualifies(monkeypatch, store, case):
+    applied, fake, events = _a127_review(
+        monkeypatch, correct=case != "wrong", matched="k1" if case == "reason_matched" else ""
+    )
+    kw = {}
+    if case == "help_floor":  # A93: help recorded for this item somewhere
+        kw = {"max_rung": params.RUNG_NO_CREDIT_MIN}
+    if case == "record_lost":  # another request holds the claim: nothing recorded
+        kw = {"claim": "c-other"}
+    _a127_grade(store, **kw)
+    assert len(applied) == 1  # graded and written either way
+    assert fake.rows[0]["resolved_at"] is None and fake.updates == [] and events == []

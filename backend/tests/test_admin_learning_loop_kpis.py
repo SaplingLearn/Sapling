@@ -504,6 +504,36 @@ def test_the_evidence_scan_reads_the_calibration_columns(monkeypatch):
     assert client.get(URL, params=RANGE).status_code == 200
     cols = dict(calls)["node_mastery_events"].split(",")
     assert {"channel", "p_before", "weight"} <= set(cols)
+    # spec §13 A127: the students' stated confidence, never the grader's alone
+    assert "student_confidence" in cols
+
+
+def test_confidence_calibration_reports_stated_confidence_per_channel(monkeypatch):
+    """Spec §13 A127: stated confidence against correctness, per channel, over
+    the same evidence scan; an answer with none stated is no row of it."""
+    sure, guessing = (params.STUDENT_CONFIDENCE_LEVELS[k] for k in ("sure", "guessing"))
+    evidence = [
+        {**_evidence(1, session="s1", correct=True), "student_confidence": sure},
+        {**_evidence(2, session="s1", correct=False), "student_confidence": sure},
+        {**_evidence(3, session="s1", correct=False, channel="mc_reasoned"),
+         "student_confidence": guessing},
+        _evidence(4, session="s1", correct=True),  # none stated
+    ]
+    _serve(monkeypatch, {"events": [], "node_mastery_events": evidence})
+    cc = client.get(URL, params=RANGE).json()["confidence_calibration"]
+    assert cc["all"]["n"] == 3 and cc["all"]["observed_rate"] == pytest.approx(1 / 3)
+    assert cc["all"]["overconfidence"] == pytest.approx((2 * sure + guessing) / 3 - 1 / 3)
+    assert [c["channel"] for c in cc["channels"]] == ["free_response", "mc_reasoned"]
+    free = {lv["level"]: lv for lv in cc["channels"][0]["levels"]}
+    assert (free["sure"]["n"], free["sure"]["correct"], free["sure"]["observed"]) == (2, 1, 0.5)
+    assert free["guessing"]["n"] == 0 and free["guessing"]["observed"] is None
+
+
+def test_confidence_calibration_is_empty_not_zero(monkeypatch):
+    monkeypatch.setattr(analytics, "table", lambda name: _FakeTable([]))
+    cc = client.get(URL, params=RANGE).json()["confidence_calibration"]
+    assert cc["channels"] == [] and cc["all"]["n"] == 0
+    assert cc["all"]["observed_rate"] is None and cc["all"]["brier"] is None
 
 
 # ── spec §13 A112: the pre/post learning gain per fixed post-test window ──────

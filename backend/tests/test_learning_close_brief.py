@@ -819,10 +819,12 @@ def _wire_brief(
     offerings=("off-1",),
     course_keys=None,
     open_rows=(),
+    resolved_keys=(),
 ):
     """`course_keys`: the course's check-item concept keys (fix round 2); None = every
     node name in `nodes` is a course concept. `open_rows`: the student's open rows in
-    the misconceptions table (PKG-10's `open_for`)."""
+    the misconceptions table (PKG-10's `open_for`). `resolved_keys`: keys no longer
+    held (spec §13 A127's `open_keys` leaves them out); every other key is open."""
     import learning.learner_brief as lb
 
     calls: list[tuple] = []
@@ -850,6 +852,9 @@ def _wire_brief(
 
     monkeypatch.setattr(lb, "table", factory)
     monkeypatch.setattr(lb, "open_for", lambda user_id, node_ids: [dict(r) for r in open_rows])
+    monkeypatch.setattr(
+        lb, "open_keys", lambda user_id, keys: {k for k in keys if k not in set(resolved_keys)}
+    )
     monkeypatch.setattr(lb, "decrypt_json_column", lambda v: v)  # rows are plaintext dicts
     monkeypatch.setattr(lb, "days_until_next_exam", lambda user_id, course_id: exam_days)
     monkeypatch.setattr(
@@ -2087,7 +2092,10 @@ def test_answers_wait_while_a_close_is_being_written(monkeypatch, path):
             "steps": {"qh-1": {"check_item_id": "ci-1", "first_shown_at": 1.0}},
         },
     )
-    body = {"question_hash": "qh-1", "answer": "x", "attempt_text": "I tried n == 1 first"}
+    # each route's own fields: the answer body refuses any other (spec §13 A127)
+    body = {"question_hash": "qh-1"} | (
+        {"answer": "x"} if path == "/check/answer" else {"attempt_text": "I tried n == 1 first"}
+    )
     app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
     try:
         with patch("routes.learn_loop.get_check_item", return_value=_item()):
@@ -2797,6 +2805,40 @@ def test_brief_table_keys_come_before_close_keys(monkeypatch):
     )
     closes = [{"misconceptions": ["k_close", "k_table"]}]
     assert lb._open_misconception_keys("u1", ["n1"], closes) == ["k_table", "k_close"]
+
+
+def test_a_close_key_resolved_since_leaves_the_brief(monkeypatch):
+    """Spec §13 A127: a recent close's key is listed only while the student
+    still holds it (`open_keys`), so one resolved since that close drops out."""
+    lb, _ = _wire_brief(
+        monkeypatch,
+        closes=[_close_row("s.", "If a, then b.", ["k_held", "k_closed"])],
+        states=[],
+        nodes=[],
+        resolved_keys=("k_closed",),
+    )
+    text = lb.build_brief("u", "c", [])
+    assert "open misconceptions: k_held" in text and "k_closed" not in text
+
+
+def test_the_brief_asks_open_keys_only_for_close_keys_it_has_not_listed(monkeypatch):
+    lb, _ = _wire_brief(
+        monkeypatch,
+        closes=[],
+        states=[],
+        nodes=[],
+        open_rows=[{"node_id": "n1", "wrong_key": "k_table", "count": 2}],
+    )
+    asked = []
+    monkeypatch.setattr(lb, "open_keys", lambda uid, keys: asked.append(list(keys)) or set())
+    assert lb._open_misconception_keys("u1", ["n1"], [{"misconceptions": ["k_table"]}]) == [
+        "k_table"
+    ]
+    assert asked == []  # every close key is already an open in-play row: no read
+    assert lb._open_misconception_keys("u1", ["n1"], [{"misconceptions": ["k_old"]}]) == [
+        "k_table"
+    ]
+    assert asked == [["k_old"]]  # and a failed or empty answer lists none of them
 
 
 def test_brief_renders_only_identifier_shaped_table_keys(monkeypatch):

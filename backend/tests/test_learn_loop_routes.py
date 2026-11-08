@@ -370,14 +370,16 @@ def seams():
         async def grade_with_evidence(item, answer, **kw):
             outcome = await ns.grade(item, answer, **kw)
             if not outcome.unavailable and not outcome.refused and not kw["deps"].pending_evidence:
-                from learning.evidence import Evidence
+                from learning.evidence import Evidence, stated_confidence
                 ev = Evidence(
                     **{**(outcome.evidence or {}), "node_id": kw["node_id"],
                        "correct": bool(outcome.correct), "idk": answer.idk,
                        "session_id": kw["deps"].session_id, "check_item_id": item.id,
                        "question_hash": item.question_hash, "max_rung": kw["max_rung"],
                        "same_session_recheck": kw["same_session_recheck"],
-                       "grader_backend": outcome.grader_backend, "confidence": outcome.confidence},
+                       "grader_backend": outcome.grader_backend, "confidence": outcome.confidence,
+                       # spec §13 A127: the stated label, as the real grade_answer journals it
+                       "student_confidence": stated_confidence(answer.confidence, idk=answer.idk)},
                 )
                 row = ev.model_dump(mode="json")
                 kw["deps"].pending_evidence.append(row)
@@ -4038,8 +4040,11 @@ def test_active_loop_chat_observes_only_after_persistence_and_router_cannot_fail
 def test_active_loop_foreign_pending_session_is_404_without_materialization(gate_on, seams, path):
     from routes.learn import PENDING_SESSIONS
 
-    body = {"session_id": "foreign-pending", "user_id": "u1", "message": "hi",
-            "question_hash": "qh-1", "answer": "n == 0", "action_type": "hint"}
+    body = {"session_id": "foreign-pending", "user_id": "u1"}
+    if "answer" in path:  # an answer body takes its own fields only (spec §13 A127)
+        body |= {"question_hash": "qh-1", "answer": "n == 0"}
+    else:
+        body |= {"message": "hi", "action_type": "hint"}
     PENDING_SESSIONS["foreign-pending"] = {"user_id": "someone-else"}
     try:
         response = client.post("/api/learn/loop" + path, json=body)

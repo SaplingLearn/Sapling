@@ -40,7 +40,7 @@ from pydantic import BaseModel
 from agents.deps import SaplingDeps
 from agents.grader import GradeResult
 from learning.answer_guard import Refusal
-from learning.evidence import Evidence, GraderBackend
+from learning.evidence import Evidence, GraderBackend, StudentConfidence, stated_confidence
 from learning.misconceptions import (
     Attempt,
     Verdict,
@@ -48,6 +48,7 @@ from learning.misconceptions import (
     attempts_of,
     confront_of,
     is_key,
+    resolvable_keys,
     set_confront,
     slip_or_misconception,
 )
@@ -78,6 +79,10 @@ class CheckAnswer(BaseModel):
     selected_option: str | None = None  # mc_reason: the letter chosen
     reason: str | None = None  # mc_reason: the one-sentence reason
     idk: bool = False  # explicit "I don't know" (A1)
+    # spec §13 A127: the student's stated confidence (the 3-point control); None
+    # = skipped. grade_answer reads it as evidence.stated_confidence, which an
+    # idk overrides (an idk states none). Never the grader's confidence.
+    confidence: StudentConfidence | None = None
 
 
 @dataclass
@@ -247,9 +252,15 @@ async def apply_misconception_rule(
     grading claim, so a failed flush never leaves a row behind for a
     resubmission to count twice. The key is grade.wrong_key — the seam-matched key
     after PKG-05's A22 option filter; the option → key map alone never reaches
-    here. Student-stated confidence only: CheckAnswer has none yet, and
-    grade.confidence is the grader's, deliberately not read. The change is
-    also left on `grade.diagnosis` for the route's compare-and-set save.
+    here. Student-stated confidence only (spec §13 A127): the attempt carries
+    `evidence.student_confidence`, the answer's stated label on the rule's
+    scale; grade.confidence is the grader's, deliberately not read. A correct
+    answer also lists the keys it may close (`grade.diagnosis["resolve"]`,
+    learning.misconceptions.resolvable_keys: the item's keys but one the
+    student's reason matched) — the route applies A127's resolution rule to
+    the grade's FINAL evidence after its claimed save (the help floor may
+    still raise the rung here). The change is also left on `grade.diagnosis`
+    for the route's compare-and-set save.
 
     `confront=False` (the probe, spec §13 A120): the rule runs and may mark the
     row, but the confrontation marker is never set or cleared — the probe stays
@@ -274,7 +285,7 @@ async def apply_misconception_rule(
         node_id=node_id,
         correct=bool(evidence.correct),
         wrong_key=grade.wrong_key,
-        confidence=None,
+        confidence=evidence.student_confidence,  # A127: the STUDENT's, never the grader's
         difficulty=int(item.difficulty),
         idk=bool(evidence.idk),
         isomorph_of=earlier[-1].get("question_hash") if earlier else None,
@@ -305,6 +316,13 @@ async def apply_misconception_rule(
         "confront": marker,
         "cleared": cleared,
         "record": to_record,
+        # A127: what this answer may close; the route decides on the final evidence
+        "resolve": resolvable_keys(
+            item,
+            correct=bool(evidence.correct),
+            idk=bool(evidence.idk),
+            matched_wrong_key=grade.matched_wrong_key,
+        ),
     }
     return verdict
 
@@ -355,6 +373,9 @@ async def grade_answer(
     grader failure never raises (GradeOutcome(unavailable=True)).
     `confront=False` (the probe, spec §13 A120): the misconception rule never
     sets or clears the confrontation marker (apply_misconception_rule).
+    `answer.confidence` (spec §13 A127) rides the Evidence as
+    `student_confidence` (the journal column, never a weight) and the attempt
+    the §3.3 rule reads; none is stated for an idk.
     """
     if not deps.learning_loop:
         return GradeOutcome(unavailable=True)
@@ -368,6 +389,7 @@ async def grade_answer(
         check_item_id=item.id,
         question_hash=item.question_hash,
         same_session_recheck=same_session_recheck,
+        student_confidence=stated_confidence(answer.confidence, idk=answer.idk),
     )
 
     answer_text = grader_answer_text(item, answer)  # PKG-10: the wrong-reason match

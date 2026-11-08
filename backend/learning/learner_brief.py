@@ -26,7 +26,7 @@ import logging
 from db.connection import pg_quote_value, table
 from learning.bkt import band
 from learning.learner_state import read_states
-from learning.misconceptions import KEY_PATTERN, open_for
+from learning.misconceptions import KEY_PATTERN, open_for, open_keys
 from learning.params import (
     BKT_L0,
     LEARNER_BRIEF_LAST_CLOSES,
@@ -219,16 +219,25 @@ def _open_misconception_keys(
     then the union of the recent closes' keys, deduplicated, order preserved.
     A close's keys are already the draft's (`normalise_close` intersects them
     with the items' listed keys); only identifier-shaped keys are rendered.
-    A raised error omits the section (the caller's `_section`)."""
+    Spec §13 A127: a close's key is listed only while the student still holds
+    it (`open_keys`: an open row, any node, in the recency window), so a
+    misconception resolved since that close drops out; one read, made only
+    when a close carries a key (a failed read lists none of them). A raised
+    error omits the section (the caller's `_section`)."""
     keys: list[str] = [
         r["wrong_key"]
         for r in open_for(user_id, list(node_ids_in_play or []))
         if isinstance(r.get("wrong_key"), str) and _KEY.fullmatch(r["wrong_key"])
     ]
+    closed: list[str] = []
     for close in closes:
-        keys += [
+        closed += [
             k for k in close.get("misconceptions") or [] if isinstance(k, str) and _KEY.fullmatch(k)
         ]
+    from_closes = [k for k in dict.fromkeys(closed) if k not in keys]
+    if from_closes:
+        still = open_keys(user_id, from_closes)
+        keys += [k for k in from_closes if k in still]
     return list(dict.fromkeys(keys))
 
 
