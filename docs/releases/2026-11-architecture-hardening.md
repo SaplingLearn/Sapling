@@ -66,14 +66,14 @@ start, re-check with `git fetch && git log --oneline f2c77e05..origin/main`.
 |---|---|---|---|---|---|---|
 | 0 | #809 | `docs/architecture-hardening-plan` | 5e75d6ab | Hardening plan and RLS step-2 plan (draft SQL, not migrations) | none | Docs only. |
 | 1 | #810 | `harden/w1c-backup` | f99aba5f, fec08225 | `pg_dump` backup module, `make backup-db`; `make promote` backs up before migrating and refuses to continue if the backup fails | low | Operator tooling. `make promote` now needs host `pg_dump` 15+ or podman/docker. |
-| 2 | #821 | `harden/db-migrations` | 93998307 | **All four stack migrations**: RLS 2a (`app_auth` helpers, function EXECUTE hygiene, `room_messages` privileges), 2b (137 policies), 2c (grants to `authenticated`), and the `jobs` queue table and functions, plus their DB-level integration tests | low | Privileges, policies and one new table. Inert for the service_role backend: nothing mints a `sapling-api` token until `db_user_scope` is on, and nothing writes `jobs` until `jobs_queue` is on. Replaces #811 and #816 (closed). |
-| 3 | #812 | `harden/w1b-cross-user-matrix` | ea424bce | Cross-user test matrix, about 285 requests, flag off | none | Tests only. |
-| 4 | #813 | `harden/fix-social-cross-user-leaks` | 0b2ca3f6 | **Security fix**: 4 cross-user leaks in `routes/social.py` | low | Members see no change. `school_match` is now same-school only. |
-| 5 | #814 | `harden/w1d-llm-resilience` | 5c89213c, c95083c8 | LLM retries, timeouts, circuit breaker; cross-provider fallback behind `llm_fallback` | **med** | **Active with the flag off.** Per-slot timeouts drop from 600 s to 30–240 s, Gemini now gets 3 attempts, and the breaker fails fast for 30 s after 8 failures. |
-| 6 | #815 | `harden/w2c-relock` | 8225cd8b | Re-locks 12 flagged transitive dependencies | med | Includes oauthlib 3→4 (Google sign-in) and logfire 4→5 / otel 0.66. |
-| 7 | #817 | `harden/w2b-jobs-foundation` | fea4e0f1, f7e970ec | `services/jobs.py`, `python -m worker`, course-context refresh behind `jobs_queue` (its migration is in #821) | low | With the flag off it adds one cached flag read. |
-| 8 | #818 | `harden/w3a-user-scoped-client` | 5353703d, c76f3bc4, 6b2970a6, 16db3639, 725b01d2, 6e930604, 42e521a2 | User-scoped PostgREST client behind `db_user_scope` (off/shadow/enforce) | low (off) / high (enforce) | With the flag off, requests are byte-identical (pinned by a test). Every `table()` call now goes through `_scope_headers`. |
-| 9 | #819 | `harden/w3b-async-db-design` | 651f6168 | Async DB client design doc | none | Docs only. |
+| 2 | #821 | `harden/db-migrations` | 93998307, dad53800 | **All four stack migrations**: RLS 2a (`app_auth` helpers, function EXECUTE hygiene, `room_messages` privileges), 2b (137 policies), 2c (grants to `authenticated`), and the `jobs` queue table and functions, plus their DB-level integration tests | low | Privileges, policies and one new table. Inert for the service_role backend: nothing mints a `sapling-api` token until `db_user_scope` is on, and nothing writes `jobs` until `jobs_queue` is on. Replaces #811 and #816 (closed). |
+| 3 | #812 | `harden/w1b-cross-user-matrix` | be082ccb | Cross-user test matrix, about 285 requests, flag off | none | Tests only. |
+| 4 | #813 | `harden/fix-social-cross-user-leaks` | 74d43bdd | **Security fix**: 4 cross-user leaks in `routes/social.py` | low | Members see no change. `school_match` is now same-school only. |
+| 5 | #814 | `harden/w1d-llm-resilience` | 30e22d0f, 21e2f7f7 | LLM retries, timeouts, circuit breaker; cross-provider fallback behind `llm_fallback` | **med** | **Active with the flag off.** Per-slot timeouts drop from 600 s to 30–240 s, Gemini now gets 3 attempts, and the breaker fails fast for 30 s after 8 failures. |
+| 6 | #815 | `harden/w2c-relock` | 57dbd62a | Re-locks 12 flagged transitive dependencies | med | Includes oauthlib 3→4 (Google sign-in) and logfire 4→5 / otel 0.66. |
+| 7 | #817 | `harden/w2b-jobs-foundation` | 66f965a1, 1484dd1c, 174adec1 | `services/jobs.py`, `python -m worker`, course-context refresh behind `jobs_queue` (its migration is in #821) | low | With the flag off it adds one cached flag read. |
+| 8 | #818 | `harden/w3a-user-scoped-client` | 8d59ddbf, ed882824, e9cd875b, 6c936d1d, 0b57f73e, bfb407cd, b9b3a1bc | User-scoped PostgREST client behind `db_user_scope` (off/shadow/enforce) | low (off) / high (enforce) | With the flag off, requests are byte-identical (pinned by a test). Every `table()` call now goes through `_scope_headers`. |
+| 9 | #819 | `harden/w3b-async-db-design` | 3314e062 | Async DB client design doc | none | Docs only. |
 | 10 | this (#820) | `harden/release-doc` | — | This file | none | Docs only. |
 
 `stack/base` is **not a PR**. It is `f2c77e05` plus a merge commit `8c7d72fc`
@@ -139,15 +139,18 @@ gh pr merge N --merge
   conflict as modify/delete because #812 has not merged, so drop them:
   ```bash
   git switch -c hotfix/social-leaks origin/main
-  git cherry-pick 2d50f618        # stops on 2 modify/delete conflicts
+  git cherry-pick 74d43bdd        # stops on 2 modify/delete conflicts
   git rm backend/tests/cross_user_matrix.py backend/tests/integration/test_cross_user_matrix_db.py
   git cherry-pick --continue
   ```
   On that tree the social suites pass: 82 passed. Open it as its own PR and
   merge it. When #813 later merges in the stack, the social changes are already
   on `main` and only the matrix edits remain. Expect a conflict-free merge.
-- The PRs above the leak fix were never seen by CodeRabbit (it skips PRs whose
-  base is not `production`/`staging`), so each needs its own review.
+- **No stacked PR was seen by CodeRabbit.** It skips PRs whose base is not
+  `production`/`staging`, and every PR here, #810 and #821 included, targets
+  another stack branch. One `/code-review` pass (high effort) over the whole
+  stack ran on 2026-11-08 and reported 10 findings, all in this release doc. They
+  are fixed here. Each PR still needs its own approval.
 
 ---
 
@@ -167,7 +170,7 @@ and twice on 11-08). #5 to #8 reach staging together when #821 merges.
 | 2 | `20261106055333_state_machines_audit.sql` | #772 | `email_sends.claimed_at` / `idempotency_gen`, `email_broadcasts.heartbeat_at` and a status CHECK, a `room_bans` table, room FKs → ON DELETE CASCADE, `gradescope_credentials` sync outcome, a `course_chunk_sources` ledger, a quiz completed-XOR-abandoned CHECK, `canopy_metrics` changes, the `apply_mastery_delta` function, `documents.index_status` gaining `exhausted`, a claim/reaper rewrite, **DROP `users.current_room_id` and `courses.deleted_at`** | **Yes.** It backfills `claimed_at` / `heartbeat_at`, **deletes rooms with no members**, gives rooms whose owner left to their earliest member, resolves quiz rows that are both completed and abandoned, and rewrites `mastery_tier 'subject_root'` to `'unexplored'`. | **No reverse header, and it is partly irreversible.** The dropped columns, deleted rooms and rewritten rows come back only from the pre-promote dump (§7.3). Re-adding the columns empty: `ALTER TABLE users ADD COLUMN current_room_id TEXT REFERENCES rooms(id) ON DELETE SET NULL; ALTER TABLE courses ADD COLUMN deleted_at TIMESTAMPTZ;` |
 | 3 | `20261108063442_xp_events_per_user_idempotency.sql` | #805 | UNIQUE `(user_id, idempotency_key)` replaces UNIQUE `(idempotency_key)`. It raises if duplicate pairs exist. | No rows change; it moves a constraint. | `ALTER TABLE xp_events DROP CONSTRAINT IF EXISTS xp_events_user_id_idempotency_key_key; ALTER TABLE xp_events ADD CONSTRAINT xp_events_idempotency_key_key UNIQUE (idempotency_key);` This fails once two students hold the same key, which is the bug the migration fixes. Don't reverse it. |
 | 4 | `20261108082151_rls_on_every_table.sql` | #807 | ENABLE RLS on every `public` table except `room_messages`; REVOKE ALL from anon/authenticated; GRANT ALL to service_role; default privileges stop granting anon/authenticated | No (privileges) | **Reversing it reopens the anon-key hole.** If you must: `DO $$ DECLARE t text; BEGIN FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'room_messages' LOOP EXECUTE format('ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY', t); END LOOP; END $$;` Re-granting anon is never needed: the backend uses service_role. |
-| 5 | `20261108092633_rls_app_auth_helpers.sql` | #821 | Schema `app_auth` with `uid()` and 4 SECURITY DEFINER membership helpers; EXECUTE on public functions revoked from PUBLIC/anon/authenticated and granted to service_role; default privileges; `room_messages` write privileges revoked (anon SELECT kept) | No | Header block, verified in a container: `ALTER DEFAULT PRIVILEGES IN SCHEMA app_auth REVOKE EXECUTE ON FUNCTIONS FROM authenticated, service_role; DROP SCHEMA IF EXISTS app_auth CASCADE; GRANT EXECUTE ON FUNCTION public.set_updated_at() TO PUBLIC, anon, authenticated; GRANT EXECUTE ON FUNCTION public.match_course_chunks(vector, integer, text, text) TO PUBLIC, anon, authenticated; ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;` On **prod**, re-grant anon only `TRUNCATE, REFERENCES, TRIGGER` on `room_messages`. Reverse 2b first. |
+| 5 | `20261108092633_rls_app_auth_helpers.sql` | #821 | Schema `app_auth` with `uid()` and 4 SECURITY DEFINER membership helpers; EXECUTE on public functions revoked from PUBLIC/anon/authenticated and granted to service_role; default privileges; `room_messages` write privileges revoked (anon SELECT kept) | No | Header block, verified in a container: `ALTER DEFAULT PRIVILEGES IN SCHEMA app_auth REVOKE EXECUTE ON FUNCTIONS FROM authenticated, service_role; DROP SCHEMA IF EXISTS app_auth CASCADE; GRANT EXECUTE ON FUNCTION public.set_updated_at() TO PUBLIC, anon, authenticated; GRANT EXECUTE ON FUNCTION public.match_course_chunks(vector, integer, text, text) TO PUBLIC, anon, authenticated; ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;` Then `room_messages`, which depends on the environment. **Local/CI/staging:** `GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.room_messages TO anon, authenticated;` **Prod:** `GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.room_messages TO authenticated; GRANT TRUNCATE, REFERENCES, TRIGGER ON public.room_messages TO anon;` (prod's anon had only those three). Reverse 2b first. |
 | 6 | `20261108094129_rls_policies.sql` | #821 | 137 policies on 55 tables, all `TO authenticated`, all keyed on `(SELECT app_auth.uid())` | No (policies) | 137 `DROP POLICY IF EXISTS ...` lines in the header. Reverse 2c first. |
 | 7 | `20261108094130_rls_authenticated_grants.sql` | #821 | Table, column and function grants to `authenticated` exactly matching the 2b policies; EXECUTE on `match_course_chunks` and `apply_mastery_delta` | No (grants) | 59 `REVOKE ...` lines in the header. Run this one **first** when reversing. |
 | 8 | `20261108095241_jobs_queue.sql` | #821 | `public.jobs` (service-only, RLS on) plus `enqueue_job` / `claim_jobs` / `complete_job` / `fail_job` | No. New table, written only when `jobs_queue` is on. | Turn `jobs_queue` off, then check `SELECT status, count(*) FROM public.jobs GROUP BY 1;`, then `DROP FUNCTION IF EXISTS public.fail_job(uuid, text, integer, text, integer, boolean); DROP FUNCTION IF EXISTS public.complete_job(uuid, text, integer); DROP FUNCTION IF EXISTS public.claim_jobs(text, text[], integer, integer); DROP FUNCTION IF EXISTS public.enqueue_job(text, jsonb, text, timestamptz, integer); DROP TABLE IF EXISTS public.jobs;` |
@@ -266,8 +269,9 @@ least a day of prod traffic first.
      should list all 8 files from §3.
    - The `migrate-staging.yml` runs are green:
      `gh run list --workflow migrate-staging.yml --limit 5`.
-   - Supabase **Security Advisor** (staging): no "RLS Disabled in Public" errors.
-     `room_messages` stays exempt until step 2e, so expect that one finding there.
+   - Supabase **Security Advisor** (staging): expect **exactly one** "RLS
+     Disabled in Public" finding, on `room_messages`, which stays exempt until
+     step 2e. A finding on any other table means stop.
    - Smoke: sign in with **real Google** once. oauthlib 4 (#815) is only covered
      by an offline test. Then open the tutor, run a quiz, upload a document,
      check that KaTeX and mermaid render (#808), load the graph, and open a
@@ -277,14 +281,33 @@ least a day of prod traffic first.
 4. **Read-only prod pre-checks.** Each of these, if non-zero, makes a
    migration raise or delete rows:
    ```bash
-   cd backend && venv/bin/dotenv -f .env.production run -- sh -c '
-     podman run --rm -i --network host -e DBURL="$SUPABASE_DB_URL" --entrypoint sh \
-       public.ecr.aws/supabase/postgres:15.8.1.085 -c "psql \"\$DBURL\" -X -v ON_ERROR_STOP=1"' <<'SQL'
+   # bash. Split the password out of the URI so it never sits on any argv
+   # (the same rule as promotion/backup.py): PGPASSWORD goes by name into the
+   # container's env, and DBURL carries no password.
+   cd backend
+   eval "$(venv/bin/dotenv -f .env.production run -- venv/bin/python -c '
+   import os, shlex, urllib.parse as u
+   p = u.urlsplit(os.environ["SUPABASE_DB_URL"])
+   host = p.netloc.rsplit("@", 1)[1]
+   print("export PGPASSWORD=" + shlex.quote(u.unquote(p.password or "")))
+   print("export DBURL=" + shlex.quote(p._replace(netloc=(p.username or "") + "@" + host).geturl()))
+   ')"
+   podman run --rm -i --network host -e PGPASSWORD -e DBURL --entrypoint sh \
+     public.ecr.aws/supabase/postgres:15.8.1.085 -c 'psql "$DBURL" -X -v ON_ERROR_STOP=1' <<'SQL'
    BEGIN READ ONLY;
    -- #772 raises if > 0 (decide those courses first)
    SELECT count(*) AS courses_deleted_at_set FROM courses WHERE deleted_at IS NOT NULL;
    -- #772 DELETES these rooms (and, via the new cascades, their messages)
    SELECT count(*) AS memberless_rooms FROM rooms r WHERE NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id);
+   -- #772 drops and re-adds these FKs, which validates every existing row.
+   -- Each must be 0, or migration #2 raises after #1 has committed. (Drop a
+   -- line if that table does not exist on prod; the migration skips it too.)
+   SELECT count(*) AS orphan_room_members   FROM room_members   x WHERE NOT EXISTS (SELECT 1 FROM rooms r WHERE r.id = x.room_id);
+   SELECT count(*) AS orphan_room_activity  FROM room_activity  x WHERE NOT EXISTS (SELECT 1 FROM rooms r WHERE r.id = x.room_id);
+   SELECT count(*) AS orphan_room_messages  FROM room_messages  x WHERE NOT EXISTS (SELECT 1 FROM rooms r WHERE r.id = x.room_id);
+   SELECT count(*) AS orphan_room_summaries FROM room_summaries x WHERE NOT EXISTS (SELECT 1 FROM rooms r WHERE r.id = x.room_id);
+   SELECT count(*) AS orphan_reply_to       FROM room_messages  x WHERE x.reply_to_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM room_messages p WHERE p.id = x.reply_to_id);
    -- #805 raises if > 0
    SELECT count(*) AS xp_dupes FROM (SELECT 1 FROM xp_events GROUP BY user_id, idempotency_key HAVING count(*) > 1) d;
    -- #807 ENABLE fails on any table the migration role does not own
@@ -293,6 +316,7 @@ least a day of prod traffic first.
    SELECT count(*) AS applied FROM schema_migrations;
    ROLLBACK;
    SQL
+   unset PGPASSWORD DBURL
    ```
 5. **Backup.** With #810 merged, `make promote` takes the backup itself
    (stage 2) and stops if the backup fails. You can also take one by hand
@@ -306,10 +330,11 @@ least a day of prod traffic first.
    restore with 17 or newer.
    ```bash
    mkdir -p backups && chmod 700 backups
-   (cd backend && venv/bin/dotenv -f .env.production run -- sh -c '
-     podman run --rm -i --network host -e DBURL="$SUPABASE_DB_URL" --entrypoint sh \
-       public.ecr.aws/supabase/postgres:15.8.1.085 -c "pg_dump -Fc --dbname \"\$DBURL\""') \
+   # PGPASSWORD and DBURL exported as in step 4 (password kept off argv)
+   podman run --rm -i --network host -e PGPASSWORD -e DBURL --entrypoint sh \
+     public.ecr.aws/supabase/postgres:15.8.1.085 -c 'pg_dump -Fc --dbname "$DBURL"' \
      > backups/prod-manual-$(date -u +%Y%m%dT%H%M%SZ).dump
+   unset PGPASSWORD DBURL
    chmod 600 backups/prod-manual-*.dump
    podman run --rm -i --entrypoint pg_restore public.ecr.aws/supabase/postgres:15.8.1.085 --list \
      < backups/prod-manual-<ts>.dump | grep -c 'TABLE DATA'     # must be > 0
@@ -383,10 +408,19 @@ and finally the smoke tests (`backend/promotion/smoke.py` against
 
 ## 7. Rollback plan
 
-1. **Flags first. They need no deploy.** `SAPLING_FLAG_LLM_FALLBACK=off`,
-   `SAPLING_FLAG_JOBS_QUEUE=off`, `SAPLING_FLAG_DB_USER_SCOPE=off` on Railway,
-   or set the stored default to `off` in `/admin/flags`. #814's timeouts,
-   retries and breaker are not behind a flag; undoing them is a code revert.
+1. **Flags first.** A flag resolves in this order: env override, fail-closed,
+   user rule, role rule, rollout, then default. **Setting only the stored default
+   to `off` does not turn the flag off** for anyone a user rule, a role rule or
+   the rollout already covers.
+   - **Everyone, guaranteed:** `SAPLING_FLAG_LLM_FALLBACK=off`,
+     `SAPLING_FLAG_JOBS_QUEUE=off`, `SAPLING_FLAG_DB_USER_SCOPE=off` on Railway.
+     The env override wins over every rule. Changing a Railway variable
+     redeploys the service, so allow for one deploy (minutes).
+   - **No deploy:** in `/admin/flags`, delete the flag's user and role targets,
+     set the rollout to 0, **and** set the default to `off`. Each process picks
+     it up within its 30 s flag snapshot.
+   - #814's timeouts, retries and breaker are not behind a flag. Undoing them
+     takes a code revert.
 2. **Code.** Revert the promotion's merge commit on `production` (the runner
    prints the revert command when smoke fails), or revert individual stack
    merge commits on `main` and re-promote. Any `production` hotfix must be
@@ -396,6 +430,13 @@ and finally the smoke tests (`backend/promotion/smoke.py` against
    migrations, because they are additive or privilege-only. It is **not**
    strictly safe for #772: old code reads `courses.deleted_at` in the topic
    checklist.
+   **A reverted merge stays reverted.** After `git revert -m 1` of the promotion
+   merge, the next promote of `main` does **not** bring those commits back: git
+   treats them as already merged. If that revert is back-merged into `main`,
+   it removes the stack from `main` too. To re-ship after the fix, first revert
+   the revert (`git revert <revert-sha>`) on `main`, then promote. Prefer
+   reverting individual stack merge commits on `main` when only one PR is at
+   fault.
 3. **Migrations.** Apply the reverse SQL from §3 by hand as the migration role,
    in reverse order: jobs, then 2c, then 2b, then 2a. Leave #807, #805 and #677
    in place. #772 has no reverse.
@@ -403,9 +444,21 @@ and finally the smoke tests (`backend/promotion/smoke.py` against
    using the recipes in `backend/promotion/README.md` → "Backups". Rehearse on
    the local stack first. Restore only the tables you need
    (`--data-only --table=<t>`), never the whole archive over the live project.
-   Take a fresh dump before any restore over prod. For #772's dropped columns,
-   first re-add them (§3 #2), then use `--data-only --table` with `pg_restore -L`
-   to pick out the needed rows.
+   Take a fresh dump before any restore over prod.
+   **Never `--data-only` into a live table that already has rows.** The COPY
+   aborts on the first duplicate primary key and restores nothing. `-L` selects
+   whole archive entries, not rows. For #772's dropped columns and deleted rooms:
+   1. Restore the needed tables from the dump into a **scratch** database (the
+      local stack or a throwaway container):
+      `pg_restore --no-owner --no-acl -d "$SCRATCH" --table=users --table=courses --table=rooms --table=room_members --table=room_messages <dump>`.
+   2. Re-add the columns on prod (§3 #2).
+   3. Export only what you need from the scratch DB, for example
+      `\copy (SELECT id, current_room_id FROM users WHERE current_room_id IS NOT NULL) TO 'users_room.csv' CSV`.
+   4. On prod, `\copy` that into a temp table, then `UPDATE users u SET
+      current_room_id = t.current_room_id FROM tmp t WHERE t.id = u.id;`.
+      Restore deleted rooms with `INSERT ... ON CONFLICT (id) DO NOTHING`, then
+      their members and messages in the same way.
+   5. Rehearse the whole sequence on the local stack first.
 
 ---
 
@@ -459,6 +512,7 @@ bases are not whitelisted.
 | #809 | pass | pass | pass | — | pass |
 | #810 | pass | pass | pass | — | pass |
 | #811 (closed, now in #821) | pass | pass | pass | — | pass |
+| #821 | pass | pass | pass | — | pass |
 | #812 | pass | pass | pass | — | pass |
 | #813 | pass | pass | pass | — | pass |
 | #814 | pass | pass | pass | pass | pass |
@@ -467,6 +521,8 @@ bases are not whitelisted.
 | #817 | pass | pass | pass | pass | pass |
 | #818 | pass | flake, rerun requested* | pass | pass | pass |
 | #819 | pass | pass | pass | — | pass |
+
+After the #821 restack (2026-11-08 ~19:30Z), every PR, #810, #821, #812–#815 and #817–#820, re-ran and is green. #821's first integration run failed: one test imported `services/jobs.py`, so it was moved back to #817.
 
 Earlier CI reds on #813 to #816 were GitHub infra failures (the `supabase`
 setup-cli download returned 504) and a vitest flake in `EmailBroadcasts`. All of
