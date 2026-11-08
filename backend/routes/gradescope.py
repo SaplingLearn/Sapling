@@ -35,7 +35,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -675,7 +675,8 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
 
     # #116: `jobs_queue` on -> the login, scrape and gradebook writes below run
     # in the worker (services/gradescope_jobs.py) and this request waits for
-    # the outcome, answering exactly as below. None -> sync here after all.
+    # the outcome, answering exactly as below (202 when it outlasts the wait).
+    # None -> sync here after all.
     if gradescope_jobs.should_queue(user_id):
         queued = gradescope_jobs.sync_via_queue(
             user_id=user_id, enrollment_id=enrollment_id, link_id=link_id,
@@ -686,35 +687,77 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
     return _sync_linked_course(user_id, gs_course_id, enrollment_id, link_id)
 
 
-#: The 502 detail when no assignment could be saved. The queued sync maps it
-#: back to its own error code (services/gradescope_jobs.py).
+@router.get("/sync/{sapling_course_id}/status")
+def sync_status(sapling_course_id: str, user_id: str, request: Request, semester: str | None = None):
+    """The latest queued sync of this course (#116, `jobs_queue` on): 202
+    while it runs, then exactly what POST /sync would have answered (the
+    counts, or the same typed error). The client polls it after a POST that
+    answered 202 / 504. 404 when the course has no staged sync."""
+    require_self(user_id, request)
+    all_enrollments = _all_enrollments_for(user_id, sapling_course_id, semester)
+    if not all_enrollments:
+        raise HTTPException(status_code=404, detail="Sapling course not found for user")
+    answer = gradescope_jobs.status_response(
+        gradescope_jobs.latest_sync(user_id, all_enrollments))
+    if answer is None:
+        raise HTTPException(status_code=404, detail="No Gradescope sync found for this course")
+    return answer
+
+
+#: The 502 detail when no assignment could be saved.
 SYNC_WRITE_FAILED_DETAIL = "No assignments could be saved. Please retry; if this continues, contact support."
 
 
 def _sync_linked_course(user_id: str, gs_course_id: str, enrollment_id: str, link_id: str | None) -> dict[str, Any] | JSONResponse:
+    """The inline sync: run it and answer with its outcome (the counts, a
+    typed JSONResponse, or a raised HTTPException)."""
+    return gradescope_jobs.response_for_outcome(
+        _run_linked_sync(user_id, gs_course_id, enrollment_id, link_id))
+
+
+def _run_linked_sync(
+    user_id: str, gs_course_id: str, enrollment_id: str, link_id: str | None,
+    *, still_linked: Callable[[], bool] | None = None,
+) -> gradescope_jobs.SyncOutcome:
     """Log in with the stored credentials, scrape the linked Gradescope course
     and upsert it into the enrollment's gradebook, recording the outcome on
-    gradescope_credentials. The request runs it inline; with `jobs_queue` on,
-    the `gradescope.sync` worker runs it (services/gradescope_jobs.py)."""
-    creds = _load_creds(user_id)
+    gradescope_credentials. Returns the typed outcome; raises only on an
+    unexpected error. The request runs it inline; with `jobs_queue` on, the
+    `gradescope.sync` worker runs it (services/gradescope_jobs.py), passing
+    `still_linked`, checked right before the first write: False ends the
+    sync as ``link_changed`` with nothing written."""
+    Outcome = gradescope_jobs.SyncOutcome
+    try:
+        creds = _load_creds(user_id)
+    except HTTPException:  # _load_creds' one raise: the stored row would not decrypt
+        return Outcome.failed(gradescope_jobs.ERR_CREDS)
     if not creds:
-        return _not_connected()
+        return Outcome.failed(gradescope_jobs.ERR_NOT_CONNECTED)
+    if creds.auth_mode == "password" and not (creds.email and creds.password):
+        # _establish_connection's own refusal, classified before the call.
+        return Outcome.failed(gradescope_jobs.ERR_CREDS_INCOMPLETE)
 
     conn = None
     try:
         conn = _establish_connection(creds)
         gs_assignments = gradescope_service.list_assignments(conn, gs_course_id)
     except gradescope_service.GradescopeAuthError as e:
-        return _reauth_required(
-            user_id, creds, str(e), last_sync_error="auth_failed", last_attempt_at=_now_iso(),
+        # Stored credentials rejected: mark them stale (as _reauth_required does).
+        _write_connection_state(
+            user_id, {"needs_reauth": True, "last_sync_error": "auth_failed", "last_attempt_at": _now_iso()},
+            only_version=creds.updated_at,
         )
+        return Outcome.failed(gradescope_jobs.ERR_AUTH, str(e))
     except gradescope_service.GradescopeFetchError as e:
         # An outage says nothing about the credentials: needs_reauth untouched.
         _write_connection_state(user_id, {"last_sync_error": "fetch_failed", "last_attempt_at": _now_iso()})
-        raise HTTPException(status_code=502, detail=str(e))
+        return Outcome.failed(gradescope_jobs.ERR_FETCH, str(e))
     finally:
         if conn is not None:
             conn.session.close()
+
+    if still_linked is not None and not still_linked():
+        return Outcome.failed(gradescope_jobs.ERR_LINK_CHANGED)
 
     # Load existing assignments keyed by gradescope_assignment_id so we
     # know whether each incoming one is an insert or an update.
@@ -807,7 +850,7 @@ def _sync_linked_course(user_id: str, gs_course_id: str, enrollment_id: str, lin
     outcome: dict[str, Any] = {"needs_reauth": False, "last_attempt_at": now_iso}
     if failed and not (inserted or updated):
         _write_connection_state(user_id, {**outcome, "last_sync_error": "write_failed"})
-        raise HTTPException(status_code=502, detail=SYNC_WRITE_FAILED_DETAIL)
+        return Outcome.failed(gradescope_jobs.ERR_WRITE)
     # last_synced_at represents a complete import, not a partial or failed one.
     if failed:
         _write_connection_state(user_id, {**outcome, "last_sync_error": "partial_write"})
@@ -817,6 +860,4 @@ def _sync_linked_course(user_id: str, gs_course_id: str, enrollment_id: str, lin
             {"last_synced_at": now_iso}, filters={"id": f"eq.{link_id}"},
         )
 
-    return SyncResult(
-        inserted=inserted, updated=updated, skipped=skipped, failed=failed
-    ).model_dump()
+    return Outcome.done(inserted=inserted, updated=updated, skipped=skipped, failed=failed)

@@ -126,6 +126,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/gradescope_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
     ("services/gradescope_jobs.py", "fail_if_running", "runs_as_service"):
         "#116 gradescope_syncs: record a dead-lettered job",
+    ("services/gradescope_jobs.py", "finish_inline", "runs_as_service"):
+        "#116 gradescope_syncs: an inline run records its outcome",
+    ("services/gradescope_jobs.py", "latest_sync", "runs_as_service"):
+        "#116 gradescope_syncs: the status route's read (filtered to the caller)",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):
