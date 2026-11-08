@@ -337,6 +337,10 @@ def seams():
         )
         ns.scope = p("_session_scope", return_value=("off-1", "c1"))
         ns.item = p("get_check_item", return_value=ITEM)
+        # spec §13 A121: the probe-phase opener's one read (check-in vs plan intro),
+        # and the loop_tutor_v2 flag — off, the default, unless a test turns it on
+        ns.has_items = p("course_has_items", return_value=True)
+        ns.v2 = p("_tutor_v2_on", return_value=False)
         ns.list_items = p("list_items", return_value=[])
         ns.node = p("_node_for_item", return_value="node-1")
         ns.prereq = p("_prereq_proficient", return_value=True)
@@ -2645,13 +2649,20 @@ def _opener_patches():
 
 
 def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
+    """Spec §13 A121: a new session opens in the probe phase, so its opener is
+    the TEMPLATE — a neutral welcome and the check-in's intro — at the normal
+    budget level too: no model run, nothing taught, no question. The lazy
+    session contract is unchanged (the model opener of a quiz-ask session,
+    which teaches from its first turn, is pinned in tests/test_quiz_ask_session.py)."""
+    from learning.turn_shape import LOOP_PROBE_OPENER
     from routes.learn_loop import PENDING_SESSIONS
 
-    agent, seen = _json_agent("Welcome. Key idea: base case. Ready to start?")
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=AssertionError("the probe-phase opener ran the model"))
     topic_p, offering_p, graph_p = _opener_patches()
     with (
         patch("routes.learn_loop.loop_tutor_agent", agent),
-        patch("routes.learn_loop.record_agent_usage", side_effect=lambda r, **k: r),
+        patch("routes.learn_loop.stream_structured_turn", MagicMock(side_effect=AssertionError)),
         topic_p,
         offering_p,
         graph_p,
@@ -2663,6 +2674,8 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"session_id", "initial_message", "graph_state"}
+    assert body["initial_message"] == LOOP_PROBE_OPENER
+    assert "?" not in body["initial_message"] and "Key idea" not in body["initial_message"]
     pending = PENDING_SESSIONS.pop(body["session_id"])
     assert pending["loop"] is True and pending["assistant_reply"] == body["initial_message"]
     assert {
@@ -2676,13 +2689,11 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
         "graph_update",
     } <= set(pending)
     assert pending["course_id"] == "c1" and pending["offering_id"] == "off-1"
-    assert seams.context_policy.call_args.kwargs["opener"] is True
-    assert seams.model_tier.call_args.args[0] == "opener"
-    assert seen["kw"]["message_history"] == []
-    assert "Begin the session with a warm greeting" in seen["msg"]
-    assert re.search(r"<<student_text (\w+)>>\nRecursion\n<<end_student_text \1>>", seen["msg"]), (
-        "the topic is the student's text: it rides the envelope (review round 3, C1)"
-    )
+    assert "loop_state" not in pending  # a probe session's document starts empty
+    seams.model_tier.assert_not_called()  # a template turn is never routed
+    seams.context_policy.assert_not_called()
+    seams.ai_budget.count_tutor_call.assert_not_called()
+    # the budget is still read once: a capped student's opener carries the notice
     seams.ai_budget.check.assert_called_once_with(
         "u1",
         "tutor",
@@ -2691,9 +2702,36 @@ def test_start_session_stashes_pending_with_loop_flag(gate_on, seams):
         session_deep_requests=0,
         arm_session=False,
     )
+    seams.has_items.assert_called_once_with("c1")
     seams.save_msg.assert_not_called()  # the opener persists nothing (lazy session)
     seams.save.assert_not_called()
     seams.scope.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/api/learn/loop/start-session", "/api/learn/loop/start-session/stream"])
+def test_a_probe_opener_for_a_course_without_check_items_introduces_the_plan(gate_on, seams, path):
+    """Spec §13 A121: a course with no check items ends its probe at once
+    (`no_check_items`), so its opener names the plan, not a check-in; an
+    unreadable item bank serves the check-in intro (the probe then reports)."""
+    from learning.turn_shape import LOOP_PLAN_OPENER, LOOP_PROBE_OPENER
+    from routes.learn_loop import PENDING_SESSIONS
+
+    for has_items, want in ((False, LOOP_PLAN_OPENER), (RuntimeError("db down"), LOOP_PROBE_OPENER)):
+        if isinstance(has_items, Exception):
+            seams.has_items.side_effect = has_items
+        else:
+            seams.has_items.return_value = has_items
+        topic_p, offering_p, graph_p = _opener_patches()
+        with topic_p, offering_p, graph_p:
+            r = client.post(path, json={"user_id": "u1", "topic": "Recursion"})
+        assert r.status_code == 200, r.text
+        if path.endswith("/stream"):
+            done = _sse_events(r.text)[-1]["data"]
+            reply, sid = done["reply"], done["session_id"]
+        else:
+            reply, sid = r.json()["initial_message"], r.json()["session_id"]
+        assert reply == want
+        assert PENDING_SESSIONS.pop(sid)["assistant_reply"] == want
 
 
 def test_start_session_stream_done_carries_session_and_graph_state(gate_on, seams):

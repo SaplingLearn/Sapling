@@ -40,6 +40,8 @@ from learning.params import (
     LOOP_PRO_THINKING_BUDGET,
 )
 from learning.turn_shape import (
+    ANSWER_VERDICT_FIELD,
+    ANSWER_VERDICTS,
     LoopTurnOut,
     TURN_FIELDS,
     render_partial,
@@ -133,13 +135,22 @@ def google_response(request, text, *, function=None, name="gemini-2.5-flash"):
     return httpx.Response(200, json=wire_part(part, name=name))
 
 
-def assert_native(body):
+def assert_native(body, *, v2=False, answer_check=False):
     config = body["generationConfig"]
     assert config["responseMimeType"] == "application/json"
     schema = config["responseJsonSchema"]
     assert schema["type"] == "object"
-    assert list(schema["properties"]) == list(TURN_FIELDS)
-    assert schema["required"] == list(TURN_FIELDS)
+    if not v2:
+        # the default (loop_tutor_v2 off): 7fa9cd0e's schema exactly
+        assert list(schema["properties"]) == list(TURN_FIELDS)
+        assert schema["required"] == list(TURN_FIELDS)
+    else:
+        # spec §13 A121, flag on: answer_verdict is an optional first key,
+        # required only on an answer-check turn (the [ANSWER CHECK] line)
+        assert list(schema["properties"]) == [ANSWER_VERDICT_FIELD, *TURN_FIELDS]
+        assert schema["properties"][ANSWER_VERDICT_FIELD]["enum"] == list(ANSWER_VERDICTS)
+        want = [ANSWER_VERDICT_FIELD, *TURN_FIELDS] if answer_check else list(TURN_FIELDS)
+        assert schema["required"] == want
     assert schema["additionalProperties"] is False
     assert all(schema["properties"][key]["type"] == "string" for key in TURN_FIELDS)
     assert "tools" not in body and "toolConfig" not in body
@@ -181,6 +192,43 @@ def test_all_tiers_send_native_schema_for_disabled_tools_without_changing_caps(t
     if tier != "lite":
         assert config["thinkingConfig"]["thinking_budget"] == thinking
     assert tutor._LOOP_SYSTEM_PROMPT.strip() == bodies[0]["systemInstruction"]["parts"][0]["text"]
+
+
+@pytest.mark.parametrize("answer_check", [True, False])
+def test_the_answer_verdict_variant_sends_its_own_schema_and_instructions(monkeypatch, answer_check):
+    """Spec §13 A121, `loop_tutor_v2` on (`variant_run_args`): Gemini gets
+    the LoopTurnOutV2 schema — answer_verdict required on an answer-check
+    teach turn only — and the variant's run instructions after the unchanged
+    system prompt; the turn is parsed and validated as sent."""
+    bodies = []
+    answered = {"answer_verdict": "partly_correct", **TURN} if answer_check else dict(TURN)
+
+    def handle(request):
+        bodies.append(json.loads(request.content))
+        return google_response(request, json.dumps(answered))
+
+    async def run():
+        async with transport_model(handle) as model:
+            monkeypatch.setattr(tutor, "model_for", lambda slot: model)
+            run_deps = deps()
+            run_deps.loop_turn = turn_limits(
+                "teach", Rung.H3, False, answer_check=answer_check, v2=True
+            )
+            result = await tutor.loop_tutor_agent.run(
+                "Synthetic answer-check context.",
+                deps=run_deps,
+                usage_limits=LOOP_LIMITS,
+                **tutor.tier_run_kwargs("standard", tool_choice="none"),
+                **tutor.variant_run_args(True),
+            )
+            assert result.output == answered and result.usage.requests == 1
+
+    asyncio.run(run())
+    assert len(bodies) == 1
+    assert_native(bodies[0], v2=True, answer_check=answer_check)
+    system = bodies[0]["systemInstruction"]["parts"][0]["text"]
+    assert system.startswith(tutor._LOOP_SYSTEM_PROMPT.strip())
+    assert tutor.V2_INSTRUCTIONS in system
 
 
 @pytest.mark.parametrize("streamed", [False, True])

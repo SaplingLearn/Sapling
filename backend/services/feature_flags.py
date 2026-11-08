@@ -102,6 +102,23 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "upload is byte-identical to before A118 (same extraction prompt, "
             "schema and message; no course-concepts read) and writes concept "
             "nodes only.", False),
+    # Learning loop spec §13 A121: the tutor's v2 variant
+    # (agents/loop_tutor.py::variant_run_args) — every loop tutor prompt change
+    # that needs a live eval re-record. Resolved ONCE per turn, for the
+    # student, by routes/learn_loop.py::_tutor_v2_on; that one answer picks the
+    # prompt and schema variant, the per-turn prompt lines and the served
+    # framing. Server-only: the turn's text arrives already framed.
+    FlagDef("loop_tutor_v2", ("off", "on"),
+            "Loop tutor v2 (A121): a student's reply to the tutor's own question "
+            "opens the next turn with a plain verdict (right / partly right / not "
+            "quite), feedback turns open with the grader's verdict, 'Key idea:' "
+            "marks only new content, a turn that poses a check is asked for no "
+            "question, and every teach turn names the plan's current concept and "
+            "why the plan is on it. On sends a changed tutor prompt and output "
+            "schema, so turn it on only after the loop_tutor and "
+            "misconception_confront datasets are re-recorded live under "
+            "LOOP_EVAL_VARIANT=v2 (their own cassettes) and pass. "
+            "Off: the tutor request is byte-identical to before A121.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

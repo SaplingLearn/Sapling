@@ -61,12 +61,12 @@ from _rung_judge import JudgeItem, RungJudgement, ajudge_rung  # noqa: E402
 from agents import LOOP_LIMITS  # noqa: E402
 from agents._providers import model_name_for  # noqa: E402
 from agents.loop_tutor import (  # noqa: E402
-    _PROMPT_HASH,
     LOOP_TIER_SLOTS,
     assemble_turn_message,
     loop_tutor_agent,
     phase_prefix,
     tier_run_kwargs,
+    variant_run_args,
 )
 from chat_tutor import ToolCall, graph_block  # noqa: E402
 from learning import policy  # noqa: E402
@@ -74,7 +74,7 @@ from learning.ladder import Rung  # noqa: E402
 from learning.turn_shape import sentences, turn_limits  # noqa: E402
 from loop_tutor import (  # noqa: E402
     EVAL_NONCE,
-    OUTPUT_SCHEMA_HASH,
+    V2,
     CeilingCompliance,
     LoopInput,
     LoopRecording,
@@ -93,7 +93,11 @@ from loop_tutor import (  # noqa: E402
     _model_ceiling,
     _released,
     _responses,
+    prompt_hash_for,
+    schema_hash_for,
     served_texts,
+    v2_focus,
+    variant_namespace,
 )
 
 DATASET = "misconception_confront"
@@ -275,15 +279,19 @@ def confront_line(meta: dict) -> str:
     return line
 
 
-def assembled(case_input: LoopInput) -> str:
+def assembled(case_input: LoopInput, v2: bool = V2) -> str:
     """The case's user message, built by production's helpers: the phase prefix
-    at the route's clamped model ceiling, the confrontation line right after it
-    (`with_confrontation`), the phase's context block, the student's words
-    enveloped (an [ACTION: ...] line is server text)."""
+    at the route's clamped model ceiling (in the variant, spec §13 A121), the
+    confrontation line right after it (`with_confrontation`), the phase's
+    context block, the student's words enveloped (an [ACTION: ...] line is
+    server text)."""
     from routes.learn_loop import with_confrontation
 
     phase, band, _ceiling, message = case_input
     meta = _META[_INPUT_TO_NAME[case_input]]
+    # spec §13 A121: a v2 teach case carries the route's plan focus (the
+    # default variant's message is unchanged)
+    plan_reason, focus = v2_focus(_INPUT_TO_NAME[case_input], phase, v2)
     prefix = phase_prefix(
         phase=phase,
         band=band,
@@ -292,6 +300,8 @@ def assembled(case_input: LoopInput) -> str:
         item_format=meta.get("item_format") if phase != "teach" else None,
         answer_released=_released(meta),
         verdict=meta.get("verdict"),
+        v2=v2,
+        plan_reason=plan_reason,
     )
     prefix = with_confrontation(prefix, confront_line(meta))
     context = policy.context_policy(phase, opener=False, budget_level="normal")
@@ -299,7 +309,7 @@ def assembled(case_input: LoopInput) -> str:
     trusted = bool(meta.get("trusted"))
     return assemble_turn_message(
         prefix=prefix,
-        blocks=[block] if block else [],
+        blocks=[*focus, block] if block else focus,
         nonce=EVAL_NONCE,
         student_text=None if trusted else message,
         instruction=message if trusted else None,
@@ -314,23 +324,30 @@ def _tool_choice(phase: str):
     return policy.context_policy(phase, opener=False, budget_level="normal").tool_choice
 
 
-def input_sha256(slot: str, case_input: LoopInput) -> str:
+def input_sha256(slot: str, case_input: LoopInput, v2: bool = V2) -> str:
     settings = tier_run_kwargs(_tier_of(slot), tool_choice=_tool_choice(case_input[0]))[
         "model_settings"
     ]
-    body = assembled(case_input) + "\x00" + json.dumps(dict(settings), default=str, sort_keys=True)
+    body = (
+        assembled(case_input, v2)
+        + "\x00"
+        + json.dumps(dict(settings), default=str, sort_keys=True)
+    )
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def check_fresh(rec: LoopRecording, slot: str, case_input: LoopInput) -> None:
+def check_fresh(
+    rec: LoopRecording, slot: str, case_input: LoopInput, v2: bool = V2
+) -> None:
     problems = []
-    if rec.prompt_hash != _PROMPT_HASH:
-        problems.append(f"system prompt changed ({rec.prompt_hash} -> {_PROMPT_HASH})")
-    if rec.schema_hash != OUTPUT_SCHEMA_HASH:
+    want_prompt, want_schema = prompt_hash_for(v2), schema_hash_for(v2)
+    if rec.prompt_hash != want_prompt:
+        problems.append(f"system prompt changed ({rec.prompt_hash} -> {want_prompt})")
+    if rec.schema_hash != want_schema:
         problems.append("LoopTurnOut schema changed")
     if rec.model != model_name_for(slot):
         problems.append(f"slot model changed ({rec.model} -> {model_name_for(slot)})")
-    if rec.input_sha256 != input_sha256(slot, case_input):
+    if rec.input_sha256 != input_sha256(slot, case_input, v2):
         problems.append("case message or run settings changed")
     if problems:
         raise StaleRecordingError(
@@ -339,14 +356,16 @@ def check_fresh(rec: LoopRecording, slot: str, case_input: LoopInput) -> None:
         )
 
 
-def _cassette_dataset(slot: str) -> str:
-    return f"{DATASET}/{slot}"
+def _cassette_dataset(slot: str, v2: bool = V2) -> str:
+    """The cassette folder of one slot in a variant (spec §13 A121: the
+    v2 variant's recordings never share the default's)."""
+    return f"{DATASET}/{variant_namespace(slot, v2)}"
 
 
-async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
+async def record_turn(slot: str, case_input: LoopInput, v2: bool = V2) -> LoopRecording:
     """One live turn with the route's run shape (loop_tutor.record_turn's, on
-    this case's message): the agent run, then — on UnexpectedModelBehavior —
-    the route's tool-less continuation."""
+    this case's message, in the variant): the agent run, then — on
+    UnexpectedModelBehavior — the route's tool-less continuation."""
     from pydantic_ai import capture_run_messages
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -354,13 +373,16 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
 
     phase = case_input[0]
     meta = _META[_INPUT_TO_NAME[case_input]]
-    message = assembled(case_input)
-    limits = turn_limits(phase, _model_ceiling(case_input, meta), _released(meta))
+    message = assembled(case_input, v2)
+    limits = turn_limits(
+        phase, _model_ceiling(case_input, meta), _released(meta), v2=v2
+    )
     run_kwargs = {
-        "deps": _deps(limits, _leak_guard(case_input, meta)),
+        "deps": _deps(limits, _leak_guard(case_input, meta, v2)),
         "message_history": [],
         "usage_limits": LOOP_LIMITS,
         **tier_run_kwargs(_tier_of(slot), tool_choice=_tool_choice(phase)),
+        **variant_run_args(v2),
     }
     output, rescued = None, False
     with capture_run_messages() as messages:
@@ -381,9 +403,9 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
     return LoopRecording(
         slot=slot,
         model=model_name_for(slot),
-        prompt_hash=_PROMPT_HASH,
-        schema_hash=OUTPUT_SCHEMA_HASH,
-        input_sha256=input_sha256(slot, case_input),
+        prompt_hash=prompt_hash_for(v2),
+        schema_hash=schema_hash_for(v2),
+        input_sha256=input_sha256(slot, case_input, v2),
         output=dict(output),
         attempts=attempts,
         requests=len(responses),
@@ -393,10 +415,12 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
     )
 
 
-async def _record_with_retry(slot: str, case_input: LoopInput) -> LoopRecording:
+async def _record_with_retry(
+    slot: str, case_input: LoopInput, v2: bool = V2
+) -> LoopRecording:
     for attempt in range(5):
         try:
-            return await record_turn(slot, case_input)
+            return await record_turn(slot, case_input, v2)
         except Exception as exc:  # noqa: BLE001 - re-raised unless transient
             if not _is_transient(exc) or attempt == 4:
                 raise
@@ -404,31 +428,35 @@ async def _record_with_retry(slot: str, case_input: LoopInput) -> LoopRecording:
     raise AssertionError("unreachable")
 
 
-def _run_for(slot: str):
+def _run_for(slot: str, v2: bool = V2):
+    #: spec §13 A121: a variant's judgements live under its own slot name
+    space = variant_namespace(slot, v2)
+
     async def _run(case_input: LoopInput) -> ConfrontReply:
         name = _INPUT_TO_NAME[case_input]
         meta = _META[name]
         if MODE == "replay":
-            body = load_cassette(_cassette_dataset(slot), name)
+            body = load_cassette(_cassette_dataset(slot, v2), name)
             if body is None:
                 raise RuntimeError(
-                    f"No cassette for {DATASET}/{slot}/{name}. Run with SAPLING_EVAL_MODE=record."
+                    f"No cassette for {_cassette_dataset(slot, v2)}/{name}. "
+                    "Run with SAPLING_EVAL_MODE=record."
                 )
             rec = LoopRecording.model_validate(body)
-            check_fresh(rec, slot, case_input)
+            check_fresh(rec, slot, case_input, v2)
         else:
-            rec = await _record_with_retry(slot, case_input)
+            rec = await _record_with_retry(slot, case_input, v2)
             if MODE == "record":
-                save_cassette(_cassette_dataset(slot), name, rec)
-        raw, served, turn = served_texts(rec.output, case_input, meta)
+                save_cassette(_cassette_dataset(slot, v2), name, rec)
+        raw, served, turn = served_texts(rec.output, case_input, meta, v2)
         judgement = await ajudge_rung(
-            name, slot, served, JudgeItem.from_metadata(meta, student_message=case_input[3])
+            name, space, served, JudgeItem.from_metadata(meta, student_message=case_input[3])
         )
         # the judge reads the MODEL's part of the served turn: a released answer's
         # lead is code's (A16 m1), not the tutor's move
         confront = await ajudge_confront(
             name,
-            slot,
+            space,
             turn,
             ConfrontCase(
                 item_prompt=meta.get("item_prompt") or "",
@@ -557,13 +585,15 @@ _EVALUATORS = (
 assert tuple(e.__name__ for e in _EVALUATORS) == SERVED_GATES + DIAGNOSTICS
 
 
-def dataset_name(slot: str) -> str:
-    """The baselines.json key of one slot's dataset."""
-    return f"{DATASET}__{slot}"
+def dataset_name(slot: str, v2: bool = V2) -> str:
+    """The baselines.json key of one slot's dataset (in the variant, A121)."""
+    return f"{DATASET}__{variant_namespace(slot, v2)}"
 
 
-def make_dataset_for(slot: str) -> Dataset[LoopInput, ConfrontReply]:
-    return Dataset(name=dataset_name(slot), cases=CASES, evaluators=[e() for e in _EVALUATORS])
+def make_dataset_for(slot: str, v2: bool = V2) -> Dataset[LoopInput, ConfrontReply]:
+    return Dataset(
+        name=dataset_name(slot, v2), cases=CASES, evaluators=[e() for e in _EVALUATORS]
+    )
 
 
 #: One dataset per slot a confronting turn is served on; run_all.py iterates these.

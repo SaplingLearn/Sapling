@@ -45,7 +45,13 @@ from learning.params import (
     CHECK_ITEM_FORMATS,
     CHECK_ITEM_MC_MIN_PER_CONCEPT,
 )
-from learning.turn_shape import render_turn
+from learning.turn_shape import (
+    ANSWER_VERDICT_LEADS,
+    LOOP_PLAN_OPENER,
+    LOOP_PROBE_OPENER,
+    TurnTemplate,
+    render_turn,
+)
 
 # Streamed-replay pacing (#356): re-chunk streamed text into small deltas with
 # 150ms between them, giving the mid-stream journeys (Stop a turn, switch
@@ -750,9 +756,11 @@ E2E_LOOP_TUTOR_REPLY = render_turn(E2E_LOOP_TUTOR_TURN)
 
 # ── Learning loop tutor by phase (PKG-13) ──────────────────────────────────
 #
-# One handler, three fixed turns keyed on the PHASE of the run: the hint turn,
-# the feedback turn, and everything else (teach, the opener) the PKG-07 turn
-# above. The phase is read off THIS run's user prompt — the prefix
+# One handler, fixed turns keyed on the PHASE of the run: the hint turn, the
+# feedback turn, the answer-check teach turn (spec §13 A121, below), and
+# everything else (teach, a quiz-ask session's opener — a probe-phase opener
+# is a template and runs no model) the PKG-07 turn above. The phase is read
+# off THIS run's user prompt — the prefix
 # routes/learn_loop.py assembles with agents.loop_tutor.phase_prefix — never off
 # the history, where an earlier hint turn's prefix would answer a later teach
 # turn with the hint reply. The pattern values are copied verbatim from
@@ -812,12 +820,51 @@ E2E_LOOP_REFERENCE = (
 )
 
 
+# ── Spec §13 A121: the turn template's loop constants ──────────────────────
+#
+# On by default: the probe-phase session opener is a TEMPLATE (no model run, no
+# teaching, no question) — learn-loop.spec.ts asserts it on the check-in card —
+# and a teach turn that poses the concept's check is served WITHOUT the question
+# the model wrote (E2E_LOOP_CHECK_POSING_REPLY: the PKG-07 turn, question
+# dropped). With the `loop_tutor_v2` flag on, a teach turn answering the
+# student's reply to the tutor's own question carries the [ANSWER CHECK] line
+# (agents/loop_tutor.py::ANSWER_CHECK_LINE; the pattern is copied from it and
+# pinned by tests/test_e2e_function_handlers.py), and its turn must fill
+# answer_verdict: the seam judges a reply carrying E2E_LOOP_CHAT_ANSWER_TOKEN
+# correct and any other reply not_an_answer (a follow-up question, say), so the
+# quiz "Ask about this" follow-up still gets the plain teach reply. A correct
+# verdict is served as its plain line first, with no "Key idea:" label; a turn
+# that also poses a check drops its question (routes/learn_loop.py::
+# served_render) — E2E_LOOP_ANSWER_REPLY. Flag off, no prefix carries the
+# pattern, so the seam never answers with a verdict.
+E2E_LOOP_PROBE_OPENER = LOOP_PROBE_OPENER
+E2E_LOOP_PLAN_OPENER = LOOP_PLAN_OPENER
+E2E_LOOP_CHECK_POSING_REPLY = render_turn(E2E_LOOP_TUTOR_TURN, TurnTemplate(question=False))
+E2E_LOOP_ANSWER_CHECK_PATTERN = "Your previous turn ended with a question, and the student's"
+E2E_LOOP_CHAT_ANSWER_TOKEN = "E2E_CHAT_ANSWER_RIGHT"
+E2E_LOOP_ANSWER_LEAD = ANSWER_VERDICT_LEADS["correct"]
+E2E_LOOP_ANSWER_TURN = {"answer_verdict": "correct", **E2E_LOOP_TUTOR_TURN}
+E2E_LOOP_NOT_AN_ANSWER_TURN = {"answer_verdict": "not_an_answer", **E2E_LOOP_TUTOR_TURN}
+#: The answer-check turn as served when it also poses the concept's next check
+#: (the flag-on journey's second teach turn): the verdict line, the key idea
+#: unlabelled, the body — and no question.
+E2E_LOOP_ANSWER_REPLY = render_turn(
+    E2E_LOOP_ANSWER_TURN, TurnTemplate(label=True, question=False, answer_check=True)
+)
+
+
 def _loop_tutor_handler(messages, info) -> ModelResponse:
     prompt = _last_user_prompt_text(messages)
     if E2E_LOOP_PHASE_PATTERNS["hint"] in prompt:
         turn = E2E_LOOP_HINT_TURN
     elif E2E_LOOP_PHASE_PATTERNS["feedback"] in prompt:
         turn = E2E_LOOP_FEEDBACK_TURN
+    elif E2E_LOOP_ANSWER_CHECK_PATTERN in prompt:
+        turn = (
+            E2E_LOOP_ANSWER_TURN
+            if E2E_LOOP_CHAT_ANSWER_TOKEN in prompt
+            else E2E_LOOP_NOT_AN_ANSWER_TURN
+        )
     else:
         turn = E2E_LOOP_TUTOR_TURN
     return ModelResponse(parts=[TextPart(content=json.dumps(turn))])

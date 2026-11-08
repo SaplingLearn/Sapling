@@ -85,11 +85,14 @@ from agents._providers import model_name_for  # noqa: E402
 from agents.deps import SaplingDeps  # noqa: E402
 from agents.loop_tutor import (  # noqa: E402
     _PROMPT_HASH,
+    _V2_PROMPT_HASH,
     LOOP_TIER_SLOTS,
     assemble_turn_message,
     loop_tutor_agent,
     phase_prefix,
+    plan_focus_block,
     tier_run_kwargs,
+    variant_run_args,
 )
 from chat_tutor import ToolCall, graph_block  # noqa: E402
 from learning import policy  # noqa: E402
@@ -101,6 +104,7 @@ from learning.turn_shape import (  # noqa: E402
     _CONTROL_TAG,
     _LATEX,
     LoopTurnOut,
+    LoopTurnOutV2,
     clamp_model_ceiling,
     render_turn,
     sentences,
@@ -129,6 +133,62 @@ DIAGNOSTICS: tuple[str, ...] = ("RawAnswerLeak", "RetriesUsed")
 OUTPUT_SCHEMA_HASH = hashlib.sha256(
     json.dumps(TypeAdapter(LoopTurnOut).json_schema(), sort_keys=True).encode("utf-8")
 ).hexdigest()[:12]
+
+#: Spec §13 A121: which tutor variant a run evaluates. "default" is the
+#: `loop_tutor_v2` flag off — 7fa9cd0e's prompt and schema, the committed
+#: cassettes and run_all.py's datasets. "v2" is the flag on: its
+#: own run arguments (agents.loop_tutor.variant_run_args), prompt and schema
+#: hashes, and its own namespace for cassettes, rung/confront judgements and
+#: baselines (`<slot>__v2`), so recording it never stales a default
+#: recording. It joins run_all.py only once it is recorded:
+#:   LOOP_EVAL_VARIANT=v2 SAPLING_EVAL_MODE=record python tests/evals/loop_tutor.py
+V2_VARIANT = "v2"
+_VARIANT = os.getenv("LOOP_EVAL_VARIANT", "default")
+if _VARIANT not in ("default", V2_VARIANT):
+    raise SystemExit(f"LOOP_EVAL_VARIANT={_VARIANT!r}: expected default or {V2_VARIANT}")
+V2 = _VARIANT == V2_VARIANT
+#: The v2 variant's schema hash (LoopTurnOutV2).
+V2_OUTPUT_SCHEMA_HASH = hashlib.sha256(
+    json.dumps(TypeAdapter(LoopTurnOutV2).json_schema(), sort_keys=True).encode("utf-8")
+).hexdigest()[:12]
+
+
+def variant_namespace(slot: str, v2: bool = V2) -> str:
+    """The cassette / judgement / baseline name of `slot` in a variant."""
+    return f"{slot}__{V2_VARIANT}" if v2 else slot
+
+
+def prompt_hash_for(v2: bool = V2) -> str:
+    return _V2_PROMPT_HASH if v2 else _PROMPT_HASH
+
+
+def schema_hash_for(v2: bool = V2) -> str:
+    return V2_OUTPUT_SCHEMA_HASH if v2 else OUTPUT_SCHEMA_HASH
+
+
+#: Spec §13 A121 (v2 only): every teach case's plan focus — the concept a
+#: production v2 teach turn names (from the student's graph, in the
+#: plan_concept block) and why the plan is on it (routes/learn_loop.py
+#: ::plan_focus). Keyed by case name across both loop eval modules
+#: (misconception_confront's teach case included); a teach case without an
+#: entry is an error, so a new one can never be recorded without its focus.
+V2_PLAN_FOCUS: dict[str, tuple[str, str]] = {
+    "teach_novice_recursion": ("Recursion", "plan_order"),
+    "teach_profic_limits": ("Limits", "plan_order"),
+    "sycophancy_insists_wrong_derivative": ("Power Rule", "plan_order"),
+    "sycophancy_insists_wrong_limit": ("Limits", "isomorph_reask"),
+    "confront_teach_waiting_novice_h5": ("Derivatives", "plan_order"),
+}
+
+
+def v2_focus(name: str, phase: str, v2: bool = V2) -> tuple[str | None, list[str]]:
+    """(the phase prefix's plan_reason, the plan_concept block list) of one
+    case: a v2 teach case's focus, else (None, []) — the default variant and
+    every non-teach case carry neither."""
+    if not v2 or phase != "teach":
+        return None, []
+    concept, reason = V2_PLAN_FOCUS[name]
+    return reason, [plan_focus_block(concept)]
 
 
 class StaleRecordingError(RuntimeError):
@@ -196,24 +256,36 @@ def _leak_rung(case_input: LoopInput, meta: dict) -> Rung:
     )
 
 
-def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, str, str]:
+def served_texts(
+    output: dict, case_input: LoopInput, meta: dict, v2: bool = V2
+) -> tuple[str, str, str]:
     """(raw, served, turn): production render_turn (raw); then, as the route
-    serves it (`served_render`: an H2 hint's question is the ladder's), a teach turn unchanged (no active item, m4) and a hint/feedback turn
-    through served_model_text (strict, served mode with the student-visible
-    text as `given`, at the route's leak rung — a leak is the rung's
-    ladder line, never masked; the released answer's lead in front); `turn`
-    is served minus that lead."""
-    from routes.learn_loop import released_lead, served_model_text, served_render
+    serves it in the variant (`served_render`: an H2 hint's question is the
+    ladder's; spec §13 A121's v2 variant also moves the "Key idea:"
+    label to teach/hint turns at H2+), a teach turn with nothing stripped (no
+    active item, m4) and a hint/feedback turn through served_model_text
+    (strict, served mode with the student-visible text as `given`, at the
+    route's leak rung — a leak is the rung's ladder line, never masked; code's
+    lead in front: with the variant on, a feedback turn's verdict line, then
+    the released answer); `turn` is served minus that lead. The default
+    variant's served text is exactly 7fa9cd0e's (the rung judgements are
+    keyed on it)."""
+    from routes.learn_loop import served_lead, served_model_text, served_render
 
     raw = render_turn(output)
+    rendered = served_render(
+        output,
+        phase=case_input[0],
+        rung=_leak_rung(case_input, meta),
+        verdict=meta.get("verdict"),
+        v2=v2,
+    )
     if case_input[0] == "teach":
         # spec §13 A86 (route parity): a teach turn has no active item and is
-        # served UNCHANGED (the items it states are marked revealed, never
-        # withheld) — the served text is the render
-        return raw, raw, raw
-    rendered = served_render(
-        output, phase=case_input[0], rung=_leak_rung(case_input, meta), verdict=meta.get("verdict")
-    )
+        # served with nothing stripped (the items it states are marked
+        # revealed, never withheld) — the served text is the served render
+        return raw, rendered, rendered
+    verdict = meta.get("verdict") if v2 and case_input[0] == "feedback" else None
     served, _verdict = served_model_text(
         rendered,
         leak_rung=_leak_rung(case_input, meta),
@@ -224,8 +296,9 @@ def served_texts(output: dict, case_input: LoopInput, meta: dict) -> tuple[str, 
         option_text=meta.get("option_text"),
         answer_released=_released(meta),
         given=_visible(case_input, meta),
+        verdict=verdict,
     )
-    lead = released_lead(meta["reference"]) if _released(meta) else ""
+    lead = served_lead(reference=meta["reference"], answer_released=_released(meta), verdict=verdict)
     return raw, served, served[len(lead) :]
 
 
@@ -572,9 +645,12 @@ def _tier_of(slot: str) -> str:
 EVAL_NONCE = "e0a1e0a1e0a1e0a1e0a1e0a1"
 
 
-def _assembled(case_input: LoopInput) -> str:
+def _assembled(case_input: LoopInput, v2: bool = V2) -> str:
     phase, band, _ceiling, message = case_input
     meta = _META[_INPUT_TO_NAME[case_input]]
+    # spec §13 A121: a v2 teach case carries the route's plan focus (the
+    # default variant's message is unchanged)
+    plan_reason, focus = v2_focus(_INPUT_TO_NAME[case_input], phase, v2)
     prefix = phase_prefix(
         phase=phase,
         band=band,
@@ -583,13 +659,15 @@ def _assembled(case_input: LoopInput) -> str:
         item_format=meta.get("item_format"),
         answer_released=_released(meta),
         verdict=meta.get("verdict"),
+        v2=v2,
+        plan_reason=plan_reason,
     )
     context = policy.context_policy(phase, opener=False, budget_level="normal")
     block = graph_block(message) if context.graph_block else ""
     trusted = bool(meta.get("trusted"))
     return assemble_turn_message(
         prefix=prefix,
-        blocks=[block] if block else [],
+        blocks=[*focus, block] if block else focus,
         nonce=EVAL_NONCE,
         student_text=None if trusted else message,
         instruction=message if trusted else None,
@@ -600,26 +678,33 @@ def _tool_choice(phase: str):
     return policy.context_policy(phase, opener=False, budget_level="normal").tool_choice
 
 
-def input_sha256(slot: str, case_input: LoopInput) -> str:
+def input_sha256(slot: str, case_input: LoopInput, v2: bool = V2) -> str:
     """The assembled case message + the slot's run settings (thinking,
     max_tokens, tool_choice): what the recording's output depends on besides
     the system prompt, the schema and the model."""
     settings = tier_run_kwargs(_tier_of(slot), tool_choice=_tool_choice(case_input[0]))[
         "model_settings"
     ]
-    body = _assembled(case_input) + "\x00" + json.dumps(dict(settings), default=str, sort_keys=True)
+    body = (
+        _assembled(case_input, v2)
+        + "\x00"
+        + json.dumps(dict(settings), default=str, sort_keys=True)
+    )
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def check_fresh(rec: LoopRecording, slot: str, case_input: LoopInput) -> None:
+def check_fresh(
+    rec: LoopRecording, slot: str, case_input: LoopInput, v2: bool = V2
+) -> None:
     problems = []
-    if rec.prompt_hash != _PROMPT_HASH:
-        problems.append(f"system prompt changed ({rec.prompt_hash} -> {_PROMPT_HASH})")
-    if rec.schema_hash != OUTPUT_SCHEMA_HASH:
+    want_prompt, want_schema = prompt_hash_for(v2), schema_hash_for(v2)
+    if rec.prompt_hash != want_prompt:
+        problems.append(f"system prompt changed ({rec.prompt_hash} -> {want_prompt})")
+    if rec.schema_hash != want_schema:
         problems.append("LoopTurnOut schema changed")
     if rec.model != model_name_for(slot):
         problems.append(f"slot model changed ({rec.model} -> {model_name_for(slot)})")
-    if rec.input_sha256 != input_sha256(slot, case_input):
+    if rec.input_sha256 != input_sha256(slot, case_input, v2):
         problems.append("case message or run settings changed")
     if problems:
         raise StaleRecordingError(
@@ -628,7 +713,7 @@ def check_fresh(rec: LoopRecording, slot: str, case_input: LoopInput) -> None:
         )
 
 
-def _leak_guard(case_input: LoopInput, meta: dict):
+def _leak_guard(case_input: LoopInput, meta: dict, v2: bool = V2):
     """The route's deps.loop_leak for a hint/feedback case with the answer
     unreleased (fix round 2, N1: one named retry before the ladder line). A
     teach case has none (A86: a teach turn is never retried on account of
@@ -651,7 +736,7 @@ def _leak_guard(case_input: LoopInput, meta: dict):
     return _LeakGuard(
         lambda text: detect_leak(emitted=text, rung=rung, given=given, **answer).leaked,
         render=lambda out: served_render(
-            out, phase=case_input[0], rung=rung, verdict=meta.get("verdict")
+            out, phase=case_input[0], rung=rung, verdict=meta.get("verdict"), v2=v2
         ),
     )
 
@@ -700,9 +785,9 @@ def _attempts_and_calls(responses: list) -> tuple[list[str], list[ToolCall]]:
     return attempts, calls
 
 
-async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
-    """One live turn with the route's run shape: the agent run, then — on
-    UnexpectedModelBehavior — the route's tool-less continuation."""
+async def record_turn(slot: str, case_input: LoopInput, v2: bool = V2) -> LoopRecording:
+    """One live turn with the route's run shape in the variant: the agent run,
+    then — on UnexpectedModelBehavior — the route's tool-less continuation."""
     from pydantic_ai import capture_run_messages
     from pydantic_ai.exceptions import UnexpectedModelBehavior
 
@@ -710,13 +795,16 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
 
     phase = case_input[0]
     meta = _META[_INPUT_TO_NAME[case_input]]
-    assembled = _assembled(case_input)
-    limits = turn_limits(phase, _model_ceiling(case_input, meta), _released(meta))
+    assembled = _assembled(case_input, v2)
+    limits = turn_limits(
+        phase, _model_ceiling(case_input, meta), _released(meta), v2=v2
+    )
     run_kwargs = {
-        "deps": _deps(limits, _leak_guard(case_input, meta)),
+        "deps": _deps(limits, _leak_guard(case_input, meta, v2)),
         "message_history": [],
         "usage_limits": LOOP_LIMITS,
         **tier_run_kwargs(_tier_of(slot), tool_choice=_tool_choice(phase)),
+        **variant_run_args(v2),
     }
     output, rescued = None, False
     with capture_run_messages() as messages:
@@ -739,9 +827,9 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
     return LoopRecording(
         slot=slot,
         model=model_name_for(slot),
-        prompt_hash=_PROMPT_HASH,
-        schema_hash=OUTPUT_SCHEMA_HASH,
-        input_sha256=input_sha256(slot, case_input),
+        prompt_hash=prompt_hash_for(v2),
+        schema_hash=schema_hash_for(v2),
+        input_sha256=input_sha256(slot, case_input, v2),
         output=dict(output),
         attempts=attempts,
         requests=len(responses),
@@ -751,10 +839,12 @@ async def record_turn(slot: str, case_input: LoopInput) -> LoopRecording:
     )
 
 
-async def _record_with_retry(slot: str, case_input: LoopInput) -> LoopRecording:
+async def _record_with_retry(
+    slot: str, case_input: LoopInput, v2: bool = V2
+) -> LoopRecording:
     for attempt in range(5):
         try:
-            return await record_turn(slot, case_input)
+            return await record_turn(slot, case_input, v2)
         except Exception as exc:  # noqa: BLE001 - re-raised unless transient
             if not _is_transient(exc) or attempt == 4:
                 raise
@@ -762,31 +852,35 @@ async def _record_with_retry(slot: str, case_input: LoopInput) -> LoopRecording:
     raise AssertionError("unreachable")
 
 
-def _run_for(slot: str):
+def _run_for(slot: str, v2: bool = V2):
+    #: spec §13 A121: a variant's cassettes, judgements and baselines live under
+    #: its own name (the default's is the slot itself)
+    space = variant_namespace(slot, v2)
+
     async def _run(case_input: LoopInput) -> LoopReply:
         name = _INPUT_TO_NAME[case_input]
         meta = _META[name]
         if MODE == "replay":
-            body = load_cassette(slot, name)
+            body = load_cassette(space, name)
             if body is None:
                 raise RuntimeError(
-                    f"No cassette for {slot}/{name}. Run with SAPLING_EVAL_MODE=record."
+                    f"No cassette for {space}/{name}. Run with SAPLING_EVAL_MODE=record."
                 )
             rec = LoopRecording.model_validate(body)
-            check_fresh(rec, slot, case_input)
+            check_fresh(rec, slot, case_input, v2)
         else:
-            rec = await _record_with_retry(slot, case_input)
+            rec = await _record_with_retry(slot, case_input, v2)
             if MODE == "record":
-                save_cassette(slot, name, rec)
-        raw, served, turn = served_texts(rec.output, case_input, meta)
+                save_cassette(space, name, rec)
+        raw, served, turn = served_texts(rec.output, case_input, meta, v2)
         judgement = await ajudge_rung(
-            name, slot, served, JudgeItem.from_metadata(meta, student_message=case_input[3])
+            name, space, served, JudgeItem.from_metadata(meta, student_message=case_input[3])
         )
         sycophancy = None
         if meta.get("wrong_claim"):  # PKG-14: does the served reply contradict the claim?
             sycophancy = await ajudge_confront(
                 name,
-                slot,
+                space,
                 served,
                 ConfrontCase(
                     item_prompt=meta.get("item_prompt") or "",
@@ -825,13 +919,21 @@ _EVALUATORS = (
 assert tuple(e.__name__ for e in _EVALUATORS) == SERVED_GATES + DIAGNOSTICS
 
 
-def make_dataset_for(tier: str) -> Dataset[LoopInput, LoopReply]:
-    return Dataset(name=LOOP_TIER_SLOTS[tier], cases=CASES, evaluators=[e() for e in _EVALUATORS])
+def make_dataset_for(tier: str, v2: bool = V2) -> Dataset[LoopInput, LoopReply]:
+    return Dataset(
+        name=variant_namespace(LOOP_TIER_SLOTS[tier], v2),
+        cases=CASES,
+        evaluators=[e() for e in _EVALUATORS],
+    )
 
 
-#: One dataset per tier slot; run_all.py iterates these (baselines key on the slot name).
+#: One dataset per tier slot; run_all.py iterates these (baselines key on the
+#: slot name — `<slot>__v2` under LOOP_EVAL_VARIANT=v2).
 VARIANTS = {
-    LOOP_TIER_SLOTS[t]: (partial(make_dataset_for, t), _run_for(LOOP_TIER_SLOTS[t]))
+    variant_namespace(LOOP_TIER_SLOTS[t]): (
+        partial(make_dataset_for, t),
+        _run_for(LOOP_TIER_SLOTS[t]),
+    )
     for t in ("lite", "standard", "deep")
 }
 
