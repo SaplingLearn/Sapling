@@ -3,7 +3,13 @@ A20, A22, A23, A33, A38).
 
 Due flashcards (facts) and due concepts (each mapped to one check item) are
 merged, ordered by the DASH rule (`fsrs.order_due`: |R − REVIEW_ORDER_THRESHOLD|
-ascending) and cut at the daily budget. A concept's item never comes from the
+ascending) and cut at the daily budget; the budgeted queue is then put in serve
+order by `learning/interleave.serve_order` (§13 A114): a concept confusable with
+the one just placed — a prerequisite sibling, or one sharing an open
+misconception wrong_key, same course — comes next, anchored on the item this
+session graded last (`loop_state["review"]["last_graded"]`), so the order holds
+across the per-request rebuild; the set, the budget and every unrelated item's
+DASH order are unchanged. A concept's item never comes from the
 student's seen/revealed sets or the concept's post-test reserve (A23); when that
 leaves nothing, only revealed items and the reserve are excluded; still nothing
 → the concept is counted `unservable`. At the tutor hard budget level the route
@@ -49,14 +55,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agents.tools.check import CheckAnswer, grade_answer  # PKG-05 — the ONLY grading path
-from db.connection import table
+from db.connection import pg_quote_value, table
 from learning import fsrs, loop_state_store
 from learning.bkt import band, decayed_p
 from learning.checks import is_servable, posttest_reserve_hash, select_item
+from learning.evidence import PREREQ_RELATIONSHIP_TYPE
 from learning.flashcard_fsrs import flashcard_fsrs_update, fsrs_rating_for  # PKG-11
+from learning.interleave import confusable_partners, serve_order  # A114
 from learning.loop_state_store import update_loop_state
-from learning.misconceptions import recheck_after_release  # PKG-10 (A76)
+from learning.misconceptions import open_for, recheck_after_release  # PKG-10 (A76, A114)
 from learning.params import (
+    EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_S0_GOOD,
     LOOP_GRADING_CLAIM_STALE_S,
     REVIEW_DAILY_BUDGET_MIN,
@@ -590,6 +599,74 @@ def _order(entries: list, now: datetime) -> list:
     return [row["entry"] for row in fsrs.order_due(rows, now)]
 
 
+def _prerequisite_parents(user_id: str, node_ids: list[str]) -> dict[str, set[str]]:
+    """{node: its prerequisite parents} for `node_ids`: ONE graph_edges read,
+    oriented by EDGE_PREREQ_SOURCE_IS_PREREQ (the direction PKG-03's propagation
+    reads). A failed read is a WARNING and no parents — the queue keeps its DASH
+    order; ordering never fails a review."""
+    prereq_col, dependent_col = (
+        ("source_node_id", "target_node_id")
+        if EDGE_PREREQ_SOURCE_IS_PREREQ
+        else ("target_node_id", "source_node_id")
+    )
+    try:
+        rows = (
+            table("graph_edges").select(
+                "source_node_id,target_node_id",
+                filters={
+                    "user_id": f"eq.{user_id}",
+                    "relationship_type": f"eq.{PREREQ_RELATIONSHIP_TYPE}",
+                    dependent_col: f"in.({','.join(pg_quote_value(n) for n in node_ids)})",
+                },
+            )
+            or []
+        )
+    except Exception as exc:
+        logger.warning(
+            "review: prerequisite edges unread (%s); DASH order kept", type(exc).__name__
+        )
+        return {}
+    parents: dict[str, set[str]] = {}
+    for row in rows:
+        prereq, dependent = row.get(prereq_col), row.get(dependent_col)
+        if prereq and dependent and prereq != dependent:
+            parents.setdefault(dependent, set()).add(prereq)
+    return parents
+
+
+def _last_graded(loop_state: dict | None) -> dict:
+    """{"key", "course_id"} of the item this session graded last ({} before the
+    first grade, or for a malformed entry): the interleave's anchor (A114),
+    written by `_apply_grade`."""
+    last = ((loop_state or {}).get("review") or {}).get("last_graded")
+    ok = isinstance(last, dict) and isinstance(last.get("key"), str) and last["key"]
+    return last if ok else {}
+
+
+def _interleaved(
+    user_id: str, queue: list[ReviewItem], loop_state: dict | None
+) -> list[ReviewItem]:
+    """A114: the budgeted DASH queue in serve order (`interleave.serve_order`),
+    anchored on the item this session graded last, so the order survives the
+    per-request rebuild. The confusable relation (`interleave.confusable_partners`)
+    costs one graph_edges and one misconceptions read, made only when two
+    concepts could pair; the set never changes."""
+    last = _last_graded(loop_state)
+    previous = last.get("key")
+    courses = {i.node_id: i.course_id for i in queue if i.kind == "check" and i.node_id}
+    if previous and not previous.startswith(_FLASHCARD_KEY_PREFIX):
+        courses.setdefault(previous, last.get("course_id"))
+    partners: dict[str, frozenset[str]] = {}
+    if len(queue) > 1 and len(courses) > 1:
+        nodes = sorted(courses)
+        wrong: dict[str, set[str]] = {}
+        for row in open_for(user_id, nodes):  # PKG-10's reader: [] on a DB error
+            wrong.setdefault(row["node_id"], set()).add(row["wrong_key"])
+        partners = confusable_partners(courses, _prerequisite_parents(user_id, nodes), wrong)
+    order = serve_order([sr_key(i) for i in queue], partners, previous=previous)
+    return [queue[i] for i in order]
+
+
 def remaining_budget_s(loop_state: dict | None) -> int:
     """REVIEW_DAILY_BUDGET_MIN in seconds minus what this session spent."""
     spent = ((loop_state or {}).get("review") or {}).get("spent_s") or 0
@@ -607,6 +684,7 @@ def due_queue_with_stats(
     *,
     loop_state: dict | None = None,
     pause_novice: bool | Callable[[], bool] = False,
+    interleave: bool = True,
 ) -> tuple[list[ReviewItem], dict]:
     """Rule 1. Returns (the ordered, budgeted queue, stats).
 
@@ -616,7 +694,9 @@ def due_queue_with_stats(
     checks and cards, so it sums each item's own cost — Deviation). It stops at
     the first item that does not fit, so a cheaper later item never jumps the
     order; a concept's check item is read only while the concept is inside the
-    budget, and a concept whose key has an open item re-uses it.
+    budget, and a concept whose key has an open item re-uses it. The budgeted
+    queue is then put in serve order (`_interleaved`, A114) — the same items;
+    `interleave=False` (the summary, which reports counts only) skips its reads.
 
     stats = {"due": {"flashcard": n, "check": n}, "in_budget": n, "unservable": n,
     "paused": n}: `due` counts everything due this session (a concept past the
@@ -665,6 +745,8 @@ def due_queue_with_stats(
             spent += item.cost_s
     stats["due"] = due
     stats["in_budget"] = len(queue)
+    if interleave:
+        queue = _interleaved(user_id, queue, state)
     return queue, stats
 
 
@@ -715,7 +797,12 @@ def summary(
     tutor hard level; `due` everything due today, `in_budget` what today's
     remaining budget covers)."""
     _, stats = due_queue_with_stats(
-        user_id, course_id, now, loop_state=loop_state, pause_novice=pause_novice
+        user_id,
+        course_id,
+        now,
+        loop_state=loop_state,
+        pause_novice=pause_novice,
+        interleave=False,  # counts only: the order is not served here
     )
     if retention is None:
         retention = review_retention(user_id, course_id)
@@ -882,6 +969,8 @@ def _apply_grade(
     review = doc.setdefault("review", {})
     review["spent_s"] = (review.get("spent_s") or 0) + item.cost_s
     review["retention"] = retention
+    # A114: the interleave's anchor — the next queue build continues from here
+    review["last_graded"] = {"key": sr_key(item), "course_id": item.course_id}
     return entry
 
 
