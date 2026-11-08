@@ -224,6 +224,14 @@ E2E_DOC_CONCEPTS = [
     ("Gradient Descent", "Iterative optimization that steps against the loss gradient.", 0.9),
     ("Learning Rate", "Step-size hyperparameter governing each descent update.", 0.7),
 ]
+# Spec §13 A118: the scripted (prerequisite, dependent) relations — the step
+# size only means something once the descent it scales is understood. Every
+# name is one of E2E_DOC_CONCEPTS, so services/concept_prereqs.py resolves the
+# set with zero drops (tests/test_e2e_function_handlers.py pins that). Written
+# as a prerequisite edge only behind the upload_prereq_edges flag:
+# frontend/e2e/upload.spec.ts asserts none with the flag off (the lane's
+# default) and exactly this one, oriented, with it on. Keep all three in sync.
+E2E_DOC_PREREQUISITES = [("Gradient Descent", "Learning Rate")]
 
 
 def _structured_output(args: dict) -> FunctionModelHandler:
@@ -262,6 +270,10 @@ register_function_handler(
         "concepts": [
             {"name": name, "description": desc, "importance": imp}
             for name, desc, imp in E2E_DOC_CONCEPTS
+        ],
+        "prerequisites": [
+            {"prerequisite": pre, "dependent": dep}
+            for pre, dep in E2E_DOC_PREREQUISITES
         ],
     }),
 )
