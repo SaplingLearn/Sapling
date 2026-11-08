@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export interface CustomSelectOption<T extends string = string> {
   value: T;
@@ -97,7 +97,7 @@ export function CustomSelect<T extends string = string>({
 
   // While open: the list holds focus (once, on opening); a click outside closes
   // it, and so does Escape wherever focus is.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     listRef.current?.focus();
     const onDown = (e: MouseEvent) => {
@@ -116,7 +116,7 @@ export function CustomSelect<T extends string = string>({
   }, [open, close]);
 
   // Keep the active option in view as the keys move it.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || highlighted < 0) return;
     document.getElementById(optionId(highlighted))?.scrollIntoView?.({ block: "nearest" });
     // optionId is derived from the stable useId value

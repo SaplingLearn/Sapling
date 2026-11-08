@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Icon } from "../Icon";
 import { CrisisSupportCard } from "../safety/CrisisSupportCard";
@@ -225,14 +225,18 @@ const ChatInputBar = React.memo(function ChatInputBar({
   // unless something else (a posed check, a dialog) has taken focus by then.
   const refocus = useRef(false);
 
-  // Apply seed when parent bumps the key (e.g. after a mode switch).
+  // Apply the seed when the parent bumps the key (e.g. after a mode switch) —
+  // never on mount: useState already starts from it, and a mount-time reset
+  // would erase text typed before this effect ran.
+  const seededKey = useRef(draftSeedKey);
   useEffect(() => {
-    if (draftSeedKey === undefined) return;
+    if (draftSeedKey === undefined || draftSeedKey === seededKey.current) return;
+    seededKey.current = draftSeedKey;
     setText(draftSeed ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftSeedKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (disabled || !refocus.current) return;
     refocus.current = false;
     const active = document.activeElement;
