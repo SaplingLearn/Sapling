@@ -11,6 +11,8 @@ import { SocialRoomsSkeleton } from "../Skeleton";
 import { useToast } from "../ToastProvider";
 import { useConfirm } from "@/lib/useConfirm";
 import { useUser } from "@/context/UserContext";
+import { useFlag } from "@/context/FlagsContext";
+import { startRealtimeAuth } from "@/lib/realtimeAuth";
 import { humanizeError } from "@/lib/errorMessage";
 import {
   getUserRooms,
@@ -83,6 +85,17 @@ type RealtimeMsgAction =
   | { type: "ignore" }
   | { type: "refetch" }
   | { type: "applyOwnFlags"; id: string; is_deleted: boolean; edited_at: string | null };
+
+/**
+ * RLS step 2e (#115): may the room_messages channel subscribe now? Flag off:
+ * always, with the anon key (the path before the flag existed). Flag on: only
+ * once the minted token is applied, so the join carries it; the anon key
+ * reads nothing once RLS is on for room_messages, and a room with no token
+ * stays REST-only rather than silently subscribing as anon.
+ */
+export function roomRealtimeMaySubscribe(realtimeRls: boolean, realtimeAuthed: boolean): boolean {
+  return !realtimeRls || realtimeAuthed;
+}
 
 export function planMessageRealtimeAction(
   event: "INSERT" | "UPDATE",
@@ -565,10 +578,32 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
     }
   }, [roomId]);
 
+  // RLS step 2e (#115): with `realtime_rls` on, Realtime authenticates with a
+  // backend-minted token (only room_messages SELECT for this student's rooms
+  // trusts it) instead of the anon key, kept fresh until unmount. Off: no
+  // token, exactly the anon path below.
+  const realtimeRls = useFlag("realtime_rls") === "on";
+  const [realtimeAuthed, setRealtimeAuthed] = React.useState(false);
+  React.useEffect(() => {
+    if (!realtimeRls) return;
+    const supa = supabaseClient();
+    if (!supa) return;
+    const stop = startRealtimeAuth(supa.realtime, {
+      onReady: () => setRealtimeAuthed(true),
+      // No token (and the last one expired): REST-only until a retry lands.
+      onFail: () => setRealtimeAuthed(false),
+    });
+    return () => {
+      stop();
+      setRealtimeAuthed(false);
+    };
+  }, [realtimeRls]);
+
   // Realtime subscriptions.
   React.useEffect(() => {
     const supa = supabaseClient();
     if (!supa) return;
+    if (!roomRealtimeMaySubscribe(realtimeRls, realtimeAuthed)) return;
 
     const channel = supa
       .channel(`room:${roomId}`)
@@ -603,10 +638,14 @@ function RoomChat({ roomId, members }: { roomId: string; members: { user_id: str
       // live reactions can be restored post-RLS by publishing room_reactions
       // with a membership-scoped policy (see
       // docs/security/realtime-jwt-bridge-design.md).
-      .subscribe();
+      .subscribe(realtimeRls
+        // Flag on, the subscription starts after the first history load:
+        // catch up on anything sent in between (the merge dedups).
+        ? (status: string) => { if (status === "SUBSCRIBED") void refreshLatest(); }
+        : undefined);
 
     return () => { supa.removeChannel(channel); };
-  }, [roomId, refreshLatest, userId]);
+  }, [roomId, refreshLatest, userId, realtimeRls, realtimeAuthed]);
 
   // Presence / typing channel.
   React.useEffect(() => {

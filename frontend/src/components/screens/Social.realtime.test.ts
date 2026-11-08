@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeLatestMessages, planMessageRealtimeAction } from './Social';
+import { mergeLatestMessages, planMessageRealtimeAction, roomRealtimeMaySubscribe } from './Social';
 
 /**
  * #124: room_messages realtime payloads carry ciphertext `text`. The component
@@ -75,5 +75,21 @@ describe('mergeLatestMessages (#764)', () => {
   it('an empty refetch leaves the list alone', () => {
     const prev = [msg('a', 10)];
     expect(mergeLatestMessages(prev, [])).toBe(prev);
+  });
+});
+
+/**
+ * RLS step 2e (#115): under `realtime_rls` the room channel waits for the
+ * minted token; with the flag off it subscribes at once with the anon key,
+ * exactly as before the flag existed.
+ */
+describe('roomRealtimeMaySubscribe (RLS step 2e)', () => {
+  it('flag off: subscribes immediately (anon key, unchanged)', () => {
+    expect(roomRealtimeMaySubscribe(false, false)).toBe(true);
+  });
+
+  it('flag on: waits until the minted token is applied', () => {
+    expect(roomRealtimeMaySubscribe(true, false)).toBe(false);
+    expect(roomRealtimeMaySubscribe(true, true)).toBe(true);
   });
 });
