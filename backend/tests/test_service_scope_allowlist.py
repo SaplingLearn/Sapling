@@ -79,6 +79,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "rewrites shared course_chunks visibility",
     ("services/chunk_visibility.py", "withdraw_document_chunks", "runs_as_service"):
         "rewrites shared course_chunks + ledgers",
+    ("services/jobs.py", "enqueue", "runs_as_service"):
+        "#116 job queue: jobs + enqueue_job are service-only; enqueued from request paths (refresh_course_context)",
     ("services/course_context_service.py", "_read_course_context", "runs_as_service"):
         "class aggregate behind a shared per-process cache",
     ("services/course_context_service.py", "update_course_context", "runs_as_service"):

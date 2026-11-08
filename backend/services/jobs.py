@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from db.connection import rpc
+from db.scope import runs_as_service
 
 logger = logging.getLogger("sapling.jobs")
 
@@ -135,6 +136,7 @@ def backoff_seconds(
 # ── queue operations ────────────────────────────────────────────────────────
 
 
+@runs_as_service  # #115: jobs is a service-only table and enqueue_job is service_role-only; a request-path enqueue under db_user_scope=enforce must not run as the student
 def enqueue(
     job_type: str,
     payload: dict[str, Any] | None = None,
