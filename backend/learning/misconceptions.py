@@ -261,7 +261,7 @@ def recheck_after_release(
         return True
     since = now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)
     shape = (getattr(item, "format", None), getattr(item, "difficulty", None))
-    if _prequestion_owes(user_id, node_id, loop_state, last=last, since=since, shape=shape):
+    if _prequestion_owes(user_id, node_id, loop_state, since=since, shape=shape):
         return True
     rows = recent_evidence(user_id, node_id, since=since.isoformat())
     if not rows:
@@ -272,37 +272,58 @@ def recheck_after_release(
 
 
 def _prequestion_owes(
-    user_id: str, node_id: str, loop_state: dict | None, *, last: bool | None, since: datetime, shape: tuple
+    user_id: str, node_id: str, loop_state: dict | None, *, since: datetime, shape: tuple
 ) -> bool:
     """Spec §13 A138 × A76: whether an answered prequestion on the concept
     makes this grade a re-check.
-      • This session: a prequestion is posed only at a segment start, before
-        any attempt on the concept in the session, so with no attempt on it in
-        the session log (`last is None`) the session's answered prequestion is
-        the concept's latest release — this is the next graded item after it.
       • Every answered prequestion in the window (this session's, and
         `learning_prequestions` across sessions) owes its item's isomorph class,
         as owed_isomorph does for a journal release; an unknown class of the
         graded item owes on any release (R5-3).
-      • Across sessions, with no attempt on the concept in this one: the newest
-        prequestion release in the window decides when no evidence row on the
-        concept was journaled after it (the journal's newest row would
-        otherwise be older than the release).
-    A failed read decides nothing (A76's rule for its own journal)."""
+      • The NEXT graded item on the concept after the newest such release is a
+        re-check, whatever class it is: nothing on the concept was graded after
+        the release — no step of this session (`graded_at`) and no evidence row
+        in the journal, any surface. Decided by time, never by the session's
+        attempt log: an answer before the release (the probe's, A120, which
+        logs an unreleased attempt) must not hide it.
+    A failed journal read leaves this session's own record to decide (the
+    session's release with no later step owes, as `last` does for an attempt);
+    a release from another session then decides nothing (A76's rule for its
+    own journal)."""
     from learning.prequestion import released_on_node
     from learning.prequestion_store import evidence_since, releases
 
     cutoff = since.timestamp()
     session = [r for r in released_on_node(loop_state, node_id) if r["at"] >= cutoff]
-    if last is None and session:
-        return True
     durable = releases(user_id, node_id, since=since) or []
     shapes = {r["shape"] for r in session} | {r["shape"] for r in durable}
-    if shapes and (None in shape or shape in shapes):
+    if not shapes:
+        return False
+    if None in shape or shape in shapes:
         return True
-    if last is None and durable:
-        later = evidence_since(user_id, node_id, max(r["at"] for r in durable))
-        if later is False:
+    newest = max([r["at"] for r in session] + [r["at"].timestamp() for r in durable])
+    if _graded_on_node_after(loop_state, node_id, newest):
+        return False
+    later = evidence_since(user_id, node_id, datetime.fromtimestamp(newest, tz=timezone.utc))
+    if later is None:
+        return bool(session) and not _graded_on_node_after(loop_state, node_id, max(r["at"] for r in session))
+    return later is False
+
+
+def _graded_on_node_after(loop_state: dict | None, node_id: str, at: float) -> bool:
+    """Whether a step of this session on `node_id` was graded after `at` (epoch
+    seconds). Pure."""
+    steps = loop_state.get("steps") if isinstance(loop_state, dict) else None
+    for entry in steps.values() if isinstance(steps, dict) else ():
+        if not isinstance(entry, dict):
+            continue
+        graded = entry.get("graded_at")
+        if (
+            entry.get("node_id") == node_id
+            and isinstance(graded, (int, float))
+            and not isinstance(graded, bool)
+            and graded > at
+        ):
             return True
     return False
 

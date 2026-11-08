@@ -297,15 +297,32 @@ def _recheck(state, item, releases=None, later=None):
 
 
 def test_the_next_graded_item_after_this_sessions_prequestion_is_a_recheck():
-    assert _recheck(_answered(), _graded_item("teachback", 3)) is True
+    assert _recheck(_answered(), _graded_item("teachback", 3), later=False) is True
 
 
-def test_a_later_attempt_ends_the_next_item_rule_but_class_mates_still_owe():
+def test_an_answer_before_the_release_does_not_hide_it():
+    # Review fix (A138 x A76): the probe graded the concept right — A120 logs an
+    # unreleased attempt — and then the segment's prequestion was answered. The
+    # segment's first check, of another class, is still the next item after it.
     st = _answered("mc_reason", 1)
-    st["attempts"] = [{"node_id": "n1", "question_hash": "q1", "correct": True, "difficulty": 2,
+    st["attempts"] = [{"node_id": "n1", "question_hash": "probe-q", "correct": True, "difficulty": 2,
                        "released": False}]
-    assert _recheck(st, _graded_item("teachback", 3)) is False
-    assert _recheck(st, _graded_item("mc_reason", 1)) is True  # its isomorph class owes
+    assert _recheck(st, _graded_item("free", 2), later=False) is True
+    assert _recheck(st, _graded_item("free", 2), later=None) is True  # the journal unread: the session decides
+
+
+def test_a_step_graded_after_the_release_ends_the_next_item_rule_but_class_mates_still_owe():
+    st = _answered("mc_reason", 1)
+    st["steps"] = {"q1": {"node_id": "n1", "graded_at": _NOW.timestamp() - 60, "last_verdict": "correct"}}
+    assert _recheck(st, _graded_item("teachback", 3), later=True) is False
+    assert _recheck(st, _graded_item("teachback", 3), later=None) is False  # the step decides
+    assert _recheck(st, _graded_item("mc_reason", 1), later=True) is True  # its isomorph class owes
+    st["steps"]["q1"]["graded_at"] = _NOW.timestamp() - 3600  # graded BEFORE the release
+    assert _recheck(st, _graded_item("teachback", 3), later=False) is True
+
+
+def test_a_grade_on_another_surface_after_the_release_ends_it():
+    assert _recheck(_answered(), _graded_item("teachback", 3), later=True) is False
 
 
 def test_a_prequestion_outside_the_window_owes_nothing():
