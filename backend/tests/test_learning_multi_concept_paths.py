@@ -131,6 +131,79 @@ def test_course_has_items_never_counts_a_combination(monkeypatch):
         assert course_has_items("c1") is True
 
 
+# ── the re-check after a release (A76) ───────────────────────────────────────
+
+
+def test_a_combinations_isomorph_class_names_its_combination():
+    from learning.multi_concept import isomorph_class
+
+    assert isomorph_class("free", 3, APEX) == ("free", 3)  # a concept's own item: as always
+    assert isomorph_class("free", 3, KEY) == ("free", 3, KEY)
+    assert isomorph_class(None, None, None) == (None, None)  # unreadable: A76 fails closed on it
+
+
+@pytest.mark.parametrize(
+    "released,graded,owed",
+    [
+        # a released combination never makes the apex's own (free, 3) a re-check
+        (("free", 3, KEY), ("free", 3), False),
+        # nor a released single-concept item the combination
+        (("free", 3), ("free", 3, KEY), False),
+        # the same combination's class-mates are re-checks, as any class's
+        (("free", 3, KEY), ("free", 3, KEY), True),
+        # another combination of the same apex is another construct
+        (("free", 3, combo_key([APEX, PRE, "loss"])), ("free", 3, KEY), False),
+        # an unreadable released item still owes on every class (R5-3)
+        (None, ("free", 3, KEY), True),
+    ],
+)
+def test_a_release_owes_only_its_own_construct(released, graded, owed):
+    from learning.misconceptions import owed_isomorph
+
+    rows = [{"question_hash": "r", "released": True, "shape": released}]
+    assert owed_isomorph(rows, graded) is owed
+
+
+def test_the_journal_read_and_the_decision_carry_the_combination(monkeypatch):
+    """recent_evidence tags a combination's row with its key; the grade of
+    the apex's own (free, 3) after a released combination is no re-check,
+    and the grade of the combination after a released (free, 3) of the apex
+    is none either — while a released combination's class-mate is one."""
+    from learning import loop_state_store as store
+    from learning import misconceptions
+    from tests.test_learning_misconceptions import _FakeJournal
+
+    monkeypatch.setattr(misconceptions, "_prequestion_owes", lambda *a, **k: False)
+    now = datetime.now(timezone.utc)
+
+    def decide(journal, items, item):
+        with patch.object(store, "table", side_effect=_FakeJournal(journal, items)):
+            return misconceptions.recheck_after_release("u1", "n-apex", {}, now=now, item=item)
+
+    items = [
+        {"id": "ci-x", "format": "free", "difficulty": 3, "concept_key": KEY},
+        {"id": "ci-a", "format": "free", "difficulty": 3, "concept_key": APEX},
+        {"id": "ci-b", "format": "teachback", "difficulty": 3, "concept_key": APEX},
+    ]
+    combo_released = [
+        {"check_item_id": "ci-x", "question_hash": "x", "correct": False, "max_rung": 0},
+        {"check_item_id": "ci-b", "question_hash": "b", "correct": True, "max_rung": 0},
+    ]
+    single = MagicMock(question_hash="a2", format="free", difficulty=3, concept_key=APEX)
+    twin = MagicMock(question_hash="x2", format="free", difficulty=3, concept_key=KEY)
+    assert decide(combo_released, items, single) is False
+    assert decide(combo_released, items, twin) is True
+    single_released = [
+        {"check_item_id": "ci-a", "question_hash": "a", "correct": False, "max_rung": 0},
+        {"check_item_id": "ci-b", "question_hash": "b", "correct": True, "max_rung": 0},
+    ]
+    assert decide(single_released, items, twin) is False
+    assert decide(single_released, items, single) is True
+    with patch.object(store, "table", side_effect=_FakeJournal(combo_released, items)):
+        rows = store.recent_evidence("u1", "n-apex", since="2026-11-01T00:00:00+00:00")
+    assert [r["shape"] for r in rows] == [("free", 3, KEY), ("teachback", 3)]
+
+
 # ── the item statistics (A131) ───────────────────────────────────────────────
 
 

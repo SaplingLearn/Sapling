@@ -1618,7 +1618,7 @@ def test_recent_evidence_reads_the_nodes_rows_and_their_isomorph_classes():
         "created_at": "gte.2026-09-28T00:00:00+00:00",
     }
     assert kw["order"] == "created_at.asc,evidence_seq.asc"
-    assert name == "check_items" and icols == "id,format,difficulty"
+    assert name == "check_items" and icols == "id,format,difficulty,concept_key"  # A141: the class
     assert ikw["filters"]["id"].startswith("in.(")
 
 

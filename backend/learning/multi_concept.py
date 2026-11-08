@@ -88,6 +88,19 @@ def is_multi_concept(item) -> bool:
     return components_of(getattr(item, "concept_key", None)) is not None
 
 
+def isomorph_class(format, difficulty, concept_key) -> tuple:
+    """A76's isomorph class of an item on a node: (format, difficulty) — and,
+    for a multi-concept item, its combination key too (spec §13 A141). Every
+    item on a node shares the node's concept, so a single-concept item's class
+    is exactly the pair it always was; a combination measures another
+    construct, so a release of one never makes a single-concept item of the
+    same format and difficulty a re-check, nor the reverse, nor one
+    combination another's."""
+    if components_of(concept_key) is None:
+        return (format, difficulty)
+    return (format, difficulty, concept_key)
+
+
 def evidence_key(item) -> str | None:
     """The concept key an item's evidence is recorded under: a multi-concept
     item's apex, any other item's own concept_key."""
