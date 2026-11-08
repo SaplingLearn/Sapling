@@ -909,7 +909,10 @@ class TestSlotAndAgent:
             out = asyncio.run(verify_items(["Load Factor"], [item], deps=deps, flex=False))
         assert isinstance(out, AlignmentChecks)
         kwargs = recorded.call_args.kwargs
-        assert kwargs == {"feature": "check_items_verify", "task": "check_items_verify", "user_id": None}
+        # spec §13 A137: a check-item run has no session, so the row names its course
+        assert kwargs == {
+            "feature": "check_items_verify", "task": "check_items_verify", "user_id": None, "course_id": COURSE
+        }
 
         def boom(messages, info):
             raise RuntimeError("down")

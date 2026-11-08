@@ -283,14 +283,16 @@ def test_grade_returns_all_yes_and_records_usage(monkeypatch):
     assert res.item_results == {"r1": True, "r2": True}
     assert res.low_confidence is False and res.backend == "gemini"
     assert calls["n"] == 1 and calls["spans"] == 1  # the credit's span check (round a33)
-    # PKG-14b (A92): every grader run records its session (deps.session_id).
+    # PKG-14b (A92): every grader run records its session (deps.session_id),
+    # and A137 its course (deps.course_id: a post-test grade has no session).
     assert recorded == [
-        {"feature": "tutor", "task": "grader", "user_id": "u1", "session_id": "s1"},
+        {"feature": "tutor", "task": "grader", "user_id": "u1", "session_id": "s1", "course_id": "c1"},
         {
             "feature": "tutor",
             "task": GRADER_SECOND_OPINION_SLOT,
             "user_id": "u1",
             "session_id": "s1",
+            "course_id": "c1",
         },
         # A33 finish: the context check, also on the grader_second slot
         {
@@ -298,6 +300,7 @@ def test_grade_returns_all_yes_and_records_usage(monkeypatch):
             "task": GRADER_SECOND_OPINION_SLOT,
             "user_id": "u1",
             "session_id": "s1",
+            "course_id": "c1",
         },
     ]
 
@@ -1416,7 +1419,16 @@ GRADING_HELPER_CALLS = frozenset({"grade_answer", "flush_pending"})
 # /review/answer route (invariant 19 pins that it never reaches the grader
 # or the decision seam itself).
 SANCTIONED_GRADING_CALLERS = frozenset(
-    {"agents/tools/check.py", "services/learning_decisions.py", "routes/learn_loop.py", "learning/review.py"}
+    {
+        "agents/tools/check.py",
+        "services/learning_decisions.py",
+        "routes/learn_loop.py",
+        "learning/review.py",
+        # spec §13 A137: the offline cost projection measures each grader call by
+        # replaying the grader eval's cassettes through grade(); it grades no
+        # student, makes no model call and refuses any mode but replay
+        "scripts/project_loop_cost.py",
+    }
 )
 
 

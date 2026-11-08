@@ -1383,7 +1383,10 @@ class TestSlotAndAgents:
         deps = SaplingDeps(user_id="", course_id=COURSE, supabase=None, request_id="r")
         with agent.override(model=FunctionModel(answer)):
             assert isinstance(asyncio.run(run(deps)), out_type)
-        assert recorded.call_args.kwargs == {"feature": feature, "task": "check_items_solve", "user_id": None}
+        # spec §13 A137: a check-item run has no session, so the row names its course
+        assert recorded.call_args.kwargs == {
+            "feature": feature, "task": "check_items_solve", "user_id": None, "course_id": COURSE
+        }
 
         def boom(messages, info):
             raise RuntimeError("down")
