@@ -574,6 +574,80 @@ describe("LoopLearn — A26", () => {
     api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
     render(<LoopLearn />);
     expect((await screen.findByTestId("loop-no-check-items")).textContent).toContain("No check items for this course yet");
+    expect(screen.queryByTestId("loop-preparing-items")).toBeNull();
+    // A128: another notice showing never brings the materials note with it
+    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+  });
+
+  it("A128: while the upload is still drafted, says preparing — never 'No check items'", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue({ done: true, phase: "plan", no_check_items: true, preparing: true });
+    api.getLoopPlan.mockResolvedValue({ concepts: [], order: [], empty: true, phase: "teach" });
+    render(<LoopLearn />);
+    expect((await screen.findByTestId("loop-preparing-items")).textContent).toBe(
+      "Preparing practice questions from your upload…",
+    );
+    expect(screen.queryByTestId("loop-no-check-items")).toBeNull();
+  });
+
+  it("A128: 'Check me' with nothing yet while the upload is drafted shows the preparing note", async () => {
+    api.nextLoopCheck.mockResolvedValue({ phase: "teach", plan_done: true, check: null, preparing: true });
+    await resumedTeach();
+    fireEvent.click(await screen.findByTestId("loop-check-me"));
+    expect(await screen.findByText("Preparing practice questions from your upload…")).toBeTruthy();
+    expect(screen.queryByText(/That's every concept in today's plan/)).toBeNull();
+  });
+
+  it("A128: a turn whose retrieval failed shows ONE calm note; the turn itself is served", async () => {
+    api.streamLoopChat
+      .mockResolvedValueOnce(turn({ reply: "Here is the idea.", phase: "teach", materials_unavailable: true }))
+      .mockResolvedValueOnce(turn({ reply: "And the next step.", phase: "teach" }));
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("Here is the idea.");
+    const note = await screen.findByTestId("loop-materials-unavailable");
+    expect(note.textContent).toBe(
+      "Your course materials are temporarily unavailable, so answers may be less specific to your class.",
+    );
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "and?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("And the next step.");
+    expect(screen.getAllByTestId("loop-materials-unavailable")).toHaveLength(1);
+    expect(toast.error).not.toHaveBeenCalled(); // an outage note, never an error
+  });
+
+  it("A128: no note without the response field (an empty retrieval is not a failure)", async () => {
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Plain turn.", phase: "teach" }));
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("Plain turn.");
+    expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull();
+  });
+
+  it("A128: the note belongs to its session — switching sessions clears it", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(
+      listed([open("s2", "teach", "2026-09-21T10:00:00Z"), open("s1", "teach", "2026-09-20T10:00:00Z")]),
+    );
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Here is the idea.", phase: "teach", materials_unavailable: true }));
+    render(<LoopLearn />);
+    await screen.findByText("welcome back");
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByTestId("loop-materials-unavailable");
+    fireEvent.click(screen.getByTestId("loop-session-s1"));
+    await waitFor(() => expect(api.resumeSession).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(screen.queryByTestId("loop-materials-unavailable")).toBeNull());
+  });
+
+  it("A128: the opener's failed retrieval shows the note from the first turn", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession.mockResolvedValue({ session_id: "s9", initial_message: "Welcome.", materials_unavailable: true });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    expect(await screen.findByTestId("loop-materials-unavailable")).toBeTruthy();
   });
 
   it("keeps the knowledge map reachable", async () => {

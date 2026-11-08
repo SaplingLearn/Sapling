@@ -34,6 +34,9 @@ logger = logging.getLogger("sapling.learning.zpd_events")
 Phase = Literal["probe", "plan", "teach", "check", "feedback", "close", "posttest"]  # A8: posttest
 Rating = Literal["too_easy", "appropriate", "too_hard"]
 BandTrigger = Literal["high", "stable_high", "low", "wheelspin"]
+#: Spec §13 A128: a step whose concept was taught with a failed course-material
+#: retrieval. The only value: a step with nothing to report omits the key.
+Retrieval = Literal["failed"]
 
 
 def _is_plain(value: object) -> bool:
@@ -106,6 +109,7 @@ def emit_zpd_step(
     variant: Variant | None = None,
     session_id: str | None = None,
     earnest_blocked: bool = False,
+    retrieval: Retrieval | None = None,
 ) -> None:
     def build() -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -146,6 +150,11 @@ def emit_zpd_step(
         # omitted when there is none (the post-test), never blanked
         if session_id is not None:
             payload["session_id"] = session_id
+        # A128: the step's concept was taught while course material could not
+        # be retrieved (an outage, never "nothing matched") — so an analysis
+        # can set such steps apart; omitted when no teach turn's retrieval failed
+        if retrieval is not None:
+            payload["retrieval"] = retrieval
         return payload
 
     _emit("zpd.step", "usage", user_id, request_id, build)

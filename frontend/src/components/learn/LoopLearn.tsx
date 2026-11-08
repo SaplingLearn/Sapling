@@ -84,6 +84,13 @@ import { ReportQuestion } from "./ReportQuestion";
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
   "No check items for this course yet. You can still learn with the tutor; nothing is graded until the course has items.";
+// spec §13 A128: the student's own upload is still being drafted into questions
+const PREPARING_COPY = "Preparing practice questions from your upload…";
+// spec §13 A128: the session's course-material retrieval failed (an outage, not
+// an empty result). Shown once per session, from the turn's response field —
+// never a prompt change.
+const MATERIALS_UNAVAILABLE_COPY =
+  "Your course materials are temporarily unavailable, so answers may be less specific to your class.";
 const PLAN_DONE_COPY = "That's every concept in today's plan — close the session when you're ready.";
 const NO_ITEM_COPY = "No check is ready for this concept yet — keep going with the tutor.";
 const NO_FRESH_PRACTICE_COPY = "Fresh practice questions are unavailable for these concepts in this session. You can review source material with the tutor; source review does not assess or complete your goal. Starting another session will not replenish these questions.";
@@ -224,7 +231,10 @@ export function LoopLearn() {
   const [probeCount, setProbeCount] = useState(0);
   const [probeBusy, setProbeBusy] = useState(false);
   const [probeFinished, setProbeFinished] = useState(false); // the last answer ended the probe
-  const [noCheckItems, setNoCheckItems] = useState(false);
+  // A26: the course has no check items — or (A128) none YET: the student's upload is being drafted
+  const [noCheckItems, setNoCheckItems] = useState<"none" | "preparing" | null>(null);
+  // A128: this session's course materials could not be retrieved (served once per session)
+  const [materialsNote, setMaterialsNote] = useState(false);
 
   // Plan
   const [plan, setPlan] = useState<LoopPlanConcept[] | null>(null);
@@ -474,7 +484,8 @@ export function LoopLearn() {
     setProbeCount(0);
     setProbeBusy(false);
     setProbeFinished(false);
-    setNoCheckItems(false);
+    setNoCheckItems(null);
+    setMaterialsNote(false);
     setPlan(null);
     setPlanJustApproved(false);
     setPlanGoalVersion(undefined);
@@ -533,7 +544,7 @@ export function LoopLearn() {
       if (r.done) {
         setPendingGrade(null);
         setProbeItem(null);
-        if (r.no_check_items) setNoCheckItems(true);
+        if (r.no_check_items) setNoCheckItems(r.preparing ? "preparing" : "none");
         dispatch({ type: "phase", phase: r.phase });
         if (r.phase === "plan") await loadPlan(sid, g);
       } else if ("pending_grade" in r) {
@@ -661,6 +672,7 @@ export function LoopLearn() {
       applyLearningScope(r);
       setScopeReady(true);
       if (r.initial_message) setMessages([asMsg("assistant", r.initial_message)]);
+      if (r.materials_unavailable) setMaterialsNote(true); // A128: the opener's retrieval failed
       if (r.budget?.level === "hard") {
         // A27: a capped student still gets the template opener and the probe
         dispatch({ type: "budget", level: "hard", resetAt: r.budget.reset_at, sessionCapped: r.budget.session_capped });
@@ -868,7 +880,7 @@ export function LoopLearn() {
       setProbeReference(null);
       setProbeCount(0);
       setProbeFinished(false);
-      setNoCheckItems(false);
+      setNoCheckItems(null);
       setPlan(null);
       setPlanGoalVersion(undefined);
       setLoadError(null);
@@ -1014,6 +1026,7 @@ export function LoopLearn() {
         setHint(null);
       }
       if (submission && res.ask_rating && sid) setAskRating(sid);
+      if (res.materials_unavailable) setMaterialsNote(true); // A128: the server sends it once per session
       if (res.phase) dispatch({ type: "phase", phase: res.phase });
       setFeedbackPending(false); // only a successful done means feedback was served
       setCheckNote(null);
@@ -1235,7 +1248,11 @@ export function LoopLearn() {
       }
       dispatch({ type: "phase", phase: r.phase });
       if (r.check) applyActivated(r.check);
-      else setCheckNote(r.practice_unavailable_node_ids?.length ? null : r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY);
+      else setCheckNote(
+        r.practice_unavailable_node_ids?.length ? null
+          : r.preparing ? PREPARING_COPY // A128: the student's upload is still being drafted
+            : r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY,
+      );
     } catch (err) {
       if (g !== gen.current || epoch !== turnEpoch.current) return;
       const { status, detail } = extractErrorDetail(err);
@@ -1451,7 +1468,7 @@ export function LoopLearn() {
     </div>
   );
 
-  const notices = (paused || noCheckItems || topicOffer || practiceUnavailable.length > 0) && (
+  const notices = (paused || noCheckItems || materialsNote || topicOffer || practiceUnavailable.length > 0) && (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 32px 0" }}>
       {paused && (
         <BudgetPausedBanner
@@ -1470,13 +1487,31 @@ export function LoopLearn() {
           </Link>
         </BudgetPausedBanner>
       )}
-      {noCheckItems && (
+      {noCheckItems === "none" && (
         <div
           data-testid="loop-no-check-items"
           role="status"
           style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
         >
           {NO_CHECK_ITEMS_COPY}
+        </div>
+      )}
+      {noCheckItems === "preparing" && (
+        <div
+          data-testid="loop-preparing-items"
+          role="status"
+          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
+        >
+          {PREPARING_COPY}
+        </div>
+      )}
+      {materialsNote && (
+        <div
+          data-testid="loop-materials-unavailable"
+          role="status"
+          style={{ padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--info-soft)", fontSize: 13 }}
+        >
+          {MATERIALS_UNAVAILABLE_COPY}
         </div>
       )}
       {practiceUnavailable.length > 0 && (

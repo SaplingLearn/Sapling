@@ -121,7 +121,9 @@ def _source_documents(offerings: list[str]) -> list[dict]:
     return list(
         page_all(
             table("documents"),
-            "id,user_id,shareability,shareability_confidence,extracted_text",
+            # index_status: an unindexed source drafts `unsourced` items unless
+            # its indexing was skipped by design (spec §13 A128, source_chunks)
+            "id,user_id,shareability,shareability_confidence,extracted_text,index_status",
             filters={
                 "offering_id": f"in.({','.join(pg_quote_value(o) for o in offerings)})",
                 "shareability": f"eq.{COURSE_MATERIAL}",

@@ -252,6 +252,67 @@ LOOP_SLOTS_PENDING_CLAUDE_EVAL: frozenset[AgentTask] = frozenset({
 })
 
 
+# ── The evidence-slot guard (spec §13 A128) ──────────────────────────────
+#
+# The slots whose output IS learning evidence or what evidence is graded
+# against — the items and their keys (check_items, its alignment check and
+# its blind key solve), the grader and its second opinion, the loop's typed
+# decisions, the tutor tiers whose turns the gates were measured on, and the
+# session close. Their quality gates were recorded on specific models (A111,
+# A119, A124); an env flip (`SAPLING_MODEL_<SLOT>`) moves one with no code
+# change, and nothing said so at runtime — `LOOP_SLOTS_PENDING_CLAUDE_EVAL`
+# was read only by tests. Now a slot resolved to a model outside its
+# evaluated set logs ONE warning per process and emits ONE
+# `system.unevaluated_slot` event (slot, model — no secrets), at boot
+# (`check_slot_guards`, the lifespan) and wherever the slot's model is
+# resolved (`model_for`). Warn only: it never blocks a run.
+EVIDENCE_SLOTS: tuple[AgentTask, ...] = (
+    "check_items", "check_items_verify", "check_items_solve",
+    "grader", "grader_second", "learning_decision",
+    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep", "session_close",
+)
+
+#: The models each evidence slot's quality gates were recorded and passed on:
+#: today exactly its default. A pending slot's set holds no claude-* model
+#: until its A111 eval pass moves it (that change adds the model here, flips
+#: the default and leaves the pending set together). check_items_verify and
+#: check_items_solve were built and accepted on claude-haiku-5-5 (A119, A124).
+EVALUATED_MODELS: dict[AgentTask, frozenset[str]] = {
+    "check_items": frozenset({"gemini-2.5-flash-lite"}),
+    "check_items_verify": frozenset({"claude-haiku-5-5"}),
+    "check_items_solve": frozenset({"claude-haiku-5-5"}),
+    "grader": frozenset({"gemini-2.5-flash-lite"}),
+    "grader_second": frozenset({"gemini-2.5-flash"}),
+    "learning_decision": frozenset({"gemini-2.5-flash-lite"}),
+    "loop_tutor_lite": frozenset({"gemini-2.5-flash-lite"}),
+    "loop_tutor": frozenset({"gemini-2.5-flash"}),
+    "loop_tutor_deep": frozenset({"gemini-2.5-pro"}),
+    "session_close": frozenset({"gemini-2.5-flash-lite"}),
+}
+
+#: Slots whose verdict must come from a DIFFERENT model than another slot's:
+#: (slot, the slot it must be independent of, the rule). A22: the grader's
+#: second opinion "runs on a different model" (§3.5 GRADER_SECOND_OPINION_SLOT)
+#: — the same model again is a correlated resample, not a second opinion.
+#: A22/A124 (f): `canonical_verified` is set only by an INDEPENDENT second-model
+#: agreement — the blind solve must run off the drafter's model, or a solver
+#: sharing the drafter's mistakes passes a wrong key as verified.
+INDEPENDENT_SLOTS: tuple[tuple[AgentTask, AgentTask, str], ...] = (
+    ("grader_second", "grader", "A22"),
+    ("check_items_solve", "check_items", "A124"),
+)
+
+#: Reasons a slot's model is outside its evaluated set.
+PENDING_CLAUDE_EVAL = "pending_claude_eval"  # a pending slot on claude-* (A111)
+NOT_EVALUATED = "not_evaluated"  # any other model outside the set
+
+_slot_guard_lock = threading.Lock()
+#: (slot, model) pairs already warned about in this process (once each).
+_slot_warned: set[tuple[str, str]] = set()
+#: (slot, model, independent_of) violations already reported in this process.
+_independence_warned: set[tuple[str, str, str]] = set()
+
+
 # Slots whose runs are TOOL LOOPS — several requests per run, each resending
 # the same system prompt + tool definitions + growing history — get automatic
 # prompt caching (top-level `cache_control`; the breakpoint follows the last
@@ -950,6 +1011,143 @@ def clear_override_model_cache() -> None:
     override_model.cache_clear()
 
 
+def unevaluated_reason(task: str, model: str) -> str | None:
+    """Why `model` on evidence slot `task` is outside its evaluated set
+    (PENDING_CLAUDE_EVAL or NOT_EVALUATED), or None — evaluated, or not an
+    evidence slot. A pending slot on any claude-* model is unevaluated even if
+    its set ever named one: it leaves the pending set when its eval passes."""
+    if task not in EVALUATED_MODELS:
+        return None
+    bare = _bare_model_name(model)
+    try:
+        anthropic = provider_for_model(bare) == "anthropic"
+    except ValueError:
+        anthropic = False  # an unknown name is outside every set
+    if task in LOOP_SLOTS_PENDING_CLAUDE_EVAL and anthropic:
+        return PENDING_CLAUDE_EVAL
+    return None if bare in EVALUATED_MODELS[task] else NOT_EVALUATED
+
+
+def _emit_system_event(event_type: str, payload: dict) -> None:
+    """One category-`system` event (a fact about this process, never a
+    student's activity). Imported here, at call time: this module is below
+    every service. Never raises."""
+    try:
+        from services.events_service import SYSTEM_CATEGORY, log_event
+
+        log_event(event_type, category=SYSTEM_CATEGORY, payload=payload)
+    except Exception:  # pragma: no cover - log_event itself never raises
+        _logger.debug("%s not emitted", event_type, exc_info=True)
+
+
+def note_slot_model(task: str, model: str) -> str | None:
+    """The A128 guard where a slot's model is resolved: when evidence slot
+    `task` runs `model` outside its evaluated set, ONE WARNING and ONE
+    `system.unevaluated_slot` event per process per (slot, model). Returns
+    the reason (or None). Warn only — never blocks, never raises."""
+    try:
+        reason = unevaluated_reason(task, model)
+        if reason is None:
+            return None
+        bare = _bare_model_name(model)
+        with _slot_guard_lock:
+            if (task, bare) in _slot_warned:
+                return reason
+            _slot_warned.add((task, bare))
+        _logger.warning(
+            "evidence slot %r runs %r, outside its evaluated models %s (%s; spec §13 "
+            "A128). Its quality gates were not recorded on this model — run the "
+            "slot's evals (A111 (d)) before relying on its evidence.",
+            task, bare, sorted(EVALUATED_MODELS[task]), reason,
+        )
+        _emit_system_event(
+            "system.unevaluated_slot", {"slot": task, "model": bare, "reason": reason}
+        )
+        return reason
+    except Exception:
+        _logger.debug("evidence-slot guard failed for %r", task, exc_info=True)
+        return None
+
+
+def unevaluated_slots() -> list[dict]:
+    """Every evidence slot whose configured model (its SAPLING_MODEL_* override,
+    else its default) is outside its evaluated set now: [{slot, model, reason}].
+    A configuration read; it never builds a Model."""
+    out = []
+    for task in EVIDENCE_SLOTS:
+        model = _bare_model_name(model_name_for(task))
+        reason = unevaluated_reason(task, model)
+        if reason is not None:
+            out.append({"slot": task, "model": model, "reason": reason})
+    return out
+
+
+def slot_independence_violations() -> list[dict]:
+    """The INDEPENDENT_SLOTS pairs that resolve to the SAME model now:
+    [{slot, model, independent_of, rule}]."""
+    out = []
+    for task, other, rule in INDEPENDENT_SLOTS:
+        model = _bare_model_name(model_name_for(task))
+        if model == _bare_model_name(model_name_for(other)):
+            out.append({"slot": task, "model": model, "independent_of": other, "rule": rule})
+    return out
+
+
+def slot_warnings() -> list[dict]:
+    """The active A128 warnings, for the admin learning-loop panel: each
+    unevaluated evidence slot (`kind: "unevaluated"`) and each independence
+    violation (`kind: "not_independent"`). [] outside real model mode, where
+    no configured model runs (the FunctionModel seam stands in for all)."""
+    if model_mode() != "real":
+        return []
+    return [{"kind": "unevaluated", **w} for w in unevaluated_slots()] + [
+        {"kind": "not_independent", **v} for v in slot_independence_violations()
+    ]
+
+
+def check_slot_guards() -> list[dict]:
+    """The boot check (main.py's lifespan, real mode only): every evidence
+    slot's resolved model through `note_slot_model`, then every independence
+    violation — an ERROR and one `system.slot_not_independent` event per
+    process each. Warn only (spec §13 A128): grading runs on, and the A22
+    rules it weakens are the admin panel's to show. Never raises; returns the
+    active warnings."""
+    if model_mode() != "real":
+        return []
+    try:
+        for task in EVIDENCE_SLOTS:
+            note_slot_model(task, model_name_for(task))
+        for v in slot_independence_violations():
+            key = (v["slot"], v["model"], v["independent_of"])
+            with _slot_guard_lock:
+                if key in _independence_warned:
+                    continue
+                _independence_warned.add(key)
+            _logger.error(
+                "slot %r resolves to %r, the same model as %r: its verdicts are not "
+                "independent (spec §13 %s; %s). Point SAPLING_MODEL_%s at another model.",
+                v["slot"], v["model"], v["independent_of"], v["rule"],
+                "the grader's second opinion runs on a different model" if v["rule"] == "A22"
+                else "the key solve must not run on the drafter's model",
+                v["slot"].upper(),
+            )
+            _emit_system_event(
+                "system.slot_not_independent",
+                {"slot": v["slot"], "model": v["model"], "independent_of": v["independent_of"]},
+            )
+        return slot_warnings()
+    except Exception:
+        _logger.warning("the evidence-slot guard could not run at boot", exc_info=True)
+        return []
+
+
+def reset_slot_guard_for_tests() -> None:
+    """Test-only: forget which slots were already warned about."""
+    with _slot_guard_lock:
+        _slot_warned.clear()
+        _independence_warned.clear()
+
+
 def model_for(task: AgentTask) -> "Model":
     """Return the configured model for a given pipeline task.
 
@@ -959,14 +1157,17 @@ def model_for(task: AgentTask) -> "Model":
     (#354/#436 — see `_LoopSafeProviderMixin`) for whichever provider that
     name implies (ADR 0030), so the caller never has to think about which
     event loop it ends up running on. In function mode, returns a
-    FunctionModel (see the seam notes above).
+    FunctionModel (see the seam notes above). An evidence slot resolved to a
+    model outside its evaluated set is reported once (`note_slot_model`, A128).
     """
     global _BUILT_UNDER
     mode = _model_mode()
     if _BUILT_UNDER is None:
         _BUILT_UNDER = mode
     if mode == "real":
-        return provider_model(model_name_for(task), task=task)
+        name = model_name_for(task)
+        note_slot_model(task, name)
+        return provider_model(name, task=task)
     if mode == "function":
         return _function_model_for(task)
     if mode == "cassette":

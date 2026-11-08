@@ -76,6 +76,8 @@ from learning.checks import (
     KEY_AUDIT_AMBIGUOUS,
     KEY_AUDIT_WRONG,
     KEY_HOLD_FLAGS,
+    PROVENANCE_FLAGS,
+    UNSOURCED,
     CheckItem,
     CheckItemDraft,
     Option,
@@ -119,6 +121,7 @@ from learning.item_reports import retired_hashes
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_DRAFT_PENDING_TTL_S,
     CHECK_ITEM_DRAFT_WORKERS,
     CHECK_ITEM_INITIAL_PER_CONCEPT,
     CHECK_ITEM_MAX_CHUNKS,
@@ -131,6 +134,7 @@ from learning.params import (
     CHECK_ITEM_VERIFY_MAX_ITEMS,
     ITEM_AUDIT_VERDICTS,
 )
+from services.academics import course_offering_ids
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
 from services.encryption import (
@@ -168,9 +172,9 @@ _ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at"
 #: What the A124 key backfill reads: every column, and when the key check last
 #: ran on the row (NULL = never).
 _KEY_COLUMNS = _COLUMNS + ",key_checked_at"
-#: Every code the review queue lists an item for: the A113 linter's, A119's
-#: and the A124 key holds.
-QUEUE_FLAGS = (*LINT_FLAGS, *ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS)
+#: Every code the review queue lists an item for: the A113 linter's, A119's,
+#: the A124 key holds and the A128 provenance code (`unsourced`).
+QUEUE_FLAGS = (*LINT_FLAGS, *ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS, *PROVENANCE_FLAGS)
 
 #: What derive_key names the secret the correct mc_reason option's slot is
 #: keyed with (A37): the client is sent each item's question_hash, so the slot
@@ -204,8 +208,15 @@ def _build_row(
     aligned_at: str | None = None,
     verified: bool = False,
     key_checked_at: str | None = None,
+    unsourced: bool = False,
 ) -> dict:
     qh = question_hash(draft.prompt)  # PLAINTEXT, before encryption
+    cited = clean_chunk_ids(draft, allowed)
+    if unsourced and not cited:
+        # A128: drafted from extracted text because the document's indexing
+        # failed — no passage to cite. Stored like any other item; the code
+        # puts it in the review queue and behind its sourced siblings.
+        flags = (*flags, UNSOURCED)
     # A37 review: an mc_reason rubric ends with code's reason criterion.
     rubric = [r.model_dump() for r in stored_rubric(draft)]
     # A37: an mc_reason item's wrong reasons are its distractors' misconceptions,
@@ -248,7 +259,7 @@ def _build_row(
         # confirmation (an admin's approval, an audit verdict "correct").
         "canonical_verified": verified,
         "stepwise": draft.stepwise,
-        "source_chunk_ids": clean_chunk_ids(draft, allowed),
+        "source_chunk_ids": cited,
         "source_document_ids": source_docs,
         "question_hash": qh,
         # A32: every generated item is practice material, never graded coursework.
@@ -257,7 +268,8 @@ def _build_row(
         # the correct one by its letter) — what lint_check_item reads back, so
         # the backfill agrees. Codes only; flagged items are stored, not dropped.
         # A119: then what the alignment check changed (learning.item_alignment);
-        # A124: then a key-hold code when the blind solve disputed the key.
+        # A124: then a key-hold code when the blind solve disputed the key;
+        # A128: then `unsourced` when it cites no passage of a failed index.
         "lint_flags": merge_flags(lint_item(draft.prompt, texts, correct), flags),
         # A119: when the alignment check passed this draft; None = never checked
         # (create_items), which the alignment backfill picks up.
@@ -371,6 +383,7 @@ def _store_screened(
     source_document_ids: Iterable[str] = (),
     limit: int | None = None,
     exclude_ids: Iterable[str] = (),
+    unsourced: bool = False,
 ) -> _ConceptWrite:
     """Store the screened drafts of one concept in ONE upsert, saying what it
     stored and why each mc_reason draft was dropped. `limit` caps the valid
@@ -385,7 +398,9 @@ def _store_screened(
     check's flags and `aligned_at`. A124: a key-checked draft carries
     `key_checked_at` and, agreed, `canonical_verified`; a held one its hold
     code — it is stored, but serves no one, so it takes no `limit` slot and
-    counts toward no A37 floor, and its hold reason reaches the top-up."""
+    counts toward no A37 floor, and its hold reason reaches the top-up. A128:
+    `unsourced` (the call showed passages of a document whose indexing
+    failed) marks every row that cites no chunk."""
     allowed = set(allowed_chunk_ids)
     exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
@@ -414,6 +429,7 @@ def _store_screened(
                     aligned_at=stamp if entry.aligned else None,
                     verified=entry.verified,
                     key_checked_at=stamp if entry.key_checked else None,
+                    unsourced=unsourced,
                 ),
             )
         )
@@ -1258,13 +1274,24 @@ def document_is_item_source(row: dict) -> bool:
     )
 
 
+#: Spec §13 A128: the one `documents.index_status` whose extracted-text
+#: passages are NOT unsourced — indexing skipped by design (the #439 seam:
+#: function mode, no key), a configured mode rather than a failure. Every
+#: other status with no chunks (failed, exhausted, pending after a deferred
+#: attempt, an unknown one) is a failed or unfinished index.
+_SKIPPED_INDEX = "skipped"
+
+
 def source_chunks(doc_row: dict) -> list[dict]:
     """The passages an item may be drafted from. Not a source → []. Indexed →
     its SHARED chunks only (none shared → [], never the fallback). Not indexed
     → its decrypted extracted_text, split by the indexer's block chunker into
     id-less passages (chunk_index 0, 1, …), so ranking bounds what each agent
     call carries exactly as for an indexed document — never the whole text in
-    every batch. Every passage carries its `doc_id`."""
+    every batch. Every passage carries its `doc_id`. A128: a fallback passage
+    of a document whose indexing FAILED (its `index_status` is anything but
+    `skipped`) carries `unsourced: True`, and an item drafted from it that
+    cites no chunk is stored with the `unsourced` code."""
     doc_id = doc_row.get("id")
     if not document_is_item_source(doc_row):
         logger.info("check items: document %s is not shared course material; skipped", doc_id)
@@ -1281,8 +1308,22 @@ def source_chunks(doc_row: dict) -> list[dict]:
     if not text or not str(text).strip():
         logger.warning("check items: document %s has no chunks and no extracted text", doc_id)
         return []
+    unsourced = doc_row.get("index_status") != _SKIPPED_INDEX
+    if unsourced:
+        logger.warning(
+            "check items: document %s is not indexed (index_status=%s); drafting from "
+            "its extracted text — items that cite no passage are stored `unsourced` (A128)",
+            doc_id,
+            doc_row.get("index_status"),
+        )
     return [
-        {"id": None, "chunk_index": i, "chunk_text": piece, "doc_id": doc_id}
+        {
+            "id": None,
+            "chunk_index": i,
+            "chunk_text": piece,
+            "doc_id": doc_id,
+            UNSOURCED: unsourced,
+        }
         for i, piece in enumerate(chunk_document(str(text)))
     ]
 
@@ -1494,6 +1535,9 @@ class _CallSources(NamedTuple):
     passages: list[dict]  # [{id, text}] as the agent reads them
     allowed: set[str]  # chunk ids a draft may cite
     source_docs: list[str]  # every document whose passages the call showed
+    # A128: the call showed extracted-text passages of a document whose
+    # indexing failed (`source_chunks`); a draft citing no chunk is unsourced
+    unsourced: bool = False
 
 
 def _call_sources(ranked_lists: Iterable[list[dict]]) -> _CallSources:
@@ -1507,6 +1551,7 @@ def _call_sources(ranked_lists: Iterable[list[dict]]) -> _CallSources:
     seen: set = set()
     shown_docs: set[str] = set()
     allowed: set[str] = set()
+    unsourced = False
     for ranked in ranked_lists:
         for chunk in ranked:
             pkey = _passage_key(chunk)
@@ -1514,11 +1559,12 @@ def _call_sources(ranked_lists: Iterable[list[dict]]) -> _CallSources:
                 continue
             seen.add(pkey)
             passages.append({"id": chunk.get("id"), "text": chunk.get("chunk_text") or ""})
+            unsourced = unsourced or (not chunk.get("id") and chunk.get(UNSOURCED) is True)
             if chunk.get("doc_id"):
                 shown_docs.add(chunk["doc_id"])
             if chunk.get("id"):
                 allowed.add(chunk["id"])
-    return _CallSources(passages, allowed, sorted(shown_docs))
+    return _CallSources(passages, allowed, sorted(shown_docs), unsourced)
 
 
 class _CallWrite(NamedTuple):
@@ -1958,6 +2004,7 @@ def _write_checked(
                 source_document_ids=sources.source_docs,
                 limit=limit if key in drafts_by_key else None,
                 exclude_ids=exclude_ids,
+                unsourced=sources.unsourced,
             )
         except Exception:
             logger.warning(
@@ -2599,11 +2646,42 @@ def generate_for_document(
 ) -> GenerationOutcome:
     """The upload hook's generation: the document's source passages (A23 —
     shared course material only), then at most CHECK_ITEM_MAX_CONCEPTS_PER_DOC
-    of its concepts. Usage is attributed to the uploader."""
+    of its concepts. Usage is attributed to the uploader.
+
+    A128: it records how drafting ended on the document's row
+    (`check_items_status`, `drafting_status_for`): `done`, `unavailable` (a
+    model or check was unavailable for some concept: a later run drafts it),
+    or `failed` (an exception escaped — re-raised). The upload hook set
+    `pending` first (`mark_drafting`); `drafting_pending` reads it."""
     if not config.LEARNING_LOOP_ENABLED:
         return _NOTHING
+    try:
+        outcome = _generate_for_document(
+            document_id,
+            user_id=user_id,
+            course_id=course_id,
+            concept_names=concept_names,
+            flex=flex,
+        )
+    except BaseException:
+        mark_drafting(document_id, DRAFTING_FAILED)
+        raise
+    mark_drafting(document_id, drafting_status_for(outcome))
+    return outcome
+
+
+def _generate_for_document(
+    document_id: str,
+    *,
+    user_id: str,
+    course_id: str,
+    concept_names: Iterable[str],
+    flex: bool,
+) -> GenerationOutcome:
     rows = table("documents").select(
-        "id,user_id,shareability,shareability_confidence,extracted_text",
+        # index_status: A128 — an unindexed source drafts `unsourced` items
+        # unless its indexing was skipped by design (`source_chunks`)
+        "id,user_id,shareability,shareability_confidence,extracted_text,index_status",
         filters={"id": f"eq.{document_id}", "deleted_at": "is.null"},
         limit=1,
     )
@@ -2622,6 +2700,96 @@ def generate_for_document(
         document_id=document_id,
         max_concepts=CHECK_ITEM_MAX_CONCEPTS_PER_DOC,
     )
+
+
+# ── per-document drafting status (A128) ────────────────────────────────────
+#
+# `documents.check_items_status` (migration 20261108091912_learning_document_
+# drafting.sql) says where an upload's check-item drafting is: `pending` from
+# the upload hook until a run ends, then `done`, `unavailable` or `failed`;
+# NULL = never drafted (a pre-A128 row, or the loop off). `check_items_at` is
+# when the status was set. The loop reads it for one thing: while a student's
+# own upload in a course with no servable item is still being drafted, the
+# probe and "Check me" say "preparing", not "no check items". Bookkeeping
+# only: a write that fails (or meets a database the migration has not reached)
+# logs a WARNING and never fails an upload or a drafting run; a read that
+# fails answers "not pending" — the pre-A128 state.
+
+DRAFTING_PENDING = "pending"
+DRAFTING_DONE = "done"
+DRAFTING_FAILED = "failed"
+DRAFTING_UNAVAILABLE = "unavailable"
+#: The CHECK of `documents.check_items_status` (its migration pins the same list).
+DRAFTING_STATUSES = (DRAFTING_PENDING, DRAFTING_DONE, DRAFTING_FAILED, DRAFTING_UNAVAILABLE)
+
+
+def drafting_status_for(outcome: GenerationOutcome) -> str:
+    """How a finished run ends a document's drafting: `unavailable` when any
+    concept it attempted could not be drafted for want of a model or check
+    (the run did not finish its work — a later one drafts it), else `done` —
+    items stored, every concept already full, or nothing to draft from."""
+    return DRAFTING_UNAVAILABLE if outcome.unavailable else DRAFTING_DONE
+
+
+def _stamp(at: datetime) -> str:
+    """UTC with a `Z`: the value also travels in a PostgREST filter."""
+    return at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def mark_drafting(document_id: str, status: str) -> None:
+    """Record `status` (one of DRAFTING_STATUSES) on the document's row, now.
+    Never raises on a failed write (bookkeeping, see above)."""
+    if status not in DRAFTING_STATUSES:
+        raise ValueError(f"not a drafting status: {status!r}")
+    try:
+        table("documents").update(
+            {"check_items_status": status, "check_items_at": _stamp(_utcnow())},
+            filters={"id": f"eq.{document_id}"},
+            prefer_return_minimal=True,
+        )
+    except Exception as exc:
+        # The class only, no traceback: bookkeeping, and before the migration
+        # runs every upload meets it (a traceback per upload is noise).
+        logger.warning(
+            "check items: drafting status %r not recorded for document %s (%s)",
+            status,
+            document_id,
+            type(exc).__name__,
+        )
+
+
+def drafting_pending(user_id: str, course_id: str | None) -> bool:
+    """Whether one of the student's OWN live uploads in the course is still
+    being drafted: `pending`, set within CHECK_ITEM_DRAFT_PENDING_TTL_S. The
+    student's own, because the loop then says "from your upload" (and a
+    classmate's upload is not theirs to hear about). One `limit=1` read; False
+    on a read failure or when the course's offerings cannot be told."""
+    if not course_id:
+        return False
+    try:
+        offerings = course_offering_ids(course_id)
+        if not offerings:
+            return False
+        cutoff = _stamp(_utcnow() - timedelta(seconds=CHECK_ITEM_DRAFT_PENDING_TTL_S))
+        rows = table("documents").select(
+            "id",
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"in.({','.join(pg_quote_value(o) for o in offerings)})",
+                "check_items_status": f"eq.{DRAFTING_PENDING}",
+                "check_items_at": f"gt.{cutoff}",
+                "deleted_at": "is.null",
+            },
+            limit=1,
+        )
+    except Exception as exc:
+        logger.warning(
+            "check items: drafting status unreadable for course %s (%s); not preparing",
+            course_id,
+            type(exc).__name__,
+        )
+        return False
+    return bool(rows)
 
 
 # ── upload-time drafting pool ──────────────────────────────────────────────

@@ -1235,7 +1235,8 @@ export interface LoopPendingGrade { kind: 'check' | 'probe'; question_hash: stri
 export type LoopProbeNext = LoopLearningScope & (
   | ({ done: false } & LoopProbeItem)
   | { done: false; pending_grade: LoopPendingGrade }
-  | { done: true; phase: LoopPhase; no_check_items?: boolean });
+  // A128: `preparing` (present only when true) — none yet: the student's upload is being drafted
+  | { done: true; phase: LoopPhase; no_check_items?: boolean; preparing?: boolean });
 export type LoopProbeAnswerResult = LoopLearningScope & (
   | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
   // unavailable → counted as not asked; refused (A33) → the item stays posed;
@@ -1272,6 +1273,8 @@ export interface LoopStartResult extends LoopLearningScope {
   graph_state?: unknown;
   /** Present at the hard level: the opener is then a template, never a 429 (A27). */
   budget?: LoopBudgetNotice | null;
+  /** A128: the opener's course-material retrieval failed (present only when true). */
+  materials_unavailable?: boolean;
 }
 /** A loop turn's `done.data` / JSON body (HANDOFF-07 §Symbols). */
 export interface LoopTurnResult extends ChatResult {
@@ -1280,6 +1283,9 @@ export interface LoopTurnResult extends ChatResult {
   budget?: LoopBudgetNotice | null;
   learner_state?: LoopLearnerState[];
   hint_offer?: { rung: number } | null;
+  /** A128: this turn's course-material retrieval failed — present (true) on the
+   *  session's FIRST such turn only; the UI shows one calm note from it. */
+  materials_unavailable?: boolean;
   // submissions (/check/answer) add these
   graded?: boolean;
   verdict?: string | null;
@@ -1296,6 +1302,8 @@ export interface LoopCheckNext extends LoopLearningScope {
   check?: LoopCheckItem | null;
   pending_grade?: LoopPendingGrade | null;
   plan_done?: boolean;
+  /** A128: no check yet because the student's upload is still being drafted. */
+  preparing?: boolean;
 }
 /** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
  *  is the next `[ACTION: hint]` turn (requestLoopHintTurn). */
@@ -2073,7 +2081,8 @@ export type CheckItemLintFlag =
   | 'key_disputed'
   | 'key_unsolved'
   | 'key_audit_wrong'
-  | 'key_audit_ambiguous';
+  | 'key_audit_ambiguous'
+  | 'unsourced';
 /** What staff judge an item's key by (decrypted by the server for admins only). */
 export interface AdminCheckItemText {
   prompt: string | null;

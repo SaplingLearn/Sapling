@@ -27,7 +27,10 @@ from learning.params import (
 
 
 class ProbeItem(Protocol):
-    """The caller binds a stored check item to the student's node_id."""
+    """The caller binds a stored check item to the student's node_id. It may
+    also say `unsourced: bool` (spec §13 A128: drafted from extracted text
+    after a failed index) — read with a False default, so an item without it
+    ranks as sourced."""
 
     id: str
     node_id: str
@@ -274,6 +277,9 @@ def next_probe_item(
             0 if PROBE_TARGET_LO <= es <= PROBE_TARGET_HI else 1,
             abs(es - mid),
             it.difficulty,
+            # A128: among equal challenges an item with its sources goes first
+            # (never ahead of the adaptive difficulty: the diagnosis decides that)
+            bool(getattr(it, "unsourced", False)),
             it.question_hash,
         )
 

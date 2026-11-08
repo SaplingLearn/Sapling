@@ -465,7 +465,7 @@ def test_start_runs_no_model_writes_no_evidence_and_records_the_pose(
     tables["check_items"] = [item("k1", "q1")]
     with (
         patch("routes.learn_loop.grade_answer") as grade,
-        patch("routes.learn_loop.retrieve_chunks") as rag,
+        patch("routes.learn_loop.retrieve_chunks_detailed") as rag,
         patch("routes.learn_loop.store_brief") as brief,
     ):
         assert client.post(START, json={"course_id": "c", "user_id": "u"}).status_code == 200

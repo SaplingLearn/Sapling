@@ -83,6 +83,19 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         (summary | first_chunk — what was scored), score (cosine
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
+rag.embedding_breaker_open    error     reason (auth | failures), trial (a failed half-open trial
+                                        re-opened it), error_type (a class, never a message),
+                                        status_code, failures, cooldown_s — ONE per open of the
+                                        embeddings circuit breaker (spec §13 A128); while open,
+                                        retrieval and indexing report failed without calling
+system.unevaluated_slot       system    slot, model, reason (pending_claude_eval |
+                                        not_evaluated) — an evidence-producing model slot runs a
+                                        model outside its evaluated set; once per process per
+                                        (slot, model), never blocking (spec §13 A128)
+system.slot_not_independent   system    slot, model, independent_of — a slot whose verdict must
+                                        come from a different model than another's (A22: the
+                                        grader's second opinion; A124: the key solve vs the
+                                        drafter) resolves to the same model; once per process
 learn.answer_refused          audit     reason (grader_directive / role_marker /
                                         addresses_grader / too_long / disowned_answer), format,
                                         check_item_id, request_id, rubric_items, directives,
@@ -102,7 +115,10 @@ zpd.step                      usage     concept_id, question_hash, phase, channe
                                         optional tier, grader_backend (omitted when unknown;
                                         deterministic / gemini / gemini_second / claude /
                                         claude_second / jev — a model grade names the provider
-                                        of its slot, spec §13 A116)
+                                        of its slot, spec §13 A116), retrieval ("failed" only:
+                                        a teach turn on the step's concept ran with its course
+                                        material retrieval failed since the concept's last
+                                        check; omitted otherwise, spec §13 A128)
                                         (learning loop PKG-06, spec §6)
 zpd.offer                     usage     accepted, band
 zpd.band_adjust               usage     direction, trigger, window_stats
@@ -281,6 +297,19 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # while their uploads stay in classmates' retrieval, with nothing saying
     # so. Rare and per-user, so category="error" is affordable on the feed.
     "rag.visibility_resync_failed",
+    # Learning-loop spec §13 A128: the embeddings circuit breaker opened (an
+    # invalid key opens it at once; EMBED_BREAKER_FAILURES service failures in
+    # a row otherwise). ONE per open — a refused call emits nothing, so a dead
+    # key costs one row per cooldown, not one per tutor turn. category="error".
+    "rag.embedding_breaker_open",
+    # Spec §13 A128: an evidence-producing model slot (agents/_providers.py::
+    # EVIDENCE_SLOTS) resolves to a model outside its evaluated set — an env
+    # flip, or a pending-eval slot on claude-* — and one that must differ from
+    # another slot's model (A22's second opinion, A124's key solve) does not.
+    # Once per process per (slot, model); warn only, never block.
+    # category="system": a fact about the process, never a student's activity.
+    "system.unevaluated_slot",
+    "system.slot_not_independent",
     # Learning loop PKG-04 (spec §6, §13 A8): one check_items agent call (a
     # batch of concepts) or one concept's item write failed — an honest
     # degrade (ADR 0024), category="error"; payload document_id, course_id,

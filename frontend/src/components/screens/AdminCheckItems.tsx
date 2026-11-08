@@ -59,6 +59,8 @@ export const LINT_FLAG_LABELS: Record<CheckItemLintFlag, string> = {
   key_unsolved: "An independent solve found the passages don't settle it",
   key_audit_wrong: "An audit found the key wrong",
   key_audit_ambiguous: "An audit found the question ambiguous",
+  // spec §13 A128: provenance, not a flaw — its upload failed to index
+  unsourced: "Drafted from the upload's raw text (indexing failed): no source passages",
 };
 
 export const REPORT_REASON_LABELS: Record<LoopReportReason, string> = {

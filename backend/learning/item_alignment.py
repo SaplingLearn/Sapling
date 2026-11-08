@@ -38,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import NamedTuple
 
-from learning.checks import KEY_HOLD_FLAGS
+from learning.checks import KEY_HOLD_FLAGS, PROVENANCE_FLAGS
 from learning.item_lint import LINT_FLAGS
 
 RUBRIC_UNASKED_DROPPED = "rubric_unasked_dropped"
@@ -161,10 +161,15 @@ def align(
 def merge_flags(*flag_sets: Iterable[str] | None) -> list[str]:
     """One stored lint_flags list from several sets: the linter's codes in
     LINT_FLAGS order, then the alignment codes in ALIGNMENT_FLAGS order, then
-    the A124 key-hold codes in checks.KEY_HOLD_FLAGS order; an unknown code is
+    the A124 key-hold codes in checks.KEY_HOLD_FLAGS order, then the A128
+    provenance codes in checks.PROVENANCE_FLAGS order; an unknown code is
     dropped (the column holds known codes only)."""
     have = {f for flags in flag_sets for f in flags or ()}
-    return [f for f in (*LINT_FLAGS, *ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS) if f in have]
+    return [
+        f
+        for f in (*LINT_FLAGS, *ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS, *PROVENANCE_FLAGS)
+        if f in have
+    ]
 
 
 def alignment_flags(flags: Iterable[str] | None) -> list[str]:
@@ -174,7 +179,8 @@ def alignment_flags(flags: Iterable[str] | None) -> list[str]:
 
 
 def kept_flags(flags: Iterable[str] | None) -> list[str]:
-    """The stored codes no linter run can see again — the alignment codes and
-    the A124 key-hold codes — which a re-lint or an alignment rewrite keeps."""
+    """The stored codes no linter run can see again — the alignment codes, the
+    A124 key-hold codes and the A128 provenance codes — which a re-lint or an
+    alignment rewrite keeps."""
     have = set(flags or ())
-    return [f for f in (*ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS) if f in have]
+    return [f for f in (*ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS, *PROVENANCE_FLAGS) if f in have]

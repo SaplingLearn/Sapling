@@ -316,6 +316,12 @@ CHECK_ITEM_MC_MIN_PER_CONCEPT = 2
 # † focused mc_reason-only top-up calls per concept per pass, each for exactly
 # the missing count; a concept still below is left to the next run or backfill.
 CHECK_ITEM_MC_TOPUP_CALLS = 1
+# † spec §13 A128: how long an upload's `documents.check_items_status =
+# 'pending'` still means "practice questions are being prepared". A drafting
+# run takes minutes; one older than this was most likely dropped (a deploy
+# drops the queued drafting, A41 (4); a crash leaves the mark behind), and
+# promising it to the student would no longer be honest.
+CHECK_ITEM_DRAFT_PENDING_TTL_S = 2 * 3600
 
 # ── PKG-06: ZPD policy layer (spec §3.2 / §3.3 / §3.5, §13 A15/A17/A18) ────
 # FSRS grade indices (§3.2 rating map). They equal learning.fsrs.Rating

@@ -130,6 +130,12 @@ def test_event_taxonomy_is_pinned():
         # #629: the Class Intel toggle moved but course_chunks.visibility did
         # not follow. A privacy control that fails silently is not one.
         "rag.visibility_resync_failed",
+        # Learning-loop spec §13 A128: one per open of the embeddings breaker,
+        # and the evidence-slot guard's two warnings. Emit coverage lives in
+        # test_learning_degraded_mode.py.
+        "rag.embedding_breaker_open",
+        "system.unevaluated_slot",
+        "system.slot_not_independent",
         # Learning loop PKG-04 (spec §6, A8): a check-item batch or write failed.
         "learn.check_items_failed",
         # PKG-05 reopen (spec §6, §13 A33): an answer that addressed the grader
