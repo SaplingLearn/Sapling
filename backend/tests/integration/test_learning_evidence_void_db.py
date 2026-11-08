@@ -260,11 +260,18 @@ def test_the_void_record_is_append_only_and_backend_only(db_conn):
             assert db_conn.execute(
                 "SELECT has_table_privilege(%s, %s, 'SELECT') AS ok", (role, f"public.{name}")
             ).fetchone()["ok"] is False
-    for privilege, allowed in (("SELECT", True), ("INSERT", True), ("UPDATE", False), ("DELETE", False)):
-        assert db_conn.execute(
-            "SELECT has_table_privilege('service_role', 'public.learning_evidence_voids', %s) AS ok",
-            (privilege,),
-        ).fetchone()["ok"] is allowed
+    # 20261108115157: the backend holds SELECT and INSERT only on both records.
+    # Supabase's default privileges grant service_role ALL on a new table, so
+    # the A123 GRANT alone left UPDATE, DELETE and TRUNCATE in place.
+    for name in ("learning_evidence_voids", "misconception_attempts"):
+        for privilege, allowed in (
+            ("SELECT", True), ("INSERT", True),
+            ("UPDATE", False), ("DELETE", False), ("TRUNCATE", False),
+        ):
+            assert db_conn.execute(
+                "SELECT has_table_privilege('service_role', %s, %s) AS ok",
+                (f"public.{name}", privilege),
+            ).fetchone()["ok"] is allowed, (name, privilege)
     for fn in (
         "learning_evidence_void_pending(text,text)",
         "learning_evidence_void_snapshot(text,text,text)",

@@ -294,15 +294,19 @@ unfinished engineering requirement.
    `20261108093359_learning_posttest_outcomes.sql` (A126),
    `20261108103333_learning_evidence_commit_reconcile.sql` (A123 × A127),
    `20261108105254_learning_posttest_anchors_void.sql` (A123 × A126: the
-   post-test anchors leave void rows out, as `evidence_spans` does) and
+   post-test anchors leave void rows out, as `evidence_spans` does),
    `20261108110805_learning_misconception_resolved_reason.sql` (A123 × A127:
    the `misconceptions.resolved_reason` CHECK admits A127's
    `correct_unassisted_isomorph` beside A123's `evidence_void`; code ahead of
    it has every `misconceptions.resolve()` refused, so no misconception closes
-   and each refused call logs a WARNING). The verifier's `--db-audit` requires
-   the columns they add and the `posttest_anchors` function. It reads no
-   constraint body: what holds 110805, a CHECK change, is its ledger check,
-   which fails while any migration file is unapplied. Code ahead of the A126
+   and each refused call logs a WARNING) and
+   `20261108115157_learning_evidence_void_grants.sql` (A123: service_role keeps
+   only SELECT and INSERT on `learning_evidence_voids` and
+   `misconception_attempts`; no code depends on it). The verifier's
+   `--db-audit` requires the columns they add and the `posttest_anchors`
+   function. It reads no constraint body or grant: what holds 110805 and
+   115157 is its ledger check, which fails while any migration file is
+   unapplied. Code ahead of the A126
    migration fails `/posttest/start` (its pose upsert names the new columns)
    and leaves the admin funnel `null`; never deploy it first.
    **`learning_evidence_commit` is re-created three times; only the last is

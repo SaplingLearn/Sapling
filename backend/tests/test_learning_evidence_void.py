@@ -280,3 +280,31 @@ def test_the_void_rule_on_rows_and_poses():
     assert evidence_void.pose_is_void({"course_id": "c1", "question_hash": "h1"}, retired)
     assert not evidence_void.pose_is_void({"course_id": "c1", "question_hash": "h2"}, retired)
     assert not evidence_void.pose_is_void({"course_id": None, "question_hash": "h1"}, retired)
+
+
+def test_the_backend_holds_select_and_insert_only_on_both_records():
+    """Supabase's default privileges grant service_role ALL on a new public
+    table, so A123's GRANT SELECT, INSERT alone changed nothing there.
+    20261108115157 revokes everything from service_role on both append-only
+    records and grants back exactly SELECT and INSERT, guarded (a plain
+    Postgres has no service_role). The real-DB half:
+    tests/integration/test_learning_evidence_void_db.py."""
+    import pathlib
+    import re
+
+    migrations = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+    (grants,) = sorted(migrations.glob("*_learning_evidence_void_grants.sql"))
+    (a123,) = sorted(migrations.glob("*_learning_evidence_void.sql"))
+    assert grants.name > a123.name, "must sort after A123's migration"
+    ddl = "\n".join(
+        line for line in grants.read_text().splitlines() if not line.lstrip().startswith("--")
+    )
+    guard = "IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN"
+    assert guard in ddl
+    for table in ("learning_evidence_voids", "misconception_attempts"):
+        revoke = f"REVOKE ALL ON TABLE {table} FROM service_role;"
+        grant = f"GRANT SELECT, INSERT ON TABLE {table} TO service_role;"
+        assert ddl.index(guard) < ddl.index(revoke) < ddl.index(grant)
+    granted = re.findall(r"GRANT ([^;]*?) ON TABLE \w+ TO service_role;", ddl)
+    assert granted == ["SELECT, INSERT", "SELECT, INSERT"]
+
