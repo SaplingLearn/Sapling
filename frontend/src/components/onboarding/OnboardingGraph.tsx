@@ -81,7 +81,7 @@ function makeAmbient(): AmbientNode[] {
 export function OnboardingGraph({ phase, zoom, activeChapter, completed, speed = 0.5 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const live = useRef({ phase, zoom, activeChapter, completed, speed });
-  live.current = { phase, zoom, activeChapter, completed, speed };
+  useEffect(() => { live.current = { phase, zoom, activeChapter, completed, speed }; });
   /** Set while the loop is paused (reduced motion), so prop changes still repaint. */
   const repaint = useRef<(() => void) | null>(null);
   useEffect(() => { repaint.current?.(); }, [phase, zoom, activeChapter, completed]);
