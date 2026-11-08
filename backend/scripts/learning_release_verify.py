@@ -202,6 +202,39 @@ REQUIRED_COLUMNS = {
         "reason": "text",
         "skipped_at": "timestamp with time zone",
     },
+    # spec §13 A138: an answered segment prequestion (the guess encrypted); A76's
+    # re-check rule reads it on every grade
+    "learning_prequestions": {
+        "id": "text",
+        "user_id": "text",
+        "session_id": "text",
+        "course_id": "text",
+        "node_id": "text",
+        "check_item_id": "text",
+        "question_hash": "text",
+        "format": "text",
+        "difficulty": "smallint",
+        "no_idea": "boolean",
+        "guess_json": "text",
+        "posed_at": "timestamp with time zone",
+        "answered_at": "timestamp with time zone",
+    },
+    # spec §13 A139: a served self-explanation prompt and its reply (encrypted)
+    "learning_self_explanations": {
+        "id": "text",
+        "user_id": "text",
+        "session_id": "text",
+        "course_id": "text",
+        "node_id": "text",
+        "question_hash": "text",
+        "juncture": "text",
+        "rung": "smallint",
+        "prompted_at": "timestamp with time zone",
+        "status": "text",
+        "closed_at": "timestamp with time zone",
+        "reply_text": "text",
+        "reply_chars": "integer",
+    },
 }
 # This fence must not manufacture historical activity during migration.
 # Other column constraints/defaults remain outside this metadata-only contract.
