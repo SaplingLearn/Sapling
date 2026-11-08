@@ -760,6 +760,54 @@ export interface LoopLearningGain {
   funnel: LoopFunnelWindow[] | null;
 }
 
+/** spec §13 A137: one post-test window's pairs against the range's loop spend.
+ *  Intervals are [lo, hi]; hi null = unbounded (a resample with no pair or no
+ *  gain); the whole interval is null below two students. */
+export interface LoopCostWindow {
+  window_days: number;
+  pairs: number;
+  students: number;
+  /** improved − worse: Σ(post − pre) over the pairs */
+  gain_points: number;
+  per_pair: number | null;
+  per_pair_ci: [number | null, number | null] | null;
+  /** null unless gain_points > 0: no cost per gain without a gain */
+  per_gain_point: number | null;
+  per_gain_point_ci: [number | null, number | null] | null;
+}
+
+/** The loop's spend overall (course_id null) or for one course (A137). */
+export interface LoopCostBlock {
+  course_id: string | null;
+  cost_usd: number;
+  /** the tutor tiers: what spec §3.5's target prices */
+  tutor_usd: number;
+  /** check-item drafting and its checks (course assets) */
+  drafting_usd: number;
+  rows: number;
+  /** rows with no cost_usd (an unpriced model): no dollars added */
+  unpriced_rows: number;
+  active_students: number;
+  per_active_student_month: number | null;
+  tutor_per_active_student_month: number | null;
+  /** per_active_student_month ÷ the §3.5 target */
+  target_ratio: number | null;
+  sessions: number;
+  per_session: number | null;
+  windows: LoopCostWindow[];
+}
+
+/** spec §13 A137: what the loop cost against what it measurably taught. */
+export interface LoopCostPerGain {
+  target_usd_per_student_month: number;
+  range_days: number | null;
+  ci: { method: string; level: number; resamples: number; seed: string };
+  overall: LoopCostBlock;
+  courses: LoopCostBlock[];
+  /** spend with no course of its own and no session (overall only) */
+  unattributed: { cost_usd: number; rows: number };
+}
+
 /** GET /api/admin/analytics/learning-loop — spec §10 KPIs and gates. */
 export interface LearningLoopKpisData {
   range: { from: string; to: string };
@@ -794,6 +842,9 @@ export interface LearningLoopKpisData {
   /** post-tests answered in the range, per fixed window (spec §13 A112), and
    *  the funnel of the windows that opened in it (A126) */
   learning_gain: LoopLearningGain;
+  /** spec §13 A137: the loop's spend against the learning gain; null when the
+   *  spend could not be read, absent from a pre-A137 backend. */
+  cost_per_gain?: LoopCostPerGain | null;
   /** spec §13 A128: the API process's active evidence-slot warnings (its current
    *  configuration, not the range); absent from a pre-A128 backend. */
   slot_warnings?: LoopSlotWarning[];

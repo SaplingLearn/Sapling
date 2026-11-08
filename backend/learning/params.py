@@ -601,6 +601,10 @@ POSTTEST_HIDDEN_COUNT_MAX = 1000
 LEARNING_GAIN_CI_LEVEL = 0.95
 LEARNING_GAIN_BOOTSTRAP_RESAMPLES = 2000  # †
 LEARNING_GAIN_BOOTSTRAP_SEED = "sapling-learning-gain-v1"
+# † spec §3.5's target: the routed tutor plan ≈ $0.36 per student-month (a
+# no-cache estimate that prices the tutor tiers only). The cost-per-gain report
+# (learning/cost_per_gain.py, A137) sets the measured loop spend against it.
+LOOP_COST_TARGET_USD_PER_STUDENT_MONTH = 0.36
 # † days from the anchor to the answer, binned for the report: [7, 14), [14,
 # 28), [28, 42), [42, ∞) — the actual delay, not the window's label
 POSTTEST_DELAY_BIN_EDGES_DAYS = (7, 14, 28, 42)

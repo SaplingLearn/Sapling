@@ -666,3 +666,15 @@ describe("Learning loop panel — model slot warnings (spec §13 A128)", () => {
     expect(screen.queryByTestId("admin-loop-slot-warnings")).toBeNull();
   });
 });
+
+describe("Learning loop panel — cost per learning gain (spec §13 A137)", () => {
+  it("shows the cost section under the gain, unavailable when unread, absent for an older backend", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, cost_per_gain: null }} />);
+    expect(screen.getByText("What did it cost?")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-cost-unavailable")).toBeTruthy();
+    cleanup();
+    render(<LearningLoopPanelBody d={{ ...loopFixture, cost_per_gain: undefined }} />);
+    expect(screen.queryByText("What did it cost?")).toBeNull();
+    expect(screen.queryByTestId("admin-loop-cost")).toBeNull();
+  });
+});
