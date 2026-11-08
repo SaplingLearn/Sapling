@@ -228,16 +228,20 @@ function CalibrationTable({ title, report, testid }: { title: string; report: Lo
 /** A paired change in percentage points (post − pre), signed; "—" when n = 0. */
 const fmtPp = (v: number | null) => (v == null ? "—" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)} pp`);
 
-function GainRow({ testid, label, s, posttests }: {
+function GainRow({ testid, label, s, posttests, excludedRetired }: {
   testid: string;
   label: string;
   s: LoopGainSummary;
   posttests?: number;
+  excludedRetired?: number;
 }) {
   return (
     <tr data-testid={testid}>
       <td style={td}>{label}</td>
       <td style={tdNum}>{posttests ?? "—"}</td>
+      <td style={tdNum} data-testid={excludedRetired == null ? undefined : `${testid}-excluded`}>
+        {excludedRetired ?? "—"}
+      </td>
       <td style={tdNum}>{s.n}</td>
       <td style={tdNum}>{fmtRate(s.pre_correct_rate)}</td>
       <td style={tdNum}>{fmtRate(s.post_correct_rate)}</td>
@@ -252,7 +256,8 @@ function GainRow({ testid, label, s, posttests }: {
  *  the "no practice for a while before the post-test" stratum under each
  *  window. Observed answers only — never the mastery estimate. */
 function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain"] }) {
-  if (!gain.windows.some(w => w.posttests > 0)) {
+  // an outcome excluded for a retired item still shows the table: the drop stays visible
+  if (!gain.windows.some(w => w.posttests > 0 || w.excluded_retired > 0)) {
     return (
       <div data-testid="admin-loop-gain" style={{ color: "var(--text-muted)", fontSize: 13 }}>
         No unaided post-test outcomes in this range.
@@ -266,6 +271,7 @@ function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain
           <tr>
             <th style={th}>Window</th>
             <th style={{ ...th, textAlign: "right" }}>Post-tests</th>
+            <th style={{ ...th, textAlign: "right" }}>Excluded: item retired</th>
             <th style={{ ...th, textAlign: "right" }}>Pairs</th>
             <th style={{ ...th, textAlign: "right" }}>Pre-test correct</th>
             <th style={{ ...th, textAlign: "right" }}>Post-test correct</th>
@@ -276,7 +282,13 @@ function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain
         <tbody>
           {gain.windows.map(w => (
             <React.Fragment key={w.window_days}>
-              <GainRow testid={`admin-loop-gain-${w.window_days}`} label={`${w.window_days} days`} s={w} posttests={w.posttests} />
+              <GainRow
+                testid={`admin-loop-gain-${w.window_days}`}
+                label={`${w.window_days} days`}
+                s={w}
+                posttests={w.posttests}
+                excludedRetired={w.excluded_retired}
+              />
               <GainRow
                 testid={`admin-loop-gain-${w.window_days}-delayed`}
                 label={`↳ no practice in the ${gain.delayed_min_days} days before`}
@@ -319,6 +331,7 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
       <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "0 0 12px" }}>
         Each concept&apos;s first unaided probe answer (the pretest) against its unaided delayed post-test,
         at fixed windows after the concept was first graded. Answers only, never the mastery estimate.
+        An answer to a question later retired as broken is left out and counted under &ldquo;Excluded&rdquo;.
       </p>
       <LearningGainTable gain={d.learning_gain} />
       {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}

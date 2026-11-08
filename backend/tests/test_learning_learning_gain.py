@@ -185,3 +185,50 @@ def test_beliefs_never_enter_the_report():
     )
     assert plain == with_beliefs
     assert plain["windows"][0]["worse"] == 1
+
+
+# ── A113: an outcome on an item retired as broken is no valid measurement ────
+
+
+def _asked(pose: dict, *, course: str = "c1", qh: str) -> dict:
+    """A pose with the course item it asked (posttest_poses.course_id/question_hash)."""
+    return {**pose, "course_id": course, "question_hash": qh}
+
+
+def test_an_outcome_on_a_retired_item_is_left_out_and_counted():
+    """An item retired through A113's review path leaves its window's
+    post-tests, pairs and delayed stratum, and `excluded_retired` counts it, so
+    the drop is visible. The key is the COURSE item (the same hash in another
+    course is another item), and only an unassisted outcome is counted (a
+    no-credit grade never was one)."""
+    pretests = {"ev-a": False, "ev-b": True}
+    poses = [
+        _asked(_pose(W1, correct=True, anchor="ev-a", days=9.0), qh="q-broken"),
+        _asked(_pose(W1, correct=False, anchor="ev-b", days=9.0), qh="q-fine"),
+        _asked(_pose(W1, correct=True, anchor="ev-a"), course="c2", qh="q-broken"),
+        _asked(_pose(W1, correct=True, anchor="ev-a", rung=RUNG_NO_CREDIT_MIN), qh="q-broken"),
+        _asked(_pose(W2, correct=True, anchor="ev-b", days=9.0), qh="q-broken"),
+    ]
+    kept = {w["window_days"]: w for w in lg.learning_gain(poses, pretests)["windows"]}
+    assert (kept[W1]["posttests"], kept[W1]["n"], kept[W1]["excluded_retired"]) == (3, 3, 0)
+    assert (kept[W2]["posttests"], kept[W2]["excluded_retired"]) == (1, 0)
+    out = {
+        w["window_days"]: w
+        for w in lg.learning_gain(poses, pretests, retired={("c1", "q-broken")})["windows"]
+    }
+    first = out[W1]
+    assert (first["posttests"], first["n"], first["excluded_retired"]) == (2, 2, 1)
+    assert (first["improved"], first["same"], first["worse"]) == (1, 0, 1)
+    assert first["delayed"]["n"] == 2  # c1/q-fine and c2's item; the retired one is gone
+    second = out[W2]
+    assert (second["posttests"], second["n"], second["excluded_retired"]) == (0, 0, 1)
+    assert second["pre_correct_rate"] is None and second["paired_difference"] is None
+
+
+def test_a_pose_names_its_course_item():
+    assert lg.pose_item({"course_id": "c1", "question_hash": "q"}) == ("c1", "q")
+    for partial in ({"course_id": "c1"}, {"question_hash": "q"}, {"course_id": "", "question_hash": "q"}):
+        assert lg.pose_item(partial) is None
+    assert lg.learning_gain([_pose()], {"ev-1": True}, retired={("c1", "q")})["windows"][0][
+        "posttests"
+    ] == 1  # a pose that names no item is never a retired one

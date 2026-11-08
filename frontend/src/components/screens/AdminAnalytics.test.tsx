@@ -116,12 +116,12 @@ const learningGain = {
   delayed_min_days: 7,
   windows: [
     {
-      window_days: 7, posttests: 6,
+      window_days: 7, posttests: 6, excluded_retired: 0,
       n: 5, pre_correct_rate: 0.4, post_correct_rate: 0.8, paired_difference: 0.4,
       improved: 2, same: 3, worse: 0,
       delayed: { n: 2, pre_correct_rate: 0.5, post_correct_rate: 1, paired_difference: 0.5, improved: 1, same: 1, worse: 0 },
     },
-    { window_days: 28, posttests: 0, ...emptyGain, delayed: emptyGain },
+    { window_days: 28, posttests: 0, excluded_retired: 0, ...emptyGain, delayed: emptyGain },
   ],
 };
 const loopFixture = {
@@ -415,11 +415,46 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
       ...loopFixture,
       learning_gain: {
         delayed_min_days: 7,
-        windows: [7, 28].map(window_days => ({ window_days, posttests: 0, ...emptyGain, delayed: emptyGain })),
+        windows: [7, 28].map(window_days => ({
+          window_days, posttests: 0, excluded_retired: 0, ...emptyGain, delayed: emptyGain,
+        })),
       },
     };
     render(<LearningLoopPanelBody d={none} />);
     expect(screen.getByTestId("admin-loop-gain").textContent).toContain("No unaided post-test outcomes in this range.");
     expect(screen.queryByTestId("admin-loop-gain-7")).toBeNull();
+  });
+
+  it("shows per window how many outcomes a retired item left out (spec §13 A112 × A113)", () => {
+    const withRetired = {
+      ...loopFixture,
+      learning_gain: {
+        ...learningGain,
+        windows: [{ ...learningGain.windows[0], excluded_retired: 2 }, learningGain.windows[1]],
+      },
+    };
+    render(<LearningLoopPanelBody d={withRetired} />);
+    expect(screen.getByText("Excluded: item retired")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-gain-7-excluded").textContent).toBe("2");
+    expect(screen.getByTestId("admin-loop-gain-28-excluded").textContent).toBe("0");
+    // the delayed stratum is a subset of the window's pairs: no count of its own
+    expect(screen.queryByTestId("admin-loop-gain-7-delayed-excluded")).toBeNull();
+    expect(within(screen.getByTestId("admin-loop-gain-7-delayed")).getAllByText("—").length).toBe(2);
+  });
+
+  it("keeps the table when every outcome in range was left out for a retired item", () => {
+    const allRetired = {
+      ...loopFixture,
+      learning_gain: {
+        delayed_min_days: 7,
+        windows: [
+          { window_days: 7, posttests: 0, excluded_retired: 3, ...emptyGain, delayed: emptyGain },
+          { window_days: 28, posttests: 0, excluded_retired: 0, ...emptyGain, delayed: emptyGain },
+        ],
+      },
+    };
+    render(<LearningLoopPanelBody d={allRetired} />);
+    expect(screen.getByTestId("admin-loop-gain").textContent).not.toContain("No unaided post-test outcomes");
+    expect(screen.getByTestId("admin-loop-gain-7-excluded").textContent).toBe("3");
   });
 });

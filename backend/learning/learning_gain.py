@@ -23,6 +23,16 @@ counts — and the same over the "delayed" stratum, the pairs whose concept had
 no evidence for at least POSTTEST_DELAYED_MIN_DAYS before the pose (practice
 no longer postpones a window, so a pose may follow recent practice).
 
+An outcome whose item was RETIRED through spec §13 A113's review path (a staff
+retire, or the auto-retire at ITEM_REPORT_RETIRE_MIN_REPORTERS distinct
+reporters) is no valid measurement — the item was retired as broken — so it is
+left out of its window (its post-tests, its pairs and the delayed stratum) and
+counted in the window's `excluded_retired`, which keeps the drop visible. The
+caller passes the retired course items as (course_id, question_hash) keys read
+from that structured record (`check_item_reviews`, status 'retired'). An item
+row merely gone is no retire — A23's consent withdrawal deletes items too, and
+those outcomes stand — and neither is a report alone or an approval.
+
 Only observed outcomes are read — never p_known or any other belief. Every rate
 is None when n = 0, never a zero that reads as a result. A report: it never
 gates and never writes.
@@ -97,6 +107,15 @@ def summarize(pairs: Iterable[tuple[bool, bool]]) -> dict:
     }
 
 
+def pose_item(pose: Mapping[str, Any]) -> tuple[str, str] | None:
+    """The course item a pose asked: (course_id, question_hash) — the key A113's
+    review records a retire under. None when either is missing."""
+    course, question_hash = pose.get("course_id"), pose.get("question_hash")
+    if isinstance(course, str) and course and isinstance(question_hash, str) and question_hash:
+        return course, question_hash
+    return None
+
+
 def _delayed(days: Any, min_days: float) -> bool:
     """At least `min_days` since the concept's last evidence; an unknown delay
     (a pose from before A112) is never counted as delayed."""
@@ -107,16 +126,22 @@ def learning_gain(
     poses: Iterable[Mapping[str, Any]],
     pretests: Mapping[str, bool],
     *,
+    retired: Collection[tuple[str, str]] = frozenset(),
     windows: Sequence[int] = POSTTEST_WINDOWS_DAYS,
     delayed_min_days: int = POSTTEST_DELAYED_MIN_DAYS,
 ) -> dict:
     """`poses`: answered posttest_poses rows (window_days, correct, max_rung,
-    anchor_event_id, days_since_evidence, answered_at); `pretests`: anchor
-    event id → the concept's pretest outcome (pretest_outcome over the caller's
-    reads). One block per window in `windows` order — a window with no outcome
-    is still reported, with None rates; `posttests` counts its unassisted
-    outcomes, paired or not. A pose of a window outside `windows` is ignored."""
-    buckets = {w: {"posttests": 0, "pairs": [], "delayed": []} for w in windows}
+    anchor_event_id, days_since_evidence, answered_at, course_id,
+    question_hash); `pretests`: anchor event id → the concept's pretest outcome
+    (pretest_outcome over the caller's reads); `retired`: the (course_id,
+    question_hash) items A113's review path retired. One block per window in
+    `windows` order — a window with no outcome is still reported, with None
+    rates; `posttests` counts its unassisted outcomes, paired or not, and
+    `excluded_retired` the unassisted outcomes left out because their item is
+    in `retired`. A pose of a window outside `windows` is ignored."""
+    buckets = {
+        w: {"posttests": 0, "excluded_retired": 0, "pairs": [], "delayed": []} for w in windows
+    }
     for pose in poses:
         window = pose.get("window_days")
         if isinstance(window, bool) or window not in buckets:
@@ -125,6 +150,9 @@ def learning_gain(
         if post is None:
             continue
         bucket = buckets[window]
+        if pose_item(pose) in retired:  # retired as broken: no valid measurement (A113)
+            bucket["excluded_retired"] += 1
+            continue
         bucket["posttests"] += 1
         pre = pretests.get(pose.get("anchor_event_id"))
         if not isinstance(pre, bool):
@@ -138,6 +166,7 @@ def learning_gain(
             {
                 "window_days": w,
                 "posttests": b["posttests"],
+                "excluded_retired": b["excluded_retired"],
                 **summarize(b["pairs"]),
                 "delayed": summarize(b["delayed"]),
             }

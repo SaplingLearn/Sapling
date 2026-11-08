@@ -26,7 +26,8 @@ from pydantic import BaseModel, Field
 from db.connection import pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
 from learning.earnest_revise import earnest_revise
-from learning.learning_gain import learning_gain, posttest_outcome, pretest_outcome
+from learning.item_reports import RETIRED, REVIEWS
+from learning.learning_gain import learning_gain, pose_item, posttest_outcome, pretest_outcome
 from learning.params import (
     ACQ_TARGET_HI,
     ACQ_TARGET_LO,
@@ -621,6 +622,9 @@ class GainSummary(BaseModel):
 class GainWindow(GainSummary):
     window_days: int  # a POSTTEST_WINDOWS_DAYS window
     posttests: int  # unassisted post-test outcomes in the window, paired or not
+    # unassisted outcomes left out because their item was retired through A113's
+    # review path (retired as broken: no valid measurement) — the drop, visible
+    excluded_retired: int
     delayed: GainSummary  # the pairs with no evidence for ≥ delayed_min_days before the pose
 
 
@@ -805,9 +809,11 @@ def _next_session_rate(evidence_rows: list[dict], quiz_ask: set[str] | frozenset
 
 
 #: spec §13 A112: an answered post-test pose — its window, its recorded outcome,
-#: its anchor (the concept's first evidence row) and the delay it had
+#: its anchor (the concept's first evidence row), the delay it had, and the
+#: course item it asked (what an A113 retire is keyed on)
 _POSE_COLS = (
-    "user_id,node_id,window_days,answered_at,correct,max_rung,anchor_event_id,days_since_evidence"
+    "user_id,node_id,window_days,answered_at,correct,max_rung,anchor_event_id,days_since_evidence,"
+    "course_id,question_hash"
 )
 #: an anchor row, with what learning_gain.pretest_outcome binds its envelope to
 _ANCHOR_COLS = (
@@ -869,6 +875,30 @@ def _pretests(poses: list[dict]) -> dict[str, bool]:
     return out
 
 
+def _retired_items(poses: list[dict]) -> set[tuple[str, str]]:
+    """A112 × A113: the course items, among those the poses with an unassisted
+    outcome asked, that A113's review path RETIRED — a check_item_reviews row
+    with status 'retired' (a staff retire, or the auto-retire at
+    ITEM_REPORT_RETIRE_MIN_REPORTERS distinct reporters). Retired as broken,
+    their outcomes are no valid measurement. ONE bounded read (question hashes
+    per `in.(…)`, status-filtered), matched on (course_id, question_hash): the
+    same hash in another course is another item. Keyed on that structured
+    record, never on the item row being gone — A23's consent withdrawal deletes
+    items too, and those outcomes stand; a report alone, or an approval, is no
+    retire. No unassisted outcome → no read."""
+    asked = {key for p in poses if posttest_outcome(p) is not None and (key := pose_item(p))}
+    retired: set[tuple[str, str]] = set()
+    for batch in _batches(sorted({question_hash for _, question_hash in asked})):
+        for row in table(REVIEWS).select(
+            "course_id,question_hash",
+            filters={"question_hash": _in(batch), "status": f"eq.{RETIRED}"},
+        ) or []:
+            key = pose_item(row)
+            if key in asked:
+                retired.add(key)
+    return retired
+
+
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
     n = ok = 0
     for row in steps:
@@ -891,8 +921,9 @@ def learning_loop_kpis(
     """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
     and the zero-leak, ceiling-compliance and earnest-revise (A109) gates; the
     BKT calibration (A110) and the pre/post learning gain of the post-tests
-    answered in the range, per fixed window (A112); `truncated: true` means a
-    scan cap cut the aggregation short."""
+    answered in the range, per fixed window (A112) — an outcome whose item
+    A113's review path retired is left out and counted in `excluded_retired`;
+    `truncated: true` means a scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -927,6 +958,10 @@ def learning_loop_kpis(
     in_band, banded = _in_band_share(steps)
     compliance = _ceiling_compliance(steps)
     earnest = EarnestRevise(**earnest_revise(steps))
+    # A113: an outcome on a retired item is excluded (and counted), so its
+    # anchor is never read for a pretest
+    retired = _retired_items(poses)
+    pretests = _pretests([p for p in poses if pose_item(p) not in retired])
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -947,6 +982,6 @@ def learning_loop_kpis(
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
         calibration=Calibration(**bkt_calibration(evidence)),
-        learning_gain=LearningGain(**learning_gain(poses, _pretests(poses))),
+        learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired)),
         truncated=events_truncated or evidence_truncated or poses_truncated,
     )

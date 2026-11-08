@@ -674,6 +674,9 @@ export interface LoopGainWindow extends LoopGainSummary {
   window_days: number;
   /** unassisted post-test outcomes in the window, paired with a pretest or not */
   posttests: number;
+  /** unassisted outcomes left out of the window: their item was later retired
+   *  through spec §13 A113's review path (retired as broken — no valid measurement) */
+  excluded_retired: number;
   /** the pairs whose concept had no evidence for ≥ delayed_min_days before the pose */
   delayed: LoopGainSummary;
 }

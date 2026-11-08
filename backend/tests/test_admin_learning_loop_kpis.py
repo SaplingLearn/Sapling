@@ -630,6 +630,7 @@ def test_no_pretest_read_without_an_unassisted_outcome(monkeypatch):
     monkeypatch.setattr(analytics, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
     assert not [c for c in calls if "id" in c[1]]
+    assert not [c for c in calls if c[0] == "check_item_reviews"]  # A113: nor a retire read
 
 
 def test_the_pose_scan_bounds_answered_at_and_counts_toward_truncation(monkeypatch):
@@ -651,9 +652,114 @@ def test_the_pose_scan_bounds_answered_at_and_counts_toward_truncation(monkeypat
     assert {"window_days", "correct", "max_rung", "anchor_event_id", "days_since_evidence"} <= set(
         scan[1].split(",")
     )
+    assert {"course_id", "question_hash"} <= set(scan[1].split(","))  # the item an A113 retire keys
     assert scan[3].startswith("answered_at.asc")
     monkeypatch.setattr(analytics, "_SCAN_CAP", 1)
     monkeypatch.setattr(analytics, "_PAGE", 1)
     two = [_answered("n1", W1, correct=True, anchor="a"), _answered("n2", W1, correct=True, anchor="b")]
     _serve(monkeypatch, {"posttest_poses": two})
     assert client.get(URL, params=RANGE).json()["truncated"] is True
+
+
+# ── A112 × A113: an outcome on an item retired as broken is no measurement ───
+
+
+def _asked(node, window, *, course, qh, correct=True, anchor="ev-a", rung=0, days=10.0):
+    """An answered pose with the course item it asked."""
+    pose = _answered(node, window, correct=correct, anchor=anchor, rung=rung, days=days)
+    return {**pose, "course_id": course, "question_hash": qh}
+
+
+def _review(course, qh, status, decided_by):
+    """A check_item_reviews row as A113's SQL functions write it."""
+    return {
+        "course_id": course, "question_hash": qh, "status": status, "decided_by": decided_by,
+        "reviewed_by": "admin-1" if decided_by == "admin" else None,
+        "reviewed_at": "2026-07-25T00:00:00+00:00",
+    }
+
+
+def _windows(monkeypatch, store, calls=None) -> dict:
+    """GET the KPIs over `store`; the gain windows by window_days. `calls`, when
+    given, records every `select` as (table, columns, filters)."""
+
+    class _Rec(_FakeTable):
+        def __init__(self, name):
+            super().__init__(store.get(name, []))
+            self.name = name
+
+        def select(self, columns="*", filters=None, order=None, limit=None):
+            if calls is not None:
+                calls.append((self.name, columns, dict(filters or {})))
+            return super().select(columns, filters, order, limit)
+
+    monkeypatch.setattr(analytics, "table", _Rec)
+    r = client.get(URL, params=RANGE)
+    assert r.status_code == 200, r.text
+    return {w["window_days"]: w for w in r.json()["learning_gain"]["windows"]}
+
+
+def test_an_outcome_on_a_retired_item_is_excluded_and_counted(monkeypatch):
+    """A post-test outcome whose item A113's review path later retired — by its
+    reporters (the auto-retire) or by an admin, even while the delete is still
+    pending and the item row remains — is left out of its window and counted in
+    `excluded_retired`; the same hash in another course is another item and
+    stays. ONE status-filtered read of the review records, and a retired
+    outcome's anchor is never read for a pretest."""
+    calls: list = []
+    store = {
+        "node_mastery_events": [_anchor("ev-a", session="s1", qh="qa", correct=False)],
+        "sessions": [{"id": "s1", "history": [{"question_hash": "qa"}]}],
+        "posttest_poses": [
+            _asked("na", W1, course="c1", qh="q-auto", anchor="ev-a"),
+            _asked("nb", W1, course="c1", qh="q-admin", anchor="ev-b"),
+            _asked("nc", W1, course="c2", qh="q-auto", anchor="ev-a"),
+        ],
+        "check_item_reviews": [
+            _review("c1", "q-auto", "retired", "reports"),
+            _review("c1", "q-admin", "retired", "admin"),
+        ],
+        "check_items": [{"id": "ci-1", "course_id": "c1", "question_hash": "q-admin"}],  # pending
+    }
+    gain = _windows(monkeypatch, store, calls)
+    first = gain[W1]
+    assert (first["posttests"], first["excluded_retired"]) == (1, 2)
+    assert first["n"] == 1 and first["improved"] == 1  # c2's outcome, paired with the probe
+    assert gain[W2]["excluded_retired"] == 0
+    (read,) = [(cols, f) for name, cols, f in calls if name == "check_item_reviews"]
+    assert read[1] == {"question_hash": 'in.("q-admin","q-auto")', "status": "eq.retired"}
+    assert set(read[0].split(",")) == {"course_id", "question_hash"}
+    anchors = [f["id"] for name, _, f in calls if name == "node_mastery_events" and "id" in f]
+    assert anchors == ['in.("ev-a")']  # ev-b anchors only a retired outcome: never read
+
+
+def test_an_outcome_on_a_reported_but_unretired_item_is_still_counted(monkeypatch):
+    """A report alone (the item pending review) or a staff approval is no
+    retire: the outcomes stay counted and nothing is excluded."""
+    reports = [
+        {"user_id": u, "course_id": "c1", "question_hash": qh, "reason": "wrong_answer",
+         "surface": "loop", "created_at": "2026-07-21T00:00:00+00:00"}
+        for u, qh in (("u2", "q-approved"), ("u3", "q-approved"), ("u2", "q-pending"))
+    ]
+    store = {
+        "posttest_poses": [
+            _asked("na", W1, course="c1", qh="q-approved"),
+            _asked("nb", W1, course="c1", qh="q-pending"),
+        ],
+        "check_item_reports": reports,
+        "check_item_reviews": [_review("c1", "q-approved", "approved", "admin")],
+    }
+    first = _windows(monkeypatch, store)[W1]
+    assert (first["posttests"], first["excluded_retired"]) == (2, 0)
+
+
+def test_an_outcome_on_a_consent_withdrawn_item_is_still_counted(monkeypatch):
+    """A23's consent withdrawal deletes item rows too, and writes no review
+    record: an item merely gone is no retire, and its outcome stays counted."""
+    store = {
+        "posttest_poses": [_asked("na", W1, course="c1", qh="q-withdrawn")],
+        "check_items": [],  # withdrawn: the row is gone
+        "check_item_reviews": [],
+    }
+    first = _windows(monkeypatch, store)[W1]
+    assert (first["posttests"], first["excluded_retired"]) == (1, 0)
