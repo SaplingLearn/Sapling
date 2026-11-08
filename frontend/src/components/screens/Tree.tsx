@@ -120,6 +120,7 @@ export function Tree() {
           source: e.source as string,
           target: e.target as string,
           strength: e.strength,
+          relationship_type: e.relationship_type,
         })),
       );
       setSessions(sessionsRes.sessions || []);

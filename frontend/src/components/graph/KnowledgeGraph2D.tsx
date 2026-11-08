@@ -4,10 +4,7 @@ import {
   forceSimulation,
   forceLink,
   forceManyBody,
-  forceCenter,
   forceCollide,
-  forceX,
-  forceY,
   type Simulation,
   type SimulationNodeDatum,
   type SimulationLinkDatum,
@@ -24,13 +21,27 @@ import {
   truncateLabel,
   type GraphColorMode,
 } from "@/lib/graph/nodeStyle";
-import { IS_TEST_MODE, random } from "@/lib/testMode";
+import { IS_TEST_MODE } from "@/lib/testMode";
+import {
+  courseLinks,
+  forceOrbit,
+  importanceRadii,
+  isDirected,
+  labelOpacityAt,
+  planBounds,
+  planRadial,
+  splitEdges,
+  type RadialPlan,
+} from "@/lib/graph/radialLayout";
 
 export type GraphVariant = "orb" | "constellation" | "organism";
 
 type SimNode = SimulationNodeDatum & GraphNode;
 type SimLink = SimulationLinkDatum<SimNode> & {
   strength: number;
+  relationship_type?: GraphEdge["relationship_type"];
+  /** A course → inner-circle link: drawn, but the orbit force places it. */
+  anchor?: boolean;
   source: string | SimNode;
   target: string | SimNode;
 };
@@ -72,6 +83,13 @@ type Props = {
   colorMode?: GraphColorMode;
   /** Top offset of the zoom stack (default 12, flush with the corner). */
   zoomControlsTop?: number;
+  /**
+   * Obsidian-style legibility (preview only for now): hovering a concept
+   * fades everything but it and its neighbours, concept labels fade in with
+   * zoom, nodes size by how many concepts build on them, and links stay quiet
+   * with direction arrows when zoomed in or focused.
+   */
+  legible?: boolean;
 };
 
 // The pure node-style layer (shade, radius, tier opacity, edge width, label
@@ -85,6 +103,17 @@ type DragState =
   | null;
 
 const MIN_ZOOM = 0.4;
+/** Smallest on-screen node radius (px) in legible mode. */
+const MIN_SCREEN_R = 7;
+
+/** Where a line from (x1, y1) to (x2, y2) should stop to end `inset` short. */
+function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len <= inset * 1.5) return [x2, y2];
+  return [x2 - (dx / len) * inset, y2 - (dy / len) * inset];
+}
 const MAX_ZOOM = 3;
 
 // Visually-hidden but screen-reader-available, so the pointer-only SVG graph
@@ -116,8 +145,35 @@ function KnowledgeGraph2DImpl({
   initialZoom = 1,
   colorMode = "course",
   zoomControlsTop = 12,
+  legible = false,
 }: Props) {
   const mastery = colorMode === "mastery";
+  const legibleRef = React.useRef(legible);
+  // The current zoom, for the per-tick writer (legible nodes keep a minimum
+  // on-screen size, so arrow insets depend on it).
+  const viewScaleRef = React.useRef(initialZoom);
+  React.useEffect(() => {
+    legibleRef.current = legible;
+  }, [legible]);
+  const importance = React.useMemo(
+    () => (legible ? importanceRadii(nodes, splitEdges(nodes, edges).concept) : null),
+    [legible, nodes, edges],
+  );
+  const radiusMap = React.useMemo(
+    () =>
+      new Map(
+        nodes.map((n) => [
+          n.id,
+          (!n.is_subject_root && importance?.get(n.id)) || radiusFor(n.mastery_score, n.is_subject_root),
+        ]),
+      ),
+    [nodes, importance],
+  );
+  // Read by the per-tick writer and the collide force, outside React renders.
+  const radiusRef = React.useRef(radiusMap);
+  React.useEffect(() => {
+    radiusRef.current = radiusMap;
+  }, [radiusMap]);
   // Per-instance prefix for the edge-gradient ids: several graphs can share
   // a page, and SVG `url(#…)` references resolve document-wide.
   const gradPrefix = `kg${React.useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -144,6 +200,9 @@ function KnowledgeGraph2DImpl({
     [width, height, initialZoom],
   );
   const [view, setView] = React.useState(initialView);
+  React.useEffect(() => {
+    viewScaleRef.current = view.scale;
+  }, [view.scale]);
   // A zoomed opening view is centred on the window, so a new window size
   // re-centres it — but only while the student hasn't moved it: once they
   // have panned or zoomed, a resize keeps their view. At the default zoom the
@@ -199,12 +258,17 @@ function KnowledgeGraph2DImpl({
       const s = resolve(l.source);
       const t = resolve(l.target);
       if (!s || !t || s.x == null || s.y == null || t.x == null || t.y == null) return;
+      // Legible mode ends each line at the target's rim so its arrow shows.
+      const [ex, ey] = legibleRef.current
+        ? lineEnd(s.x, s.y, t.x, t.y,
+            Math.max(radiusRef.current.get(t.id) ?? 0, MIN_SCREEN_R / viewScaleRef.current) + 2)
+        : [t.x, t.y];
       for (const target of [el, gradElsRef.current.get(i)]) {
         if (!target) continue;
         target.setAttribute("x1", String(s.x));
         target.setAttribute("y1", String(s.y));
-        target.setAttribute("x2", String(t.x));
-        target.setAttribute("y2", String(t.y));
+        target.setAttribute("x2", String(target === el ? ex : t.x));
+        target.setAttribute("y2", String(target === el ? ey : t.y));
       }
     });
   }, []);
@@ -216,33 +280,81 @@ function KnowledgeGraph2DImpl({
     [nodes, edges],
   );
 
+  // Radial plan (rings per course) — read by the orbit force every tick.
+  const planRef = React.useRef<RadialPlan>({ centers: new Map(), orbit: new Map() });
+  // Course roots the student dragged keep their spot across re-plans.
+  const movedRootsRef = React.useRef(new Set<string>());
+  // Set once the student pans or zooms; auto-fit never overrides them.
+  const viewTouchedRef = React.useRef(false);
+  const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
+
   React.useEffect(() => {
+    // Course spokes are layout-only: the root is a position, never a hub, so
+    // only real concept-to-concept edges join the simulation and the render.
+    const { concept: conceptEdges } = splitEdges(nodes, edges);
+    const plan = planRadial(nodes, conceptEdges, width, height);
+    planRef.current = plan;
+
+    // Open on the whole graph: when the planned rings overflow the window,
+    // zoom out to fit — until the student pans or zooms themselves.
+    const b = planBounds(plan, width, height);
+    fittedViewRef.current = null;
+    if (b) {
+      const bw = b.maxX - b.minX;
+      const bh = b.maxY - b.minY;
+      const scale = Math.max(MIN_ZOOM, Math.min(initialZoom, width / bw, height / bh));
+      if (scale < initialZoom || bw > width || bh > height) {
+        const mx = (b.minX + b.maxX) / 2;
+        const my = (b.minY + b.maxY) / 2;
+        fittedViewRef.current = { tx: width / 2 - mx * scale, ty: height / 2 - my * scale, scale };
+        if (!viewTouchedRef.current) setView(fittedViewRef.current);
+      }
+    }
+
     // Merge new node data into existing sim nodes to preserve motion state.
     const byId = new Map(simNodesRef.current.map((n) => [n.id, n]));
     const nextNodes: SimNode[] = nodes.map((n) => {
       const prev = byId.get(n.id);
+      const center = plan.centers.get(n.id);
       if (prev) {
         // Keep position + velocity; refresh mutable data fields (mastery, color).
         Object.assign(prev, n);
+        if (center && !movedRootsRef.current.has(n.id)) {
+          prev.fx = center.x;
+          prev.fy = center.y;
+        }
         return prev;
       }
-      const hubSeed = n.is_subject_root ? 0 : random();
+      if (center) {
+        return { ...n, x: center.x, y: center.y, fx: center.x, fy: center.y, vx: 0, vy: 0, index: undefined } as SimNode;
+      }
+      const o = plan.orbit.get(n.id);
+      const c = (o?.rootId && plan.centers.get(o.rootId)) || { x: width / 2, y: height / 2 };
+      const a = o?.angle ?? 0;
+      const r = o?.radius ?? 80;
       return {
         ...n,
-        x: width / 2 + (random() - 0.5) * 40,
-        y: height / 2 + (random() - 0.5) * 40,
+        x: c.x + Math.cos(a) * r,
+        y: c.y + Math.sin(a) * r,
         vx: 0,
         vy: 0,
         index: undefined,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        _hub: hubSeed,
       } as SimNode;
     });
 
     const nextIds = new Set(nextNodes.map((n) => n.id));
-    const nextLinks: SimLink[] = edges
+    const nextLinks: SimLink[] = [
+      ...courseLinks(plan).map((e) => ({ ...e, anchor: true })),
+      ...conceptEdges.map((e) => ({ ...e, anchor: false })),
+    ]
       .filter((e) => nextIds.has(e.source) && nextIds.has(e.target))
-      .map((e) => ({ source: e.source, target: e.target, strength: e.strength }));
+      .map((e) => ({
+        source: e.source,
+        target: e.target,
+        strength: e.strength,
+        relationship_type: e.relationship_type,
+        anchor: e.anchor,
+      }));
 
     simNodesRef.current = nextNodes;
     simLinksRef.current = nextLinks;
@@ -253,23 +365,34 @@ function KnowledgeGraph2DImpl({
       simRef.current.nodes(nextNodes);
     }
 
+    const nodeById = new Map(nextNodes.map((n) => [n.id, n]));
+    const centerOf = (rootId: string | null) => {
+      const root = rootId ? nodeById.get(rootId) : undefined;
+      if (root && root.x != null && root.y != null) return { x: root.x, y: root.y };
+      return { x: width / 2, y: height / 2 };
+    };
+
     const sim = simRef.current;
     sim
       .force(
         "link",
         forceLink<SimNode, SimLink>(nextLinks)
           .id((d) => d.id)
-          .distance((l) => 40 + (1 - (l.strength || 0.5)) * 90)
-          .strength((l) => 0.15 + (l.strength || 0.5) * 0.4),
+          .distance(56)
+          .strength((l) => (l.anchor ? 0 : 0.06 + (l.strength || 0.5) * 0.12)),
       )
-      .force("charge", forceManyBody<SimNode>().strength((d) => (d.is_subject_root ? -400 : -120)))
+      .force("charge", forceManyBody<SimNode>().strength(-70).distanceMax(220))
       .force(
         "collide",
-        forceCollide<SimNode>().radius((d) => (d.is_subject_root ? 36 : 18 + (d.mastery_score || 0) * 6)),
+        forceCollide<SimNode>().radius((d) =>
+          d.is_subject_root
+            ? 40
+            : legibleRef.current
+              ? (radiusRef.current.get(d.id) ?? 8) + 13
+              : 20 + (d.mastery_score || 0) * 6,
+        ),
       )
-      .force("center", forceCenter(width / 2, height / 2).strength(0.06))
-      .force("x", forceX<SimNode>(width / 2).strength(0.02))
-      .force("y", forceY<SimNode>(height / 2).strength(0.02));
+      .force("orbit", forceOrbit<SimNode>(() => planRef.current, centerOf, 0.55));
 
     // Test mode rides the reduced-motion path: the simulation settles
     // synchronously (fixed tick count) instead of animating on rAF, so
@@ -300,14 +423,60 @@ function KnowledgeGraph2DImpl({
   }, []);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const nodeRadius = (n: GraphNode) => radiusFor(n.mastery_score, n.is_subject_root);
+  const nodeRadius = (n: GraphNode) => radiusMap.get(n.id) ?? radiusFor(n.mastery_score, n.is_subject_root);
+
+  // Legible focus: the hovered concept and its direct neighbours — from the
+  // props (concept edges + the course's inner-circle links), never the sim.
+  const focusId = legible ? hovered?.id ?? null : null;
+  // The same radial plan the simulation uses, recomputed from props for render.
+  const planned = React.useMemo(() => {
+    const { concept } = splitEdges(nodes, edges);
+    const plan = planRadial(nodes, concept, width, height);
+    // Each course's outermost ring, for its region label.
+    const outer = new Map<string, number>();
+    for (const o of plan.orbit.values()) {
+      if (o.rootId) outer.set(o.rootId, Math.max(outer.get(o.rootId) ?? 0, o.radius));
+    }
+    const roots = nodes.filter((n) => n.is_subject_root);
+    const rootOfCourse = new Map(roots.map((r) => [r.course_id, r.id]));
+    return { concept, plan, outer, roots, rootOfCourse };
+  }, [nodes, edges, width, height]);
+  // Legend hover: one course stays bright, the rest fade.
+  const [legendFocus, setLegendFocus] = React.useState<string | null>(null);
+  const courseRootOf = (n: GraphNode) =>
+    n.is_subject_root ? n.id : planned.rootOfCourse.get(n.course_id) ?? null;
+  const inLegendFocus = (n: GraphNode) => !legendFocus || courseRootOf(n) === legendFocus;
+  const zoomToCourse = (rootId: string) => {
+    const c = planned.plan.centers.get(rootId);
+    if (!c) return;
+    const reach = (planned.outer.get(rootId) ?? 60) + 50;
+    // Fit the course, but never so far out that its labels are still faded.
+    const fit = Math.min(width / (reach * 2), height / (reach * 2));
+    const scale = Math.min(MAX_ZOOM, Math.max(1.05, fit));
+    viewTouchedRef.current = true;
+    setView({ tx: width / 2 - c.x * scale, ty: height / 2 - c.y * scale, scale });
+  };
+  const focusSet = React.useMemo(() => {
+    const set = new Set<string>();
+    if (!focusId) return set;
+    set.add(focusId);
+    const inner = courseLinks(planned.plan);
+    for (const e of [...planned.concept, ...inner]) {
+      if (e.source === focusId) set.add(e.target);
+      if (e.target === focusId) set.add(e.source);
+    }
+    return set;
+  }, [focusId, planned]);
   const courseColor = (n?: GraphNode) => {
     if (!n) return "var(--c-sage)";
     const base = n.color || "var(--c-sage)";
     if (n.is_subject_root) return base;
     return shadeFor(base, n.id);
   };
-  const fillFor = (n: GraphNode) => (mastery ? masteryFillFor(n) : courseColor(n));
+  // In legible mastery mode the course dot keeps its course colour, so it
+  // matches the disc behind it and the legend.
+  const fillFor = (n: GraphNode) =>
+    mastery && !(legible && n.is_subject_root) ? masteryFillFor(n) : courseColor(n);
 
   // ── Pause simulation when offscreen ─────────────────────────────────────
   React.useEffect(() => {
@@ -434,6 +603,7 @@ function KnowledgeGraph2DImpl({
       n.fx = clamp(x, (r - view.tx) / view.scale, (width - r - view.tx) / view.scale);
       n.fy = clamp(y, (r - view.ty) / view.scale, (height - r - view.ty) / view.scale);
     } else if (drag.kind === "pan") {
+      viewTouchedRef.current = true;
       const dx = e.clientX - drag.startX;
       const dy = e.clientY - drag.startY;
       setView((v) => {
@@ -452,7 +622,12 @@ function KnowledgeGraph2DImpl({
     } catch {}
     if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
-      if (n) {
+      if (n?.is_subject_root) {
+        // Course roots stay pinned where they were dropped; their rings follow.
+        if (movedRef.current) movedRootsRef.current.add(n.id);
+        n.fx = n.x;
+        n.fy = n.y;
+      } else if (n) {
         // Release the pin so the simulation takes over again.
         n.fx = null;
         n.fy = null;
@@ -472,6 +647,7 @@ function KnowledgeGraph2DImpl({
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
+    viewTouchedRef.current = true;
     const delta = -e.deltaY * 0.0015;
     setView((v) => {
       const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * (1 + delta)));
@@ -481,7 +657,10 @@ function KnowledgeGraph2DImpl({
     });
   };
 
-  const resetView = () => setView(initialView());
+  const resetView = () => {
+    viewTouchedRef.current = false;
+    setView(fittedViewRef.current ?? initialView());
+  };
 
   const hoveredMastery = hovered
     ? hovered.is_subject_root
@@ -491,6 +670,12 @@ function KnowledgeGraph2DImpl({
 
   const simNodes = simNodesRef.current;
   const simLinks = simLinksRef.current;
+  const zoomLabels = labelOpacityAt(view.scale);
+  // Legible nodes never shrink below MIN_SCREEN_R on screen, however far out.
+  const drawRadius = (n: GraphNode) =>
+    legible ? Math.max(nodeRadius(n), MIN_SCREEN_R / view.scale) : nodeRadius(n);
+  // Labels of focused concepts stay readable however far out the view is.
+  const focusFont = (size: number) => size / Math.min(1, view.scale);
   // O(1) endpoint resolution for edges whose source/target is still an id
   // string (before the link force swaps in node objects) — replaces the old
   // per-edge .find() over all nodes.
@@ -518,6 +703,18 @@ function KnowledgeGraph2DImpl({
         onWheel={onWheel}
       >
         <defs>
+          {legible && (
+            <>
+              <marker id={`${gradPrefix}-arrow`} viewBox="0 0 10 10" refX={9} refY={5}
+                markerWidth={5} markerHeight={5} orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="var(--text-muted)" />
+              </marker>
+              <marker id={`${gradPrefix}-arrow-on`} viewBox="0 0 10 10" refX={9} refY={5}
+                markerWidth={5} markerHeight={5} orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="var(--text-dim)" />
+              </marker>
+            </>
+          )}
           <filter id="soft">
             <feGaussianBlur stdDeviation={GLOW.blur} />
           </filter>
@@ -530,7 +727,19 @@ function KnowledgeGraph2DImpl({
               const s = typeof l.source === "object" ? (l.source as SimNode) : nodeById.get(String(l.source));
               const t = typeof l.target === "object" ? (l.target as SimNode) : nodeById.get(String(l.target));
               if (!s || !t || s.x == null || t.x == null) return null;
-              const op = mastery ? 0.85 : variant === "constellation" ? 0.35 : 0.2;
+              const baseOp = mastery ? 0.85 : variant === "constellation" ? 0.35 : 0.2;
+              const incident = !!focusId && (s.id === focusId || t.id === focusId);
+              const op = !legible
+                ? baseOp
+                : focusId
+                  ? incident ? 0.9 : 0.04
+                  : !inLegendFocus(s) || !inLegendFocus(t)
+                    ? 0.03
+                    : l.anchor ? 0.1 : mastery ? 0.45 : 0.16;
+              const directed = legible && !l.anchor && isDirected(l);
+              // Arrowheads don't fade with their line, so a dimmed link drops its arrow.
+              const arrow = directed && (focusId ? incident : view.scale >= 0.9);
+              const [ex, ey] = legible ? lineEnd(s.x!, s.y!, t.x!, t.y!, drawRadius(t) + 2) : [t.x, t.y];
               const gradId = `${gradPrefix}-e${i}`;
               return (
                 <React.Fragment key={i}>
@@ -561,12 +770,15 @@ function KnowledgeGraph2DImpl({
                     data-testid="graph-edge"
                     x1={s.x}
                     y1={s.y}
-                    x2={t.x}
-                    y2={t.y}
-                    stroke={mastery ? `url(#${gradId})` : "var(--text-muted)"}
+                    x2={ex}
+                    y2={ey}
+                    stroke={mastery ? `url(#${gradId})` : incident ? "var(--text-dim)" : "var(--text-muted)"}
                     strokeOpacity={op}
+                    markerEnd={arrow ? `url(#${gradPrefix}-arrow${incident ? "-on" : ""})` : undefined}
+                    style={legible ? { transition: "stroke-opacity 150ms ease" } : undefined}
                     strokeWidth={mastery ? edgeWidthFor(l.strength) * 1.6 : edgeWidthFor(l.strength)}
                     strokeLinecap="round"
+                    strokeDasharray={l.relationship_type === "related" ? "4 4" : undefined}
                   />
                 </React.Fragment>
               );
@@ -577,7 +789,7 @@ function KnowledgeGraph2DImpl({
           <g>
             {simNodes.map((n) => {
               if (n.x == null || n.y == null) return null;
-              const r = nodeRadius(n);
+              const r = drawRadius(n);
               const color = fillFor(n);
               // `mastery` mode carries the tier in the hue, so every mark is
               // fully opaque; `course` mode carries it in the opacity.
@@ -595,7 +807,16 @@ function KnowledgeGraph2DImpl({
                   data-testid="graph-node"
                   data-node-id={n.id}
                   transform={`translate(${n.x}, ${n.y})`}
-                  style={{ cursor: "grab" }}
+                  style={
+                    legible
+                      ? {
+                          cursor: "grab",
+                          opacity:
+                            (focusId && !focusSet.has(n.id)) || (!focusId && !inLegendFocus(n)) ? 0.15 : 1,
+                          transition: "opacity 150ms ease",
+                        }
+                      : { cursor: "grab" }
+                  }
                   onPointerDown={(ev) => onNodePointerDown(ev, n)}
                   onPointerEnter={(ev) => {
                     // Seed the tooltip position as it mounts so it opens
@@ -610,6 +831,10 @@ function KnowledgeGraph2DImpl({
                     onNodeClick?.(n);
                   }}
                 >
+                  {legible && (
+                    // A bigger, invisible hover/click target than the dot itself.
+                    <circle cx={0} cy={0} r={r + Math.max(4, 10 / view.scale)} fill="transparent" />
+                  )}
                   {variant === "organism" && (
                     <circle cx={0} cy={0} r={r + GLOW.pad} fill={color} opacity={GLOW.opacity} filter="url(#soft)" />
                   )}
@@ -663,7 +888,7 @@ function KnowledgeGraph2DImpl({
                       strokeOpacity={isPinned ? 1 : isHovered ? 0.9 : NODE_STROKE_OPACITY}
                     />
                   )}
-                  {n.is_subject_root && (
+                  {n.is_subject_root && !legible && (
                     <text
                       x={0}
                       y={r + 16}
@@ -683,9 +908,14 @@ function KnowledgeGraph2DImpl({
                       y={r + 13}
                       textAnchor="middle"
                       fontFamily="var(--font-sans)"
-                      fontSize={10.5}
+                      fontSize={legible && focusSet.has(n.id) ? Math.min(24, focusFont(10.5)) : 10.5}
+                      fontWeight={legible && focusId === n.id ? 600 : undefined}
                       fill="var(--text-dim)"
-                      opacity={0.85}
+                      opacity={
+                        legible
+                          ? (focusId ? (focusSet.has(n.id) ? 1 : 0) : zoomLabels) * 0.85
+                          : 0.85
+                      }
                       pointerEvents="none"
                     >
                       {truncateLabel(n.name)}
@@ -750,6 +980,62 @@ function KnowledgeGraph2DImpl({
           ⟲
         </button>
       </div>
+
+      {/* One course needs no key; the course is just the dot in the middle. */}
+      {legible && planned.roots.length > 1 && (
+        <div
+          data-testid="graph-course-legend"
+          onPointerLeave={() => setLegendFocus(null)}
+          style={{
+            position: "absolute",
+            right: 12,
+            bottom: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-sm)",
+            padding: 6,
+            boxShadow: "var(--shadow-sm)",
+            fontSize: 12,
+          }}
+        >
+          {planned.roots.map((r) => {
+            const [code, ...rest] = r.name.split(" - ");
+            const active = legendFocus === r.id;
+            return (
+              <button
+                key={r.id}
+                data-testid="graph-course-legend-item"
+                data-node-id={r.id}
+                type="button"
+                title={`${rest.join(" - ") || r.subject} · click to zoom`}
+                onPointerEnter={() => setLegendFocus(r.id)}
+                onFocus={() => setLegendFocus(r.id)}
+                onBlur={() => setLegendFocus(null)}
+                onClick={() => zoomToCourse(r.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "4px 8px",
+                  border: 0,
+                  borderRadius: "var(--r-sm)",
+                  background: active ? "var(--bg-subtle, rgba(0,0,0,0.05))" : "transparent",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  fontWeight: active ? 600 : 500,
+                }}
+              >
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: r.color || "var(--c-sage)", flex: "none" }} />
+                {code}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {hovered && !dragRef.current && (
         <div

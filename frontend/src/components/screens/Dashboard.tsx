@@ -52,7 +52,12 @@ const QUOTES = [
 ];
 
 function apiToGraphEdge(e: ApiEdge): GraphEdge {
-  return { source: e.source as string, target: e.target as string, strength: e.strength };
+  return {
+    source: e.source as string,
+    target: e.target as string,
+    strength: e.strength,
+    relationship_type: e.relationship_type,
+  };
 }
 
 function getGreetingPrefix(d: Date) {
