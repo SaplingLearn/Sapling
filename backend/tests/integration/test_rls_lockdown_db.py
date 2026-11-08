@@ -17,7 +17,9 @@ halves, because they fail differently:
 
 `room_messages` is the single documented exemption (see the migration header:
 the local Realtime lane depends on anon postgres_changes, production already
-has RLS on for it). It leaves this list when the realtime JWT bridge lands.
+has RLS on for it). The step-2e bridge (20261108210944_rls_room_messages
+_realtime.sql) adds its policy but keeps RLS off; it leaves this list with
+the migration that pins the manual enable step (that migration's header).
 
 Step 2a (20261108092633_rls_app_auth_helpers.sql) is pinned at the bottom:
 function EXECUTE hygiene (no public function callable by anon/authenticated,
@@ -382,6 +384,8 @@ BACKEND_RPCS = frozenset({
 
 APP_AUTH_FUNCTIONS = frozenset({
     "uid", "is_room_member", "owns_room", "owns_enrollment", "enrolled_in_offering",
+    # step 2e (20261108210944_rls_room_messages_realtime.sql)
+    "realtime_uid", "is_room_member_realtime",
 })
 
 _BACKEND = Path(__file__).resolve().parents[2]
@@ -649,3 +653,63 @@ def test_updated_at_triggers_still_fire_after_the_execute_revoke(db_conn):
         ).fetchone()["fired"]
         raise psycopg.Rollback(tx)
     assert fired, "set_updated_at did not fire"
+
+
+# ── Step 2e: room_messages read policy for the Realtime JWT bridge ─────────
+# 20261108210944_rls_room_messages_realtime.sql. RLS on room_messages stays
+# OFF here until the manual enable step (its header); the behaviour with it
+# on is pinned in test_rls_policies_db.py (chat_world).
+
+@pytest.mark.parametrize(
+    ("claims", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ('{"iss": "sapling-api", "sub": "user_1", "role": "authenticated"}', None),  # backend token
+        ('{"iss": "supabase-demo", "sub": "user_1", "role": "authenticated"}', None),
+        ('{"iss": "http://127.0.0.1:54321/auth/v1", "sub": "user_1"}', None),        # GoTrue
+        ('{"sub": "user_1", "role": "authenticated"}', None),                       # no issuer
+        ('{"iss": "sapling-realtime", "sub": ""}', None),
+        ('{"iss": "sapling-realtime"}', None),
+        ('{"iss": "sapling-realtime", "sub": "user_1", "role": "authenticated"}', "user_1"),
+    ],
+)
+def test_app_auth_realtime_uid_only_trusts_realtime_claims(db_conn, claims, expected):
+    with db_conn.transaction() as tx:
+        if claims is not None:
+            db_conn.execute("SELECT set_config('request.jwt.claims', %s, true)", (claims,))
+        got = db_conn.execute("SELECT app_auth.realtime_uid() AS uid").fetchone()["uid"]
+        raise psycopg.Rollback(tx)
+    assert got == expected
+
+
+def test_new_app_auth_helpers_pin_search_path_and_definer(db_conn):
+    rows = db_conn.execute(
+        "SELECT proname, prosecdef, coalesce(proconfig, '{}') AS cfg FROM pg_proc "
+        "WHERE pronamespace = 'app_auth'::regnamespace "
+        "AND proname IN ('realtime_uid', 'is_room_member_realtime')"
+    ).fetchall()
+    got = {r["proname"]: (r["prosecdef"], r["cfg"]) for r in rows}
+    assert set(got) == {"realtime_uid", "is_room_member_realtime"}
+    # Only the membership check reads past RLS; both pin an empty search_path.
+    assert got["is_room_member_realtime"][0] is True
+    assert got["realtime_uid"][0] is False
+    for name, (_, cfg) in got.items():
+        assert 'search_path=""' in cfg, f"app_auth.{name} does not pin search_path: {cfg}"
+
+
+def test_room_messages_has_exactly_the_member_read_policy(db_conn):
+    rows = db_conn.execute(
+        """
+        SELECT policyname, cmd, roles::text[] AS roles, coalesce(qual, '') AS qual,
+               with_check
+          FROM pg_policies WHERE schemaname = 'public' AND tablename = 'room_messages'
+        """
+    ).fetchall()
+    assert [r["policyname"] for r in rows] == ["room_messages_select_member"]
+    (pol,) = rows
+    assert pol["cmd"] == "SELECT" and pol["roles"] == ["authenticated"]
+    assert pol["with_check"] is None
+    # Both readers, and nothing that trusts any other issuer.
+    assert "app_auth.is_room_member(" in pol["qual"]
+    assert "app_auth.is_room_member_realtime(" in pol["qual"]
