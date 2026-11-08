@@ -29,6 +29,7 @@ import httpx
 from fastapi import HTTPException, Request
 
 from db.connection import page_all, table
+from db.scope import service_scope
 
 logger = logging.getLogger("sapling.feature_flags")
 
@@ -97,6 +98,21 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Run course-context aggregation on the job queue instead of in the "
             "request. Needs a running `python -m worker`; without one the work "
             "only queues.", False),
+    # #115 (RLS step 2, docs/security/rls-step2-plan.md §4.4): whether a
+    # request's PostgREST calls run as the student (a backend-minted JWT, RLS
+    # applies) instead of the service role. shadow = service answers, a
+    # sampled share of reads is re-run as the student and divergence logged
+    # (db.rls_shadow_divergence); enforce = the student's token, fail closed.
+    # Per user, so per-user/role rules and rollouts work ("admins on enforce").
+    # Resolved once per request, as service (db/scope.py). Server-only. Kill
+    # switch: SAPLING_FLAG_DB_USER_SCOPE=off. NB the ADR 0029 fail-closed
+    # answer ("off") is the LESS secure side for this flag: a flag-store
+    # outage downgrades everyone to service role (accepted during rollout;
+    # graduate the flag once prod has run enforce at 100%).
+    FlagDef("db_user_scope", ("off", "shadow", "enforce"),
+            "Run each request's database calls as the student (RLS) instead of "
+            "the service role. shadow compares a sample of reads; enforce "
+            "applies RLS and fails closed.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
@@ -224,16 +240,20 @@ def read_config(*, timeout: float | None = None) -> Snapshot:
     Paged in a total order: offset paging over an unordered select can skip
     or repeat a row at a page boundary. ``timeout`` bounds each page read
     (the resolver passes STORE_TIMEOUT_S; the admin API keeps the default)."""
-    flags = list(page_all(
-        table("feature_flags"),
-        "key,default_variant,rollout_percent,rollout_variant,updated_at,updated_by",
-        order="key", timeout=timeout,
-    ))
-    targets = list(page_all(
-        table("feature_flag_targets"),
-        "flag_key,target_type,target_id,variant,created_at,created_by",
-        order="flag_key,target_type,target_id", timeout=timeout,
-    ))
+    # Service role (#115): the flag store is service-only, it is read before
+    # a request's identity is settled, and `db_user_scope` itself is decided
+    # from it — a scoped read would recurse into its own answer.
+    with service_scope():
+        flags = list(page_all(
+            table("feature_flags"),
+            "key,default_variant,rollout_percent,rollout_variant,updated_at,updated_by",
+            order="key", timeout=timeout,
+        ))
+        targets = list(page_all(
+            table("feature_flag_targets"),
+            "flag_key,target_type,target_id,variant,created_at,created_by",
+            order="flag_key,target_type,target_id", timeout=timeout,
+        ))
     by_key: dict[str, list[dict]] = {}
     for t in targets:
         by_key.setdefault(t["flag_key"], []).append(t)
@@ -329,10 +349,11 @@ def _user_roles(user_id: str) -> tuple[tuple[str, int], ...]:
     # A failed read raises into explain(), which fails closed for THIS
     # user's resolution only: one user's roles read does not mark the whole
     # store down (only a snapshot read does).
-    rows = table("user_roles").select(
-        "role_id,roles!inner(display_priority)", filters={"user_id": f"eq.{user_id}"},
-        timeout=STORE_TIMEOUT_S,
-    ) or []
+    with service_scope():  # #115: part of the flag store (see read_config)
+        rows = table("user_roles").select(
+            "role_id,roles!inner(display_priority)", filters={"user_id": f"eq.{user_id}"},
+            timeout=STORE_TIMEOUT_S,
+        ) or []
     out = tuple(
         (str(r["role_id"]), int(((r.get("roles") or {}).get("display_priority")) or 0))
         for r in rows
