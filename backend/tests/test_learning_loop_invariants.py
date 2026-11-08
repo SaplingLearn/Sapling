@@ -49,6 +49,8 @@ PURE_MODULES = (
     "surface.py",  # A140: the surface descriptor and the cue-familiarity dial (descriptors in, ranks out)
     "multi_concept.py",  # A141: combination identity, the gate and the session dial (keys/states in)
     "multi_concept_report.py",  # A141: served and outcomes per course (rows in, report out)
+    "quiz_plan.py",  # A143/A144/A147: the quiz's learner-model choices (states in, choices out)
+    "quiz_gates.py",  # A145/A146: the quiz item gates and misconception rules (answers in, decisions out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
@@ -56,6 +58,7 @@ SERIES_AGENT_TASKS = (
     "check_items",
     "check_items_verify",  # A119: the drafted items' alignment check (request path in function mode)
     "check_items_solve",  # A124: the drafted items' key check (request path in function mode)
+    "quiz_check",  # A145: the quiz item gates' checks (request path with quiz_item_gates on)
     "grader",
     "grader_second",
     "learning_decision",
@@ -84,6 +87,9 @@ SERIES_AGENT_MODULES = (
     # check (check_items_verify slot), each its own agent and prompt stack
     "check_items_combo.py",
     "check_items_combo_verify.py",
+    # A144: the planned quiz writer, its own agent and prompt stack on the quiz
+    # slot
+    "quiz_planned.py",
     "grader.py",
     "learning_decision.py",
     "loop_tutor.py",
@@ -2348,6 +2354,11 @@ MISCONCEPTIONS_IMPORTERS_ALLOWED = {
     # recheck_after_release — the one re-check decision; spec §13 A114: its queue
     # reads open_for (shared open wrong_keys mark confusable concepts). Nothing else.
     "learning/review.py",
+    # Spec §13 A146: the quiz records a "Sure" wrong answer's tagged
+    # misconception (`record`) and closes what a correct first answer lists
+    # (`resolve_after_grade`) — imported inside those functions only, never the
+    # rollup.
+    "services/quiz_learning.py",
 }
 
 

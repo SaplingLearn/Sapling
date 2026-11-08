@@ -1,9 +1,10 @@
 """The quiz with every quiz learning flag off is the quiz of 50e9ded8.
 
-Learning-loop spec §13 A143-A147 put the quiz's learner-model choice, its
-item gates, its misconception record and resolve, and its results block
-behind four per-student flags (`quiz_learner_model`, `quiz_item_gates`,
-`quiz_misconceptions`, `quiz_results_routing`). Off, every quiz generation
+Learning-loop spec §13 A143-A147 put the quiz's learner-model concept plan,
+its planned questions, its item gates, its misconception record and resolve,
+and its results block behind five per-student flags (`quiz_concept_plan`,
+`quiz_planned_questions`, `quiz_item_gates`, `quiz_misconceptions`,
+`quiz_results_routing`). Off, every quiz generation
 request, served question, recorded response, evidence row and stored row is
 byte-identical to 50e9ded8, so the recorded `quiz_generation` eval cassettes
 still replay.
@@ -38,7 +39,8 @@ from main import app
 client = TestClient(app)
 
 QUIZ_FLAGS = (
-    "quiz_learner_model",
+    "quiz_concept_plan",
+    "quiz_planned_questions",
     "quiz_item_gates",
     "quiz_misconceptions",
     "quiz_results_routing",
@@ -308,8 +310,9 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
     """/generate → /answer (each question, the first answered "Sure") → /submit
     on the E2E quiz handler, every write and response recorded."""
     from agents._providers import clear_function_handlers, model_for, register_function_handler
-    from agents.function_handlers_e2e import _quiz_handler
+    from agents.function_handlers_e2e import _quiz_check_handler, _quiz_handler
     from agents.quiz import quiz_agent
+    from agents.quiz_planned import quiz_planned_agent
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     written: list = []
@@ -325,10 +328,12 @@ def _flow(monkeypatch, *, question_format: str, difficulty: str = "adaptive") ->
 
     clear_function_handlers()
     register_function_handler("quiz", _quiz_handler)
+    register_function_handler("quiz_check", _quiz_check_handler)
     try:
         with ExitStack() as stack:
             _context_patches(stack, material=True, recent=False, exam_days=None)
             stack.enter_context(quiz_agent.override(model=model_for("quiz")))
+            stack.enter_context(quiz_planned_agent.override(model=model_for("quiz")))
             stack.enter_context(patch("routes.quiz.table", side_effect=tables))
             stack.enter_context(patch("routes.quiz.encrypt_json", side_effect=lambda v: {"enc": v}))
             stack.enter_context(

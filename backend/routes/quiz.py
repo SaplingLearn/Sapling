@@ -16,6 +16,11 @@ import config
 from agents import ORCHESTRATOR_LIMITS, TOPUP_LIMITS
 from agents._providers import UnregisteredHandlerError
 from agents.quiz import quiz_agent, Quiz, QuizQuestion, PROMPT_VERSION
+from agents.quiz_planned import (
+    PROMPT_VERSION as PLANNED_PROMPT_VERSION,
+    build_message as build_planned_message,
+    quiz_planned_agent,
+)
 from agents.deps import SaplingDeps
 from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
@@ -44,7 +49,10 @@ from services.encryption import encrypt_json, decrypt_json_column
 from services.quiz_grading import WRITTEN_TYPES, grade_written, numeric_value
 from services.quiz_algebra import equivalent_algebra
 from services.graph_service import apply_graph_update
-from learning import quiz_evidence
+from services import quiz_learning
+from services.feature_flags import flag_on
+from services.quiz_learning import GenerationPlan
+from learning import quiz_evidence, quiz_gates
 from learning.evidence import stated_confidence
 from learning.help_ledger import max_help_many
 from learning.params import RUNG_ASSISTED_MIN, RUNG_NO_CREDIT_MIN
@@ -754,7 +762,11 @@ def _agent_question_to_wire(q: QuizQuestion, qid: int) -> dict | None:
 #
 # `lint_flags` (learning-loop spec §13 A132) IS sensitive: a code such as
 # `correct_longest` says where the key is.
-_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash", "lint_flags")
+#
+# `gate` and `planned` (spec §13 A144/A145) are the item gates' verdict and the
+# plan a question was written to; an option's `misconception` tag names a
+# distractor. Internal like the rest, and only ever present with their flags.
+_INTERNAL_QUESTION_KEYS = ("provenance", "question_hash", "lint_flags", "gate", "planned")
 
 
 def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> list[dict]:
@@ -762,9 +774,46 @@ def _client_questions(wire_questions: list[dict], include_answer_key: bool) -> l
     if not include_answer_key:
         return _strip_answer_key(wire_questions)
     return [
-        {k: v for k, v in q.items() if k not in _INTERNAL_QUESTION_KEYS}
+        {
+            k: (_untagged(v) if k == "options" else v)
+            for k, v in q.items()
+            if k not in _INTERNAL_QUESTION_KEYS
+        }
         for q in wire_questions
     ]
+
+
+def _untagged(options):
+    """Options without A144's misconception tags (a no-op on untagged ones)."""
+    if not isinstance(options, list) or not any(
+        isinstance(o, dict) and quiz_gates.TAG_KEY in o for o in options
+    ):
+        return options
+    return [
+        {k: v for k, v in o.items() if k != quiz_gates.TAG_KEY} if isinstance(o, dict) else o
+        for o in options
+    ]
+
+
+def _record_plan(question: dict, spec, tags, plan) -> None:
+    """Learning-loop spec §13 A144: stamp a planned question with the plan it
+    answers (its slot, where its difficulty came from, its target) and tag
+    each distractor with the misconception key the model gave it, kept only
+    when the plan named that key (`quiz_gates.validate_tags`)."""
+    options = question.get("options") or []
+    if options:
+        correct = next((i for i, o in enumerate(options) if o.get("correct")), -1)
+        kept = quiz_gates.validate_tags(
+            tags, options=len(options), correct_index=correct, allowed=plan.allowed_keys
+        )
+        for option, tag in zip(options, kept):
+            if tag:
+                option[quiz_gates.TAG_KEY] = tag
+    question[quiz_gates.PLANNED_KEY] = {
+        "slot": spec.slot,
+        "difficulty_source": plan.source,
+        "target": spec.target,
+    }
 
 
 # Per-request model override map. Mirrors the chat tutor's
@@ -921,6 +970,12 @@ class CourseMaterial(NamedTuple):
     #: That is a claim about data we never read. Same reasoning as
     #: `resolution_failed`, one layer down.
     retrieval_failed: bool = False
+    #: The retrieved document chunks in `block`, as {"id", "text"} passages:
+    #: what the A124 blind solve reads when the quiz item gates check a
+    #: generated question (learning-loop spec §13 A145). Carried, never sent:
+    #: the prompt is `block`. The catalog is no passage (it describes the
+    #: course, not the concept).
+    passages: tuple = ()
 
     @property
     def chunk_count(self) -> int:
@@ -1074,6 +1129,11 @@ def _course_material(
         course_chunks=None if chunks else _course_chunk_coverage(bu_code, user_id),
         bu_code=bu_code,
         retrieval_failed=retrieval.failed,
+        passages=tuple(
+            {"id": str(c["id"]) if c.get("id") else None, "text": c.get("chunk_text") or ""}
+            for c in chunks
+            if isinstance(c, dict)
+        ),
     )
 
 
@@ -1251,8 +1311,18 @@ async def _quiz_via_agent(
     question_format: str = "multiple_choice",
     times_studied: int | None = None,
     has_graph: bool | None = None,
+    plan: GenerationPlan | None = None,
+    gate=None,
 ) -> GeneratedQuiz:
     """Run quiz_agent and return questions in the legacy wire shape.
+
+    Learning-loop spec §13 A144/A145, both None while their flags are off
+    (and then nothing below changes): `plan` runs the planned agent
+    (agents/quiz_planned.py) on the learner model's question specs instead of
+    quiz_agent, and `gate` — an async `(questions, material) -> GateRun`
+    (services/quiz_learning.py::gate_questions) — checks each run's new
+    questions before they are kept; a dropped question counts toward the
+    bounded top-up like a drifted one.
 
     `has_graph` is what the CALLER knows about this student's knowledge graph
     in this course, for the F5 dark-scope report in `quiz_signals`. Left None
@@ -1485,6 +1555,18 @@ async def _quiz_via_agent(
         )
     else:
         user_message = routing_msg
+    if plan is not None:
+        # Learning-loop spec §13 A144: the planned agent is told what to write
+        # and nothing else — the concept, the plan's question lines and the
+        # misconception keys — over the same grounding and do-not-repeat list.
+        user_message = build_planned_message(
+            concept_name=concept_name,
+            question_format=question_format,
+            specs=plan.specs,
+            keys=plan.keys,
+            material_block=material.block,
+            recently_asked=_do_not_repeat_block(recent),
+        )
 
     # F6: what this prompt is made of, so `llm_usage.prompt_tokens` (same
     # request_id) becomes attributable to sections instead of estimated.
@@ -1506,11 +1588,21 @@ async def _quiz_via_agent(
         routing_chars=len(routing_msg),
         adaptive=difficulty == "adaptive",
     )
+    if plan is not None:
+        prompt_dimensions.record(
+            planned=True,
+            planned_source=plan.source,
+            planned_targets=sum(1 for s in plan.specs if s.target),
+            misconception_keys=len(plan.keys),
+        )
+    if gate is not None:
+        prompt_dimensions.record(gated=True)
 
     model_override = _resolve_model_pref(model_pref)
     run_kwargs: dict = {"deps": deps}
     if model_override is not None:
         run_kwargs["model"] = model_override
+    agent = quiz_agent if plan is None else quiz_planned_agent
 
     async def _run(message: str, limits) -> tuple[Quiz, str]:
         # #544 F2: bound EACH agent run rather than the whole function.
@@ -1521,7 +1613,7 @@ async def _quiz_via_agent(
         # ordinary TimeoutError the existing handlers can reason about.
         result = record_agent_usage(
             await asyncio.wait_for(
-                quiz_agent.run(message, usage_limits=limits, **run_kwargs),
+                agent.run(message, usage_limits=limits, **run_kwargs),
                 timeout=QUIZ_GENERATION_TIMEOUT_SEC,
             ),
             feature="quiz", task="quiz", user_id=deps.user_id,
@@ -1556,7 +1648,7 @@ async def _quiz_via_agent(
     # claim — the model never tells us which chunk it drew any single
     # question from.
     provenance_base = {
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": PROMPT_VERSION if plan is None else PLANNED_PROMPT_VERSION,
         "chunk_ids": list(material.chunk_ids),
         # Two separate facts, not one fuzzy one: whether retrieved document
         # chunks grounded the question, and whether the official catalog
@@ -1566,9 +1658,27 @@ async def _quiz_via_agent(
         "catalog": material.has_catalog,
     }
 
+    # A144: the plan slots a kept planned question answers (a slot is written
+    # once; a dropped one is asked again by the top-up).
+    filled_slots: set[int] = set()
+
     def _absorb(quiz: Quiz, model: str) -> None:
         nonlocal dropped
         for q in quiz.questions:
+            spec = tags = None
+            if plan is not None:
+                spec = plan.spec(q.slot)
+                if spec is None or spec.slot in filled_slots:
+                    dropped += 1
+                    continue
+                tags = q.option_misconceptions
+                # The concept and the difficulty are the plan's, never the model's.
+                q = QuizQuestion(
+                    question=q.question, type=q.type, difficulty=spec.difficulty,
+                    options=q.options, accepted_answers=q.accepted_answers,
+                    correct_answer=q.correct_answer, explanation=q.explanation,
+                    concept=concept_name,
+                )
             if question_format != "mixed" and q.type != question_format:
                 dropped += 1
                 continue
@@ -1595,11 +1705,31 @@ async def _quiz_via_agent(
             mapped["material_context"] = (
                 "course_material" if material.rag_grounded else "catalog" if material.has_catalog else "general"
             )
+            if spec is not None:
+                _record_plan(mapped, spec, tags, plan)
+                filled_slots.add(spec.slot)
             seen_stems.add(stem)
             seen_hashes.add(qhash)
             wire_questions.append(mapped)
 
+    async def _gate_new(start: int) -> None:
+        """A145: check the questions this run added; a dropped one counts as
+        a drop (the top-up asks again) and frees its plan slot."""
+        nonlocal dropped
+        fresh = wire_questions[start:]
+        if gate is None or not fresh:
+            return
+        run = await gate(fresh, material)
+        kept = {id(q) for q in run.kept}
+        for q in fresh:
+            if id(q) not in kept and isinstance(q.get("planned"), dict):
+                filled_slots.discard(q["planned"].get("slot"))
+        del wire_questions[start:]
+        wire_questions.extend(q for q in fresh if id(q) in kept)
+        dropped += len(fresh) - len(kept)
+
     _absorb(*await _run(user_message, ORCHESTRATOR_LIMITS))
+    await _gate_new(0)
 
     # #543 E2: one bounded top-up when DRIFT cost us a big share of the
     # quiz. Gated on questions actually dropped (never on a clean short
@@ -1619,18 +1749,31 @@ async def _quiz_via_agent(
             # re-emits the same questions, which the dedupe above then
             # discards — a full generation for nothing.
             already = "\n".join(f"- {q['question']}" for q in wire_questions)
-            topup_msg = (
-                f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
-                f"format errors. Generate {missing} MORE questions on the same "
-                f"concept. Remember: {_topup_format_rule(question_format)}"
-            )
+            if plan is None:
+                topup_msg = (
+                    f"{user_message}\n\n[TOP-UP] Some questions were rejected for "
+                    f"format errors. Generate {missing} MORE questions on the same "
+                    f"concept. Remember: {_topup_format_rule(question_format)}"
+                )
+            else:
+                # A144: ask again for exactly the plan slots still open.
+                topup_msg = build_planned_message(
+                    concept_name=concept_name,
+                    question_format=question_format,
+                    specs=[s for s in plan.specs if s.slot not in filled_slots][:missing],
+                    keys=plan.keys,
+                    material_block=material.block,
+                    recently_asked=_do_not_repeat_block(recent),
+                ) + "\n\n[TOP-UP] Write only the QUESTION lines above."
             if already:
                 topup_msg += (
                     f"\n\nDo NOT repeat any of these questions, which are "
                     f"already in the quiz:\n{already}"
                 )
             try:
+                start = len(wire_questions)
                 _absorb(*await _run(topup_msg, TOPUP_LIMITS))
+                await _gate_new(start)
             except (Exception, asyncio.TimeoutError) as e:
                 # The request deliberately SUCCEEDS from here — serve the
                 # short quiz with an honest count. No traceback: the E2E
@@ -1906,6 +2049,38 @@ def _lint_questions(questions: list[dict]) -> list[dict]:
     return questions
 
 
+def _item_gate(user_id: str, course_id: str | None, concept_name: str, request_id: str):
+    """Learning-loop spec §13 A145: the gate hook `_quiz_via_agent` runs on
+    each generation run's new questions — the A119 concept check and the
+    A124 blind solve against the course's concepts and the passages the
+    questions were written from. It never fails the quiz: when the checks
+    cannot run at all, the run's questions are served as practice, never
+    evidence."""
+
+    async def gate(questions: list[dict], material: CourseMaterial):
+        try:
+            names = await asyncio.to_thread(quiz_learning.course_concept_names, user_id, course_id)
+            return await quiz_learning.gate_questions(
+                questions,
+                user_id=user_id,
+                course_id=course_id,
+                concept_name=concept_name,
+                concept_names=names,
+                passages=list(material.passages),
+                request_id=request_id,
+            )
+        except Exception as exc:
+            logger.warning("quiz: item gates unavailable (%s); serving as practice", type(exc).__name__)
+            unchecked = quiz_gates.Gate(
+                quiz_gates.PRACTICE, quiz_gates.ALIGNMENT_UNVERIFIED, quiz_gates.KEY_UNVERIFIED
+            ).stored()
+            for question in questions:
+                question[quiz_gates.GATE_KEY] = dict(unchecked)
+            return quiz_learning.GateRun(kept=list(questions))
+
+    return gate
+
+
 async def _generate_or_502(
     body: GenerateQuizBody,
     *,
@@ -1915,12 +2090,16 @@ async def _generate_or_502(
     times_studied: int | None,
     count: int,
     slot: float | None,
+    plan: GenerationPlan | None = None,
+    gate=None,
 ) -> GeneratedQuiz:
     """Run generation, or raise the error the client contract calls for.
 
     `count` is what to generate NOW, which is not `body.num_questions` when
     G5 recovered part of the quiz from a previous attempt. `slot` is the
     rate-limit slot this request claimed, refunded on every failure exit.
+    `plan` and `gate` are the learning-loop spec §13 A144/A145 hooks (None
+    while their flags are off).
     """
     try:
         # Each agent run inside is individually bounded by
@@ -1944,6 +2123,8 @@ async def _generate_or_502(
             # off that very row. It spares the F5 reporter a probe that could
             # only tell it what we just saw — once per generation, forever.
             has_graph=True,
+            **({"plan": plan} if plan is not None else {}),
+            **({"gate": gate} if gate is not None else {}),
         )
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
@@ -2107,7 +2288,30 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # for the lookup on a path that makes no model call, purely to fill a
     # column nothing reads back on the request path, is the trade not taken.
     exam_days_away = None
+    # Learning-loop spec §13 A144/A145: each flag resolved ONCE for this
+    # request, for the student, and its answer carried down. Off (the
+    # default), nothing below changes.
+    planned_on, gates_on = await run_in_threadpool(
+        lambda: (
+            flag_on(quiz_learning.PLANNED_QUESTIONS_FLAG, body.user_id),
+            flag_on(quiz_learning.ITEM_GATES_FLAG, body.user_id),
+        )
+    )
     if missing > 0:
+        plan = (
+            await run_in_threadpool(
+                quiz_learning.generation_plan,
+                body.user_id,
+                body.concept_node_id,
+                course_id=course_id,
+                concept_name=concept_name,
+                count=missing,
+                requested=body.difficulty,
+                question_format=body.question_format,
+            )
+            if planned_on
+            else None
+        )
         try:
             generated = await _generate_or_502(
                 body,
@@ -2117,6 +2321,12 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 times_studied=node.get("times_studied"),
                 count=missing,
                 slot=slot,
+                plan=plan,
+                gate=(
+                    _item_gate(body.user_id, course_id, concept_name, request_id)
+                    if gates_on
+                    else None
+                ),
             )
         except QuizAPIError:
             if not recovered:
@@ -2155,6 +2365,9 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             ]
             exam_days_away = generated.exam_days_away
     regenerated_count = len(questions) - len(recovered)
+    if gates_on:
+        # A145: a re-served question stored before the gates is practice.
+        quiz_learning.ungated_practice(questions)
     _renumber(questions)
     _lint_questions(questions)
 
@@ -2261,6 +2474,25 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             else {}
         ),
     }
+
+
+@router.get("/plan")
+def quiz_plan(request: Request, user_id: str, course_id: str | None = None):
+    """Learning-loop spec §13 A143: the concepts the quiz proposes, in the
+    learner model's order — due reviews first, then concepts with an open
+    misconception, then concepts the student is ready to learn — each with
+    its reason, decayed p_known and band (learning/quiz_plan.py). 404 while
+    `quiz_concept_plan` is off for the student; 503 when the student's state
+    could not be read (the home then keeps its own ranking). Reads only."""
+    require_self(user_id, request)
+    if not flag_on(quiz_learning.CONCEPT_PLAN_FLAG, user_id):
+        raise HTTPException(status_code=404, detail="quiz plan not enabled")
+    try:
+        concepts = quiz_learning.concept_plan(user_id, course_id)
+    except Exception as exc:
+        logger.warning("quiz: plan unavailable (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="The quiz plan is unavailable right now.") from exc
+    return {"concepts": concepts}
 
 
 @router.get("/attempts")
@@ -2768,7 +3000,10 @@ def _lint_gate(
     kept: list[dict] = []
     for question, result, ev in zip(questions, results, evidence):
         flags = quiz_evidence.question_lint_flags(question)
-        excluded_by = quiz_evidence.evidence_exclusion(flags)
+        # Spec §13 A145: a question its item gate did not verify is no
+        # evidence either ([] for a question stored without a gate: every one
+        # while quiz_item_gates is off).
+        excluded_by = quiz_evidence.evidence_exclusion(flags) + quiz_gates.evidence_exclusion(question)
         if not excluded_by:
             kept.append(ev)
             continue
@@ -3133,6 +3368,27 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         raise
 
     mastery_before = node["mastery_score"]
+    # Learning-loop spec §13 A146/A147: each flag resolved ONCE for this
+    # submit, for the student. Off (the default), nothing below changes. What
+    # they need from before the evidence write is read here: the skill meters
+    # the results compare against, and what the journal said about the
+    # attempt's questions and the concept (A127's first attempt, A76).
+    misconceptions_on = flag_on(quiz_learning.MISCONCEPTIONS_FLAG, user_id)
+    routing_on = flag_on(quiz_learning.RESULTS_ROUTING_FLAG, user_id)
+    skills_before = (
+        quiz_learning.skill_snapshot(user_id, concept_node_id) if routing_on else None
+    )
+    exposure = (
+        quiz_learning.exposure_before(
+            user_id,
+            concept_node_id,
+            [q.get("question_hash") for q in questions if isinstance(q, dict) and quiz_gates.verified(q)],
+            datetime.now(timezone.utc),
+        )
+        if misconceptions_on and any(isinstance(q, dict) and quiz_gates.verified(q) for q in questions)
+        else None
+    )
+    evidence: list[dict] = []
     # PKG-11 / PKG-14b (spec §11.2): graded evidence is the ONLY write — no
     # gate, no flat per-item delta, for every student and under the kill
     # switch alike. The graph runs BKT per question and writes
@@ -3210,6 +3466,19 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             logger.exception(
                 "quiz: mastery snapshot write failed quiz_id=%s", body.quiz_id,
             )
+    if mastery_written and misconceptions_on and evidence:
+        # Spec §13 A146: after the one evidence write (A75 (a)'s order: a
+        # failed write records and closes nothing). Never raises.
+        quiz_learning.misconceptions_after_submit(
+            user_id,
+            concept_node_id,
+            questions=questions,
+            results=results,
+            stated=stated,
+            written=evidence,
+            exposure=exposure,
+            request_id=current_request_id(),
+        )
 
     node2_rows = table("graph_nodes").select(
         "concept_name",
@@ -3320,6 +3589,18 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         },
     )
 
+    # Spec §13 A147, additive: how each skill meter moved, what is due, the
+    # next step. Present only with quiz_results_routing on and a block that
+    # could be built.
+    learning = (
+        quiz_learning.results_block(
+            user_id,
+            {"id": concept_node_id, "course_id": node.get("course_id"), "concept_name": concept_name},
+            skills_before,
+        )
+        if routing_on
+        else None
+    )
     return {
         "score": score,
         "total": total,
@@ -3333,4 +3614,5 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
         # Always present. If the snapshot read failed it carries the award
         # half ALONE — see `_gamification_block` for why that half survives.
         "gamification": gamification,
+        **({"learning": learning} if learning is not None else {}),
     }
