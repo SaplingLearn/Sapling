@@ -1,6 +1,6 @@
 "use client";
 /**
- * The Dashboard's right column (sidebar layout): Today's plan, the streak,
+ * The Dashboard's right column (sidebar layout): the streak, Today's plan,
  * and mastery, as three untitled cards. Their purpose reads from the content,
  * so none carries a label.
  *
@@ -246,7 +246,7 @@ const PLAN_SLOTS = 4;
 const PLAN_ROW_H = 58;
 
 /** Tallest a course row's track may grow to fill the mastery card. */
-const COURSE_ROW_MAX = 56;
+const COURSE_ROW_MAX = 64;
 
 export function DashboardActions({ navigate }: { navigate: (href: string) => void }) {
   return (
@@ -337,37 +337,6 @@ export function TodayColumn(props: {
 
   return (
     <div data-testid="dashboard-today-column" style={{ display: "flex", flexDirection: "column", gap: PANEL_GAP, minWidth: 0, minHeight: 0 }}>
-      {/* Today's plan */}
-      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
-          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
-          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
-        </div>
-        <div
-          role="progressbar"
-          aria-label="Today's plan"
-          aria-valuemin={0}
-          aria-valuemax={checkable.length}
-          aria-valuenow={doneCount}
-          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
-        >
-          <div
-            style={{
-              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
-              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
-              transition: "width var(--dur) var(--ease)",
-            }}
-          />
-        </div>
-        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
-            below don't jump as the plan fills up. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
-          {plan.map((item) => (
-            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
-          ))}
-        </div>
-      </div>
-
       {/* Streak */}
       <div
         className="card"
@@ -439,24 +408,71 @@ export function TodayColumn(props: {
         </div>
       </div>
 
+      {/* Today's plan */}
+      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
+          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Today's plan"
+          aria-valuemin={0}
+          aria-valuemax={checkable.length}
+          aria-valuenow={doneCount}
+          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
+        >
+          <div
+            style={{
+              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
+              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
+              transition: "width var(--dur) var(--ease)",
+            }}
+          />
+        </div>
+        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
+            below don't jump as the plan fills up. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
+          {plan.map((item) => (
+            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
+          ))}
+        </div>
+      </div>
+
       {/* Mastery */}
       {/* flex: 1 — the last card takes the rest of the column, so the column
           runs the full height of the graph beside it. */}
       <div
         className="card"
         data-testid="dashboard-mastery"
-        // Bottom padding 10 + the 24px link: the link's centre sits 22px off
-        // the card's bottom edge — the same line as the graph's legend
-        // (bottom: 14, 16px tall) in the card beside it.
-        style={{ padding: "16px 18px 10px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        // 28px at the bottom keeps the last course bar above the floating
+        // report button, which is pinned over this card's bottom-right corner.
+        style={{ padding: "16px 18px 28px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
-        {stats.total > 0 ? (
-          <>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          {stats.total > 0 ? (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
               <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
               <span style={{ fontSize: 13, color: "var(--text-muted)" }}>of {stats.total} concepts mastered</span>
             </div>
-            <div style={{ display: "flex", height: 8, borderRadius: 99, overflow: "hidden", gap: 2 }}>
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 3 }}>
+              No concepts yet. They appear as you study and upload course material.
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            data-testid="dashboard-mastery-tree"
+            onClick={() => navigate("/tree")}
+            style={{ flexShrink: 0, marginRight: -8, marginTop: -2, fontSize: 12, height: 24, padding: "0 8px" }}
+          >
+            Open Tree →
+          </button>
+        </div>
+        {stats.total > 0 && (
+          <>
+            <div style={{ display: "flex", height: 8, borderRadius: 99, overflow: "hidden", gap: 2, marginTop: 8 }}>
               {legend.map(([label, n, color]) => (
                 <span key={label} style={{ flex: n, background: color }} />
               ))}
@@ -470,22 +486,17 @@ export function TodayColumn(props: {
               ))}
             </div>
           </>
-        ) : (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            No concepts yet. They appear as you study and upload course material.
-          </div>
         )}
         {courseRows && (
-          // The rows share the card's spare height up to COURSE_ROW_MAX each,
-          // so a tall window doesn't strand them far apart; anything beyond
-          // that falls above the footer link (marginTop: auto).
+          // basis 0 + grow: the rows take the card's spare height (up to
+          // COURSE_ROW_MAX each, so a tall window doesn't strand them) and
+          // space-between spreads them. minHeight 0 + overflow: a student with
+          // many courses scrolls this list instead of stretching the page.
           <div
             data-testid="dashboard-course-rows"
             style={{
               marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
-              // basis 0 + grow: take the spare height, but never more than
-              // COURSE_ROW_MAX per row; space-between spreads them within it.
-              flex: "1 1 0", minHeight: "min-content",
+              flex: "1 1 0", minHeight: 0, overflowY: "auto",
               maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
               display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
             }}
@@ -493,17 +504,6 @@ export function TodayColumn(props: {
             {courseRows}
           </div>
         )}
-        {/* Bottom-left, so it lines up with the graph's legend row and stays
-            clear of the floating report button in the bottom-right corner. */}
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          data-testid="dashboard-mastery-tree"
-          onClick={() => navigate("/tree")}
-          style={{ alignSelf: "flex-start", marginTop: "auto", marginLeft: -8, fontSize: 12, height: 24, padding: "0 8px" }}
-        >
-          Open Tree →
-        </button>
       </div>
     </div>
   );
