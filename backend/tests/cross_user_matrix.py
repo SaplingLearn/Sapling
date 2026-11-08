@@ -282,7 +282,10 @@ ENFORCE_404: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/api/quiz/attempts/{attempt_id}/answer"),
     ("POST", "/api/quiz/attempts/{attempt_id}/abandon"),
     ("POST", "/api/quiz/submit"),
-    ("POST", "/api/gradebook/syllabus/apply"),
+    # Not POST /api/gradebook/syllabus/apply: it answers 403 "Document not yours"
+    # for a missing document AND a foreign one (`not doc_rows or ...`), so RLS
+    # hiding A's row leaves the status at 403 under enforce too (final E2E
+    # pass, 2026-11-08). No existence oracle either way.
 })
 
 #: Resource cases whose correct answer today is not 404 and not a leak.
