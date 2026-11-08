@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import TypedDict
 
 import httpcore
+from services import request_limits
+
 import httpx
 from bs4 import BeautifulSoup
 from Levenshtein import distance as _levenshtein
@@ -97,26 +99,18 @@ def dedup_against_existing(
 
 _RATE_WINDOW_SEC = 60
 _RATE_LIMIT = 5
-_rate_state: dict[str, list[float]] = {}
+#: The shared limiter's state (#117): one store, so the `stateless_rate_limit`
+#: flag moves this budget to Postgres along with every other limiter's.
+_rate_state = request_limits._rate_state
 
 
 def check_rate_limit(user_id: str) -> int | None:
-    """Returns None if call allowed, else seconds until allowed again."""
-    now = time.time()
-    bucket = [t for t in _rate_state.get(user_id, []) if now - t < _RATE_WINDOW_SEC]
-    if len(bucket) >= _RATE_LIMIT:
-        # Seconds until the oldest call in the window ages out (freeing a slot),
-        # rounded up. ceil keeps a sub-second remainder from reporting 0 and —
-        # unlike the old `int(...) + 1` — never overshoots to 61 when the calls
-        # land in the same clock tick (elapsed == 0). The min() cap additionally
-        # pins the ceiling when `now` reads BEFORE bucket[0] (NTP step / coarse
-        # Windows timers, #346), so the result is always in [1, _RATE_WINDOW_SEC].
-        retry = min(_RATE_WINDOW_SEC, math.ceil(_RATE_WINDOW_SEC - (now - bucket[0])))
-        _rate_state[user_id] = bucket
-        return retry
-    bucket.append(now)
-    _rate_state[user_id] = bucket
-    return None
+    """Returns None if call allowed, else seconds until allowed again (the
+    shared sliding window in services/request_limits, key
+    ``flashcard_import:<user_id>``)."""
+    return request_limits.check_rate_limit(
+        f"flashcard_import:{user_id}", limit=_RATE_LIMIT, window_sec=_RATE_WINDOW_SEC,
+    )
 
 
 def parse_xlsx(file_bytes: bytes) -> list[Card]:

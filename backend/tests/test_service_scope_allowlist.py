@@ -138,6 +138,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):
         "other users' account state (deleted_at) for cross-user lists",
+    ("services/request_limits.py", "_claim_db", "service_scope"):
+        "#117 stateless_rate_limit: rate_limit_hits + claim_rate_limit() are service-only",
+    ("services/request_limits.py", "_aclaim_db", "service_scope"):
+        "#117 stateless_rate_limit: the async twin of _claim_db",
+    ("services/request_limits.py", "_refund_db", "service_scope"):
+        "#117 stateless_rate_limit: deletes the call's own rate_limit_hits row",
     ("services/rag_service.py", "index_document_chunks", "runs_as_service"): "shared content-addressed chunks",
     ("services/rag_service.py", "index_document_chunks_detailed", "runs_as_service"): "shared chunks",
     ("services/social_cache_service.py", "get_cached_summary", "runs_as_service"): "room_summaries cache",
