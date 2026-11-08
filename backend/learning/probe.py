@@ -9,8 +9,8 @@ Protocol and their format/channel map is supplied by the caller.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping, Sequence
-from typing import NotRequired, Protocol, TypedDict
+from collections.abc import Collection, Iterable, Mapping, Sequence
+from typing import Any, NotRequired, Protocol, TypedDict
 
 from learning.params import (
     CHANNELS,
@@ -413,3 +413,62 @@ def probe_done(
         history, skills=required, available_difficulties=available_difficulties
     )
     return summary["stop_reason"] is not None
+
+
+# ── The probe's evidence journal rows: ONE rule (spec §13 A112, A117) ─────────
+#
+# Planning provenance alone cannot say "probe": the loop's in-session checks
+# carry it too. The session's probe history can. The session close counts
+# check-in answers apart from teaching checks by this rule (A117), and the
+# A112 pre/post report reads a concept's pretest by it, plus one condition of
+# its own (learning_gain.pretest_outcome: the observation was independent).
+
+#: What a planning observation must agree with on its journal row, in type and
+#: value: the envelope can never relabel the row it accompanies (the binding of
+#: learning/planning_history.py::_bound_observation).
+PLANNING_BOUND_FIELDS = (
+    "node_id", "question_hash", "check_item_id", "channel", "correct", "assisted", "max_rung",
+)
+
+
+def probe_history_hashes(history: Any) -> frozenset[str]:
+    """The question hashes of a session's recorded check-in answers, off its
+    `loop_state.probe.history` (PKG-08 appends one observation per recorded
+    probe grade; a goal change keeps the history). Anything but a list of
+    observations reads as none."""
+    if not isinstance(history, list):
+        return frozenset()
+    return frozenset(
+        h["question_hash"]
+        for h in history
+        if isinstance(h, Mapping) and isinstance(h.get("question_hash"), str)
+    )
+
+
+def is_probe_row(row: Mapping[str, Any] | None, probe_hashes: Collection[str]) -> bool:
+    """The evidence journal row is a check-in (probe) answer: it belongs to a
+    session, its question_hash is in that session's probe history
+    (`probe_hashes`, probe_history_hashes), and its planning_observation is
+    bound to it — PLANNING_BOUND_FIELDS equal in type and value, and the
+    envelope's `idk` agreeing with the row's reason. A check-in answer on a
+    seen item, or a refusal graded as idk, is still one (independence is the
+    pretest's further condition, not this rule's). Anything else — a
+    teaching-phase check, a legacy row with no envelope, a relabelled
+    envelope — is not."""
+    if not isinstance(row, Mapping):
+        return False
+    question_hash = row.get("question_hash")
+    if not row.get("session_id") or not isinstance(question_hash, str):
+        return False
+    if question_hash not in probe_hashes:
+        return False
+    observation = row.get("planning_observation")
+    if not isinstance(observation, Mapping):
+        return False
+    for key in PLANNING_BOUND_FIELDS:
+        bound, journaled = observation.get(key), row.get(key)
+        if type(bound) is not type(journaled) or bound != journaled:
+            return False
+    idk = observation.get("idk")
+    journaled_idk = row.get("reason") == f"evidence:{row.get('channel')}:idk"
+    return isinstance(idk, bool) and idk == journaled_idk

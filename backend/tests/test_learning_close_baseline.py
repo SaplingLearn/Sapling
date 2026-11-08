@@ -448,7 +448,7 @@ def test_measured_before_is_the_nodes_whose_first_evidence_is_not_this_sessions(
 
 def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch):
     import routes.learn_loop as loop
-    from learning.session_close import _BOUND
+    from learning.probe import PLANNING_BOUND_FIELDS
 
     journal = _Journal([])
     monkeypatch.setattr(
@@ -471,7 +471,7 @@ def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch
         "session_id",
         "reason",
         "planning_observation",
-        *_BOUND,
+        *PLANNING_BOUND_FIELDS,
     }
     assert needed <= set(cols.split(","))
 

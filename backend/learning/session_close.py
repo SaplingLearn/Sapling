@@ -41,6 +41,9 @@ from learning.params import (
     CLOSE_TRANSCRIPT_TURN_MAX_CHARS,
     LOOP_HISTORY_MAX_MESSAGES,
 )
+# A117: the probe's journal-row rule is the one the A112 pre/post report reads
+# a pretest by (learning_gain.pretest_outcome) — one source, learning/probe.py
+from learning.probe import is_probe_row, probe_history_hashes
 from services.encryption import encrypt_json
 
 logger = logging.getLogger("sapling.learning.session_close")
@@ -126,54 +129,11 @@ class CloseRecord(BaseModel):
     model_written: bool
 
 
-#: What a planning observation must agree with on its journal row: the
-#: envelope cannot relabel the row it accompanies (the binding of
-#: learning/planning_history.py::_bound_observation).
-_BOUND = ("node_id", "question_hash", "check_item_id", "channel", "correct", "assisted", "max_rung")
-
-
 def session_probe_hashes(loop_state: Mapping[str, Any] | None) -> frozenset[str]:
     """The question hashes of the session's recorded check-in answers:
-    `loop_state.probe.history` (PKG-08 appends one observation per recorded
-    probe grade; a goal change keeps the history)."""
+    `probe.probe_history_hashes` of `loop_state.probe.history`."""
     probe = loop_state.get("probe") if isinstance(loop_state, Mapping) else None
-    history = probe.get("history") if isinstance(probe, Mapping) else None
-    if not isinstance(history, list):
-        return frozenset()
-    return frozenset(
-        h["question_hash"]
-        for h in history
-        if isinstance(h, Mapping) and isinstance(h.get("question_hash"), str)
-    )
-
-
-def is_probe_row(row: Mapping[str, Any] | None, probe_hashes: Collection[str]) -> bool:
-    """A117: the journal row is a check-in (probe) answer — the rule the A112
-    pre/post report identifies a probe grade by (`learning_gain.pretest_outcome`):
-    the row belongs to a session, its question_hash is in that session's probe
-    history (`probe_hashes`; planning provenance alone cannot say "probe": the
-    loop's in-session checks are tagged too), and its planning_observation is
-    bound to the row. Independence is the pretest's further condition, not this
-    one: a check-in answer on a seen item, or a refusal graded as idk, is still
-    a check-in answer. Anything else (a teaching-phase check, a legacy row with
-    no envelope, a relabelled envelope) is not."""
-    if not isinstance(row, Mapping):
-        return False
-    question_hash = row.get("question_hash")
-    if not row.get("session_id") or not isinstance(question_hash, str):
-        return False
-    if question_hash not in probe_hashes:
-        return False
-    observation = row.get("planning_observation")
-    if not isinstance(observation, Mapping):
-        return False
-    for key in _BOUND:
-        bound, journaled = observation.get(key), row.get(key)
-        if type(bound) is not type(journaled) or bound != journaled:
-            return False
-    idk = observation.get("idk")
-    journaled_idk = row.get("reason") == f"evidence:{row.get('channel')}:idk"
-    return isinstance(idk, bool) and idk == journaled_idk
+    return probe_history_hashes(probe.get("history") if isinstance(probe, Mapping) else None)
 
 
 def _node_rows(evidence_rows: list[dict]) -> dict[str, list[dict]]:

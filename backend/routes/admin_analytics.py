@@ -41,6 +41,7 @@ from learning.params import (
     PROBE_TARGET_HI,
     PROBE_TARGET_LO,
 )
+from learning.probe import probe_history_hashes
 from services.auth_guard import require_admin
 from services.quiz_ask import quiz_ask_session_ids
 from services.events_service import SYSTEM_CATEGORY
@@ -861,12 +862,7 @@ def _pretests(poses: list[dict]) -> dict[str, bool]:
         for row in table("sessions").select(
             "id,history:loop_state->probe->history", filters={"id": _in(batch)}
         ) or []:
-            history = row.get("history") if isinstance(row.get("history"), list) else []
-            probed[str(row.get("id"))] = {
-                h["question_hash"]
-                for h in history
-                if isinstance(h, dict) and isinstance(h.get("question_hash"), str)
-            }
+            probed[str(row.get("id"))] = probe_history_hashes(row.get("history"))
     out: dict[str, bool] = {}
     for row in anchors:
         outcome = pretest_outcome(row, probed.get(str(row.get("session_id")), set()))

@@ -4942,7 +4942,7 @@ def _session_record(session_id: str) -> tuple[list[dict], list[dict]]:
         for m in msgs or []
     ]
     evidence = table("node_mastery_events").select(
-        # A117: the columns learning.session_close.is_probe_row binds a row's
+        # A117: the columns learning.probe.is_probe_row binds a row's
         # planning envelope to, so the close counts check-in answers apart
         "node_id,p_before,p_after,correct,channel,session_id,question_hash,check_item_id,"
         "assisted,max_rung,reason,planning_observation",

@@ -98,6 +98,74 @@ def test_a_legacy_or_relabelled_envelope_is_no_pretest():
         assert lg.pretest_outcome(row, PROBED) is None
 
 
+# ── one probe rule for the pretest (A112) and the session close (A117) ───────
+
+
+def _probe_rule_corpus() -> list[tuple[str, dict | None, set]]:
+    """Journal rows across the rule's every branch, each with the probe history
+    it is read against."""
+    flipped = _anchor()
+    flipped["planning_observation"] = {**flipped["planning_observation"], "correct": False}
+    relabelled = _anchor()
+    relabelled["planning_observation"] = {**relabelled["planning_observation"], "question_hash": "q-x"}
+    no_flag = _anchor()
+    del no_flag["planning_observation"]["independent"]
+    return [
+        ("independent-right", _anchor(correct=True), PROBED),
+        ("independent-wrong", _anchor(correct=False), PROBED),
+        ("independent-idk", _anchor(correct=False, idk=True), PROBED),
+        ("hint", _anchor(max_rung=2), PROBED),
+        ("no-credit", _anchor(max_rung=RUNG_NO_CREDIT_MIN, correct=False), PROBED),
+        ("seen", _anchor(previously_seen=True), PROBED),
+        ("synthetic-idk", _anchor(correct=False, idk=True, synthetic_idk=True), PROBED),
+        ("no-independence-flag", no_flag, PROBED),
+        ("check", _anchor(qh="q-check"), PROBED),
+        ("not-in-history", _anchor(), set()),
+        ("sessionless", _anchor(session=None), PROBED),
+        ("legacy", {**_anchor(), "planning_observation": None}, PROBED),
+        ("flipped", flipped, PROBED),
+        ("relabelled", relabelled, PROBED),
+        ("idk-lie", {**_anchor(correct=False), "reason": "evidence:free_response:idk"}, PROBED),
+        ("no-row", None, PROBED),
+    ]
+
+
+def test_the_pretest_and_the_session_close_read_probe_rows_by_one_rule():
+    """`learning/probe.py::is_probe_row` is the one rule: the session close
+    (A117) counts check-in answers by it, and the A112 pretest is exactly a row
+    it accepts whose observation was independent, its outcome the row's
+    `correct` — over a corpus that crosses every branch of the rule."""
+    from learning import probe, session_close
+
+    assert session_close.is_probe_row is probe.is_probe_row
+    assert lg.is_probe_row is probe.is_probe_row
+    accepted = set()
+    for name, row, probed in _probe_rule_corpus():
+        is_probe = probe.is_probe_row(row, probed)
+        independent = is_probe and row["planning_observation"].get("independent") is True
+        expected = row["correct"] if independent else None
+        assert lg.pretest_outcome(row, probed) == expected, name
+        accepted |= {name} if is_probe else set()
+    # the rule accepts a check-in answer on a seen or helped item — those are
+    # check-in answers the close counts — but no relabelled or foreign row
+    assert accepted == {
+        "independent-right", "independent-wrong", "independent-idk", "hint", "no-credit",
+        "seen", "synthetic-idk", "no-independence-flag",
+    }
+
+
+def test_the_pretest_delegates_to_the_shared_probe_rule(monkeypatch):
+    """Delegation, not a copy: the pretest follows `is_probe_row` whatever it
+    answers, and adds only the independence and a boolean outcome on top."""
+    good, relabelled = _anchor(correct=True), _anchor(correct=True)
+    relabelled["planning_observation"] = {**relabelled["planning_observation"], "max_rung": 3}
+    monkeypatch.setattr(lg, "is_probe_row", lambda row, probed: False)
+    assert lg.pretest_outcome(good, PROBED) is None
+    monkeypatch.setattr(lg, "is_probe_row", lambda row, probed: True)
+    assert lg.pretest_outcome(relabelled, PROBED) is True  # the binding is the rule's, not the pretest's
+    assert lg.pretest_outcome(_anchor(previously_seen=True), PROBED) is None  # not independent
+
+
 # ── the post-test outcome ────────────────────────────────────────────────────
 
 

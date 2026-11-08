@@ -1,16 +1,18 @@
 """Pre/post learning gain at the fixed post-test windows (spec §13 A112;
 docs/research/learning-loop/2026-11-07-direction-audit.md rec. 2 "add a pretest
 form", and the 2026-10-18 foundation audit: "do not use rising p_known as the
-primary learning outcome"). Pure: stdlib + learning.params.
+primary learning outcome"). Pure: stdlib, learning.params and learning.probe.
 
 A PAIR is one (student, concept) in one post-test window that has BOTH
 
   • a pretest — the concept's FIRST graded evidence (the post-test anchor,
     A112) when that evidence is a PROBE grade with an independent planning
     observation (no help, a fresh item, no re-check, no synthetic idk) bound to
-    its journal row. Planning provenance alone cannot say "probe": the loop's
-    in-session checks are tagged too, so the caller passes the question hashes
-    of the row's session's probe history (`sessions.loop_state.probe.history`).
+    its journal row — `probe.is_probe_row`, the rule the session close (A117)
+    counts check-in answers by, plus the independence. Planning provenance
+    alone cannot say "probe": the loop's in-session checks are tagged too, so
+    the caller passes the question hashes of the row's session's probe history
+    (`probe.probe_history_hashes` of `sessions.loop_state.probe.history`).
     A concept graded first by anything else (a check after teaching, review, a
     quiz) has no pretest: it was exposed before it was diagnosed; and
   • an unassisted post-test outcome in that window — the pose was answered and
@@ -44,32 +46,21 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
 from learning.params import POSTTEST_DELAYED_MIN_DAYS, POSTTEST_WINDOWS_DAYS
-
-#: The planning envelope cannot relabel the journal row it accompanies
-#: (learning/planning_history.py::_bound_observation's binding).
-_BOUND = ("node_id", "question_hash", "check_item_id", "channel", "correct", "assisted", "max_rung")
+from learning.probe import is_probe_row
 
 
 def pretest_outcome(row: Mapping[str, Any] | None, probe_hashes: Collection[str]) -> bool | None:
     """The concept's pretest from its anchor row (its first evidence row): the
-    observed outcome when the row is a probe grade — it has a session and its
-    question_hash is in `probe_hashes`, that session's probe history — whose
-    planning_observation is independent and bound to the row; else None (no
-    usable pretest: a check, review, quiz or post-test row, a helped or seen
-    probe item, a legacy row without provenance — unknown, never inferred)."""
-    if not isinstance(row, Mapping):
+    observed outcome when the row is a probe grade — `probe.is_probe_row`, the
+    one rule the session close counts check-in answers by (A117): a session's
+    row, its question in `probe_hashes` (that session's probe history), its
+    planning_observation bound to it — whose observation is, on top of that,
+    independent; else None (no usable pretest: a check, review, quiz or
+    post-test row, a helped or seen probe item, a legacy row without
+    provenance — unknown, never inferred)."""
+    if not is_probe_row(row, probe_hashes):
         return None
-    question_hash = row.get("question_hash")
-    if not row.get("session_id") or not isinstance(question_hash, str) or question_hash not in probe_hashes:
-        return None
-    observation = row.get("planning_observation")
-    if not isinstance(observation, Mapping) or observation.get("independent") is not True:
-        return None
-    for key in _BOUND:
-        if type(observation.get(key)) is not type(row.get(key)) or observation.get(key) != row.get(key):
-            return None
-    idk = observation.get("idk")
-    if not isinstance(idk, bool) or idk != (row.get("reason") == f"evidence:{row.get('channel')}:idk"):
+    if row["planning_observation"].get("independent") is not True:
         return None
     correct = row.get("correct")
     return correct if isinstance(correct, bool) else None
