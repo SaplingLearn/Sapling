@@ -2808,15 +2808,22 @@ describe("LoopLearn — segment prequestion (spec §13 A138)", () => {
     expect(api.approveLoopPlan).not.toHaveBeenCalled();
   });
 
-  it("a chat turn while the card is open closes it (the server superseded it)", async () => {
+  it("while the card is open the composer is held: the guess (or No idea) is the one open prompt", async () => {
+    // review fix: a chat turn over an open card let the tutor work its stem
     api.getLoopSessionStatus.mockResolvedValue(status({ prequestion: freePq }));
-    api.streamLoopChat.mockResolvedValue(turn({ reply: "Sure, let's look at that.", phase: "teach" }));
     await resumedTeach();
     await screen.findByTestId("loop-prequestion");
-    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "can we skip this?" } });
-    fireEvent.click(screen.getByTestId("tutor-send"));
-    await screen.findByText("Sure, let's look at that.");
-    expect(screen.queryByTestId("loop-prequestion")).toBeNull();
+    const input = screen.getByTestId("tutor-input");
+    expect(input).toBeDisabled();
+    expect(input.getAttribute("placeholder")).toBe("Answer the question above first, or choose “No idea”.");
+    expect(api.streamLoopChat).not.toHaveBeenCalled();
+  });
+
+  it("an answered card whose explanation is owed leaves the composer open (any turn explains it)", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ prequestion: { ...freePq, answered: true } }));
+    await resumedTeach();
+    await screen.findByTestId("loop-prequestion-explain");
+    expect(screen.getByTestId("tutor-input")).not.toBeDisabled();
   });
 
   it("a feedback turn that opens the next segment poses its guess", async () => {

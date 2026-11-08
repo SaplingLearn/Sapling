@@ -117,6 +117,8 @@ const REPORTED_COPY = "Thanks — that question is reported and won't be shown t
 const WITHDRAWN_DETAIL = "check item withdrawn";
 // spec §13 A139: a self-explanation reply was saved (a polite live region)
 const SELF_EXPLAIN_SAVED_COPY = "Saved — thanks.";
+/** Spec §13 A138: the composer's placeholder while the guess card is open. */
+const PREQUESTION_COMPOSER_COPY ="Answer the question above first, or choose “No idea”.";
 /** routes/learn_loop.py: the prompt was superseded (a later turn closed it). */
 const SELF_EXPLAIN_GONE_DETAIL = "no open self-explanation prompt";
 
@@ -318,6 +320,8 @@ export function LoopLearn() {
   // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
   // Both are server-driven: a served turn closes them and may open new ones.
   const [prequestion, setPrequestion] = useState<LoopPrequestion | null>(null);
+  /** Spec §13 A138 (review fix): an unanswered guess card holds the composer. */
+  const guessCardOpen = !!prequestion && !prequestion.answered;
   const [prequestionBusy, setPrequestionBusy] = useState(false);
   const [selfExplain, setSelfExplain] = useState<LoopSelfExplain | null>(null);
   const [selfExplainBusy, setSelfExplainBusy] = useState(false);
@@ -2129,8 +2133,16 @@ export function LoopLearn() {
           header={chatHeader}
           streamingText={streamingText}
           onStop={stop}
-          disabled={starting || scopeLoading}
-          placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
+          // spec §13 A138 (review fix): the open guess card is the turn's one
+          // open prompt (A121) — answer it, or "No idea", before the chat
+          disabled={starting || scopeLoading || guessCardOpen}
+          placeholder={
+            guessCardOpen
+              ? PREQUESTION_COMPOSER_COPY
+              : paused
+                ? "Tutor chat is paused — check answers still count."
+                : "Ask the tutor…"
+          }
           draftSeed={chatDraft.text}
           draftSeedKey={chatDraft.key}
         />
