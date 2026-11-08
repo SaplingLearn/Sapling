@@ -16,7 +16,6 @@ import pytest
 import scripts.export_learning_trial as export
 from learning import arms
 from learning.evidence import Evidence, planning_observation
-from learning.loop_state_store import EvidenceSpan
 from learning_trial.deidentify import Pseudonymizer
 from learning_trial.table import CONTROL, TREATMENT, read_csv, write_csv
 
@@ -246,7 +245,9 @@ class _FakeDB:
         return iter(self._match(handle.name, filters))
 
 
-def _probe_anchor(event_id, node, qh, *, correct):
+def _probe_anchor(event_id, node, qh, *, correct, at, seq=1):
+    """A journal evidence row as graph_service writes it, carrying the REAL planning
+    envelope; `graph_nodes.user_id` stands in for the !inner embed's filter."""
     ev = Evidence(
         node_id=node, channel="free_response", correct=correct, session_id="sess-1", check_item_id="item-1",
         question_hash=qh,
@@ -257,6 +258,7 @@ def _probe_anchor(event_id, node, qh, *, correct):
         "id": event_id, "node_id": node, "session_id": "sess-1", "question_hash": qh, "check_item_id": "item-1",
         "channel": ev.channel, "correct": ev.correct, "assisted": ev.assisted, "max_rung": ev.max_rung,
         "reason": f"evidence:{ev.channel}", "event_type": "evidence", "planning_observation": planning_observation(ev),
+        "created_at": _iso(at), "evidence_seq": seq, "graph_nodes.user_id": U1,
     }
 
 
@@ -271,9 +273,10 @@ def test_read_trial_composes_the_reads(monkeypatch):
         "posttest_poses": [
             {**_pose(N["open"], 7, QH["a"], posed=_at(8), answered=_at(8, 1), correct=True, rung=0), "user_id": U1},
         ],
-        "node_mastery_events": [
-            _probe_anchor(f"ev-{N['open']}", N["open"], "q-probe", correct=True),
-            _probe_anchor(f"ev-{N['load']}", N["load"], "q-check", correct=False),  # not a probe item
+        "node_mastery_events": [  # the journal's total order: the first row of a node is its anchor
+            _probe_anchor(f"ev-{N['open']}", N["open"], "q-probe", correct=True, at=_at(1)),
+            _probe_anchor(f"ev-{N['load']}", N["load"], "q-check", correct=False, at=_at(2)),  # not a probe item
+            _probe_anchor("ev-later", N["open"], "q-check", correct=False, at=_at(3)),  # practice: no anchor
         ],
         "sessions": [{"id": "sess-1", "history": [{"question_hash": "q-probe"}]}],
         "check_item_reviews": [{"course_id": COURSE, "question_hash": QH["a"], "status": "retired",
@@ -282,23 +285,43 @@ def test_read_trial_composes_the_reads(monkeypatch):
     })
     monkeypatch.setattr(export, "table", db.table)
     monkeypatch.setattr(export, "page_all", db.page_all)
-    spans = {
-        N["open"]: EvidenceSpan(f"ev-{N['open']}", _at(1), _at(3)),
-        N["load"]: EvidenceSpan(f"ev-{N['load']}", _at(2), _at(2)),
-    }
-    seen_courses = []
-    monkeypatch.setattr(export, "evidence_spans", lambda user, course: seen_courses.append((user, course)) or spans)
     data = export.read_trial(LABEL, AS_OF)
     assert data.students == [U1]
-    assert seen_courses == [(U1, COURSE)]
     assert {n["id"] for n in data.nodes} == {N["open"], N["load"]}
-    assert data.spans[N["open"]] == (f"ev-{N['open']}", _at(1))
+    assert data.spans == {N["open"]: (f"ev-{N['open']}", _at(1)), N["load"]: (f"ev-{N['load']}", _at(2))}
     assert data.pretests == {f"ev-{N['open']}": True}  # the check-item anchor is no pretest
     assert set(data.poses) == {(N["open"], 7)}
     assert data.retired == {(COURSE, QH["a"])} and data.reported == set()
     assert not any(kind == "select" and name in ("posttest_poses", "graph_nodes") for kind, name, _ in db.calls), (
         "unbounded reads page"
     )
+
+
+def test_the_anchor_read_is_evidence_spans_rule(monkeypatch):
+    """The exporter restates A112's anchor read (scripts may not import the ZPD
+    layer's loop_state_store): same journal rows in, same anchors out, same
+    total order asked of PostgREST."""
+    from learning import loop_state_store as store
+
+    rows = [
+        {"id": "e1", "node_id": "n1", "created_at": "2026-11-01T09:00:00Z", "evidence_seq": 1},
+        {"id": "e2", "node_id": "n2", "created_at": "2026-11-01T09:00:00+00:00", "evidence_seq": 2},
+        {"id": "e3", "node_id": "n1", "created_at": "2026-11-02T09:00:00Z", "evidence_seq": 3},
+        {"id": "e4", "node_id": "n3", "created_at": "2026-11-03T10:30:00.123456Z", "evidence_seq": None},
+    ]
+    orders = []
+
+    def page_all(handle, columns="*", *, filters=None, order, **kwargs):
+        orders.append(order)
+        assert filters["event_type"] == "eq.evidence"
+        return iter(dict(r) for r in rows)
+
+    monkeypatch.setattr(store, "page_all", page_all)
+    monkeypatch.setattr(export, "page_all", page_all)
+    monkeypatch.setattr(export, "table", lambda name: SimpleNamespace(name=name))
+    spans = store.evidence_spans("u1", "course")
+    assert export._anchors("u1") == {node: (span.first_id, span.first_at) for node, span in spans.items()}
+    assert orders[0] == orders[1] == export._JOURNAL_ORDER
 
 
 def test_reported_means_no_staff_approval_since_the_last_report(monkeypatch):

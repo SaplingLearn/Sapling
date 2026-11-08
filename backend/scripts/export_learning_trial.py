@@ -12,8 +12,10 @@ exported.
 What it reads (read-only, PostgREST through db.connection):
   - the students' course concepts (graph_nodes: id, course, concept name — the
     name only to form the course-level concept key, never exported);
-  - each concept's A112 anchor, its FIRST graded evidence
-    (learning.loop_state_store.evidence_spans, the post-test's own reader);
+  - each concept's A112 anchor, its FIRST graded evidence in the journal's
+    total order (learning/loop_state_store.py::evidence_spans's rule, restated
+    here because scripts may not import that ZPD-layer module —
+    tests/test_learning_zpd_policy.py; a test pins the two equal);
   - the anchor journal rows and their sessions' probe histories -> the probe
     pretest (learning.learning_gain.pretest_outcome, A112's own rule);
   - posttest_poses, every window;
@@ -64,7 +66,6 @@ from db.connection import SUPABASE_URL, page_all, pg_quote_value, table  # noqa:
 from learning.arms import variant_for  # noqa: E402
 from learning.item_alignment import concept_key  # noqa: E402
 from learning.learning_gain import posttest_outcome, pretest_outcome  # noqa: E402
-from learning.loop_state_store import evidence_spans  # noqa: E402
 from learning.params import POSTTEST_POSE_TTL_HOURS, POSTTEST_WINDOWS_DAYS  # noqa: E402
 from learning_trial.deidentify import Pseudonymizer  # noqa: E402
 from learning_trial.table import CONTROL, STATUSES, TREATMENT, TrialRow, write_csv  # noqa: E402
@@ -79,6 +80,9 @@ _POSE_COLS = (
     "node_id,course_id,window_days,question_hash,posed_at,answered_at,correct,max_rung,"
     "anchor_event_id,days_since_evidence"
 )
+#: the evidence journal's total order (read_planning_history's): the first row of a
+#: node in it is the node's A112 anchor (learning/loop_state_store.py::evidence_spans)
+_JOURNAL_ORDER = "created_at.asc,evidence_seq.asc.nullslast,id.asc"
 #: an anchor row, with what learning_gain.pretest_outcome binds its envelope to
 _ANCHOR_COLS = (
     "id,node_id,session_id,question_hash,check_item_id,channel,correct,assisted,max_rung,"
@@ -148,6 +152,30 @@ def _nodes(user_id: str) -> list[dict]:
         )
         if r.get("id") and r.get("course_id")
     ]
+
+
+def _anchors(user_id: str) -> dict[str, tuple[str, datetime]]:
+    """Node id -> (anchor event id, anchor time) for every node of the student
+    with graded evidence: the node's FIRST event_type='evidence' row in the
+    journal's total order, owner-scoped through the graph_nodes!inner embed —
+    evidence_spans' rule (A112), over all the student's courses at once.
+    Propagation is never journaled, so it never anchors. An unreadable journal
+    time raises, as evidence_spans' does: the database wrote it."""
+    out: dict[str, tuple[str, datetime]] = {}
+    for row in page_all(
+        table("node_mastery_events"),
+        "id,node_id,created_at,evidence_seq,graph_nodes!inner(user_id)",
+        filters={"graph_nodes.user_id": f"eq.{user_id}", "event_type": "eq.evidence"},
+        order=_JOURNAL_ORDER,
+    ):
+        node = row.get("node_id")
+        if not node or not row.get("id") or str(node) in out:
+            continue
+        at = _ts(row.get("created_at"))
+        if at is None:
+            raise ValueError("unreadable evidence journal time")
+        out[str(node)] = (str(row["id"]), at)
+    return out
 
 
 def _poses(user_id: str) -> list[dict]:
@@ -238,9 +266,8 @@ def read_trial(label: str, as_of: datetime) -> TrialData:
     for user_id in students:
         mine = _nodes(user_id)
         nodes += mine
-        for course_id in sorted({str(n["course_id"]) for n in mine}):
-            for node_id, span in evidence_spans(user_id, course_id).items():
-                spans[node_id] = (span.first_id, span.first_at)
+        anchors = _anchors(user_id)
+        spans.update({str(n["id"]): anchors[str(n["id"])] for n in mine if str(n["id"]) in anchors})
         for pose in _poses(user_id):
             if pose.get("node_id") and isinstance(pose.get("window_days"), int):
                 poses[(str(pose["node_id"]), pose["window_days"])] = pose
