@@ -33,6 +33,17 @@ class EvidenceObservationSuperseded(PlanningPersistenceUnavailable):
     """An uncommitted older grade cannot overwrite newer learner evidence."""
 
 
+class EvidenceItemRetired(EvidenceObservationSuperseded):
+    """Spec §13 A123: staff retired a check item this batch grades, so the
+    batch was refused and nothing was written. A grade on a retired item is
+    void by definition; like a superseded grade it is dropped, never retried
+    as is (the student is offered another check)."""
+
+
+class EvidenceVoidRefused(PlanningPersistenceUnavailable):
+    """A void was asked for a check item staff have not retired (nothing written)."""
+
+
 def fingerprint(user_id: str, course_id: str | None, evidences: list[Evidence], retention) -> str:
     value = {
         "user_id": user_id,
@@ -276,6 +287,10 @@ def commit_evidence_transaction(
                 raise EvidenceObservationSuperseded(
                     "Newer learner evidence supersedes this uncommitted grade"
                 )
+            if out["status"] == "retired":
+                # §13 A123: under the item's lock the commit found a staff
+                # retire — no row was written, so none can be left non-void.
+                raise EvidenceItemRetired("A check item this batch grades was retired")
             if out["status"] not in {"committed", "replay"}:
                 raise EvidenceTransactionConflict(
                     "Evidence transaction identity/ownership conflict"
@@ -287,3 +302,107 @@ def commit_evidence_transaction(
         raise
     except Exception as exc:
         raise PlanningPersistenceUnavailable("Evidence transaction unavailable") from exc
+
+
+# ── spec §13 A123: void + recompute ─────────────────────────────────────────
+#
+# One student's void of a retired check item's evidence is ONE transaction:
+# `learning_evidence_void_commit` inserts the void rows and writes the
+# learner_state rows and graph mirrors the journal replay computed, under the
+# evidence commit's owner lock, the item's lock and the same version checks.
+# Only graph_service's single writer submits a plan (`_apply_void`); the plan
+# is a deterministic function of the snapshot, so a stale snapshot is simply
+# re-read and re-planned, and a re-run of a finished void writes nothing.
+
+_VOID_KEYS = ("voids", "nodes", "states_expected", "edges", "state_rows", "mirrors", "misconceptions")
+
+
+@dataclass
+class VoidPlan:
+    """What a void commits (`payload`, the RPC's plan) and what it changes,
+    for the caller's report ({concept, before, after} per recomputed node)."""
+
+    payload: dict
+    changes: list[dict]
+
+
+def void_pending(course_id: str, question_hash: str) -> dict[str, int]:
+    """{user_id: rows} — the students who still have a NON-void evidence row
+    graded against the course item. Read-only; raises
+    PlanningPersistenceUnavailable when the store does not answer (an empty
+    answer would read as "nothing left to void")."""
+    try:
+        out = _result(
+            rpc(
+                "learning_evidence_void_pending",
+                {"p_course_id": course_id, "p_question_hash": question_hash},
+            )
+        )
+        users = out.get("users")
+        if out["status"] != "pending" or not isinstance(users, dict):
+            raise PlanningPersistenceUnavailable("Invalid evidence void pending set")
+        pending: dict[str, int] = {}
+        for user_id, rows in users.items():
+            if not isinstance(user_id, str) or not user_id or type(rows) is not int or rows < 1:
+                raise PlanningPersistenceUnavailable("Invalid evidence void pending set")
+            pending[user_id] = rows
+        return pending
+    except PlanningPersistenceUnavailable:
+        raise
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Evidence void pending set unavailable") from exc
+
+
+def commit_void_transaction(
+    user_id: str,
+    course_id: str,
+    question_hash: str,
+    compute: Callable[[dict], VoidPlan],
+) -> tuple[list[dict], dict]:
+    """Snapshot → plan (`compute`, the replay; no I/O) → commit, retried on a
+    stale snapshot or an explicit rollback, at most EVIDENCE_TRANSACTION_RETRIES
+    times. Returns (the plan's changes, the commit's counts). An ambiguous
+    acknowledgment is retried with the IDENTICAL plan once: a void commit is
+    idempotent (void rows on conflict do nothing; a row equal to what is
+    stored is not written), so whether the first attempt landed or not, the
+    retry ends in the same state."""
+    op_id = str(uuid.uuid4())
+    args_base = {"p_user_id": user_id, "p_course_id": course_id, "p_question_hash": question_hash}
+    try:
+        for _attempt in range(EVIDENCE_TRANSACTION_RETRIES):
+            snapshot = _result(rpc("learning_evidence_void_snapshot", args_base))
+            if snapshot["status"] != "snapshot":
+                raise EvidenceTransactionConflict("Evidence void snapshot unavailable")
+            plan = compute(snapshot)
+            if set(plan.payload) != set(_VOID_KEYS):
+                raise EvidenceTransactionConflict("Invalid evidence void plan")
+            args = {**args_base, "p_operation_id": op_id, "p_plan": plan.payload}
+            try:
+                out = _result(rpc("learning_evidence_void_commit", args))
+            except Exception as first:
+                if _retryable_sql(first):
+                    continue  # the server explicitly rolled the transaction back
+                try:
+                    out = _result(rpc("learning_evidence_void_commit", args))
+                except Exception as second:
+                    raise PlanningPersistenceUnavailable(
+                        "Evidence void acknowledgment unavailable"
+                    ) from second
+            if out["status"] == "stale":
+                continue
+            if out["status"] == "not_retired":
+                raise EvidenceVoidRefused("The check item is not retired")
+            if out["status"] != "committed":
+                raise EvidenceTransactionConflict("Evidence void ownership conflict")
+            counts = {}
+            for key in ("voided", "states", "mirrors", "misconceptions"):
+                value = out.get(key)
+                if type(value) is not int or value < 0:
+                    raise PlanningPersistenceUnavailable("Invalid evidence void receipt")
+                counts[key] = value
+            return plan.changes, counts
+        raise PlanningPersistenceUnavailable("Evidence void remained busy")
+    except PlanningPersistenceUnavailable:
+        raise
+    except Exception as exc:
+        raise PlanningPersistenceUnavailable("Evidence void unavailable") from exc

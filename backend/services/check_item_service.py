@@ -16,11 +16,13 @@ Sources (A23): an item is drafted only from a document that is shared course
 material — `chunk_visibility.decide_visibility` decides, never re-derived
 here — and only from its SHARED chunks.
 
-Quality (A113): every stored row carries learning.item_lint's flags
+Quality (A113, A123): every stored row carries learning.item_lint's flags
 (`lint_flags`, plaintext codes — flagged items are stored, never dropped); a
-question retired for its course (ITEM_REPORT_RETIRE_MIN_REPORTERS reporters or
-an admin; learning/item_reports.py) is never stored again, and
-`retire_course_item` retires one through the same retire path as A23/A34.
+question staff retired for its course (learning/item_reports.py) is never
+stored again, and `retire_course_item` voids its evidence through the single
+graph writer, then deletes it through the same retire path as A23/A34. A
+question its reporters quarantined is stored again when re-drafted, held like
+its other rows (`reports_threshold`, below).
 
 Alignment (A119): before a generation pass writes, every valid draft of the
 call goes through ONE alignment check (agents/check_items_verify.py) and
@@ -48,6 +50,16 @@ Held items are withdrawn from every student read here (`list_items`,
 reads (`items_by_ids`, `items_by_hash`) and the admin reads keep them.
 scripts/backfill_check_item_keys.py checks stored rows; the human audit
 (`record_item_audit`, learning/item_audit.py) measures what is left.
+
+Staff holds (A123) are the same hold under two more codes
+(learning/checks.py STAFF_HOLD_FLAGS): `reports_threshold` while reporters'
+quarantine waits for staff, `staff_retired` from a staff retire until the
+rows are deleted. A confirmed key lifts neither; only a staff decision does.
+The database derives both from check_item_reviews — the report and decision
+functions write them onto the course item's rows in the decision's own
+transaction, and a trigger re-derives them on every later insert or flag
+write — so nothing here sets or clears one (a rewrite keeps them, `kept_flags`,
+only so as not to fight that trigger).
 """
 
 from __future__ import annotations
@@ -73,9 +85,10 @@ from agents.check_items_verify import VerifyItem, verdicts, verify_items
 from agents.deps import SaplingDeps
 from db.connection import page_all, pg_quote_value, table
 from learning.checks import (
+    HOLD_FLAGS,
     KEY_AUDIT_AMBIGUOUS,
     KEY_AUDIT_WRONG,
-    KEY_HOLD_FLAGS,
+    REPORTS_THRESHOLD,
     CheckItem,
     CheckItemDraft,
     Option,
@@ -84,8 +97,9 @@ from learning.checks import (
     clean_chunk_ids,
     common_wrong,
     content_criteria,
+    held,
+    held_flags,
     item_id,
-    key_held,
     key_held_flags,
     lettered_options,
     parse_tolerance,
@@ -115,7 +129,7 @@ from learning.item_keys import (
     settle,
 )
 from learning.item_lint import LINT_FLAGS, lint_check_item, lint_item
-from learning.item_reports import retired_hashes
+from learning.item_reports import QUARANTINED, RETIRED, review_statuses
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
@@ -169,8 +183,8 @@ _ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at"
 #: ran on the row (NULL = never).
 _KEY_COLUMNS = _COLUMNS + ",key_checked_at"
 #: Every code the review queue lists an item for: the A113 linter's, A119's
-#: and the A124 key holds.
-QUEUE_FLAGS = (*LINT_FLAGS, *ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS)
+#: and the holds (A124's key holds, A123's staff holds).
+QUEUE_FLAGS = (*LINT_FLAGS, *ALIGNMENT_FLAGS, *HOLD_FLAGS)
 
 #: What derive_key names the secret the correct mc_reason option's slot is
 #: keyed with (A37): the client is sent each item's question_hash, so the slot
@@ -272,6 +286,9 @@ def _build_row(
 _REPEAT = "repeat: the prompt is a stored item's"
 # A draft whose prompt is a question retired for the course (A113).
 _RETIRED = "retired: the prompt repeats a question withdrawn from this course"
+# A draft whose prompt is a question its reporters quarantined (A123): stored,
+# held like the question's other rows, so it serves no one until staff decide.
+_QUARANTINED = "quarantined: the prompt repeats a question held for staff review"
 
 
 class _ConceptWrite(NamedTuple):
@@ -379,13 +396,16 @@ def _store_screened(
     id is the prompt's question_hash) is a repeat: dropped before `limit`
     counts it, so it never rewrites the stored item or takes a new one's slot.
     A draft of a question retired for the course (A113) is dropped the same
-    way, after one read of the batch's hashes; that read raises like the upsert
-    does, so a blip drops the batch (the caller reports StorageError) rather
-    than risk re-publishing a retired key. A119: an aligned draft carries the
-    check's flags and `aligned_at`. A124: a key-checked draft carries
-    `key_checked_at` and, agreed, `canonical_verified`; a held one its hold
-    code — it is stored, but serves no one, so it takes no `limit` slot and
-    counts toward no A37 floor, and its hold reason reaches the top-up."""
+    way, after one read of the batch's decisions; that read raises like the
+    upsert does, so a blip drops the batch (the caller reports StorageError)
+    rather than risk re-publishing a retired key. A119: an aligned draft
+    carries the check's flags and `aligned_at`. A124: a key-checked draft
+    carries `key_checked_at` and, agreed, `canonical_verified`; a held one its
+    hold code — it is stored, but serves no one, so it takes no `limit` slot
+    and counts toward no A37 floor, and its hold reason reaches the top-up.
+    A123: a draft of a question its reporters quarantined is stored held the
+    same way (`reports_threshold`: the database's trigger adds it whatever
+    this write says — it is added here too so the slot count sees the hold)."""
     allowed = set(allowed_chunk_ids)
     exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
@@ -418,18 +438,19 @@ def _store_screened(
             )
         )
     hashes = [b["question_hash"] for _, b in built if isinstance(b, dict)]
-    retired = retired_hashes(course_id, hashes) if hashes else set()
+    decided = review_statuses(course_id, hashes) if hashes else {}
     rows: list[dict] = []
     seen: set[str] = set()
     mc_drops: list[str] = []
-    surplus = repeats = withdrawn = served = 0
+    surplus = repeats = withdrawn = quarantined = served = 0
     for entry, row in built:
         fmt = entry.format
         if not isinstance(row, dict):
             if fmt == _MC_REASON:
                 mc_drops.append(row)
             continue
-        if row["question_hash"] in retired:
+        status = decided.get(row["question_hash"])
+        if status == RETIRED:
             withdrawn += 1
             if fmt == _MC_REASON:
                 mc_drops.append(_RETIRED)
@@ -443,13 +464,19 @@ def _store_screened(
             if fmt == _MC_REASON:
                 mc_drops.append(_REPEAT)
             continue
+        if status == QUARANTINED:
+            row["lint_flags"] = merge_flags(row.get("lint_flags"), [REPORTS_THRESHOLD])
         held = _row_held(row)
         if limit is not None and not held and served >= limit:
             surplus += 1
             continue
         seen.add(row["id"])
         rows.append(row)
-        if held:
+        if status == QUARANTINED:
+            quarantined += 1
+            if fmt == _MC_REASON:
+                mc_drops.append(_QUARANTINED)
+        elif held:
             if fmt == _MC_REASON and entry.reasons:
                 mc_drops.append(entry.reasons)
         else:
@@ -467,6 +494,14 @@ def _store_screened(
             "check items: %d draft(s) repeat a question retired for the course; not stored "
             "(course=%s concept=%s)",
             withdrawn,
+            course_id,
+            concept_key,
+        )
+    if quarantined:
+        logger.info(
+            "check items: %d draft(s) repeat a question quarantined for the course; "
+            "stored held (course=%s concept=%s)",
+            quarantined,
             course_id,
             concept_key,
         )
@@ -490,8 +525,8 @@ def _store_screened(
 
 
 def _row_held(row: dict) -> bool:
-    """A124: a stored row (its plaintext columns) is held off every student path."""
-    return key_held_flags(row.get("lint_flags"), row.get("canonical_verified"))
+    """A124, A123: a stored row (its plaintext columns) is held off every student path."""
+    return held_flags(row.get("lint_flags"), row.get("canonical_verified"))
 
 
 def create_items(
@@ -606,12 +641,13 @@ def _to_items(rows) -> list[CheckItem]:
 
 
 def _unheld(items: Iterable[CheckItem]) -> list[CheckItem]:
-    """A124: the items no key hold withdraws. The student reads below drop a
-    held item as if it were retired (A23: nothing serves a deleted item, and
-    every loop and review path already handles an item gone mid-session — a
-    posed check, an open post-test pose or a served review item reads as
-    withdrawn, its key never released)."""
-    return [i for i in items if not key_held(i)]
+    """A124: the items no hold withdraws — no key hold, and (A123) no staff
+    hold: neither quarantined by reporters nor retired by staff. The student
+    reads below drop a held item as if it were retired (A23: nothing serves a
+    deleted item, and every loop and review path already handles an item gone
+    mid-session — a posed check, an open post-test pose or a served review
+    item reads as withdrawn, its key never released)."""
+    return [i for i in items if not held(i)]
 
 
 def list_items(
@@ -821,9 +857,10 @@ def items_to_lint(course_id: str | None = None, *, relint: bool = False) -> Iter
 def lint_update(item: CheckItem) -> list[str] | None:
     """The item's lint flags as the write path would store them now, or None
     when they equal what is stored (nothing to write). The A119 alignment codes
-    and the A124 key-hold codes already stored are kept: they record what the
-    alignment check changed and what a key check or audit decided, which no
-    re-lint can see again (dropping a hold code would release a held key)."""
+    and the hold codes already stored are kept: they record what the alignment
+    check changed and what a key check, an audit or a staff decision decided,
+    which no re-lint can see again (dropping a key-hold code would release a
+    held key; a staff-hold code the database restores either way)."""
     flags = merge_flags(lint_check_item(item), kept_flags(item.lint_flags))
     return None if item.lint_flags == flags else flags
 
@@ -843,15 +880,38 @@ def store_lint_flags(flags: Iterable[str], item_ids: Iterable[str]) -> int:
     return len(ids)
 
 
+def relint_course_item(course_id: str, question_hash: str) -> int:
+    """Lint every row of a course item the current linter would flag
+    differently (`lint_update`), one write per changed row; returns how many
+    were written. Spec §13 A123: an approval runs it after lifting a staff
+    hold. A row never linted (lint_flags NULL) that a quarantine held carries
+    an empty list once the hold is lifted, which reads as "linted clean"
+    (checks.lint_rank) — linting it now makes that true. Raises on a failed
+    read or write (the approval answers 503; approving again finishes it)."""
+    rows = table(_TABLE).select(
+        _COLUMNS,
+        filters={"course_id": f"eq.{course_id}", "question_hash": f"eq.{question_hash}"},
+        order="id",
+    )
+    written = 0
+    for item in _to_items(rows):
+        flags = lint_update(item)
+        if flags is not None:
+            store_lint_flags(flags, [item.id])
+            written += 1
+    return written
+
+
 # ── alignment backfill (A119) ───────────────────────────────────────────────
 #
 # scripts/backfill_check_item_alignment.py re-checks items stored before the
 # alignment check existed (aligned_at NULL), or every item with --reverify,
 # through the same check and the same learning.item_alignment rules as the
 # write path. Evidence is never touched: node_mastery_events keys no foreign
-# key on an item, so a re-keyed or retired item leaves every evidence row (its
-# check_item_id, node and question_hash) exactly as recorded. Reports and
-# reviews key on (course_id, question_hash), which a re-tag keeps.
+# key on an item, so a re-keyed or rejected (deleted) item leaves every
+# evidence row (its check_item_id, node and question_hash) exactly as recorded
+# — only a STAFF retire voids evidence (spec §13 A123). Reports and reviews key
+# on (course_id, question_hash), which a re-tag keeps.
 
 
 def items_to_align(
@@ -1108,7 +1168,9 @@ def confirm_course_item(course_id: str, question_hash: str) -> None:
     """A124: an admin's approval is the A22 instructor confirmation of the
     key — `canonical_verified` on every row of the course item (one per
     concept that holds the question), which lifts a key hold. Flags are kept
-    (the history of what held it). Raises on a failed write."""
+    (the history of what held it). A staff hold (A123) is not the key's: the
+    decision itself lifts it (check_item_review_decide, in the database).
+    Raises on a failed write."""
     table(_TABLE).update(
         {"canonical_verified": True},
         filters={"course_id": f"eq.{course_id}", "question_hash": f"eq.{question_hash}"},
@@ -1140,8 +1202,9 @@ _AUDIT_HOLD = {WRONG: KEY_AUDIT_WRONG, AMBIGUOUS: KEY_AUDIT_AMBIGUOUS}
 
 def key_status(item) -> str:
     """The key's status as the audit records it: `verified` (confirmed),
-    `held` (A124 hold) or `unverified` (never checked, or checked with no
-    verdict). Reads a CheckItem or a plaintext row."""
+    `held` (A124 key hold) or `unverified` (never checked, or checked with no
+    verdict). A staff hold (A123) says nothing about the key, so it is not
+    read here. Reads a CheckItem or a plaintext row."""
     get = item.get if isinstance(item, dict) else (lambda k: getattr(item, k, None))
     if get("canonical_verified"):
         return "verified"
@@ -1356,19 +1419,39 @@ def retire_items_by_id(item_ids: Iterable[str]) -> int:
     return retired
 
 
-def retire_course_item(course_id: str, question_hash: str) -> int:
-    """A113: retire one question course-wide — every row of the course with
-    this question_hash (one per concept that holds it) — through
-    retire_items_by_id, the A23/A34 retire path. Evidence already written
-    from it stays (node_mastery_events keys no foreign key on the item), and
-    a session whose current check it was finds it withdrawn (A23). Returns
-    how many rows went; raises on a failed read or delete (the caller
-    reports it; the decision is already recorded, so a re-run finishes it)."""
+class RetireOutcome(NamedTuple):
+    """What a staff retire did (spec §13 A123)."""
+
+    items: int  # stored rows of the question deleted (one per concept that held it)
+    students: int  # students whose evidence was voided and state recomputed
+    voided: int  # evidence rows voided
+
+
+def retire_course_item(course_id: str, question_hash: str) -> RetireOutcome:
+    """A113/A123: finish a STAFF retire of one question course-wide (the
+    caller has recorded the 'retired' decision, so no new grade of it can
+    commit and its rows are held — `staff_retired` — so nothing serves them
+    while they wait here). First every student's evidence graded
+    against it is VOIDED and their state recomputed from the rest of their
+    journal — one apply_graph_update(void_evidence) per student with non-void
+    rows left (learning.evidence_transaction.void_pending) — then every row
+    of the course with this question_hash is deleted through
+    retire_items_by_id, the A23/A34 retire path. Raises on any failure; the
+    rows stay stored until every void is done, so the admin queue lists the
+    item as retire-pending and a re-run finishes it (each void is idempotent,
+    a finished student is no longer pending)."""
+    from learning.evidence_transaction import void_pending
+    from services.graph_service import apply_graph_update
+
+    pending = void_pending(course_id, question_hash)
+    for user_id in sorted(pending):
+        apply_graph_update(user_id, {"void_evidence": {"question_hash": question_hash}}, course_id)
     rows = table(_TABLE).select(
         "id",
         filters={"course_id": f"eq.{course_id}", "question_hash": f"eq.{question_hash}"},
     )
-    return retire_items_by_id(r["id"] for r in rows or [] if r.get("id"))
+    items = retire_items_by_id(r["id"] for r in rows or [] if r.get("id"))
+    return RetireOutcome(items=items, students=len(pending), voided=sum(pending.values()))
 
 
 def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:

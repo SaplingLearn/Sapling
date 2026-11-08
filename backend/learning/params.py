@@ -592,13 +592,16 @@ INTEGRITY_HELP_RUNG = RUNG_NO_CREDIT_MIN
 # tests/test_learning_item_quality.py).
 ITEM_REPORT_REASONS = ("wrong_answer", "unclear", "not_from_my_course")
 ITEM_REPORT_SURFACES = ("loop", "review")
-# † distinct students whose reports retire an item course-wide (#695 suggests
-# 2). One report only stops serving the item to its reporter; a second,
-# independent reporter retires the peer-sourced key for the whole course. The
-# database counts (`check_item_report`, under a per-item lock), so two reports
-# arriving together retire it exactly once. Reports newer than an admin's
+# † distinct students whose reports QUARANTINE an item course-wide (#695
+# suggests 2; spec §13 A123 turned the retire into a quarantine). One report
+# only stops serving the item to its reporter; a second, independent reporter
+# withholds it from the whole course until staff decide — approve restores it,
+# retire deletes it and voids its evidence. Reports never delete anything, so
+# two colluding students cannot remove a question. The database counts
+# (`check_item_report_quarantine`, under a per-item lock), so two reports
+# arriving together quarantine it exactly once. Reports newer than an admin's
 # approval count afresh.
-ITEM_REPORT_RETIRE_MIN_REPORTERS = 2
+ITEM_REPORT_QUARANTINE_MIN_REPORTERS = 2
 # † item-flaw linter (learning/item_lint.py): the correct option is "uniquely the
 # longest" when it is longer than every distractor by at least this fraction of
 # the longest distractor (characters, whitespace runs collapsed). LLM-written

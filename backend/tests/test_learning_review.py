@@ -2963,7 +2963,7 @@ def review_report(monkeypatch):
 
     def record(user_id, course_id, question_hash, *, reason, surface):
         ns.calls.append((user_id, course_id, question_hash, reason, surface))
-        return item_reports.ReportOutcome(first=True, reporters=1, retire=False)
+        return item_reports.ReportOutcome(first=True, reporters=1, quarantine=False)
 
     monkeypatch.setattr("routes.learn_loop.item_reports.record_report", record)
     yield ns
@@ -2975,7 +2975,7 @@ def test_a_served_review_item_is_reported_and_no_longer_answerable(client, monke
     with _loop():
         r = client.post("/api/learn/loop/report", json=_report())
     assert r.status_code == 200, r.text
-    assert r.json() == {"reported": True, "first": True, "retired": False}
+    assert r.json() == {"reported": True, "first": True, "quarantined": False}
     assert review_report.calls == [(USER, COURSE, "qh-1", "not_from_my_course", "review")]
     assert "n-due" not in store.state.extra.get("open", {})  # its open entry is dropped
     (event,) = [c for c in review_report.events.log_event.call_args_list if c.args[0] == "learn.check_item_reported"]

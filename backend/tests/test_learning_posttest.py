@@ -1223,6 +1223,25 @@ def test_start_never_poses_a_retired_item(gate_on, tables, freeze_now, seen_reve
     assert served["question_hash"] == "q2"
 
 
+def test_a_grade_refused_because_the_item_was_retired_meanwhile_is_a_409(
+    gate_on, one_item, grader_says
+):
+    """Retired while it was graded (the commit refused it under the item's
+    lock): nothing was written, the pose stays answered — its outcome is
+    excluded from the learning gain by the void rule — and the student is told."""
+    from learning.evidence_transaction import EvidenceItemRetired
+
+    grader_says(correct=True, confidence=0.9)
+    with patch(
+        "services.graph_service.apply_graph_update",
+        side_effect=EvidenceItemRetired("retired"),
+    ):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 409 and "withdrawn" in r.json()["detail"]
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answered_at"] is not None and pose["claim"] is None
+
+
 def test_start_prefers_a_lint_clean_item(gate_on, tables, freeze_now, seen_revealed, reported):
     freeze_now(NOW)
     flagged = item("k1", "q1").model_copy(update={"lint_flags": ["negative_stem"]})

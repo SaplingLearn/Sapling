@@ -39,7 +39,25 @@ REQUIRED_COLUMNS = {
         "planning_observation": "jsonb",
         "evidence_seq": "integer",
         "grader_backend": "text",
+        # spec §13 A123: what a replay of each row needs
+        "retention": "double precision",
+        "same_session_recheck": "boolean",
+        "propagated_to": "jsonb",
     },
+    # spec §13 A123: the append-only void record, the quarantine, misconception support
+    "learning_evidence_voids": {
+        "event_id": "text",
+        "user_id": "text",
+        "node_id": "text",
+        "course_id": "text",
+        "question_hash": "text",
+        "check_item_id": "text",
+        "event_created_at": "timestamp with time zone",
+        "reason": "text",
+        "operation_id": "uuid",
+    },
+    "misconceptions": {"resolved_reason": "text"},
+    "misconception_attempts": {"misconception_id": "text", "question_hash": "text"},
     "learner_state": {
         "p_known": "double precision",
         "n_strong_unassisted": "integer",
@@ -116,7 +134,8 @@ REQUIRED_COLUMNS = {
         "surface": "text",
         "created_at": "timestamp with time zone",
     },
-    # spec §13 A113: the decision on one course item (approved / retired)
+    # spec §13 A113: the decision on one course item (approved / retired); A123
+    # adds approved_at (the quarantine's clearing time)
     "check_item_reviews": {
         "course_id": "text",
         "question_hash": "text",
@@ -124,6 +143,7 @@ REQUIRED_COLUMNS = {
         "decided_by": "text",
         "reviewed_by": "text",
         "reviewed_at": "timestamp with time zone",
+        "approved_at": "timestamp with time zone",
     },
     "llm_usage": {"cached_tokens": "integer", "thinking_tokens": "integer", "session_id": "text"},
     "learning_reveals": {"rung": "smallint", "graded_at": "timestamp with time zone"},

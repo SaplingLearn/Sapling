@@ -35,6 +35,7 @@ from learning.params import (
     LEARNER_BRIEF_TOP_STATES,
 )
 from learning.session_close import BASELINES, ensure_session_row
+from learning.void_store import voided_sessions
 from services.academics import course_offering_ids
 from services.encryption import decrypt_json_column, encrypt_if_present
 from services.exam_proximity import days_until_next_exam
@@ -133,12 +134,17 @@ def _read_closes(user_id: str, course_id: str | None) -> list[tuple[str, dict]]:
     (session date, close). Sessions key on the offering stamped by
     `resolve_offering`, so the course's offerings come from `course_offering_ids`
     (not the enrollment-derived `user_offering_ids_for_course`, which diverges at
-    a term rollover); ownership is the `user_id` filter."""
+    a term rollover); ownership is the `user_id` filter. Spec §13 A123: a close
+    of a session in which the student was graded against an item staff retired
+    since is not rendered at all — its recorded progress and misconception keys
+    rest partly on void evidence (the store's open misconceptions, closed on a
+    void, still render)."""
     offerings = course_offering_ids(course_id) if course_id else []
     if offerings is None:
         raise LookupError("course offerings unknown")
     if not offerings:
         return []
+    void_sessions = voided_sessions(user_id)
     rows = table("sessions").select(
         "id,started_at,close_json,close_phase",
         filters={
@@ -152,6 +158,8 @@ def _read_closes(user_id: str, course_id: str | None) -> list[tuple[str, dict]]:
     )
     closes = []
     for row in rows or []:
+        if row.get("id") in void_sessions:
+            continue
         try:
             close = decrypt_json_column(row.get("close_json"))
         except Exception as exc:

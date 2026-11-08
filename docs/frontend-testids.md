@@ -446,6 +446,7 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-usage-retry` / `-users-retry` / `-cost-retry` / `-errors-retry` | per-panel "Try again" after a failed load (`error && !data` gate) |
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
 | `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
+| `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
 
 ### `admin-items`
 
@@ -463,11 +464,11 @@ file entered the lint block new, so there is no baselined backlog.
 | `admin-items-empty` | nothing flagged, held or reported is waiting |
 | `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate) |
 | `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer, a numeric item's key value ± tolerance (A124) and the reference (`<details>`) |
-| `admin-items-held-{itemId}` | "Held — served to no one until approved" (spec §13 A124: a key hold withdraws it from students); absent once the key is confirmed |
+| `admin-items-held-{itemId}` | "Held — served to no one until approved": a hold withdraws it from every student — a key hold (spec §13 A124) or a staff hold (A123: quarantined by `quarantine_min_reporters` students' reports, nothing deleted; or retired and waiting to be removed); absent once approved |
 | `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
-| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`), or why A124 held the key (`key_disputed` / `key_unsolved` / `key_audit_wrong` / `key_audit_ambiguous`) |
-| `admin-items-approve-{itemId}` | Approve — reviewed, OK, its key confirmed (A124: a held item is served again); every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
-| `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course |
+| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`), or why it is held — A124's key holds (`key_disputed` / `key_unsolved` / `key_audit_wrong` / `key_audit_ambiguous`) or A123's staff holds (`reports_threshold` "Quarantined by student reports", `staff_retired`) |
+| `admin-items-approve-{itemId}` | Approve — reviewed, OK: its key confirmed (A124) and any hold lifted (A123: the quarantine), so a held item is restored to students ("Approve and restore" on a held item); every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
+| `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course and voids every student's results on it (A123) |
 | `admin-audit` | the Key audit tab's root (spec §13 A124: a stratified sample of one course's stored keys) |
 | `admin-audit-course` | the course id input |
 | `admin-audit-draw` | "Draw sample" (disabled until a course id is typed) |

@@ -771,6 +771,8 @@ def admin_client(monkeypatch):
     monkeypatch.setattr(admin, "require_admin", lambda request: None)
     monkeypatch.setattr(admin, "get_session_user_id", lambda request: "admin-1")
     monkeypatch.setattr(admin, "log_event", lambda *a, **k: None)
+    # spec §13 A123: an approval re-lints the course item's rows (a store write)
+    monkeypatch.setattr(admin, "relint_course_item", lambda c, q: 0)
     from main import app
 
     return TestClient(app)

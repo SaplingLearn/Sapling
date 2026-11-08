@@ -1990,7 +1990,7 @@ describe("LoopLearn — Report this question (spec §13 A113)", () => {
 
   it("reports the posed check with a reason, takes the card down and says so", async () => {
     flags.item_reports = "on";
-    api.reportCheckItem.mockResolvedValue({ reported: true, first: true, retired: false });
+    api.reportCheckItem.mockResolvedValue({ reported: true, first: true, quarantined: false });
     await withCheckItem();
     fireEvent.click(screen.getByTestId("loop-check-report"));
     // a short list of reasons — never a text box
@@ -2034,7 +2034,7 @@ describe("LoopLearn — Report this question (spec §13 A113)", () => {
 
   it("a fresh check clears the reported note", async () => {
     flags.item_reports = "on";
-    api.reportCheckItem.mockResolvedValue({ reported: true, first: true, retired: false });
+    api.reportCheckItem.mockResolvedValue({ reported: true, first: true, quarantined: false });
     await withCheckItem();
     fireEvent.click(screen.getByTestId("loop-check-report"));
     fireEvent.click(screen.getByTestId("loop-check-report-reason-not_from_my_course"));

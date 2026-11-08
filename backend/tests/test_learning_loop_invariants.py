@@ -35,6 +35,7 @@ PURE_MODULES = (
     "item_lint.py",  # A113: item-flaw flags of a check item (text in, codes out)
     "interleave.py",  # A114: confusable partners + the review serve order (keys in, order out)
     "item_alignment.py",  # A119: the alignment check's answers applied (verdicts in, decisions out)
+    "evidence_void.py",  # A123: the one void rule (rows / poses / misconceptions in, decisions out)
     "item_keys.py",  # A124: the blind solve compared with the key (answers in, decisions out)
     "item_audit.py",  # A124: the stratified audit sample and the Wilson key-error rate
     "stem_match.py",  # A125: does a text quote a posed item's stem (texts in, hashes out)
@@ -226,15 +227,40 @@ def _learning_files(module: str, root: pathlib.Path) -> list[pathlib.Path]:
     return [f for f in files if f.is_file()]
 
 
-GRAPH_TABLES = ("graph_nodes", "graph_edges", "node_mastery_events", "learner_state")
+# spec §13 A123: learning_evidence_voids (the append-only void record) is written
+# only by the void branch of the same single writer, inside its transaction RPC.
+GRAPH_TABLES = (
+    "graph_nodes", "graph_edges", "node_mastery_events", "learner_state", "learning_evidence_voids",
+)
 GRAPH_WRITER = "services/graph_service.py"
-GRAPH_WRITER_FUNCS = ("apply_graph_update", "_apply_evidence", "_calculate_evidence")
+GRAPH_WRITER_FUNCS = (
+    "apply_graph_update", "_apply_evidence", "_calculate_evidence", "_apply_void", "_calculate_void",
+)
 GRAPH_ENTRY = GRAPH_WRITER_FUNCS[0]
 # Writers that name neither table() nor write_state at a call site, so the
-# halves below cannot see a second caller: reachable only via GRAPH_ENTRY.
+# halves below cannot see a second caller: reachable only via GRAPH_ENTRY —
+# each from exactly one function of the writer file.
 GRAPH_PRIVATE_WRITERS = GRAPH_WRITER_FUNCS[1:]
+GRAPH_PRIVATE_CALLER = {
+    "_apply_evidence": GRAPH_ENTRY,
+    "_calculate_evidence": "_apply_evidence",
+    "_apply_void": GRAPH_ENTRY,  # A123: the void + recompute branch
+    "_calculate_void": "_apply_void",
+}
 TRANSACTION_MODULE = "learning/evidence_transaction.py"
 TRANSACTION_ENTRY = "commit_evidence_transaction"
+# A123: the void transport, entered only from graph_service._apply_void
+VOID_TRANSACTION_ENTRY = "commit_void_transaction"
+TRANSACTION_ENTRY_CALLER = {TRANSACTION_ENTRY: "_apply_evidence", VOID_TRANSACTION_ENTRY: "_apply_void"}
+# Each protected RPC identity, and the one adapter function allowed to call it.
+RPC_SCOPE = {
+    "learning_evidence_receipt": "read_receipt",
+    "learning_evidence_snapshot": TRANSACTION_ENTRY,
+    "learning_evidence_commit": TRANSACTION_ENTRY,
+    "learning_evidence_void_pending": "void_pending",  # A123: read-only
+    "learning_evidence_void_snapshot": VOID_TRANSACTION_ENTRY,
+    "learning_evidence_void_commit": VOID_TRANSACTION_ENTRY,
+}
 # learning/learner_state.py is the learner_state table-access module (spec §2).
 # Its one write, table("learner_state").upsert inside write_state, runs only
 # through write_state, and the second half of inv_01 pins every write_state
@@ -453,7 +479,7 @@ def _private_writer_offenders(rel: str, source: str) -> list[str]:
         (fn.lineno, fn.end_lineno, fn.name)
         for fn in tree.body
         if rel == GRAPH_WRITER and isinstance(fn, ast.FunctionDef)
-        and fn.name in (GRAPH_ENTRY, "_apply_evidence")
+        and fn.name in set(GRAPH_PRIVATE_CALLER.values())
     ]
     offenders = []
     for node in ast.walk(tree):
@@ -469,7 +495,7 @@ def _private_writer_offenders(rel: str, source: str) -> list[str]:
             continue
         if name not in GRAPH_PRIVATE_WRITERS:
             continue
-        caller = GRAPH_ENTRY if name == "_apply_evidence" else "_apply_evidence"
+        caller = GRAPH_PRIVATE_CALLER[name]
         if any(lo <= node.lineno <= hi and fn == caller for lo, hi, fn in entry):
             continue
         offenders.append(
@@ -514,8 +540,8 @@ def _transaction_writer_offenders(rel: str, source: str) -> list[str]:
             name = node.name.rsplit(".", 1)[-1]
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             name = node.value
-        if name == TRANSACTION_ENTRY and not (
-            rel == GRAPH_WRITER and scope(node.lineno) == "_apply_evidence"
+        if name in TRANSACTION_ENTRY_CALLER and not (
+            rel == GRAPH_WRITER and scope(node.lineno) == TRANSACTION_ENTRY_CALLER[name]
         ):
             errors.append(f"{rel}:{node.lineno} escapes the evidence transaction entry")
         if isinstance(node, ast.Call) and node.args and (
@@ -526,8 +552,9 @@ def _transaction_writer_offenders(rel: str, source: str) -> list[str]:
                           if isinstance(part, ast.Constant) and isinstance(part.value, str)
                           and part.value.startswith("learning_evidence_")]
             for identity in identities:
-                allowed = "read_receipt" if identity == "learning_evidence_receipt" else TRANSACTION_ENTRY
-                if rel != TRANSACTION_MODULE or scope(node.lineno) != allowed:
+                # an unknown identity (a concatenation's prefix) has no scope at all
+                allowed = RPC_SCOPE.get(identity)
+                if allowed is None or rel != TRANSACTION_MODULE or scope(node.lineno) != allowed:
                     errors.append(f"{rel}:{node.lineno} escapes the evidence RPC adapter")
     if rel == TRANSACTION_MODULE:
         imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == "db.connection"]
@@ -551,9 +578,48 @@ def _transaction_writer_offenders(rel: str, source: str) -> list[str]:
     ('from db.connection import rpc\ndef commit_evidence_transaction():\n return rpc("learning_evidence_commit",{})', TRANSACTION_MODULE, False),
     ('from other import rpc\ndef commit_evidence_transaction():\n return rpc("learning_evidence_commit",{})', TRANSACTION_MODULE, True),
     ('from db.connection import rpc\ndef commit_evidence_transaction(rpc):\n return rpc("learning_evidence_commit",{})', TRANSACTION_MODULE, True),
+    # spec §13 A123: the void transport is the same single writer's, nothing else's
+    ('from learning.evidence_transaction import commit_void_transaction', "services/check_item_service.py", True),
+    ('def _apply_void():\n from learning.evidence_transaction import commit_void_transaction', GRAPH_WRITER, False),
+    ('from learning.evidence_transaction import commit_void_transaction\ndef _apply_void():\n pass', GRAPH_WRITER, True),
+    ('def apply_graph_update():\n commit_void_transaction()', GRAPH_WRITER, True),
+    ('rpc("learning_evidence_void_commit",{})', "routes/admin_check_items.py", True),
+    ('from db.connection import rpc\ndef commit_evidence_transaction():\n return rpc("learning_evidence_void_commit",{})', TRANSACTION_MODULE, True),
+    ('from db.connection import rpc\ndef commit_void_transaction():\n return rpc("learning_evidence_void_commit",{})', TRANSACTION_MODULE, False),
+    ('from db.connection import rpc\ndef void_pending():\n return rpc("learning_evidence_void_snapshot",{})', TRANSACTION_MODULE, True),
+    ('from db.connection import rpc\ndef void_pending():\n return rpc("learning_evidence_void_pending",{})', TRANSACTION_MODULE, False),
+    ('from db.connection import rpc\nrpc("learning_evidence_"+"void_commit",{})', TRANSACTION_MODULE, True),
+    ('from learning.evidence_transaction import void_pending\nvoid_pending(c, q)', "services/check_item_service.py", False),
 ])
 def test_inv_01_transaction_entry_cannot_escape_the_single_writer(source, rel, offends):
     assert bool(_transaction_writer_offenders(rel, source)) is offends
+
+
+@pytest.mark.parametrize("source,rel,offends", [
+    ("def apply_graph_update():\n _apply_void()", GRAPH_WRITER, False),
+    ("def _apply_void():\n _calculate_void()", GRAPH_WRITER, False),
+    ("def apply_graph_update():\n _calculate_void()", GRAPH_WRITER, True),
+    ("def retire():\n _apply_void()", GRAPH_WRITER, True),
+    ("from services.graph_service import _apply_void", "services/check_item_service.py", True),
+    ("import services.graph_service as gs\ngs._calculate_void", "routes/x.py", True),
+])
+def test_inv_01_the_void_branch_is_reached_only_through_apply_graph_update(source, rel, offends):
+    """A123: the void + recompute writes learner_state, graph mirrors and the
+    void record — a private writer of the single entry point like the
+    evidence branch, never a second entry."""
+    assert bool(_private_writer_offenders(rel, source)) is offends
+
+
+def test_inv_01_the_void_record_is_written_by_no_python_module():
+    """A123: `learning_evidence_voids` is append-only and written inside the
+    void transaction RPC only — no Python module, the writer included, ever
+    writes the table through PostgREST."""
+    offenders = []
+    for rel, path in _application_py_files():
+        for line, tbl, method, _ in _graph_table_uses(path.read_text()):
+            if tbl == "learning_evidence_voids" and method not in GRAPH_TABLE_READ_METHODS:
+                offenders.append(f"{rel}:{line}")
+    assert offenders == []
 
 
 def test_inv_01_single_graph_writer():

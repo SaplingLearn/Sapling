@@ -5,14 +5,18 @@
  * #695), over /api/admin/check-items. A check item is drafted by a model from
  * a classmate's upload and keyed from peer material — no instructor reviewed
  * it — so this lists every item the item-flaw linter flagged, the alignment
- * check changed (A119: a criterion dropped, a concept re-tagged), a key hold
- * withdraws (A124: an independent solve disputed its key, or an audit found it
- * wrong or ambiguous — "Held" items are served to no one until approved) or a
- * student reported (counts by reason), worst first, with its text (decrypted
- * by the server for this page only) and two actions: Approve (reviewed, OK —
- * it leaves the queue until a newer report, and its key is confirmed) and
- * Retire (withdrawn for the whole course, never drafted again; two clicks). An
- * item whose retire did not finish is marked and listed first.
+ * check changed (A119: a criterion dropped, a concept re-tagged), a hold
+ * withdraws — "Held" items are served to no one until approved: a key hold
+ * (A124: an independent solve disputed its key, or an audit found it wrong or
+ * ambiguous) or a quarantine (A123: enough students reported it; nothing is
+ * deleted) — or a student reported (counts by reason), worst first, with its
+ * text (decrypted by the server for this page only) and two actions: Approve
+ * (reviewed, OK — it leaves the queue until a newer report, its key is
+ * confirmed and any hold lifted, so a held question is restored to students)
+ * and Retire (withdrawn for the whole course and never drafted again, and
+ * every student's results on it are voided and their mastery recomputed —
+ * A123; two clicks). Reports alone never delete a question. An item whose
+ * retire did not finish is listed first, then the held ones.
  *
  * The "Key audit" tab (spec §13 A124) draws a stratified sample of one
  * course's stored keys (format × difficulty × concept) for staff to judge
@@ -59,6 +63,9 @@ export const LINT_FLAG_LABELS: Record<CheckItemLintFlag, string> = {
   key_unsolved: "An independent solve found the passages don't settle it",
   key_audit_wrong: "An audit found the key wrong",
   key_audit_ambiguous: "An audit found the question ambiguous",
+  // spec §13 A123: why staff hold it (the database sets these from the decision)
+  reports_threshold: "Quarantined by student reports",
+  staff_retired: "Retired — waiting to be removed",
 };
 
 export const REPORT_REASON_LABELS: Record<LoopReportReason, string> = {
@@ -162,8 +169,19 @@ function QueueBody() {
   const act = async (entry: AdminCheckItemEntry, action: "approve" | "retire") => {
     setBusyId(entry.id);
     try {
-      if (action === "approve") await adminApproveCheckItem(entry.id);
-      else await adminRetireCheckItem(entry.id);
+      let message: string;
+      if (action === "approve") {
+        const out = await adminApproveCheckItem(entry.id);
+        message = out.restored
+          ? "Approved — its key is confirmed, it is restored for students, and it leaves the queue."
+          : "Approved — its key is confirmed and it leaves the queue.";
+      } else {
+        const out = await adminRetireCheckItem(entry.id);
+        const students = out.students === 1 ? "1 student" : `${out.students} students`;
+        message = out.voided
+          ? `Retired for the whole course — results from ${students} voided.`
+          : "Retired for the whole course.";
+      }
       // the decision is per course question: every row of it leaves the queue
       setQueue((q) => {
         if (!q) return q;
@@ -172,11 +190,7 @@ function QueueBody() {
         );
         return { ...q, items: left, count: Math.max(0, q.count - (q.items.length - left.length)) };
       });
-      toast.success(
-        action === "approve"
-          ? "Approved — its key is confirmed and it leaves the queue."
-          : "Retired for the whole course.",
-      );
+      toast.success(message);
     } catch (err) {
       toast.error(humanizeError(err, action === "approve" ? "Couldn't approve it." : "Couldn't retire it."));
     } finally {
@@ -204,7 +218,8 @@ function QueueBody() {
           <div data-testid="admin-items-count" style={{ color: "var(--text-muted)", fontSize: 13 }}>
             {queue.count} to review
             {queue.count > queue.items.length ? ` — showing the first ${queue.items.length}` : ""}. Reports
-            from {queue.retire_min_reporters} different students retire a question on their own.
+            from {queue.quarantine_min_reporters} different students hide a question from everyone until
+            you approve or retire it. Retiring voids every student&apos;s results on it.
           </div>
           {queue.items.map((entry) => (
             <QueueRow
@@ -309,7 +324,7 @@ function QueueRow({
             disabled={busy}
             onClick={onApprove}
           >
-            Approve
+            {entry.held ? "Approve and restore" : "Approve"}
           </button>
         )}
         <button
@@ -319,7 +334,7 @@ function QueueRow({
           disabled={busy}
           onClick={retire.trigger}
         >
-          {retire.armed ? "Click again to retire for the course" : "Retire"}
+          {retire.armed ? "Click again to retire and void its results" : "Retire"}
         </button>
       </div>
     </section>

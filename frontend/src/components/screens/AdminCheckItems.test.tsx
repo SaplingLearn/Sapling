@@ -7,7 +7,10 @@
  *   - each entry shows its lint flags, its reports by reason, the question with
  *     its key marked, the final answer and the reference;
  *   - Approve calls the API and every row of that course question leaves;
- *   - Retire takes two clicks (it withdraws the question course-wide);
+ *   - Retire takes two clicks (it withdraws the question course-wide and,
+ *     spec §13 A123, voids every student's results on it — the toast says how many);
+ *   - spec §13 A123: a quarantined item is a held one (A124's hold) whose
+ *     reports_threshold code is named, and approving it says it is restored;
  *   - a failed action keeps the row and toasts; a failed load offers a retry;
  *   - nothing to review says so; a retire-pending item cannot be approved;
  *   - spec §13 A124: a held item says it is served to no one, the key-hold
@@ -106,7 +109,7 @@ const auditSample = (items: AdminAuditItem[], summary: Partial<AuditCounts> = {}
 });
 
 const queue = (items: AdminCheckItemEntry[], over: Partial<AdminCheckItemQueue> = {}): AdminCheckItemQueue => ({
-  items, count: items.length, page_size: 100, retire_min_reporters: 2, ...over,
+  items, count: items.length, page_size: 100, quarantine_min_reporters: 2, ...over,
 });
 
 beforeEach(() => {
@@ -164,7 +167,7 @@ describe("AdminCheckItems", () => {
     api.adminCheckItemQueue.mockResolvedValue(
       queue([entry(), entry({ id: "i1b", concept_key: "base case" }), entry({ id: "i3", question_hash: "qh3" })]),
     );
-    api.adminApproveCheckItem.mockResolvedValue({ id: "i1", status: "approved" });
+    api.adminApproveCheckItem.mockResolvedValue({ id: "i1", status: "approved", restored: false });
     render(<AdminCheckItems />);
     fireEvent.click(await screen.findByTestId("admin-items-approve-i1"));
     await waitFor(() => expect(screen.queryByTestId("admin-items-row-i1")).toBeNull());
@@ -177,15 +180,39 @@ describe("AdminCheckItems", () => {
 
   it("retires only on the second click", async () => {
     api.adminCheckItemQueue.mockResolvedValue(queue([entry()]));
-    api.adminRetireCheckItem.mockResolvedValue({ id: "i1", status: "retired", items: 1 });
+    api.adminRetireCheckItem.mockResolvedValue({ id: "i1", status: "retired", items: 1, students: 3, voided: 4 });
     render(<AdminCheckItems />);
     const retire = await screen.findByTestId("admin-items-retire-i1");
     fireEvent.click(retire);
     expect(api.adminRetireCheckItem).not.toHaveBeenCalled();
-    expect(retire.textContent).toContain("Click again");
+    expect(retire.textContent).toContain("Click again to retire and void its results");
     fireEvent.click(retire);
     await waitFor(() => expect(api.adminRetireCheckItem).toHaveBeenCalledWith("i1"));
     expect(await screen.findByTestId("admin-items-empty")).toBeTruthy();
+    expect(toast.success).toHaveBeenCalledWith("Retired for the whole course — results from 3 students voided.");
+  });
+
+  it("marks a quarantined item held, names its reports hold and says an approval restores it (spec §13 A123)", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(
+      queue([entry({ held: true, status: "quarantined", lint_flags: ["negative_stem", "reports_threshold"] })]),
+    );
+    api.adminApproveCheckItem.mockResolvedValue({ id: "i1", status: "approved", restored: true });
+    render(<AdminCheckItems />);
+    expect((await screen.findByTestId("admin-items-held-i1")).textContent).toContain(
+      "served to no one until approved",
+    );
+    expect(screen.getByTestId("admin-items-flag-i1-reports_threshold").textContent).toBe(
+      "Quarantined by student reports",
+    );
+    expect(screen.queryByTestId("admin-items-quarantined-i1")).toBeNull(); // one hold, not two states
+    expect(screen.getByTestId("admin-items-count").textContent).toContain(
+      "Reports from 2 different students hide a question from everyone",
+    );
+    const approve = screen.getByTestId("admin-items-approve-i1");
+    expect(approve.textContent).toBe("Approve and restore");
+    fireEvent.click(approve);
+    await waitFor(() => expect(api.adminApproveCheckItem).toHaveBeenCalledWith("i1"));
+    expect(toast.success).toHaveBeenCalledWith("Approved — its key is confirmed, it is restored for students, and it leaves the queue.");
   });
 
   it("keeps the row and toasts when an action fails", async () => {

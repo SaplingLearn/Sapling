@@ -73,7 +73,7 @@ class TestPins:
     def test_constants(self):
         assert params.ITEM_REPORT_REASONS == ("wrong_answer", "unclear", "not_from_my_course")
         assert params.ITEM_REPORT_SURFACES == ("loop", "review")
-        assert params.ITEM_REPORT_RETIRE_MIN_REPORTERS == 2  # † #695's N
+        assert params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS == 2  # † #695's N (A123: a quarantine)
         assert 0 < params.ITEM_LINT_LONGEST_MARGIN < 1
         assert params.ITEM_LINT_STEM_OVERLAP_MARGIN >= 1
 
@@ -360,7 +360,9 @@ class TestServiceWrites:
         from services import check_item_service as svc
 
         retired = question_hash(_mc_draft().prompt)
-        factory, mocks = _cached_tables({"check_item_reviews": [{"question_hash": retired}]})
+        factory, mocks = _cached_tables(
+            {"check_item_reviews": [{"question_hash": retired, "status": "retired"}]}
+        )
         with (
             patch("services.check_item_service.table", side_effect=factory),
             patch("learning.item_reports.table", side_effect=factory),
@@ -372,8 +374,37 @@ class TestServiceWrites:
         assert write.mc_drops == [svc._RETIRED]  # the top-up is told why
         read = mocks["check_item_reviews"].select.call_args
         assert read.kwargs["filters"]["course_id"] == "eq.course-1"
-        assert read.kwargs["filters"]["status"] == "eq.retired"
+        assert read.kwargs["filters"]["status"] == "in.(quarantined,retired)"
         assert any("retired for the course" in r.getMessage() for r in caplog.records)
+
+    def test_a_quarantined_question_drafted_again_is_stored_held(self, caplog):
+        """A123: only a staff retire blocks a re-draft. A question its reporters
+        quarantined is stored again, HELD like its other rows (the database's
+        trigger adds `reports_threshold` whatever the write says; the write
+        adds it too so it takes no top-up slot and counts toward no floor)."""
+        from learning.checks import REPORTS_THRESHOLD, held
+        from services import check_item_service as svc
+
+        quarantined = question_hash(_mc_draft().prompt)
+        fresh = _mc_draft(prompt="Which quantity does the learning rate set? Pick one and give your reason.")
+        factory, mocks = _cached_tables(
+            {"check_item_reviews": [{"question_hash": quarantined, "status": "quarantined"}]}
+        )
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("learning.item_reports.table", side_effect=factory),
+            caplog.at_level("INFO", logger="sapling.services.check_items"),
+        ):
+            write = svc._store_drafts("course-1", "learning rate", None, [_mc_draft(), fresh], limit=1)
+        stored = mocks["check_items"].upsert.call_args[0][0]
+        by_hash = {r["question_hash"]: r for r in stored}
+        assert set(by_hash) == {quarantined, question_hash(fresh.prompt)}  # both stored
+        assert by_hash[quarantined]["lint_flags"][-1] == REPORTS_THRESHOLD
+        assert held(svc._row_to_item(by_hash[quarantined]))
+        assert REPORTS_THRESHOLD not in by_hash[question_hash(fresh.prompt)]["lint_flags"]
+        assert write.mc_drops == [svc._QUARANTINED]  # the top-up is told why
+        assert write.mc_reason == {by_hash[question_hash(fresh.prompt)]["id"]: fresh.difficulty}
+        assert any("quarantined for the course" in r.getMessage() for r in caplog.records)
 
     def test_a_retired_draft_never_takes_a_top_up_slot(self):
         """The top-up asks for exactly the missing count (`limit`): a retired
@@ -382,7 +413,9 @@ class TestServiceWrites:
 
         fresh = _mc_draft(prompt="Which quantity does the learning rate set? Pick one and give your reason.")
         retired = question_hash(_mc_draft().prompt)
-        factory, mocks = _cached_tables({"check_item_reviews": [{"question_hash": retired}]})
+        factory, mocks = _cached_tables(
+            {"check_item_reviews": [{"question_hash": retired, "status": "retired"}]}
+        )
         with (
             patch("services.check_item_service.table", side_effect=factory),
             patch("learning.item_reports.table", side_effect=factory),
@@ -405,17 +438,46 @@ class TestServiceWrites:
             svc.create_items("course-1", "learning rate", None, [_draft()])
         assert "check_items" not in mocks  # nothing was written
 
-    def test_retire_course_item_retires_every_row_of_the_question(self):
+    def test_retire_course_item_voids_every_students_evidence_then_retires_every_row(self):
+        """A123: the staff retire voids first — one apply_graph_update(void_evidence)
+        per student with non-void evidence on the item — and deletes the rows
+        only after every void went through."""
         from services import check_item_service as svc
 
         factory, mocks = _cached_tables({"check_items": [{"id": "i1"}, {"id": "i2"}]})
         mocks_t = factory("check_items")
         mocks_t.delete.return_value = [{"id": "i1"}, {"id": "i2"}]
-        with patch("services.check_item_service.table", side_effect=factory):
-            assert svc.retire_course_item("c1", "qh-1") == 2
+        order = []
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("learning.evidence_transaction.void_pending", return_value={"u2": 1, "u1": 3}),
+            patch(
+                "services.graph_service.apply_graph_update",
+                side_effect=lambda user, update, course: order.append((user, update, course)) or [],
+            ),
+        ):
+            out = svc.retire_course_item("c1", "qh-1")
+        assert out == svc.RetireOutcome(items=2, students=2, voided=4)
+        assert order == [
+            ("u1", {"void_evidence": {"question_hash": "qh-1"}}, "c1"),
+            ("u2", {"void_evidence": {"question_hash": "qh-1"}}, "c1"),
+        ]
         filters = mocks_t.select.call_args.kwargs["filters"]
         assert filters == {"course_id": "eq.c1", "question_hash": "eq.qh-1"}
         assert mocks_t.delete.call_args.kwargs["filters"]["id"] == 'in.("i1","i2")'
+
+    def test_a_failed_void_keeps_the_rows_for_a_retire_pending_rerun(self):
+        from services import check_item_service as svc
+
+        factory, mocks = _cached_tables({"check_items": [{"id": "i1"}]})
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("learning.evidence_transaction.void_pending", return_value={"u1": 1}),
+            patch("services.graph_service.apply_graph_update", side_effect=RuntimeError("down")),
+            pytest.raises(RuntimeError),
+        ):
+            svc.retire_course_item("c1", "qh-1")
+        assert not factory("check_items").delete.called  # stored: the queue lists it retire-pending
 
     def test_store_lint_flags_batches_by_id(self):
         from services import check_item_service as svc
@@ -495,19 +557,19 @@ class TestReportStore:
     def test_record_report_is_one_database_decision(self):
         with patch(
             "learning.item_reports.rpc",
-            return_value=[{"first_report": True, "reporters": 2, "retire": True}],
+            return_value=[{"first_report": True, "reporters": 2, "quarantine": True}],
         ) as rpc:
             out = item_reports.record_report("u1", "c1", "qh", reason="wrong_answer", surface="loop")
-        assert out == item_reports.ReportOutcome(first=True, reporters=2, retire=True)
+        assert out == item_reports.ReportOutcome(first=True, reporters=2, quarantine=True)
         name, args = rpc.call_args.args
-        assert name == "check_item_report"
+        assert name == "check_item_report_quarantine"  # A123: reports never retire
         assert args == {
             "p_user_id": "u1",
             "p_course_id": "c1",
             "p_question_hash": "qh",
             "p_reason": "wrong_answer",
             "p_surface": "loop",
-            "p_min_reporters": params.ITEM_REPORT_RETIRE_MIN_REPORTERS,
+            "p_min_reporters": params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS,
         }
 
     def test_record_report_raises_when_the_store_does_not_answer(self):
@@ -601,6 +663,63 @@ class TestQueue:
         decisions = {("c1", "q"): {"status": "approved", "reviewed_at": NOW.isoformat()}}
         assert item_reports.queue_entries(rows, counts, decisions) == []
 
+    def test_a_quarantined_item_is_a_held_one_listed_after_the_retire_pending(self):
+        """A123 on A124's hold: an item its reporters quarantined carries the
+        database's `reports_threshold` code, so it is `held` — listed after an
+        unfinished retire, before the merely reported, whatever an older
+        approval said — until staff decide; the approval drops the code (the
+        database's), and then it clears like any approval."""
+        rows = [
+            _row("reported", "q1"),
+            _row("quarantined", "q2", flags=["negative_stem", "reports_threshold"]),
+            _row("pending", "q3", flags=["staff_retired"]),
+        ]
+        counts = {("c1", "q1"): _count(3), ("c1", "q2"): _count(2)}
+        decisions = {
+            ("c1", "q2"): {"status": "quarantined", "reviewed_at": NOW.isoformat()},
+            ("c1", "q3"): {"status": "retired", "reviewed_at": NOW.isoformat()},
+        }
+        entries = item_reports.queue_entries(rows, counts, decisions)
+        assert [e["id"] for e in entries] == ["pending", "quarantined", "reported"]
+        assert [e["held"] for e in entries] == [True, True, False]
+        assert entries[1]["status"] == "quarantined" and "quarantined" not in entries[1]
+        # a key the solve confirmed does not lift a staff hold
+        verified = [{**rows[1], "canonical_verified": True}]
+        assert item_reports.queue_entries(verified, counts, decisions)[0]["held"] is True
+        # a quarantine whose code is not read back yet still waits for staff: its reports list it
+        bare = [_row("quarantined", "q2")]
+        (entry,) = item_reports.queue_entries(bare, counts, decisions)
+        assert entry["held"] is False and entry["status"] == "quarantined"
+        approved = {("c1", "q2"): {"status": "approved", "reviewed_at": (NOW + timedelta(hours=1)).isoformat()}}
+        assert item_reports.queue_entries([_row("quarantined", "q2")], counts, approved) == []
+
+    def test_review_statuses_reads_the_pending_and_final_decisions(self):
+        reviews = [
+            {"question_hash": "q1", "status": "quarantined"},
+            {"question_hash": "q2", "status": "retired"},
+            {"question_hash": "q3", "status": "approved"},  # never asked for; ignored if served
+        ]
+        factory, mocks = _cached_tables({"check_item_reviews": reviews})
+        with patch("learning.item_reports.table", side_effect=factory):
+            assert item_reports.review_statuses("c1", ["q2", "q1", "q3", ""]) == {
+                "q1": "quarantined",
+                "q2": "retired",
+            }
+        filters = mocks["check_item_reviews"].select.call_args.kwargs["filters"]
+        assert filters == {
+            "course_id": "eq.c1",
+            "status": "in.(quarantined,retired)",
+            "question_hash": 'in.("q1","q2","q3")',
+        }
+
+    def test_retired_items_are_the_staff_retires_only(self):
+        rows = [{"course_id": "c1", "question_hash": "q1"}, {"course_id": "c2", "question_hash": "q1"}]
+        factory, mocks = _cached_tables({"check_item_reviews": rows})
+        with patch("learning.item_reports.table", side_effect=factory):
+            assert item_reports.retired_items() == {("c1", "q1"), ("c2", "q1")}
+        kwargs = mocks["check_item_reviews"].select_with_count.call_args.kwargs
+        assert kwargs["filters"] == {"status": "eq.retired"}
+
     def test_order_most_reported_then_latest_then_most_flagged(self):
         rows = [
             _row("one-old", "q1"),
@@ -660,10 +779,14 @@ def admin_client(monkeypatch):
     monkeypatch.setattr(admin, "get_session_user_id", lambda request: "admin-1")
     events = []
     monkeypatch.setattr(admin, "log_event", lambda et, **kw: events.append({"event_type": et, **kw}))
+    # spec §13 A123: an approval re-lints the course item's rows (a store write)
+    relints = []
+    monkeypatch.setattr(admin, "relint_course_item", lambda c, q: relints.append((c, q)) or 0)
     from main import app
 
     c = TestClient(app)
     c.events = events
+    c.relints = relints
     return c
 
 
@@ -711,7 +834,7 @@ def test_the_queue_decrypts_only_its_page_at_the_read_boundary(admin_client, mon
     body = admin_client.get(f"{ADMIN}/queue").json()
     assert asked["keys"] == {("c1", "q2")}
     assert body["count"] == 2 and body["page_size"] == 1
-    assert body["retire_min_reporters"] == params.ITEM_REPORT_RETIRE_MIN_REPORTERS
+    assert body["quarantine_min_reporters"] == params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS
     (entry,) = body["items"]
     assert seen["ids"] == ["i2"]  # only the page is decrypted
     assert entry["id"] == "i2" and entry["reports"]["wrong_answer"] == 2
@@ -733,10 +856,48 @@ def test_approve_records_the_decision_and_an_audit_event(admin_client, monkeypat
     # spec §13 A124: an approval confirms the key (canonical_verified), after the decision
     monkeypatch.setattr(admin, "confirm_course_item", lambda c, q: calls.append(("confirm", c, q)))
     r = admin_client.post(f"{ADMIN}/i1/approve")
-    assert r.status_code == 200 and r.json() == {"id": "i1", "status": "approved"}
+    assert r.status_code == 200 and r.json() == {"id": "i1", "status": "approved", "restored": False}
     assert calls == [("c1", "qh-1", "approved", "admin-1"), ("confirm", "c1", "qh-1")]
+    assert admin_client.relints == [("c1", "qh-1")]  # A123: after the confirmation
     assert admin_client.events[0]["event_type"] == "learn.check_item_approved"
     assert admin_client.events[0]["category"] == "audit"
+    assert admin_client.events[0]["payload"]["restored"] is False
+
+
+@pytest.mark.parametrize("flag", ["reports_threshold", "key_disputed"])
+def test_approving_a_held_item_restores_it(admin_client, monkeypatch, flag):
+    """A123 on A124's hold: the approval lifts a quarantine (the database
+    drops `reports_threshold` with the decision, under the item lock) as it
+    lifts a key hold (the confirmation); the response and the audit event say
+    the item is served again. The hold is read off the row staff decided on,
+    before the decision."""
+    import routes.admin_check_items as admin
+
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i, lint=[flag]))
+    monkeypatch.setattr(
+        admin.item_reports, "decide",
+        lambda *a, **k: item_reports.Decision(previous="quarantined", applied=True),
+    )
+    monkeypatch.setattr(admin, "confirm_course_item", lambda c, q: None)
+    r = admin_client.post(f"{ADMIN}/i1/approve")
+    assert r.json() == {"id": "i1", "status": "approved", "restored": True}
+    assert admin_client.events[0]["payload"] == {"course_id": "c1", "question_hash": "qh-1", "restored": True}
+
+
+def test_a_failed_relint_is_a_503_finished_by_approving_again(admin_client, monkeypatch):
+    import routes.admin_check_items as admin
+
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin.item_reports, "decide", lambda *a, **k: item_reports.Decision(None, True))
+    monkeypatch.setattr(admin, "confirm_course_item", lambda c, q: None)
+
+    def down(c, q):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(admin, "relint_course_item", down)
+    r = admin_client.post(f"{ADMIN}/i1/approve")
+    assert r.status_code == 503 and "approve it again" in r.json()["detail"]
+    assert admin_client.events == []
 
 
 def test_a_retired_item_cannot_be_approved(admin_client, monkeypatch):
@@ -763,13 +924,22 @@ def test_retire_decides_then_retires_through_the_service(admin_client, monkeypat
         lambda c, q, s, *, reviewed_by: order.append(("decide", s))
         or item_reports.Decision(previous=None, applied=True),
     )
-    monkeypatch.setattr(admin, "retire_course_item", lambda c, q: order.append(("retire", c, q)) or 2)
+    from services.check_item_service import RetireOutcome
+
+    monkeypatch.setattr(
+        admin, "retire_course_item",
+        lambda c, q: order.append(("retire", c, q)) or RetireOutcome(items=2, students=3, voided=5),
+    )
     r = admin_client.post(f"{ADMIN}/i1/retire")
-    assert r.status_code == 200 and r.json() == {"id": "i1", "status": "retired", "items": 2}
-    assert order == [("decide", "retired"), ("retire", "c1", "qh-1")]
+    assert r.status_code == 200
+    assert r.json() == {"id": "i1", "status": "retired", "items": 2, "students": 3, "voided": 5}
+    assert order == [("decide", "retired"), ("retire", "c1", "qh-1")]  # decided BEFORE any void
     (event,) = admin_client.events
     assert event["event_type"] == "learn.check_item_retired"
-    assert event["payload"]["decided_by"] == "admin" and event["payload"]["items"] == 2
+    assert event["payload"] == {
+        "course_id": "c1", "question_hash": "qh-1", "decided_by": "admin",
+        "items": 2, "students": 3, "voided": 5,
+    }
 
 
 def test_a_failed_retire_is_a_503_and_the_decision_stands(admin_client, monkeypatch):

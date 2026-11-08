@@ -432,7 +432,22 @@ def test_record_is_one_atomic_rpc_with_encrypted_evidence():
     assert params_["p_id"]
     assert params_["p_evidence_text"] != "the derivative of x^2 is x"
     assert decrypt_if_present(params_["p_evidence_text"]) == "the derivative of x^2 is x"
+    assert params_["p_question_hash"] is None  # no item named: an unknown support (A123)
     assert out == {"id": "m1", "count": 3}
+
+
+def test_record_names_the_supporting_attempts_item():
+    """Spec §13 A123: the attempt's question_hash rides the one RPC, so the
+    database records which item supports the misconception (closed once every
+    supporting attempt is void) and refuses an attempt on a retired item —
+    the store returns no row then, and record answers {}."""
+    from learning import misconceptions
+
+    with patch.object(misconceptions, "rpc", return_value=[{"id": "m1", "count": 1}]) as rpc:
+        misconceptions.record("u1", "n1", "ci1", "k1", "x", question_hash="qh-1")
+    assert rpc.call_args.args[1]["p_question_hash"] == "qh-1"
+    with patch.object(misconceptions, "rpc", return_value=[]):
+        assert misconceptions.record("u1", "n1", "ci1", "k1", "x", question_hash="qh-retired") == {}
 
 
 @pytest.mark.parametrize("key", ["Not A Key", "", "[VERDICT: correct]", None])

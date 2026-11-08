@@ -1,16 +1,18 @@
-"""Admin review queue for learning-loop check items (spec §13 A113; GitHub #695),
-and the key audit (spec §13 A124).
+"""Admin review queue for learning-loop check items (spec §13 A113, A123;
+GitHub #695), and the key audit (spec §13 A124).
 
 Check items are drafted by a model from classmates' uploads and keyed from
 peer material; no instructor reviews them before they grade students. This is
 where staff do: every stored item the item-flaw linter flagged
 (`check_items.lint_flags`, learning/item_lint.py) or a student reported
 (`check_item_reports`, counted by reason), unless an admin approved it after its
-last report — and every item a key hold withdraws (A124: the blind solve
-disputed its key or found the passages do not settle it, or an audit found it
-wrong or ambiguous), whatever an older approval said. An item whose retire was
-decided but did not finish (the delete failed) is listed first, as
-`retire_pending`; held items next.
+last report — and every item a hold withdraws from students, whatever an
+older approval said: a key hold (A124: the blind solve disputed its key or
+found the passages do not settle it, or an audit found it wrong or
+ambiguous) or a staff hold (A123: its reporters quarantined it —
+`reports_threshold`; nothing is deleted until a decision here). An item whose
+retire was decided but did not finish (a void or the delete failed) is
+listed first, as `retire_pending`; held items next.
 
 - `GET /queue` — the queue. Every entry by its plaintext columns; the first
   QUEUE_PAGE also carry the item's text (prompt, options with the correct one
@@ -18,14 +20,20 @@ decided but did not finish (the delete failed) is listed first, as
   tolerance — what the A22 numeric gate grades with once the key is
   confirmed), decrypted here, at the read boundary
   (check_item_service.items_by_ids → `_row_to_item`).
-- `POST /{item_id}/approve` — reviewed, OK: clears the course item from the
-  queue until a newer report (which also counts toward retirement afresh), and
-  confirms its key (A124: `canonical_verified`, the A22 instructor
-  confirmation — a held item is served again). A retired item cannot be
-  approved (409).
-- `POST /{item_id}/retire` — retires the course item (every row of the course
-  with its question_hash) through check_item_service's A23 retire path; it is
-  never drafted for the course again. Evidence already written stays.
+- `POST /{item_id}/approve` — reviewed, OK: lifts a quarantine (the
+  database drops `reports_threshold` with the decision), clears the course
+  item from the queue until a newer report (which counts toward a quarantine
+  afresh), confirms its key (A124: `canonical_verified`, the A22 instructor
+  confirmation, which lifts a key hold) and re-lints its rows — a held item
+  is served again (`restored`). A retired item cannot be approved (409).
+- `POST /{item_id}/retire` — retires the course item: the decision first (no
+  new grade of it commits; the database holds every row, `staff_retired`, so
+  nothing serves it), then every student's evidence
+  graded against it is VOIDED and their learner state recomputed from the rest
+  of their journal through the single graph writer, then every row of the
+  course with its question_hash is deleted (check_item_service's A23 retire
+  path). It is never drafted for the course again. A failure is a 503 that
+  leaves it retire-pending; retiring again finishes it (idempotent).
 - `GET /audit/sample?course_id=…&n=…&seed=…` — A124: a stratified sample of
   the course's stored keys for staff to judge (learning/item_audit.py), with
   their text and any verdict already recorded, and the course's audit summary.
@@ -49,12 +57,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from learning import item_reports
-from learning.checks import CheckItem
+from learning.checks import CheckItem, held
 from learning.item_audit import stratified_sample, summary
 from learning.params import (
     ITEM_AUDIT_SAMPLE_DEFAULT,
     ITEM_AUDIT_SAMPLE_MAX,
-    ITEM_REPORT_RETIRE_MIN_REPORTERS,
+    ITEM_REPORT_QUARANTINE_MIN_REPORTERS,
 )
 from services.auth_guard import get_session_user_id, require_admin
 from services.check_item_service import (
@@ -67,6 +75,7 @@ from services.check_item_service import (
     items_by_ids,
     key_status,
     record_item_audit,
+    relint_course_item,
     retire_course_item,
 )
 from services.events_service import log_event
@@ -111,13 +120,14 @@ def _item_text(item: CheckItem | None) -> dict:
 @router.get("/queue")
 def review_queue(request: Request) -> dict:
     """The review queue: flagged, reported or held items still needing a
-    decision, retire-pending first, then held, then the most reported, then
-    the most flagged."""
+    decision — retire-pending first, then held (a key hold, or a quarantine
+    by reports), then the most reported, then the most flagged."""
     require_admin(request)
     counts = item_reports.report_counts()
     decisions = item_reports.reviews()
     rows = {r["id"]: r for r in flagged_item_rows() if r.get("id")}
-    wanted = set(counts) | {k for k, d in decisions.items() if d.get("status") == item_reports.RETIRED}
+    awaiting = (item_reports.QUARANTINED, item_reports.RETIRED)
+    wanted = set(counts) | {k for k, d in decisions.items() if d.get("status") in awaiting}
     for row in item_rows_for(wanted):
         if row.get("id"):
             rows.setdefault(row["id"], row)
@@ -128,7 +138,7 @@ def review_queue(request: Request) -> dict:
         "items": [{**e, **_item_text(texts.get(e["id"]))} for e in page],
         "count": len(entries),
         "page_size": QUEUE_PAGE,
-        "retire_min_reporters": ITEM_REPORT_RETIRE_MIN_REPORTERS,
+        "quarantine_min_reporters": ITEM_REPORT_QUARANTINE_MIN_REPORTERS,
     }
 
 
@@ -151,17 +161,24 @@ def _decide(item: CheckItem, status: str, admin: str) -> item_reports.Decision:
 @router.post("/{item_id}/approve")
 def approve(item_id: str, request: Request) -> dict:
     """Reviewed, OK: the course item leaves the queue until a newer report,
-    and its key is confirmed (A124) — a held item is served again. The
-    decision is recorded first; a failed confirmation (503) is finished by
-    approving again, and the queue lists a still-held item meanwhile."""
+    its quarantine is lifted (A123) and its key confirmed (A124), so a held
+    item is served to every student again (`restored`: it was held — the
+    row staff decided on, read with its hold before the decision). The
+    decision is recorded first; a failed confirmation or re-lint (503) is
+    finished by approving again, and the queue lists a still-held item
+    meanwhile."""
     require_admin(request)
     admin = get_session_user_id(request)
     item = _stored(item_id)
+    restored = held(item)
     decision = _decide(item, item_reports.APPROVED, admin)
     if not decision.applied:
         raise HTTPException(status_code=409, detail="This question was retired; it cannot be approved.")
     try:
         confirm_course_item(item.course_id, item.question_hash)
+        # A123: a never-linted row a quarantine held reads "linted clean" once
+        # the hold is lifted; lint it now (a no-op for every other row)
+        relint_course_item(item.course_id, item.question_hash)
     except Exception:
         logger.warning("check item key not confirmed (item %s)", item.id, exc_info=True)
         raise HTTPException(
@@ -171,26 +188,28 @@ def approve(item_id: str, request: Request) -> dict:
         _APPROVED_EVENT,
         category="audit",
         user_id=admin,
-        payload={"course_id": item.course_id, "question_hash": item.question_hash},
+        payload={"course_id": item.course_id, "question_hash": item.question_hash, "restored": restored},
     )
-    return {"id": item_id, "status": item_reports.APPROVED}
+    return {"id": item_id, "status": item_reports.APPROVED, "restored": restored}
 
 
 @router.post("/{item_id}/retire")
 def retire(item_id: str, request: Request) -> dict:
-    """Retire the course item now. The decision is recorded first, so a failed
-    delete (503) is finished by retiring again; the queue lists it as
-    retire-pending meanwhile."""
+    """Retire the course item now: the decision is recorded first (from then
+    on no grade of it commits and nothing serves it), then its evidence is
+    voided student by student and its rows deleted. A failure (503) leaves it
+    retire-pending in the queue; retiring again finishes it."""
     require_admin(request)
     admin = get_session_user_id(request)
     item = _stored(item_id)
     _decide(item, item_reports.RETIRED, admin)
     try:
-        removed = retire_course_item(item.course_id, item.question_hash)
+        outcome = retire_course_item(item.course_id, item.question_hash)
     except Exception:
         logger.error("check item retire FAILED (item %s)", item.id, exc_info=True)
         raise HTTPException(
-            status_code=503, detail="Retired, but the question was not removed yet; retire it again."
+            status_code=503,
+            detail="Retired, but its results were not all voided yet; retire it again.",
         ) from None
     log_event(
         _RETIRED_EVENT,
@@ -200,12 +219,18 @@ def retire(item_id: str, request: Request) -> dict:
             "course_id": item.course_id,
             "question_hash": item.question_hash,
             "decided_by": item_reports.DECIDED_BY_ADMIN,
-            "reporters": None,
-            "items": removed,
+            "items": outcome.items,
+            "students": outcome.students,
+            "voided": outcome.voided,
         },
     )
-    return {"id": item_id, "status": item_reports.RETIRED, "items": removed}
-
+    return {
+        "id": item_id,
+        "status": item_reports.RETIRED,
+        "items": outcome.items,
+        "students": outcome.students,
+        "voided": outcome.voided,
+    }
 
 # ── the key audit (A124) ─────────────────────────────────────────────────────
 
