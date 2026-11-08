@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install locust
-        run: pip install -r loadtest/requirements.txt
+        run: pip install --require-hashes -r loadtest/requirements.lock
       - name: Run
         env:
           TARGET_URL: ${{ inputs.target_url }}

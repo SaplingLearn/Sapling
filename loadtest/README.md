@@ -19,7 +19,7 @@ and the GitHub workflow refuses to run without `target_url`.
 
 ```
 make e2e-up    # function-mode LLM seam, rich seed (see docs/local-supabase.md)
-uv venv .venv-loadtest && uv pip install --python .venv-loadtest -r loadtest/requirements.txt
+uv venv .venv-loadtest && uv pip install --python .venv-loadtest --require-hashes -r loadtest/requirements.lock
 .venv-loadtest/bin/locust -f loadtest/locustfile.py --host http://localhost:5000 \
     --headless -u 20 -r 5 -t 2m --csv loadtest/out/run --html loadtest/out/report.html
 make e2e-down
