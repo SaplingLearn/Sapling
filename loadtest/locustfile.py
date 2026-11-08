@@ -23,8 +23,12 @@ Configuration (environment):
 ``LOADTEST_TEST_LOGIN``   ``1`` (default) mints sessions via
                           ``POST /api/auth/test-login`` -- exists only when the
                           target runs ``APP_ENV=local|test``
-``LOADTEST_SESSION_TOKEN`` a ``sapling_session`` token to use instead (then
-                          ``LOADTEST_TEST_LOGIN`` is ignored)
+``LOADTEST_SESSION_TOKEN`` a ``sapling_session`` token to use instead. One
+                          token is ONE student: every simulated user then acts
+                          as the token's own ``user_id`` (single-user mode;
+                          ``LOADTEST_USER_IDS`` and ``LOADTEST_TEST_LOGIN`` are
+                          ignored), so no request names a user the session is
+                          not (each would 403 at ``require_self``)
 ``LOADTEST_TUTOR_SESSION`` an existing tutor session id for the chat task;
                           unset, each user starts one (``/api/learn/start-session``)
 ``LOADTEST_CHAT``         ``0`` drops the chat task (reads only)
@@ -36,6 +40,7 @@ Run (see loadtest/README.md):
 """
 from __future__ import annotations
 
+import base64
 import itertools
 import json
 import os
@@ -46,8 +51,31 @@ from locust import HttpUser, between, events, task
 
 SESSION_COOKIE = "sapling_session"
 
-_USER_IDS = [u.strip() for u in os.getenv("LOADTEST_USER_IDS", "rich-user-active").split(",")
-             if u.strip()]
+_TOKEN = (os.getenv("LOADTEST_SESSION_TOKEN") or "").strip()
+
+
+def _token_user_id(token: str) -> str:
+    """The ``user_id`` a ``sapling_session`` token names (its payload is
+    base64url JSON before the ``.``; services/session_tokens.py). Read only:
+    the server still verifies the signature on every request."""
+    payload_b64 = token.split(".", 1)[0]
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)))
+    except ValueError as exc:
+        raise SystemExit(f"loadtest: LOADTEST_SESSION_TOKEN is not a sapling_session token ({exc})")
+    user_id = payload.get("user_id") if isinstance(payload, dict) else None
+    if not isinstance(user_id, str) or not user_id:
+        raise SystemExit("loadtest: LOADTEST_SESSION_TOKEN names no user_id")
+    return user_id
+
+
+if _TOKEN:
+    # Single-user mode: one token is one student, so every simulated user is
+    # that student (asking for anyone else's data would only measure 403s).
+    _USER_IDS = [_token_user_id(_TOKEN)]
+else:
+    _USER_IDS = [u.strip() for u in
+                 os.getenv("LOADTEST_USER_IDS", "rich-user-active").split(",") if u.strip()]
 _next_user = itertools.cycle(_USER_IDS or ["rich-user-active"])
 
 
@@ -61,6 +89,9 @@ def _require_host(environment, **_kw):
     if not (environment.host or "").strip():
         raise SystemExit("loadtest: no target. Pass --host (e.g. http://localhost:5000); "
                          "there is deliberately no default.")
+    if _TOKEN:
+        print(f"loadtest: LOADTEST_SESSION_TOKEN set -- single-user mode, every simulated "
+              f"user acts as {_USER_IDS[0]} (LOADTEST_USER_IDS ignored)")
 
 
 class SaplingUser(HttpUser):
@@ -69,7 +100,7 @@ class SaplingUser(HttpUser):
     def on_start(self) -> None:
         self.user_id = next(_next_user)
         self.tutor_session = None
-        token = (os.getenv("LOADTEST_SESSION_TOKEN") or "").strip()
+        token = _TOKEN
         if not token and _flag("LOADTEST_TEST_LOGIN", "1"):
             with self.client.post("/api/auth/test-login", json={"user_id": self.user_id},
                                   name="auth test-login", catch_response=True) as r:
