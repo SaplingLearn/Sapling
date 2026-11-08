@@ -145,6 +145,18 @@ test("study and flashcards", async ({ page }) => {
   const recent = page.getByRole("button", { name: /Midterm Exam/ });
   await expect(recent).toBeVisible();
   await expectAccessible(page, "study: guides");
+  // The shared select (CustomSelect), open from the keyboard: the list takes
+  // focus with an active option, and Escape hands focus back to its button.
+  const coursePicker = page.locator('button[aria-haspopup="listbox"]').first();
+  await coursePicker.focus();
+  await page.keyboard.press("ArrowDown");
+  const courses = page.getByRole("listbox", { name: "Course" });
+  await expect(courses).toBeFocused();
+  await expect(courses).toHaveAttribute("aria-activedescendant", /.+/);
+  await expectAccessible(page, "study: course picker open");
+  await page.keyboard.press("Escape");
+  await expect(courses).toHaveCount(0);
+  await expect(coursePicker).toBeFocused();
   await recent.click();
   await expect(page.getByText("Covers variables, control flow, and functions.")).toBeVisible();
   await expectAccessible(page, "study: guide open");
