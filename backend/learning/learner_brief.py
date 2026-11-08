@@ -34,7 +34,7 @@ from learning.params import (
     LEARNER_BRIEF_MAX_MISCONCEPTIONS,
     LEARNER_BRIEF_TOP_STATES,
 )
-from learning.session_close import ensure_session_row
+from learning.session_close import BASELINES, ensure_session_row
 from services.academics import course_offering_ids
 from services.encryption import decrypt_json_column, encrypt_if_present
 from services.exam_proximity import days_until_next_exam
@@ -164,29 +164,47 @@ def _read_closes(user_id: str, course_id: str | None) -> list[tuple[str, dict]]:
     return closes
 
 
-def _deltas(close: dict) -> list[tuple[str, float, float]]:
+def _deltas(close: dict) -> list[tuple[str, float, float, str]]:
+    """(node_id, p_before, p_after, baseline) per stored concept; a close stored
+    before spec §13 A117 has no baseline and reads "pre_session"; a malformed
+    entry is skipped."""
     out = []
     for c in close.get("concepts") or []:
         try:
-            out.append((str(c["node_id"]), float(c["p_before"]), float(c["p_after"])))
-        except (KeyError, TypeError, ValueError):
+            baseline = c.get("baseline", "pre_session")
+            if baseline not in BASELINES:
+                continue
+            out.append((str(c["node_id"]), float(c["p_before"]), float(c["p_after"]), baseline))
+        except (AttributeError, KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def _move_text(name: str, before: float, after: float, baseline: str) -> str:
+    """One recorded concept change. A117: a concept first measured in that
+    session started at its first measurement — never a move from the prior."""
+    direction = "up" if after > before else "down" if after < before else "unchanged"
+    if baseline == "pre_session":
+        return f"{name} {before:.2f} → {after:.2f} ({direction})"
+    if direction == "unchanged":
+        return f"{name} first measured at {before:.2f}"
+    return f"{name} first measured at {before:.2f}, then {after:.2f} ({direction})"
 
 
 def _closes_section(user_id: str, course_id: str | None, closes: list[tuple[str, dict]]) -> str:
     """Review MAJOR 1: rendered from STRUCTURED close data only — the session
     date, each checked concept's name (the student's own graph) and recorded
-    p_before → p_after with its direction. The model-written summary, plan and
+    p_before → p_after with its direction (A117: a first measurement reads as
+    one). The model-written summary, plan and
     self-evaluation stay in `close_json` for the student's close screen and
     never enter a later prompt (a poisoned plan steered the tutor live)."""
-    ids = list(dict.fromkeys(n for _, c in closes for n, _, _ in _deltas(c)))
+    ids = list(dict.fromkeys(n for _, c in closes for n, *_ in _deltas(c)))
     names = _node_names(user_id, course_id, ids)
     lines = []
     for day, close in closes:
         moves = [
-            f"{names[n]} {b:.2f} → {a:.2f} ({'up' if a > b else 'down' if a < b else 'unchanged'})"
-            for n, b, a in _deltas(close)
+            _move_text(names[n], b, a, baseline)
+            for n, b, a, baseline in _deltas(close)
             if n in names  # never an id alone
         ]
         lines.append(f"- {day or 'earlier'}: " + ("; ".join(moves) or "no graded checks"))

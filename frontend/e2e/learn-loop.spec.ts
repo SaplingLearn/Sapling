@@ -346,6 +346,50 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   expect(closed[0].close_json).not.toContain("summary"); // ciphertext at rest
   expect(await decryptText(closed[0].close_json)).toContain(CLOSE_SUMMARY); // decrypts to the record
 
+  // spec §13 A117: an honest wrap-up. USER_LOOP has no evidence before this session
+  // (the fixtures re-seed before every test), so every concept is a first measurement
+  // and none starts at the BKT prior: a probed concept starts at its check-in result
+  // (where teaching on it began, else after its last check-in answer), any other at
+  // its first evidence. Recomputed here from the journal and the probe history.
+  const record = JSON.parse(await decryptText(closed[0].close_json)) as {
+    concepts: { node_id: string; p_before: number; p_after: number; baseline?: string }[];
+  };
+  const journal = (await queryRaw(
+    `SELECT node_id, question_hash, p_before, p_after FROM node_mastery_events
+      WHERE session_id = $1 AND event_type = 'evidence' ORDER BY created_at, evidence_seq`,
+    [checkedSessionId],
+  )) as { node_id: string; question_hash: string | null; p_before: number; p_after: number }[];
+  const [probeRow] = (await queryRaw(
+    `SELECT loop_state->'probe'->'history' AS history FROM sessions WHERE id = $1`,
+    [checkedSessionId],
+  )) as { history: { question_hash: string }[] | null }[];
+  const probeHashes = new Set((probeRow?.history ?? []).map((h) => h.question_hash));
+  expect(probeHashes.size).toBeGreaterThan(0);
+  const starts = new Map<string, { baseline: string; p: number; inCheckIn: boolean }>();
+  for (const row of journal) {
+    const isProbe = row.question_hash !== null && probeHashes.has(row.question_hash);
+    const start = starts.get(row.node_id);
+    if (!start) starts.set(row.node_id, { baseline: isProbe ? "check_in" : "teaching", p: Number(row.p_after), inCheckIn: isProbe });
+    else if (start.inCheckIn && isProbe) start.p = Number(row.p_after);
+    else if (start.inCheckIn) Object.assign(start, { p: Number(row.p_before), inCheckIn: false });
+  }
+  expect(record.concepts.map((c) => c.node_id).sort()).toEqual([...starts.keys()].sort());
+  for (const concept of record.concepts) {
+    const start = starts.get(concept.node_id)!;
+    expect(concept.baseline).toBe(start.baseline);
+    expect(concept.p_before).toBeCloseTo(start.p, 9);
+    const item = page.getByTestId(`loop-close-concept-${concept.node_id}`);
+    await expect(item).toHaveAttribute("data-baseline", start.baseline);
+    // Nothing in this walk lowered a concept after its first measurement.
+    await expect(item).not.toHaveAttribute("data-direction", "down");
+  }
+  // The explicitly checked concept: its correct check after teaching reads as a rise
+  // from its check-in result; first measured by that check itself, as a starting point.
+  await expect(page.getByTestId(`loop-close-concept-${checkedNodeId}`)).toHaveAttribute(
+    "data-direction",
+    starts.get(checkedNodeId)?.baseline === "check_in" ? "up" : "same",
+  );
+
   const events = (await queryRaw(
     `SELECT DISTINCT event_type FROM events WHERE user_id = $1 AND event_type = ANY($2)`,
     [USER_LOOP, ["zpd.step", "learn.session_closed", "zpd.leak", "learn.probe_done", "learn.plan_approved"]],

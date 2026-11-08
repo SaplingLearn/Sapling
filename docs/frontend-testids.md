@@ -718,6 +718,7 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-rating-{too_easy,appropriate,too_hard}` | its three buttons — `POST /api/learn/loop/rating` |
 | `loop-close-button` | end the session (`/close`; teach/check/feedback only) |
 | `loop-close-summary` | the close summary text |
+| `loop-close-concept-{nodeId}` | one checked concept on the wrap-up (spec §13 A117): `data-baseline` = `pre_session` / `check_in` / `teaching` (where its change starts; a close stored before A117 reads `pre_session`), `data-direction` = `up` / `down` / `same` — a first measurement with no move after it is `same` with a "first measured" label, never an arrow |
 | `loop-close-self-eval` | the self-evaluation question — a reflection prompt, no input (A60: nothing stores an answer) |
 | `loop-close-if-then` | the stored if-then plan (rendered only when non-empty) |
 | `loop-close-done` | the closed state ("Session closed." + a link to the review queue); also a session found closed elsewhere (a 409 `this session is closed`) whose stored close could not be read |

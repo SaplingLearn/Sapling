@@ -53,6 +53,8 @@ import {
   type EnrolledCourse,
   type LoopCheckAnswer,
   type LoopCheckItem,
+  type LoopCloseBaseline,
+  type LoopCloseConcept,
   type LoopCloseResponse,
   type LoopGoal,
   type LoopGoalProgress,
@@ -2229,6 +2231,32 @@ function CheckCard({
   );
 }
 
+/** Spec §13 A117: how one concept reads on the wrap-up. A concept first measured
+ *  this session (`check_in` / `teaching`) starts at that measurement — it is a
+ *  starting point, never a drop from the BKT prior — and only a move after it
+ *  gets an arrow. A close stored before A117 has no `baseline`: its numbers are
+ *  read as a change from the pre-session estimate, as they always were. */
+function closeConceptView(c: LoopCloseConcept): {
+  baseline: LoopCloseBaseline;
+  dir: "up" | "down" | "same";
+  arrow: string;
+  label: string;
+} {
+  const baseline = c.baseline ?? "pre_session";
+  const dir = c.p_after > c.p_before ? "up" : c.p_after < c.p_before ? "down" : "same";
+  if (baseline === "pre_session") {
+    const label = dir === "up" ? "stronger" : dir === "down" ? "worth another look" : "about the same";
+    return { baseline, dir, arrow: dir === "up" ? "↑" : dir === "down" ? "↓" : "→", label };
+  }
+  if (dir === "same") {
+    const label = baseline === "check_in" ? "first measured at the check-in" : "first measured this session";
+    return { baseline, dir, arrow: "•", label };
+  }
+  const since = baseline === "check_in" ? "the check-in" : "its first check";
+  const label = dir === "up" ? `stronger since ${since}` : `lower since ${since} — worth another look`;
+  return { baseline, dir, arrow: dir === "up" ? "↑" : "↓", label };
+}
+
 function ClosePanel({
   close, note, names, courseId,
 }: {
@@ -2263,16 +2291,20 @@ function ClosePanel({
         {rec.concepts.length > 0 && (
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}>
             {rec.concepts.map((c) => {
-              const dir = c.p_after > c.p_before ? "up" : c.p_after < c.p_before ? "down" : "same";
+              const view = closeConceptView(c);
               return (
-                <li key={c.node_id} style={{ display: "flex", gap: 8, fontSize: 14 }}>
-                  <span aria-hidden style={{ color: dir === "up" ? "var(--accent)" : "var(--text-muted)" }}>
-                    {dir === "up" ? "↑" : dir === "down" ? "↓" : "→"}
+                <li
+                  key={c.node_id}
+                  data-testid={`loop-close-concept-${c.node_id}`}
+                  data-baseline={view.baseline}
+                  data-direction={view.dir}
+                  style={{ display: "flex", gap: 8, fontSize: 14 }}
+                >
+                  <span aria-hidden style={{ color: view.dir === "up" ? "var(--accent)" : "var(--text-muted)" }}>
+                    {view.arrow}
                   </span>
                   <span>{names.get(c.node_id) ?? "A concept"}</span>
-                  <span style={{ color: "var(--text-muted)" }}>
-                    {dir === "up" ? "stronger" : dir === "down" ? "worth another look" : "about the same"}
-                  </span>
+                  <span style={{ color: "var(--text-muted)" }}>{view.label}</span>
                 </li>
               );
             })}

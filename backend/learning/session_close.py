@@ -1,11 +1,17 @@
 """End-of-session close: draft assembly, deterministic fallback, normalisation
-of the agent output, encrypted storage (spec §4/§9, §13 A11/A25; research
+of the agent output, encrypted storage (spec §4/§9, §13 A11/A25/A117; research
 report §Close). No LLM here — spec §12; the agent is `agents/session_close.py`.
 
 `build_close` bounds what the close agent may see (the last
 LOOP_HISTORY_MAX_MESSAGES user/assistant turns, each cut to
-CLOSE_TRANSCRIPT_TURN_MAX_CHARS, the per-concept probability deltas of this
-session's evidence rows and the misconception keys). `fallback_close` is the
+CLOSE_TRANSCRIPT_TURN_MAX_CHARS, each checked concept's change from an honest
+baseline, the graded answers counted apart by phase and the misconception
+keys). A117: the BKT prior is no measurement of the student, so a concept with
+no evidence before this session starts at its FIRST measurement here (for a
+probed concept, the check-in result), never at the prior; a concept with
+evidence before the session starts at the estimate it had then. Check-in
+(probe) answers came before any teaching and are counted apart from the
+teaching-phase checks. `fallback_close` is the
 deterministic close — stored when the session has no evidence (nothing was
 graded), when the close budget is hard, or when the agent is unavailable
 (ADR 0024 honest degrade, `model_written=False`). `normalise_close` bounds the
@@ -20,6 +26,9 @@ never `upsert`, which would overwrite an existing row's mode/topic.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection, Mapping
+from itertools import takewhile
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel
 
@@ -48,10 +57,43 @@ class Turn(BaseModel):
     content: str
 
 
+#: Where a concept's reported change starts — `ConceptDelta.p_before` (spec §13
+#: A117). "pre_session": the concept had evidence before this session, so the
+#: estimate right before this session's first evidence on it. "check_in" /
+#: "teaching": it had none, so its FIRST measurement here — for a concept first
+#: measured by check-in (probe) answers, the check-in result (where teaching on
+#: it began, or after its last check-in answer when it was never taught: every
+#: check-in answer came before any teaching, so none of them is a move);
+#: otherwise the estimate right after its first teaching-phase evidence. The
+#: BKT prior is never a start: it measures nothing about the student.
+Baseline = Literal["pre_session", "check_in", "teaching"]
+BASELINES: tuple[str, ...] = get_args(Baseline)
+
+
 class ConceptDelta(BaseModel):
+    """One checked concept's reported change: from `p_before`, where it starts
+    (`baseline`), to `p_after`, the estimate after this session's last
+    evidence on it. A close stored before A117 has no `baseline` key."""
+
     node_id: str
     p_before: float
     p_after: float
+    baseline: Baseline = "pre_session"
+
+    @property
+    def first_measured(self) -> bool:
+        return self.baseline != "pre_session"
+
+
+def move(delta: ConceptDelta) -> str:
+    """The reported change's direction, "up", "down" or "unchanged" (the close
+    agent copies it instead of reading two numbers: a flash-lite close called
+    a drop progress). For a first-measured concept it is the move AFTER the
+    first measurement (for a probed one, after the check-in), never one from
+    the prior."""
+    if delta.p_after > delta.p_before:
+        return "up"
+    return "down" if delta.p_after < delta.p_before else "unchanged"
 
 
 class CloseDraft(BaseModel):
@@ -60,9 +102,13 @@ class CloseDraft(BaseModel):
     turns: list[Turn]
     concepts: list[ConceptDelta]
     misconception_keys: list[str]
-    # the session's graded checks and how many were correct (evidence rows)
-    graded_checks: int = 0
-    correct_checks: int = 0
+    # A117: this session's graded evidence rows (`correct` set), counted apart by
+    # phase (`is_probe_row`) — the check-in came before any teaching, so its
+    # answers locate where the student starts and are never a teaching score
+    probe_answers: int = 0
+    probe_correct: int = 0
+    teach_checks: int = 0
+    teach_correct: int = 0
     # node_id -> concept name (one graph_nodes read in the route); rendering
     # only — the stored record keeps node ids (the brief resolves names itself).
     concept_names: dict[str, str] = {}
@@ -80,44 +126,139 @@ class CloseRecord(BaseModel):
     model_written: bool
 
 
-def _deltas_from_evidence(evidence_rows: list[dict]) -> dict[str, tuple[float, float]]:
-    """The first p_before and the last p_after per node, in row order; a row
-    missing either probability is skipped."""
-    out: dict[str, tuple[float, float]] = {}
+#: What a planning observation must agree with on its journal row: the
+#: envelope cannot relabel the row it accompanies (the binding of
+#: learning/planning_history.py::_bound_observation).
+_BOUND = ("node_id", "question_hash", "check_item_id", "channel", "correct", "assisted", "max_rung")
+
+
+def session_probe_hashes(loop_state: Mapping[str, Any] | None) -> frozenset[str]:
+    """The question hashes of the session's recorded check-in answers:
+    `loop_state.probe.history` (PKG-08 appends one observation per recorded
+    probe grade; a goal change keeps the history)."""
+    probe = loop_state.get("probe") if isinstance(loop_state, Mapping) else None
+    history = probe.get("history") if isinstance(probe, Mapping) else None
+    if not isinstance(history, list):
+        return frozenset()
+    return frozenset(
+        h["question_hash"]
+        for h in history
+        if isinstance(h, Mapping) and isinstance(h.get("question_hash"), str)
+    )
+
+
+def is_probe_row(row: Mapping[str, Any] | None, probe_hashes: Collection[str]) -> bool:
+    """A117: the journal row is a check-in (probe) answer — the rule the A112
+    pre/post report identifies a probe grade by (`learning_gain.pretest_outcome`):
+    the row belongs to a session, its question_hash is in that session's probe
+    history (`probe_hashes`; planning provenance alone cannot say "probe": the
+    loop's in-session checks are tagged too), and its planning_observation is
+    bound to the row. Independence is the pretest's further condition, not this
+    one: a check-in answer on a seen item, or a refusal graded as idk, is still
+    a check-in answer. Anything else (a teaching-phase check, a legacy row with
+    no envelope, a relabelled envelope) is not."""
+    if not isinstance(row, Mapping):
+        return False
+    question_hash = row.get("question_hash")
+    if not row.get("session_id") or not isinstance(question_hash, str):
+        return False
+    if question_hash not in probe_hashes:
+        return False
+    observation = row.get("planning_observation")
+    if not isinstance(observation, Mapping):
+        return False
+    for key in _BOUND:
+        bound, journaled = observation.get(key), row.get(key)
+        if type(bound) is not type(journaled) or bound != journaled:
+            return False
+    idk = observation.get("idk")
+    journaled_idk = row.get("reason") == f"evidence:{row.get('channel')}:idk"
+    return isinstance(idk, bool) and idk == journaled_idk
+
+
+def _node_rows(evidence_rows: list[dict]) -> dict[str, list[dict]]:
+    """Per node, in apply order, its rows carrying both probabilities (a row
+    missing either is skipped)."""
+    out: dict[str, list[dict]] = {}
     for row in evidence_rows or []:
-        node, before, after = row.get("node_id"), row.get("p_before"), row.get("p_after")
-        if not node or before is None or after is None:
+        node = row.get("node_id")
+        if not node or row.get("p_before") is None or row.get("p_after") is None:
             continue
-        first = out[node][0] if node in out else float(before)
-        out[node] = (first, float(after))
+        out.setdefault(node, []).append(row)
     return out
+
+
+def _start(
+    rows: list[dict], *, measured_before: bool, probe_hashes: Collection[str]
+) -> tuple[str, float]:
+    """(baseline, p) where one concept's reported change starts (A117):
+
+    - evidence before the session: its first row's p_before;
+    - first measured by check-in answers: the check-in result — the p_before
+      of its first teaching-phase row (where teaching on it began: after all
+      of its check-in answers AND whatever the other check-in answers inferred
+      about it, since prerequisite propagation is never journaled), or, never
+      taught, the p_after of its last check-in answer. No check-in answer, its
+      own or another concept's, ever reads as this concept's move;
+    - first measured in teaching: its first row's p_after."""
+    if measured_before:
+        return "pre_session", rows[0]["p_before"]
+    check_in = list(takewhile(lambda r: is_probe_row(r, probe_hashes), rows))
+    if not check_in:
+        return "teaching", rows[0]["p_after"]
+    taught = rows[len(check_in) :]
+    return "check_in", taught[0]["p_before"] if taught else check_in[-1]["p_after"]
 
 
 def build_close(
     session_messages: list[dict],
     evidence_rows: list[dict],
     misconception_keys: list[str],
-    learner_deltas: dict[str, tuple[float, float]],
     *,
+    measured_before: Collection[str],
+    probe_hashes: Collection[str] = (),
     concept_names: dict[str, str] | None = None,
 ) -> CloseDraft:
     """Pure: the bounded draft. `session_messages` are decrypted `{role,
     content}` dicts in order; `evidence_rows` this session's `evidence` journal
-    rows in apply order; `learner_deltas` `{node_id: (p_before, p_after)}`
-    (derived from `evidence_rows` when empty)."""
+    rows in apply order; `measured_before` the node ids the journal measured
+    before this session first did; `probe_hashes` this session's check-in
+    question hashes (`session_probe_hashes`).
+
+    A117: a node in `measured_before` reports from its first row's p_before
+    (the estimate before the session); any other node from its first
+    measurement here (`_start`: the check-in result, or its first teaching-phase
+    row's p_after), so the BKT prior never stands as a level the student had
+    and no check-in answer reads as a move. Every node reports to its last
+    row's p_after."""
     kept = [
         Turn(role=m["role"], content=str(m["content"])[:CLOSE_TRANSCRIPT_TURN_MAX_CHARS])
         for m in session_messages or []
         if m.get("role") in _ROLES and m.get("content")
     ]
-    deltas = learner_deltas or _deltas_from_evidence(evidence_rows)
+    before = set(measured_before)
+    concepts = []
+    for node, rows in _node_rows(evidence_rows).items():
+        baseline, start = _start(rows, measured_before=node in before, probe_hashes=probe_hashes)
+        concepts.append(
+            ConceptDelta(
+                node_id=node,
+                p_before=float(start),
+                p_after=float(rows[-1]["p_after"]),
+                baseline=baseline,
+            )
+        )
     graded = [r for r in evidence_rows or [] if r.get("correct") is not None]
+    probe = [r for r in graded if is_probe_row(r, probe_hashes)]
+    teach = [r for r in graded if not is_probe_row(r, probe_hashes)]
     return CloseDraft(
-        graded_checks=len(graded),
-        correct_checks=sum(1 for r in graded if r.get("correct")),
         turns=kept[-LOOP_HISTORY_MAX_MESSAGES:],
-        concepts=[ConceptDelta(node_id=n, p_before=b, p_after=a) for n, (b, a) in deltas.items()],
+        concepts=concepts,
         misconception_keys=list(dict.fromkeys(k for k in misconception_keys or [] if k)),
+        probe_answers=len(probe),
+        probe_correct=sum(1 for r in probe if r.get("correct")),
+        teach_checks=len(teach),
+        teach_correct=sum(1 for r in teach if r.get("correct")),
         concept_names={k: v for k, v in (concept_names or {}).items() if k and v},
     )
 
@@ -134,16 +275,37 @@ CLOSE_FALLBACK_DETAILS = ("named", "unnamed", "bare")
 BARE_SUMMARY = "Your checks this session were recorded."
 
 
+#: Where the deterministic close says a first measurement was taken (A117).
+_FIRST_MEASURED_AT = {"check_in": "at the check-in", "teaching": "this session"}
+
+
+def _fallback_change(c: ConceptDelta) -> str:
+    """One concept in the deterministic summary (A117): a change from the
+    pre-session estimate ("p a → b"); a first measurement with no move after
+    it ("first measured at the check-in, p a"); or the move after it ("since
+    the check-in, p a → b", "first measured this session, p a → b") — never a
+    move from the prior."""
+    if not c.first_measured:
+        return f"p {c.p_before:.2f} → {c.p_after:.2f}"
+    if move(c) == "unchanged":
+        return f"first measured {_FIRST_MEASURED_AT[c.baseline]}, p {c.p_before:.2f}"
+    if c.baseline == "check_in":  # the start is where teaching on it began
+        return f"since the check-in, p {c.p_before:.2f} → {c.p_after:.2f}"
+    return f"first measured this session, p {c.p_before:.2f} → {c.p_after:.2f}"
+
+
 def fallback_close(draft: CloseDraft, *, detail: str = "named") -> CloseRecord:
-    """The deterministic close (no LLM): the concept deltas as the summary
-    (`named`: "<name>: p a → b"; `unnamed`: the name withheld; `bare`: no name
-    and no number), the fixed self-evaluation question, no if-then plan,
-    `model_written=False`."""
+    """The deterministic close (no LLM): the concept changes as the summary
+    (`named`: "<name>: p a → b", or for a concept first measured this session
+    "<name>: first measured at the check-in, p a" / "<name>: since the
+    check-in, p a → b", A117 — `_fallback_change`; `unnamed`: the name
+    withheld; `bare`: no name and no number), the fixed self-evaluation
+    question, no if-then plan, `model_written=False`."""
     if detail not in CLOSE_FALLBACK_DETAILS:
         raise ValueError(f"fallback_close: unknown detail {detail!r}")
     summary = "; ".join(
         (f"{concept_label(draft, c.node_id)}: " if detail == "named" else "a checked concept: ")
-        + f"p {c.p_before:.2f} → {c.p_after:.2f}"
+        + _fallback_change(c)
         for c in draft.concepts
     )
     if detail == "bare" and draft.concepts:
