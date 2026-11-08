@@ -552,7 +552,16 @@ def _submit(
 #: signal, and a raw path per row. flag.changed (#620) is an admin audit
 #: event whose `field` names the rule's target — `user:<another student's
 #: id>` — in a value no key-based id filter can see.
-_NOT_MIRRORED: frozenset[str] = frozenset({"error.4xx", "flag.changed"})
+#: safety.crisis_support_shown (docs/safety/crisis-support.md) says that a
+#: named student wrote something that read as suicidal ideation, self-harm or
+#: acute danger: mental-health information about an identifiable person
+#: (special-category health data under GDPR Art. 9). It is not product
+#: analytics, so it never leaves our own `events` table, where only admins
+#: can count it; a third-party analytics processor, its person profiles and
+#: everyone with PostHog access would otherwise hold it, consent or not.
+_NOT_MIRRORED: frozenset[str] = frozenset({
+    "error.4xx", "flag.changed", "safety.crisis_support_shown",
+})
 
 #: Payload keys that carry a request path. Whatever the emitter put there (a
 #: raw path like auth.permission_denied's `/api/profile/<another user's id>`,
@@ -606,7 +615,8 @@ def mirror_event(
 
     Called only from ``events_service.log_event``, after its kill-switch
     check. ``content_fp`` is never forwarded (a hash of student text).
-    ``error.4xx`` and ``flag.changed`` are not mirrored; ``path``/``route`` become the route
+    ``_NOT_MIRRORED`` events (``error.4xx``, ``flag.changed``,
+    ``safety.crisis_support_shown``) are not mirrored; ``path``/``route`` become the route
     template; the #117 category is sent as ``event_category``. Consent is
     decided on the worker, at send time.
     """

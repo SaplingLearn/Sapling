@@ -170,6 +170,10 @@ def test_event_taxonomy_is_pinned():
         "flag.changed",
         # #640/#642 (ADR 0027): one row per typed-decision call. Emit
         # coverage lives in test_decisions.py / test_tutor_router.py.
+        # docs/safety/crisis-support.md: the crisis screen fired. Emit
+        # coverage (and the no-content / no-PostHog pins) lives in
+        # test_crisis_support_routes.py.
+        "safety.crisis_support_shown",
     })
 
 

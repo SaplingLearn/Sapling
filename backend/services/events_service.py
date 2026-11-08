@@ -149,6 +149,12 @@ review.session_started        usage     session_id, offering_id (a daily review 
 review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
 review.graded                 usage     kind, correct, rating
 flag.changed                  audit     key, field, before, after
+safety.crisis_support_shown   system    surface (services/crisis_support.SURFACES), category
+                                        (acute_danger / suicidal_ideation / self_harm), tier
+                                        (explicit / mention) — a student message matched the
+                                        crisis screen and got the resources card instead of a
+                                        model turn. Never the text, not even content_fp; NOT
+                                        mirrored to PostHog (docs/safety/crisis-support.md)
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -355,6 +361,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # emits it about a chat turn (the turn itself is chat.message_sent), so it
     # must not count as the student's activity in the usage rollups. It is
     # the dataset the routing-accuracy and Jev-agreement reviews are run over.
+    # docs/safety/crisis-support.md: a student message matched the crisis
+    # screen and got the resources card instead of a model turn
+    # (services/crisis_support.py). category="system", like decision.made:
+    # the server emits it about a turn, so it is not counted as activity.
+    # Payload surface / category / tier: enums only; never the message,
+    # never even a content fingerprint. NOT mirrored to PostHog
+    # (posthog_client._NOT_MIRRORED says why).
+    "safety.crisis_support_shown",
 })
 
 #: Category for rows the SERVER emits about a request (e.g. decision.made, one

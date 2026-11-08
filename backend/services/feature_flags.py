@@ -102,6 +102,20 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "upload is byte-identical to before A118 (same extraction prompt, "
             "schema and message; no course-concepts read) and writes concept "
             "nodes only.", False),
+    # docs/safety/crisis-support.md: the crisis-support path. On: a student
+    # message that states suicidal ideation, self-harm or acute danger gets
+    # the fixed resources card INSTEAD of a model turn, on every surface
+    # services/crisis_support.py lists. Server-only: the client renders the
+    # card whenever a response carries one. SHIPS OFF until the owner has
+    # reviewed the copy (services/crisis_support_copy.py).
+    FlagDef("crisis_support", ("off", "on"),
+            "Crisis-support path: a student message stating suicidal ideation, "
+            "self-harm or acute danger gets a fixed card with crisis resources "
+            "(988, Crisis Text Line, campus counseling, 911) instead of a model "
+            "turn, on every tutor, learning-loop and notes AI surface. Keep OFF "
+            "until the owner has reviewed the copy in "
+            "services/crisis_support_copy.py (checklist: "
+            "docs/safety/crisis-support.md).", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
