@@ -379,7 +379,9 @@ BACKEND_RPCS = frozenset({
     "complete_job",                  # services/jobs.py (#116)
     "enqueue_job",                   # services/jobs.py (#116)
     "fail_job",                      # services/jobs.py (#116)
+    "heartbeat_job",                 # services/jobs.py (#116, 20261108213623)
     "match_course_chunks",           # services/rag_service.py
+    "prune_jobs",                    # services/jobs.py (#116, 20261108213623)
 })
 
 APP_AUTH_FUNCTIONS = frozenset({
