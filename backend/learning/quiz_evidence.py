@@ -1,6 +1,7 @@
 """The quiz channel's evidence rules (learning-loop spec §13 A132). Pure: no
-I/O, no model; imports learning.evidence, learning.gates and learning.item_lint
-only (listed in tests/test_learning_loop_invariants.py::PURE_MODULES).
+I/O, no model; imports learning.evidence, learning.item_lint, learning.params
+and (lazily, in `is_idk_answer`) two names of learning.gates only (listed in
+tests/test_learning_loop_invariants.py::PURE_MODULES).
 
 The quiz (routes/quiz.py) writes one `mc` Evidence per graded question through
 the single writer. Two things ride on that evidence here:
@@ -32,7 +33,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from learning import gates
 from learning.evidence import StudentConfidence, stated_confidence
 from learning.item_lint import (
     ALL_OR_NONE_OF_ABOVE,
@@ -87,8 +87,15 @@ def is_idk_answer(text: str | None) -> bool:
     (routes/learn_loop.py::_is_idk_phrase; parity pinned by test): the text
     holds a gates.IDK_PATTERNS phrase that `gates.non_attempt_phrases`
     returns, so a hedged answer ("idk maybe 7") is an answer, and "idk" is
-    none. An idk states no confidence (A127 (c))."""
-    return any(p in gates.IDK_PATTERNS for p in gates.non_attempt_phrases(text or ""))
+    none. An idk states no confidence (A127 (c)).
+
+    learning.gates is a PKG-06 module, which the app does not load at boot
+    (tests/test_learning_zpd_policy.py's inertness scan and app-load probe):
+    these two pure names are imported here, on the first written answer, and
+    are the layer's only reach from the quiz (sanctioned there, A132)."""
+    from learning.gates import IDK_PATTERNS, non_attempt_phrases
+
+    return any(p in IDK_PATTERNS for p in non_attempt_phrases(text or ""))
 
 
 # ── Item quality ────────────────────────────────────────────────────────────

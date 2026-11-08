@@ -3959,6 +3959,15 @@ _PKG06_SANCTIONED_IMPORTS = {
         "learning.loop_state_store",
         frozenset({"recent_evidence"}),
     ),
+    # Spec §13 A132: an idk written quiz answer states no confidence, by A16's own
+    # idk split — IDK_PATTERNS and non_attempt_phrases alone (pure phrase matching,
+    # no model, no DB), imported INSIDE quiz_evidence.is_idk_answer, so the app
+    # loads nothing of the layer at boot (the app-load probe below) and the quiz
+    # (routes/quiz.py's /answer, on a written answer) reaches no other PKG-06 name.
+    "learning/quiz_evidence.py": (
+        "learning.gates",
+        frozenset({"IDK_PATTERNS", "non_attempt_phrases"}),
+    ),
 }
 # PKG-07 (spec §7, §9): the loop route WIRES the layer — gates, ladder, policy, leak,
 # the loop_state store and the zpd_events emitters — so every PKG-06 import in it is
