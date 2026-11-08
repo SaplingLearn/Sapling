@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from db.connection import pg_quote_value, rpc, table
 from learning.evidence import MisconceptionVerdict
 from learning.loop_state_store import recent_evidence  # A76's journal half
+from learning.multi_concept import isomorph_class
 from learning.params import (
     GAP_CONFIDENCE_MAX,
     MISCONCEPTION_CONFIDENCE,
@@ -260,7 +261,10 @@ def recheck_after_release(
     if last:
         return True
     since = now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)
-    shape = (getattr(item, "format", None), getattr(item, "difficulty", None))
+    # spec §13 A141: a multi-concept item's class names its combination
+    shape = isomorph_class(
+        getattr(item, "format", None), getattr(item, "difficulty", None), getattr(item, "concept_key", None)
+    )
     if _prequestion_owes(user_id, node_id, loop_state, last=last, since=since, shape=shape):
         return True
     rows = recent_evidence(user_id, node_id, since=since.isoformat())

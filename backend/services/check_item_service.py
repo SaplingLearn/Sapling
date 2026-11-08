@@ -199,9 +199,13 @@ _QUEUE_COLUMNS = (
 )
 #: What the A119 alignment backfill reads: every column, when the alignment
 #: check last passed the row (NULL = never) and when the A124 key check did (a
-#: re-key carries it). Only the backfills read them, so the request path's reads
-#: never depend on the A119 or A124 migrations.
-_ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at"
+#: re-key carries it), and the A140 surface descriptor (a re-key carries it
+#: too). Only the backfills read them, so the request path's reads never
+#: depend on the A119, A124 or A140 migrations.
+_ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at,surface_representation,surface_context"
+#: What a re-tag copies besides _COLUMNS: the A124 key check's time and the
+#: A140 surface descriptor (its context still ciphertext), as stored.
+_RETAG_CARRIED = ("key_checked_at", "surface_representation", "surface_context")
 #: What the A124 key backfill reads: every column, and when the key check last
 #: ran on the row (NULL = never).
 _KEY_COLUMNS = _COLUMNS + ",key_checked_at"
@@ -1111,12 +1115,12 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
     over the stored shape, the alignment and A124 key-hold codes already
     stored and the new ones), `aligned_at`. On the same concept the row is
     updated in place. A re-tag re-keys it: the row as stored (every other
-    column's ciphertext copied untouched, `canonical_verified` and the A124
-    `key_checked_at` with it) is upserted under (course_id, the tested concept,
-    question_hash) — its new id — and the old row deleted through the A23 retire
-    path. Evidence is never written. Returns the item's id after the write;
-    raises on a failed write (a re-run finishes a half-done re-key: the old
-    row is still unchecked)."""
+    column's ciphertext copied untouched, `canonical_verified`, the A124
+    `key_checked_at` and the A140 surface descriptor with it) is upserted
+    under (course_id, the tested concept, question_hash) — its new id — and
+    the old row deleted through the A23 retire path. Evidence is never
+    written. Returns the item's id after the write; raises on a failed write
+    (a re-run finishes a half-done re-key: the old row is still unchecked)."""
     criteria = content_criteria(item)
     update: dict = {
         "lint_flags": merge_flags(lint_check_item(item), kept_flags(item.lint_flags), result.flags),
@@ -1129,7 +1133,7 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
         table(_TABLE).update(update, filters={"id": f"eq.{item.id}"}, prefer_return_minimal=True)
         return item.id
     new_id = item_id(item.course_id, result.concept_key, item.question_hash)
-    columns = [*_COLUMNS.split(","), "key_checked_at"]
+    columns = [*_COLUMNS.split(","), *_RETAG_CARRIED]
     moved = {c: row[c] for c in columns if c in row}
     moved.update(update, id=new_id, concept_key=result.concept_key)
     table(_TABLE).upsert([moved], on_conflict=_ON_CONFLICT)

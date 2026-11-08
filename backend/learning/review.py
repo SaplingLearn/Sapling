@@ -721,8 +721,13 @@ def _interleaved(
     `varied` (spec §13 A140, varied_isomorphs on): a definitional check item —
     recall or definition, INTERLEAVE_DEFINITIONAL_DIFFICULTY — is treated as
     flashcards always were: it is never pulled forward as a partner and never
-    anchors one (the last graded item's difficulty rides `last_graded`). Off:
-    exactly the A114 order."""
+    anchors one (the last graded item's difficulty rides `last_graded`). The
+    rule is about ITEMS while the confusable relation is about concepts, and
+    the item graded last need not be its concept's queue item: so a concept
+    whose queue item is definitional leaves every partner set and pulls
+    nothing once served, and the first step pulls only after a
+    non-definitional anchor (`serve_order`'s `lead`; the same-concept guard
+    holds either way). Off: exactly the A114 order."""
     last = _last_graded(loop_state)
     previous = last.get("key")
     courses = {
@@ -740,7 +745,15 @@ def _interleaved(
         for row in open_for(user_id, nodes):  # PKG-10's reader: [] on a DB error
             wrong.setdefault(row["node_id"], set()).add(row["wrong_key"])
         partners = confusable_partners(courses, _prerequisite_parents(user_id, nodes), wrong)
-    order = serve_order([sr_key(i) for i in queue], partners, previous=previous)
+    if not varied:
+        order = serve_order([sr_key(i) for i in queue], partners, previous=previous)
+        return [queue[i] for i in order]
+    plain = {
+        i.node_id for i in queue if i.kind == "check" and i.node_id and _definitional(i.difficulty)
+    }
+    lead = partners.get(previous, frozenset()) - plain if previous and anchors else frozenset()
+    partners = {node: others - plain for node, others in partners.items() if node not in plain}
+    order = serve_order([sr_key(i) for i in queue], partners, previous=previous, lead=lead)
     return [queue[i] for i in order]
 
 

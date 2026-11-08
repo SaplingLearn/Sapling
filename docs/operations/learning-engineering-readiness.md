@@ -457,6 +457,18 @@ Varied practice (spec §13 A140, A141; `feat/learning-varied-practice`):
    checkpoint is in flight cannot replay it as written (older code drops the
    `multi_concept` flag, so its weight and fingerprint differ): roll forward,
    or drain grade checkpoints first.
+4. The review fixes (`fix/varied-practice-review`) add
+   `20261108205812_learning_varied_practice_review.sql`. Apply it after the
+   wave's three migrations and BEFORE that code. It replaces
+   `check_items_multi_concept_shape` with a closed version, which every
+   stored row passes. It adds `node_mastery_events.multi_concept` (nullable,
+   no default: no rewrite). It re-creates `learning_evidence_commit` to admit
+   that key. Code ahead of the migration breaks the admin item statistics
+   (`/api/admin/check-items/stats` selects the column and answers 503), and a
+   multi-concept grade would be refused. The A119 alignment backfill now reads
+   the two surface columns, so run it only after `20261108185101`.
+   `--db-audit` requires the new column. Rollback: older code never names the
+   column; the rows keep their flag.
 
 #### Reconciliation (A142)
 

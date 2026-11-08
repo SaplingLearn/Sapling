@@ -127,6 +127,67 @@ Sonnet tutor it costs $0.0914 and $1.121.
 7. **Thinking is the largest unmeasured term.** Under the assumed allowances it
    is 15 to 50% of a Claude mix's session cost. The cassettes record none.
 
+## Varied practice with its flags on (A140, A141)
+
+Added after wave 4, by this document's method. The estimate is offline:
+`backend/scripts/project_varied_practice_cost.py` reuses
+`project_loop_cost.py`'s request capture, characters / 4, prices, caching and
+thinking allowances. It makes no model, network or database call.
+
+Serving adds no model call. Both dials are code over stored rows. A
+combination is posed in place of one of the session's checks and graded like
+any other check. So the two flags cost only drafting, per upload:
+
+- **A140** (`varied_isomorphs`): the varied drafter replaces the plain one on
+  each of an upload's 4 drafting calls. Its static prefix is 3,045 tokens
+  against 2,684 (the surface rules and the varied schema). Its input is the
+  plain call's 652 tokens; on a re-draft it also lists the concepts' stored
+  surfaces (926 tokens when every representation is used). Its output is
+  8,962 tokens against 8,354: each recorded item, with the descriptor in
+  place of the two fields code derives. The alignment check and the blind
+  solve never see the descriptor, so their cost is unchanged.
+- **A141** (`multi_concept_items`): at most 6 combinations an upload (the
+  cap; only an apex with a direct prerequisite has any), 3 a call, so 2
+  calls. Each call drafts 9 items (2,782 output tokens, the recorded items'
+  mean size per format). The combination alignment check (prefix 1,019) and
+  the blind solve check each call; their verdicts are 720 and 360 tokens †.
+- The A37 top-up is not modelled, as in the projection above.
+
+| Mix | Caching | A140 per upload | A140 re-draft | A141 per upload | Both per student-month | Of the target |
+|---|---|---|---|---|---|---|
+| Today (Gemini defaults) | off | $0.0011 | $0.0012 | $0.0054 | **$0.0065** | 1.8% |
+| Haiku, Gemini partners | on | $0.0011 | $0.0012 | $0.0053 | **$0.0064** | 1.8% |
+| Haiku, all Claude (Sonnet partners) | off | $0.0014 | $0.0015 | $0.0243 | **$0.0256** | 7.1% |
+| Haiku, all Claude (Sonnet partners) | on | $0.0013 | $0.0014 | $0.0240 | **$0.0253** | 7.0% |
+| Sonnet, all Claude (Haiku partners) | off | $0.0272 | $0.0294 | $0.1088 | **$0.1360** | 37.8% |
+| Sonnet, all Claude (Haiku partners) | on | $0.0254 | $0.0276 | $0.1039 | **$0.1293** | 35.9% |
+
+The tutor's model does not change these numbers: every other mix equals the
+row with the same drafter, alignment and solve models.
+
+1. **With the drafter on Gemini Flash-Lite** (today, and every "Gemini
+   partners" mix), both flags add about $0.0065 per student-month, under 2%
+   of the target. A141 is about five-sixths of that.
+2. **With the key solve on Sonnet**, A141 costs $0.024 per upload, 7% of the
+   target. The solve is most of it.
+3. **With the drafter on Sonnet**, both flags cost about $0.13 per
+   student-month, 36 to 38% of the target. A141 is 80% of that.
+4. These are upper bounds per student-month, as above: one 10-concept upload
+   per student-month, while check items are course assets every student in
+   the course shares.
+5. The live eval recording each flag waits for (spec §13 A140 (g), A141 (i))
+   can log usage with `SAPLING_EVAL_USAGE_LOG`. Those lines replace this
+   estimate's characters / 4, thinking and verdict-size assumptions with
+   measurements.
+
+```sh
+cd backend
+SAPLING_EVAL_MODE=replay GEMINI_API_KEY=dummy-not-used-in-replay \
+  ANTHROPIC_API_KEY=dummy-not-used-in-replay \
+  ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
+  venv/bin/python scripts/project_varied_practice_cost.py --markdown [--steady-traffic]
+```
+
 ## For the owner's decision (not a decision)
 
 - **Tutor.** Haiku for every tier projects to half the target; Sonnet for every

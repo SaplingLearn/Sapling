@@ -66,6 +66,7 @@ def serve_order(
     partners: Mapping[Hashable, Collection[Hashable]],
     *,
     previous: Hashable | None = None,
+    lead: Collection[Hashable] | None = None,
 ) -> list[int]:
     """The order to serve the queue in: a permutation of `range(len(keys))`.
 
@@ -79,6 +80,12 @@ def serve_order(
     than half of the remaining items is placed first, so it never runs out of
     separators. The review queue's keys are unique, so there the guard only
     keeps the concept just graded from being served again right away.
+
+    `lead` (spec §13 A140): the keys the first step may pull, in place of
+    `partners[previous]` — for a caller whose relation is about ITEMS while
+    `partners` is keyed by concept (the item graded just before need not be
+    the queue's item of its concept). None: `partners[previous]`, exactly as
+    without it. The guard on `previous` holds either way.
 
     Hence, for unique keys:
       - no item is added, dropped or repeated (the set and the budget hold);
@@ -99,7 +106,10 @@ def serve_order(
         others = [i for i in pending if keys[i] != last] or pending
         crowded = [i for i in others if 2 * left[keys[i]] > len(pending)]
         pool = crowded or others
-        near = partners.get(last, ()) if last is not None else ()
+        if lead is not None and not order:
+            near = lead
+        else:
+            near = partners.get(last, ()) if last is not None else ()
         pick = next((i for i in pool if keys[i] in near), pool[0])
         order.append(pick)
         pending.remove(pick)

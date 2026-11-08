@@ -41,6 +41,7 @@ from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, table
 from learning import params, void_store
+from learning.multi_concept import isomorph_class
 from learning.policy import WINDOW_KEEP, LoopState, Opportunity
 
 logger = logging.getLogger("sapling.learning.loop_state")
@@ -189,10 +190,11 @@ def recent_evidence(user_id: str, node_id: str, *, since: str) -> list[dict] | N
     """PKG-10 (spec §13 A76): the student's evidence rows on this node
     journaled since `since`, oldest first, each as {question_hash, released,
     shape} — `released` by revealed_hashes' rule, `shape` the item's isomorph
-    class (format, difficulty; None when the item cannot be read). Two
-    owner-scoped reads (the node's rows like _evidence_rows, then the rows'
-    items' plaintext format/difficulty in one `in.(...)` select); None when a
-    read failed (never raises)."""
+    class (format, difficulty — and a multi-concept item's combination key,
+    spec §13 A141, multi_concept.isomorph_class; None when the item cannot be
+    read). Two owner-scoped reads (the node's rows like _evidence_rows, then
+    the rows' items' plaintext format/difficulty/concept_key in one
+    `in.(...)` select); None when a read failed (never raises)."""
     try:
         rows = table("node_mastery_events").select(
             "check_item_id,question_hash,correct,max_rung,graph_nodes!inner(user_id)",
@@ -208,10 +210,13 @@ def recent_evidence(user_id: str, node_id: str, *, since: str) -> list[dict] | N
         shapes: dict[str, tuple] = {}
         if ids:
             for item in table("check_items").select(
-                "id,format,difficulty",
+                "id,format,difficulty,concept_key",
                 filters={"id": f"in.({','.join(pg_quote_value(i) for i in ids)})"},
             ):
-                shapes[item["id"]] = (item.get("format"), item.get("difficulty"))
+                # spec §13 A141: a multi-concept item's class names its combination
+                shapes[item["id"]] = isomorph_class(
+                    item.get("format"), item.get("difficulty"), item.get("concept_key")
+                )
     except Exception as exc:
         logger.warning("recent_evidence read failed: %s", type(exc).__name__)
         return None

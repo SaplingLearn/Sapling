@@ -901,6 +901,13 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             # was stated, so an evidence row without one is the row it was
             # before A127 — its plan, and its operation's fingerprint, unchanged.
             event_row["student_confidence"] = ev.student_confidence
+        if ev.multi_concept:
+            # Spec §13 A141: the row a multi-concept item graded says so in the
+            # journal itself — the item's own row may later be withdrawn (A23)
+            # or retired (A123), and the item statistics must still tell it
+            # from the apex's own items. Absent on every other row, so its
+            # plan, and its operation's fingerprint, are unchanged.
+            event_row["multi_concept"] = True
         provenance = planning_observation(ev)
         if provenance is not None:
             event_row["planning_observation"] = provenance

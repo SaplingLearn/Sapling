@@ -347,6 +347,58 @@ def test_a_definitional_anchor_pairs_nothing(monkeypatch):
     assert _interleaved(monkeypatch, queue, applied, varied=True) == ["b", "x"]
 
 
+def test_a_definitional_anchor_pulls_nothing_even_when_its_concepts_queue_item_could(monkeypatch):
+    # the review's scenario A: a (difficulty 1) graded last and due again with a
+    # difficulty-2 pick; a and b are siblings. The anchor pulls nothing (x, the
+    # DASH head, first), a never follows itself, and a's applied item then
+    # pulls b
+    queue = _queue(("x", 2), ("a", 2), ("b", 2))
+    anchor = {"key": "a", "course_id": "c1", "difficulty": 1}
+    assert _interleaved(monkeypatch, queue, anchor, varied=True) == ["x", "a", "b"]
+    assert _interleaved(monkeypatch, queue, anchor, varied=False) == ["b", "a", "x"]
+
+
+def test_a_definitional_queue_item_is_never_pulled_even_by_its_concepts_applied_anchor(monkeypatch):
+    # the review's scenario B: a (difficulty 2) graded last and due again with a
+    # difficulty-1 pick. The applied anchor pulls its sibling b; b never pulls
+    # a's definitional item ahead of x
+    queue = _queue(("b", 2), ("x", 2), ("a", 1))
+    anchor = {"key": "a", "course_id": "c1", "difficulty": 2}
+    assert _interleaved(monkeypatch, queue, anchor, varied=True) == ["b", "x", "a"]
+    assert _interleaved(monkeypatch, queue, anchor, varied=False) == ["b", "a", "x"]
+
+
+def test_a_definitional_item_once_served_pulls_nothing_though_its_concept_anchored(monkeypatch):
+    from learning import review
+
+    # a pairs with b (the same open misconception) and with c (a shared
+    # parent); b and c do not pair. a, graded last at difficulty 2, anchors b;
+    # a's definitional queue item, once served, pulls nothing — y keeps its
+    # DASH place ahead of c
+    monkeypatch.setattr(review, "_prerequisite_parents", lambda u, nodes: {"a": {"p"}, "c": {"p"}})
+    monkeypatch.setattr(
+        review, "open_for", lambda u, nodes: [{"node_id": n, "wrong_key": "w"} for n in ("a", "b")]
+    )
+    queue = _queue(("b", 2), ("x", 2), ("a", 1), ("y", 2), ("c", 2))
+    state = {"review": {"last_graded": {"key": "a", "course_id": "c1", "difficulty": 2}}}
+    order = [i.node_id for i in review._interleaved("u1", queue, state, varied=True)]
+    assert order == ["b", "x", "a", "y", "c"]
+    order = [i.node_id for i in review._interleaved("u1", queue, state, varied=False)]
+    assert order == ["b", "a", "c", "x", "y"]  # A114: the definitional a pulled and pulling
+
+
+def test_the_lead_replaces_only_the_first_steps_partners():
+    from learning.interleave import serve_order
+
+    partners = {"a": {"b"}, "b": {"a"}}
+    keys = ["x", "a", "b"]
+    assert serve_order(keys, partners, previous="a") == [2, 1, 0]
+    assert serve_order(keys, partners, previous="a", lead=None) == [2, 1, 0]
+    assert serve_order(keys, partners, previous="a", lead=frozenset()) == [0, 1, 2]
+    # the guard on `previous` holds with any lead: a never follows a
+    assert serve_order(["a", "x"], partners, previous="a", lead={"a"}) == [1, 0]
+
+
 def test_the_graded_anchor_records_its_difficulty_only_with_the_flag():
     from learning.review import _apply_grade
 

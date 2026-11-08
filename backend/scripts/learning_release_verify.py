@@ -49,6 +49,9 @@ REQUIRED_COLUMNS = {
         # spec §13 A127: the student's stated confidence (never the grader's
         # `confidence`); learning_evidence_commit refuses the key without it
         "student_confidence": "double precision",
+        # spec §13 A141: the row a multi-concept item graded says so (the item
+        # statistics read it; learning_evidence_commit refuses the key without it)
+        "multi_concept": "boolean",
     },
     # spec §13 A123: the append-only void record, the quarantine, misconception support
     "learning_evidence_voids": {
