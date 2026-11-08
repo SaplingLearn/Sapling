@@ -38,14 +38,16 @@ always get the service-role answer. On top of that:
 | Signal | When | Kind |
 |---|---|---|
 | A sampled **read** (`select`, `select_with_count`, and the read-only rpc `match_course_chunks`) is run again as the student on a background pool, and the row counts and `id` sets are compared. | sampled, default 10% | `fewer_rows`, `more_rows`, `different_ids`, `error` (with HTTP `status` and PostgREST `code`) |
-| A **write** (`insert`/`update`/`upsert`/`delete`) names a `user_id` other than the student's, either in the rows it writes or as an `eq.` filter. Writes are never run twice. This is the one fact about a write that is known without running it again. | every write | `write_other_user` |
-| A request with **no session subject** reached the DB from a path not marked service. Under `enforce` this is a 500. | every query | `no_subject` (event `db.unscoped_query`) |
+| A **write** (`insert`/`update`/`upsert`/`delete`) or write rpc names another user: in an owner column of the rows it writes (`user_id`, or the table's own owner column: `rooms.owner_id`, `course_chunks.uploader_id`, `room_bans.banned_by`, `users.id`; both sides of `friendships`/`friend_requests`), in an `eq.`/`in.(…)`/`neq.`/`not.` filter on one, or as an rpc user parameter (`p_user_id`, …). Writes are never run twice; this is what is known about a write without running it again. **A heuristic** — see "What an empty report does not prove" below. | every write | `write_other_user` |
+| A request with **no session subject** reached the DB from a path not marked service. Under `enforce` this is a 500. | every query (counted every time; under shadow LOGGED once per route + table per process) | `no_subject` (event `db.unscoped_query`) |
 | Under **enforce**, PostgREST refused a user-scoped call (403 / 42501). | every refusal | `denied` (event `db.rls_denied`) |
 
 Every row above produces three things:
 
 1. **One WARNING log line**, always in the same field order, never with row
-   contents, raw paths or error messages:
+   contents, raw paths or error messages (`no_subject` under shadow: the first
+   occurrence per route + table per process only, so an anonymous page does not
+   flood the log; the event and the tally still count every one):
 
    ```
    db_user_scope.divergence event=db.rls_shadow_divergence kind=fewer_rows mode=shadow method=GET route=/api/notes/{note_id} target=notes op=select status=- code=- service_rows=2 scoped_rows=1 request_id=6f0c... user=user_1234
@@ -83,10 +85,16 @@ cookie is sent. The response has:
 - `top`: the `events` rows from the window, grouped by (event, kind, mode,
   method, route, target, op, status, code). Each group has `count`, distinct
   `users`, `first_seen`/`last_seen` and up to 3 `sample_request_ids`. This view
-  covers every worker. `truncated: true` means the scan stopped at 100k rows.
+  covers every worker. The grouping is done in Python, so the scan is bounded:
+  at most `scan_cap` (20 000) events, newest first, and `hours` at most 168.
+  `truncated: true` means the window held more and `top` covers only the newest
+  `scan_cap` events — narrow `hours`, or use the SQL below, which has no cap.
+  (Follow-up: a SQL `GROUP BY` function behind the endpoint would remove the cap.)
 - `process`: the tally of the worker that served this request since it booted
   (`pid`, `since`). Each uvicorn worker has its own tally, so a reload can show a
-  different `pid`.
+  different `pid`. Its divergence rows carry the same key fields as `top`
+  (normalised by one function, `scope_report.key_of`), so a group can be matched
+  across the two views; an absent `status`/`code` is `null` in both.
 
 **SQL** (Supabase SQL editor, read-only):
 
@@ -120,6 +128,32 @@ grep -o 'db_user_scope.divergence .*' railway.log \
 That gives the top divergences by event, kind, method, route, table, op and
 code. To follow one occurrence, take its `request_id`: it matches the
 `X-Request-ID` response header and the request's access log line.
+
+### What an empty report does not prove
+
+An empty `top` means none of the CHECKS fired. It does not mean enforce is safe:
+
+- **Reads are sampled** (default 10%). Check `shadow_reads.compared`: a route
+  nobody hit, or hit only unsampled, was never compared.
+- **Writes are never run as the student.** `write_other_user` is a heuristic
+  over owner columns, filters and rpc user parameters, and it is one-sided: a
+  hit is a real signal, silence is not proof. It cannot see a write keyed by a
+  row id alone (`id=eq.<another student's row>`), a table whose policy goes
+  through a parent row (`messages` via `sessions`, `note_concepts`,
+  `node_mastery_events`, `quiz_responses`, the enrollment-keyed gradebook
+  tables), `room_members` (a room owner may remove others), or an rpc that takes
+  the user any other way. Whether those writes pass WITH CHECK / USING is only
+  known when they run user-scoped.
+- **Every route in `unverified_writes` is exactly that: unverified.**
+
+So the gate before ANY enforce step (admins included) is not the report alone:
+
+1. The cross-user matrix (`tests/integration/test_cross_user_matrix_db.py`,
+   parametrized over `off` and `enforce`) green in the CI **integration lane**,
+   with no new `KNOWN_LEAKS` entry and every write route of `unverified_writes`
+   covered by a matrix case or an explicit integration test under enforce.
+2. The Chapter 1 E2E lane green.
+3. Then the report clean as described in §5.
 
 ### What each kind usually means, and the fix
 
@@ -197,7 +231,7 @@ The realtime bridge (step 2e, `iss: sapling-realtime`) signs with this same key.
 |---|---|---|---|
 | `SUPABASE_JWT_SIGNING_KEY` | The private JWK from §2 as **one line of JSON**, e.g. `{"kty":"EC","crv":"P-256","kid":"…","x":"…","y":"…","d":"…"}`. Extra members (`alg`, `use`, `key_ops`, `ext`) are ignored. `db/user_jwt.py` accepts exactly `kty: EC` + `crv: P-256` with `d`, `x`, `y` (ES256), or `kty: oct` with a base64url `k` of at least 32 bytes (HS256, local and CI only). A `kid` is optional for the parser but required in practice on hosted projects. | **[Andres]** Railway → backend (API) service → Variables, for that environment. Paste the JSON as-is, with no surrounding quotes. Your local `backend/.env.staging` / `.env.production` (used by §4 only), wrapped in single quotes. | The frontend, GitHub secrets, the repo, Trov, chat. The worker service does not need it: it runs outside a request and is always service role. |
 | `SUPABASE_ANON_KEY` | The project's **anon** (legacy JWT) or **publishable** (`sb_publishable_…`) key, from Project Settings → API Keys. It is the same value as that environment's frontend `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Supabase refuses a minted JWT in the `apikey` header, so this key goes there. Never the service key: `db/user_jwt.anon_key()` refuses to fall back to it. | **[Andres]** Railway backend service, same environment. Local env file for §4. | It is not secret, but it is per environment: staging's anon key on prod will 401. |
-| `DB_USER_SCOPE_SHADOW_SAMPLE_RATE` (optional) | `0`–`1`. Fraction of reads the shadow re-runs. Default `0.1`. | Staging: `1` (traffic is small, so compare everything). Prod: leave unset, or `0.2`–`0.5` for a short, denser pass. Read at boot. | |
+| `DB_USER_SCOPE_SHADOW_SAMPLE_RATE` (optional) | `0`–`1`. Fraction of reads the shadow re-runs. Default `0.1`. A **tuning knob, not a feature gate** (like `JOBS_LEASE_SECONDS`): whether shadow runs at all is the `db_user_scope` flag; this only sets how dense an already-on shadow is. It is an env var because flag variants are strings, not numbers. Clamped to `[0, 1]`; `nan`, `inf` or anything unparseable falls back to `0.1` with a WARNING. | Staging: `1` (traffic is small, so compare everything). Prod: leave unset, or `0.2`–`0.5` for a short, denser pass. Read at boot. | |
 
 After setting them, the next boot no longer logs
 `db_user_scope cannot leave 'off' on this deployment (...)` (`config.py`). That
@@ -271,11 +305,13 @@ id. So:
      (`dotenv -f .env.staging run -- python -m db.e2e_staging_http`).
    - Read the report (§1) daily. **Stop at any `status=401`.** Fix every other
      kind (table in §1), redeploy, read again.
-   - Exit criteria: `top` empty for 24 h of real traffic, apart from understood
-     `more_rows` noise; `shadow_reads.compared` in the hundreds; every entry in
-     `unverified_writes` is either covered by the integration matrix under
-     enforce or exercised in step 2; p95 latency unchanged (the comparison runs
-     off the request thread, at most 4 in flight per process).
+   - Exit criteria: the gate in §1 "What an empty report does not prove" (the
+     cross-user matrix under enforce green in the integration lane, every
+     `unverified_writes` route covered); `top` empty for 24 h of real traffic,
+     apart from understood `more_rows` noise; `shadow_reads.compared` in the
+     hundreds; p95 latency unchanged (the comparison runs off the request
+     thread, at most 4 in flight per process). An empty `top` on its own is
+     never the exit criterion.
 2. **Enforce for admins and test accounts.** Add a **role** rule: `target_type:
    role`, `target_id` = the admin role's `roles.id` (`SELECT id FROM roles WHERE
    slug = 'admin'`), `variant: enforce`. Add user rules for test accounts. The
@@ -351,7 +387,9 @@ for everyone still on the anon-key path.
 
 ## 9. Graduation
 
-Once prod has run `enforce` at 100% for a full release with an empty report:
+Once prod has run `enforce` at 100% for a full release with an empty report
+(under enforce, `db.rls_denied` and `db.unscoped_query` are real refusals, not a
+heuristic, so an empty report there IS meaningful):
 delete the flag and make enforce unconditional, keeping only the env kill switch
 (plan §4.4). Remove the shadow machinery with it (`db/scope_report.py`, the
 shadow pool in `db/connection.py`).

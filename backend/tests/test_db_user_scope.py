@@ -442,7 +442,8 @@ def test_shadow_scoped_error_is_reported_not_raised(wire, real_guard, keys, monk
     wire.status = lambda verb, url, headers: 403 if headers and "Bearer ey" in str(headers) else 200
     r = _app(lambda: _read_notes()).get("/probe", cookies=_cookie("u1"))
     assert r.status_code == 200
-    assert events[0][1]["error"] == "403" and events[0][1]["scoped_count"] == -1
+    assert events[0][1]["status"] == 403 and events[0][1]["scoped_count"] == -1
+    assert "error" not in events[0][1]  # the redundant duplicate of status is gone
 
 
 def test_shadow_never_reruns_writes_or_rpc(wire, real_guard, keys, monkeypatch, inline_shadow):

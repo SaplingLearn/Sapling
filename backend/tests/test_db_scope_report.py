@@ -156,7 +156,8 @@ def test_shadow_scoped_error_carries_status_and_postgrest_code(
     assert "kind=error" in line and "status=403" in line and "code=42501" in line
     assert SECRET_MARKER not in caplog.text
     (_, payload, _, _), = events
-    assert payload["status"] == 403 and payload["code"] == "42501" and payload["error"] == "403"
+    assert payload["status"] == 403 and payload["code"] == "42501"
+    assert "error" not in payload  # status only; the reader still accepts old `error` rows
     assert payload["scoped_count"] == -1
 
 
@@ -261,21 +262,47 @@ def test_read_only_rpc_is_shadowed_and_reported(wire, monkeypatch, inline_shadow
 # ── Unscoped and enforce feed the same tally ────────────────────────────────
 
 
-def test_unscoped_query_in_shadow_is_one_line_every_time(wire, monkeypatch, events, caplog):
+def test_unscoped_query_in_shadow_logs_once_per_route_and_table_but_counts_all(
+        wire, monkeypatch, events, caplog):
+    """An anonymous page reading the same table on every hit must not write a
+    WARNING line per query: one line per (route, table) per process, while
+    the tally and the events still count every occurrence."""
     monkeypatch.setenv(FLAG_ENV, "shadow")
 
     def handler():
         table("notes").select("id")
         table("notes").select("id")
+        table("courses").select("id")
         return {}
 
     with caplog.at_level(logging.WARNING, logger="sapling.db_scope"):
-        _app(handler).get("/probe")  # no session
+        client = _app(handler)
+        client.get("/probe")  # no session
+        client.get("/probe")
     lines = _lines(caplog)
-    assert len(lines) == 2 and all("kind=no_subject mode=shadow method=GET route=/probe "
-                                   "target=notes" in ln for ln in lines)
-    (row,) = scope_report.snapshot()["divergences"]
-    assert row["event"] == "db.unscoped_query" and row["count"] == 2
+    assert len(lines) == 2
+    assert any("kind=no_subject mode=shadow method=GET route=/probe target=notes" in ln
+               for ln in lines)
+    assert any("target=courses" in ln for ln in lines)
+    counts = {row["target"]: row["count"] for row in scope_report.snapshot()["divergences"]}
+    assert counts == {"notes": 4, "courses": 2}
+    assert len(events) == 6
+
+
+def test_unscoped_query_under_enforce_logs_every_refusal(wire, monkeypatch, events, caplog):
+    monkeypatch.setenv(FLAG_ENV, "enforce")
+
+    def handler():
+        for _ in range(2):
+            try:
+                table("notes").select("id")
+            except db_scope.UnscopedQueryError:
+                pass
+        return {}
+
+    with caplog.at_level(logging.WARNING, logger="sapling.db_scope"):
+        _app(handler).get("/probe")
+    assert len(_lines(caplog)) == 2
 
 
 def test_enforce_denial_is_counted_with_code_and_op(wire, monkeypatch, events, caplog):
@@ -295,6 +322,84 @@ def test_enforce_denial_is_counted_with_code_and_op(wire, monkeypatch, events, c
             "target=notes op=insert status=403 code=42501") in line
     (_, payload, user_id, _), = events
     assert payload["code"] == "42501" and payload["op"] == "insert" and user_id == "u1"
+
+
+def test_enforce_denial_reports_the_call_sites_op_not_the_http_verb(wire, monkeypatch, events, caplog):
+    """An upsert is a POST like an insert; the report must say upsert."""
+    monkeypatch.setenv(FLAG_ENV, "enforce")
+    wire.status = lambda verb, url, headers: 403 if _scoped(headers) else 200
+    wire.rows = lambda verb, url, headers: {"code": "42501"} if _scoped(headers) else []
+
+    def handler():
+        table("notes").upsert({"id": "n1", "user_id": "u1"})
+        return {}
+
+    with caplog.at_level(logging.WARNING, logger="sapling.db_scope"):
+        r = _app(handler, method="post").post("/probe", cookies=_cookie("u1"))
+    assert r.status_code == 404
+    (line,) = _lines(caplog)
+    assert "op=upsert" in line
+    (_, payload, _, _), = events
+    assert payload["op"] == "upsert"
+
+
+# ── The write_other_user heuristic ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize("target,op,data,filters,expect", [
+    # in.(...) / neq. / not. filters on the owner column
+    ("notes", "delete", None, {"user_id": "in.(u1,u2)"}, True),
+    ("notes", "delete", None, {"user_id": 'in.("u1")'}, False),
+    ("notes", "update", {"a": 1}, {"user_id": "neq.u1"}, True),
+    ("notes", "update", {"a": 1}, {"user_id": "not.is.null"}, True),
+    ("notes", "update", {"a": 1}, {"user_id": ["eq.u1", "neq.u2"]}, False),
+    # known owner columns other than user_id
+    ("rooms", "insert", {"owner_id": "u2", "name": "r"}, None, True),
+    ("rooms", "update", {"name": "r"}, {"owner_id": "eq.u1"}, False),
+    ("course_chunks", "upsert", [{"id": "c", "uploader_id": "u2"}], None, True),
+    ("users", "update", {"level": 2}, {"id": "eq.u2"}, True),
+    ("users", "update", {"level": 2}, {"id": "eq.u1"}, False),
+    ("room_bans", "insert", {"room_id": "r", "user_id": "u2", "banned_by": "u1"}, None, False),
+    # party tables: either side being the subject is the subject's own row
+    ("friendships", "insert", {"user_id": "u2", "friend_id": "u1"}, None, False),
+    ("friendships", "delete", None, {"user_id": "eq.u2", "friend_id": "eq.u1"}, False),
+    ("friendships", "delete", None, {"user_id": "eq.u2", "friend_id": "eq.u3"}, True),
+    ("friend_requests", "update", {"status": "x"}, {"to_user_id": "eq.u3"}, True),
+    # write rpc parameters that name a user
+    ("rpc/apply_mastery_delta", "rpc", {"p_user_id": "u2", "p_node_id": "n"}, None, True),
+    ("rpc/apply_mastery_delta", "rpc", {"p_user_id": "u1"}, None, False),
+    # documented blind spots: a bare row id, a policy through a parent row
+    ("notes", "delete", None, {"id": "eq.someone-elses-note"}, False),
+    ("room_members", "delete", None, {"user_id": "eq.u2"}, False),
+])
+def test_other_user_heuristic(target, op, data, filters, expect):
+    assert db_scope._other_user("u1", target, op, data, filters) is expect
+
+
+def test_write_rpc_naming_another_user_is_a_would_be_denial(wire, monkeypatch, events, caplog):
+    monkeypatch.setenv(FLAG_ENV, "shadow")
+
+    def handler():
+        rpc("apply_mastery_delta", {"p_user_id": "someone_else", "p_node_id": "n1"})
+        return {}
+
+    with caplog.at_level(logging.WARNING, logger="sapling.db_scope"):
+        _app(handler, method="post").post("/probe", cookies=_cookie("u1"))
+    (line,) = _lines(caplog)
+    assert "kind=write_other_user" in line and "target=rpc/apply_mastery_delta op=rpc" in line
+    assert "someone_else" not in caplog.text
+
+
+# ── The sample rate knob ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("raw,expect", [
+    ("", 0.1), ("0.5", 0.5), ("1", 1.0), ("7", 1.0), ("-1", 0.0),
+    ("nan", 0.1), ("NaN", 0.1), ("inf", 0.1), ("-inf", 0.1), ("lots", 0.1),
+])
+def test_sample_rate_is_finite_and_clamped(monkeypatch, raw, expect):
+    monkeypatch.setenv(db_scope.SHADOW_SAMPLE_RATE_ENV, raw)
+    assert db_scope._sample_rate_from_env() == expect
 
 
 # ── Flag off: none of this runs ─────────────────────────────────────────────
@@ -369,9 +474,12 @@ class _Events:
     def __init__(self, rows):
         self.rows = rows
         self.filters = None
+        self.orders: list = []
 
     def select_with_count(self, columns="*", filters=None, order=None, limit=None, offset=None):
         self.filters = filters
+        if order not in self.orders:
+            self.orders.append(order)
         rows = self.rows[offset or 0:][: limit or None]
         return rows, len(self.rows)
 
@@ -414,8 +522,49 @@ def test_admin_db_scope_report_groups_events_and_includes_the_process_tally(monk
     legacy = next(t for t in body["top"] if t["route"] == "/x")
     assert legacy["kind"] == "error" and legacy["status"] == "403"
     assert body["process"]["divergences"][0]["count"] == 1
-    # Only the three db_user_scope events are scanned.
+    # Only the three db_user_scope events are scanned, newest first, bounded.
     assert "db.rls_denied" in store.filters["event_type"]
+    assert store.orders == ["created_at.desc"]
+    assert body["scan_cap"] == analytics._DB_SCOPE_SCAN_CAP
+
+
+def test_admin_report_and_process_tally_use_the_same_key(monkeypatch):
+    """One divergence must group under the SAME key in `top` (events) and in
+    `process` (the tally) — including absent status/code (None in both)."""
+    import main
+    import routes.admin_analytics as analytics
+
+    fields = dict(event="db.unscoped_query", kind="no_subject", mode="shadow",
+                  method="GET", route="/api/x", target="courses", op=None)
+    scope_report.record(**fields)
+    store = _Events([_ev("db.unscoped_query", {"table": "courses", "route": "/api/x",
+                                               "mode": "shadow", "kind": "no_subject",
+                                               "method": "GET"}, user=None)])
+    monkeypatch.setattr(analytics, "table", lambda name: store)
+    body = TestClient(main.app).get("/api/admin/analytics/db-scope").json()
+    keys = scope_report.KEY_FIELDS
+    top = {k: body["top"][0][k] for k in keys}
+    proc = {k: body["process"]["divergences"][0][k] for k in keys}
+    assert top == proc
+    assert top["status"] is None and top["code"] is None and top["op"] == "?"
+
+
+def test_admin_db_scope_report_caps_scan_and_window(monkeypatch):
+    import main
+    import routes.admin_analytics as analytics
+
+    store = _Events([_ev("db.unscoped_query", {"table": "t", "route": f"/r{i}"})
+                     for i in range(5)])
+    monkeypatch.setattr(analytics, "table", lambda name: store)
+    monkeypatch.setattr(analytics, "_PAGE", 2)
+    monkeypatch.setattr(analytics, "_DB_SCOPE_SCAN_CAP", 3)
+    client = TestClient(main.app)
+    body = client.get("/api/admin/analytics/db-scope").json()
+    assert body["truncated"] is True and body["scan_cap"] == 3
+    assert body["total"] == 4  # two pages of two, then the cap stops the scan
+    over = client.get("/api/admin/analytics/db-scope",
+                      params={"hours": analytics._DB_SCOPE_MAX_HOURS + 1})
+    assert over.status_code == 422
 
 
 def test_admin_db_scope_report_is_admin_only(monkeypatch):

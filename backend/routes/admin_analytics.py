@@ -192,16 +192,20 @@ _NOT_SYSTEM = {"category": f"neq.{SYSTEM_CATEGORY}"}
 
 def _scan_range(
     table_name: str, columns: str, from_iso: str, to_iso: str,
-    extra_filters: dict | None = None,
+    extra_filters: dict | None = None, *, cap: int | None = None, newest_first: bool = False,
 ) -> tuple[list[dict], bool]:
     """Fetch every row in [from, to] for a table, paging via select_with_count.
 
     Aggregation endpoints need the full (date-bounded) set — PostgREST won't
     GROUP BY for us — so we page to completion rather than relying on the
     server's default row cap. Returns ``(rows, truncated)``: a range large
-    enough to hit _SCAN_CAP stops the scan early, logs a warning, and sets
-    ``truncated=True`` so callers can surface the partial aggregation.
+    enough to hit ``cap`` (default _SCAN_CAP) stops the scan early, logs a
+    warning, and sets ``truncated=True`` so callers can surface the partial
+    aggregation. ``newest_first`` pages newest → oldest, so a truncated scan
+    keeps the most recent rows rather than the oldest.
     """
+    if cap is None:
+        cap = _SCAN_CAP  # read at call time (tests shrink it)
     out: list[dict] = []
     offset = 0
     truncated = False
@@ -210,16 +214,18 @@ def _scan_range(
         if extra_filters:
             filters.update(extra_filters)
         rows, total = table(table_name).select_with_count(
-            columns, filters=filters, order="created_at.asc", limit=_PAGE, offset=offset,
+            columns, filters=filters,
+            order="created_at.desc" if newest_first else "created_at.asc",
+            limit=_PAGE, offset=offset,
         )
         out.extend(rows)
         if len(out) >= total or not rows:
             break
-        if len(out) >= _SCAN_CAP:
+        if len(out) >= cap:
             truncated = True
             logger.warning(
                 "admin_analytics scan hit cap %d on %r (total=%d); results truncated",
-                _SCAN_CAP, table_name, total,
+                cap, table_name, total,
             )
             break
         offset += _PAGE
@@ -507,6 +513,13 @@ def errors(
 
 _DB_SCOPE_EVENTS = ("db.rls_shadow_divergence", "db.unscoped_query", "db.rls_denied")
 
+#: The db-scope report groups in Python (PostgREST has no GROUP BY), so it
+#: bounds its own scan: at most this many events (newest first) and a window
+#: of at most _DB_SCOPE_MAX_HOURS. A truncated answer says so (`truncated`,
+#: `scan_cap`). A SQL GROUP BY function would lift both limits (follow-up).
+_DB_SCOPE_SCAN_CAP = 20_000
+_DB_SCOPE_MAX_HOURS = 168
+
 
 class DbScopeWindow(BaseModel):
     from_: str = Field(serialization_alias="from")
@@ -537,12 +550,19 @@ class DbScopeReport(BaseModel):
     groups: int
     top: list[DbScopeGroup]
     truncated: bool = False
+    #: The most events one report groups (newest first); `truncated` is True
+    #: when the window held more, and then `top` covers only the newest.
+    scan_cap: int
     process: dict
 
 
 def _db_scope_key(event_type: str, payload: dict) -> tuple:
-    """The grouping key for one db.* event row. Rows written before the
-    report existed carry no kind/method/op; derive what they imply."""
+    """The grouping key for one db.* event row — `scope_report.key_of`, the
+    same key the in-process tally uses. Rows written before the report
+    existed carry no kind/method/op (and `error` where newer rows carry
+    `status`); derive what they imply."""
+    from db import scope_report
+
     status = payload.get("status", payload.get("error"))
     kind = payload.get("kind")
     if not kind:
@@ -557,24 +577,26 @@ def _db_scope_key(event_type: str, payload: dict) -> tuple:
             kind = "fewer_rows" if scp < svc else "more_rows" if scp > svc else "different_ids"
     mode = payload.get("mode") or {"db.rls_shadow_divergence": "shadow",
                                    "db.rls_denied": "enforce"}.get(event_type, "?")
-    return (
-        event_type, str(kind), str(mode), str(payload.get("method") or "?"),
-        str(payload.get("route") or "?"), str(payload.get("table") or "?"),
-        str(payload.get("op") or "?"),
-        None if status is None else str(status),
-        None if not payload.get("code") else str(payload["code"]),
-    )
+    # Same defaults as scope_report.record: "?" for an unknown method/route/
+    # target/op, None for an absent status/code.
+    return scope_report.key_of({
+        "event": event_type, "kind": kind, "mode": mode,
+        "method": payload.get("method") or "?", "route": payload.get("route") or "?",
+        "target": payload.get("table") or "?", "op": payload.get("op") or "?",
+        "status": status, "code": payload.get("code"),
+    })
 
 
 @router.get("/db-scope", response_model=DbScopeReport)
 def db_scope_report(
     request: Request,
     response: Response,
-    hours: int = Query(24, ge=1, le=720),
+    hours: int = Query(24, ge=1, le=_DB_SCOPE_MAX_HOURS),
     limit: int = Query(50, ge=1, le=500),
 ) -> DbScopeReport:
-    """Top `db_user_scope` divergences by route + table over the last `hours`,
-    plus this worker's in-process tally. Ids, counts and codes only."""
+    """Top `db_user_scope` divergences by route + table over the last `hours`
+    (at most a week), plus this worker's in-process tally. Ids, counts and
+    codes only. Scans at most `_DB_SCOPE_SCAN_CAP` events, newest first."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from db import scope_report
@@ -585,6 +607,7 @@ def db_scope_report(
     rows, truncated = _scan_range(
         "events", "created_at,event_type,user_id,request_id,payload", from_iso, to_iso,
         extra_filters={"event_type": "in.(" + ",".join(pg_quote_value(e) for e in _DB_SCOPE_EVENTS) + ")"},
+        cap=_DB_SCOPE_SCAN_CAP, newest_first=True,
     )
     groups: dict[tuple, dict] = {}
     for r in rows:
@@ -603,14 +626,13 @@ def db_scope_report(
         if rid and len(g["rids"]) < 3 and rid not in g["rids"]:
             g["rids"].append(rid)
     ranked = sorted(groups.items(), key=lambda kv: (-kv[1]["count"], kv[0][4], kv[0][5]))
-    fields = ("event", "kind", "mode", "method", "route", "target", "op", "status", "code")
     top = [
-        DbScopeGroup(**dict(zip(fields, key)), count=g["count"], users=len(g["users"]),
+        DbScopeGroup(**dict(zip(scope_report.KEY_FIELDS, key)), count=g["count"], users=len(g["users"]),
                      first_seen=g["first"], last_seen=g["last"], sample_request_ids=g["rids"])
         for key, g in ranked[:limit]
     ]
     return DbScopeReport(
         window=DbScopeWindow(from_=from_iso, to=to_iso, hours=hours),
         total=len(rows), groups=len(groups), top=top, truncated=truncated,
-        process=scope_report.snapshot(limit),
+        scan_cap=_DB_SCOPE_SCAN_CAP, process=scope_report.snapshot(limit),
     )

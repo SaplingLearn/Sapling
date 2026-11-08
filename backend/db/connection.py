@@ -58,11 +58,13 @@ def _merge(headers: Optional[dict], scoped: Optional[dict]) -> Optional[dict]:
     return {**(headers or {}), **scoped}
 
 
-def _raise_for_status(r, scoped: Optional[dict], target: str) -> None:
+def _raise_for_status(r, scoped: Optional[dict], target: str, op: str) -> None:
     """`raise_for_status()`, plus the enforce-only mapping of PostgREST's two
     user-scope refusals: 401 (the minted token was rejected: key/kid mismatch)
     -> ScopeUnavailable (503), 403 (RLS WITH CHECK / missing grant, 42501) ->
-    ScopedAccessDenied (404). A service-role call is unchanged."""
+    ScopedAccessDenied (404). A service-role call is unchanged. `op` is the
+    caller's own operation (select/insert/update/upsert/delete/rpc): the HTTP
+    verb cannot tell an upsert from an insert."""
     if scoped is not None:
         status = r.status_code
         if status == 401:
@@ -70,8 +72,7 @@ def _raise_for_status(r, scoped: Optional[dict], target: str) -> None:
                          "for %s (401); refusing rather than retrying as service role", target)
             raise _scope.ScopeUnavailable(f"PostgREST rejected the user-scoped token ({target})")
         if status == 403:
-            _scope.report_denied(target, status, code=_pg_code(r),
-                                 verb=getattr(getattr(r, "request", None), "method", None))
+            _scope.report_denied(target, status, code=_pg_code(r), op=op)
             raise _scope.ScopedAccessDenied(
                 f"user-scoped call on {target} refused (403)",
                 request=r.request, response=r,
@@ -247,7 +248,7 @@ class SupabaseTable:
         if scoped is not None:
             kw["headers"] = scoped
         r = _client.get(self.url, params=params, **kw)
-        _raise_for_status(r, scoped, self.name)
+        _raise_for_status(r, scoped, self.name, "select")
         rows = r.json()
         if scoped is None:
             _maybe_shadow(self.name, self.url, params, None, timeout, rows)
@@ -277,7 +278,7 @@ class SupabaseTable:
         kw = {"timeout": timeout} if timeout is not None else {}
         scoped = _scope_headers(self.name)
         r = _client.get(self.url, params=params, headers=_merge(headers, scoped), **kw)
-        _raise_for_status(r, scoped, self.name)
+        _raise_for_status(r, scoped, self.name, "select")
         rows = r.json()
         if scoped is None:
             _maybe_shadow(self.name, self.url, params, headers, timeout, rows)
@@ -296,7 +297,7 @@ class SupabaseTable:
             r = _client.post(self.url, json=data)
         else:
             r = _client.post(self.url, json=data, headers=scoped)
-        _raise_for_status(r, scoped, self.name)
+        _raise_for_status(r, scoped, self.name, "insert")
         return r.json()
 
     def update(self, data: dict, filters: dict, *, prefer_return_minimal: bool = False) -> list:
@@ -311,7 +312,7 @@ class SupabaseTable:
         headers = {"Prefer": "return=minimal"} if prefer_return_minimal else None
         scoped = _scope_headers(self.name, "update", data=data, filters=filters)
         r = _client.patch(self.url, params=filters, json=data, headers=_merge(headers, scoped))
-        _raise_for_status(r, scoped, self.name)
+        _raise_for_status(r, scoped, self.name, "update")
         if prefer_return_minimal:
             return []
         return r.json()
@@ -339,7 +340,7 @@ class SupabaseTable:
             params["select"] = columns
         scoped = _scope_headers(self.name, "upsert", data=data)
         r = _client.post(self.url, headers=_merge(headers, scoped), params=params, json=data)
-        _raise_for_status(r, scoped, self.name)
+        _raise_for_status(r, scoped, self.name, "upsert")
         return r.json()
 
     def delete(self, filters: dict) -> list:
@@ -348,7 +349,7 @@ class SupabaseTable:
             r = _client.delete(self.url, params=filters)
         else:
             r = _client.delete(self.url, params=filters, headers=scoped)
-        _raise_for_status(r, scoped, self.name)
+        _raise_for_status(r, scoped, self.name, "delete")
         return r.json()
 
 
@@ -477,12 +478,12 @@ def rpc(function_name: str, params: dict) -> list:
     url = f"{REST_URL}/rpc/{function_name}"
     target = f"rpc/{function_name}"
     read_only = function_name in SHADOW_READ_RPCS
-    scoped = _scope_headers(target, None if read_only else "rpc")
+    scoped = _scope_headers(target, None if read_only else "rpc", data=params)
     if scoped is None:
         r = _client.post(url, json=params)
     else:
         r = _client.post(url, json=params, headers=scoped)
-    _raise_for_status(r, scoped, target)
+    _raise_for_status(r, scoped, target, "rpc")
     rows = r.json()
     if scoped is None and read_only:
         _maybe_shadow(target, url, {}, None, None, rows, op="rpc", json_body=params)

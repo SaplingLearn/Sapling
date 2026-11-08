@@ -6,10 +6,12 @@ score. Three things feed it, all from ``db/scope.py``:
 
 * :func:`record` - a would-be denial: a ``shadow`` read whose user-scoped
   re-run disagreed with the service-role read, a ``shadow`` write that names
-  another user's ``user_id``, an unscoped query (no session subject), or an
-  ``enforce`` refusal. It writes ONE structured WARNING line (the
-  :data:`LOG_TOKEN` prefix, ``key=value`` fields, greppable in Railway and
-  Logfire) and bumps a per-key counter.
+  another user (a heuristic: ``db/scope.py::_other_user``), an unscoped query
+  (no session subject), or an ``enforce`` refusal. It writes ONE structured WARNING line (the
+  :data:`LOG_TOKEN` prefix, ``key=value`` fields: a stdlib log line, so it
+  lands in the Railway service logs (stdout) — grep there; it is not shipped
+  to Logfire) and bumps a per-key counter. An unscoped query under shadow is
+  logged once per (route, table) per process but counted every time.
 * :func:`note_write` - a ``shadow`` write or rpc that was NOT checked. Writes
   are never executed twice, so their RLS outcome is unknowable until
   ``enforce``; this is the inventory of (route, table, op) the policies and
@@ -85,6 +87,16 @@ def _bump(store: dict, key: tuple, request_id: Optional[str]) -> None:
             hit[3] = request_id
 
 
+def key_of(fields: dict) -> tuple:
+    """The grouping key (:data:`KEY_FIELDS`) for one divergence. The ONE
+    normalisation both views use — this process's tally and the admin
+    report's grouping of ``events`` rows — so the same divergence has the
+    same key in both: values pass through :func:`_clean`, and a missing
+    value (None or "") is None."""
+    return tuple(None if fields.get(k) in (None, "") else _clean(fields.get(k))
+                 for k in KEY_FIELDS)
+
+
 def format_line(fields: dict) -> str:
     """The one WARNING line for a divergence (also what tests and the runbook
     grep for). Field order is fixed so a line reads the same every time."""
@@ -96,8 +108,10 @@ def record(*, event: str, kind: str, mode: str, method: Optional[str], route: Op
            target: Optional[str], op: Optional[str], status: Optional[int] = None,
            code: Optional[str] = None, service_rows: Optional[int] = None,
            scoped_rows: Optional[int] = None, request_id: Optional[str] = None,
-           user: Optional[str] = None, level: int = logging.WARNING) -> None:
-    """Log one structured line and count it. Never raises."""
+           user: Optional[str] = None, level: int = logging.WARNING,
+           log: bool = True) -> None:
+    """Log one structured line (unless ``log`` is False) and count it — every
+    call is counted. Never raises."""
     fields = {
         "event": event, "kind": kind, "mode": mode, "method": method or "?",
         "route": route or "?", "target": target or "?", "op": op or "?",
@@ -105,8 +119,9 @@ def record(*, event: str, kind: str, mode: str, method: Optional[str], route: Op
         "scoped_rows": scoped_rows, "request_id": request_id, "user": user,
     }
     try:
-        logger.log(level, "%s", format_line(fields))
-        _bump(_divergences, tuple(_clean(fields[k]) for k in KEY_FIELDS), request_id)
+        if log:
+            logger.log(level, "%s", format_line(fields))
+        _bump(_divergences, key_of(fields), request_id)
     except Exception:  # pragma: no cover - observability never breaks a request
         logger.debug("db scope divergence not recorded", exc_info=True)
 
