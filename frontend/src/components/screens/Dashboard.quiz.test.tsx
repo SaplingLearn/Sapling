@@ -43,6 +43,8 @@ vi.mock("@/lib/api", () => ({
   getUpcomingAssignments: vi.fn(),
   getSessions: vi.fn(),
   getRecommendations: vi.fn(),
+  fetchActivity: vi.fn(async () => ({ week: [] })),
+  fetchGamificationMe: vi.fn(async () => null),
 }));
 
 import { Dashboard } from "./Dashboard";

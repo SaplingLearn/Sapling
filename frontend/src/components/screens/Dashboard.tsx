@@ -19,6 +19,8 @@ import {
   getUpcomingAssignments,
   getSessions,
   getRecommendations,
+  fetchActivity,
+  fetchGamificationMe,
   type EnrolledCourse,
   type Session,
   type Assignment,
@@ -27,6 +29,7 @@ import type { GraphNode as ApiNode, GraphEdge as ApiEdge } from "@/lib/types";
 import { apiToGraphNode, learnHrefForNode, type GraphNode, type GraphEdge } from "@/lib/data";
 import { IS_TEST_MODE, now } from "@/lib/testMode";
 import { buildQuizHref } from "@/lib/quiz/source";
+import { DashboardActions, TodayColumn } from "../dashboard/TodayColumn";
 
 /** An assignment known to have a due date (gradebook/Gradescope items may not). */
 type DatedAssignment = Assignment & { due_date: string };
@@ -219,6 +222,12 @@ export function Dashboard() {
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [activeDays, setActiveDays] = React.useState<Set<string>>(new Set());
+  // Days with XP this week (gamification /activity) and the longest streak
+  // (/me). XP and the streak are written by the same post-commit hook, so an
+  // XP day is a streak day. Best-effort: the column falls back to session and
+  // concept dates when these don't load.
+  const [xpDays, setXpDays] = React.useState<Set<string>>(new Set());
+  const [bestStreak, setBestStreak] = React.useState<number | null>(null);
 
   const [coursesOpen, setCoursesOpen] = React.useState(false);
   const [fullscreen, setFullscreen] = React.useState(false);
@@ -322,6 +331,25 @@ export function Dashboard() {
       if (run.isCurrent()) setLoading(false);
     }
   }, [userId, activeSemester, loadReq]);
+
+  React.useEffect(() => {
+    if (!userReady || !userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [activity, me] = await Promise.all([
+          fetchActivity(userId).catch(() => null),
+          fetchGamificationMe(userId).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setXpDays(new Set((activity?.week ?? []).filter((d) => d.xp > 0).map((d) => d.date)));
+        setBestStreak(me ? me.longest_streak : null);
+      } catch {
+        /* streak extras are decoration; the dashboard renders without them */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userReady, userId]);
 
   React.useEffect(() => {
     // Wait for the active-semester read from localStorage before the first load,
@@ -514,141 +542,27 @@ export function Dashboard() {
   };
 
   const rightPanel = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-      {!isMobile && (
-        <div style={{ padding: "0 2px", display: "flex", justifyContent: "flex-end", gap: 8, minHeight: 32, alignItems: "center", flexWrap: "wrap" }}>
-          <button
-            className="btn btn--sm btn--primary"
-            onClick={() => router.push("/learn")}
-            style={{ padding: "7px 10px", fontSize: 12 }}
-          >
-            <Icon name="sparkle" size={13} /> Start learning
-          </button>
-        </div>
-      )}
-
-      {/* Panel 1 — Streak + Mastered, split 50/50 like the design reference. */}
-      <div className="card" style={{ padding: 0, display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-        <div style={{ padding: "16px 18px", borderRight: "1px solid var(--border)" }}>
-          <div className="label-micro" style={{ marginBottom: 6 }}>Streak</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span
-              className="h-serif"
-              style={{ fontSize: 32, fontWeight: 600, color: stats.streak > 0 ? "var(--warn)" : "var(--text)", lineHeight: 1 }}
-            >
-              {stats.streak}
-            </span>
-            <span style={{ fontSize: 13, color: "var(--text-dim)" }}>days</span>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-            Personal best: {Math.max(stats.streak, 0)}
-          </div>
-        </div>
-        <div style={{ padding: "16px 18px" }}>
-          <div className="label-micro" style={{ marginBottom: 6 }}>Mastered</div>
-          <div
-            className="h-serif"
-            style={{ fontSize: 32, fontWeight: 600, lineHeight: 1 }}
-          >
-            {stats.mastered}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-            {stats.total ? `of ${stats.total} concepts` : "no concepts yet"}
-          </div>
-        </div>
-      </div>
-
-      {/* Panel 2 — Where you left off (recent sessions). */}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <div className="label-micro">Today</div>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={() => router.push("/learn")}
-          >
-            View all
-          </button>
-        </div>
-        <div className="h-serif" style={{ fontSize: 16, marginBottom: 12 }}>Where you left off</div>
-        {sessions.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            No recent sessions — start learning to fill this in.
-          </div>
-        ) : (
-          sessions.slice(0, 3).map((s) => (
-            <button
-              key={s.id}
-              data-testid={`dashboard-resume-${s.id}`}
-              onClick={() => router.push(`/learn?resume=${encodeURIComponent(s.id)}`)}
-              style={{
-                display: "flex", alignItems: "center", gap: 10, width: "100%",
-                padding: "10px 12px", borderRadius: "var(--r-md)",
-                background: "var(--bg-subtle)", marginBottom: 6, textAlign: "left",
-              }}
-            >
-              <Icon name="brain" size={14} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 13, fontWeight: 600,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}
-                >
-                  {s.topic}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11, color: "var(--text-muted)",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}
-                >
-                  {[courseNameFor(s.course_id), s.mode, relTime(s.started_at)].filter(Boolean).join(" · ")}
-                </div>
-              </div>
-              <Icon name="chev" size={12} />
-            </button>
-          ))
-        )}
-      </div>
-
-      {/* Panel 3 — Upcoming assignments. */}
-      <div className="card" style={{ padding: "var(--pad-lg)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="label-micro">Upcoming</div>
-          <button className="btn btn--ghost btn--sm" onClick={() => router.push("/calendar")}>Calendar →</button>
-        </div>
-        {assignments.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No upcoming assignments.</div>
-        )}
-        {assignments.slice(0, 4).map((a) => {
-          const diffMs = new Date(a.due_date).getTime() - now();
-          const hours = diffMs / (1000 * 60 * 60);
-          const days = Math.ceil(diffMs / 86400000);
-          let chipClass = "chip--info";
-          let label = `${days}D`;
-          if (hours <= 0) {
-            chipClass = "chip--err";
-            label = "OVERDUE";
-          } else if (hours <= 24) {
-            chipClass = "chip--err";
-            label = hours < 1 ? "NOW" : `${Math.max(1, Math.round(hours))}H`;
-          } else if (days <= 2) {
-            chipClass = "chip--warn";
-          }
-          return (
-            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.course_name || "—"} · {a.assignment_type || "task"}
-                </div>
-              </div>
-              <span className={`chip ${chipClass}`}>{label}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <TodayColumn
+      sessions={sessions}
+      nodes={nodes}
+      assignments={assignments}
+      hasCourses={courses.length > 0}
+      stats={stats}
+      bestStreak={bestStreak}
+      xpDays={xpDays}
+      today={today}
+      weekDays={weekDays}
+      nowMs={now()}
+      courseLabel={(id) => courseNameFor(id ?? null)}
+      relTime={relTime}
+      navigate={(href) => router.push(href)}
+      openCourses={() => setCoursesOpen(true)}
+      courseRows={
+        courseProgress.length > 0
+          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} />)
+          : undefined
+      }
+    />
   );
 
   const heroBlock = (
@@ -965,19 +879,31 @@ export function Dashboard() {
             </>
           )}
         </div>
-      ) : (
-        <div
-          style={{
-            padding: isMobile ? "8px 20px 16px" : "18px 32px 24px",
-            display: "grid", gap: 16,
-            gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(280px, 360px)",
-            alignItems: isMobile ? "start" : "stretch",
-            flex: isMobile ? "0 0 auto" : 1,
-            minHeight: 0,
-          }}
-        >
+      ) : isMobile ? (
+        <div style={{ padding: "8px 20px 16px", display: "grid", gap: 16, gridTemplateColumns: "1fr", alignItems: "start" }}>
           {mainColumn}
           {rightPanel}
+        </div>
+      ) : (
+        // Desktop sidebar layout: the greeting and the actions share one header
+        // row, so the graph and the right column start on the same line and
+        // stretch to the same bottom edge.
+        <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+            <div style={{ minWidth: 0 }}>{heroBlock}</div>
+            <DashboardActions navigate={(href) => router.push(href)} />
+          </div>
+          {suggestBlock}
+          <div
+            style={{
+              display: "grid", gap: 16,
+              gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)",
+              alignItems: "stretch", flex: 1, minHeight: 0,
+            }}
+          >
+            {graphPanel}
+            {rightPanel}
+          </div>
         </div>
       )}
 
