@@ -255,7 +255,8 @@ def heartbeat(job: Job) -> bool:
 MAX_HEARTBEAT_SECONDS = 3600
 
 
-#: The job that prunes old `succeeded` rows. Each worker that claims it
+#: The job that prunes old `succeeded` rows (and the staging tables' terminal
+#: rows, STAGING_PRUNE_FUNCTIONS). Each worker that claims it
 #: enqueues it once per PRUNE_INTERVAL_SECONDS under PRUNE_JOB_TYPE as its
 #: dedupe key, so any number of replicas collapse into one waiting run.
 PRUNE_JOB_TYPE = "jobs.prune"
@@ -267,6 +268,14 @@ PRUNE_INTERVAL_SECONDS = 3600
 #: PRUNE_BATCH * PRUNE_MAX_BATCHES rows and the next run picks up the rest.
 PRUNE_BATCH = 1000
 PRUNE_MAX_BATCHES = 50
+#: The same run also prunes the terminal rows of the in-flight staging tables
+#: (document_uploads, gradescope_syncs: 20261108212226 / 20261108214227),
+#: which are only a short-lived receipt once their outcome was delivered. The
+#: SQL floors it at 1 day and never touches a row that is still running.
+STAGING_PRUNE_AFTER_DAYS = 2
+#: SQL function per staging table; each deletes terminal rows in one bounded
+#: batch per call, exactly like prune_jobs.
+STAGING_PRUNE_FUNCTIONS = ("prune_document_uploads", "prune_gradescope_syncs")
 
 
 def prune(
@@ -278,15 +287,48 @@ def prune(
     """Delete `succeeded` jobs older than `older_than_days`, `batch` rows per
     statement, until a short batch (nothing older left) or `max_batches`.
     Returns how many rows went. Never touches unfinished or dead rows."""
+    total = _prune_batches("prune_jobs", older_than_days, batch, max_batches)
+    logger.info("job.pruned rows=%d older_than_days=%d", total, older_than_days)
+    return total
+
+
+def _prune_batches(function: str, older_than_days: int, batch: int, max_batches: int) -> int:
+    """Call a bounded-batch prune function until a short batch or `max_batches`."""
     total = 0
     for _ in range(max(1, int(max_batches))):
-        n = rpc("prune_jobs", {"p_older_than_days": older_than_days, "p_limit": batch})
+        n = rpc(function, {"p_older_than_days": older_than_days, "p_limit": batch})
         n = n if isinstance(n, int) and not isinstance(n, bool) else 0
         total += n
         if n < batch:
             break
-    logger.info("job.pruned rows=%d older_than_days=%d", total, older_than_days)
     return total
+
+
+def prune_staging(
+    *,
+    older_than_days: int = STAGING_PRUNE_AFTER_DAYS,
+    batch: int = PRUNE_BATCH,
+    max_batches: int = PRUNE_MAX_BATCHES,
+) -> dict[str, int]:
+    """Delete terminal staging rows (STAGING_PRUNE_FUNCTIONS) older than
+    `older_than_days`, each table in the same bounded loop as `prune`.
+    Returns rows deleted per function. One table failing does not stop the
+    others; the first error is raised after all ran, so the job retries (the
+    prunes are idempotent) and dead-letters visibly if it keeps failing."""
+    out: dict[str, int] = {}
+    first_error: Exception | None = None
+    for function in STAGING_PRUNE_FUNCTIONS:
+        try:
+            out[function] = _prune_batches(function, older_than_days, batch, max_batches)
+        except Exception as exc:
+            logger.warning("job.prune_failed function=%s", function, exc_info=True)
+            first_error = first_error or exc
+            continue
+        logger.info("job.pruned function=%s rows=%d older_than_days=%d",
+                    function, out[function], older_than_days)
+    if first_error is not None:
+        raise first_error
+    return out
 
 
 def schedule_prune(older_than_days: int = PRUNE_AFTER_DAYS) -> dict:
@@ -303,3 +345,4 @@ def _run_prune(payload: dict) -> None:
     if type(days) is not int:
         raise PermanentJobError(f"{PRUNE_JOB_TYPE}: older_than_days must be an integer")
     prune(older_than_days=days)
+    prune_staging()

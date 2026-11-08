@@ -326,11 +326,68 @@ def test_schedule_prune_is_one_deduped_job():
 def test_the_prune_handler_is_registered_and_validates_its_payload():
     handler = jobs.get_handler(jobs.PRUNE_JOB_TYPE)
     assert handler is not None
-    with patch.object(jobs, "prune") as prune:
+    with patch.object(jobs, "prune") as prune, patch.object(jobs, "prune_staging") as staging:
         handler({"older_than_days": 7})
         handler({})
     assert [c.kwargs for c in prune.call_args_list] == [
         {"older_than_days": 7}, {"older_than_days": jobs.PRUNE_AFTER_DAYS}]
+    # Every run also prunes the staging tables, on their own retention.
+    assert staging.call_count == 2
     for bad in ({"older_than_days": "7"}, {"older_than_days": True}, None):
         with pytest.raises(jobs.PermanentJobError):
             handler(bad)
+
+
+def test_prune_staging_runs_each_staging_prune_in_bounded_batches():
+    answers = {"prune_document_uploads": [100, 100, 3], "prune_gradescope_syncs": [7]}
+    calls = []
+
+    def rpc(name, args):
+        calls.append((name, args))
+        return answers[name].pop(0)
+
+    with patch.object(jobs, "rpc", side_effect=rpc):
+        out = jobs.prune_staging(older_than_days=2, batch=100)
+    assert out == {"prune_document_uploads": 203, "prune_gradescope_syncs": 7}
+    assert [c[0] for c in calls] == ["prune_document_uploads"] * 3 + ["prune_gradescope_syncs"]
+    assert all(args == {"p_older_than_days": 2, "p_limit": 100} for _, args in calls)
+
+
+def test_prune_staging_is_bounded_per_table():
+    with patch.object(jobs, "rpc", return_value=5) as rpc:
+        out = jobs.prune_staging(batch=5, max_batches=3)
+    assert out == {"prune_document_uploads": 15, "prune_gradescope_syncs": 15}
+    assert rpc.call_count == 6
+
+
+def test_prune_staging_defaults_to_its_own_short_retention():
+    with patch.object(jobs, "rpc", return_value=0) as rpc:
+        jobs.prune_staging()
+    assert {c.args[1]["p_older_than_days"] for c in rpc.call_args_list} == {
+        jobs.STAGING_PRUNE_AFTER_DAYS}
+
+
+def test_prune_staging_runs_every_table_then_raises_the_first_failure():
+    def rpc(name, _args):
+        if name == "prune_document_uploads":
+            raise RuntimeError("PGRST202")
+        return 4
+
+    with patch.object(jobs, "rpc", side_effect=rpc) as fake, pytest.raises(RuntimeError):
+        jobs.prune_staging(batch=10)
+    assert [c.args[0] for c in fake.call_args_list] == [
+        "prune_document_uploads", "prune_gradescope_syncs"]
+
+
+def test_the_prune_handler_prunes_jobs_and_the_staging_tables():
+    seen = []
+
+    def rpc(name, args):
+        seen.append((name, args["p_older_than_days"]))
+        return 0
+
+    with patch.object(jobs, "rpc", side_effect=rpc):
+        jobs.get_handler(jobs.PRUNE_JOB_TYPE)({"older_than_days": 14})
+    assert seen == [("prune_jobs", 14),
+                    ("prune_document_uploads", jobs.STAGING_PRUNE_AFTER_DAYS),
+                    ("prune_gradescope_syncs", jobs.STAGING_PRUNE_AFTER_DAYS)]

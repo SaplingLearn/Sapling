@@ -20,7 +20,8 @@ before heartbeats existed.
 
 Upkeep: a worker that claims `jobs.prune` makes sure one prune run is queued
 every `prune_interval` seconds (deduped across replicas), which deletes old
-`succeeded` rows in bounded batches.
+`succeeded` rows, and the terminal rows of the upload/sync staging tables, in
+bounded batches.
 """
 from __future__ import annotations
 
