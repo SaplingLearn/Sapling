@@ -13,6 +13,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 from db.connection import table
+from db.scope import runs_as_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ def effective_streak(row: dict | None, today: date | None = None) -> int:
     return streak
 
 
+@runs_as_service  # #115: writes users streak columns (service-only)
 def touch_streak(user_id: str) -> int:
     """Advance the streak for today's activity. Idempotent within a day."""
     rows = table("users").select(

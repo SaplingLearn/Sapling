@@ -1,9 +1,10 @@
 import re
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from db.connection import like_literal, pg_quote_value, table
+from db.scope import service_scope, service_route
 from models import OnboardingBody
 from services.academics import resolve_offering
 from services.auth_guard import require_self
@@ -62,7 +63,8 @@ def _score(row: dict, q_tokens: list[str], phrase: str) -> int:
     return score
 
 
-@router.get("/courses")
+# #115: public (no session) catalog search -> service role under db_user_scope.
+@router.get("/courses", dependencies=[Depends(service_route)])
 def search_courses(request: Request, q: str = Query("", min_length=0)):
     """Search courses by code and/or name. Returns the first page if q is empty.
 
@@ -198,10 +200,12 @@ def save_onboarding_profile(body: OnboardingBody, request: Request):
 
     # onboarding_completed is an auth/status flag and stays on `users`. Last,
     # and only from false: a concurrent submit that got here first wins.
-    table("users").update(
-        {"onboarding_completed": True},
-        filters={"id": f"eq.{body.user_id}", "onboarding_completed": "is.false"},
-    )
+    # #115: `users` is account state (SELECT-only for the student's token).
+    with service_scope():
+        table("users").update(
+            {"onboarding_completed": True},
+            filters={"id": f"eq.{body.user_id}", "onboarding_completed": "is.false"},
+        )
 
     return {
         "user_id": body.user_id,

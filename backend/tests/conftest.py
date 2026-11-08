@@ -98,6 +98,21 @@ def _clear_lru_caches():
 
 
 @pytest.fixture(autouse=True)
+def _db_user_scope_off(request, monkeypatch):
+    """#115: pin the `db_user_scope` kill switch to "off" for the hermetic
+    suite. Unpinned, the first DB call of every request resolves the flag from
+    the (fake, empty) store, which WARMS the process's flag snapshot during
+    the request; tests that rely on a cold snapshot after a request (the tutor
+    router's `router_backends_cached` -> None path) would then see a cached
+    "off" for every flag. Production is unaffected: warming earlier gives the
+    same answers. tests/test_db_user_scope.py deletes the override to exercise
+    the store path; the integration lane sets it per matrix mode."""
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
+        return
+    monkeypatch.setenv("SAPLING_FLAG_DB_USER_SCOPE", "off")
+
+
+@pytest.fixture(autouse=True)
 def _tutor_session_reads_follow_learn_table(monkeypatch):
     """The tutor-session ownership read moved from routes/learn.py to
     services/tutor_sessions.py so flashcards/feedback could share it. Dozens

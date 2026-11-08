@@ -13,6 +13,7 @@ from config import (
     get_mastery_tier,
 )
 from db.connection import rpc, table
+from db.scope import runs_as_service
 from services.streak_service import effective_streak, touch_streak_safe
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ def _get_course_nodes(user_id: str, course_id: str) -> list:
     ) or []
 
 
+@runs_as_service  # #115: inserts a users row (service-only)
 def ensure_user_exists(user_id: str) -> None:
     """Create a user row if one doesn't exist yet (prevents FK violations).
 

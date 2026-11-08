@@ -18,6 +18,7 @@ from google.genai import types as genai_types
 
 from agents._providers import model_mode
 from db.connection import rpc, table
+from db.scope import runs_as_service
 from services.chunk_visibility import PRIVATE, SHARED, record_contributors
 from services.encryption import decrypt_if_present, encrypt_if_present
 from services.events_service import log_event
@@ -355,6 +356,7 @@ class ChunkIndexResult(NamedTuple):
     chunk_ids: tuple[str, ...] = ()
 
 
+@runs_as_service  # #115: content-addressed shared course_chunks rows: a scoped upsert onto a classmate's row fails
 def index_document_chunks(
     course_code: str,
     doc_id: str,
@@ -376,6 +378,7 @@ def index_document_chunks(
     ).upserted
 
 
+@runs_as_service  # #115: same as index_document_chunks
 def index_document_chunks_detailed(
     course_code: str,
     doc_id: str,

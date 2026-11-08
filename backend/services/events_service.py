@@ -125,6 +125,7 @@ import threading
 from typing import Any, Optional
 
 from db.connection import table
+from db.scope import runs_as_service
 from services import llm_pricing, posthog_client
 from services.fingerprint import fingerprint_text
 from services.request_context import current_request_id
@@ -230,6 +231,21 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # must not count as the student's activity in the usage rollups. It is
     # the dataset the routing-accuracy and Jev-agreement reviews are run over.
     "decision.made",
+    # #115 (RLS step 2, db/scope.py): the user-scoped PostgREST client under
+    # the `db_user_scope` flag. category="system", ids/counts/table + route
+    # template only, never row content. They are the staging rollout's
+    # signals (docs/security/rls-step2-plan.md §6.2):
+    # - db.unscoped_query: shadow/enforce, a request with no session subject
+    #   reached the DB from a path not marked service (an unmarked public
+    #   route; enforce refuses it with a 500);
+    # - db.rls_shadow_divergence: shadow, a sampled read re-run as the
+    #   student returned a different row count / id set (or failed) than the
+    #   service-role read the student was actually served;
+    # - db.rls_denied: enforce, PostgREST refused a user-scoped call (403:
+    #   an RLS WITH CHECK or a missing grant); the request answers 404.
+    "db.unscoped_query",
+    "db.rls_shadow_divergence",
+    "db.rls_denied",
 })
 
 #: Category for rows the SERVER emits about a request (e.g. decision.made, one
@@ -461,6 +477,7 @@ def _enqueue(table_name: str, row: dict) -> None:
         )
 
 
+@runs_as_service  # #115: same as _flush_batch
 def _insert_late(table_name: str, row: dict) -> None:
     """A row logged after shutdown() drained the queue. Off an event loop (a
     worker thread finishing after its loop was cancelled) it is inserted
@@ -493,6 +510,7 @@ def dropped_count() -> int:
 # ── Flush ───────────────────────────────────────────────────────────────────
 
 
+@runs_as_service  # #115: events/llm_usage are service-only; usually the worker thread, but flush_now/late inserts can run in a request
 def _flush_batch(items: list[dict]) -> None:
     """Insert a batch grouped by table. Errors are swallowed + logged.
 
@@ -516,6 +534,7 @@ def _flush_batch(items: list[dict]) -> None:
             _flush_rows_individually(table_name, rows)
 
 
+@runs_as_service  # #115: same as _flush_batch
 def _flush_rows_individually(table_name: str, rows: list[dict]) -> None:
     """Per-row salvage after a failed bulk insert: only the rows that
     individually fail are dropped (logged per-row at debug, plus one warning

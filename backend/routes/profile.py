@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, File, Query
 
 from services.chunk_visibility import resync_user_chunk_visibility
 from services.course_context_service import refresh_course_context
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from config import MAX_AVATAR_SIZE
 from db.connection import table
+from db.scope import service_route, service_scope
 from services.encryption import encrypt_if_present, decrypt_if_present
 from models import (
     UpdateProfileBody,
@@ -269,7 +270,8 @@ def _get_user_stats(user_id: str) -> dict:
 _USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
 
 
-@router.get("/username/check")
+# #115: unauthenticated, and answers about OTHER users' usernames -> service role.
+@router.get("/username/check", dependencies=[Depends(service_route)])
 def check_username(username: str = Query(...), user_id: Optional[str] = Query(None)):
     name = (username or "").strip().lower()
     if not _USERNAME_RE.match(name):
@@ -285,7 +287,10 @@ def check_username(username: str = Query(...), user_id: Optional[str] = Query(No
 
 # ── Public Profile ───────────────────────────────────────────────────────────
 
-@router.get("/{user_id}")
+# #115: a cross-user projection (anonymous viewers too). It reads the
+# target's rows, creates their missing settings/profile rows, and applies
+# profile_visibility in code below -> service role.
+@router.get("/{user_id}", dependencies=[Depends(service_route)])
 def get_public_profile(user_id: str, request: Request):
     user = _get_user_or_404(user_id)
     settings = _get_or_create_settings(user_id)
@@ -828,7 +833,8 @@ def get_cosmetics_catalog(user_id: str, request: Request):
 
 # ── Roles ────────────────────────────────────────────────────────────────────
 
-@router.get("/{user_id}/roles")
+# #115: public roles of any user (unauthenticated) -> service role.
+@router.get("/{user_id}/roles", dependencies=[Depends(service_route)])
 def get_roles(user_id: str):
     return {"roles": _get_user_roles(user_id)}
 
@@ -848,10 +854,13 @@ def delete_account(
     if body.confirmation != "DELETE":
         raise HTTPException(status_code=400, detail="Confirmation must be 'DELETE'")
 
-    table("users").update(
-        {"deleted_at": datetime.now(timezone.utc).isoformat()},
-        filters={"id": f"eq.{user_id}"},
-    )
+    # #115: the soft delete is account state (`users` is SELECT-only for the
+    # student's token) -> service role.
+    with service_scope():
+        table("users").update(
+            {"deleted_at": datetime.now(timezone.utc).isoformat()},
+            filters={"id": f"eq.{user_id}"},
+        )
     # ADR 0028: from here on the PostHog worker's consent check reads
     # deleted_at, so nothing — not even items already queued — names this user
     # (which would re-create the person the delete below removes). Drop the

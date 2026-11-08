@@ -215,6 +215,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # so the handler, threadpool Depends and BackgroundTasks see them.
         privacy_token = _PRIVACY_SIGNAL_CTX.set(privacy_signal_in(request.headers))
         view = RequestView(request.scope)
+        # #115 (RLS step 2, db/scope.py): stamp the session's subject onto the
+        # shared state BEFORE any handler runs — HMAC + expiry only, no DB
+        # read — so a handler that reads a row before its own require_self
+        # is already user-scoped when the db_user_scope flag is on. Separate
+        # key from request.state.user_id, which keeps meaning "the guard
+        # fully authenticated this request". Inert while the flag is off.
+        from db.scope import stamp_subject
+        stamp_subject(request)
         view_token = _REQUEST_CTX.set(view)
         try:
             return await self._dispatch(request, call_next)

@@ -25,6 +25,7 @@ from functools import lru_cache
 import httpx
 
 from db.connection import table
+from db.scope import runs_as_service, service_scope
 
 logger = logging.getLogger(__name__)
 
@@ -161,9 +162,12 @@ def resolve_offering(
     if create and term_id:
         new_id = str(uuid.uuid4())
         try:
-            table("course_offerings").insert(
-                {"id": new_id, "course_id": course_id, "term_id": term_id}
-            )
+            # #115: the catalog is SELECT-only for students; creating an
+            # offering on demand is a server decision -> service role.
+            with service_scope():
+                table("course_offerings").insert(
+                    {"id": new_id, "course_id": course_id, "term_id": term_id}
+                )
             return new_id
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 409:
@@ -352,6 +356,7 @@ def scoped_user_enrollments(
     return rows
 
 
+@runs_as_service  # #115: reads OTHER students' enrollments (the school directory boundary)
 def school_peer_user_ids(user_id: str) -> set[str]:
     """The set of user_ids who share a school with ``user_id`` (includes them).
 

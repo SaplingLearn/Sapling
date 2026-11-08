@@ -11,9 +11,11 @@ missing row and return "" (single) / omit the id (bulk).
 """
 
 from db.connection import table
+from db.scope import runs_as_service
 from services.encryption import decrypt_if_present
 
 
+@runs_as_service  # #115: names of OTHER users (room members, friends, quiz/tutor attributions)
 def get_display_name(user_id: str) -> str:
     """Return the decrypted display name for a single user, or "" if unset."""
     rows = table("user_profiles").select("name", filters={"user_id": f"eq.{user_id}"})
@@ -22,6 +24,7 @@ def get_display_name(user_id: str) -> str:
     return decrypt_if_present(rows[0].get("name")) or ""
 
 
+@runs_as_service  # #115: names of OTHER users
 def get_display_names(user_ids: list[str]) -> dict[str, str]:
     """Bulk-resolve decrypted display names keyed by user_id.
 

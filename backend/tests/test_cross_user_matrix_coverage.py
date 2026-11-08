@@ -156,3 +156,13 @@ def test_known_leaks_are_cases(routes):
     cases = {(c.group, c.method, c.path) for c in m.build_cases(routes, _A_VALUES)}
     cases.add(("probe", "POST", "/api/social/rooms/{room_id}/messages"))
     assert set(m.KNOWN_LEAKS) <= cases
+
+
+def test_enforce_404_entries_are_known_403_resource_cases(routes):
+    """ENFORCE_404 narrows KNOWN_403 entries under `db_user_scope=enforce`; an
+    entry outside KNOWN_403 (or naming no resource case) would never be
+    narrowed, so the RLS-hides-it-first claim would go unchecked."""
+    assert m.ENFORCE_404 <= set(m.KNOWN_403)
+    resource = {c.key for c in m.build_cases(routes, _A_VALUES) if c.group == "resource"}
+    assert m.ENFORCE_404 <= resource
+    assert "enforce" in m.MODES and m.MODES[0] == "off"

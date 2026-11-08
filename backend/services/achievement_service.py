@@ -6,6 +6,7 @@ Called synchronously after events to grant achievements when thresholds are met.
 import logging
 from datetime import datetime, timedelta, timezone
 from db.connection import MAX_ROWS, page_all, table
+from db.scope import runs_as_service
 from services import gradebook_service
 from services.encryption import decrypt_numeric
 from services.xp_service import award_xp_safe
@@ -39,6 +40,7 @@ def _count_rows(table_name: str, filters: dict) -> int:
     return len(rows) if rows else 0
 
 
+@runs_as_service  # #115: achievement counters read rows beyond the student's own grants
 def get_user_stat(user_id: str, trigger_type: str) -> int:
     """Public wrapper around the internal stat lookup."""
     return _get_user_stat(user_id, trigger_type)
@@ -331,6 +333,7 @@ def _course_grade_a_count(user_id: str) -> int:
     return count
 
 
+@runs_as_service  # #115: awards are server decisions (user_achievements/user_cosmetics writes are service-only)
 def check_achievements(user_id: str, event_type: str, event_data: dict = None) -> list:
     """
     Check and grant achievements for a user after an event.
@@ -585,6 +588,7 @@ def _unlock_cosmetic(user_id: str, cosmetic_id: str) -> None:
     )
 
 
+@runs_as_service  # #115: cosmetic awards are service-only writes
 def grant_linked_cosmetics(user_id: str, achievement_id: str) -> None:
     """Unlock every cosmetic linked to `achievement_id` for `user_id`.
 
