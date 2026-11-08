@@ -251,18 +251,18 @@ export function DashboardActions({ navigate }: { navigate: (href: string) => voi
         className="btn btn--sm"
         data-testid="dashboard-action-calendar"
         onClick={() => navigate("/calendar")}
-        style={{ padding: "7px 12px", fontSize: 12 }}
+        style={{ height: 40, padding: "0 16px", fontSize: 13 }}
       >
-        <Icon name="cal" size={13} /> Calendar
+        <Icon name="cal" size={14} /> Calendar
       </button>
       <button
         type="button"
         className="btn btn--sm btn--primary"
         data-testid="dashboard-action-start"
         onClick={() => navigate("/learn")}
-        style={{ padding: "7px 12px", fontSize: 12 }}
+        style={{ height: 40, padding: "0 16px", fontSize: 13 }}
       >
-        <Icon name="sparkle" size={13} /> Start learning
+        <Icon name="sparkle" size={14} /> Start learning
       </button>
     </div>
   );
