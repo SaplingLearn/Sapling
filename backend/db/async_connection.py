@@ -101,7 +101,7 @@ _IN_ASYNC_SEAM: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "sapling_db_in_async_seam", default=False,
 )
 #: Test seam: when True, :func:`note_sync_call` raises instead of logging.
-#: Flipped by the ``no_sync_db_on_loop`` fixture in tests/db_fakes.py.
+#: Flipped by the ``no_sync_db_on_loop`` fixture in tests/conftest.py.
 RAISE_ON_SYNC_ON_LOOP = False
 
 _seen: set[tuple[str, str]] = set()
@@ -422,11 +422,13 @@ class AsyncTableMixin:
         return r.json()
 
 
-async def arpc(function_name: str, params: dict) -> list:
-    """The coroutine twin of ``db.connection.rpc``. Never retried."""
+async def arpc(function_name: str, params: dict, *, timeout: Optional[float] = None) -> list:
+    """The coroutine twin of ``db.connection.rpc``. Never retried. ``timeout``
+    as in ``rpc``: it bounds this one call instead of the client default."""
     c = _conn()
+    kw = {"timeout": timeout} if timeout is not None else {}
     if not await _native():
-        return await _offload(c.rpc, function_name, params)
+        return await _offload(c.rpc, function_name, params, **kw)
     await _prime_scope()
     url = f"{c.REST_URL}/rpc/{function_name}"
     target = f"rpc/{function_name}"
@@ -434,7 +436,7 @@ async def arpc(function_name: str, params: dict) -> list:
     # not noted as a write and is shadow-compared like a select.
     read_only = function_name in c.SHADOW_READ_RPCS
     scoped = _headers(target, None if read_only else "rpc")
-    r = await _async_client().post(url, json=params, headers=_identity(None, scoped))
+    r = await _async_client().post(url, json=params, headers=_identity(None, scoped), **kw)
     c._raise_for_status(r, scoped, target)
     rows = r.json()
     if scoped is None and read_only:

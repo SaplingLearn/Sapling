@@ -61,8 +61,10 @@ def _clear_rate_limit_state():
     from services import request_limits
 
     request_limits._rate_state.clear()
+    request_limits.reset_db_state()
     yield
     request_limits._rate_state.clear()
+    request_limits.reset_db_state()
 
 
 @pytest.fixture(autouse=True)

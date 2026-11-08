@@ -12,9 +12,13 @@ Two stores for the same sliding-window limiter, chosen by the
   ``*_stateless_rate_limit.sql``): one round trip that serializes on the key,
   counts the window, inserts the hit when under the limit and returns its id
   (the refund handle) or how long to wait. Every replica shares one budget.
-  Any DB failure falls back to the in-memory store for that call (a cost
-  guard must not deny every student because the limiter's own table
-  blipped), with one warning per process.
+  The call is bounded by ``CLAIM_TIMEOUT_S`` (not the client's 30 s). Any DB
+  failure falls back to the in-memory store (a cost guard must not deny
+  every student because the limiter's own table blipped) and marks the DB
+  down for ``DB_DOWN_S``: inside that window every claim goes straight to
+  memory without trying the DB, so an outage costs each process one bounded
+  wait per window, not one per request. One warning per outage: the first
+  answer after it re-arms the warning.
 
 Sync callers (threadpool handlers) use :func:`claim_rate_limit` /
 :func:`check_rate_limit`; an ``async def`` uses :func:`aclaim_rate_limit` /
@@ -85,15 +89,55 @@ def _claim_memory(key: str, limit: int, window_sec: int) -> RateLimitClaim:
 
 # ── Postgres store (flag on) ────────────────────────────────────────────────
 
+#: Bound on one claim round trip. The limiter sits in front of the request it
+#: guards, so a slow DB must cost that request at most this, not 30 s.
+CLAIM_TIMEOUT_S = 1.5
+#: After a failed claim, how long every claim skips the DB and uses memory.
+DB_DOWN_S = 30.0
+
+_state_lock = threading.Lock()
+#: monotonic time until which the DB store counts as down (0 = try it).
+_db_down_until = 0.0
+#: Whether this outage has been logged; re-armed by the next DB answer.
 _warned_fallback = False
 
 
-def _fallback_warning(exc: BaseException) -> None:
-    global _warned_fallback
-    if not _warned_fallback:
+def _db_down() -> bool:
+    with _state_lock:
+        return time.monotonic() < _db_down_until
+
+
+def _db_failed(exc: BaseException) -> None:
+    """Mark the DB store down for DB_DOWN_S and warn once per outage."""
+    global _db_down_until, _warned_fallback
+    with _state_lock:
+        _db_down_until = time.monotonic() + DB_DOWN_S
+        warn = not _warned_fallback
         _warned_fallback = True
+    if warn:
         logger.warning("stateless_rate_limit: %s() failed (%s: %s); using the per-process "
-                       "limiter until it answers", CLAIM_FN, type(exc).__name__, exc)
+                       "limiter for %.0f s at a time until it answers",
+                       CLAIM_FN, type(exc).__name__, exc, DB_DOWN_S)
+
+
+def _db_answered() -> None:
+    """The DB store answered: clear the mark, and let the next outage warn."""
+    global _db_down_until, _warned_fallback
+    with _state_lock:
+        recovered = _warned_fallback
+        _db_down_until = 0.0
+        _warned_fallback = False
+    if recovered:
+        logger.info("stateless_rate_limit: %s() answers again; back on the shared limiter",
+                    CLAIM_FN)
+
+
+def reset_db_state() -> None:
+    """Forget any down mark and warning (tests)."""
+    global _db_down_until, _warned_fallback
+    with _state_lock:
+        _db_down_until = 0.0
+        _warned_fallback = False
 
 
 def _parse_claim(rows, window_sec: int) -> Optional[RateLimitClaim]:
@@ -113,19 +157,26 @@ def _params(key: str, limit: int, window_sec: int) -> dict:
     return {"p_key": key, "p_limit": int(limit), "p_window_sec": int(window_sec)}
 
 
+def _settle(claim: Optional[RateLimitClaim]) -> Optional[RateLimitClaim]:
+    if claim is None:
+        _db_failed(ValueError("unexpected answer"))
+    else:
+        _db_answered()
+    return claim
+
+
 def _claim_db(key: str, limit: int, window_sec: int) -> Optional[RateLimitClaim]:
     from db.connection import rpc
     from db.scope import service_scope
 
     try:
         with service_scope():  # rate_limit_hits + its function are service-only
-            claim = _parse_claim(rpc(CLAIM_FN, _params(key, limit, window_sec)), window_sec)
+            rows = rpc(CLAIM_FN, _params(key, limit, window_sec), timeout=CLAIM_TIMEOUT_S)
+        claim = _parse_claim(rows, window_sec)
     except Exception as exc:
-        _fallback_warning(exc)
+        _db_failed(exc)
         return None
-    if claim is None:
-        _fallback_warning(ValueError("unexpected answer"))
-    return claim
+    return _settle(claim)
 
 
 async def _aclaim_db(key: str, limit: int, window_sec: int) -> Optional[RateLimitClaim]:
@@ -134,14 +185,13 @@ async def _aclaim_db(key: str, limit: int, window_sec: int) -> Optional[RateLimi
 
     try:
         with service_scope():  # one coroutine, no yield: reset in the same context
-            rows = await arpc(CLAIM_FN, _params(key, limit, window_sec))
+            rows = await arpc(CLAIM_FN, _params(key, limit, window_sec),
+                              timeout=CLAIM_TIMEOUT_S)
         claim = _parse_claim(rows, window_sec)
     except Exception as exc:
-        _fallback_warning(exc)
+        _db_failed(exc)
         return None
-    if claim is None:
-        _fallback_warning(ValueError("unexpected answer"))
-    return claim
+    return _settle(claim)
 
 
 def _stateless() -> bool:
@@ -174,7 +224,7 @@ def claim_rate_limit(key: str, *, limit: int, window_sec: int) -> RateLimitClaim
     """Sliding-window per-key limiter that returns a refundable slot. Sync:
     with the flag on it is a PostgREST call, so never call it from an
     ``async def`` (use :func:`aclaim_rate_limit`)."""
-    if _stateless():
+    if not _db_down() and _stateless():
         claim = _claim_db(key, limit, window_sec)
         if claim is not None:
             return claim
@@ -183,7 +233,7 @@ def claim_rate_limit(key: str, *, limit: int, window_sec: int) -> RateLimitClaim
 
 async def aclaim_rate_limit(key: str, *, limit: int, window_sec: int) -> RateLimitClaim:
     """:func:`claim_rate_limit` for an ``async def``: never blocks the loop."""
-    if await _astateless():
+    if not _db_down() and await _astateless():
         claim = await _aclaim_db(key, limit, window_sec)
         if claim is not None:
             return claim
