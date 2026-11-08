@@ -14,7 +14,7 @@ flowchart TB
     ADM["AdminCheckItems,<br/>AdminAnalytics learning-loop panel"]
   end
   subgraph RT["backend/routes/"]
-    LEARN["learn.py<br/>(legacy tutor; delegates when the gate is on)"]
+    LEARN["learn.py<br/>(legacy tutor, delegates when the gate is on)"]
     LOOP["learn_loop.py<br/>/api/learn/loop/*"]
     QZ["quiz.py, flashcards.py"]
     DOCS["documents.py<br/>(upload → drafting)"]

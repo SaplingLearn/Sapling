@@ -38,7 +38,7 @@ sequenceDiagram
     R->>IX: index_document (passages → course_chunks)
     R->>S: queue_generation_for_document (background pool)
     S->>DB: read document, its shared chunks
-    S->>S: rank passages per concept; skip covered concepts
+    S->>S: rank passages per concept, skip covered concepts
     S->>D: draft up to 3 concepts per call
     D-->>S: drafts (or unavailable)
     S->>S: repair_draft, validate_draft, lint_item
@@ -46,8 +46,8 @@ sequenceDiagram
     V-->>S: verdicts → drop criteria, re-tag, or reject
     S->>K: solve each item blind (no key, no rubric)
     K-->>S: answers → compare with key in code
-    S->>S: agree → canonical_verified; disagree/unsolved → HELD
-    S->>DB: re-check sources; upsert check_items (encrypted)
+    S->>S: agree → canonical_verified, disagree/unsolved → HELD
+    S->>DB: re-check sources, upsert check_items (encrypted)
     S->>DB: documents.check_items_status = done / unavailable / failed
 ```
 
@@ -168,7 +168,7 @@ sequenceDiagram
     participant T as loop_tutor agent
     participant DB as Postgres
     UI->>LL: POST /start-session/stream
-    LL-->>UI: template opener (no model); session kept pending in memory
+    LL-->>UI: template opener (no model), session kept pending in memory
     loop probe (a few unaided items per concept)
         UI->>LL: POST /probe/next
         LL->>P: probe.next_probe_item (fair across strands, adaptive)
@@ -179,7 +179,7 @@ sequenceDiagram
     UI->>LL: GET /plan
     LL->>P: planner.outer_fringe, planner.plan (+ due reviews, goal scope)
     UI->>LL: POST /plan/approve
-    LL->>DB: loop_state.plan; learner brief (encrypted)
+    LL->>DB: loop_state.plan, learner brief (encrypted)
     loop each approved concept
         UI->>LL: POST /chat/stream (teach)
         LL->>P: ceiling, model_tier, context_policy
@@ -443,7 +443,7 @@ sequenceDiagram
     GA->>GR: rubric grade (or reason grade for mc_reason)
     GR->>B: check(user, "grader")
     GR->>GR: answer_guard.screen → refuse?
-    GR->>GR: run 1 (grader slot); maybe second opinion (grader_second)
+    GR->>GR: run 1 (grader slot), maybe second opinion (grader_second)
     GR-->>GA: verdict + confidence, or unavailable / refused
     GA-->>RT: Evidence appended to deps.pending_evidence (or nothing)
     RT->>RT: re-read the help floor (ledger) → max_rung
@@ -454,7 +454,7 @@ sequenceDiagram
     TX->>TX: plan in Python (BKT, FSRS, propagation)
     TX->>DB: rpc learning_evidence_commit (locks, version checks, writes, receipt)
     RT->>DB: record grade, misconception record / resolve
-    RT-->>UI: verdict; then one feedback turn
+    RT-->>UI: verdict, then one feedback turn
 ```
 
 1. **Before grading.** `backend/routes/learn_loop.py::_grade_submission`
@@ -545,7 +545,7 @@ sequenceDiagram
     participant R as learning/review.py
     participant DB as Postgres
     UI->>LL: GET /review/next
-    LL->>R: load_or_create_review_session; review_retention
+    LL->>R: load_or_create_review_session, review_retention
     LL->>R: due_queue_with_stats
     R->>DB: due flashcards + due concepts (fsrs_due_at ≤ now)
     R->>R: DASH order → cut to the daily budget → interleave
@@ -730,11 +730,11 @@ stands, because the item was not judged broken.
 
 ```mermaid
 flowchart LR
-  ENV["LEARNING_LOOP_ENABLED=false<br/>(read at process start)"] --> GATE["learning.gate.learning_loop_for_request<br/>(once per request; no DB read)"]
+  ENV["LEARNING_LOOP_ENABLED=false<br/>(read at process start)"] --> GATE["learning.gate.learning_loop_for_request<br/>(once per request, no DB read)"]
   GATE -->|false| LEG["routes/learn.py: legacy tutor<br/>(no mastery writer)"]
   GATE -->|false| F404["/api/learn/loop/* → 404<br/>'learning loop not enabled'"]
   GATE -->|false| ACT["/review/active → 200 {active: false}"]
-  ACT --> FE["frontend: legacy Learn screen;<br/>no DueQueue, no RetentionCheck"]
+  ACT --> FE["frontend: legacy Learn screen,<br/>no DueQueue, no RetentionCheck"]
   GATE -->|true| LOOP["routes/learn.py delegates to learn_loop.py"]
 ```
 
