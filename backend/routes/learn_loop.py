@@ -82,9 +82,11 @@ from agents.loop_tutor import (
     loop_tutor_agent,
     new_nonce,
     phase_prefix,
+    plan_focus_block,
     routable_tier,
     student_envelope,
     tier_run_kwargs,
+    variant_run_args,
 )
 from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, grade_answer, grader_answer_text
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
@@ -330,11 +332,26 @@ _DETERMINISTIC_RUNGS = (Rung.H2, Rung.H4, Rung.H6)
 _LOOP_OPENER_TEMPLATE = LOOP_PROBE_OPENER
 #: Spec §13 A121: loop_state key — True when the last SERVED turn ended with the
 #: tutor's own open question (a model teach or feedback turn that rendered its
-#: question; never a hint, a pose, a template or a turn that posed a check). The
-#: next teach-phase chat message is then the student's reply to it, and that
-#: turn opens with the verdict (`_LoopTurn._answer_check_due`). A flag only: the
+#: question; never a hint, a pose, a template or a turn that posed a check).
+#: With the v2 variant on, the next teach-phase chat message is
+#: then the student's reply to it, and that turn opens with the verdict
+#: (`_LoopTurn._answer_check_due`). Kept with the flag off too, so a student
+#: turned on mid-session is judged from the right turn. A flag only: the
 #: question's text lives in the (encrypted) message history, never here.
 OPEN_QUESTION_KEY = "open_question"
+#: Spec §13 A121: the v2 tutor variant's flag (services/feature_flags.py) —
+#: every tutor-prompt change that needs a live eval re-record sits behind it.
+TUTOR_V2_FLAG = "loop_tutor_v2"
+
+
+def _tutor_v2_on(user_id: str | None) -> bool:
+    """The `loop_tutor_v2` flag for this student (spec §13 A121),
+    resolved ONCE per turn by `_LoopTurn._derive` and carried on the turn: it
+    picks the prompt and schema variant (`variant_run_args`), the answer check,
+    the verdict lines, the label rules and the plan focus, so one turn never
+    sees two answers. No student means off; the resolver fails closed
+    (feature_flags)."""
+    return bool(user_id) and flag_on(TUTOR_V2_FLAG, user_id)
 
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
@@ -884,13 +901,18 @@ def _prepare_loop_run(
     trusted: bool = False,
     instruction: str | None = None,
     nonce: str | None = None,
+    v2: bool = False,
+    focus_block: str | None = None,
 ) -> tuple:
     """One loop run's agent, user message, run kwargs and deps. `user_message`
     is the retrieval query and — unless `trusted` (server text: an [ACTION: ...]
     line) — the student's words, which reach the model only inside the nonce
     envelope (review round 3, C1(a)); `instruction` is server text placed
     verbatim before it. The history's user rows are the student's words too
-    (enveloped by the caller, `_guard_history`)."""
+    (enveloped by the caller, `_guard_history`). `v2` adds the
+    v2 variant's run arguments (spec §13 A121, `variant_run_args`):
+    none when off. `focus_block` (v2 teach turns only) is the plan concept's
+    untrusted block (`plan_focus_block`), first among the context blocks."""
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id or None,
@@ -905,6 +927,8 @@ def _prepare_loop_run(
     blocks = _context_blocks(
         user_id=user_id, course_id=course_id, user_message=user_message, context=context, item=item
     )
+    if focus_block:
+        blocks = [focus_block, *blocks]
     assembled = assemble_turn_message(
         prefix=prefix,
         blocks=blocks,
@@ -917,6 +941,7 @@ def _prepare_loop_run(
         "message_history": message_history,
         "usage_limits": LOOP_LIMITS,
         **tier_run_kwargs(tier, tool_choice=context.tool_choice),
+        **variant_run_args(v2),
     }
     return loop_tutor_agent, assembled, run_kwargs, deps
 
@@ -944,6 +969,12 @@ def _continuation_history(messages: list) -> list | None:
     return None
 
 
+#: Spec §13 A121: the v2 variant's run arguments
+#: (`variant_run_args`) — a continuation finishes the turn in the same variant.
+#: A flag-off run carries none of them.
+_VARIANT_RUN_KEYS = ("output_type", "instructions", "metadata")
+
+
 @dataclass(frozen=True)
 class ContinuationPlan:
     """What the tool-less continuation run is: its prompt, its `agent.run`
@@ -961,7 +992,11 @@ def continuation_plan(*, assembled: str, run_kwargs: dict, messages: list) -> Co
     CONTINUATION_LIMITS, or — no tool ran — re-runs the turn itself under the
     turn's own limits. Same slot, same settings, minus `tool_choice` (no tools,
     so a tool_config would have nothing to choose)."""
-    carried = {k: run_kwargs[k] for k in _CONTINUATION_RUN_KEYS if k in run_kwargs}
+    carried = {
+        k: run_kwargs[k]
+        for k in (*_CONTINUATION_RUN_KEYS, *_VARIANT_RUN_KEYS)
+        if k in run_kwargs
+    }
     carried["model_settings"] = {
         k: v for k, v in (carried.get("model_settings") or {}).items() if k != "tool_choice"
     }
@@ -1066,24 +1101,29 @@ LADDER_FALLBACK_LINES: dict[int, str] = {
 }
 
 
-#: Fix round 2: the served key idea of a hint at H0/H1 — those rungs add no
-#: content (RUNG_INTENT), so the key idea is the focus of the hint, from code;
-#: recorded model key ideas there stated a definition (judged H2). Spec §13
-#: A121: a correct-verdict feedback turn at H0/H1 serves NO key idea — the
-#: grader's verdict line code serves first already says it.
+#: Fix round 2: the served key idea of an item turn at H0/H1 — those rungs add
+#: no content (RUNG_INTENT), so the key idea is the verdict (feedback) or the
+#: focus of a hint, from code; recorded model key ideas there stated a
+#: definition (judged H2). Spec §13 A121, v2 variant on: a
+#: correct-verdict feedback turn serves NO key idea there — the grader's
+#: verdict line, served first, says it.
 LOW_RUNG_KEY_IDEAS: dict[str, str] = {
+    "feedback_correct": "Your answer was graded correct.",
     "hint": "Start by pinning down what the item asks you to find.",
 }
 
 
-def _served_fields(out, *, phase: str, rung: Rung, verdict: str | None = None):
+def _served_fields(
+    out, *, phase: str, rung: Rung, verdict: str | None = None, v2: bool = False
+):
     """The structured turn as served (fix round 2). The ladder fixes what the
     lowest rungs may say, so code serves those fields: at an H2 hint the
     question is the ladder's (H2 is a concept pointer: reread the definition —
     recorded model questions named the item's own objects, judged H3); at
-    H0/H1 the key idea of a hint is LOW_RUNG_KEY_IDEAS', and a correct-verdict
-    feedback turn's is left out (A121: its verdict line leads the turn). The
-    model writes everything else."""
+    H0/H1 the key idea of a hint or a correct-verdict feedback turn is
+    LOW_RUNG_KEY_IDEAS' — or, the v2 variant on (A121), the
+    feedback turn's is left out: its verdict line leads the turn. The model
+    writes everything else."""
     at = int(rung)
     served = dict(out)
     if phase == "hint" and at == int(Rung.H2) and "question" in out:
@@ -1092,19 +1132,27 @@ def _served_fields(out, *, phase: str, rung: Rung, verdict: str | None = None):
         if phase == "hint":
             served["key_idea"] = LOW_RUNG_KEY_IDEAS["hint"]
         elif phase == "feedback" and verdict == "correct":
-            served["key_idea"] = ""
+            served["key_idea"] = "" if v2 else LOW_RUNG_KEY_IDEAS["feedback_correct"]
     return served
 
 
 def served_template(
-    *, phase: str, rung: Rung, poses_check: bool = False, answer_check: bool = False
+    *,
+    phase: str,
+    rung: Rung,
+    poses_check: bool = False,
+    answer_check: bool = False,
+    v2: bool = False,
 ) -> TurnTemplate:
-    """Spec §13 A121: how this turn is served — the "Key idea:" label only on a
-    turn with new content (`labels_new_content`: teach or hint at H2+, never
-    feedback), no question of its own when it poses a check, and the verdict
-    line first when it answers the reply to the tutor's own question."""
+    """Spec §13 A121: how this turn is served. Always: no question of its own
+    when it poses a check (the card is the one open prompt). With the
+    v2 variant on: the "Key idea:" label only on a turn with new
+    content (`labels_new_content`: teach or hint at H2+, never feedback), and
+    the verdict line first when it answers the reply to the tutor's own
+    question. Off, the label is on every turn, exactly as at 7fa9cd0e — the
+    rendering every recorded rung judgement was made of."""
     return TurnTemplate(
-        label=labels_new_content(phase, int(rung)),
+        label=labels_new_content(phase, int(rung)) if v2 else True,
         question=not poses_check,
         answer_check=answer_check,
     )
@@ -1118,12 +1166,17 @@ def served_render(
     verdict: str | None = None,
     poses_check: bool = False,
     answer_check: bool = False,
+    v2: bool = False,
 ) -> str:
     """`render_turn` of the turn as served (`_served_fields`, `served_template`)."""
     return render_turn(
-        _served_fields(out, phase=phase, rung=rung, verdict=verdict),
+        _served_fields(out, phase=phase, rung=rung, verdict=verdict, v2=v2),
         served_template(
-            phase=phase, rung=rung, poses_check=poses_check, answer_check=answer_check
+            phase=phase,
+            rung=rung,
+            poses_check=poses_check,
+            answer_check=answer_check,
+            v2=v2,
         ),
     )
 
@@ -1136,23 +1189,29 @@ def served_partial(
     verdict: str | None = None,
     poses_check: bool = False,
     answer_check: bool = False,
+    v2: bool = False,
 ) -> str:
     """`render_partial` of a streamed partial as served — the same fields and
     template as `served_render`, so the stream is a prefix of the final text."""
     return render_partial(
-        _served_fields(partial, phase=phase, rung=rung, verdict=verdict),
+        _served_fields(partial, phase=phase, rung=rung, verdict=verdict, v2=v2),
         served_template(
-            phase=phase, rung=rung, poses_check=poses_check, answer_check=answer_check
+            phase=phase,
+            rung=rung,
+            poses_check=poses_check,
+            answer_check=answer_check,
+            v2=v2,
         ),
     )
 
 
 def served_lead(*, reference: str, answer_released: bool, verdict: str | None = None) -> str:
-    """What code serves ABOVE an item turn's model text: on a feedback turn the
-    grader's verdict as a plain line first (spec §13 A121: the turn opens with
-    whether the answer was right, before anything else — the hard-level
-    template's own words, `_FEEDBACK_VERDICT_LINES`), then the released answer
-    (m1, `released_lead`). "" on a hint turn."""
+    """What code serves ABOVE an item turn's model text: with the answer-verdict
+    variant on, a feedback turn's grader verdict as a plain line first (spec
+    §13 A121: the turn opens with whether the answer was right, before
+    anything else — the hard-level template's own words,
+    `_FEEDBACK_VERDICT_LINES`; callers pass `verdict` only then), then the
+    released answer (m1, `released_lead`)."""
     lead = _FEEDBACK_VERDICT_LINES[verdict] + FIELD_JOIN if verdict else ""
     return lead + (released_lead(reference) if answer_released else "")
 
@@ -1751,15 +1810,21 @@ class _LoopTurn:
         # and the turn opens with the verdict on the reply to the tutor's question
         self.poses_check = False
         self.answer_check = False
+        # Spec §13 A121 (v2): a teach turn's (concept name, cursor reason), set in _plan
+        self.focus: tuple[str, str] | None = None
+        # Spec §13 A121: the v2 variant, resolved ONCE for the turn
+        self.v2 = _tutor_v2_on(self.user_id)
 
     def _answer_check_due(self) -> bool:
         """Spec §13 A121: this turn answers the student's reply to the tutor's
-        own question — a student chat message in the teach phase (no active
-        item: a check item is graded only by the grader, A16) right after a
-        served turn that ended with the tutor's open question
-        (OPEN_QUESTION_KEY). Read from loop state, never from the text."""
+        own question — with the v2 variant on, a student chat
+        message in the teach phase (no active item: a check item is graded only
+        by the grader, A16) right after a served turn that ended with the
+        tutor's open question (OPEN_QUESTION_KEY). Read from loop state, never
+        from the text."""
         return (
-            self.kind == "chat"
+            self.v2
+            and self.kind == "chat"
             and not self.trusted
             and self.phase == "teach"
             and self.item is None
@@ -1816,6 +1881,25 @@ class _LoopTurn:
         except Exception:
             logger.warning("the reply could not be scanned; no verdict this turn", exc_info=True)
             return True
+
+    def _plan_focus(self) -> tuple[str, str] | None:
+        """Spec §13 A121 (`loop_tutor_v2`): (the plan's current concept NAME, why
+        the cursor is on it) for a teach turn — concept and reason from loop
+        state (`plan_focus`), the name from the student's graph. None off the
+        variant, outside the teach phase, with no plan concept, or when the
+        name cannot be read (the turn is then served without it, never failed)."""
+        if not self.v2 or self.phase != "teach":
+            return None
+        focus = plan_focus(self.state)
+        if focus is None:
+            return None
+        node_id, reason = focus
+        try:
+            name = (_plan_node_names(self.user_id, [node_id]).get(node_id) or "").strip()
+        except Exception:
+            logger.warning("plan focus: the concept name could not be read; the turn goes without it", exc_info=True)
+            return None
+        return (name, reason) if name else None
 
     def _teach_attempt(self) -> bool:
         """PKG-14 (A85): the student's teach-phase message is a genuine attempt
@@ -1916,7 +2000,7 @@ class _LoopTurn:
         self.planned = decision
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
-        self.poses_check, self.answer_check = False, False
+        self.poses_check, self.answer_check, self.focus = False, False, None
         if decision.pause_novice and self.band == "novice" and self.phase in ("check", "hint"):
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
@@ -1979,6 +2063,8 @@ class _LoopTurn:
         # Spec §13 A121: the turn template's two directives, from loop state
         self.poses_check = self._check_follows()
         self.answer_check = self._answer_check_due() and not self._reply_states_posed_answer()
+        # Spec §13 A121 (v2): a teach turn names the plan's concept and why it is there
+        self.focus = self._plan_focus()
         self.prefix = phase_prefix(
             phase=self.phase,
             band=self.band,
@@ -1987,8 +2073,10 @@ class _LoopTurn:
             item_format=self.item.format if (item_phase and self.item) else None,
             answer_released=self.answer_released,
             verdict=self.verdict if self.phase == "feedback" else None,
+            v2=self.v2,
             poses_check=self.poses_check,
             answer_check=self.answer_check,
+            plan_reason=self.focus[1] if self.focus else None,
         )
         if self.confront_line:
             # PKG-10: right after the phase instruction, before the context blocks
@@ -2017,10 +2105,13 @@ class _LoopTurn:
                 self.answer_released,
                 question=not self.poses_check,
                 answer_check=self.answer_check,
+                v2=self.v2,
             ),
             trusted=self.trusted,
             instruction=self.instruction,
             nonce=nonce,
+            v2=self.v2,
+            focus_block=plan_focus_block(self.focus[0]) if self.focus else None,
         )
         self.deps.loop_leak = self._leak_guard()  # N1: the validator's guard
 
@@ -2170,8 +2261,9 @@ class _LoopTurn:
         }
 
     def _lead_verdict(self) -> str | None:
-        """The grader verdict whose plain line code serves first: a feedback turn's."""
-        return self.verdict if self.phase == "feedback" else None
+        """The grader verdict whose plain line code serves first: a feedback
+        turn's, with the v2 variant on (spec §13 A121)."""
+        return self.verdict if self.phase == "feedback" and self.v2 else None
 
     def _leak_guard(self) -> _LeakGuard | None:
         """deps.loop_leak for an unreleased active item (fix round 2, N1)."""
@@ -2216,6 +2308,7 @@ class _LoopTurn:
             "verdict": self.verdict,
             "poses_check": self.poses_check,
             "answer_check": self.answer_check,
+            "v2": self.v2,
         }
 
     def render(self, out) -> str:
@@ -2784,6 +2877,12 @@ class _LoopOpener(_LoopTurn):
         if self.reveal_fallback is not None:
             raise RuntimeError("the opener's reveals could not be recorded")  # never served unrecorded
         self._emit_reveal()
+        if self.tier != "none" and not self._probing():
+            # Spec §13 A121: a model opener (a quiz-ask session's first teach
+            # turn, A99) ends with the tutor's own question, as any served teach
+            # turn does, so the student's reply to it is judged like any other.
+            # A template opener asks nothing and leaves the key unset.
+            self.state[OPEN_QUESTION_KEY] = True
         PENDING_SESSIONS[self.session_id] = {
             "user_id": self.user_id,
             "mode": self.mode,
@@ -2874,6 +2973,18 @@ def _concept_key_for_node(user_id: str, node_id: str) -> str | None:
     return _normalize_concept(rows[0].get("concept_name") or "") if rows else None
 
 
+#: Spec §13 A121 (`loop_tutor_v2`): why the plan's cursor is on its current
+#: concept, as a v2 teach turn tells the tutor (agents.loop_tutor
+#: .PLAN_FOCUS_REASONS words each one). Read off loop state, never off text.
+CURSOR_REASONS = ("plan_order", "prerequisite_repair", "wheelspin_moved", "isomorph_reask")
+#: The two reasons a cursor MOVE records (`mark_cursor_reason`); "plan_order"
+#: is the default and "isomorph_reask" is read off the attempt log.
+_MOVE_REASONS = ("prerequisite_repair", "wheelspin_moved")
+#: The `plan` key that records why a move that is not plan order put the
+#: cursor where it is; `_advance_cursor` (plan order) clears it.
+CURSOR_REASON_KEY = "cursor_reason"
+
+
 def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
     """Move the plan (PKG-08's `plan = {approved, cursor}`) to its next concept,
     resetting the concept's counters; past the end the plan is done and there is
@@ -2881,6 +2992,7 @@ def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
     plan = state.get("plan")
     if not isinstance(plan, dict):
         return False
+    plan.pop(CURSOR_REASON_KEY, None)  # spec §13 A121: a plan-order move
     set_confront(state, None)  # PKG-10 (F2): a marker never outlives its concept
     approved = list(plan.get("approved") or [])
     if state.get("goal") and state.get("concept"):
@@ -2901,6 +3013,39 @@ def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
     state["teach_turns"] = 0
     state["concept_checks"] = 0
     return True
+
+
+def mark_cursor_reason(state: dict, reason: str) -> None:
+    """THE HOOK for a cursor move that is not plan order (spec §13 A121 × A122).
+    A122's prerequisite-repair and wheelspin moves are not on this base; when
+    they land, each calls this right after it moves `plan.cursor` / `concept`,
+    with "prerequisite_repair" or "wheelspin_moved", so the v2 tutor's teach
+    turns say why the plan is on the new concept (`plan_focus`). The next
+    plan-order advance (`_advance_cursor`) clears it."""
+    if reason not in _MOVE_REASONS:
+        raise ValueError(f"not a cursor move reason: {reason!r} (expected one of {_MOVE_REASONS})")
+    plan = state.get("plan")
+    if isinstance(plan, dict):
+        plan[CURSOR_REASON_KEY] = reason
+
+
+def plan_focus(state: dict) -> tuple[str, str] | None:
+    """Spec §13 A121 (`loop_tutor_v2`): (the plan's current concept node, why
+    the cursor is there), from loop state only — never from text. The reason
+    is "isomorph_reask" when the session's last attempt on the concept was
+    `unknown` (its next check re-asks an isomorph, `_isomorph_after_unknown`),
+    else the reason a non-plan-order move recorded (`mark_cursor_reason`),
+    else "plan_order". None with no plan, a finished plan or no concept. Pure:
+    `state` is never changed."""
+    plan = state.get("plan")
+    concept = state.get("concept")
+    if not isinstance(plan, dict) or plan.get("done") or not isinstance(concept, str) or not concept:
+        return None
+    tail = attempts_for_node(attempts_of(dict(state)), concept)  # a copy: attempts_of may add the log
+    if tail and slip_or_misconception(tail) == "unknown":
+        return concept, "isomorph_reask"
+    moved = plan.get(CURSOR_REASON_KEY)
+    return concept, moved if moved in _MOVE_REASONS else "plan_order"
 
 
 def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set):

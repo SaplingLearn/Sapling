@@ -199,7 +199,8 @@ def test_the_loop_quiz_ask_session_starts_in_teach_on_the_quiz_concept(gate_on, 
     sid = r.json()["session_id"]
     assert order == ["help", "model"]  # recorded before any tutor text exists
     pending = PENDING_SESSIONS.pop(sid)
-    assert pending["loop_state"] == quiz_ask_state("node-1")
+    # spec §13 A121: the model opener ends with the tutor's own question
+    assert pending["loop_state"] == {**quiz_ask_state("node-1"), "open_question": True}
     assert pending["loop_state"]["phase"] == "teach" and pending["loop_state"]["concept"] == "node-1"
     assert pending["course_id"] == "c-node"  # the quiz node's course, not the topic's guess
     # the opener's band is the quiz concept's (node-1, p_known 0.5), not the BKT prior's
@@ -227,6 +228,21 @@ def test_the_quiz_ask_opener_is_the_one_model_opener(gate_on, seams):
     assert re.search(r"<<student_text (\w+)>>\nRecursion\n<<end_student_text \1>>", seen["msg"])
     assert "[ANSWER CHECK]" not in seen["msg"]  # an opener answers no reply
     seams.ai_budget.count_tutor_call.assert_called_once_with("u1")
+
+
+def test_a_quiz_ask_template_opener_leaves_no_open_question(gate_on, seams):
+    """Spec §13 A121: at the hard budget level the quiz-ask opener is the
+    template, which asks nothing, so the student's next message is no reply to
+    a question of the tutor's (only a model opener sets `open_question`)."""
+    from routes.learn_loop import _LOOP_OPENER_TEMPLATE, PENDING_SESSIONS, quiz_ask_state
+
+    seams.ai_budget.check.return_value = _routes.HARD
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=AssertionError("no model at the hard level"))
+    r, _ = _opener("/api/learn/loop/start-session", agent=agent)
+    assert r.status_code == 200, r.text
+    assert r.json()["initial_message"] == _LOOP_OPENER_TEMPLATE
+    assert PENDING_SESSIONS.pop(r.json()["session_id"])["loop_state"] == quiz_ask_state("node-1")
 
 
 def test_the_loop_quiz_ask_stream_records_help_before_the_first_token(gate_on, seams):

@@ -12,13 +12,16 @@ by the ceiling rung, and `validate_turn` names what a FINAL output got wrong.
 for SSE deltas (a later step strips leaks on the cumulative text).
 
 Spec §13 A121 (the turn template): code, not the model, decides three things
-per turn and `TurnTemplate` carries them to the render. The "Key idea:" label
-marks only a turn that brings new content (`labels_new_content`: a teach or
-hint turn at H2 or above, where RUNG_INTENT first allows content); a turn that
+per turn and `TurnTemplate` carries them to the render. Always: a turn that
 poses a check ends without a question of its own (the check card is its one
-open prompt); and a teach turn answering the student's reply to the tutor's
-own question opens with the plain verdict line (`ANSWER_VERDICT_LEADS`, from
-the model's `answer_verdict` field) before anything else.
+open prompt). With the `loop_tutor_v2` flag on (the answer-verdict
+variant, `LoopTurnOutV2`): the "Key idea:" label marks only a turn that
+brings new content (`labels_new_content`: a teach or hint turn at H2 or above,
+where RUNG_INTENT first allows content), and a teach turn answering the
+student's reply to the tutor's own question opens with the plain verdict line
+(`ANSWER_VERDICT_LEADS`, from the model's `answer_verdict` field) before
+anything else. Off, `LoopTurnOut` and the label are exactly 7fa9cd0e's, so
+every recorded loop eval stays valid.
 
 `sentences` is the ONE sentence splitter for the loop: the tutor evals
 (tests/evals/loop_tutor.py `_sentences`) should count with it too.
@@ -102,12 +105,53 @@ def verdict_lead(out: Mapping[str, str], template: TurnTemplate) -> str:
     return ANSWER_VERDICT_LEADS.get(str(out.get(ANSWER_VERDICT_FIELD) or "").strip(), "")
 
 
+# The DEFAULT wire type (spec §13 A121: the `loop_tutor_v2` flag off).
+# Byte-identical to 7fa9cd0e — fields, field descriptions AND docstring, since
+# pydantic-ai sends the docstring as the schema's description — because every
+# recorded loop eval cassette was recorded against it. Change it only with a
+# recorded eval behind the change.
 class LoopTurnOut(TypedDict, total=False):
     """One structured tutor turn. A TypedDict (not a BaseModel) so pydantic's
     partial validation can parse the streamed output; `total=False` because a
-    partial lacks keys — `validate_turn` checks the final one has what its
-    `TurnLimits` require. `answer_verdict` comes first: on the turn that asks
-    for it, it is the line the student reads first (A121)."""
+    partial lacks keys — `validate_turn` checks the final one has all three."""
+
+    key_idea: Annotated[
+        str,
+        Field(
+            description=(
+                "The one idea this turn teaches, as a single declarative sentence. "
+                "No question mark. Rendered after 'Key idea: ' — do not write that label."
+            ),
+            max_length=params.TURN_KEY_IDEA_MAX_CHARS,
+        ),
+    ]
+    body: Annotated[
+        str,
+        Field(
+            description=(
+                "The explanation, within the turn's sentence limit. No question mark; "
+                "plain-text math (x^2, (a+b)/c), no LaTeX unless the answer is released."
+            ),
+            max_length=params.TURN_BODY_MAX_CHARS,
+        ),
+    ]
+    question: Annotated[
+        str,
+        Field(
+            description=(
+                "Exactly one question for the student's next step: one sentence ending "
+                "in a single '?'. Never states the answer."
+            ),
+            max_length=params.TURN_QUESTION_MAX_CHARS,
+        ),
+    ]
+
+
+class LoopTurnOutV2(TypedDict, total=False):
+    """One structured tutor turn of the v2 variant (spec §13 A121,
+    the `loop_tutor_v2` flag on). answer_verdict comes first and only
+    on a turn whose phase block has an [ANSWER CHECK] line; the system shows
+    it to the student before anything else."""
 
     answer_verdict: Annotated[
         AnswerVerdict,
@@ -235,6 +279,9 @@ class TurnLimits:
     question: bool = True
     # Spec §13 A121: the turn must carry a valid `answer_verdict`
     answer_check: bool = False
+    # Spec §13 A121: the run is the v2 variant (`loop_tutor_v2`
+    # on): its own instructions and schema, so its own retry wording
+    v2: bool = False
 
 
 def clamp_model_ceiling(ceiling: int, answer_released: bool) -> int:
@@ -256,16 +303,21 @@ def turn_limits(
     *,
     question: bool = True,
     answer_check: bool = False,
+    v2: bool = False,
 ) -> TurnLimits:
     """`question=False`: the turn poses a check (no question of its own, A121);
     `answer_check=True`: a teach turn answering the reply to the tutor's own
-    question (A121) — both only in teach, the one phase whose turns do either."""
+    question (A121) — both only in teach, the one phase whose turns do either.
+    `v2`: the v2 variant (`loop_tutor_v2` on), the only
+    one whose schema carries `answer_verdict`."""
     if phase not in TURN_PHASES:
         raise ValueError(f"unknown loop phase {phase!r}; the model sees {TURN_PHASES}")
     if answer_released and phase != "feedback":
         raise ValueError("answer_released is only meaningful in the feedback phase")
     if (answer_check or not question) and phase != "teach":
         raise ValueError("only a teach turn poses a check or answers a reply to its question")
+    if answer_check and not v2:
+        raise ValueError("an answer check needs the v2 variant (loop_tutor_v2)")
     rung = clamp_model_ceiling(ceiling, answer_released)
     remainder = (
         params.STEP_MAX_SENTENCES
@@ -279,6 +331,7 @@ def turn_limits(
         latex_ok=answer_released,
         question=question,
         answer_check=answer_check,
+        v2=v2,
     )
 
 
@@ -308,8 +361,8 @@ def render_turn(out: Mapping[str, str], template: TurnTemplate = DEFAULT_TEMPLAT
 
 
 _CONTROL_TAG = re.compile(
-    r"\[(LOOP PHASE|VERDICT|ANSWER CHECK|CHECK ITEM|ACTION|STUDENT QUESTION|STUDENT MESSAGE"
-    r"|GRAPH CONTEXT)"
+    r"\[(LOOP PHASE|VERDICT|ANSWER CHECK|PLAN FOCUS|CHECK ITEM|ACTION|STUDENT QUESTION"
+    r"|STUDENT MESSAGE|GRAPH CONTEXT)"
     r"|<<(?:end_)?student_text"
 )
 # A backslash macro (\frac, \cdot), a \( or \[ math delimiter, or $…$ inline math.

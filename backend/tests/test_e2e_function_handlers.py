@@ -1002,17 +1002,25 @@ def test_loop_phase_patterns_are_real_and_unique_phase_prompt_text():
 
 
 def _answer_check_message(student_text: str) -> tuple[str, object]:
-    """The user message of a real answer-check teach turn (spec §13 A121)."""
+    """The user message of a real answer-check teach turn (spec §13 A121: the
+    `loop_tutor_v2` variant, the only one with an [ANSWER CHECK] line)."""
     from agents.loop_tutor import assemble_turn_message, new_nonce, phase_prefix
     from learning.turn_shape import turn_limits
 
     prefix = phase_prefix(
-        phase="teach", band="develop", ceiling=3, poses_check=True, answer_check=True
+        phase="teach",
+        band="develop",
+        ceiling=3,
+        v2=True,
+        poses_check=True,
+        answer_check=True,
     )
     message = assemble_turn_message(
         prefix=prefix, blocks=[], nonce=new_nonce(), student_text=student_text
     )
-    return message, turn_limits("teach", 3, False, question=False, answer_check=True)
+    return message, turn_limits(
+        "teach", 3, False, question=False, answer_check=True, v2=True
+    )
 
 
 def test_loop_answer_check_pattern_is_real_and_unique_prompt_text():
@@ -1021,15 +1029,40 @@ def test_loop_answer_check_pattern_is_real_and_unique_prompt_text():
     carries — never the system prompt or the output template (which name the
     line), never another phase's prefix."""
     from agents.function_handlers_e2e import E2E_LOOP_ANSWER_CHECK_PATTERN
-    from agents.loop_tutor import ANSWER_CHECK_LINE, LOOP_OUTPUT_TEMPLATE, _LOOP_SYSTEM_PROMPT
+    from agents.loop_tutor import (
+        ANSWER_CHECK_LINE,
+        LOOP_OUTPUT_TEMPLATE,
+        LOOP_V2_OUTPUT_TEMPLATE,
+        V2_INSTRUCTIONS,
+        _LOOP_SYSTEM_PROMPT,
+    )
 
     assert E2E_LOOP_ANSWER_CHECK_PATTERN in ANSWER_CHECK_LINE
-    assert E2E_LOOP_ANSWER_CHECK_PATTERN not in _LOOP_SYSTEM_PROMPT + LOOP_OUTPUT_TEMPLATE
+    for instructions in (
+        _LOOP_SYSTEM_PROMPT,
+        LOOP_OUTPUT_TEMPLATE,
+        V2_INSTRUCTIONS,
+        LOOP_V2_OUTPUT_TEMPLATE,
+    ):
+        assert E2E_LOOP_ANSWER_CHECK_PATTERN not in instructions
     message, _ = _answer_check_message("slot 8")
     assert E2E_LOOP_ANSWER_CHECK_PATTERN in message
     for phase_key in _LOOP_PHASE_CASES:
         other, _ = _loop_turn_message(phase_key)
         assert E2E_LOOP_ANSWER_CHECK_PATTERN not in other, phase_key
+
+
+def test_a_v2_plan_focus_never_steers_the_seams_phase_patterns():
+    """Spec §13 A121 (v2): every teach turn carries a [PLAN FOCUS] line; none of
+    its wordings may contain a pattern the seam picks a scripted turn by, or a
+    flag-on teach turn would be answered as a hint, feedback or answer check."""
+    from agents.function_handlers_e2e import E2E_LOOP_ANSWER_CHECK_PATTERN, E2E_LOOP_PHASE_PATTERNS
+    from agents.loop_tutor import PLAN_FOCUS_REASONS, plan_focus_block, plan_focus_line
+
+    patterns = [E2E_LOOP_ANSWER_CHECK_PATTERN, *E2E_LOOP_PHASE_PATTERNS.values()]
+    for reason in PLAN_FOCUS_REASONS:
+        text = plan_focus_line(reason) + plan_focus_block("Recursion")
+        assert not [p for p in patterns if p in text], reason
 
 
 @pytest.mark.parametrize("slot", _LOOP_SLOTS)
@@ -1040,7 +1073,7 @@ def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(monkeypatch,
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
     monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
     import agents.function_handlers_e2e as m
-    from agents.loop_tutor import loop_tutor_agent
+    from agents.loop_tutor import loop_tutor_agent, variant_run_args
 
     for text, want in (
         (f"working: {m.E2E_LOOP_CHAT_ANSWER_TOKEN}", m.E2E_LOOP_ANSWER_TURN),
@@ -1049,7 +1082,9 @@ def test_loop_tutor_handler_judges_a_reply_by_the_chat_answer_token(monkeypatch,
         message, limits = _answer_check_message(text)
         deps = _deps()
         deps.loop_turn = limits
-        result = loop_tutor_agent.run_sync(message, deps=deps, model=model_for(slot))
+        result = loop_tutor_agent.run_sync(
+            message, deps=deps, model=model_for(slot), **variant_run_args(True)
+        )
         assert result.output == want
         assert result.usage().requests == 1  # no output retry
     assert m.E2E_LOOP_CHAT_ANSWER_TOKEN != m.E2E_GRADER_CORRECT_TOKEN, (
@@ -1084,7 +1119,9 @@ def test_loop_turn_constants_are_valid_turns_at_the_tightest_limits():
     for turn in (E2E_LOOP_ANSWER_TURN, E2E_LOOP_NOT_AN_ANSWER_TURN):
         for ceiling in (0, 1, 2, 3):
             for question in (True, False):
-                limits = turn_limits("teach", ceiling, False, question=question, answer_check=True)
+                limits = turn_limits(
+                    "teach", ceiling, False, question=question, answer_check=True, v2=True
+                )
                 assert validate_turn(turn, limits, source="") == [], (ceiling, question)
 
 
@@ -1102,6 +1139,7 @@ def test_loop_constants_do_not_state_a_seeded_answer():
         m.E2E_LOOP_FEEDBACK_REPLY,
         m.E2E_LOOP_PROBE_PROMPT,
         # spec §13 A121
+        m.E2E_LOOP_CHECK_POSING_REPLY,
         m.E2E_LOOP_ANSWER_REPLY,
         m.E2E_LOOP_PROBE_OPENER,
         m.E2E_LOOP_PLAN_OPENER,

@@ -336,8 +336,10 @@ def seams():
         )
         ns.scope = p("_session_scope", return_value=("off-1", "c1"))
         ns.item = p("get_check_item", return_value=ITEM)
-        # spec §13 A121: the probe-phase opener's one read (check-in vs plan intro)
+        # spec §13 A121: the probe-phase opener's one read (check-in vs plan intro),
+        # and the loop_tutor_v2 flag — off, the default, unless a test turns it on
         ns.has_items = p("course_has_items", return_value=True)
+        ns.v2 = p("_tutor_v2_on", return_value=False)
         ns.list_items = p("list_items", return_value=[])
         ns.node = p("_node_for_item", return_value="node-1")
         ns.prereq = p("_prereq_proficient", return_value=True)
@@ -1087,8 +1089,7 @@ def test_leak_path_on_a_model_turn_serves_the_ladder_line_persists_it_and_emits(
         )
     done = _sse_events(r.text)[-1]["data"]
     assert (
-        # spec §13 A121: the grader's verdict line still leads, from code
-        done["reply"] == "Correct.\n\n" + LADDER_FALLBACK_LINES[3]
+        done["reply"] == LADDER_FALLBACK_LINES[3]
         and done["leak_redacted"] is True
         and done["phase"] == "feedback"
     )
@@ -1111,9 +1112,7 @@ def test_leak_path_on_a_model_turn_serves_the_ladder_line_persists_it_and_emits(
         and leak_kw["user_id"] == "u1"
     )
     assistant_row = [c for c in seams.save_msg.call_args_list if c.args[1] == "assistant"][0]
-    assert assistant_row.args[2] == "Correct.\n\n" + LADDER_FALLBACK_LINES[3], (
-        "the served line is what persists"
-    )
+    assert assistant_row.args[2] == LADDER_FALLBACK_LINES[3], "the served line is what persists"
     assert ITEM.reference_answer not in json.dumps(seams.zpd.emit_zpd_leak.call_args.kwargs)
 
 
@@ -1683,10 +1682,7 @@ def test_check_answer_wrong_releases_the_answer_in_the_feedback_turn(gate_on, se
 
     assert "[VERDICT: not_yet]" in seen["msg"] and _ANSWER_RELEASED in seen["msg"]
     assert ITEM.reference_answer not in seen["msg"], "m1: the model is never handed the answer"
-    # spec §13 A121: the verdict first, before anything else — then the answer (m1)
-    assert body["reply"].startswith("Not yet.\n\n" + released_lead(ITEM.reference_answer)), (
-        "served from code"
-    )
+    assert body["reply"].startswith(released_lead(ITEM.reference_answer)), "served from code"
     assert seams.detect.call_args.kwargs["rung"] == Rung.H6
     entry = seams.store["doc"]["steps"]["qh-1"]
     assert entry["wrong"] == 1 and entry["last_correct"] is False and entry["attempts"] == 1
@@ -2091,9 +2087,7 @@ def test_an_mc_reason_reply_is_leak_checked_with_its_correct_option(gate_on, sea
 
     assert seams.detect.call_args.kwargs["correct_option"] == "B"
     assert seams.zpd.emit_zpd_leak.call_args.kwargs["detector"] == "option"
-    reply = _sse_events(r.text)[-1]["data"]["reply"]
-    assert reply.startswith("Correct.\n\n")  # spec §13 A121: the verdict line leads
-    assert reply.removeprefix("Correct.\n\n") in LADDER_FALLBACK_LINES.values()
+    assert _sse_events(r.text)[-1]["data"]["reply"] in LADDER_FALLBACK_LINES.values()
 
 
 # ── The structured turn (PKG-07 unblock S1, lane A wiring) ────────────────
@@ -2112,16 +2106,11 @@ def test_a_model_turn_runs_with_turn_limits_and_serves_the_render(gate_on, seams
         body = client.post(
             "/api/learn/loop/chat", json={"session_id": "s1", "user_id": "u1", "message": "ok"}
         ).json()
-    from learning.turn_shape import TurnTemplate
     from routes.learn_loop import released_lead
 
-    # spec §13 A121: the verdict line, then the released answer (m1), from code;
-    # a feedback turn's key idea carries no "Key idea:" label (no new content)
-    assert body["reply"] == (
-        "Not yet.\n\n"
-        + released_lead(ITEM.reference_answer)
-        + render_turn(out, TurnTemplate(label=False))
-    ), "the released answer is served from code above the model's render (m1)"
+    assert body["reply"] == released_lead(ITEM.reference_answer) + render_turn(out), (
+        "the released answer is served from code above the model's render (m1)"
+    )
     deps = seen["kw"]["deps"]
     assert deps.loop_turn == turn_limits("feedback", Rung.H3, True)
 
@@ -2167,12 +2156,9 @@ def test_the_stream_is_the_structured_stream_with_a_leak_strip_transform(gate_on
     from routes.learn_loop import LADDER_FALLBACK_LINES
 
     xf, final = got["transform"], got["transform_final"]
-    # spec §13 A121: the grader's verdict line leads every streamed text, from code
-    lead = "Correct.\n\n"
-    assert xf("Fine. What next?") == lead + "Fine. What next?", "clean text passes untouched"
-    assert xf("Fine. " + ITEM.reference_answer) == lead + "Fine.", "the stream stops before a leak"
-    assert final(ITEM.reference_answer) == lead + LADDER_FALLBACK_LINES[3], "never masked in place"
-    assert xf("") == lead, "the verdict is the first thing the stream shows"
+    assert xf("Fine. What next?") == "Fine. What next?", "clean text passes untouched"
+    assert xf("Fine. " + ITEM.reference_answer) == "Fine.", "the stream stops before a leak"
+    assert final(ITEM.reference_answer) == LADDER_FALLBACK_LINES[3], "never masked in place"
     assert got["run_kwargs"]["deps"] is got["deps"] and got["deps"].loop_turn is not None
 
 

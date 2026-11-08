@@ -139,8 +139,5 @@ def test_teach_cases_are_served_unchanged():
     case = next(c for c in mod.CASES if c.name == "teach_profic_limits")
     out = {"key_idea": "The limit here is 1.", "body": "It approaches one.", "question": "Why?"}
     raw, served, turn = mod.served_texts(out, case.inputs, case.metadata)
-    # nothing stripped; spec §13 A121: an H1 teach turn brings no new content,
-    # so its key idea is served without the "Key idea:" label
-    assert served == turn == raw.removeprefix("Key idea: ")
-    assert "The limit here is 1." in served
+    assert raw == served == turn
     assert mod._leak_guard(case.inputs, case.metadata) is None

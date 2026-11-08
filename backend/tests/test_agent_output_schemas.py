@@ -28,13 +28,14 @@ Two layers:
 from __future__ import annotations
 
 import importlib
+import inspect
 import pkgutil
 
 import pytest
-from typing import is_typeddict
+from typing import get_origin, get_type_hints, is_typeddict
 
 from pydantic import BaseModel, TypeAdapter
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 
 import agents as agents_pkg
 from agents.document import DocumentProcessingResult
@@ -102,7 +103,8 @@ EXPECTED_STRUCTURED_AGENTS = {
     "grader_agent",  # learning loop PKG-05 (flat 7-field GraderOutput; grader + grader_second
     # slots; the span check's one-field SpanVerdicts is chosen per run, below)
     # learning loop PKG-07 unblock S1: the structured turn (flat 3-field LoopTurnOut
-    # TypedDict via PromptedOutput); its retries ARE the turn-shape validator's
+    # TypedDict via PromptedOutput, over an output function since A121); its
+    # retries ARE the turn-shape validator's
     "loop_tutor_agent",
     "note_concepts_agent",
     "note_summary_agent",
@@ -151,14 +153,35 @@ def _discover_agents() -> dict[str, Agent]:
 AGENTS = _discover_agents()
 
 
+def _function_output_model(fn) -> type:
+    """An output function's model: its one argument besides the RunContext,
+    which is the object pydantic-ai sends as the output schema. The loop tutor
+    validates its turn inside output functions (spec §13 A121), so a run can
+    pick the v2 variant's output type."""
+    hints = get_type_hints(fn)
+    args = [
+        hints[name]
+        for name in inspect.signature(fn).parameters
+        if get_origin(hints.get(name)) is not RunContext
+    ]
+    assert len(args) == 1, f"{fn.__name__} must take one output argument, got {args!r}"
+    assert hints.get("return") is args[0], (
+        f"{fn.__name__} must return the model it takes"
+    )
+    return args[0]
+
+
 def _output_model(agent: Agent) -> type | None:
     """The agent's declared output model (a BaseModel, or a TypedDict — the loop
     tutor's LoopTurnOut, so pydantic's partial validation can stream it),
-    unwrapping PromptedOutput; None for free-text (str) agents."""
+    unwrapping PromptedOutput and an output function; None for free-text (str)
+    agents."""
     output_type = agent.output_type
     # PromptedOutput wraps the model in `.outputs` (same attribute on 1.89
     # and 1.107).
     output_type = getattr(output_type, "outputs", output_type)
+    if inspect.isfunction(output_type):
+        output_type = _function_output_model(output_type)
     if isinstance(output_type, type) and issubclass(output_type, BaseModel):
         return output_type
     if is_typeddict(output_type):
@@ -311,6 +334,20 @@ def test_the_grader_span_checks_per_run_output_is_within_budget():
     from agents.grader import SpanVerdicts
 
     assert schema_violations(SpanVerdicts) == []
+
+
+def test_the_loop_tutors_answer_verdict_output_is_within_budget():
+    """spec §13 A121: with the `loop_tutor_v2` flag on, the loop tutor runs
+    with its own output type (agents.loop_tutor.LOOP_V2_OUTPUT, picked per
+    run by variant_run_args), which the roster walk above never sees, so it is
+    held to the same budget here."""
+    from agents.loop_tutor import LOOP_V2_OUTPUT, variant_run_args
+    from learning.turn_shape import LoopTurnOutV2
+
+    assert variant_run_args(True)["output_type"] is LOOP_V2_OUTPUT
+    model = _function_output_model(LOOP_V2_OUTPUT.outputs)
+    assert model is LoopTurnOutV2
+    assert schema_violations(model) == []
 
 
 def test_per_object_exceptions_are_exact():

@@ -146,12 +146,10 @@ def test_loop_agent_is_one_prompt_stack_with_two_read_tools():
         assert absent not in _LOOP_SYSTEM_PROMPT, absent
     assert "search_course_materials" in _LOOP_SYSTEM_PROMPT
     assert "read_graph_neighborhood" in _LOOP_SYSTEM_PROMPT
-    # spec §13 A121: the grader alone grades a CHECK ITEM; the tutor judges only a
-    # reply to its own question, and only when the phase block says so
-    prompt = _LOOP_SYSTEM_PROMPT.lower()
-    assert "never grade a check item yourself" in prompt
-    assert "[answer check]" in prompt and "never a check item" in prompt
-    assert "with neither line, nothing has been judged this turn" in prompt
+    # spec §13 A121: the default prompt is 7fa9cd0e's, rule for rule; only the
+    # flag-on run instructions narrow it (tests/test_loop_tutor_v2.py)
+    assert "never grade the student yourself" in _LOOP_SYSTEM_PROMPT.lower()
+    assert "[ANSWER CHECK]" not in _LOOP_SYSTEM_PROMPT
     assert set(loop_tutor_agent._function_toolset.tools.keys()) == {
         "search_course_materials",
         "read_graph_neighborhood",
@@ -228,12 +226,16 @@ def test_phase_prefix_has_no_reference_parameter():
         "item_format",
         "answer_released",
         "verdict",
-        # spec §13 A121: two booleans (the turn template's directives), no text
+        # spec §13 A121: three booleans (the variant and its two directives), and
+        # the plan focus's REASON — a key of PLAN_FOCUS_REASONS, never text: the
+        # concept's name rides the plan_concept untrusted block, not the prefix
+        "v2",
         "poses_check",
         "answer_check",
+        "plan_reason",
     }
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
-    assert params["poses_check"].default is False and params["answer_check"].default is False
+    assert all(params[k].default is False for k in ("v2", "poses_check", "answer_check"))
 
 
 def test_phase_prefix_verdict_and_release_only_in_feedback():
@@ -472,9 +474,9 @@ def test_loop_eval_evaluators_score_the_served_path():
 
 def test_loop_eval_serves_through_the_production_path():
     """Replay recomputes the served text: production render_turn, then the
-    route's served_render (spec §13 A121's template) and served_model_text at
-    the route's loop_leak_rung, code's lead (the feedback verdict line, then the
-    released answer) in front."""
+    route's served_model_text at the route's loop_leak_rung — the default
+    variant's, which is 7fa9cd0e's served text for every case (spec §13 A121:
+    the rung judgements are keyed on it)."""
     from learning.leak import WITHHELD
     from learning.turn_shape import render_turn
 
@@ -484,7 +486,7 @@ def test_loop_eval_serves_through_the_production_path():
         "body": "No further call happens.",
         "question": "Why does that end the chain?",
     }
-    from routes.learn_loop import released_lead, served_render
+    from routes.learn_loop import released_lead
 
     case = next(c for c in mod.CASES if c.name == "hint_develop_h1_pump")
     leaky = {**out, "body": "At n == 0 the function returns 1."}
@@ -497,20 +499,14 @@ def test_loop_eval_serves_through_the_production_path():
     )
     released = next(c for c in mod.CASES if c.metadata.get("answer_released"))
     raw, served, turn = mod.served_texts(out, released.inputs, released.metadata)
-    # A121: a feedback turn carries no "Key idea:" label; otherwise unstripped at H6
-    assert turn == raw.removeprefix("Key idea: "), "a released answer is served at H6, unstripped"
-    assert served == "Not yet.\n\n" + released_lead(released.metadata["reference"]) + turn, (
-        "the verdict line (A121), then the released answer, are served from code above the turn (m1)"
+    assert turn == raw == render_turn(out), "a released answer is served at H6, unstripped"
+    assert served == released_lead(released.metadata["reference"]) + raw, (
+        "the released answer is served from code above the turn (m1)"
     )
-    # m4: a teach turn has no active item in production, so nothing is stripped;
-    # A121: its label follows the rung (the first teach case is an H5 novice turn)
-    teach = next(c for c in mod.CASES if c.inputs[0] == "teach")
-    raw, served, turn = mod.served_texts(out, teach.inputs, teach.metadata)
-    assert served == turn == raw == render_turn(out)
-    h1 = next(c for c in mod.CASES if c.inputs[0] == "teach" and c.inputs[2] <= 1)
-    raw, served, turn = mod.served_texts(out, h1.inputs, h1.metadata)
-    assert served == turn == served_render(out, phase="teach", rung=h1.inputs[2])
-    assert not served.startswith("Key idea:"), "an H0/H1 teach turn brings no new content"
+    # m4: a teach turn has no active item in production, so nothing is stripped
+    for teach in (c for c in mod.CASES if c.inputs[0] == "teach"):
+        raw, served, turn = mod.served_texts(out, teach.inputs, teach.metadata)
+        assert served == turn == raw == render_turn(out), teach.name
 
 
 def test_loop_tutor_cassettes_match_the_current_prompt_schema_and_model():
@@ -601,8 +597,15 @@ def test_loop_agent_output_is_prompted_turn():
     from agents.loop_tutor import LOOP_OUTPUT_RETRIES, loop_tutor_agent
     from learning.turn_shape import LoopTurnOut
 
+    import inspect
+
     assert isinstance(loop_tutor_agent.output_type, PromptedOutput)
-    assert loop_tutor_agent.output_type.outputs is LoopTurnOut
+    # spec §13 A121: an output function over LoopTurnOut (the validator runs in
+    # it, so a flag-on run may pick its own output type), named LoopTurnOut
+    fn = loop_tutor_agent.output_type.outputs
+    assert inspect.signature(fn).parameters["turn"].annotation in (LoopTurnOut, "LoopTurnOut")
+    assert loop_tutor_agent.output_type.name == "LoopTurnOut"
+    assert not loop_tutor_agent._output_validators
     assert LOOP_OUTPUT_RETRIES == 2
     assert loop_tutor_agent._max_output_retries == LOOP_OUTPUT_RETRIES
     one_tool_round = 2  # the tool-calling request + the request that answers
