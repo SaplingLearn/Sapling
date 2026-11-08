@@ -5,6 +5,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // next.config picks the licensed module at build time; tests always use the stand-in.
+      '@gummi-font': path.resolve(__dirname, './src/app/fonts/gummi.fallback.ts'),
     },
   },
   test: {

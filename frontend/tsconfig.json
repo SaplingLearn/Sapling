@@ -25,6 +25,9 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@gummi-font": [
+        "./src/app/fonts/gummi.fallback.ts"
       ]
     }
   },

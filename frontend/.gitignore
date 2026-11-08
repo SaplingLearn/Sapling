@@ -16,3 +16,7 @@ playwright-report/
 e2e/.auth/
 e2e/results/
 
+
+# Commercially licensed fonts (Gummi) — fetched at build time by
+# scripts/fetch-licensed-fonts.mjs; never commit them (this repo is public).
+src/app/fonts/licensed/
