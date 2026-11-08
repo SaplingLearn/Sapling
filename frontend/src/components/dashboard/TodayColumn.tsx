@@ -429,46 +429,14 @@ export function TodayColumn(props: {
         </div>
       </div>
 
-      {/* Today's plan */}
-      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
-          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
-          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
-        </div>
-        <div
-          role="progressbar"
-          aria-label="Today's plan"
-          aria-valuemin={0}
-          aria-valuemax={checkable.length}
-          aria-valuenow={doneCount}
-          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
-        >
-          <div
-            style={{
-              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
-              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
-              transition: "width var(--dur) var(--ease)",
-            }}
-          />
-        </div>
-        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
-            below don't jump as the plan fills up. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
-          {plan.map((item) => (
-            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
-          ))}
-        </div>
-      </div>
-
       {/* Mastery */}
-      {/* flex: 1 — the last card takes the rest of the column, so the column
-          runs the full height of the graph beside it. */}
+      {/* flex: 1 — this card takes the column's spare height, so the column
+          runs the full height of the graph beside it (its course rows spread
+          into it). Today's plan sits below it, at its natural height. */}
       <div
         className="card"
         data-testid="dashboard-mastery"
-        // 28px at the bottom keeps the last course bar above the floating
-        // report button, which is pinned over this card's bottom-right corner.
-        style={{ padding: "16px 18px 28px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
           {stats.total > 0 ? (
@@ -552,6 +520,39 @@ export function TodayColumn(props: {
             {courseRows}
           </div>
         )}
+      </div>
+
+      {/* Today's plan */}
+      {/* Last card: 28px at the bottom keeps its last item above the floating
+          report button, which is pinned over the column's bottom-right corner. */}
+      <div className="card" data-testid="dashboard-plan" style={{ padding: "16px 18px 28px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+          <span data-testid="dashboard-plan-progress">{doneCount} of {checkable.length} done today</span>
+          <span>{today.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label="Today's plan"
+          aria-valuemin={0}
+          aria-valuemax={checkable.length}
+          aria-valuenow={doneCount}
+          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
+        >
+          <div
+            style={{
+              height: "100%", borderRadius: 99, background: "var(--state-mastery)",
+              width: `${checkable.length ? (doneCount / checkable.length) * 100 : 0}%`,
+              transition: "width var(--dur) var(--ease)",
+            }}
+          />
+        </div>
+        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
+            below don't jump as the plan fills up. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
+          {plan.map((item) => (
+            <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
+          ))}
+        </div>
       </div>
     </div>
   );
