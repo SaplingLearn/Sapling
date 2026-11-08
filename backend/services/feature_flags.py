@@ -79,6 +79,17 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # "on", so analytics stays on wherever it already was.
     FlagDef("product_analytics", ("off", "on"),
             "PostHog product analytics, frontend + backend (ADR 0028).", True),
+    # Learning loop spec §13 A118: the WRITE half of upload prerequisite
+    # edges (services/concept_prereqs.py). The extraction always carries the
+    # relations; this decides, per student, whether an upload writes them.
+    # Server-only: the write happens inside the upload routes.
+    FlagDef("upload_prereq_edges", ("off", "on"),
+            "Uploads write prerequisite edges between the concepts they extract "
+            "(and to the course's earlier concepts), validated in code (A118). On "
+            "changes learning dynamics for upload-built graphs: one-hop evidence "
+            "propagation, prerequisite bands and wheelspin repair, the novice exit "
+            "and the planner's outer fringe start acting on them, so plan order "
+            "follows prerequisites. Off: uploads write concept nodes only.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

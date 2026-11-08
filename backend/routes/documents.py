@@ -49,11 +49,12 @@ from services.check_item_service import (
     queue_generation_for_document,
     retire_items_for_documents,
 )
+from services.concept_prereqs import course_concept_names, write_document_prerequisites
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
 from agents.summary import summary_agent
-from agents.concept_extraction import concept_extraction_agent
+from agents.concept_extraction import build_message as concept_message, concept_extraction_agent
 from agents.syllabus_extraction import syllabus_extraction_agent
 from agents.deps import SaplingDeps
 from agents.document import process_document, DocumentProcessingResult
@@ -1036,11 +1037,18 @@ async def upload_document(
                         + (" and syllabus" if classification.is_syllabus else "")
                         + " in parallel...",
             ))
+            # A118: the course's existing concept names ride in the concept
+            # message as possible prerequisite endpoints (a threaded read;
+            # never raises — no context just means the text alone).
+            existing_concepts = await asyncio.to_thread(
+                course_concept_names, user_id, course_id,
+            )
             summary_task = summary_agent.run(
                 extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
             )
             concepts_task = concept_extraction_agent.run(
-                extracted_text, deps=deps, usage_limits=WORKER_LIMITS,
+                concept_message(extracted_text, existing_concepts),
+                deps=deps, usage_limits=WORKER_LIMITS,
             )
             if classification.is_syllabus:
                 syllabus_task = syllabus_extraction_agent.run(
@@ -1073,6 +1081,12 @@ async def upload_document(
             concept_names = [c.name for c in concepts.concepts]
             merged = await apply_concepts_to_graph(user_id, course_id, concept_names)
             graph_updated = merged > 0
+            # A118: the extraction's prerequisite relations, validated in code
+            # and written as edges once the nodes exist — only behind the
+            # upload_prereq_edges flag. Best-effort (never raises), threaded.
+            await asyncio.to_thread(
+                write_document_prerequisites, user_id, course_id, concepts,
+            )
             yield sapling_event_to_sse(SaplingEvent(
                 type="progress", step="graph_updated",
                 message=f"Merged {merged} concept(s).",
