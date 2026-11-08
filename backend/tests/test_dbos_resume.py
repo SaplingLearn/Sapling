@@ -204,8 +204,7 @@ def test_shim_resume_minimal_workflow(tmp_path):
 # `@durable_workflow`/`@durable_step` changes durability, not behavior.
 #
 # What this does NOT prove: this stubs `apply_concepts_to_graph` (the one
-# real-Supabase side effect inside process_document; spec A118 added a read
-# and a flag-gated write beside it, stubbed alike) rather than running
+# real-Supabase side effect inside process_document) rather than running
 # against the live local stack + seeded course/user rows -- wiring that
 # full stack through a subprocess was disproportionate to what this test is
 # for (see the module docstring). The HTTP-route-level, real-DB behavior
@@ -235,11 +234,6 @@ from agents.deps import SaplingDeps
 # The only real-Supabase side effect inside process_document -- stubbed so
 # this test needs nothing but DBOS's own Postgres (see module comment above).
 document_module.apply_concepts_to_graph = AsyncMock(return_value=0)
-# Spec A118's two Supabase touches, stubbed for the same reason: the
-# extraction message's existing-concepts read and the flag-gated
-# prerequisite-edge write (both module globals, looked up per call).
-document_module.course_concept_names = lambda user_id, course_id: []
-document_module.write_document_prerequisites = lambda user_id, course_id, concepts: 0
 
 durable.init_dbos()
 
@@ -443,10 +437,6 @@ async def _fake_apply_concepts_to_graph(user_id, course_id, concept_names):
 document_module.apply_concepts_to_graph = AsyncMock(
     side_effect=_fake_apply_concepts_to_graph
 )
-# Spec A118's existing-concepts read and prerequisite-edge write -- stubbed
-# like test_pipeline_identical_with_dbos_on above.
-document_module.course_concept_names = lambda user_id, course_id: []
-document_module.write_document_prerequisites = lambda user_id, course_id, concepts: 0
 
 durable.init_dbos()
 

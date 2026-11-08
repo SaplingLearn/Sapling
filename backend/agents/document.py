@@ -3,9 +3,14 @@
 Coordinates classification, summary, concept extraction, and (when
 applicable) syllabus extraction, then merges results into the user's
 course graph via `_step_apply_graph`, a durable step that calls
-`apply_concepts_to_graph`, and `_step_apply_prereqs`, which writes the
-extraction's prerequisite relations as edges behind the
-`upload_prereq_edges` flag (spec §13 A118).
+`apply_concepts_to_graph`.
+
+Spec §13 A118: `process_document(..., prerequisites=)` carries the upload's
+single resolution of the `upload_prereq_edges` flag (the route resolves it;
+False wherever no student is known). False runs exactly the pre-A118 steps
+and requests. True extracts with the prerequisite variant (and the course's
+existing concepts as context), then `_step_apply_prereqs` writes the
+relations as edges.
 
 There is no orchestrator agent here: the graph merge is a deterministic
 function call with concept names already produced by the workers, so
@@ -16,9 +21,9 @@ Concurrency model:
   asyncio.gather.
 - Classification runs first because it gates whether syllabus
   extraction runs at all.
-- The graph update runs as durable steps (`_step_apply_graph`, then
-  `_step_apply_prereqs`) after workers complete, so a DBOS resume does not
-  re-run the merge.
+- The graph update runs as durable steps (`_step_apply_graph`, then — only
+  with prerequisites on — `_step_apply_prereqs`) after workers complete, so a
+  DBOS resume does not re-run the merge.
 
 Failure contract (ADR 0024 — this pipeline is the ONLY upload pipeline;
 ADR 0001's legacy fallback was retired in #151b):
@@ -53,13 +58,17 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializeAsAny
 
 from agents import WORKER_LIMITS
 from agents.deps import SaplingDeps
 from agents.classifier import classifier_agent, DocumentClassification
 from agents.summary import summary_agent, Summary
-from agents.concept_extraction import build_message, concept_extraction_agent, ConceptList
+from agents.concept_extraction import (
+    BaseConceptList,
+    concept_extraction_agent,
+    extraction_run_args,
+)
 from agents.syllabus_extraction import syllabus_extraction_agent, SyllabusAssignments
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
@@ -72,7 +81,11 @@ class DocumentProcessingResult(BaseModel):
 
     classification: DocumentClassification
     summary: Summary
-    concepts: ConceptList
+    # A118: the flag-off extraction returns the pre-A118 shape (BaseConceptList)
+    # and the flag-on one a ConceptList with `prerequisites`. SerializeAsAny
+    # dumps whichever it holds, so a flag-off result serializes exactly as
+    # before and a flag-on one carries its relations.
+    concepts: SerializeAsAny[BaseConceptList]
     syllabus: SyllabusAssignments | None = Field(
         default=None,
         description="Populated only when classification.is_syllabus is True.",
@@ -87,7 +100,7 @@ class DocumentProcessingResult(BaseModel):
 class _WorkerResults:
     classification: DocumentClassification
     summary: Summary
-    concepts: ConceptList
+    concepts: BaseConceptList
     syllabus: SyllabusAssignments | None
 
 
@@ -115,15 +128,25 @@ async def _step_summary(text: str, deps: SaplingDeps) -> Summary:
 
 
 @durable_step
-async def _step_concepts(text: str, deps: SaplingDeps) -> ConceptList:
-    # A118: the course's existing concept names ride in the message as
-    # possible prerequisite endpoints. Read inside the step, so a DBOS resume
-    # replays the checkpointed output instead of re-reading. Module-global
-    # name, looked up per call (see _step_apply_graph on why that matters).
-    existing = await asyncio.to_thread(course_concept_names, deps.user_id, deps.course_id)
+async def _step_concepts(
+    text: str, deps: SaplingDeps, prerequisites: bool = False,
+) -> BaseConceptList:
+    # A118: `prerequisites` is the upload's one flag resolution. Off: the
+    # pre-A118 request, and no read of the course's concepts. On: they ride in
+    # the message as possible prerequisite endpoints — read inside the step, so
+    # a DBOS resume replays the checkpointed output instead of re-reading.
+    # Module-global names, looked up per call (see _step_apply_graph on why
+    # that matters).
+    existing = (
+        await asyncio.to_thread(course_concept_names, deps.user_id, deps.course_id)
+        if prerequisites else ()
+    )
     result = record_agent_usage(
         await concept_extraction_agent.run(
-            build_message(text, existing), deps=deps, usage_limits=WORKER_LIMITS,
+            **extraction_run_args(
+                text, prerequisites=prerequisites, existing_concepts=existing,
+            ),
+            deps=deps, usage_limits=WORKER_LIMITS,
         ),
         feature="document", task="concepts", user_id=deps.user_id,
     )
@@ -169,17 +192,19 @@ async def _step_apply_graph(
 
 @durable_step
 async def _step_apply_prereqs(
-    user_id: str, course_id: str | None, concepts: ConceptList,
+    user_id: str, course_id: str | None, concepts: BaseConceptList,
 ) -> int:
     """A118: write the extraction's prerequisite relations as edges, AFTER the
-    node merge (`_step_apply_graph`) so the concepts are in scope. Gated by
-    the `upload_prereq_edges` flag and best-effort inside
+    node merge (`_step_apply_graph`) so the concepts are in scope. Reached
+    only with prerequisites on (process_document); best-effort inside
     `write_document_prerequisites` (never raises). Durable for the same reason
     as the merge; called by its module-global name, so a test can stub it."""
     return await asyncio.to_thread(write_document_prerequisites, user_id, course_id, concepts)
 
 
-async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
+async def _run_workers(
+    text: str, deps: SaplingDeps, prerequisites: bool = False,
+) -> _WorkerResults:
     """Run classification first, then fan out the other workers in parallel.
 
     Syllabus extraction only runs if classification flagged the document
@@ -192,7 +217,7 @@ async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
     classification = await _step_classify(text, deps)
 
     summary_task = _step_summary(text, deps)
-    concepts_task = _step_concepts(text, deps)
+    concepts_task = _step_concepts(text, deps, prerequisites)
     syllabus_task = _step_syllabus(text, deps) if classification.is_syllabus else None
 
     if syllabus_task is not None:
@@ -211,10 +236,18 @@ async def _run_workers(text: str, deps: SaplingDeps) -> _WorkerResults:
 
 
 @durable_workflow
-async def process_document(text: str, deps: SaplingDeps) -> DocumentProcessingResult:
+async def process_document(
+    text: str, deps: SaplingDeps, *, prerequisites: bool = False,
+) -> DocumentProcessingResult:
     """Run workers in parallel, then merge concepts into the graph via the
-    durable `_step_apply_graph`, then their prerequisite edges via
-    `_step_apply_prereqs` (A118, flag-gated).
+    durable `_step_apply_graph`.
+
+    `prerequisites` (A118) is the upload's single resolution of the
+    upload_prereq_edges flag, made by the route before calling this — a
+    workflow input, so a DBOS resume replays the same answer. False (the
+    default, and wherever no student is known) runs exactly the pre-A118
+    pipeline. True extracts with the prerequisite variant and then writes the
+    relations as edges via `_step_apply_prereqs`.
 
     DocumentProcessingResult is composed deterministically here from worker
     outputs. The graph merge has no orchestrator agent — no decisions to
@@ -226,10 +259,11 @@ async def process_document(text: str, deps: SaplingDeps) -> DocumentProcessingRe
     DBOS_ENABLED is unset (the default), a real DBOS workflow when the
     operator opts in. See ADR 0011 for the activation procedure.
     """
-    workers = await _run_workers(text, deps)
+    workers = await _run_workers(text, deps, prerequisites)
     concept_names = [c.name for c in workers.concepts.concepts]
     merged = await _step_apply_graph(deps.user_id, deps.course_id, concept_names)
-    await _step_apply_prereqs(deps.user_id, deps.course_id, workers.concepts)
+    if prerequisites:
+        await _step_apply_prereqs(deps.user_id, deps.course_id, workers.concepts)
     return DocumentProcessingResult(
         classification=workers.classification,
         summary=workers.summary,

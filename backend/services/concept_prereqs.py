@@ -8,16 +8,21 @@ policy bands and wheelspin prerequisite repair, the novice exit to the lowest
 prerequisite, and the planner's KST outer fringe (learning/planner.py), which
 then ordered the deck's concepts by node id.
 
-The concept extraction agent (agents/concept_extraction.py) now also names
-direct (prerequisite, dependent) relations between the concepts it extracted
-and, optionally, the course's existing concepts (listed in its message by
+Everything here sits behind the `upload_prereq_edges` flag, resolved ONCE per
+upload, for the uploading student, by `upload_prereqs_on` (the upload route
+calls it before extraction and passes the answer down; nothing re-reads it).
+Off — and wherever no student is known — an upload is byte-identical to
+before A118: the pre-A118 extraction request, no `course_concept_names` read,
+no edge write. On, the concept extraction agent's prerequisite variant
+(agents/concept_extraction.py::extraction_run_args) also names direct
+(prerequisite, dependent) relations between the concepts it extracted and,
+optionally, the course's existing concepts (listed in its message from
 `course_concept_names`). Nothing the model sends is trusted as an identity or
 a bound: `resolve_prerequisites` applies the rules below in code, and
 `write_document_prerequisites` writes what survives through
 services/graph_service.py::apply_graph_update as `prerequisite` edges oriented
 by learning.params.EDGE_PREREQ_SOURCE_IS_PREREQ — the direction propagation,
-`_prereq_proficient` and the planner read. Only the WRITE is gated, by the
-`upload_prereq_edges` flag; the extraction always carries the relations.
+`_prereq_proficient` and the planner read.
 
 Resolution rules (pure, deterministic):
 
@@ -83,11 +88,12 @@ from services.feature_flags import flag_on
 from services.graph_service import _normalize_concept, apply_graph_update
 
 if TYPE_CHECKING:
-    from agents.concept_extraction import ConceptList
+    from agents.concept_extraction import BaseConceptList
 
 logger = logging.getLogger(__name__)
 
-#: The flag that gates the edge WRITE (services/feature_flags.py::REGISTRY).
+#: The flag that gates the prerequisite extraction variant AND the edge write
+#: (services/feature_flags.py::REGISTRY); read only through upload_prereqs_on.
 UPLOAD_PREREQ_EDGES_FLAG = "upload_prereq_edges"
 
 #: † At most this many NEW prerequisite edges per document (rule 8). A typical
@@ -247,13 +253,23 @@ def edge_payload(prerequisite: str, dependent: str) -> dict:
     }
 
 
+def upload_prereqs_on(user_id: str | None) -> bool:
+    """The upload_prereq_edges flag for the uploading student (A118).
+
+    Resolved ONCE per upload, before extraction, by the upload route, which
+    passes the answer down: it picks the extraction variant, the
+    course-concepts read and the edge write, so one upload never sees two
+    answers. No student → off, whatever the stored default says. Blocking on
+    a cold flag cache: call it off the event loop."""
+    return bool(user_id) and flag_on(UPLOAD_PREREQ_EDGES_FLAG, user_id)
+
+
 def course_concept_names(user_id: str, course_id: str | None) -> list[str]:
-    """The existing concept names the extraction message lists (A118): the
-    EXISTING_CONCEPTS_PROMPT_MAX most recently created nodes of this student's
-    course graph — a document's DIRECT prerequisites are most often the
-    material just before it. Context, never a gate: a failed read is logged
-    and reads as none, and the extraction then runs on the text alone, exactly
-    as before A118."""
+    """The existing concept names the flag-on extraction message lists (A118):
+    the EXISTING_CONCEPTS_PROMPT_MAX most recently created nodes of this
+    student's course graph — a document's DIRECT prerequisites are most often
+    the material just before it. Read only when upload_prereqs_on said yes.
+    Context, never a gate: a failed read is logged and reads as none."""
     if not user_id or not course_id:
         return []
     try:
@@ -335,28 +351,27 @@ def _log_outcome(user_id: str, course_id: str, res: PrereqResolution) -> None:
 
 
 def write_document_prerequisites(
-    user_id: str, course_id: str | None, concepts: ConceptList,
+    user_id: str, course_id: str | None, concepts: BaseConceptList,
 ) -> int:
     """Write one document's prerequisite edges (A118); returns how many new
     edges were written.
 
-    Runs after the upload merged the document's concepts as nodes, so they are
-    in scope. Gated by the `upload_prereq_edges` flag (per student); off, it
-    reads and writes nothing. Best-effort, like any enrichment of an upload
-    that already succeeded: a failure is logged and returns 0, never raised —
-    a re-upload writes what is missing, idempotently. Blocking I/O: call it
-    off the event loop."""
+    The upload route calls it only when its one upload_prereqs_on resolution
+    said yes — it never reads the flag itself. Runs after the upload merged the
+    document's concepts as nodes, so they are in scope. Best-effort, like any
+    enrichment of an upload that already succeeded: a failure is logged and
+    returns 0, never raised — a re-upload writes what is missing,
+    idempotently. Blocking I/O: call it off the event loop."""
     relations = [
         (r.prerequisite, r.dependent)
-        # getattr: a ConceptList checkpointed by DBOS before A118 has no field.
+        # getattr: the flag-off BaseConceptList (and a DBOS checkpoint taken
+        # before A118) carries no relations.
         for r in (getattr(concepts, "prerequisites", None) or [])
     ]
     # No course, no scope: the upload routes always send one (a required form
     # field), and an unscoped apply_graph_update would resolve names across
     # every course the student has.
     if not relations or not user_id or not course_id:
-        return 0
-    if not flag_on(UPLOAD_PREREQ_EDGES_FLAG, user_id):
         return 0
     try:
         with _lock_for(user_id, course_id):

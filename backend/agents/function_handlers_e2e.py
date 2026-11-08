@@ -227,8 +227,10 @@ E2E_DOC_CONCEPTS = [
 # Spec §13 A118: the scripted (prerequisite, dependent) relations — the step
 # size only means something once the descent it scales is understood. Every
 # name is one of E2E_DOC_CONCEPTS, so services/concept_prereqs.py resolves the
-# set with zero drops (tests/test_e2e_function_handlers.py pins that). Written
-# as a prerequisite edge only behind the upload_prereq_edges flag:
+# set with zero drops (tests/test_e2e_function_handlers.py pins that). One
+# payload serves both extraction variants: the flag-off output schema (the
+# pre-A118 BaseConceptList) ignores the key, the flag-on ConceptList reads it.
+# Written as a prerequisite edge only behind the upload_prereq_edges flag:
 # frontend/e2e/upload.spec.ts asserts none with the flag off (the lane's
 # default) and exactly this one, oriented, with it on. Keep all three in sync.
 E2E_DOC_PREREQUISITES = [("Gradient Descent", "Learning Rate")]

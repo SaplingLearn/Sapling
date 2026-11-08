@@ -60,8 +60,9 @@ const SCRIPTED_CATEGORY = "lecture_notes";
 const SCRIPTED_ABSTRACT_SNIPPET = "deterministic fixture content";
 const SCRIPTED_CONCEPTS = ["Gradient Descent", "Learning Rate"];
 // E2E_DOC_PREREQUISITES (learning-loop spec §13 A118): [prerequisite,
-// dependent]. Written as a prerequisite edge only when the uploader has the
-// upload_prereq_edges flag on — off in this lane unless a journey turns it on.
+// dependent]. Only an uploader with the upload_prereq_edges flag on gets the
+// prerequisite extraction (which reads them) and the edge write — off in this
+// lane unless a journey turns it on.
 const SCRIPTED_PREREQUISITES = [["Gradient Descent", "Learning Rate"]];
 
 const USER_ADMIN = "rich-user-admin"; // seeded with the admin role
@@ -272,9 +273,9 @@ test("upload → SSE → document appears in library and Postgres", async ({
   expect(nodes.map((n) => n.concept_name as string).sort()).toEqual(
     [...SCRIPTED_CONCEPTS].sort(),
   );
-  // A118: the scripted concepts carry a prerequisite relation, but the edge
-  // WRITE is behind upload_prereq_edges — off here (no flag row) — so this
-  // upload wrote nodes only. The flag-on journey is at the end of the file.
+  // A118: upload_prereq_edges is off here (no flag row), so the upload ran
+  // the pre-A118 extraction (the scripted relation is ignored) and wrote
+  // nodes only. The flag-on journey is at the end of the file.
   expect(await scriptedPrerequisiteEdges()).toEqual([]);
 
   // ── Document appears in the library ───────────────────────────────────

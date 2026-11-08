@@ -5,39 +5,55 @@ zero `graph_edges`, and a learning plan that put Collision Resolution first and
 Hash Table / Hash Function 3rd and 5th — the planner's fringe falls back to node
 id order when there are no prerequisites. Pins, in order:
 
-- the extraction output: the relation list is a default-empty field with a LOCAL
-  cap (clip, never a retry), and the message lists the course's concepts;
+- the flag: `upload_prereq_edges` is resolved ONCE per upload, for the
+  uploading student (off with no student), and passed down;
+- the extraction: flag off, the model request is byte-identical to the
+  pre-A118 one (system prompt, schema, message — pinned) and nothing reads the
+  course's concepts; flag on, the prerequisite instructions, schema and
+  course-concepts context. The relation list is a default-empty field with a
+  LOCAL cap (clip, never a retry);
 - `resolve_prerequisites`: scope, self-loops, the document rule, duplicates,
   already-present edges, the canonical-order cycle break, the transitive
   reduction and the per-document cap;
-- `write_document_prerequisites`: flag off writes (and reads) nothing; flag on
-  writes through `apply_graph_update`, oriented by EDGE_PREREQ_SOURCE_IS_PREREQ;
-  a re-upload is idempotent; the write is serialized per (student, course);
-- both upload routes wire the read and the write;
+- `write_document_prerequisites`: writes through `apply_graph_update`, oriented
+  by EDGE_PREREQ_SOURCE_IS_PREREQ, without reading the flag; a re-upload is
+  idempotent; the write is serialized per (student, course);
+- both upload routes wire the resolution, the variant and the write;
 - the planner orders a prerequisite before its dependent once the edges exist.
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import io
 import itertools
+import json
 import logging
 from collections import defaultdict
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 
 import services.concept_prereqs as cp
+from agents import WORKER_LIMITS
+from agents._providers import clear_function_handlers, model_for, register_function_handler
 from agents.concept_extraction import (
     EXISTING_CONCEPTS_PROMPT_MAX,
     MAX_PREREQUISITE_RELATIONS,
+    PREREQUISITE_INSTRUCTIONS,
+    BaseConceptList,
     Concept,
     ConceptList,
     PrerequisiteRelation,
     build_message,
+    concept_extraction_agent,
+    extraction_run_args,
 )
+from agents.deps import SaplingDeps
 from learning import planner
 from learning.params import BKT_L0, BKT_PROFICIENT
 from main import app
@@ -46,6 +62,29 @@ client = TestClient(app)
 
 FLAG_ENV = "SAPLING_FLAG_UPLOAD_PREREQ_EDGES"
 USER, COURSE = "u1", "c-1"
+
+# The concept extraction request as it was before A118, captured from
+# cf9dc75c (the commit before it) by running that agent in function mode: the
+# flag-off variant must send exactly this. Change these only with a recorded
+# eval behind the change.
+PRE_A118_SYSTEM_PROMPT = (
+    "You extract key concepts from a student document. Each concept becomes a "
+    "node in the student's knowledge graph and must read as a standalone topic."
+    "\n\n- name: short Title Case noun phrase ('Linear Regression', 'Big-O "
+    "Analysis'). Never a problem number, week label, or administrative item.\n"
+    "- description: 1-2 sentences in the document's context.\n"
+    "- importance in [0, 1]; order the list by importance desc.\n"
+    "- 1-30 concepts. Prefer 4-12 for lectures/readings/study guides, up to ~15 "
+    "for whole-course syllabi, 1-8 for narrow assignments."
+)
+PRE_A118_PROMPT_SHA256 = "80a7962e078a1faeddfb6b66227853f8fb43f707ad47499a9ea77c4c2a35957b"
+PRE_A118_PROMPT_VERSION = "80a7962e078a"  # the agent metadata: the sha's first 12
+PRE_A118_OUTPUT_TOOL = ("final_result", "The final response which ends this conversation")
+# sha256 of the output tool's JSON schema (json.dumps, sort_keys=True).
+PRE_A118_SCHEMA_SHA256 = "28cd48497ca87a194eb030d792e56453c582e4985769938571da1bcf1f21763f"
+# The flag-on instructions, pinned so an edit to them is a deliberate one.
+PREREQUISITE_INSTRUCTIONS_SHA256 = "ce6710fb00f9aa7fe8e3ecd278d30e57a9a54cafc1731ebf7f2fc5189e8d14ee"
+PREREQ_PROMPT_VERSION = "5703f01ef1f6"  # sha256(system prompt + "\n\n" + instructions)[:12]
 
 # The walkthrough deck: (name, importance as the extraction scored it, node id).
 # The ids sort Collision Resolution 1st, Hash Table 3rd and Hash Function 5th —
@@ -212,6 +251,137 @@ def _named_edges(fake: _FakeDB) -> set[tuple[str, str]]:
         (names[e["source_node_id"]], names[e["target_node_id"]])
         for e in fake.edges() if e["relationship_type"] == "prerequisite"
     }
+
+
+# ── The flag: one resolution per upload ──────────────────────────────────────
+
+
+@pytest.fixture
+def flag_reads(monkeypatch):
+    """Every resolution of upload_prereq_edges, by user id: a spy on
+    feature_flags.explain, which every flag_on/flag_variant goes through."""
+    from services import feature_flags as ff
+
+    real, reads = ff.explain, []
+
+    def spy(key, user_id, *args, **kwargs):
+        if key == cp.UPLOAD_PREREQ_EDGES_FLAG:
+            reads.append(user_id)
+        return real(key, user_id, *args, **kwargs)
+
+    monkeypatch.setattr(ff, "explain", spy)
+    return reads
+
+
+def test_the_flag_is_per_student_and_off_without_one(monkeypatch, flag_reads):
+    from services import feature_flags as ff
+
+    monkeypatch.setenv(FLAG_ENV, "on")
+    assert cp.upload_prereqs_on("u1") is True
+    # No student is known: off, without even asking the flag store.
+    assert cp.upload_prereqs_on(None) is False
+    assert cp.upload_prereqs_on("") is False
+    assert flag_reads == ["u1"]
+
+    monkeypatch.delenv(FLAG_ENV)
+    snap = ff.Snapshot(  # default on, one user ruled off
+        flags={"upload_prereq_edges": {"key": "upload_prereq_edges", "default_variant": "on",
+                                       "rollout_percent": 0, "rollout_variant": None}},
+        targets={"upload_prereq_edges": [{"flag_key": "upload_prereq_edges", "target_type": "user",
+                                          "target_id": "u-out", "variant": "off"}]},
+    )
+    monkeypatch.setattr(ff, "_get_snapshot", lambda fresh=False: snap)
+    assert cp.upload_prereqs_on("u1") is True
+    assert cp.upload_prereqs_on("u-out") is False
+    assert cp.upload_prereqs_on(None) is False  # a stored default never reaches no-one
+
+
+# ── The extraction request, per variant ──────────────────────────────────────
+
+_TEXT = (
+    "Hash tables. This sample body gives the upload fixture enough extracted "
+    "text to look like a document that was actually read successfully."
+)
+
+
+def _sha256(value) -> str:
+    raw = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _deck_payload() -> dict:
+    """What a model (or the E2E handler) answers: the deck and its relations.
+    The same payload serves both variants, as the E2E handler's does."""
+    return {
+        "concepts": [{"name": n, "description": "d", "importance": i} for n, i, _ in DECK],
+        "prerequisites": [{"prerequisite": p, "dependent": d} for p, d in DECK_RELATIONS],
+    }
+
+
+def _request(monkeypatch, *, prerequisites: bool, existing=()):
+    """Run the real agent in function mode and capture what it sends the model:
+    system prompt parts, user prompt, run instructions, output tool + schema."""
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    seen: dict = {}
+
+    def handler(messages, info):
+        parts = [p for m in messages for p in getattr(m, "parts", [])]
+        tool = info.output_tools[0]
+        seen.update(
+            system=[p.content for p in parts if p.part_kind == "system-prompt"],
+            user=[p.content for p in parts if p.part_kind == "user-prompt"],
+            instructions=info.instructions,
+            tool=(tool.name, tool.description),
+            schema=tool.parameters_json_schema,
+        )
+        return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=_deck_payload())])
+
+    clear_function_handlers()
+    register_function_handler("concepts", handler)
+    try:
+        with concept_extraction_agent.override(model=model_for("concepts")):
+            result = concept_extraction_agent.run_sync(
+                **extraction_run_args(
+                    _TEXT, prerequisites=prerequisites, existing_concepts=existing,
+                ),
+                deps=SaplingDeps(user_id=USER, course_id=COURSE, supabase=None, request_id="r"),
+            )
+    finally:
+        clear_function_handlers()
+    return seen, result
+
+
+def test_flag_off_request_is_byte_identical_to_pre_a118(monkeypatch):
+    seen, result = _request(monkeypatch, prerequisites=False, existing=["Arrays"])
+    assert seen["system"] == [PRE_A118_SYSTEM_PROMPT]
+    assert _sha256(seen["system"][0]) == PRE_A118_PROMPT_SHA256
+    assert seen["instructions"] is None
+    assert seen["user"] == [_TEXT]  # the bare text: the course's concepts are not sent
+    assert seen["tool"] == PRE_A118_OUTPUT_TOOL
+    assert _sha256(seen["schema"]) == PRE_A118_SCHEMA_SHA256
+    assert result.metadata == {"prompt_version": PRE_A118_PROMPT_VERSION,
+                               "agent": "concept_extraction"}
+    # The answer is read through the pre-A118 schema: relations are not kept.
+    assert type(result.output) is BaseConceptList
+    assert not hasattr(result.output, "prerequisites")
+    assert extraction_run_args(_TEXT, prerequisites=False, existing_concepts=["Arrays"]) == {
+        "user_prompt": _TEXT,
+    }
+
+
+def test_flag_on_request_adds_the_instructions_the_schema_and_the_context(monkeypatch):
+    seen, result = _request(monkeypatch, prerequisites=True, existing=["Linked Lists", "Arrays"])
+    assert seen["system"] == [PRE_A118_SYSTEM_PROMPT]  # the instructions come after it
+    assert seen["instructions"] == PREREQUISITE_INSTRUCTIONS
+    assert _sha256(PREREQUISITE_INSTRUCTIONS) == PREREQUISITE_INSTRUCTIONS_SHA256
+    assert seen["user"] == [build_message(_TEXT, ["Linked Lists", "Arrays"])]
+    assert "\n- Arrays\n- Linked Lists\n\nDocument:\n" + _TEXT in seen["user"][0]
+    assert set(seen["schema"]["properties"]) == {"concepts", "prerequisites"}
+    assert _sha256(seen["schema"]) != PRE_A118_SCHEMA_SHA256
+    assert result.metadata == {"prompt_version": PREREQ_PROMPT_VERSION,
+                               "agent": "concept_extraction"}
+    assert type(result.output) is ConceptList
+    assert [(r.prerequisite, r.dependent) for r in result.output.prerequisites] == DECK_RELATIONS
 
 
 # ── The extraction output and message ────────────────────────────────────────
@@ -401,39 +571,16 @@ def test_edge_payload_follows_edge_prereq_source_is_prereq(monkeypatch, source_i
     assert edge["strength"] == cp.UPLOAD_PREREQ_STRENGTH
 
 
-def test_flag_off_writes_and_reads_nothing(db, monkeypatch):
-    monkeypatch.delenv(FLAG_ENV, raising=False)
+def test_the_write_never_reads_the_flag(db, monkeypatch):
+    """The upload resolved upload_prereq_edges once, before extraction; the
+    write is only called when that answer was yes and must not ask again."""
     _seed_deck(db)
-    reads = MagicMock(side_effect=db.table)
-    monkeypatch.setattr(cp, "table", reads)
-    with patch.object(cp, "apply_graph_update") as agu:
-        assert cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS)) == 0
-    agu.assert_not_called()
-    reads.assert_not_called()  # flag first: an off student costs no graph read
-    assert db.edges() == []
+    with patch.object(cp, "flag_on", side_effect=AssertionError("re-read")) as flag:
+        assert cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS)) == 8
+    flag.assert_not_called()
 
 
-def test_flag_off_for_this_student_even_when_on_for_another(db, monkeypatch):
-    """A user rule, as /admin writes one: the flag is per student."""
-    from services import feature_flags as ff
-
-    monkeypatch.delenv(FLAG_ENV, raising=False)
-    _seed_deck(db)
-    snap = ff.Snapshot(
-        flags={"upload_prereq_edges": {"key": "upload_prereq_edges", "default_variant": "off",
-                                       "rollout_percent": 0, "rollout_variant": None}},
-        targets={"upload_prereq_edges": [{"flag_key": "upload_prereq_edges", "target_type": "user",
-                                          "target_id": "u-canary", "variant": "on"}]},
-    )
-    monkeypatch.setattr(ff, "_get_snapshot", lambda fresh=False: snap)
-    assert cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS)) == 0
-    assert db.edges() == []
-    db.rows["graph_nodes"] = [dict(n, user_id="u-canary") for n in db.rows["graph_nodes"]]
-    assert cp.write_document_prerequisites("u-canary", COURSE, _concepts(DECK, DECK_RELATIONS)) == 8
-
-
-def test_flag_on_writes_oriented_edges_through_apply_graph_update(db, monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
+def test_the_write_goes_through_apply_graph_update_oriented(db):
     _seed_deck(db)
     with patch.object(cp, "apply_graph_update", wraps=cp.apply_graph_update) as agu:
         written = cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS))
@@ -450,8 +597,7 @@ def test_flag_on_writes_oriented_edges_through_apply_graph_update(db, monkeypatc
     assert {e["relationship_type"] for e in db.edges()} == {"prerequisite"}
 
 
-def test_flag_on_with_the_convention_flipped_writes_dependent_as_source(db, monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
+def test_with_the_convention_flipped_the_write_puts_the_dependent_first(db, monkeypatch):
     monkeypatch.setattr(cp, "EDGE_PREREQ_SOURCE_IS_PREREQ", False)
     _seed_deck(db)
     cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, [("Hash Function", "Hash Table")]))
@@ -460,7 +606,6 @@ def test_flag_on_with_the_convention_flipped_writes_dependent_as_source(db, monk
 
 
 def test_reupload_is_idempotent(db, monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     concepts = _concepts(DECK, DECK_RELATIONS)
     assert cp.write_document_prerequisites(USER, COURSE, concepts) == 8
@@ -475,7 +620,6 @@ def test_reupload_is_idempotent(db, monkeypatch):
 
 
 def test_a_second_document_attaches_to_the_first_and_never_contradicts_it(db, monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS))
     db.add_node("n10-cuckoo", "Cuckoo Hashing")
@@ -489,7 +633,6 @@ def test_a_second_document_attaches_to_the_first_and_never_contradicts_it(db, mo
 
 def test_the_write_holds_the_course_lock(db, monkeypatch):
     """Two documents uploaded together must not both pass the cycle check."""
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     held = []
 
@@ -503,7 +646,6 @@ def test_the_write_holds_the_course_lock(db, monkeypatch):
 
 
 def test_a_failed_write_is_logged_never_raised(db, monkeypatch, caplog):
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     with patch.object(cp, "apply_graph_update", side_effect=RuntimeError("pgrst down")), \
          caplog.at_level(logging.ERROR, logger=cp.__name__):
@@ -513,7 +655,6 @@ def test_a_failed_write_is_logged_never_raised(db, monkeypatch, caplog):
 
 
 def test_drops_are_logged_with_a_sample(db, monkeypatch, caplog):
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     with caplog.at_level(logging.INFO, logger=cp.__name__):
         cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_RELATIONS))
@@ -524,7 +665,6 @@ def test_drops_are_logged_with_a_sample(db, monkeypatch, caplog):
 
 
 def test_a_clean_write_logs_one_info_line(db, monkeypatch, caplog):
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     with caplog.at_level(logging.INFO, logger=cp.__name__):
         cp.write_document_prerequisites(USER, COURSE, _concepts(DECK, DECK_EDGES))
@@ -533,8 +673,7 @@ def test_a_clean_write_logs_one_info_line(db, monkeypatch, caplog):
     assert record.message.endswith("wrote 8, already present 0, dropped 0")
 
 
-def test_no_relations_or_no_course_costs_nothing(monkeypatch):
-    monkeypatch.setenv(FLAG_ENV, "on")
+def test_no_relations_or_no_course_costs_nothing():
     with patch.object(cp, "flag_on") as flag, patch.object(cp, "table") as t:
         assert cp.write_document_prerequisites(USER, COURSE, _concepts(DECK)) == 0
         assert cp.write_document_prerequisites(USER, None, _concepts(DECK, DECK_RELATIONS)) == 0
@@ -559,7 +698,6 @@ def _learning_order(states: dict[str, float], edges) -> list[str]:
 def test_the_planner_orders_prerequisites_before_dependents_once_edges_exist(db, monkeypatch):
     from routes.learn_loop import _plan_prereq_edges
 
-    monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
     names = {node_id: name for name, _imp, node_id in DECK}
     states = {node_id: BKT_L0 for node_id in names}
@@ -590,28 +728,40 @@ def test_the_planner_orders_prerequisites_before_dependents_once_edges_exist(db,
 # ── The upload routes ────────────────────────────────────────────────────────
 
 
-_TEXT = (
-    "Hash tables. This sample body gives the upload fixture enough extracted "
-    "text to look like a document that was actually read successfully."
-)
-
-
-def _agent_runs(concepts: ConceptList):
+def _agent_runs():
+    """Mocks for the three agents an upload runs. The concepts one answers like
+    pydantic-ai: the deck payload read through the output type the run asked
+    for — the pre-A118 BaseConceptList unless the flag-on variant passed
+    ConceptList."""
     from agents.classifier import DocumentClassification
     from agents.summary import Summary
 
     cls = DocumentClassification(category="slides", is_syllabus=False, confidence=0.9,
                                  rationale="t")
     summary = Summary(headline="h", abstract="Hash tables.", key_points=["a", "b", "c"])
+
+    def concepts(*_args, **kwargs):
+        output_type = kwargs.get("output_type") or BaseConceptList
+        return SimpleNamespace(output=output_type.model_validate(_deck_payload()))
+
     return (
         AsyncMock(return_value=SimpleNamespace(output=cls)),
         AsyncMock(return_value=SimpleNamespace(output=summary)),
-        AsyncMock(return_value=SimpleNamespace(output=concepts)),
+        AsyncMock(side_effect=concepts),
     )
 
 
-def _stream_upload(concepts: ConceptList):
-    cls_run, sum_run, cpt_run = _agent_runs(concepts)
+def _sse_result(body: str) -> dict:
+    """The `result` event's data off an SSE body (CRLF-framed)."""
+    for block in body.replace("\r\n", "\n").split("\n\n"):
+        fields = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        if fields.get("event") == "result":
+            return json.loads(fields["data"])["data"]
+    raise AssertionError(f"no result event in {body!r}")
+
+
+def _stream_upload():
+    cls_run, sum_run, cpt_run = _agent_runs()
     with (
         patch("routes.documents._validate_user"),
         patch("routes.documents.extract_text_from_file", return_value=_TEXT),
@@ -621,6 +771,8 @@ def _stream_upload(concepts: ConceptList):
         patch("routes.documents.apply_concepts_to_graph", AsyncMock(return_value=9)),
         patch("routes.documents.table") as t,
         patch("routes.documents._spawn_post_roll"),
+        patch("routes.documents.write_document_prerequisites",
+              wraps=cp.write_document_prerequisites) as write,
         patch.object(cp, "apply_graph_update") as agu,
     ):
         t.return_value.select.return_value = []
@@ -633,11 +785,11 @@ def _stream_upload(concepts: ConceptList):
             assert r.status_code == 200
             body = r.read().decode()
     assert '"step": "done"' in body or '"step":"done"' in body, body
-    return cpt_run, agu
+    return cpt_run, agu, write, _sse_result(body)
 
 
-def _sync_upload(concepts: ConceptList):
-    cls_run, sum_run, cpt_run = _agent_runs(concepts)
+def _sync_upload():
+    cls_run, sum_run, cpt_run = _agent_runs()
     with (
         patch("routes.documents._validate_user"),
         patch("routes.documents.extract_text_from_file", return_value=_TEXT),
@@ -648,6 +800,8 @@ def _sync_upload(concepts: ConceptList):
         patch("routes.documents.table") as t,
         patch("routes.documents._index_then_check_items"),
         patch("routes.documents.index_document"),
+        patch("agents.document.write_document_prerequisites",
+              wraps=cp.write_document_prerequisites) as write,
         patch.object(cp, "apply_graph_update") as agu,
     ):
         t.return_value.select.return_value = []
@@ -658,36 +812,94 @@ def _sync_upload(concepts: ConceptList):
             data={"course_id": COURSE, "user_id": USER},
         )
     assert r.status_code == 200, r.text
-    return cpt_run, agu
+    return cpt_run, agu, write, None  # the sync response is the documents row: no concepts payload
 
 
 UPLOADS = {"sse": _stream_upload, "sync": _sync_upload}
 
 
+@pytest.fixture
+def graph_reads(db, monkeypatch):
+    """Every graph table this module reads (the course-concepts context, the
+    write's node and edge reads), by table name."""
+    spy = MagicMock(side_effect=db.table)
+    monkeypatch.setattr(cp, "table", spy)
+    return spy
+
+
 @pytest.mark.parametrize("route", sorted(UPLOADS))
-def test_upload_flag_off_writes_no_edges(db, monkeypatch, route):
+def test_upload_flag_off_is_the_pre_a118_upload(db, graph_reads, flag_reads, monkeypatch, route):
     monkeypatch.delenv(FLAG_ENV, raising=False)
     _seed_deck(db)
-    _cpt_run, agu = UPLOADS[route](_concepts(DECK, DECK_RELATIONS))
+    cpt_run, agu, write, result = UPLOADS[route]()
+    # The pre-A118 call, argument for argument: the bare text, the agent's own
+    # prompt and schema — no instructions, no output_type, no context.
+    assert cpt_run.call_args_list == [
+        call(user_prompt=_TEXT, deps=ANY, usage_limits=WORKER_LIMITS),
+    ]
+    graph_reads.assert_not_called()  # no course-concepts read, no edge read
+    write.assert_not_called()  # not even a no-op step: the pre-A118 sequence
     agu.assert_not_called()
+    assert flag_reads == [USER]  # resolved once, for the uploader
+    if result is not None:  # the SSE result serializes exactly as before A118
+        assert set(result["concepts"]) == {"concepts"}
 
 
 @pytest.mark.parametrize("route", sorted(UPLOADS))
-def test_upload_flag_on_writes_the_oriented_edges(db, monkeypatch, route):
+def test_upload_flag_on_extracts_with_context_and_writes_oriented_edges(
+    db, graph_reads, flag_reads, monkeypatch, route,
+):
     monkeypatch.setenv(FLAG_ENV, "on")
     _seed_deck(db)
-    _cpt_run, agu = UPLOADS[route](_concepts(DECK, DECK_RELATIONS))
+    db.add_node("n-arrays", "Arrays")
+    cpt_run, agu, write, result = UPLOADS[route]()
+
+    cpt_run.assert_called_once()
+    kwargs = cpt_run.call_args.kwargs
+    assert kwargs["instructions"] == PREREQUISITE_INSTRUCTIONS
+    assert kwargs["output_type"] is ConceptList
+    assert kwargs["user_prompt"] == build_message(_TEXT, cp.course_concept_names(USER, COURSE))
+    assert "\n- Arrays\n" in kwargs["user_prompt"]
+    assert kwargs["user_prompt"].endswith("Document:\n" + _TEXT)
+
+    write.assert_called_once()
     agu.assert_called_once()
-    (user, update), kwargs = agu.call_args
-    assert (user, kwargs) == (USER, {"course_id": COURSE})
+    (user, update), agu_kwargs = agu.call_args
+    assert (user, agu_kwargs) == (USER, {"course_id": COURSE})
     assert [(e["source"], e["target"], e["relationship_type"]) for e in update["new_edges"]] == [
         (p, d, "prerequisite") for p, d in DECK_EDGES
     ]
+    assert flag_reads == [USER]  # once: the write does not ask again
+    if result is not None:
+        assert len(result["concepts"]["prerequisites"]) == len(DECK_RELATIONS)
 
 
-@pytest.mark.parametrize("route", sorted(UPLOADS))
-def test_upload_lists_the_course_concepts_in_the_extraction_message(db, monkeypatch, route):
-    db.add_node("n-arrays", "Arrays")
-    cpt_run, _agu = UPLOADS[route](_concepts(DECK))
-    message = cpt_run.call_args.args[0]
-    assert "\n- Arrays\n" in message and message.endswith(_TEXT)
+def test_a_pipeline_run_with_no_resolution_is_the_pre_a118_pipeline(
+    db, graph_reads, flag_reads, monkeypatch,
+):
+    """process_document without `prerequisites` (no student-scoped resolution
+    behind it) runs flag-off even with the flag on everywhere, and never reads
+    the flag itself."""
+    from agents.document import process_document
+
+    monkeypatch.setenv(FLAG_ENV, "on")
+    _seed_deck(db)
+    cls_run, sum_run, cpt_run = _agent_runs()
+    deps = SaplingDeps(user_id=USER, course_id=COURSE, supabase=None, request_id="r")
+    with (
+        patch("agents.classifier.classifier_agent.run", cls_run),
+        patch("agents.summary.summary_agent.run", sum_run),
+        patch("agents.concept_extraction.concept_extraction_agent.run", cpt_run),
+        patch("agents.document.apply_concepts_to_graph", AsyncMock(return_value=9)),
+        patch("agents.document.write_document_prerequisites") as write,
+        patch.object(cp, "apply_graph_update") as agu,
+    ):
+        result = asyncio.run(process_document(_TEXT, deps))
+    assert cpt_run.call_args_list == [
+        call(user_prompt=_TEXT, deps=deps, usage_limits=WORKER_LIMITS),
+    ]
+    assert result.model_dump()["concepts"].keys() == {"concepts"}
+    graph_reads.assert_not_called()
+    write.assert_not_called()
+    agu.assert_not_called()
+    assert flag_reads == []

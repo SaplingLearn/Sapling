@@ -24,7 +24,11 @@ from agents._providers import clear_function_handlers, model_for
 from agents.chat_tutor import socratic_agent
 from agents.classifier import classifier_agent
 from agents.concept_describe import build_message, concept_describe_agent
-from agents.concept_extraction import concept_extraction_agent
+from agents.concept_extraction import (
+    BaseConceptList,
+    concept_extraction_agent,
+    extraction_run_args,
+)
 from agents.concept_scan import concept_scan_agent
 from agents.deps import SaplingDeps
 from agents.note_chat import note_chat_agent
@@ -344,12 +348,13 @@ def test_env_module_summary_handler_passes_real_output_schema(monkeypatch):
 
 
 def test_env_module_concepts_handler_carries_resolvable_prerequisites(monkeypatch):
-    """Spec §13 A118: the scripted concepts payload carries the prerequisite
-    relations through the REAL ConceptList schema, and every one of them
-    resolves against the scripted concepts with zero drops — so with the
-    upload_prereq_edges flag on, the lane's upload writes exactly
-    E2E_DOC_PREREQUISITES (frontend/e2e/upload.spec.ts asserts that edge, and
-    none with the flag off) and logs no drop warning."""
+    """Spec §13 A118: one scripted concepts payload serves both extraction
+    variants. Flag off, the pre-A118 schema reads the concepts and ignores the
+    relations. Flag on, the relations come through the REAL ConceptList schema
+    and every one resolves against the scripted concepts with zero drops — so
+    the lane's flag-on upload writes exactly E2E_DOC_PREREQUISITES
+    (frontend/e2e/upload.spec.ts asserts that edge, and none with the flag off)
+    and logs no drop warning."""
     from services.concept_prereqs import resolve_prerequisites
 
     monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
@@ -358,10 +363,17 @@ def test_env_module_concepts_handler_carries_resolvable_prerequisites(monkeypatc
     )
 
     with concept_extraction_agent.override(model=model_for("concepts")):
-        result = concept_extraction_agent.run_sync("some document text", deps=_deps())
+        off = concept_extraction_agent.run_sync(
+            **extraction_run_args("some document text", prerequisites=False), deps=_deps(),
+        )
+        result = concept_extraction_agent.run_sync(
+            **extraction_run_args("some document text", prerequisites=True), deps=_deps(),
+        )
 
     from agents.function_handlers_e2e import E2E_DOC_CONCEPTS, E2E_DOC_PREREQUISITES
 
+    assert type(off.output) is BaseConceptList
+    assert [c.name for c in off.output.concepts] == [n for n, _, _ in E2E_DOC_CONCEPTS]
     assert [c.name for c in result.output.concepts] == [n for n, _, _ in E2E_DOC_CONCEPTS]
     relations = [(r.prerequisite, r.dependent) for r in result.output.prerequisites]
     assert relations == E2E_DOC_PREREQUISITES
