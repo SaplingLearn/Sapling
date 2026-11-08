@@ -36,12 +36,15 @@ PURE_MODULES = (
     "interleave.py",  # A114: confusable partners + the review serve order (keys in, order out)
     "item_alignment.py",  # A119: the alignment check's answers applied (verdicts in, decisions out)
     "evidence_void.py",  # A123: the one void rule (rows / poses / misconceptions in, decisions out)
+    "item_keys.py",  # A124: the blind solve compared with the key (answers in, decisions out)
+    "item_audit.py",  # A124: the stratified audit sample and the Wilson key-error rate
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
 SERIES_AGENT_TASKS = (
     "check_items",
     "check_items_verify",  # A119: the drafted items' alignment check (request path in function mode)
+    "check_items_solve",  # A124: the drafted items' key check (request path in function mode)
     "grader",
     "grader_second",
     "learning_decision",
@@ -58,6 +61,10 @@ SERIES_AGENT_MODULES = (
     "check_items_topup.py",
     # A119: the alignment check, its own agent and prompt stack on its own slot
     "check_items_verify.py",
+    # A124: the blind solve and the free-text key match, each its own agent and
+    # prompt stack, both on the check_items_solve slot
+    "check_items_solve.py",
+    "check_items_key_match.py",
     "grader.py",
     "learning_decision.py",
     "loop_tutor.py",

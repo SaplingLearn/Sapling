@@ -528,6 +528,76 @@ def _verify_handler(messages, info) -> ModelResponse:
 register_function_handler("check_items_verify", _verify_handler)
 
 
+# ── Check-item key check (spec §13 A124) ──────────────────────────────────
+#
+# Request-path in function mode like the alignment check above: every drafting
+# call's valid drafts are solved blind on the check_items_solve slot before
+# they are stored, and an unavailable check drops them (fail closed) — so the
+# lane needs a handler or no item would ever be stored. One handler serves both
+# agents on the slot, told apart by the output tool's schema (the grader
+# handler's way): the solve (`solutions`) and the free-text key match
+# (`matches`).
+# - The solve agrees with every E2E item's key, so every item the check_items
+#   handler drafts is stored VERIFIED (canonical_verified): an mc_reason item's
+#   answer is the letter of the OPTION line whose text is
+#   E2E_CHECK_ITEM_FINAL_ANSWER (the letters are code's, keyed by the stack's
+#   ENCRYPTION_KEY, so the handler reads them off the message); a short-answer
+#   item carrying the `[e2e-function-model][<concept>]` marker answers
+#   E2E_CHECK_ITEM_FINAL_ANSWER, the same token run as its key, so code settles
+#   it and no match call is made. Anything else — no such option, no marker, a
+#   number to compute — the handler cannot tell, so it says unsolvable (the item
+#   is then held), never a guess.
+# - The match says two answers agree only when they are the same text
+#   (whitespace and case aside).
+# Ids come off the message's `ITEM <id>` / `OPTION <letter>:` lines
+# (agents/check_items_solve.py::build_solve_prompt,
+# agents/check_items_key_match.py::build_match_prompt). Emits through the OUTPUT
+# tool → the real schema validates. Contract: tests/test_e2e_function_handlers.py.
+# Keep in sync.
+
+E2E_SOLVE_BASIS = "[e2e-function-model] Read off the passages."
+E2E_MATCH_WHY = "[e2e-function-model] Compared the two answers."
+_OPTION_LINE_RE = re.compile(r"^OPTION (\S+): (.*)$", re.M)
+_ANSWER_LINE_RE = re.compile(r"^ANSWER: (.*)$", re.M)
+_MATCH_LINE_RE = re.compile(r"^(FIRST|SECOND) ANSWER: (.*)$", re.M)
+
+
+def _e2e_solution(item: str, block: str) -> dict:
+    answer_line = _ANSWER_LINE_RE.search(block)
+    wants = answer_line.group(1) if answer_line else ""
+    answer = ""
+    if wants.startswith("the letter"):
+        answer = next(
+            (letter for letter, text in _OPTION_LINE_RE.findall(block)
+             if text.strip() == E2E_CHECK_ITEM_FINAL_ANSWER),
+            "",
+        )
+    elif wants == "short" and _E2E_CONCEPT_RE.search(block):
+        answer = E2E_CHECK_ITEM_FINAL_ANSWER
+    return {"item": item, "basis": E2E_SOLVE_BASIS, "solvable": bool(answer), "answer": answer}
+
+
+def _e2e_match(item: str, block: str) -> dict:
+    said = dict(_MATCH_LINE_RE.findall(block))
+    first, second = (" ".join(said.get(k, "").split()).casefold() for k in ("FIRST", "SECOND"))
+    return {"item": item, "why": E2E_MATCH_WHY, "same": bool(first) and first == second}
+
+
+def _solve_handler(messages, info) -> ModelResponse:
+    text, tool = _last_user_prompt_text(messages), info.output_tools[0]
+    matching = "matches" in (tool.parameters_json_schema or {}).get("properties", {})
+    heads = list(_ITEM_HEAD_RE.finditer(text))
+    rows = []
+    for n, head in enumerate(heads):
+        block = text[head.end() : heads[n + 1].start() if n + 1 < len(heads) else len(text)]
+        rows.append((_e2e_match if matching else _e2e_solution)(head.group(1), block))
+    args = {"matches": rows} if matching else {"solutions": rows}
+    return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args=args)])
+
+
+register_function_handler("check_items_solve", _solve_handler)
+
+
 # ── Learning loop grader (PKG-05) ───────────────────────────────────────────
 #
 # grade_answer (a route helper, spec §13 A16) runs grader_agent as its OWN

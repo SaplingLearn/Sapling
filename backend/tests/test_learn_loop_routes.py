@@ -3654,11 +3654,18 @@ def test_the_route_writes_the_misconception_row_after_its_one_flush(gate_on, sea
     with (
         agent_p,
         usage_p,
-        patch("routes.learn_loop.record", side_effect=lambda *a: order.append(("record", a)) or {}),
+        patch(
+            "routes.learn_loop.record",
+            side_effect=lambda *a, **k: order.append(("record", a, k)) or {},
+        ),
     ):
         r = client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
     assert r.status_code == 200
-    assert order == ["flush", ("record", ("u1", "node-1", "item-1", "no_base", "it just stops"))]
+    # spec §13 A123: the attempt names its item's question_hash (misconception_attempts)
+    assert order == [
+        "flush",
+        ("record", ("u1", "node-1", "item-1", "no_base", "it just stops"), {"question_hash": ITEM.question_hash}),
+    ]
 
 
 def test_no_misconception_row_when_the_flush_fails(gate_on, seams):
@@ -3832,7 +3839,7 @@ def test_the_misconception_row_is_written_only_after_the_claims_save(gate_on, se
         agent_p,
         usage_p,
         patch("routes.learn_loop._update_loop_state", spy_update),
-        patch("routes.learn_loop.record", side_effect=lambda *a: order.append("record") or {}),
+        patch("routes.learn_loop.record", side_effect=lambda *a, **k: order.append("record") or {}),
     ):
         client.post("/api/learn/loop/check/answer", json=_answer(answer="it just stops"))
     # Claim, encrypted checkpoint, open-session guard and final save precede the rollup.

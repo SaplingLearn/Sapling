@@ -264,7 +264,7 @@ class WrongReasonState(_State):
 
 
 class AnswerableState(_State):
-    """item_answerable (unwired; PKG-04's answerable_hook stays None)."""
+    """item_answerable (unwired: no caller; check items are answered blind by the A124 solve)."""
 
     passages: list[str]
     question: str
@@ -627,7 +627,7 @@ async def match_wrong_reason(
 
 
 async def item_answerable(state: AnswerableState, *, deps) -> YesNo | None:
-    """Unwired (PKG-04's answerable_hook stays None)."""
+    """Unwired: no caller (spec §13 A124's blind solve settles answerability for check items)."""
     return await _yes_no_decision("item_answerable", state, deps)
 
 

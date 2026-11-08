@@ -11,7 +11,11 @@
  *     spec §13 A123, voids every student's results on it — the toast says how many);
  *   - a quarantined item is marked, and approving it says it is restored;
  *   - a failed action keeps the row and toasts; a failed load offers a retry;
- *   - nothing to review says so; a retire-pending item cannot be approved.
+ *   - nothing to review says so; a retire-pending item cannot be approved;
+ *   - spec §13 A124: a held item says it is served to no one, the key-hold
+ *     codes are named, a numeric item shows its key value and tolerance, and
+ *     the Key audit tab draws a course's sample, shows the key-error rate with
+ *     its 95% interval and records a verdict (then re-reads the sample).
  */
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,10 +30,18 @@ const api = vi.hoisted(() => ({
   adminCheckItemQueue: vi.fn(),
   adminApproveCheckItem: vi.fn(),
   adminRetireCheckItem: vi.fn(),
+  adminCheckItemAuditSample: vi.fn(),
+  adminAuditCheckItem: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 
-import type { AdminCheckItemEntry, AdminCheckItemQueue } from "@/lib/api";
+import type {
+  AdminAuditItem,
+  AdminAuditSample,
+  AdminCheckItemEntry,
+  AdminCheckItemQueue,
+  AuditCounts,
+} from "@/lib/api";
 import { AdminCheckItems } from "./AdminCheckItems";
 
 const entry = (over: Partial<AdminCheckItemEntry> = {}): AdminCheckItemEntry => ({
@@ -46,6 +58,7 @@ const entry = (over: Partial<AdminCheckItemEntry> = {}): AdminCheckItemEntry => 
   reviewed_at: null,
   retire_pending: false,
   quarantined: false,
+  held: false,
   prompt: "Which case stops the recursion?",
   options: [
     { letter: "A", text: "the base case", correct: true },
@@ -53,7 +66,46 @@ const entry = (over: Partial<AdminCheckItemEntry> = {}): AdminCheckItemEntry => 
   ],
   final_answer: "the base case",
   reference_answer: "The base case returns without recursing. Final answer: the base case.",
+  canonical_answer: null,
+  tolerance: null,
   ...over,
+});
+
+const counts = (over: Partial<AuditCounts> = {}): AuditCounts => ({
+  audited: 0, correct: 0, wrong: 0, ambiguous: 0,
+  key_error: { rate: null, ci_low: null, ci_high: null },
+  key_error_or_ambiguous: { rate: null, ci_low: null, ci_high: null },
+  ...over,
+});
+
+const auditItem = (over: Partial<AdminAuditItem> = {}): AdminAuditItem => ({
+  id: "a1",
+  course_id: "c1",
+  concept_key: "load factor",
+  question_hash: "qa1",
+  format: "free",
+  difficulty: 2,
+  key_status: "verified",
+  verdict: null,
+  audited_at: null,
+  prompt: "A table holds 4 entries in 5 buckets. What is its load factor?",
+  options: null,
+  final_answer: "0.8",
+  reference_answer: "Entries over buckets: 4 / 5. Final answer: 0.8.",
+  canonical_answer: "0.8",
+  tolerance: 0.01,
+  ...over,
+});
+
+const auditSample = (items: AdminAuditItem[], summary: Partial<AuditCounts> = {}): AdminAuditSample => ({
+  course_id: "c1",
+  seed: "c1",
+  population: 40,
+  items,
+  summary: {
+    ...counts(summary),
+    by_key_status: { verified: counts(), held: counts(), unverified: counts() },
+  },
 });
 
 const queue = (items: AdminCheckItemEntry[], over: Partial<AdminCheckItemQueue> = {}): AdminCheckItemQueue => ({
@@ -154,7 +206,7 @@ describe("AdminCheckItems", () => {
     expect(approve.textContent).toBe("Approve and restore");
     fireEvent.click(approve);
     await waitFor(() => expect(api.adminApproveCheckItem).toHaveBeenCalledWith("i1"));
-    expect(toast.success).toHaveBeenCalledWith("Approved — restored for students, and it leaves the queue.");
+    expect(toast.success).toHaveBeenCalledWith("Approved — its key is confirmed, it is restored for students, and it leaves the queue.");
   });
 
   it("keeps the row and toasts when an action fails", async () => {
@@ -180,5 +232,110 @@ describe("AdminCheckItems", () => {
     expect(await screen.findByTestId("admin-items-retire-i1")).toBeTruthy();
     expect(screen.queryByTestId("admin-items-approve-i1")).toBeNull();
     expect(screen.getByTestId("admin-items-row-i1").textContent).toContain("Retire not finished");
+  });
+
+  it("a held item says it is served to no one and names its key hold (spec §13 A124)", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(
+      queue([
+        entry({ held: true, lint_flags: ["key_disputed"] }),
+        entry({
+          id: "i2", question_hash: "qh2", format: "free", options: null,
+          lint_flags: ["key_unsolved", "key_audit_wrong", "key_audit_ambiguous"],
+          final_answer: "0.8", canonical_answer: "0.8", tolerance: 0.05,
+        }),
+      ]),
+    );
+    render(<AdminCheckItems />);
+    expect((await screen.findByTestId("admin-items-held-i1")).textContent).toContain("served to no one");
+    expect(screen.queryByTestId("admin-items-held-i2")).toBeNull(); // confirmed since: no longer held
+    expect(screen.getByTestId("admin-items-flag-i1-key_disputed").textContent).toBe(
+      "An independent solve gave a different answer",
+    );
+    expect(screen.getByTestId("admin-items-flag-i2-key_unsolved").textContent).toBe(
+      "An independent solve found the passages don't settle it",
+    );
+    expect(screen.getByTestId("admin-items-flag-i2-key_audit_wrong").textContent).toBe("An audit found the key wrong");
+    expect(screen.getByTestId("admin-items-flag-i2-key_audit_ambiguous").textContent).toBe(
+      "An audit found the question ambiguous",
+    );
+    expect(screen.getByTestId("admin-items-row-i2").textContent).toContain("Numeric key 0.8 ± 0.05");
+  });
+
+  it("approving confirms the key", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([entry({ held: true, lint_flags: ["key_disputed"] })]));
+    api.adminApproveCheckItem.mockResolvedValue({ id: "i1", status: "approved" });
+    render(<AdminCheckItems />);
+    fireEvent.click(await screen.findByTestId("admin-items-approve-i1"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("key is confirmed")));
+  });
+});
+
+describe("AdminCheckItems — key audit (spec §13 A124)", () => {
+  const openAudit = async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([]));
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-empty");
+    fireEvent.click(screen.getByTestId("admin-items-tab-audit"));
+  };
+
+  it("draws a course's sample and shows the key-error rate with its interval", async () => {
+    api.adminCheckItemAuditSample.mockResolvedValue(
+      auditSample(
+        [auditItem(), auditItem({ id: "a2", question_hash: "qa2", key_status: "held", verdict: "wrong" })],
+        {
+          audited: 30, correct: 26, wrong: 3, ambiguous: 1,
+          key_error: { rate: 0.1, ci_low: 0.0346, ci_high: 0.2562 },
+          key_error_or_ambiguous: { rate: 0.1333, ci_low: 0.05, ci_high: 0.3 },
+        },
+      ),
+    );
+    await openAudit();
+    expect((screen.getByTestId("admin-audit-draw") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("admin-audit-course"), { target: { value: " c1 " } });
+    fireEvent.click(screen.getByTestId("admin-audit-draw"));
+    const summary = await screen.findByTestId("admin-audit-summary");
+    expect(api.adminCheckItemAuditSample).toHaveBeenCalledWith("c1");
+    expect(summary.textContent).toContain("30 audited · key-error rate 10% (95% CI 3.5%–25.6%)");
+    expect(summary.textContent).toContain("wrong or ambiguous 13.3%");
+    expect(summary.textContent).toContain("2 of 40 stored questions sampled");
+    expect(screen.getByTestId("admin-audit-status-a1").textContent).toBe("Key verified");
+    expect(screen.getByTestId("admin-audit-status-a2").textContent).toBe("Key held");
+    expect(screen.getByTestId("admin-audit-wrong-a2").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("admin-audit-correct-a2").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("admin-audit-row-a1").textContent).toContain("Numeric key 0.8 ± 0.01");
+  });
+
+  it("records a verdict, then re-reads the sample for the new rate", async () => {
+    api.adminCheckItemAuditSample
+      .mockResolvedValueOnce(auditSample([auditItem()]))
+      .mockResolvedValueOnce(
+        auditSample([auditItem({ verdict: "wrong", key_status: "verified" })], {
+          audited: 1, wrong: 1, key_error: { rate: 1, ci_low: 0.2065, ci_high: 1 },
+        }),
+      );
+    api.adminAuditCheckItem.mockResolvedValue({ id: "a1", verdict: "wrong", key_status: "verified", held: true });
+    await openAudit();
+    fireEvent.change(screen.getByTestId("admin-audit-course"), { target: { value: "c1" } });
+    fireEvent.click(screen.getByTestId("admin-audit-draw"));
+    fireEvent.click(await screen.findByTestId("admin-audit-wrong-a1"));
+    await waitFor(() => expect(api.adminAuditCheckItem).toHaveBeenCalledWith("a1", "wrong"));
+    await waitFor(() => expect(screen.getByTestId("admin-audit-summary").textContent).toContain("1 audited"));
+    expect(api.adminCheckItemAuditSample).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("admin-audit-wrong-a1").getAttribute("aria-pressed")).toBe("true");
+    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("held"));
+  });
+
+  it("a failed draw offers a retry; a failed verdict toasts", async () => {
+    api.adminCheckItemAuditSample
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValueOnce(auditSample([auditItem()]));
+    api.adminAuditCheckItem.mockRejectedValue(new Error("503"));
+    await openAudit();
+    fireEvent.change(screen.getByTestId("admin-audit-course"), { target: { value: "c1" } });
+    fireEvent.click(screen.getByTestId("admin-audit-draw"));
+    fireEvent.click(await screen.findByTestId("admin-audit-retry"));
+    fireEvent.click(await screen.findByTestId("admin-audit-correct-a1"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(api.adminCheckItemAuditSample).toHaveBeenCalledTimes(2);
   });
 });

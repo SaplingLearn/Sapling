@@ -2897,8 +2897,11 @@ class TestReadItems:
             assert svc.course_has_items("course-1") is True
             assert svc.count_items("course-1", "recursion") == 1
             assert svc.coverage("course-1") == (1, 2)
-        first = mocks["check_items"].select.call_args_list[0][1]
-        assert first["filters"] == {"course_id": "eq.course-1"} and first["limit"] == 1
+        first = mocks["check_items"].select.call_args_list[0]
+        # A124: it reads plaintext columns a page at a time until an unheld row
+        assert first[0][0] == "id,lint_flags,canonical_verified"
+        assert first[1]["filters"] == {"course_id": "eq.course-1"} and first[1]["offset"] == 0
+        assert first[1]["limit"] == svc._HAS_ITEMS_PAGE and first[1]["order"] == "id"
         # both course-wide coverage reads page with a total order
         for name in ("graph_nodes", "check_items"):
             call = mocks[name].select_with_count.call_args
@@ -2912,13 +2915,17 @@ class TestReadItems:
             assert svc.course_has_items("course-1") is False
             assert svc.count_items("course-1", "recursion") == 0
 
-    def test_concept_key_is_the_graph_normalizer_and_the_hook_is_an_unwired_stub(self):
+    def test_concept_key_is_the_graph_normalizer_and_the_answerable_stub_is_gone(self):
+        """Spec §13 A124: the A24 `answerable_hook` stub ("is this item
+        answerable from these passages?", never called) is replaced by the
+        blind solve every draft gets before it is stored."""
         from services import check_item_service as svc
         from services.graph_service import _normalize_concept
 
         for name in ("Learning  Rate", " learning rate", "LEARNING RATE"):
             assert svc.concept_key(name) == _normalize_concept(name) == "learning rate"
-        assert svc.answerable_hook is None
+        assert not hasattr(svc, "answerable_hook")
+        assert callable(svc._solve_screened)
 
 
 class TestMissingFinalAnswer:
@@ -4632,7 +4639,10 @@ class TestMcTopUp:
         assert topups == [] and self._topup_events(ev) == []
         read = [f for f, c in zip(items.selects, items.columns) if "format" in c]
         assert read == [{"course_id": "eq.course-1", "concept_key": "eq.learning rate"}]
-        assert [c for c in items.columns if "format" in c] == ["id,format,difficulty"]
+        # A124: plus what says whether a key hold withdraws a stored item
+        assert [c for c in items.columns if "format" in c] == [
+            "id,format,difficulty,lint_flags,canonical_verified"
+        ]
 
     def test_topup_asks_for_the_difficulties_the_concept_lacks(self, monkeypatch):
         from agents.check_items import CheckItemsOutput

@@ -92,6 +92,7 @@ _REPORT_EVENTS = ("zpd.step", "ai.budget_capped", "learn.session_closed", "chat.
 SERIES_SLOTS = (  # spec §8 invariant 6
     "check_items",
     "check_items_verify",  # spec §13 A119: the drafted items' alignment check
+    "check_items_solve",  # spec §13 A124: the drafted items' key check (solve + key match)
     "grader",
     "grader_second",
     "learning_decision",
@@ -100,9 +101,9 @@ SERIES_SLOTS = (  # spec §8 invariant 6
     "loop_tutor_deep",
     "session_close",
 )
-# Course assets, not a student's session: drafting the items and (A119)
+# Course assets, not a student's session: drafting the items and (A119, A124)
 # checking them before they are stored — reported together as check_items_usd.
-_COURSE_ASSET_SLOTS = frozenset({"check_items", "check_items_verify"})
+_COURSE_ASSET_SLOTS = frozenset({"check_items", "check_items_verify", "check_items_solve"})
 _UNKNOWN = "unknown"
 
 
