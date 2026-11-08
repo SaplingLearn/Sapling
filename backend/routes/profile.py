@@ -123,6 +123,20 @@ def _get_or_create_profile(user_id: str) -> dict:
     return row
 
 
+def _live_user_or_404(user_id: str, cols: str = "id") -> dict:
+    """The `users` row (`cols`) of a LIVE account, or a 404.
+
+    A soft-deleted account (`users.deleted_at`) is a 404 exactly like a missing
+    one (#115): nothing public about it may outlive the deletion. The one
+    check behind both the public profile and `GET /{user_id}/roles`."""
+    rows = table("users").select(
+        cols, filters={"id": f"eq.{user_id}", "deleted_at": "is.null"}
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="User not found")
+    return rows[0]
+
+
 def _get_user_or_404(user_id: str) -> dict:
     """Identity + profile merged into the legacy single-dict shape.
 
@@ -130,22 +144,37 @@ def _get_user_or_404(user_id: str) -> dict:
     on `user_profiles` (migration 0024). We read both and merge so callers keep the
     same flat dict they relied on before the split.
 
-    A soft-deleted account (`users.deleted_at`) is a 404 like a missing one
-    (#115): its public profile must not outlive the deletion. Every other
-    caller here is behind `require_self`, which already refuses a deleted
-    account's session, so the filter only changes the public read.
+    A soft-deleted account is a 404 (`_live_user_or_404`). For the public read
+    that is the whole fix. The other callers are behind `require_self`, whose
+    account-state check refuses a deleted account's session — but that state is
+    cached per worker for `auth_guard.ACCOUNT_STATE_TTL_SECONDS` (30 s), and only
+    the worker that ran the delete clears its entry, so for up to that window a
+    deleted session can still reach them; this filter is what turns those into
+    a 404 too (and keeps the profile/settings rows from being re-created).
     """
-    rows = table("users").select(
-        _USERS_COLS, filters={"id": f"eq.{user_id}", "deleted_at": "is.null"}
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="User not found")
-    user = rows[0]
+    user = dict(_live_user_or_404(user_id, _USERS_COLS))
     user["email"] = decrypt_if_present(user.get("email"))
     profile = _get_or_create_profile(user_id)
     # Merge profile fields onto the identity row (id/email/streak/created_at win).
     merged = {**profile, **user}
     return merged
+
+
+def _optional_viewer(request: Request) -> Optional[str]:
+    """The signed-in viewer's id, or None when there is no usable session.
+
+    Only "no usable session" is anonymous: a 401 (no/invalid/expired token, or
+    an account that is missing or deleted) and the 403 `not_approved` (an
+    unapproved account gets the reduced anonymous view rather than an error,
+    as before). Anything else propagates — above all the 503 the guard raises
+    when the account state cannot be read: silently serving the anonymous view
+    on a DB blip would hand a signed-in viewer a wrong page that looks right."""
+    try:
+        return get_session_user_id(request)
+    except HTTPException as exc:
+        if exc.status_code in (401, 403):
+            return None
+        raise
 
 
 _SETTINGS_COLS = (
@@ -210,6 +239,24 @@ def _get_equipped_cosmetics(settings: dict) -> dict:
         if rows:
             equipped["featured_role"] = rows[0]
     return equipped
+
+
+def _strip_role_cosmetics(equipped: dict) -> dict:
+    """`equipped` minus anything that reveals a role, for anonymous viewers
+    (#115): the featured role itself, and every equipped cosmetic a role grants
+    (`role_cosmetics`). Conservative: a cosmetic granted by ANY role goes, staff
+    or earnable, since the slot alone cannot say which."""
+    out = {k: v for k, v in equipped.items() if k != "featured_role"}
+    ids = [c["id"] for c in out.values() if isinstance(c, dict) and c.get("id")]
+    if not ids:
+        return out
+    granted = {
+        r["cosmetic_id"]
+        for r in table("role_cosmetics").select(
+            "cosmetic_id", filters={"cosmetic_id": f"in.({','.join(ids)})"}
+        ) or []
+    }
+    return {k: v for k, v in out.items() if v.get("id") not in granted}
 
 
 def _get_featured_achievements(user_id: str) -> list:
@@ -299,17 +346,22 @@ def check_username(username: str = Query(...), user_id: Optional[str] = Query(No
 # profile_visibility in code below -> service role.
 @router.get("/{user_id}", dependencies=[Depends(service_route)])
 def get_public_profile(user_id: str, request: Request):
+    # Resolve the viewer first — profiles are viewable anonymously; identity
+    # only decides how much is revealed (#134). A 503 (account state
+    # unreadable) propagates instead of degrading to the anonymous view.
+    viewer_id = _optional_viewer(request)
+
     user = _get_user_or_404(user_id)
     settings = _get_or_create_settings(user_id)
-    roles = _get_user_roles(user_id)
+    # Roles say who is staff/admin (#115): signed-in viewers only, the same
+    # audience as GET /{user_id}/roles. The app renders profiles only behind
+    # sign-in (frontend middleware), so anonymous gets [] — and skips the read.
+    roles = _get_user_roles(user_id) if viewer_id is not None else []
     equipped = _get_equipped_cosmetics(settings)
-
-    # Resolve the viewer WITHOUT raising — profiles are viewable anonymously;
-    # identity only decides how much is revealed (#134).
-    try:
-        viewer_id = get_session_user_id(request)
-    except HTTPException:
-        viewer_id = None
+    if viewer_id is None:
+        # ...nor through the cosmetics: the featured role IS a role, and a
+        # role-granted cosmetic (role_cosmetics, e.g. a staff title) names it.
+        equipped = _strip_role_cosmetics(equipped)
 
     is_owner = viewer_id is not None and viewer_id == user_id
 
@@ -330,10 +382,7 @@ def get_public_profile(user_id: str, request: Request):
         "username": user.get("username"),
         "avatar_url": user.get("avatar_url"),
         "created_at": user.get("created_at"),
-        # Roles say who is staff/admin (#115): signed-in viewers only, the
-        # same audience as GET /{user_id}/roles. The app renders profiles
-        # only behind sign-in (frontend middleware), so anonymous gets [].
-        "roles": roles if viewer_id is not None else [],
+        "roles": roles,
         "equipped_cosmetics": equipped,
     }
 
@@ -850,10 +899,7 @@ def get_cosmetics_catalog(user_id: str, request: Request):
 @router.get("/{user_id}/roles", dependencies=[Depends(service_route)])
 def get_roles(user_id: str, request: Request):
     get_session_user_id(request)
-    if not table("users").select(
-        "id", filters={"id": f"eq.{user_id}", "deleted_at": "is.null"}
-    ):
-        raise HTTPException(status_code=404, detail="User not found")
+    _live_user_or_404(user_id)
     return {"roles": _get_user_roles(user_id)}
 
 
