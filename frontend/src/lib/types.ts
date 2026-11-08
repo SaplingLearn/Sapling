@@ -797,6 +797,63 @@ export interface LearningLoopKpisData {
   /** spec §13 A128: the API process's active evidence-slot warnings (its current
    *  configuration, not the range); absent from a pre-A128 backend. */
   slot_warnings?: LoopSlotWarning[];
+  /** spec §13 A133: help abuse. null: its reads failed (the rest of the report
+   *  stands); absent from a pre-A133 backend. */
+  help_abuse?: LoopHelpAbuse | null;
+  truncated: boolean;
+}
+
+/** spec §13 A133: a median in seconds over n values (null when n = 0, never a zero). */
+export interface LoopHelpMedian {
+  n: number;
+  median: number | null;
+}
+
+/** The next graded opportunity on the concept with another item. */
+export interface LoopHelpNext {
+  /** steps with a graded, non-void evidence row in the range */
+  graded: number;
+  unassisted_correct: number;
+  other: number;
+  /** no later opportunity in the range */
+  none: number;
+}
+
+/** One group of the help-abuse report (overall, a band, a gate, a course, a student). */
+export interface LoopHelpAbuseGroup {
+  key: string;
+  /** loop check items posed (student × session × item) */
+  steps: number;
+  /** help reached the bottom-out rung (H5) or above */
+  bottom_outs: number;
+  full_solutions: number;
+  bottom_out_rate: number | null;
+  time_to_bottom_out_s: LoopHelpMedian;
+  /** seconds between consecutive new hint rungs on a step */
+  help_gap_s: LoopHelpMedian;
+  /** the same, on bottom-out steps, up to the bottom-out */
+  climb_gap_s: LoopHelpMedian;
+  /** counted hint-unlocking attempts: rapid = less than the band's independent
+   *  time alone with the latest hint; repeat = nothing new; strict_refused =
+   *  refused by the strict gate though the standard rule counted it */
+  attempts: { counted: number; rapid: number; repeat: number; strict_refused: number };
+  /** the counted attempts that bought a bottom-out's climb; unmeasured = no
+   *  attempt record (a step before A134), never a zero */
+  bottom_out_attempts: { measured: number; unmeasured: number; held_by_strict: number; no_strict_attempt: number };
+  /** by the step's help: none / partial (H1–H4) / bottom_out (H5–H6) */
+  next: Record<"none" | "partial" | "bottom_out", LoopHelpNext>;
+}
+
+/** spec §13 A133: help abuse on the loop's hint ladder, over the range. */
+export interface LoopHelpAbuse {
+  bottom_out_rung: number;
+  overall: LoopHelpAbuseGroup;
+  by_band: LoopHelpAbuseGroup[];
+  /** standard / strict (the help_gate_strict flag, A134) / none (no hint attempt) */
+  by_gate: LoopHelpAbuseGroup[];
+  by_course: LoopHelpAbuseGroup[];
+  /** most bottom-outs first */
+  by_student: LoopHelpAbuseGroup[];
   truncated: boolean;
 }
 
