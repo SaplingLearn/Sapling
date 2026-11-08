@@ -15,6 +15,7 @@ import pytest
 
 from agents import _jev
 from services import learning_decisions as decisions
+from tests.manual_clock import ManualClockLoop
 
 _BACKEND = __import__("pathlib").Path(__file__).resolve().parents[1]
 
@@ -404,23 +405,32 @@ def test_a_transport_failure_records_its_real_latency(jev, monkeypatch):
 
 
 def test_the_deadline_is_jev_timeout_ms_in_total(jev, monkeypatch):
-    """Minor 6: JEV_TIMEOUT_MS bounds the whole call, retries included."""
-    import time as _time
+    """Minor 6: JEV_TIMEOUT_MS bounds the whole call, retries included.
 
-    monkeypatch.setattr(decisions, "JEV_TIMEOUT_MS", 60)
+    Each attempt takes 40 s of a 60 s budget, so either one alone fits its own
+    per-attempt timeout; only a deadline over both ends the call while the
+    retry is still out (its 503 would otherwise come back at 80 s). The 40 s
+    pass on the loop's clock (tests/manual_clock.py), not the wall clock, so a
+    busy machine can neither push the first attempt past the deadline nor
+    hold the retry under it."""
+    monkeypatch.setattr(decisions, "JEV_TIMEOUT_MS", 60_000)
     calls = []
 
     async def slow_503(request):
         calls.append(1)
-        await asyncio.sleep(0.04)
+        loop = asyncio.get_running_loop()
+        answered = loop.create_future()
+        loop.call_at(loop.time() + 40, lambda: answered.done() or answered.set_result(None))
+        # The attempt's 40 s pass at once; a deadline due by then fires first.
+        loop.advance(40)
+        await answered
         return httpx2.Response(503, json={})
 
     monkeypatch.setattr(_jev, "_transport_override", httpx2.MockTransport(slow_503))
     _jev.reset_for_tests()
-    t0 = _time.monotonic()
     with pytest.raises(_jev.JevUnavailable) as exc:
-        _ask()
-    assert (_time.monotonic() - t0) < 0.2 and exc.value.code == "timeout" and len(calls) == 2
+        asyncio.run(_jev.ask(STATE, QUESTIONS), loop_factory=ManualClockLoop)
+    assert exc.value.code == "timeout" and len(calls) == 2
 
 
 @pytest.mark.parametrize(

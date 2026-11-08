@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import dis
 import gc
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -90,38 +91,66 @@ def count_work(fn: Callable[[], object]) -> Work:
 
 
 def assert_linear(
-    build: Callable[[int], object], run: Callable[[object], object], n: int, label: str = ""
+    build: Callable[[int], object],
+    run: Callable[[object], object],
+    n: int,
+    label: str = "",
+    *,
+    counts: tuple[str, ...] = tuple(f.name for f in fields(Work)),
 ) -> None:
     """`build(size)` makes an input of `size` (not counted); `run(input)` is the
-    work that is counted. n is the largest size."""
+    work that is counted. n is the largest size. `counts` names the counts that
+    must grow linearly (both, unless a caller documents why one may not)."""
     run(build(n // 4))
     quarter, half, full = (
         count_work(lambda arg=build(size): run(arg)) for size in (n // 4, n // 2, n)
     )
-    for field in fields(Work):
-        a, b, c = (getattr(w, field.name) for w in (quarter, half, full))
+    for name in counts:
+        a, b, c = (getattr(w, name) for w in (quarter, half, full))
         first, second = b - a, c - b
         assert second <= DOUBLING_LIMIT * first + n, (
-            f"{label}: {field.name} grew superlinearly: "
+            f"{label}: {name} grew superlinearly: "
             f"{a} at n/4, {b} at n/2, {c} at n (doublings added {first}, then {second})"
         )
+
+
+class _Runaway(Exception):
+    pass
+
+
+def _stop_runaway(signum, frame):
+    raise _Runaway
 
 
 def cpu_seconds(fn: Callable[[], object], *, limit: float, repeats: int = 3) -> float:
     """The least CPU time this thread spent in `fn()` over up to `repeats` runs,
     stopping at the first run under `limit`. The garbage collector is paused so
-    a collection of the whole test session's heap is not billed to `fn`."""
+    a collection of the whole test session's heap is not billed to `fn`.
+
+    A run still going after ten times the limit (at least 5 s) of CPU time is
+    stopped by a CPU-time timer (SIGPROF, which also interrupts a regex), and
+    that stopping point is returned: an exponential regression then fails the
+    test instead of hanging it. Main thread only, as signal handlers are."""
     best = float("inf")
+    stop_at = max(10 * limit, 5.0)
     was_enabled = gc.isenabled()
+    previous = signal.signal(signal.SIGPROF, _stop_runaway)
     gc.disable()
     try:
         for _ in range(repeats):
             start = time.thread_time()
-            fn()
+            signal.setitimer(signal.ITIMER_PROF, stop_at)
+            try:
+                fn()
+            except _Runaway:
+                return stop_at
+            finally:
+                signal.setitimer(signal.ITIMER_PROF, 0)
             best = min(best, time.thread_time() - start)
             if best < limit:
                 break
     finally:
+        signal.signal(signal.SIGPROF, previous)
         if was_enabled:
             gc.enable()
     return best

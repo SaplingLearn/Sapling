@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.work_meter import assert_linear, cpu_seconds
+
 MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 
@@ -369,16 +371,21 @@ class TestAnswerTokens:
         assert not answer_in("anything", "  ...  ")
 
     def test_normalisation_is_linear_time(self):
-        import time
-
+        """Counted, not timed (tests/work_meter.py). The answer-token regex's own
+        steps are invisible to the count, so each text keeps the old 1.0 s
+        ceiling, on CPU time rather than elapsed time."""
         from learning.checks import answer_in, answer_tokens
 
-        big = 20_000
-        for text in ("*" * big, "\u00b2" * big, "1," * big, "x" * big, "6x^2 " * (big // 5)):
-            start = time.perf_counter()
+        def check(text):
             answer_tokens(text)
             answer_in(text, "6x^2 + 1")
-            assert time.perf_counter() - start < 1.0, text[:10]
+
+        big = 20_000
+        units = (("*", 1), ("\u00b2", 1), ("1,", 1), ("x", 1), ("6x^2 ", 5))
+        for unit, per in units:
+            assert_linear(lambda size, unit=unit, per=per: unit * (size // per), check, big, unit)
+            text = unit * (big // per)
+            assert cpu_seconds(lambda text=text: check(text), limit=1.0) < 1.0, text[:10]
 
 
 class TestQuestionHash:
@@ -1517,22 +1524,33 @@ class TestRepairAndOptions:
 
     def test_the_marker_repair_is_linear_on_long_whitespace(self):
         """No quantified lead-in before a marker: a long whitespace run that
-        ends without one is scanned once per bracket, not once per space."""
-        import time
+        ends without one is scanned once per bracket, not once per space.
 
+        The repair's own work is counted, not timed (tests/work_meter.py). How
+        the marker regex scans a run happens inside the engine, where no count
+        can see it, so each text keeps the old 1.0 s ceiling, on CPU time
+        rather than elapsed time."""
         from learning.checks import repair_draft
 
-        text = "[chunk a1]" + " " * 50_000 + "x" + "(" + " " * 50_000 + "y"
-        start = time.perf_counter()
-        fixed, _ = repair_draft(_draft(reference_answer=text))
-        assert time.perf_counter() - start < 1.0
-        assert fixed.reference_answer.startswith("x(")
+        def repair(text):
+            return repair_draft(_draft(reference_answer=text))
+
+        def spaces(size):
+            return "[chunk a1]" + " " * size + "x" + "(" + " " * size + "y"
+
         # a listed marker that never closes: each "chunk" is an id or a prefix,
         # and that choice must not be tried in every combination
-        text = "[chunk " + "chunk, " * 5_000 + "chunk chunk x"
-        start = time.perf_counter()
-        fixed, repairs = repair_draft(_draft(reference_answer=text))
-        assert time.perf_counter() - start < 1.0
+        def unclosed(size):
+            return "[chunk " + "chunk, " * size + "chunk chunk x"
+
+        for build, big in ((spaces, 50_000), (unclosed, 5_000)):
+            assert_linear(build, repair, big, build.__name__)
+            text = build(big)
+            assert cpu_seconds(lambda text=text: repair(text), limit=1.0) < 1.0, build.__name__
+        fixed, _ = repair(spaces(50_000))
+        assert fixed.reference_answer.startswith("x(")
+        text = unclosed(5_000)
+        fixed, repairs = repair(text)
         assert repairs == [] and fixed.reference_answer == text
 
     @pytest.mark.parametrize(
@@ -1551,29 +1569,55 @@ class TestRepairAndOptions:
         two ids, so after an unclosed "[chunk " every one of them was read
         both ways before the match failed (exponential: 27 slashes in a URL
         held a drafting worker 29 s). An id holds no separator and is taken
-        whole, so the split is decided once per character."""
-        import time
+        whole, so the split is decided once per character.
 
+        A ceiling on CPU time rather than elapsed time, and no count: the
+        failure is exponential backtracking inside the regex engine, which no
+        count can see, and it overshoots the ceiling by orders of magnitude."""
         from learning.checks import repair_draft
 
         text = "See [chunk " + tail
-        start = time.perf_counter()
+        took = cpu_seconds(lambda: repair_draft(_draft(reference_answer=text)), limit=1.0)
+        assert took < 1.0
         fixed, repairs = repair_draft(_draft(reference_answer=text))
-        assert time.perf_counter() - start < 1.0
         assert repairs == [] and fixed.reference_answer == text
 
-    def test_many_markers_are_removed_in_one_pass(self):
+    def test_many_markers_are_removed_in_one_pass(self, monkeypatch):
         """Each removal resumes where the text it joined begins, never from
         the start again: 8,000 separate markers took 2 s when every removal
-        re-read the whole text."""
-        import time
+        re-read the whole text.
 
+        Counted, not timed. Each marker search reads from where it starts to
+        its hit (or to the end): together they must read the text about once,
+        where searching from the start after every removal reads it thousands
+        of times. The repair's own Python steps must also grow linearly
+        (tests/work_meter.py). The characters str methods scan are not held
+        linear here: each removal joins the text around the gap, a whole-text
+        copy per marker that is quadratic but cheap, and is not the re-read
+        this test is about."""
+        from learning import checks
         from learning.checks import repair_draft
 
-        text = "(see [chunk a1] " * 8_000 + "x."
-        start = time.perf_counter()
-        fixed, repairs = repair_draft(_draft(reference_answer=text))
-        assert time.perf_counter() - start < 0.5
+        def repair(text):
+            return repair_draft(_draft(reference_answer=text))
+
+        def markers(size):
+            return "(see [chunk a1] " * size + "x."
+
+        marker = checks._CHUNK_MARKER
+        read = []
+
+        class CountedMarker:
+            def search(self, text, pos=0):
+                hit = marker.search(text, pos)
+                read.append((hit.start() if hit else len(text)) - pos)
+                return hit
+
+        assert_linear(markers, repair, 8_000, counts=("steps",))
+        text = markers(8_000)
+        monkeypatch.setattr(checks, "_CHUNK_MARKER", CountedMarker())
+        fixed, repairs = repair(text)
+        assert sum(read) <= len(text), sum(read)
         assert "[chunk" not in fixed.reference_answer
         assert [r.split(":")[0] for r in repairs] == ["chunk_marker"]
         # the resumed search still reads the bracket and the lead word a
