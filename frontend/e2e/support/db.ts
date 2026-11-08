@@ -165,6 +165,46 @@ export async function seedGoalContinuationItems(stage: "diagnostic" | "practice"
 }
 
 /**
+ * Give one student a feature-flag variant (#620's user rule): the flag's
+ * `feature_flags` row (default off, as an admin's first edit creates it) and a
+ * `feature_flag_targets` user rule. The E2E stack reads the flag store fresh
+ * (FEATURE_FLAGS_SNAPSHOT_TTL_S=0), so the next request sees it; the per-test
+ * reset truncates both tables. Learning-loop spec §13 A140/A141 journeys turn
+ * their default-off flags on for the test student this way.
+ */
+export async function setUserFlag(flagKey: string, userId: string, variant: string): Promise<void> {
+  await withDb(async (client) => {
+    await client.query(
+      `INSERT INTO feature_flags (key, default_variant) VALUES ($1, 'off')
+       ON CONFLICT (key) DO NOTHING`,
+      [flagKey],
+    );
+    await client.query(
+      `INSERT INTO feature_flag_targets (flag_key, target_type, target_id, variant)
+       VALUES ($1, 'user', $2, $3)
+       ON CONFLICT (flag_key, target_type, target_id) DO UPDATE SET variant = EXCLUDED.variant`,
+      [flagKey, userId, variant],
+    );
+  });
+}
+
+/** Opt-in synthetic assets for the varied-practice journeys (spec §13 A140,
+ * A141): `python -m db.seed_learning_varied_practice <stage>` through the
+ * canonical app writers (graph writer, encrypted check-item write), printing
+ * the ids the journey drives the real routes with. Local stack only. */
+export async function seedVariedPractice(stage: "varied" | "multi"): Promise<Record<string, unknown>> {
+  requireLocalDbUrl(DB_URL);
+  const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
+  const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");
+  const { stdout } = await execFileAsync(python, ["-m", "db.seed_learning_varied_practice", stage], {
+    cwd: backendDir,
+    timeout: 30_000,
+  });
+  const lines = stdout.trim().split("\n");
+  return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
+}
+
+/**
  * Raw-SQL readback for journey assertions (#392): journeys write through the
  * app and assert directly against Postgres (the #397 posture), so the read
  * must bypass PostgREST/the API entirely. Parameterized ($1, $2, …) SELECTs
