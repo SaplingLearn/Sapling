@@ -422,6 +422,59 @@ def test_the_funnel_counts_every_due_window_once_with_its_reason():
     assert set(second["skip_reasons"]) == set(POSTTEST_SKIP_REASONS)
 
 
+def test_the_funnel_counts_an_answer_on_a_retired_item_as_excluded_never_answered():
+    """A123 × A126, the one void rule: an answered pose whose item staff
+    retired is no answered outcome. It is counted in the funnel's
+    `excluded_retired` (the windows' name for the same rule), never in
+    `answered` or `unassisted`, and the window is not still open: the student
+    did answer it. The same hash in another course is another item."""
+    now = T0 + timedelta(days=60)
+    closes = now + timedelta(days=3)
+    due = [_due_window(n, closes=closes) for n in ("void", "void-assisted", "kept", "other-course")]
+    answered = {"answered_at": now.isoformat(), "posed_at": now.isoformat(), "correct": True}
+
+    def pose(qh, *, course="c1", rung=0):
+        return {**answered, "max_rung": rung, "course_id": course, "question_hash": qh}
+
+    poses = {
+        ("u1", "void", W1): pose("q-broken"),
+        ("u1", "void-assisted", W1): pose("q-broken", rung=2),
+        ("u1", "kept", W1): pose("q-fine"),
+        ("u1", "other-course", W1): pose("q-broken", course="c2"),
+    }
+    first = lg.posttest_funnel(due, poses, {}, now=now, retired={("c1", "q-broken")})[0]
+    assert (first["opened"], first["answered"], first["unassisted"]) == (4, 2, 2)
+    assert first["excluded_retired"] == 2
+    assert first["answered"] + first["excluded_retired"] + first["expired"] + first["open"] == first["opened"]
+    assert first["still_open"] == 0
+    plain = lg.posttest_funnel(due, poses, {}, now=now)[0]
+    assert (plain["answered"], plain["excluded_retired"]) == (4, 0)
+
+
+def test_the_bootstrap_and_every_stratum_read_only_the_pairs_the_void_rule_kept():
+    """A123 × A126: a post-test outcome on a retired item never reaches the
+    student-cluster bootstrap, the visibility-loss stratum or the delay bins:
+    each reads the pairs left after the exclusion. Here the only outcome of
+    student s2 is void, so the interval has one student (no interval)."""
+    pretests = {"ev-a": False, "ev-b": True}
+    base = {"anchor_at": T0.isoformat(), "answered_at": (T0 + timedelta(days=9)).isoformat(),
+            "hidden_count": 1, "hidden_s": 4.0}
+    poses = [
+        {**_asked(_pose(W1, correct=True, anchor="ev-a"), qh="q-fine"), **base, "user_id": "s1"},
+        {**_asked(_pose(W1, correct=True, anchor="ev-b"), qh="q-broken"), **base, "user_id": "s2"},
+    ]
+    both = lg.learning_gain(poses, pretests, resamples=50)
+    first = both["windows"][0]
+    assert first["students"] == 2 and first["visibility_loss"]["n"] == 2
+    assert sum(b["n"] for b in both["delay_bins"]) == 2
+    kept = lg.learning_gain(poses, pretests, retired={("c1", "q-broken")}, resamples=50)
+    first = kept["windows"][0]
+    assert (first["n"], first["excluded_retired"]) == (1, 1)
+    assert first["students"] == 1 and first["post_correct_ci"] is None
+    assert first["visibility_loss"]["n"] == 1
+    assert sum(b["n"] for b in kept["delay_bins"]) == 1
+
+
 def test_an_empty_funnel_reports_every_window_with_zeros():
     out = lg.posttest_funnel([], {}, {}, now=T0)
     assert [w["window_days"] for w in out] == list(POSTTEST_WINDOWS_DAYS)

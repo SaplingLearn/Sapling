@@ -948,6 +948,46 @@ def test_the_funnel_counts_the_windows_that_opened_in_the_range(monkeypatch):
     assert read.get("user_id") is None and read["limit"] == analytics._SCAN_CAP
 
 
+def test_the_funnel_applies_the_void_rule_with_the_reports_one_retired_read(monkeypatch):
+    """A123 × A126: an answered funnel pose on an item staff retired is counted
+    in the funnel's `excluded_retired`, never in `answered`; the funnel reads
+    the item it asked, and the report reads the retired items once for all of
+    its parts."""
+    day = timedelta(days=1)
+    opens_in_range = START + 5 * day - W1 * day
+    anchors = [
+        {"user_id": "u1", "node_id": n, "course_id": "c1", "anchor_at": opens_in_range.isoformat()}
+        for n in ("void", "kept")
+    ]
+    monkeypatch.setattr(analytics, "posttest_anchors", _anchors(anchors))
+    posed = (opens_in_range + W1 * day).isoformat()
+    answered = {"window_days": W1, "posed_at": posed, "answered_at": posed, "correct": True,
+                "max_rung": 0, "course_id": "c1", "user_id": "u1"}
+    store = {"posttest_poses": [{**answered, "node_id": "void", "question_hash": "q-bad"},
+                                {**answered, "node_id": "kept", "question_hash": "q-ok"}]}
+    _serve(monkeypatch, store)
+    reads = []
+    monkeypatch.setattr(analytics, "retired_items", lambda: reads.append(1) or {("c1", "q-bad")})
+    gain = client.get(URL, params=RANGE).json()["learning_gain"]
+    first = {w["window_days"]: w for w in gain["funnel"]}[W1]
+    assert (first["opened"], first["answered"], first["unassisted"]) == (2, 1, 1)
+    assert first["excluded_retired"] == 1
+    assert reads == [1]
+    assert {"course_id", "question_hash"} <= set(analytics._FUNNEL_POSE_COLS.split(","))
+
+
+def test_a_funnel_answer_alone_is_reason_enough_to_read_the_retired_items(monkeypatch):
+    """The retired items are read only when there is an observation to judge:
+    an answered funnel pose is one, even with no evidence row and no post-test
+    answered in the range."""
+    reads = []
+    monkeypatch.setattr(analytics, "retired_items", lambda: reads.append(1) or set())
+    assert analytics._void_items([], [], []) == set() and reads == []
+    assert analytics._void_items([], [], [{"answered_at": None}]) == set() and reads == []
+    analytics._void_items([], [], [{"answered_at": "2026-07-20T00:00:00+00:00"}])
+    assert reads == [1]
+
+
 def test_the_funnel_is_unknown_not_zero_when_the_anchors_cannot_be_read(monkeypatch):
     def _down(**_kw):
         raise RuntimeError("function missing: migration not applied")

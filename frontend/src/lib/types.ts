@@ -735,6 +735,9 @@ export interface LoopFunnelWindow {
   answered: number;
   /** answered with no help (the outcomes the gain report can use) */
   unassisted: number;
+  /** answered on a question staff retired: void evidence (spec §13 A123), never
+   *  counted as answered; absent from a backend before the A123 × A126 merge */
+  excluded_retired?: number;
   expired: number;
   open: number;
   skipped: number;

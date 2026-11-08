@@ -394,7 +394,18 @@ function FunnelTable({ funnel }: { funnel: LearningLoopKpisData["learning_gain"]
                 <td style={td}>{`${f.window_days} days`}</td>
                 <td style={tdNum}>{f.due}</td>
                 <td style={tdNum}>{f.opened}</td>
-                <td style={tdNum}>{`${f.answered} (${f.unassisted})`}</td>
+                <td style={tdNum}>
+                  <span>{`${f.answered} (${f.unassisted})`}</span>
+                  {/* spec §13 A123: answers to a question staff retired are void */}
+                  {(f.excluded_retired ?? 0) > 0 && (
+                    <div
+                      data-testid={`admin-loop-funnel-${f.window_days}-retired`}
+                      style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}
+                    >
+                      {`+${f.excluded_retired} on retired questions, left out`}
+                    </div>
+                  )}
+                </td>
                 <td style={tdNum}>{f.expired}</td>
                 <td style={tdNum}>{f.open}</td>
                 <td style={tdNum} data-testid={`admin-loop-funnel-${f.window_days}-skipped`}>

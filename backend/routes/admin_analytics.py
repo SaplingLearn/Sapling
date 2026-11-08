@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -716,6 +717,7 @@ class FunnelWindow(BaseModel):
     opened: int
     answered: int
     unassisted: int
+    excluded_retired: int  # answered on an item staff retired (A123): void
     expired: int
     open: int
     skipped: int
@@ -939,7 +941,10 @@ _POSE_COLS = (
     "days_since_evidence,course_id,question_hash,hidden_count,hidden_s"
 )
 #: A126: what the funnel classifies a due window's pose and skip by
-_FUNNEL_POSE_COLS = "user_id,node_id,window_days,posed_at,answered_at,correct,max_rung"
+#: A123: course_id and question_hash name the item the void rule keys on
+_FUNNEL_POSE_COLS = (
+    "user_id,node_id,window_days,posed_at,answered_at,correct,max_rung,course_id,question_hash"
+)
 _FUNNEL_SKIP_COLS = "user_id,node_id,window_days,reason"
 #: an anchor row, with what learning_gain.pretest_outcome binds its envelope to
 _ANCHOR_COLS = (
@@ -1001,32 +1006,51 @@ def _pretests(poses: list[dict], retired: set[tuple[str, str]] = frozenset()) ->
     return out
 
 
-def _void_items(evidence: list[dict], poses: list[dict]) -> set[tuple[str, str]]:
-    """Spec §13 A123 — the ONE rule both reports apply: an observation graded
-    against a check item STAFF retired is void (learning/evidence_void.py).
+def _void_items(
+    evidence: list[dict], poses: list[dict], funnel_poses: Iterable[dict] = ()
+) -> set[tuple[str, str]]:
+    """Spec §13 A123 — the ONE rule every report here applies: an observation
+    graded against a check item STAFF retired is void (learning/evidence_void.py).
     The staff-retired course items, as (course_id, question_hash) — the
     structured record (`check_item_reviews`, status 'retired'), never an item
     row being gone (A23's consent withdrawal and A119's re-key delete rows too,
     and that evidence stands); a quarantine, a report or an approval is no
-    retire. Read only when there is an observation to judge: ONE paged,
-    status-filtered read (retired items are staff decisions, so few)."""
-    if not evidence and not any(posttest_outcome(p) is not None for p in poses):
+    retire. Read only when there is an observation to judge — a scanned
+    evidence row, an answered post-test in the range, or an answered pose of
+    the A126 funnel: ONE paged, status-filtered read (retired items are staff
+    decisions, so few)."""
+    if (
+        not evidence
+        and not any(posttest_outcome(p) is not None for p in poses)
+        and not any(p.get("answered_at") for p in funnel_poses)
+    ):
         return set()
     return retired_items()
 
 
-def _funnel(from_iso: str, to_iso: str) -> tuple[list[dict] | None, bool]:
-    """A126: the funnel of the post-test windows that OPENED in the range
-    (learning_gain.due_windows over every concept's anchor; posttest_funnel
-    classifies each). Reads: the anchors in the one range any window could open
-    from (the `posttest_anchors` SQL function, keyset-paged, capped at
-    _SCAN_CAP — the cap sets `truncated`), then the poses and the recorded skips
-    of the students those windows belong to (user ids per `in.(…)`, paged).
-    Returns (funnel, truncated); (None, False) when a read failed — the funnel
-    is then unknown, never zeros that read as "nothing was due"."""
+class _FunnelReads(NamedTuple):
+    """What the A126 funnel classifies: the due windows, their poses and the
+    recorded skips, keyed (user_id, node_id, window_days)."""
+
+    due: list[dict]
+    poses: dict[tuple, dict]
+    skips: dict[tuple, str]
+    truncated: bool
+
+
+def _funnel_reads(from_iso: str, to_iso: str) -> _FunnelReads | None:
+    """A126: the reads behind the funnel of the post-test windows that OPENED
+    in the range (learning_gain.due_windows over every concept's anchor;
+    posttest_funnel classifies each, after the one retired read). Reads: the
+    anchors in the one range any window could open from (the
+    `posttest_anchors` SQL function, keyset-paged, capped at _SCAN_CAP — the
+    cap sets `truncated`), then the poses and the recorded skips of the
+    students those windows belong to (user ids per `in.(…)`, paged). None
+    when a read failed — the funnel is then unknown, never zeros that read as
+    "nothing was due"."""
     start, end = _parse_ts(from_iso), _parse_ts(to_iso)
     if start is None or end is None:
-        return None, False
+        return None
     opens = [o for _, o, _ in window_bounds()]
     try:
         anchors, truncated = posttest_anchors(
@@ -1055,8 +1079,8 @@ def _funnel(from_iso: str, to_iso: str) -> tuple[list[dict] | None, bool]:
                 skips[(row.get("user_id"), row.get("node_id"), row.get("window_days"))] = row.get("reason")
     except Exception:
         logger.warning("learning-gain funnel unavailable", exc_info=True)
-        return None, False
-    return posttest_funnel(due, poses, skips, now=datetime.now(timezone.utc)), truncated
+        return None
+    return _FunnelReads(due, poses, skips, truncated)
 
 
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
@@ -1126,16 +1150,31 @@ def learning_loop_kpis(
     in_band, banded = _in_band_share(steps)
     compliance = _ceiling_compliance(steps)
     earnest = EarnestRevise(**earnest_revise(steps))
+    funnel_reads = _funnel_reads(from_iso, to_iso)  # A126
     # A123: ONE void rule for every evidence read — graded against an item
     # staff retired. An outcome on one is excluded (and counted), so its anchor
-    # is never read for a pretest; a void anchor is no pretest.
-    retired = _void_items(evidence, poses)
+    # is never read for a pretest; a void anchor is no pretest; an answered
+    # funnel pose on one is counted as excluded, never as answered.
+    retired = _void_items(
+        evidence, poses, funnel_reads.poses.values() if funnel_reads is not None else ()
+    )
     valid = [row for row in evidence if not is_void_row(row, retired)]
     excluded_void = sum(
         1 for row in evidence if is_void_row(row, retired) and calibration_eligible(row) is not None
     )
     pretests = _pretests([p for p in poses if not pose_is_void(p, retired)], retired)
-    funnel, funnel_truncated = _funnel(from_iso, to_iso)  # A126
+    funnel = (
+        posttest_funnel(
+            funnel_reads.due,
+            funnel_reads.poses,
+            funnel_reads.skips,
+            now=datetime.now(timezone.utc),
+            retired=retired,
+        )
+        if funnel_reads is not None
+        else None
+    )
+    funnel_truncated = funnel_reads.truncated if funnel_reads is not None else False
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),

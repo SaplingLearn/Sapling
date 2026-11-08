@@ -602,6 +602,22 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
     expect(screen.getByTestId("admin-loop-funnel-7-skipped").textContent).toBe("2no items: 1, all seen: 1");
   });
 
+  it("shows answers to retired questions as left out of the funnel, never as answered (spec §13 A123)", () => {
+    const funnel = (extra: Record<string, number>) => ({
+      ...loopFixture,
+      learning_gain: gainOf(learningGain.windows, {
+        funnel: [funnelRow(7, { due: 3, opened: 3, answered: 1, unassisted: 1, ...extra }), funnelRow(28)],
+      }),
+    });
+    const { rerender } = render(<LearningLoopPanelBody d={funnel({ excluded_retired: 0 })} />);
+    expect(screen.queryByTestId("admin-loop-funnel-7-retired")).toBeNull();
+    rerender(<LearningLoopPanelBody d={funnel({ excluded_retired: 2 })} />);
+    expect(within(screen.getByTestId("admin-loop-funnel-7")).getByText("1 (1)")).toBeTruthy();
+    expect(screen.getByTestId("admin-loop-funnel-7-retired").textContent).toBe(
+      "+2 on retired questions, left out",
+    );
+  });
+
   it("shows the funnel even with no outcome at all — the missing data is the finding", () => {
     const missing = {
       ...loopFixture,

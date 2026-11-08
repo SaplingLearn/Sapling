@@ -60,7 +60,13 @@ left unanswered past its TTL), open (a pose still answerable), skipped (no
 fresh item could be posed — recorded with its reason when it happened) and
 not opened (the student never came while it was open), plus `still_open`, the
 due windows not yet answered whose window has not closed (their state can
-still change). Missing outcomes are reported, never imputed.
+still change). Missing outcomes are reported, never imputed. The one void rule
+(A123) holds here too: an answered pose whose item staff retired is no answered
+outcome — it is counted in the funnel's `excluded_retired`, never in
+`answered` or `unassisted`, so `opened = answered + excluded_retired + expired
++ open`. It is the same rule, under the same name, as each window's
+`excluded_retired` (which counts the unassisted outcomes it leaves out); the
+bootstrap and every stratum read only the pairs left after it.
 
 Only observed outcomes are read — never p_known or any other belief. Every rate
 is None when n = 0, never a zero that reads as a result. A report: it never
@@ -495,6 +501,7 @@ def _empty_funnel(window: int) -> dict:
         "opened": 0,
         "answered": 0,
         "unassisted": 0,
+        "excluded_retired": 0,
         "expired": 0,
         "open": 0,
         "skipped": 0,
@@ -510,6 +517,7 @@ def posttest_funnel(
     skips: Mapping[tuple, str],
     *,
     now: datetime,
+    retired: Collection[tuple[str, str]] = frozenset(),
     ttl_hours: float = POSTTEST_POSE_TTL_HOURS,
     windows: Sequence[int] = POSTTEST_WINDOWS_DAYS,
 ) -> list[dict]:
@@ -518,10 +526,12 @@ def posttest_funnel(
     renewal replaces it) is answered (and `unassisted` when graded at rung 0),
     expired (unanswered past its TTL, or with an unreadable posed_at — void, as
     the route reads it) or open; with no pose, it is skipped when a skip was
-    recorded for it (`skips`, same key → reason) and not opened otherwise.
-    `still_open` counts the unanswered ones whose window has not closed yet. A
-    window outside `windows` is ignored; every window is reported, zeros and
-    all — here a zero IS the count."""
+    recorded for it (`skips`, same key → reason) and not opened otherwise. An
+    answered pose whose item is in `retired` (the staff-retired course items,
+    A123's one void rule: pose_is_void) is counted in `excluded_retired`
+    instead of `answered`. `still_open` counts the unanswered ones whose window
+    has not closed yet. A window outside `windows` is ignored; every window is
+    reported, zeros and all — here a zero IS the count."""
     out = {w: _empty_funnel(w) for w in windows}
     ttl = timedelta(hours=ttl_hours)
     for d in due:
@@ -537,8 +547,11 @@ def posttest_funnel(
             row["opened"] += 1
             if pose.get("answered_at"):
                 answered = True
-                row["answered"] += 1
-                row["unassisted"] += int(posttest_outcome(pose) is not None)
+                if pose_is_void(pose, retired):  # graded against a retired item (A123)
+                    row["excluded_retired"] += 1
+                else:
+                    row["answered"] += 1
+                    row["unassisted"] += int(posttest_outcome(pose) is not None)
             else:
                 posed = _ts(pose.get("posed_at"))
                 if posed is None or posed + ttl < now:
