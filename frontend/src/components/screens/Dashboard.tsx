@@ -35,6 +35,12 @@ import { DashboardActions, TodayColumn } from "../dashboard/TodayColumn";
 type DatedAssignment = Assignment & { due_date: string };
 const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
 
+// The desktop greeting's line box. The header actions centre on this line,
+// so both read from one place.
+const HERO_PAD_TOP = 6;
+const HERO_FONT = 42;
+const HERO_LINE_HEIGHT = 1.15;
+
 const QUOTES = [
   "Learning is the only thing the mind never exhausts, never fears, and never regrets. — da Vinci",
   "The roots of education are bitter, but the fruit is sweet. — Aristotle",
@@ -569,18 +575,18 @@ export function Dashboard() {
     <div
       style={{
         textAlign: useLegacyPanels && !isMobile ? "center" : "left",
-        padding: isMobile ? "14px 4px 14px" : "6px 0 18px",
+        padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 18px`,
       }}
     >
       <h1
         className="h-serif"
         style={{
           margin: 0,
-          fontSize: isMobile ? 34 : 42,
+          fontSize: isMobile ? 34 : HERO_FONT,
           fontWeight: 600,
           color: "var(--text)",
           letterSpacing: "-0.02em",
-          lineHeight: 1.15,
+          lineHeight: HERO_LINE_HEIGHT,
         }}
       >
         <Typewriter text={greetingText} onDone={() => setGreetingDoneFor(greetingText)} />
@@ -891,7 +897,16 @@ export function Dashboard() {
         <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
             <div style={{ minWidth: 0 }}>{heroBlock}</div>
-            <DashboardActions navigate={(href) => router.push(href)} />
+            {/* Same box as the greeting's first line, so the buttons centre on it. */}
+            <div
+              style={{
+                paddingTop: HERO_PAD_TOP,
+                height: HERO_PAD_TOP + HERO_FONT * HERO_LINE_HEIGHT,
+                display: "flex", alignItems: "center", flexShrink: 0,
+              }}
+            >
+              <DashboardActions navigate={(href) => router.push(href)} />
+            </div>
           </div>
           {suggestBlock}
           <div
