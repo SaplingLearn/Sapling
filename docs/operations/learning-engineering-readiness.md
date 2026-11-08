@@ -336,6 +336,12 @@ unfinished engineering requirement.
    delayed post-test from pull to push for the students it reaches — a change
    to the measurement protocol — so switch it on at a trial boundary, record
    when, and keep it on for the whole cohort.
+5. A130's `probe_matched_pretest` flag ships off. Turning it on changes which
+   item is each new concept's pretest (the probe opens on a form parallel to
+   the post-test reserves), so it follows the same rule: switch it on at a
+   trial boundary, record when, keep it on for the cohort. It needs no
+   migration; with it on, each `/probe/next` makes one `posttest_anchors`
+   read while some skill could still be steered.
 
 ### Kill-switch and rollback drill
 
