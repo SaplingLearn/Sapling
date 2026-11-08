@@ -886,25 +886,53 @@ def test_inv_07_learning_tables_only_via_connection():
             )
 
 
-def test_inv_08_series_migrations_named_and_never_modified():
-    names = sorted(p.name for p in MIGRATIONS.glob("*_learning_*.sql"))
-    for n in names:
-        assert re.fullmatch(r"\d{14}_learning_[a-z_]+\.sql", n), n
+#: The one sanctioned amendment (spec §13 A123). 7717dc24 folded the report
+#: quarantine into A124's hold by editing 20261108072715_learning_evidence_void.sql,
+#: which 2bbeaf82 had created on the same unmerged branch, before any
+#: environment applied it. The migration ledger keys on basename, so an edit
+#: AFTER an apply is what inv_08 exists to stop. Keyed on the full commit and the
+#: one file it may touch. Never add a migration that any environment has applied.
+_AMENDED_BEFORE_ANY_APPLY = {
+    "7717dc247bbc9150e469ab1960130d61425e1ffa": frozenset(
+        {"20261108072715_learning_evidence_void.sql"}
+    ),
+}
+
+
+def _modified_series_migrations(cwd: pathlib.Path = BACKEND.parent) -> dict[str, set[str]]:
+    """Commit (full hash) -> the series migrations it modified, from git."""
     out = subprocess.run(
         [
             "git",
             "log",
             "--diff-filter=M",
-            "--format=%h",
+            "--format=%x00%H",
+            "--name-only",
             "--",
             "backend/db/migrations/*_learning_*.sql",
         ],
-        cwd=BACKEND.parent,
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
-    ).stdout.strip()
-    assert out == "", f"series migrations were modified after creation: {out}"
+    ).stdout
+    modified: dict[str, set[str]] = {}
+    for entry in out.split("\x00")[1:]:
+        sha, *files = entry.splitlines()
+        modified[sha.strip()] = {pathlib.PurePosixPath(f).name for f in files if f.strip()}
+    return modified
+
+
+def test_inv_08_series_migrations_named_and_never_modified():
+    names = sorted(p.name for p in MIGRATIONS.glob("*_learning_*.sql"))
+    for n in names:
+        assert re.fullmatch(r"\d{14}_learning_[a-z_]+\.sql", n), n
+    unsanctioned = {
+        sha: sorted(files)
+        for sha, files in _modified_series_migrations().items()
+        if not files <= _AMENDED_BEFORE_ANY_APPLY.get(sha, frozenset())
+    }
+    assert not unsanctioned, f"series migrations were modified after creation: {unsanctioned}"
     if _is_shallow_clone():
         # A depth-1 clone (actions/checkout's default) lists every file as
         # Added in its one grafted commit, so the check above cannot fail there.
