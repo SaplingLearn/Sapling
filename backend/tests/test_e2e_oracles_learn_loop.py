@@ -287,16 +287,22 @@ def test_the_final_answer_after_a_released_grade_is_the_release():
 PQ_SENTINEL = "the papa sentinel phrase"
 
 
-def _with_prequestion(answered_at, status="resolved"):
+def _with_prequestion(answered_at, status="resolved", records=None):
     s = _session({"qh": _step()})
-    s["loop_state"]["prequestion"] = {"n1": {"status": status, "answered_at": answered_at}}
+    s["loop_state"]["prequestion"] = records or {
+        "n1": {"status": status, "answered_at": answered_at, "check_item_id": "rich-check-loop-a-mc-pq1"},
+    }
     return s
+
+
+def _key(token="loop-a-pq1"):
+    return f"{PQ_SENTINEL} {token}"
 
 
 def test_a_prequestion_release_opens_only_its_own_sentinel():
     # review fix (spec §13 A138): each release opens its own sentinel. An answered
     # prequestion releases the prequestion items' answer, never a check's.
-    pq_after = {"session_id": "s1", "at": 61.0, "content": f"The answer: B. {PQ_SENTINEL}"}
+    pq_after = {"session_id": "s1", "at": 61.0, "content": f"The answer: B. {_key()}"}
     check_answer = {"session_id": "s1", "at": 70.0, "content": f"It is {SENTINEL}."}
     kw = _activity(sessions=[_with_prequestion(60.0)], messages=[pq_after], prequestion_sentinel=PQ_SENTINEL)
     assert learn_loop_activity_findings(**kw) == []
@@ -306,12 +312,30 @@ def test_a_prequestion_release_opens_only_its_own_sentinel():
 
 
 def test_a_prequestions_answer_before_its_guess_is_a_finding():
-    before = {"session_id": "s1", "at": 59.0, "content": PQ_SENTINEL}
+    before = {"session_id": "s1", "at": 59.0, "content": _key()}
     for session in (_with_prequestion(60.0), _with_prequestion(60.0, status="posed"), _session({"qh": _step()})):
         kw = _activity(sessions=[session], messages=[before], prequestion_sentinel=PQ_SENTINEL)
         f = learn_loop_activity_findings(**kw)
         assert len(f) == 1 and "prequestion" in f[0].summary
         assert PQ_SENTINEL not in str(f[0].evidence).lower()
+
+
+def test_one_answered_prequestion_opens_only_its_own_items_key():
+    # second review, item 5: per ITEM — the first answer must not open another
+    # item's key for the rest of the session
+    records = {
+        "n1": {"status": "resolved", "answered_at": 60.0, "check_item_id": "rich-check-loop-a-mc-pq1"},
+        "n2": {"status": "posed", "check_item_id": "rich-check-loop-b-mc-pq1"},
+    }
+    other = {"session_id": "s1", "at": 90.0, "content": f"It is {_key('loop-b-pq1')}."}
+    kw = _activity(sessions=[_with_prequestion(None, records=records)], messages=[other],
+                   prequestion_sentinel=PQ_SENTINEL)
+    f = learn_loop_activity_findings(**kw)
+    assert len(f) == 1 and "prequestion" in f[0].summary
+    kw["messages"] = [{"session_id": "s1", "at": 90.0, "content": _key("loop-a-pq1")}]
+    assert learn_loop_activity_findings(**kw) == []
+    kw["messages"] = [{"session_id": "s1", "at": 90.0, "content": f"bare {PQ_SENTINEL}"}]  # unknown: fails closed
+    assert len(learn_loop_activity_findings(**kw)) == 1
 
 
 def test_an_h6_worked_answer_is_a_release_at_its_logged_time():

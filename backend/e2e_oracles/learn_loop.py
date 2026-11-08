@@ -22,6 +22,7 @@ over already-gathered rows. Pure — stdlib only, no IO (e2e_oracles contract).
 from __future__ import annotations
 
 import math
+import re
 
 from e2e_oracles.findings import Finding
 
@@ -113,10 +114,11 @@ def learn_loop_findings(
 #     A release in one session never opens another. The text is never echoed;
 # (g') likewise for the segment prequestion's OWN sentinel (spec §13 A138,
 #     `prequestion_sentinel`, E2E_LOOP_PREQUESTION_ANSWER — the seeded
-#     prequestion items' key, never a check's): no assistant message states it
-#     before the session's first answered prequestion. Each release opens only
-#     its own sentinel (review fix: a prequestion's release no longer opens the
-#     checks' answer);
+#     prequestion items' key, never a check's), PER ITEM (second review): each
+#     seeded item's key is the sentinel plus "<slug>-pq<n>", and no assistant
+#     message states an item's key before the session answered THAT item's
+#     prequestion (its record's check_item_id names it); a bare or unknown key
+#     fails closed. Each release opens only its own item's key;
 # (h) with `expect_activity` (the loop journey runs the oracle right after its
 #     walk, before the next test's truncate-and-reseed): no loop user, or no
 #     graded check step anywhere, is itself a finding.
@@ -141,17 +143,23 @@ def _prequestions_of(session: dict) -> dict:
     return {k: v for k, v in (records or {}).items() if isinstance(v, dict)} if isinstance(records, dict) else {}
 
 
-def _prequestion_release_at(prequestions: dict) -> float | None:
-    """Spec §13 A138: when the session first released a prequestion's answer —
-    an answered segment prequestion's `answered_at` (its explaining turn opens
-    with the answer) — or None (never). It opens only the prequestion items'
-    sentinel."""
-    times = [
-        at
-        for record in prequestions.values()
-        if record.get("status") in ("answered", "resolved") and (at := _number(record.get("answered_at"))) is not None
-    ]
-    return min(times) if times else None
+#: A seeded prequestion item (db/seed_learning_teach_prompts.py) → its sentinel's token.
+_SEEDED_PREQUESTION = re.compile(r"^rich-check-(?P<slug>.+)-mc-pq(?P<n>\d+)$")
+
+
+def _prequestion_cutoffs(prequestions: dict) -> dict[str, float | None]:
+    """Spec §13 A138, per ITEM (second review): each posed seeded item's token
+    (`<slug>-pq<n>`, read off the record's check_item_id) → when the session
+    released its answer — the record's `answered_at` once answered (its
+    explaining turn opens with it) — or None (posed, never answered)."""
+    out: dict[str, float | None] = {}
+    for record in prequestions.values():
+        m = _SEEDED_PREQUESTION.match(str(record.get("check_item_id") or ""))
+        if m is None:
+            continue
+        answered = record.get("status") in ("answered", "resolved")
+        out[f"{m['slug']}-pq{m['n']}"] = _number(record.get("answered_at")) if answered else None
+    return out
 
 
 def _release_at(steps: dict) -> float | None:
@@ -185,11 +193,11 @@ def learn_loop_activity_findings(
     findings: list[Finding] = []
     no_evidence, no_step, graded_any = [], [], False
     release: dict[str, float | None] = {}
-    pq_release: dict[str, float | None] = {}
+    pq_release: dict[str, dict[str, float | None]] = {}
     for s in sessions:
         steps = _steps_of(s)
         release[s["id"]] = _release_at(steps)
-        pq_release[s["id"]] = _prequestion_release_at(_prequestions_of(s))
+        pq_release[s["id"]] = _prequestion_cutoffs(_prequestions_of(s))
         for qh, step in sorted(steps.items()):
             if step.get("graded_at") is None:
                 continue
@@ -217,25 +225,33 @@ def learn_loop_activity_findings(
                 evidence={"sample": no_step[:_SAMPLE]},
             )
         )
-    rules = [(sentinel, release, "the seeded final answer")]
-    if prequestion_sentinel:
-        rules.append((prequestion_sentinel, pq_release, "a seeded prequestion's answer"))
-    for needle_text, cutoffs, what in rules:
-        needle = needle_text.casefold()
-        leaked = []
-        for m in messages:
-            sid = m.get("session_id")
-            if sid not in cutoffs or needle not in str(m.get("content") or "").casefold():
-                continue
-            cutoff, at = cutoffs[sid], _number(m.get("at"))
+    needle = sentinel.casefold()
+    pq_token = re.compile(re.escape(prequestion_sentinel.casefold()) + r" ([a-z0-9-]+-pq\d+)") if (
+        prequestion_sentinel
+    ) else None
+    leaked: dict[str, list[str]] = {"the seeded final answer": [], "a seeded prequestion's answer": []}
+    for m in messages:
+        sid = m.get("session_id")
+        text, at = str(m.get("content") or "").casefold(), _number(m.get("at"))
+        if sid in release and needle in text:
+            cutoff = release[sid]
             if cutoff is None or at is None or at < cutoff:  # unknown time: fail closed
-                leaked.append(sid)
-        if leaked:
+                leaked["the seeded final answer"].append(sid)
+        if pq_token is not None and sid in pq_release and prequestion_sentinel.casefold() in text:
+            # each item's key by its OWN record; a bare or unknown one fails closed
+            tokens = pq_token.findall(text) or [None]
+            for token in tokens:
+                cutoff = pq_release[sid].get(token) if token else None
+                if cutoff is None or at is None or at < cutoff:
+                    leaked["a seeded prequestion's answer"].append(sid)
+                    break
+    for what, sids in leaked.items():
+        if sids:
             findings.append(
                 Finding(
                     oracle="learn_loop",
-                    summary=f"{len(leaked)} assistant message(s) state {what} before the session released it",
-                    evidence={"sessions": sorted(set(leaked))[:_SAMPLE]},
+                    summary=f"{len(sids)} assistant message(s) state {what} before the session released it",
+                    evidence={"sessions": sorted(set(sids))[:_SAMPLE]},
                 )
             )
     if expect_activity:

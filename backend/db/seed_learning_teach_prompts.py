@@ -94,9 +94,18 @@ def seed_teach_prompt_items() -> None:
         for n, difficulty in VARIANTS:
             h.upsert(
                 "check_items",
-                prequestion_item(rows[0], slug=slug, concept=concept, n=n, difficulty=difficulty, final_answer=final_answer),
+                prequestion_item(rows[0], slug=slug, concept=concept, n=n, difficulty=difficulty,
+                                 final_answer=item_sentinel(final_answer, slug, n)),
                 on_conflict="course_id,concept_key,question_hash",
             )
+
+
+def item_sentinel(base: str, slug: str, n: int) -> str:
+    """One prequestion item's OWN key (second review): the base sentinel and
+    the item's `<slug>-pq<n>` — the e2e learn_loop oracle reads the token back
+    off the posed record's check_item_id (`rich-check-<slug>-mc-pq<n>`), so the
+    first answered prequestion releases its own item's key only."""
+    return f"{base} {slug}-pq{n}"
 
 
 if __name__ == "__main__":
