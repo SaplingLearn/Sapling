@@ -582,7 +582,7 @@ def test_ceiling_for_passes_typed_state_only():
     """Invariant 4 at the call site: the policy gets a LearnerView and a
     StepState — typed state, never the message — and the shown-work floor is
     the only thing the message decides (gates.is_genuine_attempt, fed
-    has_non_attempt_phrase, HANDOFF-06)."""
+    vetoes_attempt, HANDOFF-06; spec §13 A120)."""
     from routes.learn_loop import _ceiling_for, _learner_view, _step_state
 
     step = _step_state(_state(attempts=1), "qh-1")
@@ -601,7 +601,7 @@ def test_ceiling_for_passes_typed_state_only():
     assert lv.band == "develop" and lv.prereq_proficient is True
     assert st.genuine_attempts == 1 and st.showed_work is True and st.exam_mode is False
     assert not any(isinstance(v, str) and "work" in v for v in vars(st).values()), "no message text"
-    # a plea is never shown work (has_non_attempt_phrase vetoes it)
+    # a plea alone is never shown work (vetoes_attempt vetoes it)
     with patch(
         "routes.learn_loop.policy.ceiling_with_reason", wraps=policy.ceiling_with_reason
     ) as spy:
@@ -2223,6 +2223,61 @@ def test_step_attempt_non_genuine_is_not_recorded(gate_on, seams):
 def test_step_attempt_unknown_item_is_404(gate_on, seams):
     r = client.post("/api/learn/loop/step/attempt", json=_attempt(question_hash="nope"))
     assert r.status_code == 404
+
+
+#: Spec §13 A120: the live walkthrough's draft (2026-11-08). Typed into the
+#: attempt box, then Hint: /step/attempt judged it no genuine attempt, so /hint
+#: answered no_genuine_attempt and the UI said "Give it a real try first".
+_HEDGED_PARTIAL = (
+    "Separate chaining keeps colliding keys in a list at the slot. "
+    "I'm not sure what the other strategy is called."
+)
+
+
+def test_a_hedged_partial_answer_unlocks_the_hint(gate_on, seams):
+    """A120: the hedge vetoes nothing beside a real answer — the attempt counts
+    (one failed genuine attempt, the text never stored) and the next rung opens."""
+    from learning import gates
+
+    with patch("routes.learn_loop.gates.vetoes_attempt", wraps=gates.vetoes_attempt) as veto:
+        r = client.post("/api/learn/loop/step/attempt", json=_attempt(attempt_text=_HEDGED_PARTIAL))
+    assert r.json() == {"genuine": True, "counted": True, "attempts": 1, "independent_s": 600.0}
+    veto.assert_called_once_with(_HEDGED_PARTIAL)
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["attempted_at"] == [NOW] and entry["attempts"] == 1
+    assert "chaining" not in json.dumps(seams.store["doc"]), "attempt text is never stored"
+    h = client.post("/api/learn/loop/hint", json=_hint())
+    assert h.json() == {"rung": 2, "intent": intent(Rung.H2)}
+
+
+@pytest.mark.parametrize(
+    "plea", ["idk", "I'm not sure, can I have a hint?", "no idea lol", "not sure what to write"]
+)
+def test_a_plea_alone_still_never_unlocks_the_hint(gate_on, seams, plea):
+    """A120 keeps the anti-gaming intent: a plea with nothing else in it is no
+    genuine attempt, so /hint still answers no_genuine_attempt."""
+    r = client.post("/api/learn/loop/step/attempt", json=_attempt(attempt_text=plea))
+    assert r.json()["genuine"] is False and r.json()["counted"] is False
+    seams.save.assert_not_called()
+    assert client.post("/api/learn/loop/hint", json=_hint()).json() == {
+        "denied": "no_genuine_attempt"
+    }
+
+
+def test_a_graded_hedged_answer_is_a_failed_genuine_attempt(gate_on, seams):
+    """A120 on the explicit-submission path: a wrong hedged answer is graded (A16,
+    unchanged) and now also counts as a failed genuine attempt — the ceiling's
+    input (PKG-06 `attempts`) and hint unlocking."""
+    seams.grade.return_value = WRONG
+    agent_p, usage_p, _ = _feedback_agent("Not quite. Try a list at each slot?")
+    with agent_p, usage_p:
+        body = client.post(
+            "/api/learn/loop/check/answer", json=_answer(answer=_HEDGED_PARTIAL)
+        ).json()
+    assert body["graded"] is True and body["verdict"] == "not_yet"
+    assert seams.grade.call_args.args[1].answer_text == _HEDGED_PARTIAL
+    entry = seams.store["doc"]["steps"]["qh-1"]
+    assert entry["attempted_at"] == [NOW] and entry["attempts"] == 1
 
 
 @pytest.mark.parametrize(

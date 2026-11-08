@@ -774,11 +774,12 @@ def _learner_view(state: LearnerState | None, *, band: str, prereq_proficient: b
 def _genuine(text: str, independent_s: float, band: str, variant: str = "A") -> bool:
     """Spec §3.3 genuine attempt, for hint unlocking and the shown-work floor
     only (never a grading gate, A16). `matched_non_attempt` is
-    `has_non_attempt_phrase` — never `matches_non_attempt` (HANDOFF-06)."""
+    `vetoes_attempt` — never `matches_non_attempt` (HANDOFF-06; spec §13 A120:
+    a phrase or plea vetoes only a message with nothing else in it)."""
     return gates.is_genuine_attempt(
         len((text or "").strip()),
         False,
-        gates.has_non_attempt_phrase(text or ""),
+        gates.vetoes_attempt(text or ""),
         independent_s,
         band,
         time_scale=config.LEARNING_GATE_TIME_SCALE,

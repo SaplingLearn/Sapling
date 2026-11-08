@@ -1009,14 +1009,16 @@ def test_a_bare_function_word_answer_beside_an_idk_phrase_is_graded(word):
      "A? idk", "idk, it should", "I think it is, idk", "it isn't, idk, what do I do?",
      "idk if it is"],
 )  # fmt: skip
-def test_a_hedged_yes_no_or_connective_answer_is_graded_but_no_attempt(text):
+def test_a_hedged_yes_no_or_connective_answer_is_graded_and_an_attempt(text):
     """For "Is |x| differentiable at 0?", "it isn't, idk" answers the item as
     surely as "no, idk": it is graded (B), never idk evidence with the answer
-    released, and it still never counts toward hint unlocking (A)."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+    released, and — spec §13 A120 — the bare answer beside the hedge counts
+    toward hint unlocking, as it would without the hedge."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases, vetoes_attempt
 
     assert non_attempt_phrases(text) == ()
     assert has_non_attempt_phrase(text) is True
+    assert vetoes_attempt(text) is False
 
 
 @pytest.mark.parametrize(
@@ -1032,12 +1034,13 @@ def test_a_bare_answer_with_chat_filler_or_a_later_plea_is_graded(text):
     """A hedged yes/no answer is still an answer when an intensifier or chat
     slang sits beside it ("not really", "it isnt lol"), and when a
     first-person plea follows it in the same clause ("it isnt im not sure"):
-    graded (B), never idk evidence with the answer released; still no
-    genuine attempt (A)."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+    graded (B), never idk evidence with the answer released, and a genuine
+    attempt (spec §13 A120: the plea governs only its own statement)."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases, vetoes_attempt
 
     assert non_attempt_phrases(text) == ()
     assert has_non_attempt_phrase(text) is True
+    assert vetoes_attempt(text) is False
 
 
 @pytest.mark.parametrize(
@@ -1187,14 +1190,15 @@ def test_a_plea_beside_a_non_attempt_phrase_is_still_a_non_attempt(text, phrases
 
 def _two_attempts(texts):
     """Feed `texts` as develop-band attempts, each past the independent gate,
-    through the route's contract: matched_non_attempt = has_non_attempt_phrase."""
-    from learning.gates import has_non_attempt_phrase, is_genuine_attempt
+    through the route's contract: matched_non_attempt = vetoes_attempt (spec
+    §13 A120)."""
+    from learning.gates import is_genuine_attempt, vetoes_attempt
 
     step = _step(first=0.0)
     now = 0.0
     for text in texts:
         now += IND * 10
-        if is_genuine_attempt(len(text), False, has_non_attempt_phrase(text), IND * 10, "develop"):
+        if is_genuine_attempt(len(text), False, vetoes_attempt(text), IND * 10, "develop"):
             step.attempted_at.append(now)
             step.genuine_attempts += 1
     return step, now
@@ -1242,11 +1246,15 @@ def test_the_probe_plea_list_is_complete():
 
 @pytest.mark.parametrize("text", _PROBE_PLEAS)
 def test_every_probe_plea_holds_a_non_attempt_phrase(text):
-    """Decision (A), fail closed: a NON_ATTEMPT_PATTERNS phrase anywhere (or a
-    _PLEA plea) makes the message no genuine attempt, whatever else it says."""
-    from learning.gates import has_non_attempt_phrase
+    """Decision (A), fail closed for pleas: every probe plea holds a
+    NON_ATTEMPT_PATTERNS phrase or a _PLEA plea, and nothing else in it counts
+    (spec §13 A120: what the plea governs — "idk what formula to use", "idk I
+    never learned this" — is part of it), so it is no genuine attempt."""
+    from learning.gates import attempt_content, has_non_attempt_phrase, vetoes_attempt
 
     assert has_non_attempt_phrase(text) is True
+    assert attempt_content(text) == ""
+    assert vetoes_attempt(text) is True
 
 
 @pytest.mark.parametrize(
@@ -1263,7 +1271,10 @@ def test_two_probe_pleas_unlock_no_rung_and_never_reach_h6(first, second):
 
 # Decision (B)'s accepted residual: a probe plea whose residue holds a word
 # that can answer an item alone ("one", "bad", "formula", "equation",
-# "never", "in") is graded, never idk. It still unlocks nothing (A).
+# "never", "in") is graded, never idk. It still unlocks nothing (A): what the
+# plea governs ("what formula to use", "I never learned this") and a word that
+# answers only standing alone ("in" in "I wasn't in class") never count
+# (spec §13 A120).
 _PROBE_PLEAS_GRADED = (
     "i don't know how to do this one",
     "idk im bad at this",
@@ -1285,16 +1296,258 @@ def test_probe_pleas_route_to_idk_or_a_request_except_the_residual():
     "text",
     ["idk maybe 7", "even, idk", "the mitochondria idk", "x = 7 idk", "just tell me, is it 7?"],
 )
-def test_a_hedged_answer_is_graded_but_never_unlocks_hints(text):
-    """The split: (B) grades a hedged submission, (A) keeps it from counting
-    toward hint unlocking or H6. matches_non_attempt is the routing rule and
-    is never the is_genuine_attempt argument."""
-    from learning.gates import has_non_attempt_phrase, matches_non_attempt, non_attempt_phrases
+def test_a_hedged_answer_is_graded_and_counts_toward_hint_unlocking(text):
+    """The split: (B) grades a hedged submission; since spec §13 A120 the
+    answer beside the hedge also counts toward hint unlocking and H6, as it
+    would with no hedge (it used to veto them: "a phrase anywhere"). Each
+    message still HOLDS a phrase, so the veto is no longer the phrase alone.
+    matches_non_attempt is the routing rule and is never the
+    is_genuine_attempt argument."""
+    from learning.gates import (
+        has_non_attempt_phrase,
+        matches_non_attempt,
+        non_attempt_phrases,
+        vetoes_attempt,
+    )
 
     assert non_attempt_phrases(text) == () and matches_non_attempt(text) is False
-    assert has_non_attempt_phrase(text) is True
+    assert has_non_attempt_phrase(text) is True and vetoes_attempt(text) is False
     step, _ = _two_attempts((text, text))
+    assert step.genuine_attempts == 2
+
+
+# ── spec §13 A120: a hedge beside an answer is no veto; a plea alone is ──────
+
+#: The live walkthrough's draft (2026-11-08), typed into the attempt box before
+#: Hint: /step/attempt judged it no genuine attempt and /hint answered
+#: no_genuine_attempt ("Give it a real try first").
+LIVE_PARTIAL = (
+    "Separate chaining keeps colliding keys in a list at the slot. "
+    "I'm not sure what the other strategy is called."
+)
+
+#: Pleas with nothing else in them: the anti-gaming intent (beyond _PLEAS and
+#: _PROBE_PLEAS, which stay vetoed too).
+_A120_PLEAS = (
+    "idk", "I'm not sure, can I have a hint?", "no idea lol",
+    "not sure what to do here", "I have no idea how to start", "idk, give me a hint please",
+    "I'm not sure what the other strategy is called.", "idk what formula to use",
+    "I don't know the formula", "I don't know what 2 + 2 is", "not sure about part 2",
+    "Please just tell me how photosynthesis works", "idk, I'm still lost", "idk, I'm bad at this",
+    "I don't know. I never learned this.", "i don't know, i wasn't in class",
+    "no idea, never seen this before", "idk, one more hint please", "idk, I hate this",
+    "idk man this stuff is confusing", "What's the answer? I have no clue", "I give up",
+)  # fmt: skip
+
+#: Answers with a hedge beside them: each counts, as it would with no hedge.
+_A120_HEDGED = (
+    LIVE_PARTIAL, "the mitochondria idk", "idk maybe 7", "idk 7?", "idk, open addressing?",
+    "not sure but I think it's chaining", "idk i think its separate chaining",
+    "probably open addressing, not sure", "idk is it the mitochondria",
+    "It moves to the next free slot. Not sure what it's called.",
+    "I don't know if it's photosynthesis", "even, I think? not sure", "at the start? idk",
+    "it's in, not sure", "I think the derivative is 2x, but I'm not sure",
+    "just tell me, is it the mitochondria?", "it isn't, idk", "not sure, 2",
+)  # fmt: skip
+
+
+def test_a120_the_live_partial_answer_is_a_genuine_attempt():
+    """The hedge is there (has_non_attempt_phrase), but it governs only its own
+    sentence: the first sentence is the student's answer, so the attempt counts.
+    What the hedge is about ("the other strategy is called") is no content."""
+    from learning.gates import (
+        attempt_content,
+        has_non_attempt_phrase,
+        is_genuine_attempt,
+        vetoes_attempt,
+    )
+
+    assert has_non_attempt_phrase(LIVE_PARTIAL) is True
+    content = attempt_content(LIVE_PARTIAL).split()
+    assert {"separate", "chaining", "colliding", "keys", "list", "slot"} <= set(content)
+    assert not {"other", "strategy", "called"} & set(content)
+    assert vetoes_attempt(LIVE_PARTIAL) is False
+    veto = vetoes_attempt(LIVE_PARTIAL)
+    assert is_genuine_attempt(len(LIVE_PARTIAL), False, veto, IND, "develop") is True
+    assert is_genuine_attempt(len(LIVE_PARTIAL), False, veto, IND - 1, "develop") is False
+    step, _ = _two_attempts((LIVE_PARTIAL,))
+    assert step.genuine_attempts == 1
+
+
+@pytest.mark.parametrize("text", _A120_PLEAS)
+def test_a120_a_plea_alone_stays_vetoed(text):
+    """Fail closed for pleas: a phrase or plea with nothing else in it — what it
+    governs, labels and filler set aside — is no genuine attempt."""
+    from learning.gates import attempt_content, has_non_attempt_phrase, vetoes_attempt
+
+    assert has_non_attempt_phrase(text) is True
+    assert attempt_content(text) == "" and vetoes_attempt(text) is True
+    step, now = _two_attempts((text, text))
     assert step.genuine_attempts == 0
+
+
+@pytest.mark.parametrize("text", _A120_HEDGED)
+def test_a120_an_answer_beside_a_hedge_counts(text):
+    from learning.gates import attempt_content, has_non_attempt_phrase, vetoes_attempt
+
+    assert has_non_attempt_phrase(text) is True
+    assert attempt_content(text) and vetoes_attempt(text) is False
+    step, _ = _two_attempts((text,))
+    assert step.genuine_attempts == 1
+
+
+@pytest.mark.parametrize(
+    "text", ["n == 0", "even", "x", "7", "no", "a", "can I have a hint?", "I think it's 7", " 42 "]
+)
+def test_a120_a_hedge_free_short_answer_behaves_as_before(text):
+    """No phrase or plea: the whole text counts and the rule is the pre-A120
+    one exactly (only the length bar and the time gate decide)."""
+    from learning.gates import (
+        attempt_content,
+        has_non_attempt_phrase,
+        is_genuine_attempt,
+        vetoes_attempt,
+    )
+
+    assert has_non_attempt_phrase(text) is False
+    assert vetoes_attempt(text) is False and attempt_content(text) == text.strip()
+    for secs in (IND - 1, IND):
+        before = is_genuine_attempt(
+            len(text.strip()), False, has_non_attempt_phrase(text), secs, "develop"
+        )
+        after = is_genuine_attempt(len(text.strip()), False, vetoes_attempt(text), secs, "develop")
+        assert after is before is (secs >= IND)
+
+
+@pytest.mark.parametrize(
+    "governed,kept",
+    [
+        # an uncertainty phrase governs an embedded clause opened by a question word …
+        ("not sure what the other strategy is called", "not sure, the other strategy is probing"),
+        # … or a pronoun subject (a statement about the student)
+        ("idk i never learned this", "idk chaining"),
+        # an article right after a "know" phrase opens its object
+        ("I don't know the formula", "the formula, I don't know"),
+        # a request or complaint governs the rest of its clause
+        ("just tell me how photosynthesis works", "photosynthesis works, just tell me"),
+        ("I'm stuck on separate chaining", "separate chaining, I'm stuck"),
+        # a guess word ends the object: what follows it is the student's guess
+        ("not sure what it is called chaining", "not sure what it is called, maybe chaining"),
+        ("I don't know what the answer is", "I don't know what the answer is, I think 7"),
+    ],
+)
+def test_a120_what_a_phrase_governs_never_counts(governed, kept):
+    from learning.gates import attempt_content, vetoes_attempt
+
+    assert vetoes_attempt(governed) is True, governed
+    assert vetoes_attempt(kept) is False and attempt_content(kept), kept
+
+
+def test_a120_a_guess_word_inside_one_clause_ends_the_object():
+    """No clause break needed: "idk maybe 7", "idk I think it's chaining"."""
+    from learning.gates import attempt_content
+
+    assert attempt_content("not sure what it is maybe chaining") == "chaining"
+    assert attempt_content("idk i think its separate chaining").split()[-2:] == [
+        "separate",
+        "chaining",
+    ]
+    assert attempt_content("just tell me i think its chaining").split()[-1] == "chaining"
+
+
+@pytest.mark.parametrize(
+    "alone,in_a_statement",
+    [
+        ("in, idk", "idk, i wasn't in class"),
+        ("still, idk", "idk, I'm still lost"),
+        ("bad, not sure", "not sure, I'm bad at this"),
+        ("never, idk", "I don't know. I never learned this."),
+        ("at the start, not sure", "idk, I was lost at the start"),
+    ],
+)
+def test_a120_a_word_that_answers_alone_counts_only_alone(alone, in_a_statement):
+    """_ANSWER_ALONE words ("in", "still", "never", "bad") answer an item
+    standing alone (A16 grades them), but in a longer statement about the
+    student they are no content: a first-person subject makes a part a
+    statement unless a guess word follows it ("I think it's in")."""
+    from learning.gates import vetoes_attempt
+
+    assert vetoes_attempt(alone) is False, alone
+    assert vetoes_attempt(in_a_statement) is True, in_a_statement
+    assert vetoes_attempt("I think it's in, not sure") is False
+
+
+def test_a120_a_part_holding_a_plea_is_never_a_bare_answer():
+    """A16's rule, kept: "I give up" leaves "I", which alone would be a bare
+    answer (the imaginary unit); a part holding a plea never is one."""
+    from learning.gates import vetoes_attempt
+
+    for text in ("I give up", "give me the answer, I give up", "i dunno, idk",
+                 "What's the answer? I have no clue"):  # fmt: skip
+        assert vetoes_attempt(text) is True, text
+    assert vetoes_attempt("i, idk") is False  # "i" standing alone is an answer
+
+
+def test_a120_a_question_label_beside_a_phrase_is_no_answer():
+    from learning.gates import vetoes_attempt
+
+    for text in ("not sure about part 2", "idk how to do question 3", "no idea on q3"):
+        assert vetoes_attempt(text) is True, text
+    assert vetoes_attempt("question 3 is 7, just tell me") is False
+
+
+def test_a120_an_idk_routed_message_is_always_vetoed():
+    """The route and the gate never disagree on "I don't know": a message A16
+    records as idk evidence is no genuine attempt, even where the object rule
+    would free a bare word ("idk it is what" frees "it is")."""
+    from learning.gates import IDK_PATTERNS, attempt_content, non_attempt_phrases, vetoes_attempt
+
+    text = "idk it is what"
+    assert any(p in IDK_PATTERNS for p in non_attempt_phrases(text))
+    assert attempt_content(text) == "it is"
+    assert vetoes_attempt(text) is True
+
+
+def test_a120_respects_the_variant_independent_time_gate():
+    """PKG-14 (A85 arms): the veto changes nothing about the time gate — the
+    concept's variant B still moves the develop/profic gate, novice keeps its
+    own for both arms."""
+    from learning.gates import is_genuine_attempt, vetoes_attempt
+
+    veto = vetoes_attempt(LIVE_PARTIAL)
+    between = (params.GATE_INDEPENDENT_MIN_S + params.GATE_INDEPENDENT_MIN_S_VARIANT_B) / 2
+    n = len(LIVE_PARTIAL)
+    assert is_genuine_attempt(n, False, veto, between, "develop", variant="A") is True
+    assert is_genuine_attempt(n, False, veto, between, "develop", variant="B") is False
+    assert is_genuine_attempt(
+        n, False, veto, params.GATE_INDEPENDENT_MIN_S_VARIANT_B, "profic", variant="B"
+    )
+    for variant in ("A", "B"):
+        assert is_genuine_attempt(n, False, veto, IND_N - 1, "novice", variant=variant) is False
+        assert is_genuine_attempt(n, False, veto, IND_N, "novice", variant=variant) is True
+    plea = "I'm not sure, can I have a hint?"
+    for variant in ("A", "B"):
+        assert (
+            is_genuine_attempt(
+                len(plea), False, vetoes_attempt(plea), 10_000.0, "develop", variant=variant
+            )
+            is False
+        )
+
+
+def test_a120_a_hedged_teach_claim_raises_the_teach_ceiling_and_a_plea_never_does():
+    """A85's teach attempt is the same rule: a hedged claim is still a claim."""
+    from learning.gates import teach_turn_ceiling
+    from learning.ladder import Rung
+    from learning.policy import CeilingReason, LearnerView
+
+    profic = LearnerView(
+        p_known=0.97, band="profic", prereq_proficient=True, unassisted_next=None,
+        opps=3, streak_unassisted=0,
+    )  # fmt: skip
+    claim = "I think the limit is 0 because sin 0 is 0, but I'm not sure"
+    assert teach_turn_ceiling(profic, claim, 120.0) == (Rung.H3, CeilingReason.TEACH_ATTEMPT)
+    assert teach_turn_ceiling(profic, "I'm not sure, can I have a hint?", 120.0)[0] == Rung.H1
 
 
 @pytest.mark.parametrize(
@@ -1305,11 +1558,12 @@ def test_a_hedged_answer_is_graded_but_never_unlocks_hints(text):
 def test_a_plea_without_a_pattern_phrase_is_graded_but_no_attempt(text):
     """NON_ATTEMPT_PATTERNS is the spec's five plus "no idea" / "dunno"
     (owner decision A38 06(b)), so any other plea without one routes to
-    grading (Known gaps); a _PLEA plea still vetoes the attempt."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+    grading (Known gaps); a _PLEA plea alone still vetoes the attempt."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases, vetoes_attempt
 
     assert non_attempt_phrases(text) == ()
     assert has_non_attempt_phrase(text) is True
+    assert vetoes_attempt(text) is True
 
 
 @pytest.mark.parametrize(
@@ -1326,18 +1580,20 @@ def test_a_plea_without_a_pattern_phrase_is_graded_but_no_attempt(text):
 def test_no_idea_and_dunno_route_as_idk(text, phrases):
     """Owner decision A38 06(b): "no idea" / "dunno" are idk phrases for
     A16 routing (non_attempt_phrases), and still veto the attempt
-    (has_non_attempt_phrase, fail closed)."""
+    (vetoes_attempt, fail closed: nothing else is in the message)."""
     from learning.gates import (
         IDK_PATTERNS,
         has_non_attempt_phrase,
         matches_non_attempt,
         non_attempt_phrases,
+        vetoes_attempt,
     )
 
     assert non_attempt_phrases(text) == phrases
     assert set(phrases) <= IDK_PATTERNS
     assert matches_non_attempt(text) is True
     assert has_non_attempt_phrase(text) is True
+    assert vetoes_attempt(text) is True
 
 
 @pytest.mark.parametrize(
@@ -1353,11 +1609,12 @@ def test_no_idea_and_dunno_route_as_idk(text, phrases):
 def test_no_idea_or_dunno_beside_an_answer_is_graded(text):
     """The mixed-answer rule is the idk phrases' (decision (B)): a digit, a
     relation or a content word beside the phrase is an answer; it is graded
-    and still no genuine attempt."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+    and, since spec §13 A120, a genuine attempt too."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases, vetoes_attempt
 
     assert non_attempt_phrases(text) == (), text
     assert has_non_attempt_phrase(text) is True
+    assert vetoes_attempt(text) is False
 
 
 @pytest.mark.parametrize(
@@ -1365,15 +1622,19 @@ def test_no_idea_or_dunno_beside_an_answer_is_graded(text):
     ["I think it's photosynthesis", "x = 7", "the mitochondria", "no", "even", "an electron", ""],
 )
 def test_an_answer_without_a_phrase_or_plea_can_be_a_genuine_attempt(text):
-    from learning.gates import has_non_attempt_phrase
+    """With no phrase or plea, A120 changes nothing: the whole text counts."""
+    from learning.gates import attempt_content, has_non_attempt_phrase, vetoes_attempt
 
     assert has_non_attempt_phrase(text) is False
+    assert vetoes_attempt(text) is False and attempt_content(text) == text.strip()
 
 
 def test_every_routed_non_attempt_is_also_no_genuine_attempt():
-    """A message the route sends to idk evidence or a hint request is never a
-    genuine attempt: non_attempt_phrases(t) != () implies has_non_attempt_phrase(t)."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+    """A message the route sends to idk evidence or a hint request holds a
+    phrase (non_attempt_phrases(t) != () implies has_non_attempt_phrase(t)),
+    and every one of these holds nothing else, so none is a genuine attempt
+    (vetoes_attempt, spec §13 A120)."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases, vetoes_attempt
 
     texts = [t for t, _ in _PLEAS] + list(_PROBE_PLEAS) + [
         "Sorry, idk", "idk, just tell me", "Please just tell me how photosynthesis works",
@@ -1383,6 +1644,7 @@ def test_every_routed_non_attempt_is_also_no_genuine_attempt():
     routed = [t for t in texts if non_attempt_phrases(t)]
     assert len(routed) > len(texts) // 2
     assert all(has_non_attempt_phrase(t) for t in routed)
+    assert all(vetoes_attempt(t) for t in routed)
 
 
 _FUZZ_PARTS = (
@@ -1407,6 +1669,34 @@ def test_a_routed_non_attempt_always_holds_a_non_attempt_phrase_property():
     for _ in range(20_000):
         text = "".join(rng.choice(_FUZZ_PARTS) for _ in range(rng.randint(1, 9)))
         assert not non_attempt_phrases(text) or has_non_attempt_phrase(text), repr(text)
+
+
+def test_the_a120_veto_property():
+    """Spec §13 A120, for any text: the veto needs a phrase or plea (a
+    hedge-free message is judged as before A120: its whole text counts), and a
+    message the A16 route records as idk evidence is always vetoed — the route
+    and the gate never disagree on "I don't know"."""
+    import random
+
+    from learning.gates import (
+        IDK_PATTERNS,
+        attempt_content,
+        has_non_attempt_phrase,
+        non_attempt_phrases,
+        vetoes_attempt,
+    )
+
+    parts = _FUZZ_PARTS + ("not", "sure", "maybe", "what", "im", "lost", "in", "even", "think")
+    rng = random.Random(120)
+    for _ in range(20_000):
+        text = "".join(rng.choice(parts) for _ in range(rng.randint(1, 9)))
+        vetoed = vetoes_attempt(text)
+        if not has_non_attempt_phrase(text):
+            assert vetoed is False and attempt_content(text) == text.strip(), repr(text)
+        if any(p in IDK_PATTERNS for p in non_attempt_phrases(text)):
+            assert vetoed is True, repr(text)
+        if has_non_attempt_phrase(text) and not vetoed:
+            assert attempt_content(text), repr(text)
 
 
 @pytest.mark.parametrize(
@@ -1457,7 +1747,12 @@ def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
     _QUESTION_REF's three adjacent whitespace runs. A linear scan of these
     inputs takes well under a millisecond; 50 ms catches cubic at 500 and
     quadratic at 5000."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+    from learning.gates import (
+        attempt_content,
+        has_non_attempt_phrase,
+        non_attempt_phrases,
+        vetoes_attempt,
+    )
 
     ws = (" ", "\t", "\n")
     shapes = [
@@ -1471,9 +1766,14 @@ def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
         "idk a" + " " * size + "=" + " " * size + "(",
         "what's the answer to step" + "\t" * size + "?",
         "just tell me " + "part. " * (size // 6),
+        # A120: many phrases, pleas and objects in one clause stay linear
+        "no idea " * (size // 8),
+        "idk what " * (size // 9),
+        "not sure i " * (size // 11) + "think",
+        "idk, " + "i " * (size // 2) + "in",
     ]
     for text in shapes:
-        for fn in (non_attempt_phrases, has_non_attempt_phrase):
+        for fn in (non_attempt_phrases, has_non_attempt_phrase, attempt_content, vetoes_attempt):
             took = _fastest_of_three(fn, text)
             assert took < 0.05, (fn.__name__, text[:30], size, took)
 
@@ -1565,7 +1865,11 @@ def test_non_attempt_patterns_are_exactly_the_spec_list():
         (12, False, False, IND_N, "novice", True),
         (0, True, False, IND, "profic", True),  # shown work counts without text
         (0, False, False, IND_N, "novice", False),  # nothing submitted
-        (40, True, True, IND_N, "novice", False),  # non-attempt phrase wins
+        (40, False, True, IND_N, "novice", False),  # a plea alone: vetoed (A120)
+        # A120: what a plea leaves must clear the bar a hedge-free attempt
+        # clears (text or shown work) — shown work clears it
+        (40, True, True, IND_N, "novice", True),
+        (40, True, True, IND_N - 1, "novice", False),  # still behind the time gate
     ],
 )
 def test_is_genuine_attempt(chars, work, matched, secs, band, expected):
