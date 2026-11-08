@@ -176,15 +176,14 @@ def test_the_upload_job_runs_as_its_user_and_clears_it(monkeypatch):
     seen = []
     t = MagicMock()
     t.return_value.select.return_value = [_queued_row()]
-    monkeypatch.setattr(dj, "table", t)
-    monkeypatch.setattr(dj, "_update", lambda *a, **k: True)
-    monkeypatch.setattr(dj, "_process", lambda row: seen.append(
+    monkeypatch.setattr(dj, "table", t)  # the stage swaps report a won row
+    monkeypatch.setattr(dj, "_process", lambda row, run: seen.append(
         request_context.current_acting_user()))
     dj._run_document_process_job({"upload_id": "up1"})
     assert seen == ["user_job"]
     assert request_context.current_acting_user() is None
 
-    def boom(row):
+    def boom(row, run):
         raise RuntimeError("worker crash")
 
     monkeypatch.setattr(dj, "_process", boom)
@@ -202,14 +201,14 @@ def test_the_gradescope_job_runs_as_its_user_and_clears_it(monkeypatch):
         "id": "s1", "user_id": "user_gs", "enrollment_id": "e1", "link_id": None,
         "gradescope_course_id": "g1", "stage": "queued",
     }]
+    t.return_value.update.side_effect = lambda data, **k: updates.append(data) or [{"id": "s1"}]
     monkeypatch.setattr(gj, "table", t)
-    monkeypatch.setattr(gj, "_update", lambda sid, data, **k: updates.append(data) or True)
 
     def outcome(row):
         seen.append(request_context.current_acting_user())
-        return {"stage": "done"}
+        return SimpleNamespace(row_fields=lambda: {"stage": "done"}, error_code=None)
 
-    monkeypatch.setattr(gj, "_outcome", outcome)
+    monkeypatch.setattr(gj, "_worker_outcome", outcome)
     gj._run_gradescope_sync_job({"sync_id": "s1"})
     assert seen == ["user_gs"]
     assert updates[-1] == {"stage": "done"}
@@ -230,9 +229,11 @@ def pipeline(monkeypatch):
     failed = []
     monkeypatch.setattr(dj, "_routes", lambda: docs)
     monkeypatch.setattr(dj, "decrypt_bytes", lambda raw: b"%PDF")
-    monkeypatch.setattr(dj, "_update", lambda *a, **k: True)
-    monkeypatch.setattr(dj, "_finish_failed", lambda uid, code: failed.append(code))
-    return SimpleNamespace(dj=dj, docs=docs, failed=failed)
+    t = MagicMock()  # the run's fenced stage writes report a won row
+    monkeypatch.setattr(dj, "table", t)
+    monkeypatch.setattr(dj, "_finish_failed", lambda run, code: failed.append(code))
+    run = dj._Run(upload_id="up1", owner="w1#1", stage=dj.EXTRACTING)
+    return SimpleNamespace(dj=dj, docs=docs, failed=failed, run=run)
 
 
 def test_a_budget_refusal_in_the_job_agents_records_its_own_code(pipeline, monkeypatch):
@@ -243,7 +244,7 @@ def test_a_budget_refusal_in_the_job_agents_records_its_own_code(pipeline, monke
         raise _exc()
 
     monkeypatch.setattr(run_mod, "run_agent_sync", refused)
-    pipeline.dj._process(_queued_row())
+    pipeline.dj._process(_queued_row(), pipeline.run)
     assert pipeline.failed == [pipeline.dj.ERR_BUDGET]
 
 
@@ -252,7 +253,7 @@ def test_a_budget_refusal_in_the_job_ocr_records_its_own_code(pipeline):
         raise _exc()
 
     pipeline.docs.extract_text_from_file = refused
-    pipeline.dj._process(_queued_row())
+    pipeline.dj._process(_queued_row(), pipeline.run)
     assert pipeline.failed == [pipeline.dj.ERR_BUDGET]
 
 
