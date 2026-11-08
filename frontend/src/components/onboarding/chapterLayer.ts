@@ -29,6 +29,8 @@ const CENTERS = [
 const STEP = ["#D97706", "#8A63D2", "#3e6f8a", "#14B8A6", "#EF4444", "#7C9A2E"];
 const ZOOM_TARGET: Record<GraphZoom, number> = { rest: 1, active: 2.5, outro: 5.5 };
 const FL = 1000;
+/** Opacity the scene's own (ambient) nodes and links settle at once onboarding starts. */
+const AMBIENT_DIM = 0.3;
 
 interface ChapterNode {
   ox: number; oy: number; oz: number; startOx: number; startOy: number; startOz: number;
@@ -44,8 +46,12 @@ const rnd = (si: number, idx: number) => {
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
 export interface ChapterLayer {
-  /** Advance one frame. Returns the camera zoom and how far clusters have formed (0..1). */
-  step(nowMs: number, dtF: number, s: ChapterState): { zoom: number; clusterProgress: number };
+  /**
+   * Advance one frame. Returns the camera zoom, how far clusters have formed
+   * (0..1), and the opacity for the scene's ambient nodes (1 at rest, dimmed
+   * during onboarding so the chapter clusters and the UI read over them).
+   */
+  step(nowMs: number, dtF: number, s: ChapterState): { zoom: number; clusterProgress: number; ambientAlpha: number };
   /** Draw the chapter clusters with the scene's rotation and centre. */
   draw(ctx: CanvasRenderingContext2D, nowMs: number, t: number, rot: number, cx: number, cy: number): void;
 }
@@ -56,6 +62,7 @@ export function createChapterLayer(): ChapterLayer {
   let doneSteps = new Set<number>();
   let zoom = 1;
   let clusterProgress = 0;
+  let ambientAlpha = 1;
 
   return {
     step(nowMs, dtF, s) {
@@ -98,7 +105,9 @@ export function createChapterLayer(): ChapterLayer {
       clusterProgress = s.zoom !== "rest"
         ? Math.min(1, clusterProgress + 0.01 * dtF)
         : Math.max(0, clusterProgress - 0.015 * dtF);
-      return { zoom, clusterProgress };
+      const dimTarget = s.phase === "idle" ? 1 : AMBIENT_DIM;
+      ambientAlpha += (dimTarget - ambientAlpha) * (1 - Math.pow(0.96, dtF));
+      return { zoom, clusterProgress, ambientAlpha };
     },
 
     draw(ctx, nowMs, t, rot, cx, cy) {

@@ -77,6 +77,7 @@ export function OnboardingGraph({ phase, zoom, activeChapter, completed, speed =
     const layer = createChapterLayer();
     let curZoom = 1;
     let clusterProgress = 0;
+    let ambientAlpha = 1;
     let width = 0, height = 0, rot = 0, animId = 0, lastMs = 0;
 
     const draw = () => {
@@ -85,7 +86,7 @@ export function OnboardingGraph({ phase, zoom, activeChapter, completed, speed =
       const dtF = lastMs ? Math.min(4, (nowMs - lastMs) / 16.667) : 1;
       lastMs = nowMs;
       rot += 0.0008 * live.current.speed * dtF;
-      ({ zoom: curZoom, clusterProgress } = layer.step(nowMs, dtF, live.current));
+      ({ zoom: curZoom, clusterProgress, ambientAlpha } = layer.step(nowMs, dtF, live.current));
       const linkFade = Math.max(0, 1 - clusterProgress);
 
       const proj = ambient.map(n => {
@@ -100,7 +101,7 @@ export function OnboardingGraph({ phase, zoom, activeChapter, completed, speed =
       for (let i = 0; linkFade > 0 && i < proj.length; i++) {
         const p1 = proj[i];
         const maxD = 70 * p1.sc, maxD2 = maxD * maxD;
-        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade;
+        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade * ambientAlpha;
         for (let j = i + 1; j < proj.length; j++) {
           const p2 = proj[j];
           const dx = p1.x - p2.x; if (dx > maxD || dx < -maxD) continue;
@@ -123,7 +124,7 @@ export function OnboardingGraph({ phase, zoom, activeChapter, completed, speed =
         fogA = 1 - (1 - fogA) * zf;
         const r = p.n.radius * p.sc * breathe;
         if (r > 0.1) {
-          ctx.globalAlpha = fogA;
+          ctx.globalAlpha = fogA * ambientAlpha;
           ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
           ctx.fillStyle = p.n.hc >= 0 ? HERO[p.n.hc] : AMB[p.n.pi]; ctx.fill();
         }

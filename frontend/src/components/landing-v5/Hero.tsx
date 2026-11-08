@@ -148,7 +148,7 @@ export function Hero({
         canvas!.style.zIndex = staged ? '150' : '';
         canvas!.style.pointerEvents = staged ? 'none' : '';
       }
-      const { zoom, clusterProgress } = layer.step(nowMs, dtF, staged ? graphStage : AT_REST);
+      const { zoom, clusterProgress, ambientAlpha } = layer.step(nowMs, dtF, staged ? graphStage : AT_REST);
       const linkFade = Math.max(0, 1 - clusterProgress);
       const fl = 1000, cx = width / 2, cy = height / 2, t = nowMs * 0.001;
       // The onboarding camera is centred and still: no mouse drift or parallax.
@@ -177,7 +177,7 @@ export function Hero({
         const p1 = proj[i];
         const maxD = 70 * p1.sc;
         const maxD2 = maxD * maxD;
-        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade;
+        const aScale = 0.15 * Math.min(1, p1.sc) * linkFade * ambientAlpha;
         for (let j = i + 1; j < proj.length; j++) {
           const p2 = proj[j];
           const dx = p1.x - p2.x;
@@ -201,7 +201,7 @@ export function Hero({
           const fogA = p.z > 500 ? Math.max(0, 1 - (p.z - 500) / 500) : 1;
           const r = p.n.radius * p.sc * breathe;
           if (r > 0.1) {
-            ctx.globalAlpha = fogA;
+            ctx.globalAlpha = fogA * ambientAlpha;
             ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fillStyle = p.n.color; ctx.fill();
           }
         }
