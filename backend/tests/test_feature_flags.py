@@ -522,3 +522,14 @@ def test_decision_router_resolves_like_any_flag(monkeypatch):
 def test_decision_router_is_server_only_and_off_first():
     fd = ff.REGISTRY["decision_router"]
     assert fd.variants == ("off", "jev", "jev_shadow") and not fd.client_visible
+
+
+def test_upload_prereq_edges_is_server_only_off_first_and_off_unconfigured(monkeypatch):
+    """Spec §13 A118: the upload prerequisite-edge write. Server-only — the
+    write happens inside the upload routes — and, like every flag, "off" until
+    an admin configures it (no migration seeds a row)."""
+    monkeypatch.delenv("SAPLING_FLAG_UPLOAD_PREREQ_EDGES", raising=False)
+    fd = ff.REGISTRY["upload_prereq_edges"]
+    assert fd.variants == ("off", "on") and not fd.client_visible
+    with patch("services.feature_flags.table", side_effect=_tables()):
+        assert ff.flag_on("upload_prereq_edges", "u1") is False

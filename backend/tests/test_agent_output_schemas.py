@@ -315,6 +315,17 @@ def test_the_grader_span_checks_per_run_output_is_within_budget():
     assert schema_violations(SpanVerdicts) == []
 
 
+def test_the_concept_extractions_flag_on_output_is_within_budget():
+    """Spec §13 A118: with upload_prereq_edges on, concept_extraction_agent
+    runs with its own output type (ConceptList, `prerequisites` added), which
+    the roster walk above never sees — the agent declares the pre-A118
+    BaseConceptList. Held to the same budget here."""
+    from agents.concept_extraction import ConceptList, extraction_run_args
+
+    assert extraction_run_args("t", prerequisites=True)["output_type"] is ConceptList
+    assert schema_violations(ConceptList) == []
+
+
 def test_per_object_exceptions_are_exact():
     """Each exception names a real structured output object with EXACTLY the
     allowed property count: a model that grows past it fails here, and one

@@ -87,6 +87,21 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Students can report a learning-loop check question (wrong answer / "
             "unclear / not from my course); two reporters retire it course-wide.",
             True),
+    # Learning loop spec §13 A118: upload prerequisite edges
+    # (services/concept_prereqs.py). Resolved ONCE per upload, for the
+    # uploading student, by upload_prereqs_on; that one answer picks the
+    # concept-extraction variant AND gates the edge write. Server-only: both
+    # happen inside the upload routes.
+    FlagDef("upload_prereq_edges", ("off", "on"),
+            "Uploads ask concept extraction for prerequisite relations (with the "
+            "course's existing concepts as context) and write them, validated in "
+            "code, as prerequisite edges (A118). On changes learning dynamics for "
+            "upload-built graphs: one-hop evidence propagation, prerequisite bands "
+            "and wheelspin repair, the novice exit and the planner's outer fringe "
+            "start acting on them, so plan order follows prerequisites. Off: the "
+            "upload is byte-identical to before A118 (same extraction prompt, "
+            "schema and message; no course-concepts read) and writes concept "
+            "nodes only.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
