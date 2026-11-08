@@ -19,7 +19,10 @@
  *    multiple-choice check card, the wrap-up, the budget pause with the
  *    degraded-mode notes, the review queue (a flashcard, its answer, the
  *    rated result, a multiple-choice check) and the retention check (its entry,
- *    opened with nothing eligible);
+ *    opened with nothing eligible); with `segment_prequestion` and
+ *    `self_explanation_prompts` on for the student (spec §13 A138, A139), a
+ *    segment's ungraded guess (multiple choice, after the check-in) and the
+ *    worked example's "why" prompt;
  *  - the legacy tutor screen (kill-switch lane only).
  *
  * Determinism: function mode (agents/function_handlers_e2e.py) supplies every
@@ -36,6 +39,7 @@
 import type { Browser, Page, Route } from "@playwright/test";
 
 import { expectAccessible } from "./support/a11y";
+import { seedTeachPromptItems, setUserFlag } from "./support/db";
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { learningParams } from "./support/params";
 import { showsAnotherItem } from "./support/probe";
@@ -303,7 +307,7 @@ test("legacy tutor screen (kill switch)", async ({ page }) => {
 /** Probe → plan, scanning the check-in question, an answer shown after a miss,
  *  and the plan. Easy items are answered right, harder ones missed, as the loop
  *  journey does (learn-loop.spec.ts::walkProbeAndPlan). */
-async function walkCheckInAndPlan(page: Page, cap: number) {
+async function walkCheckInAndPlan(page: Page, cap: number, { approve = true }: { approve?: boolean } = {}) {
   const phase = page.getByTestId("loop-phase");
   const probeItem = page.getByTestId("loop-probe-item");
   await expect(probeItem).toContainText(LOOP_PROBE_PROMPT);
@@ -338,6 +342,7 @@ async function walkCheckInAndPlan(page: Page, cap: number) {
   await expect(phase).toHaveAttribute("data-phase", "plan");
   await expect(page.locator("[data-testid^='loop-plan-concept-']").first()).toBeVisible();
   await expectAccessible(page, "learn loop: plan");
+  if (!approve) return;
   await page.getByTestId("loop-plan-approve").click();
   await expect(phase).toHaveAttribute("data-phase", "teach");
 }
@@ -395,6 +400,38 @@ test("learning loop: check-in, plan, teaching, a check with hints, feedback, a m
     await expect(phase).toHaveAttribute("data-phase", "close");
     await expect(page.getByTestId("loop-close-done")).toBeVisible();
     await expectAccessible(page, "learn loop: wrap-up");
+  } finally {
+    await context.close();
+  }
+});
+
+test("learning loop: a segment's ungraded guess and a self-explanation prompt (A138, A139 on)", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_TIMEOUT_MS);
+  // Both flags on for this student only (feature_flag_targets; the reset wipes them).
+  await setUserFlag("segment_prequestion", USER_LOOP, "on");
+  await setUserFlag("self_explanation_prompts", USER_LOOP, "on");
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await walkCheckInAndPlan(page, Number(P.PROBE_SESSION_CAP), { approve: false });
+    // a fresh multiple-choice pool for the segment's guess, added after the check-in
+    await seedTeachPromptItems();
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(page.getByTestId("loop-phase")).toHaveAttribute("data-phase", "teach");
+    await expect(page.getByTestId("loop-prequestion-options")).toBeVisible();
+    await page.getByTestId("loop-prequestion-option-B").click();
+    await expectAccessible(page, "learn loop: a segment's ungraded guess");
+
+    await page.getByTestId("loop-prequestion-no-idea").click();
+    await expect(page.getByTestId("loop-prequestion")).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0, { timeout: 30_000 });
+    // spec §13 A122: the first check opens on its worked example, whose hint asks "why"
+    await page.getByTestId("loop-check-me").click();
+    await expect(page.getByTestId("loop-self-explain")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("loop-hint-button")).toBeEnabled();
+    await expectAccessible(page, "learn loop: a self-explanation prompt");
   } finally {
     await context.close();
   }

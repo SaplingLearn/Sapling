@@ -165,6 +165,47 @@ export async function seedGoalContinuationItems(stage: "diagnostic" | "practice"
 }
 
 /**
+ * Switch a feature flag for ONE student (#620's per-user rule) straight in
+ * `feature_flag_targets` — the rule the admin flags API writes, without an
+ * admin session. The flag row is created "off" by default when the per-test
+ * reset left none (it truncates both tables), so only this student is on.
+ * The stack's flag cache TTL is 0, so the next request reads the rule.
+ * Cleanup is the per-test reset.
+ */
+export async function setUserFlag(key: string, userId: string, variant: string): Promise<void> {
+  await withDb(async (client) => {
+    await client.query(
+      `INSERT INTO feature_flags (key, default_variant) VALUES ($1, 'off')
+       ON CONFLICT (key) DO NOTHING`,
+      [key],
+    );
+    await client.query(
+      `INSERT INTO feature_flag_targets (flag_key, target_type, target_id, variant)
+       VALUES ($1, 'user', $2, $3)
+       ON CONFLICT (flag_key, target_type, target_id) DO UPDATE SET variant = EXCLUDED.variant`,
+      [key, userId, variant],
+    );
+  });
+}
+
+/** Spec §13 A138's journey assets: for each seeded loop concept, three
+ *  `mc_reason` check items (`rich-check-<slug>-mc-pq1` d1, `-pq2` d1, `-pq3`
+ *  d2; options A–D, B correct) written by the canonical Python helper
+ *  (`db.seed_learning_teach_prompts`: encrypted columns, hashes). Run AFTER the
+ *  probe, like the goal journeys' practice stage, so the check-in still sees
+ *  only the seeded free-text items; the segment's guess then has a fresh,
+ *  multiple-choice pool to draw from. Writes no learner rows. */
+export async function seedTeachPromptItems(): Promise<void> {
+  requireLocalDbUrl(DB_URL);
+  const backendDir = path.resolve(__dirname, "..", "..", "..", "backend");
+  const python = process.env.E2E_SEED_PYTHON?.trim() || path.join(backendDir, "venv", "bin", "python");
+  await execFileAsync(python, ["-m", "db.seed_learning_teach_prompts"], {
+    cwd: backendDir,
+    timeout: 30_000,
+  });
+}
+
+/**
  * Raw-SQL readback for journey assertions (#392): journeys write through the
  * app and assert directly against Postgres (the #397 posture), so the read
  * must bypass PostgREST/the API entirely. Parameterized ($1, $2, …) SELECTs
