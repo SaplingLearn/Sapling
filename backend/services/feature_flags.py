@@ -154,6 +154,23 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Study-room live chat authenticates Supabase Realtime with a "
             "backend-minted, member-scoped token instead of the anon key "
             "(RLS step 2e). Needs SUPABASE_JWT_SIGNING_KEY.", True),
+    # #117 (docs/design/async-db-client.md §3): whether the `a*` twins of
+    # table()'s verbs use the native httpx.AsyncClient ("on") or run the sync
+    # verb on a worker thread ("off": today's client and limiter, reached from
+    # an async def without blocking the loop). Per user; resolved once per
+    # request and memoized beside db_user_scope. Server-only. Kill switch:
+    # SAPLING_FLAG_ASYNC_DB_CLIENT=off. Graduate after one release at 100%.
+    FlagDef("async_db_client", ("off", "on"),
+            "Serve async handlers' database calls from the native async HTTP "
+            "client instead of a worker thread.", False),
+    # #117 (design §5): the per-key rate limiter as a Postgres counter
+    # (`claim_rate_limit()` SQL function) instead of per-process memory, so
+    # two replicas share one budget. Resolved GLOBALLY (user_id=None): the
+    # limiter keys are not always a user. Off = today's in-memory limiter; a
+    # failing DB call falls back to it. Server-only.
+    FlagDef("stateless_rate_limit", ("off", "on"),
+            "Keep rate-limit counters in Postgres so every replica shares one "
+            "budget. Global: per-user rules and rollouts do not apply.", False),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")
