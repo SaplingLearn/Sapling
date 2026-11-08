@@ -229,7 +229,6 @@ from routes.learn import (  # legacy helpers, reused verbatim — never copied
     _get_course_info,
     _load_message_history,
     _observe_persisted_turn,
-    _start_texts,
     save_message,
 )
 from services import ai_budget, crisis_support, events_service
@@ -282,6 +281,19 @@ def _kill_switch_first(request: Request) -> None:
 
 
 _RATE_LIMITED = [Depends(_kill_switch_first), Depends(enforce_rate_limit)]
+
+
+def _screened(surface: str, *fields: str, respond) -> list:
+    """`_RATE_LIMITED` for a route that takes student-written text: the crisis
+    screen sits between the kill switch and the rate limit
+    (docs/safety/crisis-support.md). A crisis turn is answered with the card
+    before the limiter is even read, so it never meets a 429 and consumes no
+    unit; any other request meets the same two dependencies as before."""
+    return [
+        Depends(_kill_switch_first),
+        crisis_support.screened(surface, *fields, respond=respond),
+        Depends(enforce_rate_limit),
+    ]
 #: The legacy catalog header (routes/learn.py::_prepare_chat_run), verbatim.
 _CATALOG_HEADER = "COURSE CATALOG INFO (official BU course data):\n\n"
 _SOURCE_HEADER = "CHECK ITEM SOURCE PASSAGES (the course text this item was written from):\n"
@@ -3206,12 +3218,9 @@ def list_open_sessions(
     return {"sessions": sessions, "resume": found}
 
 
-@router.post("/chat", dependencies=_RATE_LIMITED)
+@router.post("/chat", dependencies=_screened("loop_chat", "message", respond=crisis_support.turn_response))
 async def chat(body: ChatBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    # docs/safety/crisis-support.md: before the session, the turn and any model
-    if crisis := await crisis_support.screen_async(body.user_id, "loop_chat", body.message):
-        return crisis_support.turn_json(crisis)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return await _json_turn(
@@ -3220,11 +3229,9 @@ async def chat(body: ChatBody, request: Request):
     )
 
 
-@router.post("/chat/stream", dependencies=_RATE_LIMITED)
+@router.post("/chat/stream", dependencies=_screened("loop_chat", "message", respond=crisis_support.turn_stream))
 async def chat_stream(body: ChatBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    if crisis := await crisis_support.screen_async(body.user_id, "loop_chat", body.message):
-        return crisis_support.sse_response(crisis, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     _teaching_open(body.session_id, body.user_id)
     return _sse(_LoopTurn(body=body, request=request, message=body.message, loop_on=loop_on))
@@ -3753,14 +3760,13 @@ def _submission_turn(
     return turn
 
 
-@router.post("/check/answer", dependencies=_RATE_LIMITED)
+# crisis support: a crisis answer leaves the item posed and ungraded (no claim, no evidence)
+@router.post(
+    "/check/answer",
+    dependencies=_screened("loop_check_answer", "answer", "reason", respond=crisis_support.turn_response),
+)
 async def check_answer(body: LoopCheckAnswerBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    # crisis support: the item stays posed and ungraded (no claim, no evidence)
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "loop_check_answer", body.answer, body.reason
-    ):
-        return crisis_support.turn_json(crisis)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
@@ -3770,13 +3776,12 @@ async def check_answer(body: LoopCheckAnswerBody, request: Request):
     )
 
 
-@router.post("/check/answer/stream", dependencies=_RATE_LIMITED)
+@router.post(
+    "/check/answer/stream",
+    dependencies=_screened("loop_check_answer", "answer", "reason", respond=crisis_support.turn_stream),
+)
 async def check_answer_stream(body: LoopCheckAnswerBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "loop_check_answer", body.answer, body.reason
-    ):
-        return crisis_support.sse_response(crisis, request)
     await _consume_pending_off_loop(body.session_id, body.user_id)
     sub = await _agent_turn_or_http_error(
         _grade_submission(body, request, loop_on=loop_on), what="loop grader"
@@ -4383,7 +4388,13 @@ def _posttest_floor(user_id: str, node_id: str, item, posed_at: datetime | None)
     return floor
 
 
-@router.post("/posttest/answer", dependencies=_RATE_LIMITED)
+# crisis support: a crisis answer leaves the pose open and unclaimed, nothing graded
+@router.post(
+    "/posttest/answer",
+    dependencies=_screened(
+        "loop_posttest_answer", "answer", "reason", respond=crisis_support.plain_response(graded=False)
+    ),
+)
 async def posttest_answer(body: PosttestAnswerBody, request: Request):
     """Grade the node's OPEN post-test pose (A87) through grade_answer (A16):
     ceiling H0, max_rung 0, no session — unless the item was revealed or seen
@@ -4397,11 +4408,6 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    # crisis support: the pose stays open and unclaimed, nothing is graded
-    if crisis := await crisis_support.screen_async(
-        body.user_id, "loop_posttest_answer", body.answer, body.reason
-    ):
-        return crisis_support.json_body(crisis, graded=False)
     node = _posttest_node(body.user_id, body.node_id)
     course_id, key = node["course_id"], _normalize_concept(node.get("concept_name") or "")
     items = items_for_concepts(course_id, [key]).get(key) or []
@@ -4554,7 +4560,15 @@ def _attempt_hash(text: str) -> str:
     return hashlib.sha256(words.encode("utf-8")).hexdigest()[:16]
 
 
-@router.post("/step/attempt", dependencies=_RATE_LIMITED)
+# crisis support: a crisis attempt stops the hint flow — nothing counts toward a hint
+@router.post(
+    "/step/attempt",
+    dependencies=_screened(
+        "loop_step_attempt",
+        "attempt_text",
+        respond=crisis_support.plain_response(genuine=False, counted=False),
+    ),
+)
 def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     """Records a genuine attempt for hint unlocking only (spec §3.3). The text
     is judged by gates.is_genuine_attempt and the A33 screen, and never stored,
@@ -4563,9 +4577,6 @@ def step_attempt(body: LoopAttemptBody, request: Request) -> dict:
     differs from every earlier attempt on the item (`attempt_hashes`), so
     spamming the route cannot open the next rung; the route is rate-limited."""
     _gate(body.user_id, request)
-    # crisis support: the hint flow stops here — nothing counts toward a hint
-    if crisis := crisis_support.screen(body.user_id, "loop_step_attempt", body.attempt_text):
-        return crisis_support.json_body(crisis, genuine=False, counted=False)
     _session_scope(body.session_id, body.user_id)
     state = _load_loop_state(body.session_id)
     _require_open(state)
@@ -4722,14 +4733,14 @@ async def action(body: ActionBody, request: Request):
     )
 
 
-@router.post("/start-session", dependencies=_RATE_LIMITED)
+# crisis support: a crisis topic or goal opens no session (nothing is stashed or
+# written). The legacy /api/learn routes that delegate here screen first themselves.
+@router.post(
+    "/start-session",
+    dependencies=_screened("loop_start", "topic", "goal.text", respond=crisis_support.start_response),
+)
 async def start_session(body: StartSessionBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    # crisis support: no session is opened (nothing is stashed or written)
-    if crisis := await crisis_support.screen_async(body.user_id, "loop_start", *_start_texts(body)):
-        return crisis_support.json_body(
-            crisis, session_id=None, initial_message=crisis.reply, graph_state=None
-        )
     result = await _json_turn(
         lambda: _LoopOpener(body=body, request=request, loop_on=loop_on),
         "loop start-session agent",
@@ -4744,11 +4755,12 @@ async def start_session(body: StartSessionBody, request: Request):
     return out
 
 
-@router.post("/start-session/stream", dependencies=_RATE_LIMITED)
+@router.post(
+    "/start-session/stream",
+    dependencies=_screened("loop_start", "topic", "goal.text", respond=crisis_support.start_stream),
+)
 async def start_session_stream(body: StartSessionBody, request: Request):
     loop_on = await guard_off_loop(_gate, body.user_id, request)
-    if crisis := await crisis_support.screen_async(body.user_id, "loop_start", *_start_texts(body)):
-        return crisis_support.sse_response(crisis, request, session_id=None)
     return _sse(_LoopOpener(body=body, request=request, loop_on=loop_on))
 
 

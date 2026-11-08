@@ -209,6 +209,9 @@ export function LoopLearn() {
   // docs/safety/crisis-support.md: a session start answered with the card (no
   // session was opened) shows it where the session would be
   const [startCrisis, setStartCrisis] = useState<CrisisSupport | null>(null);
+  // A chat message the budget pause answered (no reply) comes back to the
+  // composer: ChatPanel applies `text` whenever `key` changes.
+  const [chatDraft, setChatDraft] = useState<{ text: string; key: number }>({ text: "", key: 0 });
 
   // Goals are session-owned. New sessions start whole-course; typed topic text
   // never silently selects targets, and nothing is inherited across courses.
@@ -955,7 +958,7 @@ export function LoopLearn() {
 
   const runTurn = useCallback(async (
     run: (h: StreamChatHandlers) => Promise<LoopTurnResult>,
-    { submission = false }: { submission?: boolean } = {},
+    { submission = false, onPaused }: { submission?: boolean; onPaused?: () => void } = {},
   ): Promise<LoopTurnResult | null> => {
     // A hint may still be in flight when the learner submits or continues.
     // Its previous phase/question must never overwrite the newer turn.
@@ -1061,8 +1064,12 @@ export function LoopLearn() {
       if ((submission || feedbackStarted || recoveringFeedback) && sid && !closed) void reconcile(sid, g, epoch);
       if (controller.signal.aborted) return null;
       // At the hard level the stream ends with no `done`: that is the pause, not an error.
-      if (hardSeen) return null;
+      if (hardSeen) {
+        onPaused?.();
+        return null;
+      }
       if (submission && status === 409 && detail === ALREADY_GRADED_DETAIL) return null;
+      if (budgetPauseOf(err)) onPaused?.(); // a 429: reportError shows the pause banner
       reportError(err, "The tutor couldn't answer. Try again.");
       return null;
     } finally {
@@ -1074,10 +1081,20 @@ export function LoopLearn() {
   }, [applyActivated, reportError, reconcile, invalidateHint, feedbackPending]);
 
   const send = (text: string) => {
-    if (!sessionId || paused || starting || scopeLoading || pendingGrade) return;
+    // A budget pause does not stop a message: the server screens it for a crisis
+    // before any budget or rate limit, so a paused student in crisis still gets
+    // the support card (docs/safety/crisis-support.md). Anything else the pause
+    // answers with no reply, and the message goes back into the composer.
+    if (!sessionId || starting || scopeLoading || pendingGrade) return;
     setPlanJustApproved(false);
-    setMessages((prev) => [...prev, asMsg("user", text)]);
-    void runTurn((h) => streamLoopChat(sessionId, userId, text, h));
+    const userMsg = asMsg("user", text);
+    setMessages((prev) => [...prev, userMsg]);
+    void runTurn((h) => streamLoopChat(sessionId, userId, text, h), {
+      onPaused: () => {
+        setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+        setChatDraft((d) => ({ text, key: d.key + 1 }));
+      },
+    });
   };
 
   const stop = () => streamAbort.current?.abort();
@@ -1784,8 +1801,10 @@ export function LoopLearn() {
           header={chatHeader}
           streamingText={streamingText}
           onStop={stop}
-          disabled={!!paused || starting || scopeLoading}
+          disabled={starting || scopeLoading}
           placeholder={paused ? "Tutor chat is paused — check answers still count." : "Ask the tutor…"}
+          draftSeed={chatDraft.text}
+          draftSeedKey={chatDraft.key}
         />
       </div>
     );

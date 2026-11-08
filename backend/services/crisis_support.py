@@ -1,13 +1,25 @@
 """The crisis-support path (docs/safety/crisis-support.md).
 
 Every student-facing route that hands student-written text to a model screens
-that text at entry — after auth, BEFORE its session, rate-limit, budget or
-model work — with `screen` (sync routes) or `screen_async` (async routes).
-On a hit it returns `json_body` / `turn_json` / `sse_response` INSTEAD of its
-turn, so a crisis turn makes no model call and writes nothing a turn writes:
-no learning evidence, grade, hint, help-ledger row, message row, session
-materialisation, XP or streak. The triggering text is never stored, logged,
-fingerprinted or sent anywhere (no `content=` on the event either).
+that text right after authentication and BEFORE any rate limit, budget or
+quota check, and before its session or model work. A student in crisis must
+never be answered with a 429 or a pause instead of the card, so no limiter may
+run first. Two forms, one rule:
+
+- `screened(...)`, a ROUTE DEPENDENCY, for a route that has route-level
+  limiter dependencies (the loop's `_RATE_LIMITED`): listed before them, it
+  authenticates on a match and raises `CrisisAnswered`, so neither a later
+  dependency nor the handler runs.
+- `screen` / `screen_async`, called as the handler's first statement after
+  its auth, for a route whose limiters are all inline (the legacy tutor, the
+  loop's goal / probe / review, notes): it returns `json_body` / `turn_json` /
+  `sse_response` instead of the turn.
+
+Either way a crisis turn makes no model call, consumes no rate-limit, budget or
+tutor-call unit, and writes nothing a turn writes: no learning evidence, grade,
+hint, help-ledger row, message row, session materialisation, XP or streak. The
+triggering text is never stored, logged, fingerprinted or sent anywhere (no
+`content=` on the event either).
 
 Order inside a screen: `crisis_detection.detect_any` first (pure — a normal
 turn never pays more than that), then the `crisis_support` flag for this
@@ -25,13 +37,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
-from fastapi import Request
+from fastapi import Depends, Request
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from db.connection import table
+from services import auth_guard
 from services import crisis_support_copy as crisis_copy
 from services import events_service
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
@@ -223,3 +238,121 @@ def sse_response(support: CrisisSupport, request: Request, **neutral: Any) -> Ev
         events(),
         headers={"X-Request-ID": _request_id(request), "Cache-Control": SSE_CACHE_CONTROL},
     )
+
+
+# ── The route-dependency form (routes with limiter dependencies) ───────────
+
+#: Builds a route's crisis response: `turn_response` / `turn_stream` /
+#: `start_response` / `start_stream`, or `plain_response(**neutral_keys)`.
+Responder = Callable[[CrisisSupport, Request], Response]
+
+
+class CrisisAnswered(Exception):
+    """Raised by a `screened` dependency on a match with the flag on. It carries
+    the finished response, which main.py's `answered_handler` returns as-is.
+    Raising is how a dependency ends a request early (as HTTPException does), so
+    no later dependency (the rate limit) and not the handler run. It is not an
+    error: the status is 200, and it carries no student text."""
+
+    def __init__(self, response: Response) -> None:
+        super().__init__("crisis support answered the request")
+        self.response = response
+
+
+async def answered_handler(_request: Request, exc: CrisisAnswered) -> Response:
+    return exc.response
+
+
+def turn_response(support: CrisisSupport, _request: Request) -> Response:
+    return JSONResponse(turn_json(support))
+
+
+def turn_stream(support: CrisisSupport, request: Request) -> Response:
+    return sse_response(support, request)
+
+
+def start_response(support: CrisisSupport, _request: Request) -> Response:
+    """No session is opened: `session_id` is null and the copy is the opener."""
+    return JSONResponse(
+        json_body(support, session_id=None, initial_message=support.reply, graph_state=None)
+    )
+
+
+def start_stream(support: CrisisSupport, request: Request) -> Response:
+    return sse_response(support, request, session_id=None)
+
+
+def plain_response(**neutral: Any) -> Responder:
+    def respond(support: CrisisSupport, _request: Request) -> Response:
+        return JSONResponse(json_body(support, **neutral))
+
+    return respond
+
+
+def screened(surface: Surface, *fields: str, respond: Responder):
+    """The crisis screen as a ROUTE DEPENDENCY. List it before any rate-limit,
+    budget or quota dependency; the learning loop places it right after its
+    kill switch.
+
+    `fields` name the request body's student-written text, dotted when nested
+    ("goal.text"). Detection runs first and is pure, so an ordinary request pays
+    nothing more and reads no flag. On a match, the caller is authenticated
+    first (`require_self` on the body's `user_id`, else the session user), then
+    the flag is read. With the flag on, `CrisisAnswered(respond(...))` is raised
+    and the request ends there. With no match, or the flag off, the dependency
+    returns and the route carries on exactly as before.
+
+    The body is the one FastAPI already parsed (Starlette caches it); it has not
+    been validated yet, so only string values are read."""
+    if surface not in SURFACES:
+        raise ValueError(f"unknown crisis-support surface {surface!r}")
+
+    async def crisis_screen(request: Request) -> None:
+        body = await _json_object(request)
+        texts = [_text_at(body, field) for field in fields]
+        if sum(len(t or "") for t in texts) > _INLINE_DETECT_CHARS:
+            match = await asyncio.to_thread(detect_any, texts)
+        else:
+            match = detect_any(texts)
+        if match is None:
+            return
+        user_id = await _authenticated(request, body)
+        support = await asyncio.to_thread(_resolve, user_id, surface, match)
+        if support is not None:
+            raise CrisisAnswered(respond(support, request))
+
+    crisis_screen.surface = surface  # type: ignore[attr-defined]  # read by the ordering tests
+    return Depends(crisis_screen)
+
+
+def is_screen(dependency_call: Any) -> bool:
+    """Whether a route dependency's callable is a `screened` crisis screen."""
+    return getattr(dependency_call, "__name__", "") == "crisis_screen" and hasattr(
+        dependency_call, "surface"
+    )
+
+
+async def _json_object(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — no JSON object: nothing to screen
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _text_at(body: dict[str, Any], dotted: str) -> str | None:
+    node: Any = body
+    for key in dotted.split("."):
+        node = node.get(key) if isinstance(node, dict) else None
+    return node if isinstance(node, str) else None
+
+
+async def _authenticated(request: Request, body: dict[str, Any]) -> str:
+    """The caller, checked as the handler would check it, before the flag read
+    and the event: the body's `user_id` must be the session's (403/401
+    otherwise), and a body that names nobody means the session user."""
+    claimed = body.get("user_id")
+    if isinstance(claimed, str) and claimed:
+        await auth_guard.guard_off_loop(auth_guard.require_self, claimed, request)
+        return claimed
+    return await auth_guard.guard_off_loop(auth_guard.get_session_user_id, request)

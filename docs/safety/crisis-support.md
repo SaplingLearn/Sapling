@@ -9,12 +9,22 @@ crisis resources instead, and records nothing of the turn.
 
 ## What it does
 
-1. **Screen.** At the entry of every covered route (after auth, before any
-   session, inline rate-limit, budget or model work; see Limits for the one
-   dependency that runs earlier), the student-written text goes
-   through `backend/services/crisis_detection.py::detect`. That is pure,
+1. **Screen.** On every covered route, right after authentication, the
+   student-written text goes through
+   `backend/services/crisis_detection.py::detect`. That is pure,
    deterministic phrase matching: no model call, no I/O, microseconds for a
    chat message.
+
+   **Screening precedes every rate limit, budget and quota check.** A
+   student in crisis must never get a 429 or a pause instead of the card, and
+   a crisis turn runs no model, so no limiter has anything to protect. On the
+   loop routes whose rate limit is a route dependency, the screen is a
+   dependency placed before it (`crisis_support.screened`, right after the
+   kill switch). Everywhere else it is the handler's first statement after
+   auth, ahead of every inline check. A crisis turn consumes no rate-limit,
+   budget or tutor-call unit, and the loop's chat composer stays usable
+   during a budget pause so a paused student's message can still reach the
+   screen.
 2. **Flag.** Only on a match is the `crisis_support` flag read for that
    student. It is `off` by default and fails closed, so with the flag off
    every route behaves exactly as before.
@@ -99,7 +109,8 @@ tutor).
 | Detection + every phrase list | `backend/services/crisis_detection.py` |
 | **All user-facing copy (owner review)** | `backend/services/crisis_support_copy.py` |
 | Campus counseling, per school | `CAMPUS_COUNSELING` in that same copy file |
-| Flag, event, response builders | `backend/services/crisis_support.py` |
+| Flag, event, response builders, the screen dependency (`screened`) | `backend/services/crisis_support.py` |
+| Screen-before-rate-limit wiring on the loop | `backend/routes/learn_loop.py::_screened` |
 | Flag registration | `backend/services/feature_flags.py::REGISTRY["crisis_support"]` |
 | Event taxonomy / PostHog exclusion | `services/events_service.py::EVENT_TAXONOMY`, `services/posthog_client.py::_NOT_MIRRORED` |
 | The card | `frontend/src/components/safety/CrisisSupportCard.tsx`, `frontend/src/lib/crisisSupport.ts` |
@@ -156,11 +167,10 @@ negatives.
   rates, eval spend, and a latency budget on every turn. It would also send
   the student's crisis text to a model provider, which this path never does.
   It would be a separate decision.
-- **Pre-handler refusals still come first.** Auth (401), the loop kill switch
-  (404) and the loop routes' per-minute rate-limit dependency (429, 20 model
-  calls a minute) run before the handler, so before the screen. The daily AI
-  budget and every inline rate-limit check run after it, so a capped student
-  still gets the card.
+- **Only auth and the loop's kill switch come first.** An unauthenticated or
+  foreign request (401/403) and a loop route while the loop is switched off
+  (404) are refused before the screen. Those refusals say who you are and
+  whether the feature exists, never that you used too much.
 - **No human in the loop.** Nobody is notified and nothing follows up. The
   event is a count for admins, not an alerting channel. Sapling is a study
   tool, not a crisis service, and the copy says so.

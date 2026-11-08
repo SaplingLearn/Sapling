@@ -8,7 +8,7 @@
  * rendered testids.
  */
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const search = vi.hoisted(() => ({ params: new URLSearchParams() }));
@@ -539,10 +539,12 @@ describe("LoopLearn — A26", () => {
     expect(await screen.findByText(/every concept in today's plan/)).toBeTruthy();
   });
 
-  it("renders the budget pause banner from a hard `budget` stream event; the chat input is disabled", async () => {
+  it("renders the budget pause banner from a hard `budget` stream event; the unanswered message goes back to the composer", async () => {
+    // A reset still ahead: the banner's own timer lifts a pause once it passes.
+    const later = new Date(Date.now() + 60 * 60_000).toISOString();
     // PKG-07 at the hard level: `phase`, then `budget`, then the stream ends with no `done`.
     api.streamLoopChat.mockImplementation(async (_s: string, _u: string, _m: string, h: { onBudget?: (b: object) => void }) => {
-      h.onBudget?.({ level: "hard", reset_at: "2026-09-27T00:00:00Z", scope: "daily_usd", session_capped: false });
+      h.onBudget?.({ level: "hard", reset_at: later, scope: "daily_usd", session_capped: false });
       throw new Error("Chat stream ended without a done event.");
     });
     await resumedTeach();
@@ -550,10 +552,31 @@ describe("LoopLearn — A26", () => {
     fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
     fireEvent.click(screen.getByTestId("tutor-send"));
     const banner = await screen.findByTestId("loop-budget-paused");
-    expect(banner.getAttribute("data-reset-at")).toBe("2026-09-27T00:00:00Z");
+    expect(banner.getAttribute("data-reset-at")).toBe(later);
     expect(api.streamLoopChat).toHaveBeenCalledWith("s2", "u1", "why?", expect.any(Object));
     expect(toast.error).not.toHaveBeenCalled(); // the pause is not an error
-    expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(true);
+    // nothing answered it: no orphan bubble, the text is back where it was typed
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    await waitFor(() => expect(input.value).toBe("why?"));
+    expect(within(screen.getByTestId("tutor-messages")).queryByText("why?")).toBeNull();
+    // and the composer stays usable: the server screens every message for a
+    // crisis before any budget (docs/safety/crisis-support.md)
+    expect(input.disabled).toBe(false);
+    expect(input.getAttribute("placeholder")).toMatch(/paused/);
+  });
+
+  it("a budget 429 on a chat turn also hands the message back", async () => {
+    const later = new Date(Date.now() + 60 * 60_000).toISOString();
+    api.streamLoopChat.mockRejectedValue(
+      new ApiError("x", 429, { body: { detail: "ai budget reached", reset_at: later } }),
+    );
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "and then?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(await screen.findByTestId("loop-budget-paused")).toBeTruthy();
+    await waitFor(() => expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).value).toBe("and then?"));
+    expect(within(screen.getByTestId("tutor-messages")).queryByText("and then?")).toBeNull();
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("a soft `budget` event renders nothing", async () => {
@@ -2104,6 +2127,31 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
 
 describe("LoopLearn — crisis support (docs/safety/crisis-support.md)", () => {
   const crisisTurn = { reply: "the card as text", graph_update: {}, mastery_changes: [], crisis_support: crisisFixture };
+
+  it("a budget-paused student can still send, and a crisis message gets the card, not the pause", async () => {
+    api.streamLoopChat
+      .mockImplementationOnce(async (_s: string, _u: string, _m: string, h: { onBudget?: (b: object) => void }) => {
+        const later = new Date(Date.now() + 60 * 60_000).toISOString();
+        h.onBudget?.({ level: "hard", reset_at: later, scope: "daily_usd", session_capped: false });
+        throw new Error("Chat stream ended without a done event.");
+      })
+      .mockResolvedValueOnce(crisisTurn);
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "why?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(await screen.findByTestId("loop-budget-paused")).toBeTruthy();
+    // paused — and still able to reach the screen
+    const input = screen.getByTestId("tutor-input") as HTMLTextAreaElement;
+    await waitFor(() => expect(input.value).toBe("why?")); // the first message came back
+    expect(input.disabled).toBe(false);
+    fireEvent.change(input, { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    const card = await screen.findByTestId("crisis-support-card");
+    expect(screen.getByTestId("loop-messages").contains(card)).toBe(true);
+    expect(api.streamLoopChat).toHaveBeenLastCalledWith("s2", "u1", "i want to kill myself", expect.any(Object));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-budget-paused")).toBeTruthy(); // the real pause stands; the card added none
+  });
 
   it("a chat turn answered with the card shows it in the conversation and changes nothing else", async () => {
     api.streamLoopChat.mockResolvedValue(crisisTurn);
