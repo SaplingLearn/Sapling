@@ -338,7 +338,9 @@ def seen_hashes(user_id: str) -> set[str]:
 def revealed_hashes(user_id: str) -> set[str]:
     """Items whose reference the user has seen (A23): a wrong attempt (the
     answer is released), an attempt at or above RUNG_NO_CREDIT_MIN, or an H4
-    sibling shown in any session (the top-level loop_state["revealed"], A17)."""
+    sibling shown in any session (the top-level loop_state["revealed"], A17);
+    an open posed item a served turn stated (learning_reveals, A88); an
+    answered segment prequestion (learning_prequestions, A138)."""
     revealed = {
         r["question_hash"]
         for r in _evidence_rows(user_id)
@@ -360,6 +362,19 @@ def revealed_hashes(user_id: str) -> set[str]:
         table(_REVEALS),
         "id,question_hash",
         filters={"user_id": f"eq.{user_id}", "kind": "eq.reveal"},
+        order="id",
+    ):
+        if row.get("question_hash"):
+            revealed.add(row["question_hash"])
+    # Spec §13 A138: an ANSWERED prequestion's item, whose answer its explaining
+    # turn states. Its row is written before any of that text is served (the
+    # answer route's commit point), so the reveal holds even when both reveal
+    # stores above failed. Read whatever the flag says now: a prequestion
+    # answered while it was on stays revealed after it goes off.
+    for row in page_all(
+        table(_PREQUESTIONS),
+        "id,question_hash",
+        filters={"user_id": f"eq.{user_id}"},
         order="id",
     ):
         if row.get("question_hash"):
@@ -391,3 +406,5 @@ def reported_hashes(user_id: str) -> set[str]:
 _REVEALS = "learning_reveals"
 # A113: the check_item_reports table (written by learning/item_reports.py)
 _REPORTS = "check_item_reports"
+# A138: the answered prequestions (written by learning/prequestion_store.py)
+_PREQUESTIONS = "learning_prequestions"

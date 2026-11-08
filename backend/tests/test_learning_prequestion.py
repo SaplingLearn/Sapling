@@ -386,3 +386,25 @@ def test_the_guess_is_stored_encrypted_and_no_idea_stores_none():
     assert first["no_idea"] is False and first["format"] == "mc_reason" and first["difficulty"] == 1
     assert second["guess_json"] is None and second["no_idea"] is True
     assert t.insert_ignore_duplicates.call_args.kwargs["on_conflict"] == "user_id,session_id,node_id"
+
+
+def test_the_stored_answer_reads_back_owner_scoped_and_decrypted():
+    # review fix: the answer route's commit point — the first stored guess stands
+    from unittest.mock import MagicMock
+
+    from learning import prequestion_store as store
+    from services.encryption import encrypt_json
+
+    t = MagicMock()
+    t.select.return_value = [{"question_hash": "m1", "no_idea": False, "guess_json": encrypt_json({"option": "A"})}]
+    with patch.object(store, "table", return_value=t):
+        got = store.stored_answer("u1", "s1", "n1")
+        assert got == {"question_hash": "m1", "no_idea": False, "guess": {"option": "A"}}
+        assert t.select.call_args.kwargs["filters"] == {"user_id": "eq.u1", "session_id": "eq.s1", "node_id": "eq.n1"}
+        t.select.return_value = [{"question_hash": "f1", "no_idea": True, "guess_json": None}]
+        assert store.stored_answer("u1", "s1", "n1") == {"question_hash": "f1", "no_idea": True, "guess": None}
+        t.select.return_value = []
+        assert store.stored_answer("u1", "s1", "n1") is None
+        t.select.side_effect = RuntimeError("down")
+        with pytest.raises(RuntimeError):  # a failed read raises: the route answers 503
+            store.stored_answer("u1", "s1", "n1")

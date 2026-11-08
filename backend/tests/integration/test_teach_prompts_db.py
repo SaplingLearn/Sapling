@@ -5,8 +5,10 @@ on the local stack.
 - the tables are backend-only and the backend holds only what it uses;
 - the migration's SQL runs again, in a rolled-back transaction, unchanged;
 - the app's own writers round-trip through PostgREST: a guess (encrypted; a
-  retried answer inserts nothing new; "no idea" stores none), a served prompt
-  closed with its reply (encrypted, its length) — read back via psycopg (#397);
+  retried answer inserts nothing new; "no idea" stores none; the answer
+  route's read-back; the item in the revealed set), a served prompt closed
+  with its reply (encrypted, its length; closed only while 'open': a second
+  reply writes nothing, a retry is recognised) — read back via psycopg (#397);
 - the CHECKs refuse a replied row without its reply and a guess beside "no idea";
 - A76 across sessions reads the stored prequestion: a class-mate of its item
   graded later is a re-check.
@@ -108,6 +110,15 @@ def test_a_guess_round_trips_encrypted_once_and_no_idea_stores_none(db_conn):
     got = store.releases(USER, "it-node-1", since=posed - timedelta(hours=1))
     assert [r["shape"] for r in got] == [("mc_reason", 1)]
     assert store.evidence_since(USER, "it-node-1", posed) is False
+    # review fix: the commit point's read-back (the first stored guess stands)
+    # and the revealed set (an answered prequestion's item never serves again)
+    assert store.stored_answer(USER, session, "it-node-1") == {
+        "question_hash": item.question_hash, "no_idea": False, "guess": {"option": "A", "reason": "it chains"},
+    }
+    assert store.stored_answer(USER, session, "it-node-9") is None
+    from learning.loop_state_store import revealed_hashes
+
+    assert item.question_hash in revealed_hashes(USER)
 
 
 def test_a_guess_beside_no_idea_is_refused(db_conn):
@@ -134,14 +145,27 @@ def test_a_prompt_closes_with_its_reply_encrypted_and_its_length(db_conn):
     row = db_conn.execute("SELECT status, closed_at, reply_text FROM learning_self_explanations WHERE id = %s",
                           (pid,)).fetchone()
     assert row == {"status": "open", "closed_at": None, "reply_text": None}
-    store.close_prompt(prompt, user_id=USER, session_id="it-session", course_id=None,
-                       reply="Each step halves it.", closed_at=datetime.now(timezone.utc))
+    closed_at = datetime.now(timezone.utc)
+    assert store.close_prompt(prompt, user_id=USER, session_id="it-session", course_id=None,
+                              reply="Each step halves it.", closed_at=closed_at) == store.WON
+    # review fix: the row closes only while 'open' — a concurrent second reply
+    # writes nothing (LOST), and a retry of the first is recognised (SAME)
+    assert store.close_prompt(prompt, user_id=USER, session_id="it-session", course_id=None,
+                              reply="A later, different reply.", closed_at=closed_at) == store.LOST
+    assert store.close_prompt(prompt, user_id=USER, session_id="it-session", course_id=None,
+                              reply="Each step halves it.", closed_at=closed_at) == store.SAME
     row = db_conn.execute(
         "SELECT status, reply_text, reply_chars, juncture, rung FROM learning_self_explanations WHERE id = %s", (pid,)
     ).fetchone()
     assert row["status"] == "replied" and row["reply_chars"] == len("Each step halves it.")
     assert row["juncture"] == "worked_example" and row["rung"] == 4
     assert "halves" not in row["reply_text"] and decrypt_if_present(row["reply_text"]) == "Each step halves it."
+    # a prompt whose serve-time row was never written is inserted closed
+    missing = {**prompt, "id": uuid.uuid4().hex}
+    assert store.close_prompt(missing, user_id=USER, session_id="it-session", course_id=None,
+                              reply=None, closed_at=closed_at) == store.WON
+    assert db_conn.execute("SELECT status FROM learning_self_explanations WHERE id = %s",
+                           (missing["id"],)).fetchone()["status"] == "skipped"
     with pytest.raises(psycopg.errors.CheckViolation):
         db_conn.execute("UPDATE learning_self_explanations SET reply_text = NULL WHERE id = %s", (pid,))
 

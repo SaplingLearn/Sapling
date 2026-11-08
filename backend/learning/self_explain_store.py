@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 from db.connection import table
-from services.encryption import encrypt_if_present
+from services.encryption import decrypt_if_present, encrypt_if_present
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,11 @@ def record_prompt(prompt: dict, *, user_id: str, session_id: str, course_id: str
         logger.warning("self-explanation prompt row not written: %s", type(exc).__name__)
 
 
+#: close_prompt's outcomes: this call closed the row / the row was already
+#: closed with this very reply (a retry) / it was closed otherwise first
+WON, SAME, LOST = "won", "same", "lost"
+
+
 def close_prompt(
     prompt: dict,
     *,
@@ -55,19 +60,27 @@ def close_prompt(
     course_id: str | None,
     reply: str | None,
     closed_at: datetime,
-) -> None:
+) -> str:
     """Close the prompt: 'replied' with the reply (encrypted, its length in
-    characters) or 'skipped'. One upsert of the whole row, so a prompt whose
-    serve-time write failed is recorded too. Raises on a failed write (the
-    route then answers 503 and the prompt stays open for a retry)."""
+    characters) or 'skipped' — ONLY while its row is 'open' (review fix: two
+    concurrent replies never overwrite each other; the first close stands).
+    A prompt whose serve-time write failed is inserted closed. Returns WON,
+    SAME (a retry of this very close) or LOST. Raises on a failed write or
+    read (the route then answers 503 and the prompt stays open for a retry)."""
     text = (reply or "").strip()
-    table(TABLE).upsert(
-        {
-            **_base_row(prompt, user_id=user_id, session_id=session_id, course_id=course_id),
-            "status": "replied" if text else "skipped",
-            "closed_at": closed_at.isoformat(),
-            "reply_text": encrypt_if_present(text) if text else None,
-            "reply_chars": len(text) if text else None,
-        },
-        on_conflict="id",
-    )
+    closed = {
+        "status": "replied" if text else "skipped",
+        "closed_at": closed_at.isoformat(),
+        "reply_text": encrypt_if_present(text) if text else None,
+        "reply_chars": len(text) if text else None,
+    }
+    mine = {"id": f"eq.{prompt['id']}", "user_id": f"eq.{user_id}"}
+    if table(TABLE).update(closed, filters={**mine, "status": "eq.open"}):
+        return WON
+    row = {**_base_row(prompt, user_id=user_id, session_id=session_id, course_id=course_id), **closed}
+    if table(TABLE).insert_ignore_duplicates(row, on_conflict="id"):
+        return WON
+    got = table(TABLE).select("status,reply_text", filters=mine, limit=1) or []
+    if got and got[0].get("status") == closed["status"] and (decrypt_if_present(got[0].get("reply_text")) or "") == text:
+        return SAME
+    return LOST

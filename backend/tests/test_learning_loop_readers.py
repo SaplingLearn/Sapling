@@ -165,9 +165,29 @@ def test_revealed_hashes_are_wrong_or_no_credit_plus_shown_siblings(evidence_db)
     from learning.loop_state_store import revealed_hashes
 
     assert revealed_hashes("u1") == {"qb", "qc", "qd"}
-    # PKG-14 (spec §13 A88): + the served reveals, keyed by the student
+    # PKG-14 (spec §13 A88): + the served reveals, keyed by the student;
+    # spec §13 A138 (review fix): + the answered prequestions, read whatever
+    # the flag says (an answered prequestion's item stays revealed)
     assert {name for name, _, _, _ in evidence_db} == {
         "node_mastery_events",
         "sessions",
         "learning_reveals",
+        "learning_prequestions",
     }
+    assert all("u1" in json.dumps(f) for _, f, _, _ in evidence_db), "every read is scoped to the user"
+
+
+def test_an_answered_prequestion_is_revealed(evidence_db, monkeypatch):
+    import learning.loop_state_store as store
+    from learning.loop_state_store import revealed_hashes
+
+    real = store.page_all
+
+    def with_prequestion(handle, columns="*", *, filters=None, order, **kw):
+        if handle.name == "learning_prequestions":
+            real(handle, columns, filters=filters, order=order)
+            return iter([{"id": "r1", "question_hash": "q-pq"}])
+        return real(handle, columns, filters=filters, order=order, **kw)
+
+    monkeypatch.setattr(store, "page_all", with_prequestion)
+    assert "q-pq" in revealed_hashes("u1")

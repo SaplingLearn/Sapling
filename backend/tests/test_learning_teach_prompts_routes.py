@@ -83,14 +83,27 @@ def on(seams):
     from learning.checks import posttest_reserves as real_reserves
 
     seams.reserve.side_effect = real_reserves
+
+    def stored(user_id, session_id, node_id):
+        """The commit point's read-back: the FIRST stored answer stands."""
+        for c in store.call_args_list:
+            if c.kwargs["node_id"] == node_id and c.kwargs["session_id"] == session_id:
+                k = c.kwargs
+                return {"question_hash": k["item"].question_hash, "no_idea": k["no_idea"], "guess": k["guess"]}
+        return None
+
     with (
         patch("routes.learn_loop.store_prequestion_answer") as store,
+        patch("routes.learn_loop.stored_prequestion_answer", side_effect=stored) as read_back,
         patch("routes.learn_loop.record_self_explain_prompt") as se_record,
-        patch("routes.learn_loop.close_self_explain_prompt") as se_close,
+        patch("routes.learn_loop.close_self_explain_prompt", return_value="won") as se_close,
         patch("routes.learn_loop.record_help") as help_rows,
+        patch("routes.learn_loop.record_posed") as posed_rows,
+        patch("routes.learn_loop.mark_graded") as closed_rows,
         patch("routes.learn_loop.store_brief"),
     ):
         seams.pq_store, seams.se_record, seams.se_close, seams.help_rows = store, se_record, se_close, help_rows
+        seams.pq_read_back, seams.posed_rows, seams.closed_rows = read_back, posed_rows, closed_rows
         yield seams
 
 
@@ -319,6 +332,60 @@ def test_a_retry_keeps_the_stored_guess_and_serves_the_explanation_again(gate_on
     assert on.store["doc"]["prequestion"]["node-1"]["status"] == "resolved"
 
 
+def test_the_stored_row_is_the_commit_point(gate_on, on):
+    # review fix: a first request stored its guess and failed before the record
+    # moved (its claim given back). A retry with ANOTHER guess is a 409 and
+    # changes nothing; a retry of the same guess finishes the commit, and the
+    # transcript and the event are built from the stored row.
+    on.store["doc"] = _posed()
+    stored_first = {"question_hash": "qh-pq", "no_idea": False, "guess": {"option": "A", "reason": "it chains"}}
+    on.pq_read_back.side_effect = lambda *a: stored_first
+    r, _ = _run(on, "/prequestion/answer", _answer(option="C"))
+    assert r.status_code == 409 and r.json()["detail"] == "a different guess was already saved for this question"
+    rec = on.store["doc"]["prequestion"]["node-1"]
+    assert rec["status"] == "posed" and "answer_claim" not in rec  # the claim was given back
+    on.record_reveals.assert_not_called()
+    assert not _saved(on) and not _events(on, "learn.prequestion")
+    r, _ = _run(on, "/prequestion/answer", _answer(option="A", reason="it chains"))
+    assert r.status_code == 200, r.text
+    assert ("user", "My guess: A — it chains") in _saved(on)
+    rec = on.store["doc"]["prequestion"]["node-1"]
+    assert rec["status"] == "resolved" and "answer_claim" not in rec and "answer_claim_at" not in rec
+
+
+def test_a_failed_store_gives_the_claim_back_and_serves_nothing(gate_on, on):
+    on.store["doc"] = _posed()
+    on.pq_store.side_effect = RuntimeError("db down")
+    r, _ = _run(on, "/prequestion/answer", _answer(no_idea=True))
+    assert r.status_code == 503
+    rec = on.store["doc"]["prequestion"]["node-1"]
+    assert rec["status"] == "posed" and "answer_claim" not in rec
+    on.record_reveals.assert_not_called()
+    assert not _saved(on)
+
+
+def test_a_guess_under_another_live_claim_is_a_409(gate_on, on):
+    doc = _posed()
+    doc["prequestion"]["node-1"].update(answer_claim="other", answer_claim_at=NOW - 1)
+    on.store["doc"] = doc
+    r, _ = _run(on, "/prequestion/answer", _answer(no_idea=True))
+    assert r.status_code == 409 and "being saved" in r.json()["detail"]
+    on.pq_store.assert_not_called()
+
+
+def test_the_explaining_turn_carries_no_self_explanation_acknowledgement(gate_on, on):
+    # review fix (A139 x A138): a reply that closed a segment poses the next
+    # prequestion; that prequestion's explaining turn is about the new concept,
+    # so the acknowledgement is dropped there (and consumed)
+    doc = _posed()
+    se.set_ack(doc, "p-1")
+    on.store["doc"] = doc
+    r, seen = _run(on, "/prequestion/answer", _answer(no_idea=True))
+    assert r.status_code == 200 and PREQUESTION_LINE in seen["msg"]
+    assert SELF_EXPLAIN_ACK_LINE not in seen["msg"]
+    assert not se.ack_due(on.store["doc"])
+
+
 def test_any_next_teach_turn_explains_an_answered_prequestion(gate_on, on):
     """A failed explaining turn is retried by whatever teach turn comes next."""
     st = _posed()
@@ -348,7 +415,10 @@ def test_a_chat_turn_while_the_card_is_open_supersedes_it(gate_on, on):
     assert on.store["doc"]["prequestion"]["node-1"]["status"] == "superseded"
     assert _events(on, "learn.prequestion") == [{"session_id": "s1", "node_id": "node-1",
                                                  "status": "superseded", "question_hash": "qh-pq"}]
-    on.record_reveals.assert_not_called()
+    # review fix: the item is SPENT — a turn was served while its question was
+    # open, and that text cannot be trusted not to have worked it
+    on.record_reveals.assert_called_once_with("u1", ["qh-pq"], session_id="s1", source="prequestion")
+    on.closed_rows.assert_called_once_with("u1", "qh-pq")  # its 'posed' row leaves the scan set
 
 
 def test_check_me_while_the_card_is_open_supersedes_it_and_never_poses_its_item(gate_on, on):
@@ -357,6 +427,30 @@ def test_check_me_while_the_card_is_open_supersedes_it_and_never_poses_its_item(
     assert r.status_code == 200 and r.json()["check"]["question_hash"] != "qh-pq"
     assert on.store["doc"]["prequestion"]["node-1"]["status"] == "superseded"
     assert "qh-pq" in on.select_item.call_args.kwargs["exclude_hashes"]
+    assert ["qh-pq"] in [c.args[1] for c in on.record_reveals.call_args_list]  # spent
+
+
+def test_the_posed_card_is_in_the_served_text_scan(gate_on, on):
+    # review fix (A88/A93): the pose writes the ledger's 'posed' row, so a turn
+    # served while the card is open is scanned for its answer like a check's
+    on.store["doc"] = _plan_doc()
+    r = client.post("/api/learn/loop/plan/approve", json={**_CHAT, "concept_ids": ["node-1", "node-2"]})
+    assert r.status_code == 200, r.text
+    on.posed_rows.assert_called_once_with("u1", "qh-pq", source="prequestion", session_id="s1")
+
+
+def test_a_guess_being_saved_holds_the_card(gate_on, on):
+    # review fix: under a live answer claim no check opens and no turn supersedes
+    doc = _posed(teach_turns=1)
+    doc["prequestion"]["node-1"].update(answer_claim="c-1", answer_claim_at=NOW)
+    on.store["doc"] = doc
+    r = client.post("/api/learn/loop/check/next", json=_CHAT)
+    assert r.status_code == 409 and "being saved" in r.json()["detail"]
+    r, _ = _run(on, "/chat", {**_CHAT, "message": "What is hashing?"})
+    assert r.status_code == 200 and on.store["doc"]["prequestion"]["node-1"]["status"] == "posed"
+    from routes.learn_loop import _grading_in_flight
+
+    assert _grading_in_flight(on.store["doc"], NOW) is True  # a close waits for it
 
 
 def test_activation_never_serves_a_prequestion_item_of_the_session(seams):
@@ -604,6 +698,31 @@ def test_no_open_prompt_is_a_409(gate_on, on, prompt_id):
     r = client.post("/api/learn/loop/self-explain", json={**_CHAT, "prompt_id": prompt_id, "reply": "x"})
     assert r.status_code == 409 and r.json()["detail"] == "no open self-explanation prompt"
     on.se_close.assert_not_called()
+
+
+def test_a_reply_that_lost_the_row_writes_nothing_else(gate_on, on):
+    # review fix: the row closes only while 'open' — of two concurrent replies
+    # the first stands; the other is a 409 with no transcript row and no event
+    on.pq_flag.return_value = False
+    on.store["doc"] = _open_prompt()
+    on.se_close.return_value = "lost"
+    r = client.post("/api/learn/loop/self-explain", json={**_CHAT, "prompt_id": "p1", "reply": "late"})
+    assert r.status_code == 409
+    assert not _saved(on) and not _events(on, "learn.self_explanation")
+    assert se.open_prompt(on.store["doc"]) is not None  # the loop state is untouched
+
+
+def test_a_committed_reply_stands_when_a_turn_closed_the_prompt_meanwhile(gate_on, on):
+    on.pq_flag.return_value = False
+    on.store["doc"] = _open_prompt()
+    pre = json.loads(json.dumps(on.store["doc"]))
+    se.close_open(on.store["doc"])  # a turn closed it between the read and the write
+    with patch("routes.learn_loop._load_loop_state", return_value=pre):
+        r = client.post("/api/learn/loop/self-explain", json={**_CHAT, "prompt_id": "p1", "reply": "because"})
+    assert r.status_code == 200 and r.json()["status"] == "replied", r.text
+    assert ("user", "because") in _saved(on)
+    assert [e["status"] for e in _events(on, "learn.self_explanation")] == ["replied"]
+    assert not se.ack_due(on.store["doc"])  # nothing to acknowledge: the prompt was gone
 
 
 def test_the_reply_route_is_off_with_its_flag(gate_on, on):

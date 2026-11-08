@@ -108,14 +108,17 @@ def test_the_reply_is_stored_encrypted_with_its_length_and_a_skip_stores_none():
     from services.encryption import decrypt_if_present
 
     t = MagicMock()
+    t.update.return_value = []  # no 'open' row: the serve-time write failed
+    t.insert_ignore_duplicates.return_value = [{"id": "p1"}]
     prompt = {"id": "p1", "node_id": "n1", "juncture": "worked_example", "prompt_key": "worked_example",
               "question_hash": "q1", "rung": 4, "prompted_at": 1_790_000_000.0}
     when = datetime(2026, 11, 8, tzinfo=timezone.utc)
     with patch.object(store, "table", return_value=t):
-        store.close_prompt(prompt, user_id="u1", session_id="s1", course_id="c1",
-                           reply="  Each step halves the value.  ", closed_at=when)
-        store.close_prompt(prompt, user_id="u1", session_id="s1", course_id="c1", reply=None, closed_at=when)
-    replied, skipped = (c.args[0] for c in t.upsert.call_args_list)
+        assert store.close_prompt(prompt, user_id="u1", session_id="s1", course_id="c1",
+                                  reply="  Each step halves the value.  ", closed_at=when) == store.WON
+        assert store.close_prompt(prompt, user_id="u1", session_id="s1", course_id="c1", reply=None,
+                                  closed_at=when) == store.WON
+    replied, skipped = (c.args[0] for c in t.insert_ignore_duplicates.call_args_list)
     assert replied["status"] == "replied" and replied["reply_chars"] == len("Each step halves the value.")
     assert replied["reply_text"] != "Each step halves the value."
     assert decrypt_if_present(replied["reply_text"]) == "Each step halves the value."
@@ -123,6 +126,32 @@ def test_the_reply_is_stored_encrypted_with_its_length_and_a_skip_stores_none():
     assert replied["juncture"] == "worked_example" and replied["rung"] == 4
     assert replied["prompted_at"].startswith("2026-09-")  # UTC from the prompt's unix seconds
     assert "prompt_key" not in replied and "prompt" not in replied
+    # the close is conditional: only an 'open' row of this student's
+    assert t.update.call_args.kwargs["filters"] == {"id": "eq.p1", "user_id": "eq.u1", "status": "eq.open"}
+
+
+def test_the_first_close_stands_and_a_retry_of_it_is_the_same():
+    from learning import self_explain_store as store
+    from services.encryption import encrypt_if_present
+
+    prompt = {"id": "p1", "node_id": "n1", "juncture": "first_correct", "prompted_at": 1.0}
+    when = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    t = MagicMock()
+    t.update.return_value = [{"id": "p1"}]
+    with patch.object(store, "table", return_value=t):
+        assert store.close_prompt(prompt, user_id="u1", session_id="s1", course_id=None,
+                                  reply="mine", closed_at=when) == store.WON
+    t = MagicMock()  # closed already: the update and the insert both find it
+    t.update.return_value = []
+    t.insert_ignore_duplicates.return_value = []
+    t.select.return_value = [{"status": "replied", "reply_text": encrypt_if_present("mine")}]
+    with patch.object(store, "table", return_value=t):
+        assert store.close_prompt(prompt, user_id="u1", session_id="s1", course_id=None,
+                                  reply="mine", closed_at=when) == store.SAME
+        assert store.close_prompt(prompt, user_id="u1", session_id="s1", course_id=None,
+                                  reply="another", closed_at=when) == store.LOST
+        assert store.close_prompt(prompt, user_id="u1", session_id="s1", course_id=None,
+                                  reply=None, closed_at=when) == store.LOST
 
 
 def test_the_served_prompt_row_never_raises():

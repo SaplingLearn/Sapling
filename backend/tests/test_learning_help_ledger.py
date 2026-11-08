@@ -52,8 +52,14 @@ def test_record_help_and_posed_insert_hash_and_rung_rows_only():
     }
     assert posed_row["kind"] == "posed" and "rung" not in posed_row and posed_row["source"] == "probe"
     # "quiz": the quiz-ask session's help row (spec §13 A99, services/quiz_ask.py);
-    # "outside": the integrity guard of the surfaces outside the loop (A125)
-    assert set(help_ledger.SOURCES) == {"loop", "review", "posttest", "probe", "scan", "quiz", "outside"}
+    # "outside": the integrity guard of the surfaces outside the loop (A125);
+    # "prequestion": a segment prequestion's pose and its item's reveal (A138)
+    assert set(help_ledger.SOURCES) == {
+        "loop", "review", "posttest", "probe", "scan", "quiz", "outside", "prequestion",
+    }
+    from routes.learn_loop import PREQUESTION_SOURCE
+
+    assert PREQUESTION_SOURCE in help_ledger.SOURCES
 
 
 def test_max_help_is_the_highest_rung_and_a_reveal_counts_as_no_credit():

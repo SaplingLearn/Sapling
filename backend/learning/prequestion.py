@@ -12,10 +12,13 @@ segment, not per step"), and one open prompt at a time (A121).
 
 The guess is never graded: no grader call, no evidence, no BKT/FSRS change, no
 misconception record, no help-ledger rung, no band-control input. Its item's
-answer is revealed (A88's durable record), so the item never serves that
-student again as a check, a review or a post-test reserve; and because a
-worked answer of the item's exact shape was shown, A76's re-check rule treats
-the release like any other (learning/misconceptions.py::recheck_after_release).
+answer is revealed (A88's durable record, and the stored answer itself, which
+`revealed_hashes` reads), so the item never serves that student again as a
+check, a review or a post-test reserve; and because a worked answer of the
+item's exact shape was shown, A76's re-check rule treats the release like any
+other (learning/misconceptions.py::recheck_after_release). While its card is
+open the item is a posed item (the help ledger's 'posed' row, so A88's
+served-text scan covers it), and however the card closes the item is spent.
 
 The loop_state record (`loop_state["prequestion"][node]`) holds ids, ints,
 enums and timestamps only (A38: no free text in loop_state); the guess itself
@@ -44,8 +47,9 @@ KEY = "prequestion"
 #: and the item revealed; its explanation is owed (the next teach turn serves
 #: it). `resolved`: the explanation was served. `skipped`: the segment opened
 #: without one (`reason`, PREQUESTION_SKIP_REASONS). `superseded`: the student
-#: went on (a chat turn on the concept) while the card was open — nothing was
-#: revealed, and the item still never serves as a check in this session.
+#: went on (a turn on the concept, or a check) while the card was open — the
+#: item is spent all the same (review fix: the route records its reveal, since
+#: that turn's text may have worked it), and it never serves again.
 POSED, ANSWERED, RESOLVED, SKIPPED, SUPERSEDED = "posed", "answered", "resolved", "skipped", "superseded"
 STATUSES = (POSED, ANSWERED, RESOLVED, SKIPPED, SUPERSEDED)
 

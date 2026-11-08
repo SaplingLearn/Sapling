@@ -52,8 +52,9 @@ from learning.params import LADDER_MAX_RUNG, RUNG_NO_CREDIT_MIN
 _LEDGER = "learning_reveals"
 
 #: where a unit of help or a pose came from (`source`); "quiz": A99 quiz-ask;
-#: "outside": an AI surface outside the loop the student took the item to (A125)
-SOURCES = ("loop", "review", "posttest", "probe", "scan", "quiz", "outside")
+#: "outside": an AI surface outside the loop the student took the item to (A125);
+#: "prequestion": a segment prequestion's pose and the reveal of its item (A138)
+SOURCES = ("loop", "review", "posttest", "probe", "scan", "quiz", "outside", "prequestion")
 
 
 def _now_iso() -> str:
