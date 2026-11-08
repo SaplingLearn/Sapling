@@ -146,28 +146,24 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** How far a freed concept trails the one it follows before it's pulled along. */
+/** A link may always stretch to at least this before it pulls (px). */
 const FOLLOW_GAP = 70;
-/** Share of the extra gap closed per tick (before velocity decay). */
+/** Share of the extra stretch closed per tick (before velocity decay). */
 const FOLLOW_PULL = 0.1;
-/** How many links out from a dragged concept are freed to follow it. */
-const FOLLOW_HOPS = 2;
 
 /**
- * The concepts that follow a dragged one: everything within FOLLOW_HOPS
- * concept links, each mapped to the node it was reached through (its
- * leader). The dragged concept maps to null. Course spokes (anchor links)
- * don't count — a course root is pulled along by the orbit force instead.
+ * Everything a dragged concept is connected to, through concept links and
+ * course spokes alike, each mapped to the node it was reached through (its
+ * leader, so the tree of who pulls whom). The dragged concept maps to null.
  */
 export function followersOf(
   dragId: string,
-  links: ReadonlyArray<{ source: string | { id: string }; target: string | { id: string }; anchor?: boolean }>,
-  hops = FOLLOW_HOPS,
+  links: ReadonlyArray<{ source: string | { id: string }; target: string | { id: string } }>,
+  hops = Infinity,
 ): Map<string, string | null> {
   const idOf = (end: string | { id: string }) => (typeof end === "string" ? end : end.id);
   const adjacent = new Map<string, string[]>();
   for (const l of links) {
-    if (l.anchor) continue;
     const s = idOf(l.source);
     const t = idOf(l.target);
     if (!adjacent.has(s)) adjacent.set(s, []);
@@ -390,11 +386,14 @@ function KnowledgeGraph2DImpl({
   const movedRootsRef = React.useRef(new Set<string>());
   // Legible: where each free course root settles back to.
   const rootHomeRef = React.useRef(new Map<string, { x: number; y: number }>());
-  // A dragged concept and the concepts linked to it (up to two hops), freed
-  // from their rings while the drag plays out: each follows the one that
-  // leads it (the "follow" force), so the cluster moves together instead of
-  // leaving one long stretched link. `leader` is null for the dragged node.
-  const freeRef = React.useRef<{ leader: Map<string, string | null>; dragging: string | null }>({
+  // A dragged concept and everything connected to it, freed from their
+  // rings while the drag plays out. Each is tethered to the node that leads
+  // it (`leader`, null for the dragged one) by a rope as long as their link
+  // was when the drag began (`gap`): stretch it further and the other end is
+  // pulled along — the course root too, which carries its rings — so no
+  // link is ever left hyperextended.
+  type Tether = { leader: string | null; gap: number };
+  const freeRef = React.useRef<{ leader: Map<string, Tether>; dragging: string | null }>({
     leader: new Map(),
     dragging: null,
   });
@@ -419,7 +418,9 @@ function KnowledgeGraph2DImpl({
     const ids = new Set(freeRef.current.leader.keys());
     freeRef.current = { leader: new Map(), dragging: null };
     const roots = new Set<string | null>();
-    for (const id of ids) roots.add(planRef.current.orbit.get(id)?.rootId ?? null);
+    for (const id of ids) {
+      roots.add(planRef.current.centers.has(id) ? id : (planRef.current.orbit.get(id)?.rootId ?? null));
+    }
     for (const rootId of roots) adoptLayoutAround(rootId, ids);
   }, [adoptLayoutAround]);
   // Set once the student pans or zooms; auto-fit never overrides them.
@@ -540,16 +541,16 @@ function KnowledgeGraph2DImpl({
         ),
       )
       .force("follow", (alpha: number) => {
-        // Freed concepts (see freeRef): each is pulled after the node that
-        // leads it once their gap is wider than a link, and its orbit target
-        // tracks it so the orbit force (next) doesn't hold it on its old
-        // ring. While the drag is on, the dragged node keeps its orbit pull,
-        // which tugs its course root along. Once everything has slowed down,
+        // Freed nodes (see freeRef): a rope stretched past its length pulls
+        // the follower after its leader — or, when the follower is pinned (a
+        // classic-layout course root), pulls the leader back instead. Each
+        // freed concept's orbit target tracks it so the orbit force (next)
+        // doesn't hold it on its old ring. Once everything has slowed down,
         // wherever it all came to rest becomes the layout.
         const free = freeRef.current;
         if (!free.leader.size) return;
         let moving = free.dragging != null;
-        for (const [id, leaderId] of free.leader) {
+        for (const [id, { leader: leaderId, gap }] of free.leader) {
           const n = nodeById.get(id);
           if (!n || n.x == null || n.y == null) continue;
           const l = leaderId ? nodeById.get(leaderId) : undefined;
@@ -557,10 +558,17 @@ function KnowledgeGraph2DImpl({
             const dx = l.x - n.x;
             const dy = l.y - n.y;
             const len = Math.hypot(dx, dy) || 1e-6;
-            const slack = len - FOLLOW_GAP;
+            const slack = len - gap;
             if (slack > 0) {
-              n.vx = (n.vx ?? 0) + (dx / len) * slack * FOLLOW_PULL;
-              n.vy = (n.vy ?? 0) + (dy / len) * slack * FOLLOW_PULL;
+              const px = (dx / len) * slack * FOLLOW_PULL;
+              const py = (dy / len) * slack * FOLLOW_PULL;
+              if (n.fx == null) {
+                n.vx = (n.vx ?? 0) + px;
+                n.vy = (n.vy ?? 0) + py;
+              } else if (l.fx == null) {
+                l.vx = (l.vx ?? 0) - px;
+                l.vy = (l.vy ?? 0) - py;
+              }
             }
           }
           const o = planRef.current.orbit.get(id);
@@ -593,6 +601,8 @@ function KnowledgeGraph2DImpl({
         for (const [id, home] of rootHomeRef.current) {
           const root = nodeById.get(id);
           if (!root || root.fx != null || root.x == null || root.y == null) continue;
+          // A root being pulled along by a drag goes where it's pulled.
+          if (freeRef.current.leader.has(id)) continue;
           root.vx = (root.vx ?? 0) + (home.x - root.x) * 0.1 * alpha;
           root.vy = (root.vy ?? 0) + (home.y - root.y) * 0.1 * alpha;
         }
@@ -831,7 +841,15 @@ function KnowledgeGraph2DImpl({
     if (!n.is_subject_root) {
       // A still-settling earlier drag adopts its layout before this one starts.
       if (freeRef.current.leader.size) settleFreed();
-      freeRef.current = { leader: followersOf(n.id, simLinksRef.current), dragging: n.id };
+      const at = new Map(simNodesRef.current.map((sn) => [sn.id, sn]));
+      const leader = new Map<string, Tether>();
+      for (const [id, leaderId] of followersOf(n.id, simLinksRef.current)) {
+        const a = at.get(id);
+        const b = leaderId ? at.get(leaderId) : undefined;
+        const len = a?.x != null && a.y != null && b?.x != null && b.y != null ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+        leader.set(id, { leader: leaderId, gap: Math.max(FOLLOW_GAP, len) });
+      }
+      freeRef.current = { leader, dragging: n.id };
     }
     n.fx = n.x;
     n.fy = n.y;

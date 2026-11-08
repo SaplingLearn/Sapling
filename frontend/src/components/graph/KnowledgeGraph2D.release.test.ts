@@ -35,20 +35,23 @@ describe('followersOf (what a dragged concept pulls along)', () => {
     { source: 'leaf', target: 'a' },
     { source: 'a', target: 'b' },
     { source: 'b', target: 'c' },
+    { source: 'x', target: 'y' },
   ];
 
-  it('frees the dragged node and concepts up to two links away, each led by the node it was reached through', () => {
+  it('reaches everything connected, course root included, each led by the node it was reached through', () => {
     expect(followersOf('leaf', links)).toEqual(
       new Map([
         ['leaf', null],
         ['a', 'leaf'],
+        ['root', 'a'],
         ['b', 'a'],
+        ['c', 'b'],
       ]),
     );
   });
 
-  it('never frees a course root through its spoke', () => {
-    expect(followersOf('a', links).has('root')).toBe(false);
+  it('leaves unconnected concepts alone', () => {
+    expect(followersOf('leaf', links).has('x')).toBe(false);
   });
 
   it('accepts links whose ends d3 has already resolved to nodes', () => {
