@@ -240,6 +240,9 @@ function PlanRow({ item, primary, onSelect }: { item: PlanItem; primary: boolean
  *  the column, so the gutters read as one grid. */
 export const PANEL_GAP = 16;
 
+/** Tallest a course row's track may grow to fill the mastery card. */
+const COURSE_ROW_MAX = 56;
+
 export function DashboardActions({ navigate }: { navigate: (href: string) => void }) {
   return (
     <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
@@ -433,7 +436,10 @@ export function TodayColumn(props: {
       <div
         className="card"
         data-testid="dashboard-mastery"
-        style={{ padding: "16px 18px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        // Bottom padding 10 + the 24px link: the link's centre sits 22px off
+        // the card's bottom edge — the same line as the graph's legend
+        // (bottom: 14, 16px tall) in the card beside it.
+        style={{ padding: "16px 18px 10px", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
       >
         {stats.total > 0 ? (
           <>
@@ -461,10 +467,34 @@ export function TodayColumn(props: {
           </div>
         )}
         {courseRows && (
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", minHeight: 0 }}>
+          // The rows share the card's spare height up to COURSE_ROW_MAX each,
+          // so a tall window doesn't strand them far apart; anything beyond
+          // that falls above the footer link (marginTop: auto).
+          <div
+            data-testid="dashboard-course-rows"
+            style={{
+              marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)",
+              // basis 0 + grow: take the spare height, but never more than
+              // COURSE_ROW_MAX per row; space-between spreads them within it.
+              flex: "1 1 0", minHeight: "min-content",
+              maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
+              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 12,
+            }}
+          >
             {courseRows}
           </div>
         )}
+        {/* Bottom-left, so it lines up with the graph's legend row and stays
+            clear of the floating report button in the bottom-right corner. */}
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          data-testid="dashboard-mastery-tree"
+          onClick={() => navigate("/tree")}
+          style={{ alignSelf: "flex-start", marginTop: "auto", marginLeft: -8, fontSize: 12, height: 24, padding: "0 8px" }}
+        >
+          Open Tree →
+        </button>
       </div>
     </div>
   );

@@ -565,7 +565,7 @@ export function Dashboard() {
       openCourses={() => setCoursesOpen(true)}
       courseRows={
         courseProgress.length > 0
-          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} />)
+          ? courseProgress.map((entry) => <CourseProgressRow key={entry.course.course_id} entry={entry} spacing={0} />)
           : undefined
       }
     />
@@ -1004,8 +1004,11 @@ type CourseProgressEntry = {
 // four-segment mastery bar.
 function CourseProgressRow({
   entry,
+  spacing = 12,
 }: {
   entry: CourseProgressEntry;
+  /** Space below the row. 0 when the parent spaces its rows itself. */
+  spacing?: number;
 }) {
   const { course, mastered, learning, struggling, unexplored, total, progress } = entry;
   const pct = Math.round(progress * 100);
@@ -1059,7 +1062,7 @@ function CourseProgressRow({
     </>
   );
 
-  return <div style={{ marginBottom: 12 }}>{body}</div>;
+  return <div style={{ marginBottom: spacing }}>{body}</div>;
 }
 
 function CoursesKey({
