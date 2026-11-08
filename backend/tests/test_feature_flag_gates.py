@@ -87,13 +87,36 @@ def test_flags_route_has_no_degraded_marker_normally():
 # ── Single-flight + bounded maps ────────────────────────────────────────────
 
 
-def test_concurrent_cold_reads_hit_the_store_once():
+def test_concurrent_cold_reads_hit_the_store_once(monkeypatch):
+    """Eight cold callers at once: one reads the store, seven wait on its read.
+    The leader's read is held until every caller has either joined the flight
+    or read the store itself, so the waiters provably piled up behind it
+    (no sleep deciding that), and a broken single-flight shows as a second
+    read at once rather than after a timeout."""
     calls: list[int] = []
+    followers: list[int] = []
+    arrived = threading.Condition()
     gate = threading.Event()
 
+    class _CountedDone(threading.Event):
+        def wait(self, timeout=None):
+            with arrived:
+                followers.append(1)
+                arrived.notify_all()
+            return super().wait(timeout)
+
+    class _Flight(ff._Flight):
+        def __init__(self, generation):
+            super().__init__(generation)
+            self.done = _CountedDone()
+
+    monkeypatch.setattr(ff, "_Flight", _Flight)
+
     def slow_read(**_k):
-        calls.append(1)
-        gate.wait(5)
+        with arrived:
+            calls.append(1)
+            arrived.notify_all()
+        assert gate.wait(30)  # a hang guard, never reached when the test passes
         return ff.Snapshot(flags={}, targets={})
 
     results: list = []
@@ -102,14 +125,12 @@ def test_concurrent_cold_reads_hit_the_store_once():
                    for _ in range(8)]
         for t in threads:
             t.start()
-        deadline = time.monotonic() + 5
-        while not calls and time.monotonic() < deadline:
-            time.sleep(0.001)
-        time.sleep(0.05)  # let the others pile up behind the leader
+        with arrived:
+            assert arrived.wait_for(lambda: len(calls) + len(followers) == 8, timeout=30)
         gate.set()
         for t in threads:
-            t.join(5)
-    assert len(calls) == 1
+            t.join(30)
+    assert len(calls) == 1 and len(followers) == 7
     assert len(results) == 8
 
 
