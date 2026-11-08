@@ -197,7 +197,8 @@ export async function insertGoogleAccount(userId: string, googleId: string): Pro
  *      mirrors how achievement rewards pass an explicit `amount`);
  *   2. insert one `xp_events` row keyed on the same idempotency key
  *      (`rule_key:source_type:source_id`, `-` for a missing leg) via
- *      `ON CONFLICT (idempotency_key) DO NOTHING` — the JS equivalent of
+ *      `ON CONFLICT (user_id, idempotency_key) DO NOTHING` (the ledger's
+ *      per-student unique key) — the JS equivalent of
  *      catching the Postgres 409 the Python side handles;
  *   3. on a fresh insert (not a duplicate), recompute `users.total_xp` /
  *      `users.level` from the ledger and write them back — `level` walks
@@ -233,7 +234,7 @@ export async function awardXp(
     const inserted = await client.query(
       `INSERT INTO xp_events (user_id, rule_key, amount, source_type, source_id, idempotency_key)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (idempotency_key) DO NOTHING`,
+       ON CONFLICT (user_id, idempotency_key) DO NOTHING`,
       [userId, ruleKey, value, sourceType, sourceId, idempotencyKey],
     );
     if (inserted.rowCount === 0) {

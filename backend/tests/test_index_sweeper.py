@@ -17,6 +17,7 @@ from services import index_sweeper
 @pytest.fixture
 def real_mode(monkeypatch):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+    monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("INDEX_SWEEPER_ENABLED", raising=False)
 
 
@@ -162,6 +163,41 @@ def test_it_is_on_by_default_in_real_mode(real_mode):
     """A queue nothing drains is the bug being fixed. Defaulting the drain off
     would repeat what happened to DBOS, which ADR 0011 leaves off everywhere."""
     assert index_sweeper.sweeper_enabled() is True
+
+
+def test_it_is_on_when_app_env_is_unset(real_mode, monkeypatch):
+    """APP_ENV defaults to production (config.py, fail-closed), so a deploy
+    that sets nothing keeps the drain."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    assert index_sweeper.sweeper_enabled() is True
+
+
+@pytest.mark.parametrize("env", ["staging", "local", "test", " Staging "])
+def test_it_is_off_by_default_outside_production(real_mode, monkeypatch, env):
+    """A pass every 300 s keeps a Railway Serverless service from ever
+    sleeping, so staging and PR previews billed as always-on."""
+    monkeypatch.setenv("APP_ENV", env)
+    assert index_sweeper.sweeper_enabled() is False
+
+
+@pytest.mark.parametrize("value", ["true", "1", "on", "yes"])
+def test_it_can_be_forced_on_outside_production(real_mode, monkeypatch, value):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", value)
+    assert index_sweeper.sweeper_enabled() is True
+
+
+def test_forcing_it_on_still_needs_real_model_mode(real_mode, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", "true")
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert index_sweeper.sweeper_enabled() is False
+
+
+def test_a_blank_switch_follows_app_env(real_mode, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", "  ")
+    assert index_sweeper.sweeper_enabled() is False
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────
