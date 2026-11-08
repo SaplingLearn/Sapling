@@ -85,8 +85,9 @@ function fade(collapsed: boolean): React.CSSProperties {
 /* Active/hover surfaces.
  *
  * A plain neutral highlight. The selected row is a flat `--bg-soft` fill,
- * which inside the olive rail resolves to a translucent cream wash (see
- * [data-app-sidenav] in globals.css), with the label in bold cream.
+ * which inside the olive rail resolves to a translucent dark wash (see
+ * [data-app-sidenav] in globals.css; a cream wash failed AA under the white
+ * label), with the label in bold cream.
  * No rail, no hue on the label: the fill IS the treatment.
  *
  * Hover is the same colour at half strength, so it is unmistakably the
