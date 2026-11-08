@@ -117,6 +117,15 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/feature_flags.py", "_user_roles", "service_scope"): "flag store (decides db_user_scope itself)",
     ("services/feature_flags.py", "read_config", "service_scope"): "flag store (decides db_user_scope itself)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
+    ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
+        "#116 gradescope_syncs is service-only (bucket E): staged sync",
+    ("services/gradescope_jobs.py", "enqueue_sync", "runs_as_service"):
+        "#116 jobs + gradescope_syncs are service-only",
+    ("services/gradescope_jobs.py", "take_back", "runs_as_service"): "#116 gradescope_syncs stage swap",
+    ("services/gradescope_jobs.py", "read_status", "runs_as_service"): "#116 gradescope_syncs outcome poll",
+    ("services/gradescope_jobs.py", "job_status", "runs_as_service"): "#116 jobs is service-only",
+    ("services/gradescope_jobs.py", "fail_if_running", "runs_as_service"):
+        "#116 gradescope_syncs: record a dead-lettered job",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):

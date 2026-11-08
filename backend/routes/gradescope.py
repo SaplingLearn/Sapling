@@ -43,7 +43,7 @@ from gradescopeapi.classes.connection import GSConnection
 from pydantic import BaseModel, Field
 
 from db.connection import page_all, table
-from services import gradescope_service
+from services import gradescope_jobs, gradescope_service
 from services.academics import (
     current_term,
     enrollment_id_for,
@@ -671,7 +671,31 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
         raise HTTPException(status_code=409, detail="Multiple Gradescope links match this course. Select a semester and reconnect the course.")
     gs_course_id = link_rows[0]["gradescope_course_id"]
     enrollment_id = link_rows[0]["enrollment_id"]
+    link_id = link_rows[0]["id"]
 
+    # #116: `jobs_queue` on -> the login, scrape and gradebook writes below run
+    # in the worker (services/gradescope_jobs.py) and this request waits for
+    # the outcome, answering exactly as below. None -> sync here after all.
+    if gradescope_jobs.should_queue(user_id):
+        queued = gradescope_jobs.sync_via_queue(
+            user_id=user_id, enrollment_id=enrollment_id, link_id=link_id,
+            gradescope_course_id=gs_course_id,
+        )
+        if queued is not None:
+            return queued
+    return _sync_linked_course(user_id, gs_course_id, enrollment_id, link_id)
+
+
+#: The 502 detail when no assignment could be saved. The queued sync maps it
+#: back to its own error code (services/gradescope_jobs.py).
+SYNC_WRITE_FAILED_DETAIL = "No assignments could be saved. Please retry; if this continues, contact support."
+
+
+def _sync_linked_course(user_id: str, gs_course_id: str, enrollment_id: str, link_id: str | None) -> dict[str, Any] | JSONResponse:
+    """Log in with the stored credentials, scrape the linked Gradescope course
+    and upsert it into the enrollment's gradebook, recording the outcome on
+    gradescope_credentials. The request runs it inline; with `jobs_queue` on,
+    the `gradescope.sync` worker runs it (services/gradescope_jobs.py)."""
     creds = _load_creds(user_id)
     if not creds:
         return _not_connected()
@@ -783,14 +807,14 @@ def sync_course(sapling_course_id: str, user_id: str, request: Request, semester
     outcome: dict[str, Any] = {"needs_reauth": False, "last_attempt_at": now_iso}
     if failed and not (inserted or updated):
         _write_connection_state(user_id, {**outcome, "last_sync_error": "write_failed"})
-        raise HTTPException(status_code=502, detail="No assignments could be saved. Please retry; if this continues, contact support.")
+        raise HTTPException(status_code=502, detail=SYNC_WRITE_FAILED_DETAIL)
     # last_synced_at represents a complete import, not a partial or failed one.
     if failed:
         _write_connection_state(user_id, {**outcome, "last_sync_error": "partial_write"})
     else:
         _write_connection_state(user_id, {**outcome, "last_sync_error": None, "last_synced_at": now_iso})
         table("gradescope_course_links").update(
-            {"last_synced_at": now_iso}, filters={"id": f"eq.{link_rows[0]['id']}"},
+            {"last_synced_at": now_iso}, filters={"id": f"eq.{link_id}"},
         )
 
     return SyncResult(

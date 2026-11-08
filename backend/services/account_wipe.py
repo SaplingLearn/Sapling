@@ -7,7 +7,7 @@ and resets the gamification counters. It never deletes the `users` row.
 Deleted (directly, or through the FK cascades noted):
 
 * enrollments → gradebook_categories, assignments, gradescope_course_links,
-  topic_checklists (→ topic_checklist_progress)
+  topic_checklists (→ topic_checklist_progress), gradescope_syncs
 * documents — chunks withdrawn FIRST via `chunk_visibility.withdraw_document_chunks`,
   then any private `course_chunks` still carrying `uploader_id = user`
 * notes → note_concepts
@@ -84,6 +84,7 @@ WIPED_BY_CASCADE: dict[str, str] = {
     "gradebook_categories": "enrollments",
     "assignments": "enrollments",
     "gradescope_course_links": "enrollments",
+    "gradescope_syncs": "enrollments",  # #116 queued-sync bookkeeping
     "topic_checklists": "enrollments",
     "topic_checklist_progress": "topic_checklists",
     "graph_edges": "graph_nodes",
