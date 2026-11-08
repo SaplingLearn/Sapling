@@ -15,9 +15,10 @@ from config import is_weak
 from db.connection import table
 from services import events_service
 from services.academics import (
+    course_offering_ids,
     resolve_offering,
     term_id_for_label,
-    user_offering_ids_for_course,
+    user_enrolled_course_ids,
 )
 from services.auth_guard import require_self, get_session_user_id
 from services.achievement_service import check_achievements
@@ -53,6 +54,9 @@ class GenerateFlashcardsBody(BaseModel):
     # Optional term label (#141): grounds generation in the SELECTED term's
     # course documents instead of always the current term's.
     semester: str | None = None
+    # The selected course's abstract id (#829). When present it scopes the
+    # grounding documents directly; `topic` is then only the prompt's label.
+    course_id: str | None = None
 
 
 class FlashcardRatingBody(BaseModel):
@@ -120,66 +124,99 @@ def _get_session_summary(session_id: str) -> str:
         return ""
 
 
+# Grounding reads at most this many of the course's documents, newest first:
+# the prompt inlines every summary + concept list it is handed.
+_COURSE_DOC_LIMIT = 50
+_COURSE_DOC_COLS = "file_name,category,summary,concept_notes"
+
+
+def _enrolled_course_by_name(user_id: str, course_name: str) -> str | None:
+    """The abstract id of the course named ``course_name`` that the user is
+    enrolled in, or None.
+
+    Catalog names are not unique (0020: `courses` is the abstract catalog,
+    with no user_id column), so the match is restricted to the user's
+    enrolled courses and, if several same-named ones remain, the lowest id
+    wins — deterministic, one bounded read, no per-candidate lookups."""
+    enrolled = user_enrolled_course_ids(user_id)
+    if not enrolled:
+        return None
+    rows = table("courses").select(
+        "id",
+        filters={
+            "course_name": f"eq.{course_name}",
+            "id": f"in.({','.join(sorted(enrolled))})",
+        },
+        order="id.asc",
+        limit=1,
+    ) or []
+    return rows[0]["id"] if rows else None
+
+
 def _get_course_documents(
-    user_id: str, course_name: str, semester: str | None = None
+    user_id: str,
+    course_name: str,
+    semester: str | None = None,
+    course_id: str | None = None,
 ) -> list[dict]:
     """
-    Return the library documents grounding generation for `course_name`.
+    Return the user's own library documents grounding generation for a course.
 
-    Documents key on the offering (0025): match the abstract course by name,
-    resolve it to the current-term offering — or, with a ``semester`` (#141),
-    STRICTLY to that term's offering — then read documents by offering.
+    The course: ``course_id`` when the client sent it (the Study screen
+    always does for a selected course); otherwise ``course_name`` matched
+    against the courses the user is ENROLLED in (see
+    :func:`_enrolled_course_by_name`).
 
-    Fallback rules (#475 F2): with a ``semester``, a term with no offering of
-    the course AND a course-name miss both contribute NO documents — an
-    explicit term gives the all-docs fallback nothing to anchor to. Without a
-    ``semester``, a course-name miss keeps the pre-existing fallback to all of
-    the user's documents, byte-identical.
+    The documents (keyed on the offering, 0025), always filtered to the
+    user's own rows:
+    - with a ``semester`` (#141): STRICTLY that term's offering — a term with
+      no offering contributes nothing;
+    - without one: every offering of the course (``course_offering_ids``),
+      because uploads are stamped with the CURRENT term's offering at upload
+      time, so a single-offering read loses last term's notes at rollover.
+
+    Unenrolled courses: an explicit ``course_id`` still reads the student's
+    own documents in that course's offerings (they uploaded them; unenrolling
+    does not unshare their own notes from them). The name-match path only
+    sees enrolled courses, because a bare name cannot be told apart from a
+    same-named course elsewhere.
+
+    No course (a free-text topic, or a name the user is not enrolled in) →
+    NO documents, with or without a semester. This used to fall back to every
+    document the user owns, which grounded a topic in unrelated courses.
+    Lookup failures are logged and degrade to no documents, so generation
+    still works.
     """
     try:
-        # `courses` is the abstract catalog (0020): it has no user_id column —
-        # filtering on one 400'd, the except below swallowed it, and generation
-        # silently ran with NO documents. Match the name in the catalog, then
-        # keep only a course the user is actually enrolled in (names are not
-        # unique across schools).
-        candidates = table("courses").select(
-            "id", filters={"course_name": f"eq.{course_name}"}
-        ) or []
-        course_rows = [
-            c for c in candidates
-            if c.get("id") and user_offering_ids_for_course(user_id, c["id"])
-        ][:1]
-        if course_rows:
-            if semester:
-                term_id = term_id_for_label(semester)
-                offering_id = (
-                    resolve_offering(course_rows[0]["id"], term_id, fallback=False)
-                    if term_id
-                    else None
+        if not course_id:
+            course_id = _enrolled_course_by_name(user_id, course_name)
+            if course_id is None:
+                logger.info(
+                    "flashcard generate: topic matches no enrolled course; "
+                    "generating without library documents"
                 )
-            else:
-                offering_id = resolve_offering(course_rows[0]["id"])
-            if offering_id is None:
-                docs = []
-            else:
-                docs = table("documents").select(
-                    "file_name,category,summary,concept_notes",
-                    filters={
-                        "user_id": f"eq.{user_id}",
-                        "offering_id": f"eq.{offering_id}",
-                        "deleted_at": "is.null",
-                    },
-                )
-        elif semester:
-            # Course-name miss + explicit term: nothing to scope the fallback
-            # to — no documents (#475 F2).
-            docs = []
-        else:
-            docs = table("documents").select(
-                "file_name,category,summary,concept_notes",
-                filters={"user_id": f"eq.{user_id}", "deleted_at": "is.null"},
+                return []
+        if semester:
+            term_id = term_id_for_label(semester)
+            offering_id = (
+                resolve_offering(course_id, term_id, fallback=False) if term_id else None
             )
-        docs = docs or []
+            offering_ids = [offering_id] if offering_id else []
+        else:
+            # None = could not tell (logged by academics); [] = no offerings.
+            offering_ids = course_offering_ids(course_id) or []
+        if not offering_ids:
+            return []
+        docs = table("documents").select(
+            _COURSE_DOC_COLS,
+            filters={
+                "user_id": f"eq.{user_id}",
+                "offering_id": f"in.({','.join(offering_ids)})",
+                "deleted_at": "is.null",
+            },
+            order="created_at.desc",
+            limit=_COURSE_DOC_LIMIT,
+        ) or []
         for d in docs:
             d["summary"] = decrypt_if_present(d.get("summary"))
             notes_raw = d.get("concept_notes")
@@ -187,6 +224,10 @@ def _get_course_documents(
                 d["concept_notes"] = decrypt_json(notes_raw)
         return docs
     except Exception:
+        logger.warning(
+            "flashcard generate: could not load course documents; "
+            "generating without them", exc_info=True,
+        )
         return []
 
 
@@ -257,7 +298,9 @@ def generate(body: GenerateFlashcardsBody, request: Request):
 
     # 2. Library documents for this course (term-scoped when a semester is
     #    selected, #141)
-    documents = _get_course_documents(body.user_id, body.topic, semester=body.semester)
+    documents = _get_course_documents(
+        body.user_id, body.topic, semester=body.semester, course_id=body.course_id
+    )
 
     # 3. Concepts the student is weak on
     weak_concepts = _get_weak_concepts(body.user_id, body.topic)

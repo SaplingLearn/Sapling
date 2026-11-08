@@ -8,19 +8,18 @@ term-less cards (offering_id NULL — e.g. AI-generated ones) stay visible under
 ANY selection so picking a term never makes them unreachable. An unknown label
 degrades to "term-less cards only" — never a 500, never everything.
 
-Generation (`POST /generate`) grounds its context in the course's documents;
-with a `semester` those documents come from THAT term's offering — a term with
-no offering contributes no documents rather than falling back to another
-term's (or all of the user's) material.
+Generation (`POST /generate`) grounds its context in the user's own documents
+for the course (by `course_id` when sent, else the topic matched against the
+user's enrolled courses); with a `semester` those documents come from THAT
+term's offering — a term with no offering contributes no documents. No
+course → no documents: never every document the user owns (#829).
 """
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from fastapi.testclient import TestClient
 
 from main import app
-from routes.flashcards import _get_course_documents
+from routes.flashcards import _COURSE_DOC_LIMIT, _get_course_documents
 
 client = TestClient(app)
 
@@ -83,177 +82,167 @@ class TestListFlashcards:
         assert [c["id"] for c in r.json()["flashcards"]] == ["f-unscoped"]
 
 
-class TestCourseDocumentsTermScope:
-    @pytest.fixture(autouse=True)
-    def _enrolled(self):
-        # The course-name match is narrowed to courses the user is enrolled in.
-        with patch("routes.flashcards.user_offering_ids_for_course",
-                   return_value=["off-enrolled"]) as m:
-            yield m
+def _doc_tables(captured, *, courses=(), docs=None, documents_raise=None):
+    """table() stand-in for _get_course_documents: records the filters (and
+    order/limit) sent to `courses` and `documents`."""
+    docs = [{"file_name": "a.pdf", "category": "notes",
+             "summary": None, "concept_notes": None}] if docs is None else docs
 
-    @staticmethod
-    def _tables(docs, captured):
-        def side_effect(name):
-            m = MagicMock()
-            if name == "courses":
-                m.select.return_value = [{"id": "c1"}]
-            elif name == "documents":
-                def _select(cols, filters=None, order=None, limit=None):
-                    captured["filters"] = filters or {}
-                    return docs
-                m.select.side_effect = _select
-            else:
-                m.select.return_value = []
-            return m
-        return side_effect
+    def side_effect(name):
+        m = MagicMock()
+        if name == "courses":
+            def _courses(cols, filters=None, order=None, limit=None):
+                captured["courses"] = {"filters": filters or {}, "order": order, "limit": limit}
+                return list(courses)
+            m.select.side_effect = _courses
+        elif name == "documents":
+            def _docs(cols, filters=None, order=None, limit=None):
+                if documents_raise:
+                    raise documents_raise
+                captured["documents"] = {"filters": filters or {}, "order": order, "limit": limit}
+                return [dict(d) for d in docs]
+            m.select.side_effect = _docs
+        else:
+            m.select.return_value = []
+        return m
+    return side_effect
 
-    def test_no_semester_keeps_current_term_resolution(self):
+
+class TestCourseDocumentsByCourseId:
+    """#829 root fix: the Study screen sends the selected course's id, so the
+    documents resolve by id — no name matching at all."""
+
+    def test_course_id_reads_the_users_docs_in_every_offering_of_the_course(self):
         captured = {}
-        with patch("routes.flashcards.table", side_effect=self._tables([], captured)), \
-             patch("routes.flashcards.resolve_offering", return_value="off-cur") as ro:
-            _get_course_documents(USER_ID, "Intro CS")
-        ro.assert_called_once_with("c1")
-        assert captured["filters"]["offering_id"] == "eq.off-cur"
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
+             patch("routes.flashcards.course_offering_ids",
+                   return_value=["off-f25", "off-s26"]) as co, \
+             patch("routes.flashcards.user_enrolled_course_ids") as enrolled:
+            docs = _get_course_documents(USER_ID, "Intro CS", course_id="c1")
+        co.assert_called_once_with("c1")
+        enrolled.assert_not_called()  # no name match, no enrollment gate
+        assert "courses" not in captured
+        assert captured["documents"]["filters"] == {
+            "user_id": f"eq.{USER_ID}",
+            "offering_id": "in.(off-f25,off-s26)",
+            "deleted_at": "is.null",
+        }
+        assert captured["documents"]["order"] == "created_at.desc"
+        assert captured["documents"]["limit"] == _COURSE_DOC_LIMIT
+        assert len(docs) == 1
 
-    def test_semester_scopes_the_documents_to_that_terms_offering(self):
+    def test_course_id_ignores_a_misleading_topic(self):
+        # The topic is only the prompt label once a course id is present.
         captured = {}
-        doc = {"file_name": "a.pdf", "category": "notes",
-               "summary": None, "concept_notes": None}
-        with patch("routes.flashcards.table", side_effect=self._tables([doc], captured)), \
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
+             patch("routes.flashcards.course_offering_ids", return_value=["off-1"]):
+            _get_course_documents(USER_ID, "Some Other Name", course_id="c1")
+        assert "courses" not in captured
+        assert captured["documents"]["filters"]["offering_id"] == "in.(off-1)"
+
+    def test_course_id_with_semester_is_strict_to_that_terms_offering(self):
+        captured = {}
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
              patch("routes.flashcards.term_id_for_label", return_value="term-f25") as tl, \
-             patch("routes.flashcards.resolve_offering", return_value="off-f25") as ro:
-            docs = _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025")
+             patch("routes.flashcards.resolve_offering", return_value="off-f25") as ro, \
+             patch("routes.flashcards.course_offering_ids") as co:
+            docs = _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025", course_id="c1")
         tl.assert_called_once_with("Fall 2025")
         ro.assert_called_once_with("c1", "term-f25", fallback=False)
-        assert captured["filters"]["offering_id"] == "eq.off-f25"
+        co.assert_not_called()
+        assert captured["documents"]["filters"]["offering_id"] == "in.(off-f25)"
         assert len(docs) == 1
 
-    def test_no_course_match_with_semester_yields_no_docs(self):
-        """#475 F2: with an explicit semester there is no term to anchor the
-        all-docs fallback to — a course-name miss returns NO documents, never
-        every document the user owns."""
+    def test_semester_with_no_offering_yields_no_docs(self):
         captured = {}
-
-        def side_effect(name):
-            m = MagicMock()
-            if name == "courses":
-                m.select.return_value = []  # no course match
-            elif name == "documents":
-                def _select(cols, filters=None, order=None, limit=None):
-                    captured["filters"] = filters or {}
-                    return [{"file_name": "x", "category": None,
-                             "summary": None, "concept_notes": None}]
-                m.select.side_effect = _select
-            else:
-                m.select.return_value = []
-            return m
-
-        with patch("routes.flashcards.table", side_effect=side_effect):
-            docs = _get_course_documents(USER_ID, "Ghost Course", semester="Fall 2025")
-        assert docs == []
-        assert "filters" not in captured  # the all-docs query never ran
-
-    def test_no_course_match_without_semester_keeps_the_all_docs_fallback(self):
-        # Pre-existing behavior, byte-identical: no semester + no course match
-        # → every non-deleted document the user owns.
-        captured = {}
-
-        def side_effect(name):
-            m = MagicMock()
-            if name == "courses":
-                m.select.return_value = []
-            elif name == "documents":
-                def _select(cols, filters=None, order=None, limit=None):
-                    captured["filters"] = filters or {}
-                    return [{"file_name": "x", "category": None,
-                             "summary": None, "concept_notes": None}]
-                m.select.side_effect = _select
-            else:
-                m.select.return_value = []
-            return m
-
-        with patch("routes.flashcards.table", side_effect=side_effect):
-            docs = _get_course_documents(USER_ID, "Ghost Course")
-        assert len(docs) == 1
-        assert captured["filters"] == {
-            "user_id": f"eq.{USER_ID}", "deleted_at": "is.null",
-        }
-
-    def test_semester_with_no_offering_yields_no_docs_not_all_docs(self):
-        captured = {}
-        with patch("routes.flashcards.table", side_effect=self._tables(
-                 [{"file_name": "x"}], captured)), \
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
              patch("routes.flashcards.term_id_for_label", return_value="term-su26"), \
              patch("routes.flashcards.resolve_offering", return_value=None):
-            docs = _get_course_documents(USER_ID, "Intro CS", semester="Summer 2026")
+            docs = _get_course_documents(USER_ID, "Intro CS", semester="Summer 2026", course_id="c1")
         assert docs == []
-        # The all-user-documents fallback must NOT fire for a term miss.
-        assert "filters" not in captured
+        assert "documents" not in captured  # never widened to other terms
 
-
-class TestCourseLookupFilters:
-    """Regression: the course lookup filtered `courses.user_id`, a column the
-    abstract catalog table does not have (0020). PostgREST 400'd, the helper's
-    blanket except returned [], and every generation ran with no documents.
-    Assert the filters actually sent to `courses`."""
-
-    @staticmethod
-    def _tables(courses, captured):
-        def side_effect(name):
-            m = MagicMock()
-            if name == "courses":
-                def _courses(cols, filters=None, order=None, limit=None):
-                    captured["courses"] = filters or {}
-                    return courses
-                m.select.side_effect = _courses
-            elif name == "documents":
-                def _docs(cols, filters=None, order=None, limit=None):
-                    captured["documents"] = filters or {}
-                    return [{"file_name": "a.pdf", "category": "notes",
-                             "summary": None, "concept_notes": None}]
-                m.select.side_effect = _docs
-            else:
-                m.select.return_value = []
-            return m
-        return side_effect
-
-    def test_courses_filtered_by_name_only_never_user_id(self):
+    def test_unknown_semester_label_yields_no_docs(self):
         captured = {}
-        with patch("routes.flashcards.table",
-                   side_effect=self._tables([{"id": "c1"}], captured)), \
-             patch("routes.flashcards.user_offering_ids_for_course",
-                   return_value=["off-1"]) as enrolled, \
-             patch("routes.flashcards.resolve_offering", return_value="off-1") as ro:
-            docs = _get_course_documents(USER_ID, "Intro CS")
-        assert captured["courses"] == {"course_name": "eq.Intro CS"}
-        assert "user_id" not in captured["courses"]
-        enrolled.assert_called_once_with(USER_ID, "c1")
-        ro.assert_called_once_with("c1")
-        assert captured["documents"]["offering_id"] == "eq.off-1"
-        assert captured["documents"]["user_id"] == f"eq.{USER_ID}"
-        assert len(docs) == 1
-
-    def test_same_name_course_user_is_not_enrolled_in_is_skipped(self):
-        captured = {}
-        enrolled_in = {"c-mine": ["off-mine"]}
-        with patch("routes.flashcards.table",
-                   side_effect=self._tables([{"id": "c-other"}, {"id": "c-mine"}], captured)), \
-             patch("routes.flashcards.user_offering_ids_for_course",
-                   side_effect=lambda u, c: enrolled_in.get(c, [])), \
-             patch("routes.flashcards.resolve_offering", return_value="off-mine") as ro:
-            _get_course_documents(USER_ID, "Intro CS")
-        ro.assert_called_once_with("c-mine")
-
-    def test_name_match_with_no_enrollment_keeps_the_all_docs_fallback(self):
-        captured = {}
-        with patch("routes.flashcards.table",
-                   side_effect=self._tables([{"id": "c-other"}], captured)), \
-             patch("routes.flashcards.user_offering_ids_for_course", return_value=[]), \
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
+             patch("routes.flashcards.term_id_for_label", return_value=None), \
              patch("routes.flashcards.resolve_offering") as ro:
-            docs = _get_course_documents(USER_ID, "Intro CS")
+            assert _get_course_documents(USER_ID, "Intro CS", semester="Nope", course_id="c1") == []
         ro.assert_not_called()
-        assert captured["documents"] == {"user_id": f"eq.{USER_ID}", "deleted_at": "is.null"}
+        assert "documents" not in captured
+
+    def test_offering_scope_unknown_yields_no_docs(self):
+        # course_offering_ids -> None = "could not tell" (it logs); never all docs.
+        captured = {}
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
+             patch("routes.flashcards.course_offering_ids", return_value=None):
+            assert _get_course_documents(USER_ID, "Intro CS", course_id="c1") == []
+        assert "documents" not in captured
+
+
+class TestCourseDocumentsByName:
+    """No course id (an older client, or a free-text topic): the name is
+    matched against the courses the user is ENROLLED in. Regression for the
+    original bug: the lookup filtered `courses.user_id`, a column the abstract
+    catalog does not have (0020) — PostgREST 400'd, the blanket except
+    returned [], and every generation ran with no documents."""
+
+    def test_name_matched_within_enrolled_courses_deterministically(self):
+        captured = {}
+        with patch("routes.flashcards.table",
+                   side_effect=_doc_tables(captured, courses=[{"id": "c-a"}])), \
+             patch("routes.flashcards.user_enrolled_course_ids",
+                   return_value={"c-b", "c-a"}) as enrolled, \
+             patch("routes.flashcards.course_offering_ids", return_value=["off-1"]) as co:
+            docs = _get_course_documents(USER_ID, "Intro CS")
+        enrolled.assert_called_once_with(USER_ID)
+        assert captured["courses"] == {
+            "filters": {"course_name": "eq.Intro CS", "id": "in.(c-a,c-b)"},
+            "order": "id.asc",
+            "limit": 1,
+        }
+        co.assert_called_once_with("c-a")
+        assert captured["documents"]["filters"]["user_id"] == f"eq.{USER_ID}"
         assert len(docs) == 1
+
+    def test_name_match_with_semester_is_strict(self):
+        captured = {}
+        with patch("routes.flashcards.table",
+                   side_effect=_doc_tables(captured, courses=[{"id": "c1"}])), \
+             patch("routes.flashcards.user_enrolled_course_ids", return_value={"c1"}), \
+             patch("routes.flashcards.term_id_for_label", return_value="term-f25"), \
+             patch("routes.flashcards.resolve_offering", return_value="off-f25") as ro:
+            _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025")
+        ro.assert_called_once_with("c1", "term-f25", fallback=False)
+        assert captured["documents"]["filters"]["offering_id"] == "in.(off-f25)"
+
+    def test_no_enrolled_course_matches_yields_no_docs_never_the_whole_library(self):
+        captured = {}
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured, courses=[])), \
+             patch("routes.flashcards.user_enrolled_course_ids", return_value={"c-other"}):
+            docs = _get_course_documents(USER_ID, "Mitosis")
+        assert docs == []
+        assert "documents" not in captured  # the all-docs read is gone
+
+    def test_no_enrollments_yields_no_docs_without_a_courses_read(self):
+        captured = {}
+        with patch("routes.flashcards.table", side_effect=_doc_tables(captured)), \
+             patch("routes.flashcards.user_enrolled_course_ids", return_value=set()):
+            assert _get_course_documents(USER_ID, "Intro CS") == []
+            assert _get_course_documents(USER_ID, "Intro CS", semester="Fall 2025") == []
+        assert captured == {}
+
+
+class TestCourseDocumentsFailure:
+    def test_lookup_failure_is_logged_and_degrades_to_no_docs(self, caplog):
+        captured = {}
+        with patch("routes.flashcards.table", side_effect=_doc_tables(
+                 captured, documents_raise=RuntimeError("PostgREST 400"))), \
+             patch("routes.flashcards.course_offering_ids", return_value=["off-1"]), \
+             caplog.at_level("WARNING", logger="routes.flashcards"):
+            assert _get_course_documents(USER_ID, "Intro CS", course_id="c1") == []
+        assert "could not load course documents" in caplog.text
+        assert any(r.exc_info for r in caplog.records)
 
 
 class TestGenerateThreadsSemester:
@@ -268,7 +257,19 @@ class TestGenerateThreadsSemester:
                 "semester": "Fall 2025",
             })
         assert r.status_code == 200
-        gd.assert_called_once_with(USER_ID, "Intro CS", semester="Fall 2025")
+        gd.assert_called_once_with(USER_ID, "Intro CS", semester="Fall 2025", course_id=None)
+
+    def test_route_passes_the_course_id_into_the_docs_context(self):
+        with patch("routes.flashcards._get_course_documents", return_value=[]) as gd, \
+             patch("routes.flashcards._get_weak_concepts", return_value=[]), \
+             patch("routes.flashcards._generate", return_value=[{"front": "q", "back": "a"}]), \
+             patch("routes.flashcards.table", side_effect=_tables([])), \
+             patch("services.achievement_service.check_achievements"):
+            r = client.post("/api/flashcards/generate", json={
+                "user_id": USER_ID, "topic": "Intro CS", "count": 1, "course_id": "c1",
+            })
+        assert r.status_code == 200
+        gd.assert_called_once_with(USER_ID, "Intro CS", semester=None, course_id="c1")
 
 
 # ── Encryption at rest (#518) ────────────────────────────────────────────────

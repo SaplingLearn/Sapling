@@ -117,6 +117,27 @@ def user_course_ids_for_term(user_id: str, term_id: str) -> set[str]:
     return {o["course_id"] for o in offs if o.get("course_id")}
 
 
+def user_enrolled_course_ids(user_id: str) -> set[str]:
+    """Every abstract ``course_id`` the user is enrolled in, across all terms.
+
+    The term-less sibling of :func:`user_course_ids_for_term`: two bounded
+    reads (enrollments, then their offerings' ``course_id``), never one read
+    per enrollment. Deliberately **not** cached — enrollments mutate.
+    """
+    if not user_id:
+        return set()
+    enr = table("enrollments").select(
+        "offering_id", filters={"user_id": f"eq.{user_id}"}
+    ) or []
+    off_ids = sorted({e["offering_id"] for e in enr if e.get("offering_id")})
+    if not off_ids:
+        return set()
+    offs = table("course_offerings").select(
+        "course_id", filters={"id": f"in.({','.join(off_ids)})"},
+    ) or []
+    return {o["course_id"] for o in offs if o.get("course_id")}
+
+
 def resolve_offering(
     course_id: str,
     term_id: str | None = None,
