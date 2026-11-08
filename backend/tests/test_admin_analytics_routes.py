@@ -459,6 +459,20 @@ def test_cost_per_active_user_without_data_says_so(monkeypatch):
     assert body["jump"] is None and body["ratio"] is None
 
 
+def test_a_week_with_no_priced_usage_is_null_not_zero(monkeypatch):
+    """The metrics contract's "absent, not zero": a window with active users
+    but no priced llm_usage rows reports NULL cost, not $0."""
+    unpriced = [{**w, "usd": None, "usd_per_active_user": None} for w in _SIGNAL["weeks"]]
+    payload = {**_SIGNAL, "weeks": unpriced, "usd_per_active_user_7d": None,
+               "baseline_usd_per_active_user": None, "ratio": None, "jump": None}
+    monkeypatch.setattr(analytics, "rpc", lambda name, params: payload)
+    r = client.get(f"{BASE}/llm/cost-per-active-user")
+    assert r.status_code == 200
+    assert r.json()["weeks"][0]["usd"] is None
+    props = analytics.CostPerActiveUser.model_json_schema()["properties"]
+    assert "no priced usage" in props["usd_per_active_user_7d"]["description"]
+
+
 def test_cost_per_active_user_is_a_503_never_a_zero_when_the_db_cannot_answer(monkeypatch):
     def down(name, params):
         raise RuntimeError("function missing")

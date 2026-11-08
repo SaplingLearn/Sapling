@@ -152,26 +152,40 @@ class ErrorsPage(BaseModel):
     series: list[DayCount] | None = None
 
 
+#: The metrics contract's "absent, not zero" rule (#119): a NULL cost signal
+#: is never a $0 — it means the window had no active users OR no priced
+#: usage, so there is nothing honest to divide or compare.
+_NULL_COST = "NULL when the window had no active users or no priced usage (never a $0)."
+
+
 class CostWeek(BaseModel):
     week: int  # 0 = the last 7 days, 1-4 = the trailing four weeks
     from_: str = Field(validation_alias="from", serialization_alias="from")
     to: str
-    usd: float
+    usd: float | None = Field(
+        description="Priced llm_usage cost in the window. NULL when it had no priced usage.")
     active_users: int
-    usd_per_active_user: float | None
+    usd_per_active_user: float | None = Field(description=_NULL_COST)
 
 
 class CostPerActiveUser(BaseModel):
-    """#119 / plan Targets: weekly LLM cost per active user + the 2x jump."""
+    """#119 / plan Targets: weekly LLM cost per active user + the 2x jump.
+    Every cost field is NULL — absent, not zero — when its window had no
+    active users OR no priced usage."""
     as_of: str
     threshold: float
-    usd_per_active_user_7d: float | None
-    baseline_usd_per_active_user: float | None
+    usd_per_active_user_7d: float | None = Field(description=_NULL_COST)
+    baseline_usd_per_active_user: float | None = Field(
+        description="Trailing 4-week average cost per active user. " + _NULL_COST)
     baseline_weeks: int
-    ratio: float | None
+    ratio: float | None = Field(
+        description="This week over the baseline. NULL when either side is NULL.")
     # True when this week's per-user cost is at least `threshold` times the
-    # trailing 4-week average; None when either side had no active users.
-    jump: bool | None
+    # trailing 4-week average; None when either side is NULL (no active users
+    # or no priced usage in that window).
+    jump: bool | None = Field(
+        description="ratio >= threshold. NULL when either side had no active "
+                    "users or no priced usage.")
     weeks: list[CostWeek]
 
 
