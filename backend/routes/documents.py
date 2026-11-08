@@ -42,7 +42,8 @@ from services.achievement_service import check_achievements
 from services.agent_events import SSE_CACHE_CONTROL, SaplingEvent, sapling_event_to_sse
 from services.request_context import current_request_id
 from services.durable import workflow_id
-from services.document_indexing import index_document
+from services.document_indexing import schedule_document_index
+from services import document_jobs
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -733,7 +734,12 @@ async def upload_document_sync(
             ),
         )
 
-    extracted_text = _extract_text_or_422(file_bytes, filename, file.content_type or "")
+    # #116: with `jobs_queue` on for the uploader, extraction runs on the
+    # worker (document_jobs); off, it runs here exactly as before.
+    queued = await asyncio.to_thread(document_jobs.should_queue, user_id, len(file_bytes))
+    extracted_text = (
+        None if queued else _extract_text_or_422(file_bytes, filename, file.content_type or "")
+    )
 
     # ── AI: orchestrator (parallel workers + tool-driven graph update) ────────
     # #117: one document.upload per accepted upload attempt — AFTER the
@@ -748,9 +754,24 @@ async def upload_document_sync(
         payload={
             "course_id": course_id,
             "offering_id": offering_id,
-            "char_count": len(extracted_text),
+            "char_count": len(extracted_text) if extracted_text is not None else None,
         },
     )
+
+    if queued:
+        # Same JSON / HTTP errors as below, computed by the worker. None: the
+        # queue could not take it (enqueue failed, no worker picked it up),
+        # so it runs here after all.
+        response = await document_jobs.sync_via_queue(
+            user_id=user_id, offering_id=offering_id, course_id=course_id,
+            request_id=request_id, filename=filename,
+            content_type=file.content_type, file_bytes=file_bytes,
+        )
+        if response is not None:
+            return response
+        extracted_text = await asyncio.to_thread(
+            _extract_text_or_422, file_bytes, filename, file.content_type or "",
+        )
 
     deps = SaplingDeps(
         user_id=user_id,
@@ -808,7 +829,7 @@ async def upload_document_sync(
     background_tasks.add_task(_check_upload_achievements, user_id)
     # #482: this route never indexed. Gradebook syllabus uploads come through
     # it, so none of them reached RAG. Same entry point as the streaming route.
-    background_tasks.add_task(index_document, doc_id)
+    background_tasks.add_task(schedule_document_index, doc_id, user_id)
 
     response = dict(full_row)
     response["categories"] = _grading_categories_from(result)
@@ -886,8 +907,14 @@ async def upload_document(
     # progress:extracting_text event while OCR runs in a thread. Default
     # behavior is unchanged (synchronous extraction before stream opens)
     # so existing tests and clients keep working.
+    # #116: `jobs_queue` on for the uploader moves extraction and the agents
+    # to the worker; the stream below watches the job instead. If the queue
+    # cannot take it, the in-stream extraction (Phase 0) runs it here.
+    # A replayed upload (same X-Request-ID, already saved) never queues.
+    queued = False if existing else await asyncio.to_thread(
+        document_jobs.should_queue, user_id, len(file_bytes))
     extracted_text: str | None = (
-        None if OCR_ASYNC_ENABLED or existing
+        None if OCR_ASYNC_ENABLED or existing or queued
         else _extract_text_or_422(file_bytes, filename, file.content_type or "")
     )
 
@@ -931,6 +958,23 @@ async def upload_document(
                     "char_count": len(extracted_text) if extracted_text is not None else None,
                 },
             )
+
+            # ── Queued (#116): the worker runs it; relay its progress ─────────
+            if queued:
+                upload_id = await asyncio.to_thread(
+                    document_jobs.stage_and_enqueue,
+                    user_id=user_id, offering_id=offering_id, course_id=course_id,
+                    request_id=request_id, filename=filename,
+                    content_type=file.content_type, file_bytes=file_bytes,
+                )
+                if upload_id is not None:
+                    watch = document_jobs.Watch()
+                    async for ev in document_jobs.stream_events(
+                        upload_id, request_id=request_id, outcome=watch,
+                    ):
+                        yield sapling_event_to_sse(ev)
+                    if watch.kind != document_jobs.INLINE:
+                        return
 
             # ── Phase 0: text extraction (when OCR_ASYNC_ENABLED) ─────────────
             # Failures here can NOT fall through to the legacy fallback —
@@ -1198,7 +1242,7 @@ async def upload_document(
                     # #482: the id only. The indexer reads everything else off
                     # the stored row, which is what lets the sweeper re-drive
                     # this same work if the attempt below dies with the process.
-                    ("index_document", index_document, doc_id),
+                    ("index_document", schedule_document_index, doc_id, user_id),
                 )
             except Exception:
                 logger.exception("Post-roll spawn failed for '%s' (document %s saved)",

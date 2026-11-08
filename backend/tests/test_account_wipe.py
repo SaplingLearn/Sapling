@@ -19,6 +19,7 @@ U, OTHER = "user_wipe", "user_keep"
 WIPED = (
     "enrollments", "documents", "notes", "flashcards", "sessions", "study_guides",
     "quiz_attempts", "quiz_context", "graph_nodes", "xp_events", "user_achievements",
+    "document_uploads",
 )
 KEPT = (
     "users", "user_profiles", "user_settings", "user_roles", "oauth_tokens",
@@ -160,6 +161,7 @@ def _seed_user(db, uid, *, n=1):
         db.add("node_mastery_events", id=f"{p}-me{i}", node_id=f"{p}-gn{i}")
         db.add("xp_events", id=f"{p}-xp{i}", user_id=uid)
         db.add("user_achievements", achievement_id=f"{p}-ach{i}", user_id=uid)
+        db.add("document_uploads", id=f"{p}-up{i}", user_id=uid)
         # A private chunk of this document, ledgered as its source.
         db.add("course_chunks", id=f"{p}-ck{i}", doc_id=f"{p}-doc{i}", uploader_id=uid,
                visibility="private", category="lecture_notes")
@@ -203,7 +205,7 @@ def test_wipes_the_scope_and_keeps_everything_else(db):
         "enrollments": 2, "documents": 2, "course_chunks": 2,
         "course_chunk_contributors": 0, "notes": 2, "flashcards": 2, "sessions": 2,
         "study_guides": 2, "quiz_attempts": 2, "quiz_context": 2, "graph_nodes": 2,
-        "xp_events": 2, "user_achievements": 2,
+        "xp_events": 2, "user_achievements": 2, "document_uploads": 2,
     }
     assert [r["id"] for r in db.rows["course_chunks"]] == [f"{OTHER}-ck0", f"{OTHER}-ck1"]
 

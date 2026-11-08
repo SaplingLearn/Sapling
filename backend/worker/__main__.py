@@ -37,6 +37,8 @@ from pathlib import Path
 #: type's module goes here, or the worker never claims that type.
 HANDLER_MODULES: tuple[str, ...] = (
     "services.course_context_service",  # course_context.refresh
+    "services.document_indexing",       # document.index
+    "services.document_jobs",           # document.process
 )
 
 EXIT_BOOT_FAILED = 2
