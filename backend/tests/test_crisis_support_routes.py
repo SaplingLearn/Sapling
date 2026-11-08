@@ -300,6 +300,38 @@ def test_every_surface_is_covered():
     assert {c.surface for c in CASES} == set(crisis_support.SURFACES)
 
 
+def _note_chat_with_tags(tags: list, flag_variant: str, flag):
+    """POST a calm note-chat message over a note whose only crisis text (if any)
+    is in its tags; the route's next step is a sentinel 418."""
+    flag(flag_variant)
+    note = {"id": "n1", "user_id": "u1", "offering_id": "o1", "title": "Week 3",
+            "body": "Hash tables.", "tags": tags}
+    sentinel = HTTPException(status_code=SENTINEL, detail="reached the route's own next step")
+    nxt = MagicMock(side_effect=sentinel)
+    with (
+        patch("routes.notes.offering_course_id", nxt),
+        patch("routes.notes.get_note", AsyncMock(return_value=note)),
+    ):
+        return client.post("/api/notes/n1/chat", json={"user_id": "u1", "message": CALM}), nxt
+
+
+def test_a_crisis_phrase_only_in_the_notes_tags_gets_the_card_on_note_chat(flag, model_calls, sink):
+    """The note-chat agent reads the note's tags (its read_active_note tool
+    serves them, and A125's integrity guard checks them), so the crisis screen
+    reads them too: a crisis phrase that is ONLY in a tag gets the card."""
+    r, nxt = _note_chat_with_tags(["midterm", CRISIS], "on", flag)
+    assert r.status_code == 200, r.text
+    assert r.json()["crisis_support"] and r.json()["degraded"] is False
+    nxt.assert_not_called()
+    assert model_calls == []
+    (row,) = _crisis_rows(sink)
+    assert row["payload"]["surface"] == "note_chat"
+    # control: the same note with calm tags carries on to the route's next step
+    r, nxt = _note_chat_with_tags(["midterm", "hashing"], "on", flag)
+    assert r.status_code == SENTINEL, r.text
+    nxt.assert_called_once()
+
+
 # ── Screening precedes every rate limit, budget and quota ───────────────────
 #
 # A student in crisis must never be answered with a 429 or a pause instead of

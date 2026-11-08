@@ -78,7 +78,7 @@ PostHog, not to Logfire.
 | `loop_probe_answer` | `POST /api/learn/loop/probe/answer` | `answer`, `reason` | grading the probe item |
 | `loop_review_answer` | `POST /api/learn/loop/review/answer` | `answer`, `reason` | grading the review item |
 | `loop_posttest_answer` | `POST /api/learn/loop/posttest/answer` | `answer`, `reason` | grading the retention check |
-| `note_chat` | `POST /api/notes/{id}/chat` | `message`, note title + body | a note-chat reply (the agent reads the note) |
+| `note_chat` | `POST /api/notes/{id}/chat` | `message`, note title + body + tags | a note-chat reply (the agent reads the note, tags included) |
 | `note_send_to_tutor` | `POST /api/notes/{id}/send-to-tutor` | note title + body | handing the note to the tutor |
 | `note_summarize` | `POST /api/notes/{id}/summarize` | note title + body | a summary |
 | `note_extract_concepts` | `POST /api/notes/{id}/extract-concepts` | note title + body | concept extraction |

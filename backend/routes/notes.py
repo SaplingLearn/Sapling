@@ -373,6 +373,14 @@ def _note_texts(note: dict) -> tuple[str | None, ...]:
     return (note.get("title"), note.get("body"))
 
 
+def _note_chat_texts(message: str, note: dict) -> tuple[str | None, ...]:
+    """Everything student-written the note-chat agent reads: the message, the
+    note's title and body, and its tags (its read_active_note tool serves them;
+    A125's integrity guard checks the same four)."""
+    tags = [t for t in note.get("tags") or [] if isinstance(t, str)]
+    return (message, *_note_texts(note), *tags)
+
+
 async def _integrity_guard(
     user_id: str, surface: str, texts: Iterable[str | None]
 ) -> integrity_guard.Guard:
@@ -500,19 +508,18 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
-    # crisis support: the message, and the note the chat agent reads (the
-    # crisis screen first, then the A125 integrity guard, as in summarize)
+    # crisis support: the message, and the note the chat agent reads — its title,
+    # body and tags (the crisis screen first, then the A125 integrity guard, as
+    # in summarize)
     if crisis := await crisis_support.screen_async(
-        body.user_id, "note_chat", body.message, *_note_texts(note)
+        body.user_id, "note_chat", *_note_chat_texts(body.message, note)
     ):
         return crisis_support.json_body(crisis, degraded=False)
     # spec §13 A125: the message and the note the agent grounds in (its
     # read_active_note tool serves this very row, deps.note) are checked against
     # the student's posed items before any model call; the reply after it
     guard = await _integrity_guard(
-        body.user_id,
-        "note_chat",
-        (body.message, note.get("title"), note.get("body"), *(note.get("tags") or [])),
+        body.user_id, "note_chat", _note_chat_texts(body.message, note)
     )
     if guard.refused:
         return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
