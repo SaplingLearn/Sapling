@@ -430,10 +430,16 @@ async def arpc(function_name: str, params: dict) -> list:
     await _prime_scope()
     url = f"{c.REST_URL}/rpc/{function_name}"
     target = f"rpc/{function_name}"
-    scoped = _headers(target, "rpc")
+    # Same rule as the sync rpc(): a read-only function in SHADOW_READ_RPCS is
+    # not noted as a write and is shadow-compared like a select.
+    read_only = function_name in c.SHADOW_READ_RPCS
+    scoped = _headers(target, None if read_only else "rpc")
     r = await _async_client().post(url, json=params, headers=_identity(None, scoped))
     c._raise_for_status(r, scoped, target)
-    return r.json()
+    rows = r.json()
+    if scoped is None and read_only:
+        c._maybe_shadow(target, url, {}, None, None, rows, op="rpc", json_body=params)
+    return rows
 
 
 async def apage_all(
