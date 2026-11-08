@@ -207,9 +207,11 @@ register_function_handler("quiz", _quiz_handler)
 # checks' handlers (quiz_check, below) find the concept the item tests and
 # solve it to its key, and every planned E2E item is VERIFIED. Its three
 # distractors are E2E check items' own (E2E_CHECK_ITEM_OPTIONS[1:]), each
-# tagged with its misconception key when the message lists that key — the
-# keys the E2E course's check items carry, which the plan names. A written
-# item (FORMAT short_answer, or mixed: slot 2) answers
+# tagged with its misconception key when the message lists that key; a
+# QUESTION line's TARGET no distractor carries yet goes on the first untagged
+# distractor (the seeded loop course's key, `wrong_token`, is no E2E option's,
+# so a target on it tags the first distractor — the one a journey picks). A
+# written item (FORMAT short_answer, or mixed: even slots) answers
 # E2E_CHECK_ITEM_FINAL_ANSWER too, so the solve agrees with it in code.
 # Contract: tests/test_e2e_function_handlers.py. Keep in sync.
 
@@ -219,7 +221,7 @@ E2E_PLANNED_WRITTEN_STEM = (
     "rate controls."
 )
 E2E_PLANNED_EXPLANATION = "Scripted planned fixture: the learning rate sets the size of each update step."
-_PLANNED_SLOT_RE = re.compile(r"^QUESTION (\d+): difficulty (\w+)\.", re.M)
+_PLANNED_SLOT_RE = re.compile(r"^QUESTION (\d+): difficulty (\w+)\.(?: TARGET: ([a-z0-9_]+))?", re.M)
 _PLANNED_CONCEPT_RE = re.compile(r"^CONCEPT: (.+)$", re.M)
 _PLANNED_FORMAT_RE = re.compile(r"^FORMAT: (\w+)$", re.M)
 
@@ -232,7 +234,7 @@ def _e2e_planned(prompt: str) -> list[dict]:
     listed = set(re.findall(r"^- ([a-z0-9_]+): ", prompt, re.M))
     distractors = E2E_CHECK_ITEM_OPTIONS[1:]
     items = []
-    for slot_text, _difficulty in _PLANNED_SLOT_RE.findall(prompt):
+    for slot_text, _difficulty, target in _PLANNED_SLOT_RE.findall(prompt):
         n = int(slot_text)
         written = fmt in ("short_answer", "numeric", "symbolic") or (fmt == "mixed" and n % 2 == 0)
         if written:
@@ -250,6 +252,8 @@ def _e2e_planned(prompt: str) -> list[dict]:
         correct_at = "ABCD".index(E2E_QUIZ_CORRECT_LABELS[(n - 1) % len(E2E_QUIZ_CORRECT_LABELS)])
         options = [d["text"] for d in distractors]
         tags = [d["misconception_key"] if d["misconception_key"] in listed else "" for d in distractors]
+        if target and target not in tags and "" in tags:
+            tags[tags.index("")] = target
         options.insert(correct_at, E2E_CHECK_ITEM_FINAL_ANSWER)
         tags.insert(correct_at, "")
         items.append({

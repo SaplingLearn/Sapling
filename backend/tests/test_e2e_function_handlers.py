@@ -327,6 +327,26 @@ def quiz_planned_to_plain(q):
     )
 
 
+def test_the_planned_quiz_handler_puts_an_unknown_target_on_the_first_distractor(monkeypatch):
+    """The seeded loop course's key (`wrong_token`) is no E2E option's: a
+    TARGET on it tags the first distractor, option A of slot 1 — the option
+    frontend/e2e/quiz-learning.spec.ts picks with "Sure"."""
+    from agents.quiz_planned import quiz_planned_agent
+
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    monkeypatch.setenv("SAPLING_FUNCTION_HANDLERS", "agents.function_handlers_e2e")
+    prompt = (
+        "[WRITE QUIZ]\nCONCEPT: Binary\nFORMAT: multiple_choice\n"
+        "QUESTION 1: difficulty medium. TARGET: wrong_token\nQUESTION 2: difficulty medium.\n"
+        "MISCONCEPTIONS (keys):\n- wrong_token: Gives a different answer.\n"
+    )
+    with quiz_planned_agent.override(model=model_for("quiz")):
+        first, second = quiz_planned_agent.run_sync(prompt, deps=_deps()).output.questions
+    assert first.option_misconceptions == ["wrong_token", "", "", ""]
+    assert first.options.index(first.correct_answer) == 1
+    assert second.option_misconceptions == ["", "", "", ""]
+
+
 def test_the_planned_quiz_handler_writes_short_answers_the_solve_agrees_with(monkeypatch):
     from agents.function_handlers_e2e import E2E_CHECK_ITEM_FINAL_ANSWER
     from agents.quiz_planned import quiz_planned_agent
