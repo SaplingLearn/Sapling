@@ -10,8 +10,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from learning.evidence import Evidence, PlanningPersistenceUnavailable
-from learning.params import STUDENT_CONFIDENCE_LEVELS
+from learning.evidence import Evidence, PlanningPersistenceUnavailable, evidence_weight
+from learning.params import STUDENT_CONFIDENCE_LEVELS, WEIGHT_MULTI_CONCEPT
 from learning import grade_checkpoint as cp
 from services.encryption import decrypt, encrypt
 
@@ -158,11 +158,26 @@ def test_ignored_raw_evidence_keys_cannot_serialize_reference_or_rubric():
     checkpoint = cp.GradeCheckpoint.model_validate(data)
     sealed = cp.seal(checkpoint)
     decoded = json.loads(decrypt(sealed))
-    assert set(decoded["evidence"][0]) == set(Evidence.model_fields)
+    # the Evidence contract as it serializes: spec §13 A141's `multi_concept`
+    # is dumped only when set, so a single-concept row seals byte-identically
+    assert set(decoded["evidence"][0]) == set(Evidence.model_fields) - {"multi_concept"}
     assert "forbidden-reference" not in decrypt(sealed)
     assert "forbidden-rubric" not in decrypt(sealed)
     assert "unapproved-extra-copy" not in decrypt(sealed)
     assert decoded["continuation"]["answer"]["answer_text"] == PRIVATE
+
+
+def test_a_multi_concept_observation_keeps_its_partial_weight_through_recovery():
+    """Spec §13 A141: a multi-concept item's evidence is the apex's partial
+    observation; a grade recovered from its checkpoint writes the same weight."""
+    data = payload()
+    data["evidence"][0]["multi_concept"] = True
+    sealed = cp.seal(cp.GradeCheckpoint.model_validate(data))
+    assert json.loads(decrypt(sealed))["evidence"][0]["multi_concept"] is True
+    recovered = Evidence.model_validate(cp.open_checkpoint(sealed, **bindings(data)).evidence[0])
+    assert recovered.multi_concept is True
+    single = Evidence.model_validate(payload()["evidence"][0])
+    assert evidence_weight(recovered) == pytest.approx(WEIGHT_MULTI_CONCEPT * evidence_weight(single))
 
 
 @pytest.mark.parametrize("part", ["nonce", "ciphertext", "tag"])

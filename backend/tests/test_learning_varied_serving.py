@@ -559,6 +559,61 @@ async def _no_rule(deps, *, item, grade, evidence, confront):
     return "none"
 
 
+def test_planning_reads_a_combination_as_the_apexs_observation_never_a_prerequisites(monkeypatch):
+    """Spec §13 A141 (e): the binary planner reads a graded combination as the
+    apex's observation at the item's difficulty — a miss is a need on the apex
+    and never on a prerequisite; a later correct one resolves it."""
+    import asyncio
+
+    from agents.deps import SaplingDeps
+    from agents.grader import GradeResult
+    from agents.tools import check as check_tool
+    from agents.tools.check import CheckAnswer, grade_answer
+    from learning.evidence import Evidence, planning_observation
+    from learning.planner import planning_states
+    from learning.planning_history import project_planning_history
+    from routes.learn_loop import _tag_planning_evidence
+
+    monkeypatch.setattr(check_tool, "apply_misconception_rule", _no_rule)
+
+    def journal_row(qh, answer):
+        item = _combo(qh)
+        deps = SaplingDeps(user_id="u1", course_id="c1", supabase=None, request_id="r", learning_loop=True)
+        asyncio.run(grade_answer(item, answer, deps=deps, node_id="n-apex", multi_concept=True))
+        _tag_planning_evidence(deps.pending_evidence, item, synthetic_idk=False, previously_seen=False)
+        (row,) = deps.pending_evidence
+        ev = Evidence.model_validate(row)
+        observation = planning_observation(ev)
+        assert observation["node_id"] == "n-apex"
+        assert observation["difficulty"] == params.MULTI_CONCEPT_DIFFICULTY
+        reason = f"evidence:{ev.channel}:idk" if ev.idk else f"evidence:{ev.channel}"
+        return {
+            "id": f"ev-{qh}", "node_id": ev.node_id, "question_hash": qh, "check_item_id": item.id,
+            "channel": ev.channel, "correct": ev.correct, "assisted": ev.assisted, "max_rung": ev.max_rung,
+            "reason": reason, "planning_observation": observation,
+            "graph_nodes": {"user_id": "u1", "course_id": "c1"},
+        }
+
+    states = {"n-apex": 0.99, "n-pre": 0.99}
+    miss = journal_row("qc-1", CheckAnswer(question_hash="qc-1", idk=True))
+    planned = planning_states(states, project_planning_history([miss], "u1", "c1", states))
+    assert planned["n-apex"] < params.BKT_PROFICIENT  # a need on the apex, the item's concept
+    assert planned["n-pre"] == 0.99  # never on a prerequisite (the conjunctive no-blame)
+
+    async def grader_right(item, **kw):
+        return GradeResult(all_yes=True, confidence=0.9, backend="gemini"), "gemini"
+
+    async def no_key(item, **kw):
+        return None
+
+    monkeypatch.setattr(check_tool, "_rubric_grade", grader_right)
+    monkeypatch.setattr(check_tool, "match_wrong_key", no_key)
+    right = journal_row("qc-2", CheckAnswer(question_hash="qc-2", answer_text="the step size"))
+    assert right["correct"] is True and right["planning_observation"]["independent"] is True
+    rows = [miss, right]
+    assert planning_states(states, project_planning_history(rows, "u1", "c1", states))["n-apex"] == 0.99
+
+
 def test_a_combinations_node_is_its_apex(monkeypatch):
     from routes.learn_loop import _node_for_item
 
