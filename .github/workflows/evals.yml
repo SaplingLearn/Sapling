@@ -34,6 +34,11 @@ on:
       - 'backend/services/ai_budget.py'
       - 'backend/services/events_service.py'
       - 'backend/services/llm_pricing.py'
+      # INJECTION_GUARD_PROMPT is part of the loop tutor's and the chat
+      # tutor's system prompts (agents/loop_tutor.py and agents/chat_tutor.py
+      # import it), so a change there changes every recorded request of both
+      # (spec section 13 A138/A139 review).
+      - 'backend/services/prompt_safety.py'
 
 jobs:
   evals:

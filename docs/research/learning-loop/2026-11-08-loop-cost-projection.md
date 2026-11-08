@@ -207,6 +207,60 @@ SAPLING_EVAL_MODE=replay GEMINI_API_KEY=dummy-not-used-in-replay \
   loop > "What did it cost?" reports measured $ per active student-month, per
   session, per matched pair and per gain point, overall and per course (A137).
 
+## Wave 4 addendum: the teach-phase prompts with their flags on (A138, A139)
+
+This projection predates wave 4. Both flags ship off and cost nothing off. With
+them on, the method above (characters / 4, the same prices and the per-turn
+tutor costs of the table) gives the following. It was worked by hand from the
+prompt pieces' measured sizes, offline: the script does not model these turns
+yet.
+
+- **What A138 adds.** One explaining tutor turn per segment that opens on a
+  prequestion. The pose and the answer lead are code's text, and the guess is
+  never graded, so there is no grader, decision or second-opinion call.
+  - The turn carries `PREQUESTION_LINE` (812 characters, 203 tokens), the item
+    block (about 208 characters, 52 tokens), the answer block (about 330, 83)
+    and, in the history, the pose row and the guess (about 170, 42): about
+    **380 tokens more** than a teach turn.
+  - It retrieves nothing: the item's own passages replace retrieval
+    (`rag_k` 0, 2 passages instead of 5 chunks of 266 tokens), about **800
+    tokens less**. So the explaining turn costs at most one average tutor turn.
+  - † 2 segments per session: 8 graded answers at `LOOP_CHECKS_PER_CONCEPT` = 2
+    checks per concept, the probe's included. Skips (review, proficient, exam
+    mode, no item, pool for checks) make it fewer.
+  - **Upper bound:** every explaining turn is an extra turn. **Lower bound:**
+    it replaces the segment's first teach turn ("Start with …", which the card
+    hides). Then it adds nothing, because its input is smaller.
+- **What A139 adds.** No model call: the prompts are code's text. The
+  acknowledgement line (364 characters, 91 tokens) rides at most one turn per
+  replied prompt. At most 2 prompts per session (once per concept), and each
+  reply (about 30 tokens) stays in about 5 later turns' history. That is about
+  **480 input tokens per session**.
+
+Upper bound, caching off, 12 sessions per month (A139's share in brackets):
+
+| Mix | Per tutor turn | A138 per session | A139 per session | Per session, flags on | Per student-month, flags on | × target |
+|---|---|---|---|---|---|---|
+| Today (Gemini defaults) | $0.0034 | +$0.0068 | (+$0.0002) | $0.0389 (+22%) | $0.491 | 1.4× |
+| Haiku, Gemini partners | $0.0008 | +$0.0017 | (+$0.00005) | $0.0164 (+12%) | $0.221 | 0.6× |
+| Haiku + Sonnet deep tier, Gemini partners | $0.0042 | +$0.0083 | (+$0.0002) | $0.0464 (+22%) | $0.581 | 1.6× |
+| Sonnet tutor, Haiku rest, Gemini partners | $0.0168 | +$0.0336 | (+$0.0010) | $0.1609 (+27%) | $1.955 | 5.4× |
+
+Findings:
+
+1. **A138 costs at most one tutor turn per segment**: +12% on a Haiku tutor
+   and +22 to 27% on mixes with Gemini or Sonnet. It costs nothing when the
+   explanation replaces the turn that would have opened the segment anyway.
+   The session's tutor-request budget (§3.5, `LOOP_SESSION_MAX_TUTOR_REQUESTS`)
+   counts the explaining turn like any other. At the hard budget level the
+   explanation is a template, not a model call.
+2. **A139 costs under 1%**: one short line and the replies in later history,
+   with no extra call.
+3. **What turning them on waits for.** The live loop_tutor recording that each
+   flag's prompt line needs (spec §13 A138 (k), A139) also measures these
+   turns: run it with `SAPLING_EVAL_USAGE_LOG`, and the lines it writes replace
+   this addendum's estimates.
+
 ## Re-running
 
 ```sh

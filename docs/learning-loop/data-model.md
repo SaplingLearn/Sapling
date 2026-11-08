@@ -277,10 +277,10 @@ session, so it survives any session boundary):
 
 | `kind` | Written when | Read for |
 |---|---|---|
-| `reveal` | a served tutor turn stated an open posed item's answer (A88), or a segment prequestion's answer is about to be shown (source `prequestion`, A138) | the revealed set; the help floor |
+| `reveal` | a served tutor turn stated an open posed item's answer (A88), or a segment prequestion's card closed: its answer is about to be shown, or the card was superseded (source `prequestion`, A138) | the revealed set; the help floor |
 | `unscanned` | a turn's open items could not be read (fail closed) | items posed before it grade as assisted |
 | `help` | a hint rung was granted or planned, or an outside surface helped (`rung` 0–6) | the help floor: `help_ledger.max_help` (A93) |
-| `posed` | an item was posed (`graded_at` set when graded) | the open posed items the served scan checks |
+| `posed` | an item was posed, a segment prequestion's card included (source `prequestion`, A138) (`graded_at` set when graded, or when the prequestion's card closes) | the open posed items the served scan checks |
 
 Created by `backend/db/migrations/20260930031644_learning_reveals.sql`,
 extended by `backend/db/migrations/20261001010805_learning_help_ledger.sql`.
@@ -320,19 +320,26 @@ models the learner reads them, except A76's release rule (below).
   (`check_item_id`, `question_hash`, `format`, `difficulty`), `no_idea`,
   `guess_json` (the guess — **encrypted**, NULL exactly when the student said
   "no idea", a CHECK), `posed_at` and `answered_at`. Written once by
-  `backend/learning/prequestion_store.py::store_answer`; `service_role` holds
-  `SELECT` and `INSERT` only. Its one other reader is A76: an answered
-  prequestion is a release of that item's answer, so the next graded item on
-  the concept, and the item's class-mates for a day, count as re-checks
-  (`backend/learning/prequestion_store.py::releases`).
+  `backend/learning/prequestion_store.py::store_answer`, under the answer
+  route's claim, and read back at once: the row is the answer's commit point
+  (the first stored guess stands; the transcript and the event are built from
+  it). `service_role` holds `SELECT` and `INSERT` only. Its other readers,
+  whatever the flag says now: A76, because an answered prequestion is a release
+  of that item's answer, so the next graded item on the concept (decided by
+  time: nothing graded on the concept since) and the item's class-mates for a
+  day count as re-checks (`backend/learning/prequestion_store.py::releases`);
+  and the revealed set, `backend/learning/loop_state_store.py::revealed_hashes`,
+  so the item never serves that student again even if both reveal stores
+  failed.
 - `learning_self_explanations` (A139): one row per **served** prompt: the
   concept, the item, the `juncture` (`worked_example`, `released_solution`,
   `first_correct`), the rung, `prompted_at`, `status` (`open`, `replied`,
   `skipped`), `closed_at`, `reply_text` (**encrypted**) and `reply_chars`.
   CHECKs tie the reply to the `replied` status and `closed_at` to a closed
-  one. Written by `backend/learning/self_explain_store.py` (insert on serve,
-  update on reply or skip; `service_role` holds `SELECT`, `INSERT` and
-  `UPDATE`); read only by the admin report
+  one. Written by `backend/learning/self_explain_store.py` (insert on serve;
+  on reply or skip, an update that closes the row only while it is still
+  `open`, so the first of two concurrent replies stands; `service_role` holds
+  `SELECT`, `INSERT` and `UPDATE`); read only by the admin report
   (`backend/learning/self_explain_report.py`), which never reads the reply.
 
 ## Misconceptions

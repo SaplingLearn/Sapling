@@ -5,17 +5,21 @@ diagnostic spends most of a concept's fresh items, so a segment opening right
 after it has too few left for a prequestion beside its checks (the A138 pool
 rule). Run AFTER the journey's diagnostic (it reads no learner data), this adds
 three multiple-choice items per loop concept — the format a prequestion
-prefers — cloned from the concept's rich free item (its source passage,
-reference, final answer and rubric), with options A–D and B correct:
+prefers — cloned from the concept's rich free item (its source passage and
+rubric), with options A–D and B correct:
 
     rich-check-<slug>-mc-pq1   difficulty 1   (the prequestion the journey sees)
     rich-check-<slug>-mc-pq2   difficulty 1
     rich-check-<slug>-mc-pq3   difficulty 2
 
-B's text is the seeded final answer (E2E_LOOP_FINAL_ANSWER), so the e2e
-learn_loop oracle's sentinel rule covers what the prequestion's answer lead
-states (a release, A138). No attempt, evidence, release, help, goal or
-session metadata is written here. Usage: `python -m db.seed_learning_teach_prompts`
+B's text — and the items' reference and final answer — is the prequestion
+items' OWN sentinel, E2E_LOOP_PREQUESTION_ANSWER, never the checks'
+E2E_LOOP_FINAL_ANSWER: the e2e learn_loop oracle then judges each by its own
+release (a check's answer before a check released it; a prequestion's before
+its guess was answered), and the first answered prequestion no longer counts
+as a release of every check's answer (review fix). No attempt, evidence,
+release, help, goal or session metadata is written here. Usage:
+`python -m db.seed_learning_teach_prompts`
 (frontend/e2e/support/db.ts::seedTeachPromptItems)."""
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ def _require_local() -> None:
 
 
 def options(final_answer: str) -> list[tuple[str, str, str | None]]:
-    """(letter, text, wrong_key) — B is the seeded final answer."""
+    """(letter, text, wrong_key) — B is the prequestion items' sentinel."""
     return [
         ("A", "the alpha sentinel phrase", "alpha_sentinel"),
         ("B", final_answer, None),
@@ -68,6 +72,10 @@ def prequestion_item(template: dict, *, slug: str, concept: str, n: int, difficu
         question_hash=question_hash(prompt),
         options_json=encrypt_json([{"letter": letter, "text": text, "wrong_key": key} for letter, text, key in opts]),
         correct_option=encrypt_if_present(CORRECT),
+        # A34: the correct option's text, stated as the item's final answer
+        final_answer=encrypt_if_present(final_answer),
+        reference_answer=encrypt_if_present(f"The option that names it is B. Final answer: {final_answer}."),
+        canonical_answer=None,
         common_wrong_json=encrypt_json([{"key": key, "text": f"Picks {text}."} for _, text, key in opts if key]),
         graded=False,
     )
@@ -78,7 +86,7 @@ def seed_teach_prompt_items() -> None:
     from db.e2e_handler_constants import read_constants
 
     _require_local()
-    (final_answer,) = read_constants("E2E_LOOP_FINAL_ANSWER")
+    (final_answer,) = read_constants("E2E_LOOP_PREQUESTION_ANSWER")
     for slug, concept, _ in LOOP_NODES:
         rows = table("check_items").select("*", filters={"id": f"eq.rich-check-{slug}-free-d1"}, limit=1)
         if not rows or rows[0]["course_id"] != COURSE_CS:

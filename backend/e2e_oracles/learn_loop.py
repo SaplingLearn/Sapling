@@ -111,6 +111,12 @@ def learn_loop_findings(
 #     released an answer — a graded step whose verdict is not `correct` (the
 #     feedback reply then opens with it, A16/A51) or a logged H6 worked answer.
 #     A release in one session never opens another. The text is never echoed;
+# (g') likewise for the segment prequestion's OWN sentinel (spec §13 A138,
+#     `prequestion_sentinel`, E2E_LOOP_PREQUESTION_ANSWER — the seeded
+#     prequestion items' key, never a check's): no assistant message states it
+#     before the session's first answered prequestion. Each release opens only
+#     its own sentinel (review fix: a prequestion's release no longer opens the
+#     checks' answer);
 # (h) with `expect_activity` (the loop journey runs the oracle right after its
 #     walk, before the next test's truncate-and-reseed): no loop user, or no
 #     graded check step anywhere, is itself a finding.
@@ -135,15 +141,22 @@ def _prequestions_of(session: dict) -> dict:
     return {k: v for k, v in (records or {}).items() if isinstance(v, dict)} if isinstance(records, dict) else {}
 
 
-def _release_at(steps: dict, prequestions: dict | None = None) -> float | None:
-    """The first moment the session released an answer, or None (never). Spec
-    §13 A138: an answered segment prequestion releases its item's answer by
-    design — the explaining turn opens with it — at its `answered_at`."""
+def _prequestion_release_at(prequestions: dict) -> float | None:
+    """Spec §13 A138: when the session first released a prequestion's answer —
+    an answered segment prequestion's `answered_at` (its explaining turn opens
+    with the answer) — or None (never). It opens only the prequestion items'
+    sentinel."""
+    times = [
+        at
+        for record in prequestions.values()
+        if record.get("status") in ("answered", "resolved") and (at := _number(record.get("answered_at"))) is not None
+    ]
+    return min(times) if times else None
+
+
+def _release_at(steps: dict) -> float | None:
+    """The first moment the session released a CHECK's answer, or None (never)."""
     times: list[float] = []
-    for record in (prequestions or {}).values():
-        answered = _number(record.get("answered_at"))
-        if answered is not None and record.get("status") in ("answered", "resolved"):
-            times.append(answered)
     for step in steps.values():
         graded = _number(step.get("graded_at"))
         if graded is not None and step.get("last_verdict") != "correct":
@@ -164,6 +177,7 @@ def learn_loop_activity_findings(
     sentinel: str,
     loop_users: int,
     expect_activity: bool,
+    prequestion_sentinel: str | None = None,
 ) -> list[Finding]:
     """`sessions`: {id, user_id, loop_state} of every loop session; the hash
     sets are (user_id, question_hash); `messages`: {session_id, at (epoch s),
@@ -171,9 +185,11 @@ def learn_loop_activity_findings(
     findings: list[Finding] = []
     no_evidence, no_step, graded_any = [], [], False
     release: dict[str, float | None] = {}
+    pq_release: dict[str, float | None] = {}
     for s in sessions:
         steps = _steps_of(s)
-        release[s["id"]] = _release_at(steps, _prequestions_of(s))
+        release[s["id"]] = _release_at(steps)
+        pq_release[s["id"]] = _prequestion_release_at(_prequestions_of(s))
         for qh, step in sorted(steps.items()):
             if step.get("graded_at") is None:
                 continue
@@ -201,26 +217,27 @@ def learn_loop_activity_findings(
                 evidence={"sample": no_step[:_SAMPLE]},
             )
         )
-    needle = sentinel.casefold()
-    leaked = []
-    for m in messages:
-        sid = m.get("session_id")
-        if sid not in release or needle not in str(m.get("content") or "").casefold():
-            continue
-        cutoff, at = release[sid], _number(m.get("at"))
-        if cutoff is None or at is None or at < cutoff:  # unknown time: fail closed
-            leaked.append(sid)
-    if leaked:
-        findings.append(
-            Finding(
-                oracle="learn_loop",
-                summary=(
-                    f"{len(leaked)} assistant message(s) state the seeded final answer "
-                    "before the session released it"
-                ),
-                evidence={"sessions": sorted(set(leaked))[:_SAMPLE]},
+    rules = [(sentinel, release, "the seeded final answer")]
+    if prequestion_sentinel:
+        rules.append((prequestion_sentinel, pq_release, "a seeded prequestion's answer"))
+    for needle_text, cutoffs, what in rules:
+        needle = needle_text.casefold()
+        leaked = []
+        for m in messages:
+            sid = m.get("session_id")
+            if sid not in cutoffs or needle not in str(m.get("content") or "").casefold():
+                continue
+            cutoff, at = cutoffs[sid], _number(m.get("at"))
+            if cutoff is None or at is None or at < cutoff:  # unknown time: fail closed
+                leaked.append(sid)
+        if leaked:
+            findings.append(
+                Finding(
+                    oracle="learn_loop",
+                    summary=f"{len(leaked)} assistant message(s) state {what} before the session released it",
+                    evidence={"sessions": sorted(set(leaked))[:_SAMPLE]},
+                )
             )
-        )
     if expect_activity:
         if loop_users <= 0:
             findings.append(

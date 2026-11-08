@@ -297,15 +297,32 @@ def _recheck(state, item, releases=None, later=None):
 
 
 def test_the_next_graded_item_after_this_sessions_prequestion_is_a_recheck():
-    assert _recheck(_answered(), _graded_item("teachback", 3)) is True
+    assert _recheck(_answered(), _graded_item("teachback", 3), later=False) is True
 
 
-def test_a_later_attempt_ends_the_next_item_rule_but_class_mates_still_owe():
+def test_an_answer_before_the_release_does_not_hide_it():
+    # Review fix (A138 x A76): the probe graded the concept right — A120 logs an
+    # unreleased attempt — and then the segment's prequestion was answered. The
+    # segment's first check, of another class, is still the next item after it.
     st = _answered("mc_reason", 1)
-    st["attempts"] = [{"node_id": "n1", "question_hash": "q1", "correct": True, "difficulty": 2,
+    st["attempts"] = [{"node_id": "n1", "question_hash": "probe-q", "correct": True, "difficulty": 2,
                        "released": False}]
-    assert _recheck(st, _graded_item("teachback", 3)) is False
-    assert _recheck(st, _graded_item("mc_reason", 1)) is True  # its isomorph class owes
+    assert _recheck(st, _graded_item("free", 2), later=False) is True
+    assert _recheck(st, _graded_item("free", 2), later=None) is True  # the journal unread: the session decides
+
+
+def test_a_step_graded_after_the_release_ends_the_next_item_rule_but_class_mates_still_owe():
+    st = _answered("mc_reason", 1)
+    st["steps"] = {"q1": {"node_id": "n1", "graded_at": _NOW.timestamp() - 60, "last_verdict": "correct"}}
+    assert _recheck(st, _graded_item("teachback", 3), later=True) is False
+    assert _recheck(st, _graded_item("teachback", 3), later=None) is False  # the step decides
+    assert _recheck(st, _graded_item("mc_reason", 1), later=True) is True  # its isomorph class owes
+    st["steps"]["q1"]["graded_at"] = _NOW.timestamp() - 3600  # graded BEFORE the release
+    assert _recheck(st, _graded_item("teachback", 3), later=False) is True
+
+
+def test_a_grade_on_another_surface_after_the_release_ends_it():
+    assert _recheck(_answered(), _graded_item("teachback", 3), later=True) is False
 
 
 def test_a_prequestion_outside_the_window_owes_nothing():
@@ -369,3 +386,25 @@ def test_the_guess_is_stored_encrypted_and_no_idea_stores_none():
     assert first["no_idea"] is False and first["format"] == "mc_reason" and first["difficulty"] == 1
     assert second["guess_json"] is None and second["no_idea"] is True
     assert t.insert_ignore_duplicates.call_args.kwargs["on_conflict"] == "user_id,session_id,node_id"
+
+
+def test_the_stored_answer_reads_back_owner_scoped_and_decrypted():
+    # review fix: the answer route's commit point — the first stored guess stands
+    from unittest.mock import MagicMock
+
+    from learning import prequestion_store as store
+    from services.encryption import encrypt_json
+
+    t = MagicMock()
+    t.select.return_value = [{"question_hash": "m1", "no_idea": False, "guess_json": encrypt_json({"option": "A"})}]
+    with patch.object(store, "table", return_value=t):
+        got = store.stored_answer("u1", "s1", "n1")
+        assert got == {"question_hash": "m1", "no_idea": False, "guess": {"option": "A"}}
+        assert t.select.call_args.kwargs["filters"] == {"user_id": "eq.u1", "session_id": "eq.s1", "node_id": "eq.n1"}
+        t.select.return_value = [{"question_hash": "f1", "no_idea": True, "guess_json": None}]
+        assert store.stored_answer("u1", "s1", "n1") == {"question_hash": "f1", "no_idea": True, "guess": None}
+        t.select.return_value = []
+        assert store.stored_answer("u1", "s1", "n1") is None
+        t.select.side_effect = RuntimeError("down")
+        with pytest.raises(RuntimeError):  # a failed read raises: the route answers 503
+            store.stored_answer("u1", "s1", "n1")

@@ -15,7 +15,7 @@ import logging
 from datetime import datetime
 
 from db.connection import table
-from services.encryption import encrypt_json
+from services.encryption import decrypt_json, encrypt_json
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,28 @@ def store_answer(
         "posed_at": posed_at.isoformat(),
     }
     table(_TABLE).insert_ignore_duplicates(row, on_conflict="user_id,session_id,node_id")
+
+
+def stored_answer(user_id: str, session_id: str, node_id: str) -> dict | None:
+    """The answer stored for (student, session, concept) — the answer route's
+    COMMIT POINT: the first stored guess stands, and the transcript and the
+    event are built from it. {question_hash, no_idea, guess (decrypted dict, or
+    None for "no idea")}, or None when no row is stored. Raises on a failed
+    read (the route then answers 503)."""
+    rows = table(_TABLE).select(
+        "question_hash,no_idea,guess_json",
+        filters={"user_id": f"eq.{user_id}", "session_id": f"eq.{session_id}", "node_id": f"eq.{node_id}"},
+        limit=1,
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    no_idea = bool(row.get("no_idea"))
+    return {
+        "question_hash": row.get("question_hash"),
+        "no_idea": no_idea,
+        "guess": None if no_idea else decrypt_json(row.get("guess_json")),
+    }
 
 
 def _ts(value) -> datetime | None:

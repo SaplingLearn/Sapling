@@ -100,6 +100,9 @@ from learning import grade_checkpoint, item_reports
 from learning import prequestion as prequestion_rules
 from learning import self_explain
 from learning.prequestion_store import store_answer as store_prequestion_answer
+from learning.prequestion_store import stored_answer as stored_prequestion_answer
+from learning.self_explain_store import LOST as SELF_EXPLAIN_LOST
+from learning.self_explain_store import WON as SELF_EXPLAIN_WON
 from learning.self_explain_store import close_prompt as close_self_explain_prompt
 from learning.self_explain_store import record_prompt as record_self_explain_prompt
 from learning import probe as probe_policy
@@ -426,7 +429,10 @@ SELF_EXPLAIN_FLAG = "self_explanation_prompts"
 def _prequestion_on(user_id: str | None) -> bool:
     """The `segment_prequestion` flag for this student (spec §13 A138), read
     once per request where a segment can start or a prequestion be answered.
-    Off: nothing is posed, explained or read. No student means off; the
+    Off: nothing is posed, explained or written. Two reads stay (review item 9):
+    A76's release rule and `revealed_hashes` read `learning_prequestions`
+    whatever the flag says, because a prequestion answered while it was on
+    stays a release and a reveal after it goes off. No student means off; the
     resolver fails closed (feature_flags)."""
     return bool(user_id) and flag_on(PREQUESTION_FLAG, user_id)
 
@@ -443,6 +449,13 @@ def _self_explain_on(user_id: str | None) -> bool:
 _PREQUESTION_CUE = "[ACTION: The student has just answered the prequestion; explain its answer now.]"
 _NO_OPEN_PREQUESTION = "no open prequestion"
 _NO_OPEN_SELF_EXPLAIN = "no open self-explanation prompt"
+_GUESS_IN_FLIGHT = "your guess is being saved; try again in a moment"
+_ANOTHER_GUESS = "a different guess was already saved for this question"
+#: Spec §13 A138: the help ledger's / learning_reveals' `source` for a
+#: prequestion's pose and reveal (learning.help_ledger.SOURCES)
+PREQUESTION_SOURCE = "prequestion"
+#: Spec §13 A138 (review fix): the answer claim's keys on the card's record
+_ANSWER_CLAIM = "answer_claim"
 
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
@@ -2044,7 +2057,11 @@ class _LoopTurn:
         # A139: the self-explanation prompt this turn's question becomes (set in _plan)
         self.se_prompt: dict | None = None
         # A139: the student replied to the last prompt; this turn acknowledges it
-        self.se_ack = self_explain.ack_due(self.state) if self.se_on else None
+        # — never a turn that explains a prequestion (review fix): that turn is
+        # about the next concept's guess, so the acknowledgement is dropped
+        # (this turn consumes it; the card already said "Saved")
+        explains = self.pq_record is not None or self.kind == "prequestion"
+        self.se_ack = self_explain.ack_due(self.state) if self.se_on and not explains else None
 
     def _prequestion_to_explain(self) -> tuple[dict | None, object | None]:
         """Spec §13 A138: (record, item) of the plan concept's ANSWERED
@@ -2865,10 +2882,7 @@ class _LoopTurn:
         try:
             if out.get("pq_superseded"):
                 node, rec = out["pq_superseded"]
-                _emit_prequestion(
-                    self.user_id, self.request_id, self.session_id, node, "superseded",
-                    question_hash=rec.get("question_hash"),
-                )
+                _superseded_prequestion(self.user_id, self.session_id, self.request_id, node, rec, at=self._now)
             if out.get("pq_resolved"):
                 _emit_prequestion(
                     self.user_id, self.request_id, self.session_id, out["pq_resolved"], "resolved",
@@ -2915,7 +2929,8 @@ class _LoopTurn:
             self_explain.set_ack(state, None)
         if self.phase == "teach" and self.kind in ("chat", "action"):
             rec = prequestion_rules.open_record(state, self.concept_node)
-            if rec is not None:
+            # a guess being saved under its claim is no open card: it commits
+            if rec is not None and not _live(rec, _ANSWER_CLAIM, self._now):
                 records = dict(prequestion_rules.records(state))
                 records[self.concept_node] = {**rec, "status": prequestion_rules.SUPERSEDED}
                 state[prequestion_rules.KEY] = records
@@ -3597,6 +3612,29 @@ def _undo_pose(state: dict, pose: _Pose) -> None:
     state[prequestion_rules.KEY] = records
 
 
+def _spend_prequestion_item(user_id: str, session_id: str, question_hash: str | None, *, at: float) -> None:
+    """Spec §13 A138 (review fix): a posed prequestion's item is SPENT however
+    its card closes — answered (its answer is about to be shown) or superseded
+    (a turn was served, or a check opened, while its question was in front of
+    the student, and that turn's text cannot be trusted not to have worked it).
+    A durable reveal (A88: never served to this student again, and any grade of
+    it carries no credit), then its ledger 'posed' row closes: the reveal floors
+    every later grade, so the scan has nothing left to protect. Never raises."""
+    if not question_hash:
+        return
+    _persist_reveals(
+        user_id, session_id, [question_hash], unscanned=False, source=PREQUESTION_SOURCE,
+        at=datetime.fromtimestamp(at, tz=timezone.utc),
+    )
+    _ledger(mark_graded, user_id, question_hash)
+
+
+def _superseded_prequestion(user_id: str, session_id: str, request_id: str, node: str, rec: dict, *, at: float) -> None:
+    """After the write that superseded a posed card: the item spent, the event."""
+    _spend_prequestion_item(user_id, session_id, rec.get("question_hash"), at=at)
+    _emit_prequestion(user_id, request_id, session_id, node, "superseded", question_hash=rec.get("question_hash"))
+
+
 def _emit_prequestion(user_id: str, request_id: str, session_id: str, node_id: str, status: str, **extra) -> None:
     """`learn.prequestion` (spec §6, §13 A138): ids, enums and counts only —
     never the question or the guess. One per lifecycle step of a segment's
@@ -3619,6 +3657,9 @@ def _posed_prequestion(user_id: str, session_id: str, request_id: str, pose: _Po
     if pose.item is None:
         _emit_prequestion(user_id, request_id, session_id, pose.node, "skipped", reason=pose.reason)
         return None
+    # A88/A93: the card's item is a posed item — the served-text scan covers it
+    # while the card is open, like a check's (review fix: it was outside it)
+    _ledger(record_posed, user_id, pose.item.question_hash, source=PREQUESTION_SOURCE, session_id=session_id)
     try:
         save_message(session_id, "assistant", prequestion_rules.pose_text(pose.item))
     except Exception:
@@ -6703,6 +6744,11 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             if cur_entry.get("check_item_id") and get_check_item(cur_entry["check_item_id"]):
                 out["qh"] = cur  # another request activated one meanwhile
                 return
+        # Spec §13 A138 (review fix): a guess being saved under its claim is
+        # the one open prompt until it commits — no check opens over it
+        card = prequestion_rules.open_record(st, st.get("concept"))
+        if card is not None and _live(card, _ANSWER_CLAIM, now):
+            raise HTTPException(status_code=409, detail=_GUESS_IN_FLIGHT)
         if cur:
             # withdrawn (A23) or held (A124, A123), graded, or left under a
             # stale claim (C2): drop it; the entry stays
@@ -6763,10 +6809,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     save_message(body.session_id, "assistant", pose["prompt"])
     if out.get("pq_superseded"):  # spec §13 A138
         node, rec = out["pq_superseded"]
-        _emit_prequestion(
-            body.user_id, _request_id(request), body.session_id, node, "superseded",
-            question_hash=rec.get("question_hash"),
-        )
+        _superseded_prequestion(body.user_id, body.session_id, _request_id(request), node, rec, at=now)
     return {"phase": "check", "check": pose}
 
 
@@ -6829,6 +6872,37 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
         return state, scope  # a retry: the stored guess stands
     no_idea, guess = _validated_guess(body, item)
     now = _now_s()
+    claim = str(uuid.uuid4())
+
+    # Review fix (spec §13 A138): the guess commits under a CLAIM, the way a
+    # grade does (C2). (1) A compare-and-set write claims the open card — or
+    # answers 409 and writes nothing: the card is not open, a check is, the
+    # session is closing, or another request holds the claim. While it holds,
+    # nothing supersedes the card, no check opens and no close starts. (2) The
+    # stored row is the COMMIT POINT: written, then read back — the first stored
+    # guess stands (a different one is a 409), and the transcript and the event
+    # are built from it. (3) The reveal, before any text is served. (4) The
+    # record moves to `answered` under the claim. A failure before (4) gives
+    # the claim back; a retry of the same guess finishes the commit.
+    def take(doc: dict) -> None:
+        _refuse_while_closing(doc, now)
+        cur = prequestion_rules.open_record(doc, node)
+        if cur is None or cur.get("question_hash") != item.question_hash or doc.get("current"):
+            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+        if _live(cur, _ANSWER_CLAIM, now):
+            raise HTTPException(status_code=409, detail=_GUESS_IN_FLIGHT)
+        records = dict(prequestion_rules.records(doc))
+        records[node] = {**cur, _ANSWER_CLAIM: claim, f"{_ANSWER_CLAIM}_at": now}
+        doc[prequestion_rules.KEY] = records
+
+    def give_back(doc: dict) -> None:
+        cur = prequestion_rules.record_for(doc, node)
+        if cur is not None and cur.get(_ANSWER_CLAIM) == claim:
+            records = dict(prequestion_rules.records(doc))
+            records[node] = {k: v for k, v in cur.items() if k not in (_ANSWER_CLAIM, f"{_ANSWER_CLAIM}_at")}
+            doc[prequestion_rules.KEY] = records
+
+    _update_loop_state(body.session_id, take, require_open=True, require_existing=True)
     posed = rec.get("posed_at")
     posed_at = datetime.fromtimestamp(
         float(posed) if isinstance(posed, (int, float)) and not isinstance(posed, bool) else now, tz=timezone.utc
@@ -6845,58 +6919,65 @@ async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> 
             guess=guess,
             posed_at=posed_at,
         )
+        stored = await asyncio.to_thread(stored_prequestion_answer, body.user_id, body.session_id, node)
+        if stored is None or stored.get("question_hash") != item.question_hash:
+            raise RuntimeError("the stored prequestion answer could not be read back")
     except Exception as exc:
         logger.warning("prequestion guess not stored", exc_info=True)
+        _give_back_quietly(body.session_id, give_back)
         raise HTTPException(status_code=503, detail="Your guess could not be saved; try again") from exc
-    # its answer is about to be shown: durable now (A88), so the item never
-    # serves this student again — a check, a review item or a post-test item
-    await asyncio.to_thread(
-        _persist_reveals,
-        body.user_id,
-        body.session_id,
-        [item.question_hash],
-        unscanned=False,
-        source="prequestion",
-        at=datetime.fromtimestamp(now, tz=timezone.utc),
-    )
-    won: dict = {}
+    if (bool(stored["no_idea"]), stored["guess"]) != (no_idea, guess):
+        _give_back_quietly(body.session_id, give_back)
+        raise HTTPException(status_code=409, detail=_ANOTHER_GUESS)
+    # its answer is about to be shown: spent now (A88, before any text), so the
+    # item never serves this student again — a check, a review item or a
+    # post-test item; its ledger 'posed' row closes
+    await asyncio.to_thread(_spend_prequestion_item, body.user_id, body.session_id, item.question_hash, at=now)
 
-    def mark(doc: dict) -> None:
-        won.clear()
-        _refuse_while_closing(doc, now)
+    def commit(doc: dict) -> None:
         cur = prequestion_rules.record_for(doc, node)
-        if cur is None or cur.get("question_hash") != item.question_hash or doc.get("current"):
-            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
-        if cur.get("status") == prequestion_rules.POSED:
-            records = dict(prequestion_rules.records(doc))
-            records[node] = {**cur, "status": prequestion_rules.ANSWERED, "answered_at": now, "no_idea": no_idea}
-            doc[prequestion_rules.KEY] = records
-            won["first"] = True
+        if cur is None or cur.get(_ANSWER_CLAIM) != claim:
+            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)  # the claim went stale
+        records = dict(prequestion_rules.records(doc))
+        kept = {k: v for k, v in cur.items() if k not in (_ANSWER_CLAIM, f"{_ANSWER_CLAIM}_at")}
+        records[node] = {
+            **kept, "status": prequestion_rules.ANSWERED, "answered_at": now, "no_idea": bool(stored["no_idea"]),
+        }
+        doc[prequestion_rules.KEY] = records
 
-    state = _update_loop_state(body.session_id, mark, require_open=True, require_existing=True)
-    if won.get("first"):  # a concurrent duplicate records nothing twice
-        save_message(
-            body.session_id,
-            "user",
-            prequestion_rules.render_guess(
-                no_idea=no_idea,
-                answer=body.answer,
-                option=(guess or {}).get("option"),
-                reason=body.reason,
-            ),
-        )
-        _emit_prequestion(
-            body.user_id,
-            _request_id(request),
-            body.session_id,
-            node,
-            "answered",
-            question_hash=item.question_hash,
-            no_idea=no_idea,
-            format=item.format,
-            difficulty=int(item.difficulty),
-        )
+    state = _update_loop_state(body.session_id, commit, require_open=True, require_existing=True)
+    stored_guess = stored["guess"] or {}
+    save_message(
+        body.session_id,
+        "user",
+        prequestion_rules.render_guess(
+            no_idea=bool(stored["no_idea"]),
+            answer=str(stored_guess.get("answer") or ""),
+            option=stored_guess.get("option"),
+            reason=str(stored_guess.get("reason") or ""),
+        ),
+    )
+    _emit_prequestion(
+        body.user_id,
+        _request_id(request),
+        body.session_id,
+        node,
+        "answered",
+        question_hash=item.question_hash,
+        no_idea=bool(stored["no_idea"]),
+        format=item.format,
+        difficulty=int(item.difficulty),
+    )
     return state, scope
+
+
+def _give_back_quietly(session_id: str, give_back: Callable[[dict], None]) -> None:
+    """Give an answer claim back after a failure (never raises: a claim that
+    cannot be given back goes stale after LOOP_GRADING_CLAIM_STALE_S)."""
+    try:
+        _update_loop_state(session_id, give_back)
+    except Exception:
+        logger.warning("prequestion answer claim not given back; it goes stale", exc_info=True)
 
 
 def _prequestion_turn(
@@ -6963,13 +7044,17 @@ def self_explain_reply(body: SelfExplainBody, request: Request) -> dict:
         raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
     state = _load_loop_state(body.session_id)
     _require_teaching(state)
+    now = _now_s()
+    _refuse_while_closing(state, now)  # a closing session writes nothing
     prompt = self_explain.open_prompt(state)
     if prompt is None or prompt.get("id") != body.prompt_id:
         raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
     reply = "" if body.skip else body.reply.strip()
-    now = _now_s()
+    # Review fix: the row is the COMMIT POINT — closed only while it is 'open',
+    # so of two concurrent replies the first stands and the other writes
+    # nothing (a 409); the loop state, the transcript and the event follow it
     try:
-        close_self_explain_prompt(
+        outcome = close_self_explain_prompt(
             prompt,
             user_id=body.user_id,
             session_id=body.session_id,
@@ -6980,35 +7065,47 @@ def self_explain_reply(body: SelfExplainBody, request: Request) -> dict:
     except Exception as exc:
         logger.warning("self-explanation reply not stored", exc_info=True)
         raise HTTPException(status_code=503, detail="Your explanation could not be saved; try again") from exc
+    if outcome == SELF_EXPLAIN_LOST:
+        raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
     pq_on = _prequestion_on(body.user_id)
     out: dict = {}
 
     def close(doc: dict) -> None:
+        # the reply is committed: a prompt a turn closed meanwhile, or a close
+        # that started meanwhile, changes nothing here and refuses nothing
         out.clear()
-        _refuse_while_closing(doc, now)
         cur = self_explain.open_prompt(doc)
-        if cur is None or cur.get("id") != body.prompt_id:
-            raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
+        if _closing(doc, now) or cur is None or cur.get("id") != body.prompt_id:
+            return
         self_explain.close_open(doc)
+        out["closed"] = True
         if reply:
             self_explain.set_ack(doc, body.prompt_id)
         out["pose"] = _pose_prequestion(body.user_id, course_id, doc, now=now) if pq_on else _NO_POSE
 
-    _update_loop_state(body.session_id, close, require_open=True, require_existing=True)
+    try:
+        _update_loop_state(body.session_id, close, require_open=True, require_existing=True)
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise  # a retry finishes it (SAME)
+        out.clear()  # the session closed meanwhile: the committed reply stands
     request_id = _request_id(request)
-    if reply:
-        try:
-            save_message(body.session_id, "user", reply)
-        except Exception:
-            logger.warning("self-explanation reply row not saved", exc_info=True)
-    _emit_self_explanation(
-        body.user_id,
-        request_id,
-        body.session_id,
-        prompt,
-        "replied" if reply else "skipped",
-        **({"reply_chars": len(reply)} if reply else {}),
-    )
+    # a retry of a committed reply whose first request never closed the prompt
+    # finishes it here; one that finds the prompt closed already wrote nothing
+    if outcome == SELF_EXPLAIN_WON or out.get("closed"):
+        if reply:
+            try:
+                save_message(body.session_id, "user", reply)
+            except Exception:
+                logger.warning("self-explanation reply row not saved", exc_info=True)
+        _emit_self_explanation(
+            body.user_id,
+            request_id,
+            body.session_id,
+            prompt,
+            "replied" if reply else "skipped",
+            **({"reply_chars": len(reply)} if reply else {}),
+        )
     prequestion = _posed_prequestion(body.user_id, body.session_id, request_id, out.get("pose", _NO_POSE))
     return {
         "recorded": True,
@@ -7043,7 +7140,12 @@ def _grading_in_flight(doc: dict, now: float) -> bool:
     probe = doc.get("probe") if isinstance(doc.get("probe"), dict) else {}
     if isinstance(probe.get("current"), dict):
         entries.append(probe["current"])
-    return any(grade_checkpoint.KEY in e or _live(e, "grading_claim", now) for e in entries)
+    # spec §13 A138 (review fix): a prequestion guess being saved under its
+    # claim — its row is the commit point, so a close now would strand it
+    cards = [r for r in prequestion_rules.records(doc).values() if isinstance(r, dict)]
+    return any(grade_checkpoint.KEY in e or _live(e, "grading_claim", now) for e in entries) or any(
+        _live(r, _ANSWER_CLAIM, now) for r in cards
+    )
 
 
 def _refuse_while_closing(doc: dict, now: float) -> None:
@@ -7054,6 +7156,11 @@ def _refuse_while_closing(doc: dict, now: float) -> None:
         raise HTTPException(status_code=409, detail=_SESSION_CLOSED)
     if _live(doc, "close_claim", now):
         raise HTTPException(status_code=409, detail=_CLOSE_IN_PROGRESS)
+
+
+def _closing(doc: dict, now: float) -> bool:
+    """`_refuse_while_closing`'s condition, as a predicate."""
+    return _loop_phase(doc) == "close" or _live(doc, "close_claim", now)
 
 
 def _close_phase(doc: dict | None) -> str:

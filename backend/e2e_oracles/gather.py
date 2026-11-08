@@ -539,7 +539,7 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
         "SELECT /* learn_loop:loop_users */ count(*) AS n FROM user_settings "
         "WHERE learning_loop_beta IS TRUE"
     ).fetchone()
-    (sentinel,) = read_constants("E2E_LOOP_FINAL_ANSWER")
+    (sentinel, pq_sentinel) = read_constants("E2E_LOOP_FINAL_ANSWER", "E2E_LOOP_PREQUESTION_ANSWER")
     return learn_loop.learn_loop_activity_findings(
         [dict(s) for s in sessions],
         evidence,
@@ -548,6 +548,7 @@ def _learn_loop_activity(conn, step_rows, args, learn_loop) -> list[Finding]:
         sentinel,
         int((loop_users or {}).get("n") or 0),
         bool(getattr(args, "expect_loop_activity", False)),
+        prequestion_sentinel=pq_sentinel,
     )
 
 def flag_findings(flags: list[dict], targets: list[dict]) -> list[Finding]:
