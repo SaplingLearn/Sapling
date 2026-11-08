@@ -545,24 +545,104 @@ class TestGetAchievements:
 
 # ── GET /api/profile/{user_id}/roles ───────────────────────────────────────
 
+_ADMIN_ROLE = {"id": "r1", "name": "Admin", "slug": "admin", "color": "#f00", "icon": None, "description": "Administrator", "is_staff_assigned": True, "is_earnable": False, "display_priority": 100}
+
+
+def _roles_tables(*, deleted=False, calls=None):
+    """table() factory for a user holding the admin role. `deleted` models a
+    soft-deleted account: the `deleted_at is null` filter finds no row."""
+    def table_side_effect(name):
+        m = MagicMock()
+        if name == "users":
+            def _select(cols, filters=None, **kw):
+                if calls is not None:
+                    calls.append(dict(filters or {}))
+                if deleted and (filters or {}).get("deleted_at") == "is.null":
+                    return []
+                return [{"id": USER_ID, "email": None, "streak_count": 0,
+                         "created_at": "2025-01-01"}]
+            m.select.side_effect = _select
+        elif name == "user_roles":
+            m.select.return_value = [{"roles": _ADMIN_ROLE, "granted_at": "2025-01-01"}]
+        elif name == "user_profiles":
+            m.select.return_value = [dict(FULL_PROFILE_ROW)]
+        elif name == "user_settings":
+            m.select.return_value = [{"user_id": USER_ID, "profile_visibility": "public"}]
+        else:
+            m.select.return_value = []
+        return m
+    return table_side_effect
+
+
 class TestGetRoles:
     def test_returns_user_roles(self):
-        role_data = {"id": "r1", "name": "Admin", "slug": "admin", "color": "#f00", "icon": None, "description": "Administrator", "is_staff_assigned": True, "is_earnable": False, "display_priority": 100}
-
-        def table_side_effect(name):
-            m = MagicMock()
-            if name == "user_roles":
-                m.select.return_value = [{"roles": role_data, "granted_at": "2025-01-01"}]
-            else:
-                m.select.return_value = []
-            return m
-
-        with patch("routes.profile.table", side_effect=table_side_effect):
+        with patch("routes.profile.table", side_effect=_roles_tables()):
             r = client.get(f"/api/profile/{USER_ID}/roles")
 
         assert r.status_code == 200
         assert len(r.json()["roles"]) == 1
         assert r.json()["roles"][0]["role"]["slug"] == "admin"
+
+    def test_anonymous_caller_is_401(self):
+        """#115: roles say who is an admin; no session, no answer."""
+        with _viewer(None), \
+             patch("routes.profile.table", side_effect=_roles_tables()):
+            r = client.get(f"/api/profile/{USER_ID}/roles")
+        assert r.status_code == 401
+
+    def test_signed_in_viewer_may_read_another_users_roles(self):
+        """The public profile already shows a signed-in viewer the target's
+        role badges; /roles answers the same audience."""
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=_roles_tables()):
+            r = client.get(f"/api/profile/{USER_ID}/roles")
+        assert r.status_code == 200
+        assert r.json()["roles"][0]["role"]["slug"] == "admin"
+
+    def test_soft_deleted_user_is_404(self):
+        calls: list[dict] = []
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=_roles_tables(deleted=True, calls=calls)):
+            r = client.get(f"/api/profile/{USER_ID}/roles")
+        assert r.status_code == 404
+        assert calls and calls[0].get("deleted_at") == "is.null"
+
+
+class TestPublicProfileDeletedAndAnonymous:
+    def test_soft_deleted_user_profile_is_404(self):
+        """#115: a soft-deleted account's public profile is gone, and the
+        read does not recreate its profile/settings rows."""
+        calls: list[dict] = []
+        touched: list[str] = []
+        inner = _roles_tables(deleted=True, calls=calls)
+
+        def table_side_effect(name):
+            touched.append(name)
+            return inner(name)
+
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=table_side_effect):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 404
+        assert calls[0].get("deleted_at") == "is.null"
+        assert touched == ["users"]
+
+    def test_live_user_profile_still_200(self):
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=_roles_tables()):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        # A signed-in viewer sees the role badges the UI renders.
+        assert [x["role"]["slug"] for x in r.json()["roles"]] == ["admin"]
+
+    def test_anonymous_viewer_gets_no_roles(self):
+        """#115: the anonymous projection must not answer "who is an admin"
+        either, or the /roles 401 is bypassed through this route."""
+        with _viewer(None), \
+             patch("routes.profile.table", side_effect=_roles_tables()):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        assert r.json()["roles"] == []
 
 
 # ── GET /api/profile/username/check ────────────────────────────────────────

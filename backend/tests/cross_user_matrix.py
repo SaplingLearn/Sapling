@@ -329,7 +329,9 @@ SWAP_EXPECT: dict[tuple[str, str], tuple[tuple[int, ...], str]] = {
 #: allowlist group instead of the swap group.
 SWAP_SKIP: dict[tuple[str, str], str] = {
     ("GET", "/api/profile/{user_id}"): "public profile (allowlist group)",
-    ("GET", "/api/profile/{user_id}/roles"): "public roles, no auth (allowlist group)",
+    ("GET", "/api/profile/{user_id}/roles"):
+        "roles of any live user, for any signed-in session (allowlist group); "
+        "anonymous is a 401 since #115",
 }
 
 #: Confirmed cross-user leaks the matrix reproduces today, each to be fixed in
@@ -863,7 +865,7 @@ def allowlist_cases(a_user: str = USER_A, b_user: str = USER_B) -> list[Case]:
         Case("allowlist", "GET", "/api/profile/{user_id}", f"/api/profile/{a_user}",
              expect=(200,), note="public profile projection", must_contain=(a_user,)),
         Case("allowlist", "GET", "/api/profile/{user_id}/roles", f"/api/profile/{a_user}/roles",
-             expect=(200,), note="public roles"),
+             expect=(200,), note="roles for a signed-in viewer (anonymous: 401, #115)"),
         Case("allowlist", "GET", "/api/profile/username/check", "/api/profile/username/check",
              query={"username": "rich-active", "user_id": b_user}, expect=(200,),
              note="username availability"),
