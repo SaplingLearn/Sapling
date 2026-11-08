@@ -560,3 +560,85 @@ def test_band_control_reads_happen_after_the_flush(loop):
             json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-1", "answer": "n == 0"},
         )
     assert order == ["flush", "window"]
+
+
+# ── wave-2 interplay: A122 × A113 / A124, and A122 × A118 ───────────────────
+
+
+@pytest.mark.parametrize(
+    "window,reads,approved",
+    [
+        ([MISS], dict(p=0.4, prereqs={"node-0": 0.2}), ["node-0", "node-1", "node-2"]),
+        ([HIT, MISS] * 5, dict(p=0.3, opps=10, streak=2, prereqs={"node-0": 0.25}), ["node-0", "node-2"]),
+    ],
+    ids=["repair", "wheelspin"],
+)
+def test_a_band_control_cursor_move_never_activates_a_held_or_reported_item(
+    loop, window, reads, approved
+):
+    """A122 × A113 × A124: band control moves the cursor to the weak
+    prerequisite (a repair that comes back, or wheel-spin's replacement), and
+    the activation on it chooses through the one exclusion path every item
+    choice uses: never an item the student reported (A113), never one whose
+    key is held (A124), never the post-test reserve (A23). The held and the
+    reported item sort ahead of the fresh one, so either exclusion missing
+    would pose it."""
+    _learner_reads(loop, **reads)
+    _answer(loop, window, correct=False, edges=[("node-0", "node-1")])
+    doc = loop.store["doc"]
+    assert doc["concept"] == "node-0" and doc["plan"]["approved"] == approved
+    item = routes.ITEM.model_copy
+    reserve = item(update={"id": "item-0", "question_hash": "qh-0"})  # the lowest hash: A23's reserve
+    held = item(update={"id": "item-a", "question_hash": "qh-a", "lint_flags": ["key_disputed"]})
+    reported = item(update={"id": "item-b", "question_hash": "qh-b"})
+    fresh = item(update={"id": "item-c", "question_hash": "qh-c"})
+    loop.list_items.return_value = [reserve, held, reported, fresh]
+    loop.reported_hashes.return_value = {"qh-b"}
+    from learning import checks
+
+    loop.reserve.side_effect = checks.posttest_reserve_hash  # the real A23 rule: qh-0 here
+    r = routes.client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
+    assert r.status_code == 200, r.text
+    assert loop.store["doc"]["current"] == "qh-c"
+
+
+def test_upload_prerequisite_edges_feed_band_controls_prerequisite_status():
+    """A118 × A122: an edge an upload writes behind `upload_prereq_edges`
+    (services/concept_prereqs.py::edge_payload, stored by apply_graph_update as
+    source → source_node_id and target → target_node_id) is read by band
+    control's `_prerequisites` with its prerequisite as the dependent's parent,
+    through the same EDGE_PREREQ_SOURCE_IS_PREREQ orientation — so flag-on
+    edges decide the prerequisite status A122 reads (proficient, or a weak
+    parent to repair), where a concept with no edge at all is UNKNOWN."""
+    from learning.evidence import PREREQ_RELATIONSHIP_TYPE
+    from routes import learn_loop
+    from services.concept_prereqs import edge_payload
+
+    payload = edge_payload("node-0", "node-1")
+    assert payload["relationship_type"] == PREREQ_RELATIONSHIP_TYPE  # the type _prerequisite_edges reads
+    stored = (payload["source"], payload["target"])  # (source_node_id, target_node_id)
+
+    def states(p_known):
+        return lambda user_id, ids: {
+            "node-0": LearnerState(user_id=user_id, node_id="node-0", p_known=p_known, exists=True)
+        }
+
+    with (
+        patch("routes.learn_loop._prerequisite_edges", return_value=[stored]),
+        patch("routes.learn_loop.read_states", side_effect=states(0.95)),
+    ):
+        prereqs = learn_loop._prerequisites("u1", "node-1")
+        assert [p.node_id for p in prereqs] == ["node-0"]
+        assert policy.prerequisite_status(prereqs) is policy.PrerequisiteStatus.PROFICIENT
+        assert learn_loop._prereq_proficient("u1", "node-1") is True
+        assert learn_loop._prerequisites("u1", "node-0") == []  # the dependent is never a parent
+    with (
+        patch("routes.learn_loop._prerequisite_edges", return_value=[stored]),
+        patch("routes.learn_loop.read_states", side_effect=states(0.2)),
+    ):
+        weak = learn_loop._prerequisites("u1", "node-1")
+        assert policy.repair_target(weak).node_id == "node-0"
+        assert learn_loop._prereq_proficient("u1", "node-1") is False
+    with patch("routes.learn_loop._prerequisite_edges", return_value=[]):
+        none = learn_loop._prerequisites("u1", "node-1")
+        assert policy.prerequisite_status(none) is policy.PrerequisiteStatus.UNKNOWN
