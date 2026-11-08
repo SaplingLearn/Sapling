@@ -213,7 +213,7 @@ async function openDashboard(page: Page): Promise<void> {
 }
 
 async function openCoursesKey(page: Page): Promise<void> {
-  await page.getByTestId("dashboard-courses-key-toggle").click();
+  // The key is always open; this just waits for it to mount.
   await visible(page, "dashboard-courses-manage");
 }
 
@@ -674,15 +674,7 @@ export const RECIPES_CORE: RecipeBook = {
       await text(page, "No recent sessions — start learning to fill this in.");
       await text(page, "No upcoming assignments.");
       await text(page, "no concepts yet");
-      await expect(page.getByTestId("dashboard-courses-key-toggle")).toHaveCount(0);
-      await page.waitForTimeout(2_000);
-    },
-  },
-
-  "dashboard/courses-key-collapsed": {
-    run: async (page) => {
-      await openDashboard(page);
-      await expect(page.getByTestId("dashboard-courses-key-toggle")).toHaveAttribute("aria-label", "Expand courses key");
+      await expect(page.getByTestId("dashboard-courses-key")).toHaveCount(0);
       await page.waitForTimeout(2_000);
     },
   },
@@ -712,7 +704,6 @@ export const RECIPES_CORE: RecipeBook = {
         );
       }
       await openDashboard(page);
-      await page.getByTestId("dashboard-courses-key-toggle").click();
       await text(page, "Nothing enrolled this semester.");
     },
   },
@@ -722,7 +713,7 @@ export const RECIPES_CORE: RecipeBook = {
       await mockJson(page, COURSES, { courses: [] }, { method: "GET" });
       await openDashboard(page);
       await waitGraph(page);
-      await expect(page.getByTestId("dashboard-courses-key-toggle")).toHaveCount(0);
+      await expect(page.getByTestId("dashboard-courses-key")).toHaveCount(0);
       await page.waitForTimeout(1_500);
     },
   },

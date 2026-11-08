@@ -217,7 +217,6 @@ export default function GraphPreview() {
             hasCourses
             semesterActive={false}
             placement="top-left"
-            defaultCollapsed={false}
             testIdPrefix="preview"
             activeCourseId={keyHover ?? graphHover}
             onHoverCourse={setKeyHover}

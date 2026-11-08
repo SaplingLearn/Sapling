@@ -604,7 +604,6 @@ export function Tree() {
                   hasCourses={courses.length > 0}
                   semesterActive={!!activeSemester}
                   placement="top-left"
-                  defaultCollapsed={false}
                   testIdPrefix="tree"
                   activeCourseId={keyHoverCourse ?? graphHoverCourse}
                   selectedCourseId={courseFilter === "all" ? null : courseFilter}

@@ -390,9 +390,10 @@ never collide in the DOM.
 
 | testid | element |
 | --- | --- |
-| `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
-| `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
-| `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
+| `dashboard-courses-key` | the always-open "My courses" key overlay on the graph panel (default sidebar layout; mounts once enrollments have loaded, absent with no courses) |
+| `dashboard-course-row` | a course row button inside the key (click: zoom to the course, again to zoom out); carries `data-course-id` |
+| `dashboard-course-code` | a course row's code/name label inside the key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
+| `dashboard-courses-manage` | the cog in the key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
 | `dashboard-resume-{sessionId}` | Today's plan session item — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
 | `dashboard-today-column` / `dashboard-streak` / `dashboard-plan` / `dashboard-mastery` | the sidebar layout's right column and its three cards (`dashboard/TodayColumn.tsx`) |
 | `dashboard-plan-progress` | the plan's "N of M done today" line |

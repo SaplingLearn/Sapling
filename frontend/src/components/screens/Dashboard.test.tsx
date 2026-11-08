@@ -164,8 +164,7 @@ describe("Dashboard course list by active semester", () => {
 
     render(<Dashboard />);
 
-    const toggle = await screen.findByTestId("dashboard-courses-key-toggle");
-    fireEvent.click(toggle);
+    await screen.findByTestId("dashboard-courses-key");
     expect(screen.getByText("Nothing enrolled this semester.")).toBeInTheDocument();
   });
 });
