@@ -96,6 +96,7 @@ from learning import grade_checkpoint, item_reports
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
 from learning.checks import CheckItem, is_servable, lint_tiers, posttest_reserve_hash, select_item
+from learning.checks import unsourced as item_unsourced
 from learning.evidence import (
     PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
 )
@@ -255,6 +256,7 @@ from services.encryption import decrypt_if_present, decrypt_json_column
 from services.chat_stream import stream_structured_turn
 from services.check_item_service import (
     course_has_items,
+    drafting_pending,
     get_check_item,
     items_by_hash,
     items_by_ids,
@@ -266,7 +268,7 @@ from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
 from services.prompt_safety import neutralise_control_tags, wrap_untrusted
 from services.quiz_ask import QUIZ_ASK_ORIGIN, open_quiz_ask
-from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks
+from services.rag_service import chunks_for_ids, format_rag_context, retrieve_chunks_detailed
 from services.request_context import current_request_id
 from services.session_modes import NOT_REVIEW
 from services.request_limits import check_rate_limit
@@ -908,9 +910,16 @@ def _seconds_since(t: float | None, now: float) -> float:
 # ── Context and run assembly ───────────────────────────────────────────────
 
 
-def _context_blocks(*, user_id: str, course_id: str, user_message: str, context, item) -> list[str]:
+def _context_blocks(
+    *, user_id: str, course_id: str, user_message: str, context, item, out: dict | None = None
+) -> list[str]:
     """Only the blocks `context` (policy.context_policy) asks for, in the legacy
-    order, with the legacy builders (routes/learn.py::_prepare_chat_run)."""
+    order, with the legacy builders (routes/learn.py::_prepare_chat_run).
+
+    Spec §13 A128: the course-material retrieval tells a FAILURE from an empty
+    result (`retrieve_chunks_detailed`); a failed one sets `out["retrieval"] =
+    "failed"` for the turn, and the turn still runs (with no RAG block, as an
+    empty result would) — the outage is reported, never blocking."""
     blocks: list[str] = []
     bu_code = _get_course_info(course_id).get("course_code") if course_id else None
     if context.catalog and bu_code:
@@ -918,9 +927,12 @@ def _context_blocks(*, user_id: str, course_id: str, user_message: str, context,
         if catalog:
             blocks.append(_CATALOG_HEADER + catalog)
     if context.rag_k and bu_code:
-        rag = format_rag_context(
-            retrieve_chunks(user_message, course_id=bu_code, k=context.rag_k, user_id=user_id)
+        got = retrieve_chunks_detailed(
+            user_message, course_id=bu_code, k=context.rag_k, user_id=user_id
         )
+        if got.failed and out is not None:
+            out["retrieval"] = "failed"
+        rag = format_rag_context(got.chunks)
         if rag:
             blocks.append(rag)
     if context.source_chunks and item is not None:
@@ -935,6 +947,57 @@ def _context_blocks(*, user_id: str, course_id: str, user_message: str, context,
         if graph:
             blocks.append(graph)
     return blocks
+
+
+# ── A failed course-material retrieval (spec §13 A128) ─────────────────────
+#
+# Two loop_state keys. `materials_notice`: the session's ONE calm note that
+# its course materials are unavailable has been served (`materials_unavailable`
+# in the turn's response; the UI renders it — never a prompt change).
+# `retrieval_failed`: the concept nodes whose teach turns ran with a failed
+# retrieval since their last check activation; `_activate_next_item` moves a
+# concept's mark onto the step it opens (`retrieval: "failed"`), so that
+# step's zpd.step says its teaching lacked the course's material.
+_MATERIALS_NOTICE = "materials_notice"
+_RETRIEVAL_FAILED = "retrieval_failed"
+#: The step entry's key (and zpd.step's payload value) for such a step.
+_RETRIEVAL_KEY, _RETRIEVAL_FAILED_VALUE = "retrieval", "failed"
+
+
+def _note_retrieval_failure(state: dict, concept_node: str | None) -> bool:
+    """Record a turn whose course-material retrieval failed, on the loop
+    document (a compare-and-set mutate's business: no side effects): the
+    concept's mark, and the session's note. True when THIS turn serves the
+    note — the first failure of the session, never again after it."""
+    if concept_node:
+        marked = [n for n in state.get(_RETRIEVAL_FAILED) or [] if isinstance(n, str)]
+        if concept_node not in marked:
+            state[_RETRIEVAL_FAILED] = [*marked, concept_node]
+    if state.get(_MATERIALS_NOTICE) is True:
+        return False
+    state[_MATERIALS_NOTICE] = True
+    return True
+
+
+def _materials_notice(out: dict) -> dict:
+    """The turn response's A128 key: `materials_unavailable: true` on the ONE
+    turn that serves the session's note, absent on every other (never false)."""
+    return {"materials_unavailable": True} if out.get("materials_notice") else {}
+
+
+def _take_retrieval_mark(state: dict, concept_node: str) -> bool:
+    """Whether the concept's teaching since its last check ran with a failed
+    retrieval — the mark is consumed, so the NEXT check of the concept starts
+    clean (its own teach turns decide it)."""
+    marked = [n for n in state.get(_RETRIEVAL_FAILED) or [] if isinstance(n, str)]
+    if concept_node not in marked:
+        return False
+    rest = [n for n in marked if n != concept_node]
+    if rest:
+        state[_RETRIEVAL_FAILED] = rest
+    else:
+        state.pop(_RETRIEVAL_FAILED, None)
+    return True
 
 
 def _prepare_loop_run(
@@ -957,6 +1020,7 @@ def _prepare_loop_run(
     nonce: str | None = None,
     v2: bool = False,
     focus_block: str | None = None,
+    out: dict | None = None,
 ) -> tuple:
     """One loop run's agent, user message, run kwargs and deps. `user_message`
     is the retrieval query and — unless `trusted` (server text: an [ACTION: ...]
@@ -966,7 +1030,9 @@ def _prepare_loop_run(
     (enveloped by the caller, `_guard_history`). `v2` adds the
     v2 variant's run arguments (spec §13 A121, `variant_run_args`):
     none when off. `focus_block` (v2 teach turns only) is the plan concept's
-    untrusted block (`plan_focus_block`), first among the context blocks."""
+    untrusted block (`plan_focus_block`), first among the context blocks.
+    `out` receives what the context assembly found (A128: `retrieval:
+    "failed"`)."""
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id or None,
@@ -979,7 +1045,12 @@ def _prepare_loop_run(
         loop_turn=loop_turn,
     )
     blocks = _context_blocks(
-        user_id=user_id, course_id=course_id, user_message=user_message, context=context, item=item
+        user_id=user_id,
+        course_id=course_id,
+        user_message=user_message,
+        context=context,
+        item=item,
+        out=out,
     )
     if focus_block:
         blocks = [focus_block, *blocks]
@@ -1863,6 +1934,7 @@ class _LoopTurn:
         self.reveal_unscanned = False  # A88: its open items could not be read
         self.reveal_overflow = None  # A93: posed items beyond the scan window
         self.reveal_fallback: tuple | None = None  # a failed learning_reveals write
+        self.retrieval_failed = False  # A128: this turn's course-material retrieval failed
         # Spec §13 A121, both settled in _plan before the model runs: the turn
         # poses the concept's next check (so it ends without its own question),
         # and the turn opens with the verdict on the reply to the tutor's question
@@ -2059,6 +2131,7 @@ class _LoopTurn:
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
         self.poses_check, self.answer_check, self.focus = False, False, None
+        self.retrieval_failed = False
         if decision.pause_novice and self.band == "novice" and self.phase in ("check", "hint"):
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
             return
@@ -2145,6 +2218,7 @@ class _LoopTurn:
             # (never the stored brief, the history or the system prompt, A19)
             self.prefix = with_confrontation(self.prefix, self.confront_line)
             self.confront_used = confront_of(self.state)
+        assembly: dict = {}  # A128: what the context assembly found
         self.agent, self.assembled, self.run_kwargs, self.deps = _prepare_loop_run(
             user_id=self.user_id,
             session_id=self.session_id,
@@ -2173,7 +2247,9 @@ class _LoopTurn:
             nonce=nonce,
             v2=self.v2,
             focus_block=plan_focus_block(self.focus[0]) if self.focus else None,
+            out=assembly,
         )
+        self.retrieval_failed = assembly.get("retrieval") == "failed"
         self.deps.loop_leak = self._leak_guard()  # N1: the validator's guard
 
     def _confront_line(self) -> str | None:
@@ -2455,6 +2531,12 @@ class _LoopTurn:
                 ),
                 session_id=self.session_id,  # A82: per-session cost attribution
                 earnest_blocked=entry.get("earnest_blocked") is True,  # A109
+                # A128: the step's teaching ran with a failed retrieval
+                retrieval=(
+                    _RETRIEVAL_FAILED_VALUE
+                    if entry.get(_RETRIEVAL_KEY) == _RETRIEVAL_FAILED_VALUE
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("zpd.step not emitted for %s: incomplete step record", self.active)
@@ -2524,6 +2606,7 @@ class _LoopTurn:
             "hint_offer": {"rung": offer_rung} if offer_rung is not None else None,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
             "check": check,
+            **_materials_notice(out),
         }
 
     def begin_activity(self) -> None:
@@ -2768,6 +2851,8 @@ class _LoopTurn:
             moved = _apply_band_control(state, entry)
             if not moved and state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
                 _advance_cursor(state)
+        if self.retrieval_failed and _note_retrieval_failure(state, self.concept_node):
+            out["materials_notice"] = True  # A128: once per session (the stored key)
         state["phase_served"] = self.phase
         if self.reveal_fallback is not None:  # A88: a failed learning_reveals write
             _mark_revealed(state, *self.reveal_fallback)
@@ -2955,6 +3040,11 @@ class _LoopOpener(_LoopTurn):
             # turn does, so the student's reply to it is judged like any other.
             # A template opener asks nothing and leaves the key unset.
             self.state[OPEN_QUESTION_KEY] = True
+        notice: dict = {}
+        # A128: no session row yet — the lazy document carries the note's key
+        # and the concept's mark into the row the first turn materialises
+        if self.retrieval_failed and _note_retrieval_failure(self.state, self.concept_node):
+            notice["materials_notice"] = True
         PENDING_SESSIONS[self.session_id] = {
             "user_id": self.user_id,
             "mode": self.mode,
@@ -2975,6 +3065,7 @@ class _LoopOpener(_LoopTurn):
             "tier": self.tier,
             "phase": self.phase,
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
+            **_materials_notice(notice),
         }
 
 
@@ -3345,6 +3436,9 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
                 view, shown_on_concept=_worked_example_shown(state, concept)
             ):
                 step["worked_first"] = True
+            if _take_retrieval_mark(state, concept):
+                # A128: this step's teaching ran without its course material
+                step[_RETRIEVAL_KEY] = _RETRIEVAL_FAILED_VALUE
             _steps(state)[qh] = step
             return qh
         if not _advance_cursor(state, no_items=True):
@@ -5526,6 +5620,8 @@ async def start_session(body: StartSessionBody, request: Request):
     }
     if result.get("budget"):
         out["budget"] = result["budget"]
+    if result.get("materials_unavailable"):
+        out["materials_unavailable"] = True  # A128: present only when true
     return out
 
 
@@ -5615,6 +5711,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             out["goal_progress"] = plan["goal_progress"]
         if saved.get("goal"):
             out["practice_unavailable_node_ids"] = list(plan.get("practice_unavailable_node_ids") or [])
+        out.update(_preparing(body.user_id, course_id))  # A128
         return out
     item = get_check_item(saved["steps"][qh]["check_item_id"])
     # A122: an item that opens on the worked example says so (the client asks for it)
@@ -6078,6 +6175,12 @@ class _BoundItem:
     item: CheckItem
     node_id: str
 
+    @property
+    def unsourced(self) -> bool:
+        """A128: drafted from extracted text after a failed index — the probe
+        ranks such an item after an equal one with its sources."""
+        return item_unsourced(self.item)
+
     def __getattr__(self, name: str):
         return getattr(self.item, name)
 
@@ -6246,6 +6349,21 @@ def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str
 def _probe_course_has_items(course_id: str) -> bool:
     """A23: one `limit=1` read; False for a session with no course."""
     return bool(course_id) and course_has_items(course_id)
+
+
+def _preparing(user_id: str, course_id: str, *, no_items: bool = False) -> dict:
+    """Spec §13 A128: `{"preparing": True}` while the course has no item to
+    serve and the student's own upload in it is still being drafted
+    (`check_item_service.drafting_pending`), else {} — present only when true.
+    `no_items`: the caller already read that the course has none. Advisory
+    copy, so a read that fails answers {} (the pre-A128 state), never an error."""
+    try:
+        if not no_items and _probe_course_has_items(course_id):
+            return {}
+        return {"preparing": True} if drafting_pending(user_id, course_id) else {}
+    except Exception as exc:
+        logger.warning("loop: the preparing state could not be read (%s)", type(exc).__name__)
+        return {}
 
 
 def _probe_items(user_id: str, course_id: str, node_ids: list[str]) -> list[_BoundItem]:
@@ -6417,7 +6535,15 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
 
         saved = _update_loop_state(body.session_id, finish_empty)
         _emit_probe_done(saved, body.user_id, request_id)
-        return {"done": True, "phase": "plan", "no_check_items": True, **_learning_scope_payload(saved)}
+        return {
+            "done": True,
+            "phase": "plan",
+            "no_check_items": True,
+            # A128: the student's own upload is still being drafted — the UI says
+            # "preparing" instead of "no check items" (present only when true)
+            **_preparing(body.user_id, course_id, no_items=True),
+            **_learning_scope_payload(saved),
+        }
 
     states = _plan_states(body.user_id, course_id)
     edges = _plan_prereq_edges(body.user_id, list(states))

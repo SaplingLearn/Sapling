@@ -66,6 +66,8 @@ export const LINT_FLAG_LABELS: Record<CheckItemLintFlag, string> = {
   // spec §13 A123: why staff hold it (the database sets these from the decision)
   reports_threshold: "Quarantined by student reports",
   staff_retired: "Retired — waiting to be removed",
+  // spec §13 A128: provenance, not a flaw (and no hold) — its upload failed to index
+  unsourced: "Drafted from the upload's raw text (indexing failed): no source passages",
 };
 
 export const REPORT_REASON_LABELS: Record<LoopReportReason, string> = {

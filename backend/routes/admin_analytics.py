@@ -23,6 +23,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from agents._providers import slot_warnings
 from db.connection import pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
 from learning.calibration import eligible as calibration_eligible
@@ -643,6 +644,21 @@ class LearningGain(BaseModel):
     windows: list[GainWindow]
 
 
+class SlotWarning(BaseModel):
+    """Spec §13 A128: an evidence-producing model slot this API process runs
+    outside its evaluated set (`unevaluated`: reason pending_claude_eval |
+    not_evaluated), or resolved to the model it must be independent of
+    (`not_independent`: A22's second opinion, A124's key solve). The process's
+    CURRENT configuration, not the date range: warnings are about now."""
+
+    kind: Literal["unevaluated", "not_independent"]
+    slot: str
+    model: str
+    reason: str | None = None
+    independent_of: str | None = None
+    rule: str | None = None
+
+
 class LearningLoopKpis(BaseModel):
     range: Range
     steps_total: int
@@ -661,6 +677,8 @@ class LearningLoopKpis(BaseModel):
     gates: Gates
     calibration: Calibration
     learning_gain: LearningGain
+    # A128: the active evidence-slot warnings ([] when none; never blocking)
+    slot_warnings: list[SlotWarning] = Field(default_factory=list)
     truncated: bool = False
 
 
@@ -923,8 +941,9 @@ def learning_loop_kpis(
     every evidence read here: an observation graded against an item staff
     retired is left out — of the calibration (counted in `excluded_void`), the
     next-session success, the learning gain's post-tests (counted per window in
-    `excluded_retired`) and its pretests; `truncated: true` means a scan cap
-    cut the aggregation short."""
+    `excluded_retired`) and its pretests; the active evidence-slot warnings of
+    this process's configuration (A128); `truncated: true` means a scan cap cut
+    the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -989,5 +1008,6 @@ def learning_loop_kpis(
         ),
         calibration=Calibration(**bkt_calibration(valid), excluded_void=excluded_void),
         learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired)),
+        slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
         truncated=events_truncated or evidence_truncated or poses_truncated,
     )

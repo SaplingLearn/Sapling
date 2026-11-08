@@ -45,7 +45,10 @@ from services.request_context import current_request_id
 from services.durable import workflow_id
 from services.document_indexing import index_document
 from services.check_item_service import (
+    DRAFTING_FAILED,
+    DRAFTING_PENDING,
     generate_for_document,
+    mark_drafting,
     queue_generation_for_document,
     retire_items_for_documents,
 )
@@ -1325,8 +1328,14 @@ def _index_then_check_items(
 
     Each step is logged, never raised: an indexing failure leaves the document
     unindexed (the sweeper re-drives it) and drafting then falls back to its
-    extracted text; a drafting failure must not fail the upload that runs this
-    inline in function mode."""
+    extracted text (A128: its items are stored `unsourced`); a drafting
+    failure must not fail the upload that runs this inline in function mode.
+
+    A128: the document's drafting status is `pending` from the first line —
+    indexing included, since the student waits on both — until the drafting
+    run records how it ended (`generate_for_document`); a queue that refuses
+    the run records `failed` here."""
+    mark_drafting(doc_id, DRAFTING_PENDING)
     try:
         index_document(doc_id)
     except Exception:
@@ -1343,6 +1352,9 @@ def _index_then_check_items(
             )
     except Exception:
         logger.exception("Check items for doc %s failed", doc_id)
+        if model_mode() != "function":
+            # the run never started (generate_for_document marks its own end)
+            mark_drafting(doc_id, DRAFTING_FAILED)
 
 
 #: In-flight post-roll tasks (#759). The event loop holds only a WEAK

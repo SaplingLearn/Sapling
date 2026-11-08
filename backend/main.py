@@ -121,11 +121,16 @@ install_accounting_logfire_bridge()
 async def _lifespan(_app: FastAPI):
     # #771: the model mode is fixed for the life of the process from here on,
     # so the import-time agents and every per-call gate agree on it.
-    from agents._providers import freeze_model_mode
+    from agents._providers import check_slot_guards, freeze_model_mode
     freeze_model_mode()
     # #174: fail loudly at startup if required secrets are missing, before
     # serving any request, rather than booting and failing opaquely later.
     validate_config()
+    # Spec §13 A128: an evidence-producing model slot flipped (by env) to a
+    # model outside its evaluated set warns, and a second opinion or key solve
+    # resolved to its partner's model logs an ERROR — once each, with one event
+    # (queued; the events worker below drains it). Warn only: never blocks boot.
+    check_slot_guards()
     # Refuse to boot with an ENCRYPTION_KEY that isn't this database's: the
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.

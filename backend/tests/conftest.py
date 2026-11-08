@@ -156,6 +156,23 @@ def _clear_lru_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_degraded_mode_state():
+    """Spec §13 A128: two pieces of per-process state. The embeddings breaker
+    opens after a few failed embed calls — and many tests fail embed calls on
+    purpose — so one test's failures would refuse the next test's calls; the
+    evidence-slot guard warns once per (slot, model) per process, so a test
+    that flips a slot would silence the next test's warning."""
+    from agents._providers import reset_slot_guard_for_tests
+    from services.rag_service import reset_embedding_breaker_for_tests
+
+    reset_embedding_breaker_for_tests()
+    reset_slot_guard_for_tests()
+    yield
+    reset_embedding_breaker_for_tests()
+    reset_slot_guard_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _tutor_session_reads_follow_learn_table(monkeypatch):
     """The tutor-session ownership read moved from routes/learn.py to
     services/tutor_sessions.py so flashcards/feedback could share it. Dozens

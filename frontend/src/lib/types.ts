@@ -710,7 +710,23 @@ export interface LearningLoopKpisData {
   };
   /** post-tests answered in the range, per fixed window (spec §13 A112) */
   learning_gain: { delayed_min_days: number; windows: LoopGainWindow[] };
+  /** spec §13 A128: the API process's active evidence-slot warnings (its current
+   *  configuration, not the range); absent from a pre-A128 backend. */
+  slot_warnings?: LoopSlotWarning[];
   truncated: boolean;
+}
+
+/** An evidence-producing model slot run outside its evaluated set, or resolved
+ *  to the model it must be independent of (A22's second opinion, A124's key solve). */
+export interface LoopSlotWarning {
+  kind: 'unevaluated' | 'not_independent';
+  slot: string;
+  model: string;
+  /** unevaluated: pending_claude_eval | not_evaluated */
+  reason?: string | null;
+  /** not_independent: the slot whose model it shares, and the spec rule */
+  independent_of?: string | null;
+  rule?: string | null;
 }
 
 export interface ErrorsPageData {

@@ -121,6 +121,11 @@ REQUIRED_COLUMNS = {
         "aligned_at": "timestamp with time zone",  # spec §13 A119: the alignment check ran
         "key_checked_at": "timestamp with time zone",  # spec §13 A124: the blind solve ran
     },
+    # spec §13 A128: an upload's check-item drafting status and when it was set
+    "documents": {
+        "check_items_status": "text",
+        "check_items_at": "timestamp with time zone",
+    },
     # spec §13 A124: staff's verdict on one course item's key (the stratified audit)
     "check_item_audits": {
         "course_id": "text",

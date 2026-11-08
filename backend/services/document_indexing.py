@@ -37,7 +37,11 @@ from services.chunk_visibility import (
 from services.chunker import chunk_for_category
 from services.encryption import decrypt, decrypt_if_present
 from services.events_service import log_event
-from services.rag_service import course_relevance, index_document_chunks_detailed
+from services.rag_service import (
+    course_relevance,
+    embedding_blocked,
+    index_document_chunks_detailed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +77,14 @@ _BACKOFF_SECONDS = (1, 4)
 #: Failures no retry can fix. Recorded EXHAUSTED at once, so they stay
 #: visible on the admin list and the sweeper never claims them again.
 TERMINAL_ERRORS = frozenset({"no_extracted_text", "no_chunks", "no_course"})
+
+#: Spec §13 A128: the attempt found the embeddings breaker already open, so it
+#: made no embed call. The PROCESS's outage, not the document's failure: the
+#: row is put back as the attempt found it (no attempt spent, nothing
+#: terminal) and the sweeper re-drives it once the breaker closes. An attempt
+#: whose OWN calls failed and opened the breaker is spent as usual — so a
+#: document whose content makes the service fail still runs out of attempts.
+EMBEDDINGS_UNAVAILABLE = "embeddings_unavailable"
 
 
 class IndexOutcome(NamedTuple):
@@ -150,13 +162,16 @@ def index_document(
         logger.exception("[RAG] indexing doc %s failed", doc_id)
         outcome = IndexOutcome(FAILED, error=type(exc).__name__)
 
+    # Spec §13 A128: no embed call went out — the breaker was already open.
+    deferred = outcome.error == EMBEDDINGS_UNAVAILABLE
+
     # `_load` refused a deleted row, but only at the start: a delete that
     # lands while this attempt embeds still sees its chunks arrive after the
     # delete path withdrew what was there (#758). The sources this attempt
     # wrote are already in the ledger, so whichever of the two runs second
     # sees the other's effect — the same ordering argument as rag_service's
-    # post-index consent reconcile.
-    if outcome.status != SKIPPED and _deleted_since_load(doc_id):
+    # post-index consent reconcile. A deferred attempt wrote nothing.
+    if outcome.status != SKIPPED and not deferred and _deleted_since_load(doc_id):
         logger.info(
             "[RAG] doc %s was deleted while it indexed — withdrawing its chunks",
             doc_id,
@@ -166,21 +181,35 @@ def index_document(
     # What the row records: the attempt's own result, unless that spent the
     # last of the budget or can never succeed — then the terminal state. The
     # event below keeps reporting the attempt's result (failed | partial).
-    stored = _terminal_if_spent(outcome, _attempt_number(row, claimed=claimed, force=force))
+    stored = (
+        outcome if deferred
+        else _terminal_if_spent(outcome, _attempt_number(row, claimed=claimed, force=force))
+    )
 
     if tracking:
-        if outcome.status == SKIPPED and not first_attempt:
+        if (outcome.status == SKIPPED and not first_attempt) or deferred:
             # `skipped` describes this PROCESS (embedding is off here), not the
             # document. Recorded on a re-drive it would be terminal: the row
             # would leave the sweeper's queue, the admin list and the backfill's
             # default targets — so a backfill run from a shell still holding the
             # E2E function-mode export would move every unfinished document out
             # of every recovery path. Only a never-attempted upload records it.
+            # A deferred attempt (A128) describes the process too — its outage —
+            # and is put back on EVERY attempt, a first one included: recorded,
+            # it would spend the document's budget on an outage it never met.
             _restore(doc_id, prior, claimed=claimed, lease=lease)
         else:
             _finish(doc_id, stored, lease=lease)
-    _report(row, outcome, was_recovery=was_recovery, tracking=tracking,
-            claimed=claimed, force=force)
+    if deferred:
+        # The breaker reported the outage once (its own event); one
+        # rag.index_failed per deferred upload or sweep would only repeat it.
+        logger.info(
+            "[RAG] doc %s not indexed: the embeddings breaker is open — left "
+            "as it was for the sweeper (no attempt spent)", doc_id,
+        )
+    else:
+        _report(row, outcome, was_recovery=was_recovery, tracking=tracking,
+                claimed=claimed, force=force)
     return stored if tracking else outcome
 
 
@@ -326,6 +355,12 @@ def _run(row: dict) -> IndexOutcome:
         confidence=row.get("shareability_confidence"),
     )
 
+    # Spec §13 A128: the breaker is already open, so every embed call would be
+    # refused — the process's outage, never this document's failure. Checked
+    # after the deterministic checks above, which no outage changes.
+    if embedding_blocked():
+        return IndexOutcome(FAILED, error=EMBEDDINGS_UNAVAILABLE)
+
     # The best try, not the last: chunk ids are content-addressed, so whatever
     # ANY try upserted is in course_chunks now, and the best count is the
     # honest lower bound on what retrieval is serving.
@@ -372,6 +407,12 @@ def _run(row: dict) -> IndexOutcome:
             "[RAG] doc %s indexed %d/%d chunks (try %d/%d)",
             doc_id, result.upserted, result.total, attempt + 1, _INLINE_TRIES,
         )
+        if getattr(result, "embedding_unavailable", False) or embedding_blocked():
+            # A128: the breaker opened during this attempt (this document's
+            # own calls may have opened it), so another try would only be
+            # refused: the attempt ends here, spent, and the sweeper re-drives
+            # the document once the breaker closes — no sleep, no hot retry.
+            break
 
     landed = best.upserted if best is not None else 0
     if landed:

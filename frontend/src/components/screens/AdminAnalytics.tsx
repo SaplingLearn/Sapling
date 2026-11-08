@@ -302,9 +302,41 @@ function LearningGainTable({ gain }: { gain: LearningLoopKpisData["learning_gain
   );
 }
 
+const SLOT_WARNING_REASON: Record<string, string> = {
+  pending_claude_eval: "its Claude eval has not passed yet",
+  not_evaluated: "its quality gates were not recorded on this model",
+};
+
+/** spec §13 A128: evidence-producing model slots this API process runs outside
+ *  their evaluated models, or on the model they must be independent of. A
+ *  warning only — grading and tutoring run on. Nothing renders when none. */
+function SlotWarnings({ warnings }: { warnings: NonNullable<LearningLoopKpisData["slot_warnings"]> }) {
+  if (!warnings.length) return null;
+  return (
+    <div
+      data-testid="admin-loop-slot-warnings"
+      role="status"
+      style={{ marginBottom: 16, padding: "10px 14px", borderRadius: "var(--r-md)", background: "var(--warn-soft)", fontSize: 13 }}
+    >
+      <strong>Model slot warnings</strong>
+      <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+        {warnings.map(w => (
+          <li key={`${w.kind}-${w.slot}`} data-testid={`admin-loop-slot-warning-${w.slot}`}>
+            <code>{w.slot}</code> runs <code>{w.model}</code>
+            {w.kind === "not_independent"
+              ? <> — the same model as <code>{w.independent_of}</code>, so its verdicts are not independent ({w.rule})</>
+              : <> — {SLOT_WARNING_REASON[w.reason ?? ""] ?? "outside its evaluated models"}</>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
   return (
     <>
+      <SlotWarnings warnings={d.slot_warnings ?? []} />
       {d.truncated && <div style={{ marginBottom: 8 }}><TruncatedBadge /></div>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
         <GateChip label="Zero served reveals" ok={d.gates.zero_leaks} testid="admin-loop-gate-leaks" />

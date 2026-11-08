@@ -3109,6 +3109,10 @@ class TestItemSources:
                     assert [c["id"] for c in svc.source_chunks(_doc())] == want
 
     def test_unindexed_source_falls_back_to_extracted_text(self):
+        """A128: the fallback passages of a document whose indexing FAILED (any
+        index_status but `skipped`, an unknown one included) are marked
+        `unsourced`; a document whose indexing was skipped by design (the #439
+        seam: function mode, no key) falls back unmarked."""
         from services import check_item_service as svc
 
         factory, _ = _cached_tables({"course_chunks": []})
@@ -3116,8 +3120,24 @@ class TestItemSources:
             patch("services.check_item_service.table", side_effect=factory),
             patch("services.check_item_service.decide_visibility", return_value="shared"),
         ):
-            assert svc.source_chunks(_doc()) == [
-                {"id": None, "chunk_index": 0, "chunk_text": "plain body", "doc_id": "doc-1"}
+            for status in (None, "failed", "exhausted", "pending", "partial"):
+                assert svc.source_chunks(_doc(index_status=status)) == [
+                    {
+                        "id": None,
+                        "chunk_index": 0,
+                        "chunk_text": "plain body",
+                        "doc_id": "doc-1",
+                        "unsourced": True,
+                    }
+                ], status
+            assert svc.source_chunks(_doc(index_status="skipped")) == [
+                {
+                    "id": None,
+                    "chunk_index": 0,
+                    "chunk_text": "plain body",
+                    "doc_id": "doc-1",
+                    "unsourced": False,
+                }
             ]
             assert svc.source_chunks(_doc(extracted_text=None)) == []
 
@@ -3137,7 +3157,13 @@ class TestItemSources:
         ):
             passages = svc.source_chunks(_doc(extracted_text=encrypt_if_present(text)))
         assert passages == [
-            {"id": None, "chunk_index": i, "chunk_text": paragraphs[i], "doc_id": "doc-1"}
+            {
+                "id": None,
+                "chunk_index": i,
+                "chunk_text": paragraphs[i],
+                "doc_id": "doc-1",
+                "unsourced": True,  # A128: no index_status read — not a skipped index
+            }
             for i in range(3)
         ]
 

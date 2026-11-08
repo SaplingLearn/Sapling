@@ -468,3 +468,34 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
     expect(screen.getByTestId("admin-loop-gain-7-excluded").textContent).toBe("3");
   });
 });
+
+describe("Learning loop panel — model slot warnings (spec §13 A128)", () => {
+  it("lists every active evidence-slot warning, unevaluated and not independent", () => {
+    render(
+      <LearningLoopPanelBody
+        d={{
+          ...loopFixture,
+          slot_warnings: [
+            { kind: "unevaluated", slot: "grader", model: "claude-haiku-5-5", reason: "pending_claude_eval" },
+            { kind: "not_independent", slot: "grader_second", model: "gemini-2.5-flash-lite", independent_of: "grader", rule: "A22" },
+          ],
+        }}
+      />,
+    );
+    const box = screen.getByTestId("admin-loop-slot-warnings");
+    const grader = within(box).getByTestId("admin-loop-slot-warning-grader");
+    expect(grader.textContent).toContain("claude-haiku-5-5");
+    expect(grader.textContent).toContain("its Claude eval has not passed yet");
+    const second = within(box).getByTestId("admin-loop-slot-warning-grader_second");
+    expect(second.textContent).toContain("the same model as grader");
+    expect(second.textContent).toContain("(A22)");
+  });
+
+  it("renders nothing when there is no warning, or the backend predates A128", () => {
+    render(<LearningLoopPanelBody d={{ ...loopFixture, slot_warnings: [] }} />);
+    expect(screen.queryByTestId("admin-loop-slot-warnings")).toBeNull();
+    cleanup();
+    render(<LearningLoopPanelBody d={{ ...loopFixture, slot_warnings: undefined }} />);
+    expect(screen.queryByTestId("admin-loop-slot-warnings")).toBeNull();
+  });
+});

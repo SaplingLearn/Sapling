@@ -405,6 +405,27 @@ def key_held_flags(flags, canonical_verified) -> bool:
     return not canonical_verified and any(f in KEY_HOLD_FLAGS for f in flags or ())
 
 
+# ── provenance (A128) ──────────────────────────────────────────────────────
+#
+# An item drafted from its document's extracted text because the document's
+# INDEXING FAILED (an embeddings outage, an exhausted re-drive) cites no source
+# chunk: the H2 rung and the feedback turn have no passage to show, and the
+# item's provenance is the document, not a passage. It is stored and served
+# like any other (no new item state), but marked, so the A113 review queue
+# lists it and every selector prefers an item that has its sources. A document
+# whose indexing was SKIPPED by design (the #439 seam: function mode, no key)
+# drafts unmarked: that is a configured mode, not a failure.
+
+UNSOURCED = "unsourced"  # drafted from extracted text: its document's indexing failed
+#: Every provenance code, in the order they are stored (after the A124 holds).
+PROVENANCE_FLAGS = (UNSOURCED,)
+
+
+def unsourced(item) -> bool:
+    """A128: the item was drafted from extracted text after a failed index."""
+    return UNSOURCED in (getattr(item, "lint_flags", None) or ())
+
+
 def key_held(item) -> bool:
     """`key_held_flags` over a stored item (or anything with its lint_flags and
     canonical_verified)."""
@@ -1629,7 +1650,9 @@ def select_item(
     whose hash is not excluded: the first at exactly `difficulty` (ties by
     (created_at, id)), else the nearest difficulty (lower first on ties), else
     None. Format is never substituted — each format is a different evidence
-    channel (spec §3.1)."""
+    channel (spec §3.1). A128: at the chosen difficulty an item with its
+    sources goes before an `unsourced` one — difficulty stays first, because
+    the band's target is a learning requirement and provenance is support."""
     excluded = set(exclude_hashes)
     candidates = [
         i
@@ -1640,13 +1663,20 @@ def select_item(
         return None
     return min(
         candidates,
-        key=lambda i: (abs(i.difficulty - difficulty), i.difficulty, i.created_at or "", i.id),
+        key=lambda i: (
+            abs(i.difficulty - difficulty),
+            i.difficulty,
+            unsourced(i),
+            i.created_at or "",
+            i.id,
+        ),
     )
 
 
 def lint_rank(item) -> int:
     """How a post-test choice ranks an item by its item-flaw lint (§13 A113):
-    0 linted clean, 1 never linted (lint_flags None), 2 flagged."""
+    0 linted clean, 1 never linted (lint_flags None), 2 flagged — any stored
+    code, so an `unsourced` item (A128) goes after one with its sources."""
     flags = getattr(item, "lint_flags", None)
     if flags is None:
         return 1

@@ -284,12 +284,19 @@ unfinished engineering requirement.
    `20261108050630_learning_grader_backend_claude.sql` (A116; apply it before
    any grader slot is flipped to Claude, or a `claude` evidence row fails its
    batch closed), `20261108051912_learning_item_alignment.sql` (A119),
-   `20261108072715_learning_evidence_void.sql` (A123) and
-   `20261108073631_learning_item_keys.sql` (A124). The verifier's `--db-audit`
-   requires the columns they add.
+   `20261108072715_learning_evidence_void.sql` (A123),
+   `20261108073631_learning_item_keys.sql` (A124) and
+   `20261108091912_learning_document_drafting.sql` (A128). The verifier's
+   `--db-audit` requires the columns they add.
 2. Rolling back to pre-A120 code while an A120 probe grade checkpoint is in
    flight cannot open that checkpoint (503). Roll forward only, or drain probe
    checkpoints first.
+3. A128's drafting status may ship ahead of its migration: until
+   `20261108091912_learning_document_drafting.sql` runs, every status write
+   logs one WARNING per upload ("drafting status ... not recorded") and the
+   loop never says "preparing" — the pre-A128 behaviour. Apply it to retire
+   those warnings. Rolling back to pre-A128 code leaves the two columns
+   unread; nothing to drain.
 
 ### Kill-switch and rollback drill
 

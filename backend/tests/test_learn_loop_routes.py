@@ -734,11 +734,15 @@ def test_an_exhausted_conflict_ends_a_stream_in_a_terminal_error(gate_on, seams)
 
 def test_context_blocks_follow_the_policy():
     from routes.learn_loop import _context_blocks
+    from services.rag_service import Retrieval
 
     with (
         patch("routes.learn_loop._get_course_info", return_value={"course_code": "CS111"}),
         patch("routes.learn_loop._get_catalog_chunk", return_value="CATALOG") as cat,
-        patch("routes.learn_loop.retrieve_chunks", return_value=[{"chunk_text": "r"}]) as rag,
+        patch(
+            "routes.learn_loop.retrieve_chunks_detailed",
+            return_value=Retrieval(chunks=[{"chunk_text": "r"}]),
+        ) as rag,
         patch("routes.learn_loop.format_rag_context", return_value="RAG"),
         patch(
             "routes.learn_loop.chunks_for_ids",
