@@ -614,7 +614,7 @@ def test_a_band_control_cursor_move_never_activates_a_held_or_reported_item(
     prerequisite (a repair that comes back, or wheel-spin's replacement), and
     the activation on it chooses through the one exclusion path every item
     choice uses: never an item the student reported (A113), never one whose
-    key is held (A124), never the post-test reserve (A23). The held and the
+    key is held (A124), never a post-test reserve (A23, A126). The held and the
     reported item sort ahead of the fresh one, so either exclusion missing
     would pose it."""
     _learner_reads(loop, **reads)
@@ -630,7 +630,9 @@ def test_a_band_control_cursor_move_never_activates_a_held_or_reported_item(
     loop.reported_hashes.return_value = {"qh-b"}
     from learning import checks
 
-    loop.reserve.side_effect = checks.posttest_reserve_hash  # the real A23 rule: qh-0 here
+    # the real A126 rule (A23's reserve and its parallel form): {qh-0} here — a
+    # bank this small keeps its one reserve and its practice
+    loop.reserve.side_effect = checks.posttest_reserves
     r = routes.client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
     assert r.status_code == 200, r.text
     assert loop.store["doc"]["current"] == "qh-c"
