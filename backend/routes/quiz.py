@@ -20,6 +20,7 @@ from agents._run import run_agent_sync
 from agents.quiz_context import quiz_context_agent
 from agents.usage import record_agent_usage, served_model_name
 from db.connection import pg_quote_value, table
+from db.scope import runs_as_service
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
@@ -119,6 +120,7 @@ _MAX_HISTORY_OFFSET = 1_000_000
 _USAGE_PAGE = 1000
 
 
+@runs_as_service  # #115: llm_usage is service-only (bucket E)
 def _daily_spend_exceeded(user_id: str) -> bool:
     """True if this user is past the daily LLM spend ceiling (#544 F1).
 

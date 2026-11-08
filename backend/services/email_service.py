@@ -54,6 +54,7 @@ import httpx
 
 import config
 from db.connection import page_all, pg_quote_value, table
+from db.scope import runs_as_service
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,7 @@ def is_configured() -> bool:
 # ── Suppressions ────────────────────────────────────────────────────────────
 
 
+@runs_as_service  # #115: email_suppressions is service-only
 def is_suppressed(rhash: str) -> bool:
     rows = table("email_suppressions").select(
         "recipient_hash", filters={"recipient_hash": f"eq.{rhash}"}, limit=1,
@@ -166,6 +168,7 @@ def is_suppressed(rhash: str) -> bool:
     return bool(rows)
 
 
+@runs_as_service  # #115: email_suppressions is service-only
 def suppress(rhash: str, reason: str = "unsubscribe") -> None:
     """Add a hash to the suppression list. Idempotent: an existing row keeps
     its original reason and timestamp. Raises on a DB error (the unsubscribe
@@ -177,6 +180,7 @@ def suppress(rhash: str, reason: str = "unsubscribe") -> None:
     )
 
 
+@runs_as_service  # #115: email_suppressions is service-only
 def unsuppress(rhash: str) -> bool:
     """Remove a hash from the suppression list (the admin undo). True when a
     row was removed. Raises on a DB error, like `suppress`."""
@@ -201,6 +205,7 @@ def clear_opt_out_cache() -> None:
         _opt_out_cache = None
 
 
+@runs_as_service  # #115: reads every user's opt-out
 def notification_opt_out_hashes(*, fresh: bool = False) -> frozenset:
     """recipient_hash of every account with `notification_email = false`.
 
@@ -386,6 +391,7 @@ def _record_suppressed(dedupe_key: str) -> None:
         logger.warning("email suppressed-status write failed key=%s", dedupe_key, exc_info=True)
 
 
+@runs_as_service  # #115: email_sends/email_suppressions are service-only
 def send_email(
     *,
     kind: str,

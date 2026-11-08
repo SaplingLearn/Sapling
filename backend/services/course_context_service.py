@@ -24,6 +24,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 
 from db.connection import table
+from db.scope import runs_as_service
 from agents._run import run_agent_sync
 from agents.course_summary import course_summary_agent
 from agents.usage import record_agent_usage
@@ -128,6 +129,7 @@ _cache_lock = threading.Lock()
 _cache_generation = 0
 
 
+@runs_as_service  # #115: a class aggregate shared through a per-process cache: the fill must not depend on which student asked first
 def _read_course_context(offering_id: str) -> dict:
     """Uncached read. Raises on a store error (the caller answers {} and
     caches nothing, so a transient failure never pins an empty context)."""
@@ -213,6 +215,7 @@ def clear_course_context_cache() -> None:
         _cache_generation += 1
 
 
+@runs_as_service  # #115: reads every classmate's graph + quiz context; under a user scope it would silently compute class stats from one student
 def update_course_context(offering_id: str) -> None:
     """
     Aggregate mastery + quiz data for the students enrolled in an **offering**

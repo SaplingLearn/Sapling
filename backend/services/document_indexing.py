@@ -28,6 +28,7 @@ from typing import NamedTuple
 import httpx
 
 from db.connection import table
+from db.scope import runs_as_service
 from services.academics import offering_course_id
 from services.chunk_visibility import (
     decide_visibility,
@@ -84,6 +85,7 @@ class IndexOutcome(NamedTuple):
     error: str | None = None
 
 
+@runs_as_service  # #115: owns the documents.index_* lease columns and writes shared course_chunks
 def index_document(
     doc_id: str, *, force: bool = False, claimed: bool = False
 ) -> IndexOutcome:

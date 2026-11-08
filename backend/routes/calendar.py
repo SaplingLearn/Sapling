@@ -10,7 +10,7 @@ import json
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import Request as FastAPIRequest
 from fastapi.responses import RedirectResponse
 
@@ -23,6 +23,7 @@ from config import (
     SECURE_COOKIES,
 )
 from db.connection import table
+from db.scope import service_route
 from models import SaveAssignmentsBody, StudyBlockBody, ExportBody, SyncBody
 from services import academics
 from services.auth_guard import require_self, get_session_user_id, guard_off_loop
@@ -224,7 +225,9 @@ def calendar_auth_url(request: FastAPIRequest, user_id: str = Query(...)):
     return resp
 
 
-@router.get("/callback")
+# #115: Google's redirect carries no session; the user comes from the signed
+# state cookie -> service role under db_user_scope.
+@router.get("/callback", dependencies=[Depends(service_route)])
 def calendar_callback(
     request: FastAPIRequest,
     code: str = Query(None),

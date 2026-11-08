@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from db.connection import table
+from db.scope import service_route
 from services import academics
 from services.auth_guard import require_self
 from services.gamification_service import events_since, me_payload, read_me_inputs
@@ -97,7 +98,9 @@ def _private_ids() -> set[str]:
     return {r["user_id"] for r in rows}
 
 
-@router.get("/leaderboard")
+# #115: a cross-user projection (everyone's weekly XP, friends, privacy flags)
+# -> service role; the scope filter and privacy rules are applied in code.
+@router.get("/leaderboard", dependencies=[Depends(service_route)])
 def get_leaderboard(user_id: str, request: Request, scope: str = "everyone"):
     require_self(user_id, request)
     if scope not in SCOPES:

@@ -58,6 +58,7 @@ import logging
 from collections.abc import Iterable
 
 from db.connection import page_all, pg_quote_value, table
+from db.scope import runs_as_service
 from services.events_service import log_event
 
 logger = logging.getLogger(__name__)
@@ -198,6 +199,7 @@ def decide_visibility(
     return visibility_for(user_id)
 
 
+@runs_as_service  # #115: course_chunk_contributors is service-written (jointly owned shared rows)
 def record_contributors(chunk_ids: Iterable[str], user_id: str) -> None:
     """Record `user_id` as a contributor of each SHARED chunk id.
 
@@ -223,6 +225,7 @@ def record_contributors(chunk_ids: Iterable[str], user_id: str) -> None:
         )
 
 
+@runs_as_service  # #115: course_chunk_sources is service-written
 def record_sources(chunk_ids: Iterable[str], doc_id: str) -> None:
     """Record `doc_id` as a source document of each chunk id (#758).
 
@@ -254,6 +257,7 @@ def record_sources(chunk_ids: Iterable[str], doc_id: str) -> None:
         )
 
 
+@runs_as_service  # #115: rewrites shared course_chunks + both ledgers
 def withdraw_document_chunks(doc_id: str, user_id: str) -> dict:
     """Take a deleted document's contributions out of `course_chunks` (#758).
 
@@ -438,6 +442,7 @@ def _share_flags(user_ids: Iterable[str]) -> dict[str, bool]:
     return flags
 
 
+@runs_as_service  # #115: rewrites shared course_chunks visibility
 def resync_user_chunk_visibility(user_id: str) -> dict:
     """Recompute `visibility` on every shared-namespace chunk `user_id` fed.
 
