@@ -48,6 +48,29 @@ def test_concurrent_records_keep_one_open_row_and_every_increment(db_conn):
         db_conn.execute("DELETE FROM misconceptions WHERE wrong_key = %s", (key,))
 
 
+def test_a_node_the_student_does_not_own_records_nothing(db_conn, seeded_user):
+    """Spec §13 A142 (20261108193927): misconception_record refuses another
+    student's node — no misconception, no supporting attempt — so one
+    student's node delete can never cascade into a classmate's records. The
+    owner's own call on the same node still records."""
+    from learning.misconceptions import record
+
+    node = _node(db_conn)
+    other = seeded_user()
+    key = f"it_{uuid.uuid4().hex[:12]}"
+    try:
+        assert record(other, node, None, key, "x", question_hash="it-qh") == {}
+        for sql in (
+            "SELECT count(*) AS n FROM misconceptions WHERE wrong_key = %s",
+            "SELECT count(*) AS n FROM misconception_attempts a JOIN misconceptions m "
+            "ON m.id = a.misconception_id WHERE m.wrong_key = %s",
+        ):
+            assert db_conn.execute(sql, (key,)).fetchone() == {"n": 0}
+        assert record(USER, node, None, key, "x", question_hash="it-qh")["count"] == 1
+    finally:
+        db_conn.execute("DELETE FROM misconceptions WHERE wrong_key = %s", (key,))
+
+
 def test_a_resolved_row_never_blocks_a_new_open_one(db_conn):
     from learning.misconceptions import RESOLVED_BY_ISOMORPH, record, resolve
 

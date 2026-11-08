@@ -90,6 +90,23 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
             forbids=("'retired', 'reports'",),  # reports never retire an item
         ),
     },
+    ("check_item_report_quarantine", 6): {
+        # A123: the report that reaches the threshold quarantines (the hold)
+        "20261108072715_learning_evidence_void.sql": Change(
+            requires=(
+                "pg_advisory_xact_lock(",
+                "hashtextextended('check-item-review:'",
+                "'Invalid check item report'",
+                "check_item_hold_flags(c.lint_flags, 'quarantined')",
+                "AND v_status IS DISTINCT FROM 'retired'",
+            )
+        ),
+        # A142: one report per (student, course item), not per hash
+        "20261108193927_learning_report_course_key.sql": Change(
+            requires=("ON CONFLICT (user_id, course_id, question_hash) DO NOTHING",),
+            forbids=("ON CONFLICT (user_id, question_hash)",),
+        ),
+    },
     ("check_item_review_decide", 4): {
         "20261108041639_learning_item_quality.sql": Change(
             requires=(
@@ -112,6 +129,22 @@ REGISTRY: dict[tuple[str, int], dict[str, Change]] = {
         # the seven-argument one (the retired refusal, the recorded attempt)
         "20261108072715_learning_evidence_void.sql": Change(
             requires=("(SELECT ci.question_hash FROM check_items ci WHERE ci.id = p_check_item_id)",)
+        ),
+    },
+    ("misconception_record", 7): {
+        # A123: the retired-item refusal under the shared item lock, and the
+        # supporting attempt row the void closure reads
+        "20261108072715_learning_evidence_void.sql": Change(
+            requires=(
+                "pg_advisory_xact_lock_shared(",
+                "AND r.status = 'retired'",
+                "INSERT INTO misconception_attempts",
+                "ON CONFLICT (user_id, node_id, wrong_key) WHERE resolved_at IS NULL",
+            )
+        ),
+        # A142: nothing is recorded on a node the student does not own
+        "20261108193927_learning_report_course_key.sql": Change(
+            requires=("WHERE g.id = p_node_id AND g.user_id = p_user_id", "IF v_owned IS NOT TRUE THEN")
         ),
     },
     ("checklist_budget_admit", 9): {
