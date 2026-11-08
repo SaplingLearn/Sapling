@@ -28,7 +28,9 @@ const CENTERS = [
   { ox: -155, oy: 95, oz: 35 }, { ox: -215, oy: -25, oz: -55 },
   { ox: -250, oy: -165, oz: -20 }, { ox: -215, oy: 165, oz: 30 },
 ];
-const STEP = ["#D97706", "#8A63D2", "#14B8A6", "#3e6f8a", "#EF4444", "#7C9A2E", "#4a7d5c"];
+// Chapter clusters in the original animated onboarding's order (pre-#292
+// OB_STEP_COLORS), with the design's olive for the sixth chapter it added.
+const STEP = ["#D97706", "#8A63D2", "#3e6f8a", "#14B8A6", "#EF4444", "#7C9A2E"];
 const AMB = ["#8A63D2", "#3e6f8a", "#D97706", "#14B8A6", "#9CA3AF", "#D1D5DB"];
 const HERO = ["#9CA3AF", "#D97706", "#3e6f8a", "#8A63D2", "#14B8A6", "#EF4444"];
 const AMB_WEIGHTS = [0.24, 0.24, 0.2, 0.15, 0.1, 0.07];
