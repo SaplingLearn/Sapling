@@ -18,8 +18,24 @@
 # Choosing one: `docker build --target api|worker|full backend`, or (Railway,
 # which has no build-target setting) the SAPLING_IMAGE_TARGET build argument,
 # which the last stage below resolves. Railway passes a service variable of that
-# name to the build because it is declared as an ARG here. Unset = `full`.
+# name to the build because it is declared as an ARG here. Unset OR EMPTY =
+# `full` (the last FROM uses `${...:-full}`: a service variable set to "" must
+# not resolve to `FROM ` and fail, or worse, to some other image). Any other
+# value than api|worker|full fails the build in the `target-check` stage with
+# a message naming the three.
 ARG SAPLING_IMAGE_TARGET=full
+
+# ── target-check: refuse an unknown SAPLING_IMAGE_TARGET early ───────────────
+# The last stage copies its one-line marker, so the check is in the graph of
+# every default build and records the chosen target in the image
+# (/etc/sapling-image-target). Same base as the real stages: nothing new to pull.
+FROM python:3.13-slim AS target-check
+ARG SAPLING_IMAGE_TARGET
+RUN target="${SAPLING_IMAGE_TARGET:-full}"; \
+    case "$target" in \
+      api|worker|full) echo "$target" > /sapling-image-target ;; \
+      *) echo "SAPLING_IMAGE_TARGET='$target' is not a backend image target: use api, worker or full (or leave it unset for full)." >&2; exit 1 ;; \
+    esac
 
 # ── api ──────────────────────────────────────────────────────────────────────
 # The lock applied as constraints, exactly as in the heavy stage below (its
@@ -133,5 +149,7 @@ FROM heavy AS full
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
 
 # ── the image a plain `docker build` (and Railway) produces ─────────────────
-# Must stay LAST: with no --target, the last stage is the result.
-FROM ${SAPLING_IMAGE_TARGET}
+# Must stay LAST: with no --target, the last stage is the result. `:-full`
+# makes an EMPTY build argument mean `full`, like an unset one.
+FROM ${SAPLING_IMAGE_TARGET:-full}
+COPY --from=target-check /sapling-image-target /etc/sapling-image-target

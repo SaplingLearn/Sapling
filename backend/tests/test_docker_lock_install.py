@@ -378,12 +378,42 @@ def test_the_default_image_is_still_the_full_one():
     SAPLING_IMAGE_TARGET argument, whose default is `full`."""
     assert re.search(r"^ARG SAPLING_IMAGE_TARGET=full$", _DOCKERFILE, re.MULTILINE)
     last_from = re.findall(r"^FROM\s+(.+)$", _DOCKERFILE, re.MULTILINE)[-1].strip()
-    assert last_from == "${SAPLING_IMAGE_TARGET}"
+    # `:-full`: an EMPTY build argument (a Railway variable set to "") is full too.
+    assert last_from == "${SAPLING_IMAGE_TARGET:-full}"
     assert {"api", "heavy", "worker", "full"} <= set(_STAGES)
     assert re.search(r"^FROM heavy AS full$", _STAGES["full"], re.MULTILINE)
     assert re.search(r"^FROM heavy AS worker$", _STAGES["worker"], re.MULTILINE)
     assert 'CMD ["uvicorn", "main:app"' in _STAGES["full"]
     assert 'CMD ["python", "-m", "worker"]' in _STAGES["worker"]
+
+
+def test_an_unknown_image_target_fails_the_build_with_a_clear_message():
+    """The `target-check` stage validates the argument (empty = full) and the
+    last stage depends on it, so a typo fails in that stage with a message
+    naming the three targets instead of as an image pull of `FROM <typo>`."""
+    check = _STAGES["target-check"]
+    assert re.search(r"^ARG SAPLING_IMAGE_TARGET$", check, re.MULTILINE)
+    assert '"${SAPLING_IMAGE_TARGET:-full}"' in check
+    assert re.search(r"api\|worker\|full\)", check)
+    assert "use api, worker or full" in check and "exit 1" in check
+    final = _STAGES["<final:${SAPLING_IMAGE_TARGET:-full}>"]
+    assert "COPY --from=target-check /sapling-image-target" in final
+    # The check is the FIRST stage, so a sequential builder runs it before it
+    # would try to resolve an unknown `FROM` name as an image.
+    assert next(iter(_STAGES)) == "target-check"
+    # Its shell logic, run for real: empty and unset mean full; others fail.
+    import subprocess
+    script = re.search(r"RUN (target=.*?esac)", check, re.S).group(1).replace("\\\n", "\n")
+    for value, ok, written in [("", True, "full"), ("worker", True, "worker"),
+                               ("api", True, "api"), ("ful", False, None)]:
+        r = subprocess.run(["sh", "-c", script.replace("/sapling-image-target", "/dev/stdout")],
+                           env={"SAPLING_IMAGE_TARGET": value, "PATH": "/usr/bin:/bin"},
+                           capture_output=True, text=True)
+        assert (r.returncode == 0) is ok, (value, r.stderr)
+        if ok:
+            assert r.stdout.strip() == written
+        else:
+            assert "use api, worker or full" in r.stderr
 
 
 def test_the_api_image_has_no_torch_ocr_or_chromium():
