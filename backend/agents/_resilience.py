@@ -24,6 +24,8 @@ real (Anthropic or Google) model request:
   with :class:`CircuitOpenError` for `BREAKER_COOLDOWN_S`; then HALF-OPEN lets
   exactly one probe through — success closes, a retryable failure re-opens.
 * **The `llm_fallback` flag read** — see :func:`fallback_enabled`.
+* **The forced-outage drill** — `SAPLING_LLM_FORCE_OUTAGE`, read at boot; see
+  :data:`FORCED_OUTAGE` and docs/ops/llm-outage-drill.md.
 
 Nothing here builds a client or touches the network, and none of it is
 reachable in function mode: only the real `_LoopSafe*` models carry the
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import threading
 import time
@@ -99,6 +102,92 @@ class CircuitOpenError(ModelHTTPError):
 
 class DeadlineExceeded(ModelAPIError):
     """Our own per-request deadline (not an SDK timeout) fired."""
+
+
+# ── Forced-outage drill (#119, docs/ops/llm-outage-drill.md) ───────────────
+#
+# SAPLING_LLM_FORCE_OUTAGE=anthropic|google|anthropic,google makes EVERY
+# attempt against the named provider(s) fail, before any network I/O, with a
+# retryable 503 (:class:`ForcedOutageError`). Raised INSIDE the retry loop, so
+# the drill exercises the real path: retries + backoff, the breaker opening
+# after BREAKER_FAILURE_THRESHOLD failures, then — with `llm_fallback` on — the
+# cross-provider fallback, and with it off the routes' mapped errors.
+#
+# An env var read once at import (i.e. at boot), not a feature flag: a drill
+# must take a deliberate deploy-time act to start and to stop, never one
+# misclick in /admin that every worker picks up within 30 s, and it must not
+# depend on the flag store it may itself be stressing. Refused in production
+# (APP_ENV=production, which is also APP_ENV's default when unset) unless
+# SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes. A refused or malformed value
+# is logged at ERROR and ignored — a stray variable must never take
+# production down on its own.
+
+FORCE_OUTAGE_ENV = "SAPLING_LLM_FORCE_OUTAGE"
+FORCE_OUTAGE_PRODUCTION_ENV = "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION"
+OUTAGE_PROVIDERS = frozenset({"anthropic", "google"})
+
+
+class ForcedOutageError(ModelHTTPError):
+    """The forced-outage drill failed this attempt (no request was sent). A
+    503, so it is retryable, counts toward the breaker, and is fallback
+    eligible exactly like a real provider outage."""
+
+    def __init__(self, provider: str, model_name: str):
+        self.provider = provider
+        super().__init__(
+            status_code=503,
+            model_name=model_name,
+            body={"error": "forced_outage", "provider": provider},
+        )
+
+    def __reduce__(self):
+        return self.__class__, (self.provider, self.model_name)
+
+
+def resolve_forced_outage(env: Any) -> tuple[frozenset[str], str | None]:
+    """(providers forced down, why the setting was refused or None). Pure, so
+    the production refusal is testable without reloading the module."""
+    raw = (env.get(FORCE_OUTAGE_ENV) or "").strip().lower()
+    if not raw:
+        return frozenset(), None
+    names = frozenset(p.strip() for p in raw.split(",") if p.strip())
+    unknown = names - OUTAGE_PROVIDERS
+    if unknown or not names:
+        return frozenset(), (
+            f"{FORCE_OUTAGE_ENV}={raw!r}: unknown provider(s) {sorted(unknown)}; "
+            f"expected a comma-separated subset of {sorted(OUTAGE_PROVIDERS)}"
+        )
+    app_env = (env.get("APP_ENV") or "production").strip().lower()
+    allowed = (env.get(FORCE_OUTAGE_PRODUCTION_ENV) or "").strip().lower() == "yes"
+    if app_env == "production" and not allowed:
+        return frozenset(), (
+            f"{FORCE_OUTAGE_ENV} is refused in production (APP_ENV={app_env!r}); "
+            f"set {FORCE_OUTAGE_PRODUCTION_ENV}=yes to really drill there"
+        )
+    return names, None
+
+
+def _forced_outage_at_boot() -> frozenset[str]:
+    providers, refused = resolve_forced_outage(os.environ)
+    if refused:
+        logger.error("llm forced-outage drill NOT armed: %s", refused)
+    elif providers:
+        logger.warning(
+            "LLM FORCED-OUTAGE DRILL ARMED: every request to %s fails with a "
+            "retryable 503 until %s is unset and the process restarts",
+            ", ".join(sorted(providers)), FORCE_OUTAGE_ENV,
+        )
+    return providers
+
+
+#: Frozen at import (boot). Tests replace it with monkeypatch.
+FORCED_OUTAGE: frozenset[str] = _forced_outage_at_boot()
+
+
+def forced_outage_status() -> dict:
+    """For the admin drill endpoint: what this process was booted with."""
+    _, refused = resolve_forced_outage(os.environ)
+    return {"providers": sorted(FORCED_OUTAGE), "refused": refused}
 
 
 # ── Classification ───────────────────────────────────────────────────────
@@ -296,6 +385,8 @@ async def call_with_retries(
         if not breaker.allow():
             raise CircuitOpenError(site.provider, site.model_name) from last_exc
         try:
+            if site.provider in FORCED_OUTAGE:
+                raise ForcedOutageError(site.provider, site.model_name)
             if deadline_s is None:
                 result = await attempt()
             else:
