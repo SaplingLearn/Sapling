@@ -70,6 +70,11 @@ LOOP_PLAN_OPENER = (
     "Welcome! This course has no check-in questions yet, so we'll go straight to "
     "planning your session."
 )
+#: The opener of a quiz-ask session served without a model (the tutor's hard
+#: budget level, A27): a quiz-ask session has no check-in and no plan — it works
+#: on the quiz question's concept from its first turn (A99) — so it never
+#: promises either. Neutral, like the others: it teaches nothing and asks nothing.
+LOOP_QUIZ_ASK_OPENER = "Welcome! We'll work through the idea behind your quiz question together."
 
 
 @dataclass(frozen=True)

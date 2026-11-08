@@ -231,18 +231,24 @@ def test_the_quiz_ask_opener_is_the_one_model_opener(gate_on, seams):
 
 
 def test_a_quiz_ask_template_opener_leaves_no_open_question(gate_on, seams):
-    """Spec §13 A121: at the hard budget level the quiz-ask opener is the
+    """Spec §13 A121: at the hard budget level the quiz-ask opener is a
     template, which asks nothing, so the student's next message is no reply to
-    a question of the tutor's (only a model opener sets `open_question`)."""
-    from routes.learn_loop import _LOOP_OPENER_TEMPLATE, PENDING_SESSIONS, quiz_ask_state
+    a question of the tutor's (only a model opener sets `open_question`). It is
+    the quiz-ask session's own template: a quiz-ask session has no check-in, so
+    it never gets the probe opener's "quick check-in" promise."""
+    from learning.turn_shape import LOOP_PROBE_OPENER, LOOP_QUIZ_ASK_OPENER
+    from routes.learn_loop import PENDING_SESSIONS, quiz_ask_state
 
     seams.ai_budget.check.return_value = _routes.HARD
     agent = MagicMock()
     agent.run = AsyncMock(side_effect=AssertionError("no model at the hard level"))
     r, _ = _opener("/api/learn/loop/start-session", agent=agent)
     assert r.status_code == 200, r.text
-    assert r.json()["initial_message"] == _LOOP_OPENER_TEMPLATE
-    assert PENDING_SESSIONS.pop(r.json()["session_id"])["loop_state"] == quiz_ask_state("node-1")
+    assert r.json()["initial_message"] == LOOP_QUIZ_ASK_OPENER != LOOP_PROBE_OPENER
+    assert "check-in" not in LOOP_QUIZ_ASK_OPENER and "?" not in LOOP_QUIZ_ASK_OPENER
+    pending = PENDING_SESSIONS.pop(r.json()["session_id"])
+    assert pending["loop_state"] == quiz_ask_state("node-1")
+    assert pending["assistant_reply"] == LOOP_QUIZ_ASK_OPENER
 
 
 def test_the_loop_quiz_ask_stream_records_help_before_the_first_token(gate_on, seams):

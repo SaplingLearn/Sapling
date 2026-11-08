@@ -197,6 +197,7 @@ from learning.turn_shape import (
     FIELD_JOIN,
     LOOP_PLAN_OPENER,
     LOOP_PROBE_OPENER,
+    LOOP_QUIZ_ASK_OPENER,
     TurnTemplate,
     clamp_model_ceiling,
     labels_new_content,
@@ -2919,8 +2920,11 @@ class _LoopOpener(_LoopTurn):
     def _deterministic_text(self, *, hard: bool) -> str | None:
         if self._probing():
             return _probe_opener(self.course_id)
-        # the opener is never paused: at the hard level it is the template (A27)
-        return _LOOP_OPENER_TEMPLATE if hard else None
+        if not hard:
+            return None
+        # the opener is never paused: at the hard level it is a template (A27). A
+        # quiz-ask session has no check-in, so its template never promises one
+        return LOOP_QUIZ_ASK_OPENER if self.quiz_ask is not None else _LOOP_OPENER_TEMPLATE
 
     def complete(self, reply: str, merged: dict, mastery: list) -> dict:
         self._now = _now_s()
