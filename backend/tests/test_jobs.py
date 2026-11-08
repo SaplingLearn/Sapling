@@ -279,3 +279,58 @@ def test_graph_service_triggers_resolve_the_flag_for_the_student():
         tbl.return_value.select.return_value = [{"id": "n1", "course_id": "c1"}]
         assert graph_service.delete_node("u7", "n1") == {"deleted": True}
     refresh.assert_called_once_with("o1", user_id="u7")
+
+
+# ── upkeep: heartbeat, prune (20261108213623) ───────────────────────────────
+
+
+def test_heartbeat_is_fenced_on_worker_and_attempt():
+    with patch.object(jobs, "rpc", return_value=True) as rpc:
+        assert jobs.heartbeat(_job(attempt=4)) is True
+    rpc.assert_called_once_with("heartbeat_job",
+                                {"p_id": "j-1", "p_worker": "w-1", "p_attempt": 4})
+    for refused in (False, None, [], "true"):
+        with patch.object(jobs, "rpc", return_value=refused):
+            assert jobs.heartbeat(_job()) is False
+
+
+def test_prune_deletes_in_batches_until_a_short_one():
+    with patch.object(jobs, "rpc", side_effect=[100, 100, 37]) as rpc:
+        assert jobs.prune(older_than_days=10, batch=100) == 237
+    assert rpc.call_count == 3
+    assert rpc.call_args.args == ("prune_jobs", {"p_older_than_days": 10, "p_limit": 100})
+
+
+def test_prune_is_bounded_per_run():
+    with patch.object(jobs, "rpc", return_value=5) as rpc:
+        assert jobs.prune(batch=5, max_batches=4) == 20
+    assert rpc.call_count == 4
+
+
+@pytest.mark.parametrize("weird", [None, "3", True, [3]])
+def test_prune_treats_a_non_integer_answer_as_nothing_deleted(weird):
+    with patch.object(jobs, "rpc", return_value=weird) as rpc:
+        assert jobs.prune(batch=5) == 0
+    assert rpc.call_count == 1
+
+
+def test_schedule_prune_is_one_deduped_job():
+    with patch.object(jobs, "rpc", return_value=[{"id": "u", "inserted": False}]) as rpc:
+        assert jobs.schedule_prune(9) == {"id": "u", "inserted": False}
+    name, args = rpc.call_args.args
+    assert name == "enqueue_job"
+    assert args["p_type"] == args["p_dedupe_key"] == jobs.PRUNE_JOB_TYPE
+    assert args["p_payload"] == {"older_than_days": 9}
+
+
+def test_the_prune_handler_is_registered_and_validates_its_payload():
+    handler = jobs.get_handler(jobs.PRUNE_JOB_TYPE)
+    assert handler is not None
+    with patch.object(jobs, "prune") as prune:
+        handler({"older_than_days": 7})
+        handler({})
+    assert [c.kwargs for c in prune.call_args_list] == [
+        {"older_than_days": 7}, {"older_than_days": jobs.PRUNE_AFTER_DAYS}]
+    for bad in ({"older_than_days": "7"}, {"older_than_days": True}, None):
+        with pytest.raises(jobs.PermanentJobError):
+            handler(bad)

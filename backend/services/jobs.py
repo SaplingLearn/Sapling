@@ -234,3 +234,72 @@ def fail(
         "p_permanent": permanent,
     })
     return status if isinstance(status, str) else None
+
+
+# ── upkeep: lease heartbeat, pruning (20261108213623_jobs_upkeep.sql) ───────
+
+
+def heartbeat(job: Job) -> bool:
+    """Push `job`'s lease forward (locked_at = now()). The worker calls this
+    every lease/3 while a handler runs, so a long job is not re-offered to a
+    second worker mid-run. Fenced like complete/fail: False means the claim is
+    gone (re-claimed after the lease ran out, or reaped dead)."""
+    ok = rpc("heartbeat_job", {
+        "p_id": job.id, "p_worker": job.locked_by, "p_attempt": job.attempt,
+    })
+    return ok is True
+
+
+#: A worker stops heartbeating a job after this long, so a hung handler still
+#: loses its job one lease later (worker/runner.py::_Heartbeat).
+MAX_HEARTBEAT_SECONDS = 3600
+
+
+#: The job that prunes old `succeeded` rows. Each worker that claims it
+#: enqueues it once per PRUNE_INTERVAL_SECONDS under PRUNE_JOB_TYPE as its
+#: dedupe key, so any number of replicas collapse into one waiting run.
+PRUNE_JOB_TYPE = "jobs.prune"
+#: Keep succeeded rows this long (the admin view and debugging read them).
+#: Dead letters are never pruned. The SQL floors it at 1 day.
+PRUNE_AFTER_DAYS = 14
+PRUNE_INTERVAL_SECONDS = 3600
+#: Rows per DELETE, and DELETEs per run: one run removes at most
+#: PRUNE_BATCH * PRUNE_MAX_BATCHES rows and the next run picks up the rest.
+PRUNE_BATCH = 1000
+PRUNE_MAX_BATCHES = 50
+
+
+def prune(
+    *,
+    older_than_days: int = PRUNE_AFTER_DAYS,
+    batch: int = PRUNE_BATCH,
+    max_batches: int = PRUNE_MAX_BATCHES,
+) -> int:
+    """Delete `succeeded` jobs older than `older_than_days`, `batch` rows per
+    statement, until a short batch (nothing older left) or `max_batches`.
+    Returns how many rows went. Never touches unfinished or dead rows."""
+    total = 0
+    for _ in range(max(1, int(max_batches))):
+        n = rpc("prune_jobs", {"p_older_than_days": older_than_days, "p_limit": batch})
+        n = n if isinstance(n, int) and not isinstance(n, bool) else 0
+        total += n
+        if n < batch:
+            break
+    logger.info("job.pruned rows=%d older_than_days=%d", total, older_than_days)
+    return total
+
+
+def schedule_prune(older_than_days: int = PRUNE_AFTER_DAYS) -> dict:
+    """Make sure a prune run is waiting. Deduped: while one is queued this
+    returns it (``inserted`` False) instead of adding another, so the first
+    waiting run's retention is the one used."""
+    return enqueue(PRUNE_JOB_TYPE, {"older_than_days": int(older_than_days)},
+                   dedupe_key=PRUNE_JOB_TYPE, max_attempts=3)
+
+
+@job_handler(PRUNE_JOB_TYPE)
+def _run_prune(payload: dict) -> None:
+    days = payload.get("older_than_days", PRUNE_AFTER_DAYS) if isinstance(payload, dict) else None
+    if type(days) is not int:
+        raise PermanentJobError(f"{PRUNE_JOB_TYPE}: older_than_days must be an integer")
+    prune(older_than_days=days)

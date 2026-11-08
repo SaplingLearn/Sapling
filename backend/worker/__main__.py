@@ -11,11 +11,14 @@ SIGTERM or SIGINT. A signal lets the job in hand finish, claims nothing more,
 flushes the events queue and exits 0. A boot failure exits 2.
 
 Delivery is at least once (a crash or an outlived lease re-offers a job), so
-handlers must be safe to re-run. There is no per-job timeout: a hung handler
-holds its worker, and past the lease the job is offered to another.
+handlers must be safe to re-run. While a handler runs its lease is heartbeated
+(every lease/3), up to --max-heartbeat-seconds; there is no per-job timeout
+beyond that: a hung handler holds its worker, and once the heartbeat gives up
+the job is offered to another one lease later.
 
-Railway (a future worker service on the same image; not configured here):
-  start command   cd /app && python -m worker
+Railway: the `worker` service in .railway/railway.ts (docs/deploy/railway.md).
+  image           backend/Dockerfile, SAPLING_IMAGE_TARGET=worker (or full)
+  start command   python -m worker   (WORKDIR is /app)
   env             the API service's variables (same SUPABASE_*, ENCRYPTION_KEY,
                   model keys, APP_ENV); no PORT, no healthcheck path
   scaling         any number of replicas: claims use FOR UPDATE SKIP LOCKED
@@ -79,7 +82,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    from services.jobs import DEFAULT_LEASE_SECONDS
+    from services.jobs import DEFAULT_LEASE_SECONDS, MAX_HEARTBEAT_SECONDS, PRUNE_AFTER_DAYS
 
     p = argparse.ArgumentParser(prog="python -m worker", description=__doc__.split("\n")[0])
     p.add_argument("--poll-interval", type=float,
@@ -90,6 +93,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--lease-seconds", type=int,
                    default=int(_env_float("JOBS_LEASE_SECONDS", DEFAULT_LEASE_SECONDS)),
                    help="how long a claim holds its job before it is re-offered")
+    p.add_argument("--max-heartbeat-seconds", type=float,
+                   default=_env_float("JOBS_MAX_HEARTBEAT_SECONDS", MAX_HEARTBEAT_SECONDS),
+                   help="stop extending a running job's lease after this long, so a "
+                        "hung handler's job is re-offered (default 3600)")
+    p.add_argument("--prune-after-days", type=int,
+                   default=int(_env_float("JOBS_PRUNE_AFTER_DAYS", PRUNE_AFTER_DAYS)),
+                   help="delete succeeded jobs older than this many days, from an "
+                        "hourly jobs.prune run (default 14; 0 = never schedule one)")
     p.add_argument("--types", default="",
                    help="comma-separated job types to claim (default: every registered type)")
     p.add_argument("--worker-id", default="",
@@ -170,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
         lease_seconds=args.lease_seconds,
         poll_interval=args.poll_interval,
         stop=stop,
+        prune_after_days=args.prune_after_days,
+        max_heartbeat_seconds=args.max_heartbeat_seconds,
     )
     events_service.start_worker()
     try:
