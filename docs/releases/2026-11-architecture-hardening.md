@@ -9,8 +9,10 @@ staging or production.
 
 - Production runs `6ed0f13c` (#748, 2026-10-23). This release ships 13 commits
   already on `main` (PostHog, the #772 state-machine audit, #807 deny-all RLS,
-  #808 CVE upgrades, and others), plus #809 and the 10 stacked PRs #810 to #819.
-- There are 8 new migrations. One of them, #772's
+  #808 CVE upgrades, and others), plus #809 and the 9 stacked PRs below this one (#810, #821, #812–#815, #817–#819).
+- All four of the stack's own migrations are in **one PR, #821**, so they merge
+  and apply together (it replaced #811 and #816, now closed).
+- There are 8 new migrations in total. One of them, #772's
   `20261106055333_state_machines_audit.sql`, changes data and drops two
   columns. `make promote` will block on it until you pass
   `--allow-destructive` (§6).
@@ -64,16 +66,15 @@ start, re-check with `git fetch && git log --oneline f2c77e05..origin/main`.
 |---|---|---|---|---|---|---|
 | 0 | #809 | `docs/architecture-hardening-plan` | 5e75d6ab | Hardening plan and RLS step-2 plan (draft SQL, not migrations) | none | Docs only. |
 | 1 | #810 | `harden/w1c-backup` | f99aba5f, fec08225 | `pg_dump` backup module, `make backup-db`; `make promote` backs up before migrating and refuses to continue if the backup fails | low | Operator tooling. `make promote` now needs host `pg_dump` 15+ or podman/docker. |
-| 2 | #811 | `harden/w1a-rls-2a` | 2d87a3c8 | RLS 2a: `app_auth` helpers, function EXECUTE hygiene, `room_messages` privileges | low | Privileges only. Every backend RPC is re-granted to service_role. |
-| 3 | #812 | `harden/w1b-cross-user-matrix` | 71cf7ddb | Cross-user test matrix, about 285 requests, flag off | none | Tests only. |
-| 4 | #813 | `harden/fix-social-cross-user-leaks` | 2d50f618 | **Security fix**: 4 cross-user leaks in `routes/social.py` | low | Members see no change. `school_match` is now same-school only. |
-| 5 | #814 | `harden/w1d-llm-resilience` | 1c85a2c8, bb6006ec | LLM retries, timeouts, circuit breaker; cross-provider fallback behind `llm_fallback` | **med** | **Active with the flag off.** Per-slot timeouts drop from 600 s to 30–240 s, Gemini now gets 3 attempts, and the breaker fails fast for 30 s after 8 failures. |
-| 6 | #815 | `harden/w2c-relock` | 246de080 | Re-locks 12 flagged transitive dependencies | med | Includes oauthlib 3→4 (Google sign-in) and logfire 4→5 / otel 0.66. |
-| 7 | #816 | `harden/w2a-rls-2b-2c` | 747fcd8d, bcbf41f0 | RLS 2b (137 policies) and 2c (grants to `authenticated`) | low | Metadata only. Nothing mints a `sapling-api` token until `db_user_scope` is turned on. |
-| 8 | #817 | `harden/w2b-jobs-foundation` | 857ba0d5, b673d438, f6815b14 | Postgres `jobs` queue, `python -m worker`, course-context refresh behind `jobs_queue` | low | Additive table. With the flag off it adds one cached flag read. |
-| 9 | #818 | `harden/w3a-user-scoped-client` | 9f7c0486, 8fbdee61, 7d1b87c6, fd707cd6, 646a40e1, 3c1bafe9, f93398ae | User-scoped PostgREST client behind `db_user_scope` (off/shadow/enforce) | low (off) / high (enforce) | With the flag off, requests are byte-identical (pinned by a test). Every `table()` call now goes through `_scope_headers`. |
-| 10 | #819 | `harden/w3b-async-db-design` | c9c0c007 | Async DB client design doc | none | Docs only. |
-| 11 | this | `harden/release-doc` | — | This file | none | Docs only. |
+| 2 | #821 | `harden/db-migrations` | 93998307 | **All four stack migrations**: RLS 2a (`app_auth` helpers, function EXECUTE hygiene, `room_messages` privileges), 2b (137 policies), 2c (grants to `authenticated`), and the `jobs` queue table and functions, plus their DB-level integration tests | low | Privileges, policies and one new table. Inert for the service_role backend: nothing mints a `sapling-api` token until `db_user_scope` is on, and nothing writes `jobs` until `jobs_queue` is on. Replaces #811 and #816 (closed). |
+| 3 | #812 | `harden/w1b-cross-user-matrix` | ea424bce | Cross-user test matrix, about 285 requests, flag off | none | Tests only. |
+| 4 | #813 | `harden/fix-social-cross-user-leaks` | 0b2ca3f6 | **Security fix**: 4 cross-user leaks in `routes/social.py` | low | Members see no change. `school_match` is now same-school only. |
+| 5 | #814 | `harden/w1d-llm-resilience` | 5c89213c, c95083c8 | LLM retries, timeouts, circuit breaker; cross-provider fallback behind `llm_fallback` | **med** | **Active with the flag off.** Per-slot timeouts drop from 600 s to 30–240 s, Gemini now gets 3 attempts, and the breaker fails fast for 30 s after 8 failures. |
+| 6 | #815 | `harden/w2c-relock` | 8225cd8b | Re-locks 12 flagged transitive dependencies | med | Includes oauthlib 3→4 (Google sign-in) and logfire 4→5 / otel 0.66. |
+| 7 | #817 | `harden/w2b-jobs-foundation` | fea4e0f1, f7e970ec | `services/jobs.py`, `python -m worker`, course-context refresh behind `jobs_queue` (its migration is in #821) | low | With the flag off it adds one cached flag read. |
+| 8 | #818 | `harden/w3a-user-scoped-client` | 5353703d, c76f3bc4, 6b2970a6, 16db3639, 725b01d2, 6e930604, 42e521a2 | User-scoped PostgREST client behind `db_user_scope` (off/shadow/enforce) | low (off) / high (enforce) | With the flag off, requests are byte-identical (pinned by a test). Every `table()` call now goes through `_scope_headers`. |
+| 9 | #819 | `harden/w3b-async-db-design` | 651f6168 | Async DB client design doc | none | Docs only. |
+| 10 | this (#820) | `harden/release-doc` | — | This file | none | Docs only. |
 
 `stack/base` is **not a PR**. It is `f2c77e05` plus a merge commit `8c7d72fc`
 of #809's head. Once #809 is on `main`, that merge commit adds nothing.
@@ -115,13 +116,14 @@ git merge --no-edit origin/main && git push          # a plain push, no force
 #    wait for CI and a re-approval, then:
 gh pr merge 810 --merge
 
-# 2..10. For each N in 811 812 813 814 815 816 817 818 819, in order, once the
-#        PR below it has merged:
-gh pr edit N --base main          # its diff is now exactly its own commits (checked for #811: 2 files)
+# 2..9. For each N in 821 812 813 814 815 817 818 819, in order, once the
+#       PR below it has merged. #821 is every migration in the stack: merging it
+#       runs migrate-staging.yml for all four at once.
+gh pr edit N --base main          # its diff is now exactly its own commits
 #        wait for CI (the retarget re-runs it), then:
 gh pr merge N --merge
 
-# 11. This PR the same way.
+# 10. This PR (#820) the same way.
 ```
 
 - Delete a PR's head branch only **after** you have retargeted the PR above it.
@@ -157,7 +159,7 @@ commits it. A failure stops the chain at that file: the earlier files stay
 applied and the failing one rolls back.
 
 Staging already has #1 to #4 (`migrate-staging.yml` succeeded on 11-04, 11-06
-and twice on 11-08). #5 to #8 reach staging as #811, #816 and #817 merge.
+and twice on 11-08). #5 to #8 reach staging together when #821 merges.
 
 | # | File | PR | What | Touches data? | Reverse |
 |---|---|---|---|---|---|
@@ -165,10 +167,10 @@ and twice on 11-08). #5 to #8 reach staging as #811, #816 and #817 merge.
 | 2 | `20261106055333_state_machines_audit.sql` | #772 | `email_sends.claimed_at` / `idempotency_gen`, `email_broadcasts.heartbeat_at` and a status CHECK, a `room_bans` table, room FKs → ON DELETE CASCADE, `gradescope_credentials` sync outcome, a `course_chunk_sources` ledger, a quiz completed-XOR-abandoned CHECK, `canopy_metrics` changes, the `apply_mastery_delta` function, `documents.index_status` gaining `exhausted`, a claim/reaper rewrite, **DROP `users.current_room_id` and `courses.deleted_at`** | **Yes.** It backfills `claimed_at` / `heartbeat_at`, **deletes rooms with no members**, gives rooms whose owner left to their earliest member, resolves quiz rows that are both completed and abandoned, and rewrites `mastery_tier 'subject_root'` to `'unexplored'`. | **No reverse header, and it is partly irreversible.** The dropped columns, deleted rooms and rewritten rows come back only from the pre-promote dump (§7.3). Re-adding the columns empty: `ALTER TABLE users ADD COLUMN current_room_id TEXT REFERENCES rooms(id) ON DELETE SET NULL; ALTER TABLE courses ADD COLUMN deleted_at TIMESTAMPTZ;` |
 | 3 | `20261108063442_xp_events_per_user_idempotency.sql` | #805 | UNIQUE `(user_id, idempotency_key)` replaces UNIQUE `(idempotency_key)`. It raises if duplicate pairs exist. | No rows change; it moves a constraint. | `ALTER TABLE xp_events DROP CONSTRAINT IF EXISTS xp_events_user_id_idempotency_key_key; ALTER TABLE xp_events ADD CONSTRAINT xp_events_idempotency_key_key UNIQUE (idempotency_key);` This fails once two students hold the same key, which is the bug the migration fixes. Don't reverse it. |
 | 4 | `20261108082151_rls_on_every_table.sql` | #807 | ENABLE RLS on every `public` table except `room_messages`; REVOKE ALL from anon/authenticated; GRANT ALL to service_role; default privileges stop granting anon/authenticated | No (privileges) | **Reversing it reopens the anon-key hole.** If you must: `DO $$ DECLARE t text; BEGIN FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'room_messages' LOOP EXECUTE format('ALTER TABLE public.%I DISABLE ROW LEVEL SECURITY', t); END LOOP; END $$;` Re-granting anon is never needed: the backend uses service_role. |
-| 5 | `20261108092633_rls_app_auth_helpers.sql` | #811 | Schema `app_auth` with `uid()` and 4 SECURITY DEFINER membership helpers; EXECUTE on public functions revoked from PUBLIC/anon/authenticated and granted to service_role; default privileges; `room_messages` write privileges revoked (anon SELECT kept) | No | Header block, verified in a container: `ALTER DEFAULT PRIVILEGES IN SCHEMA app_auth REVOKE EXECUTE ON FUNCTIONS FROM authenticated, service_role; DROP SCHEMA IF EXISTS app_auth CASCADE; GRANT EXECUTE ON FUNCTION public.set_updated_at() TO PUBLIC, anon, authenticated; GRANT EXECUTE ON FUNCTION public.match_course_chunks(vector, integer, text, text) TO PUBLIC, anon, authenticated; ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;` On **prod**, re-grant anon only `TRUNCATE, REFERENCES, TRIGGER` on `room_messages`. Reverse 2b first. |
-| 6 | `20261108094129_rls_policies.sql` | #816 | 137 policies on 55 tables, all `TO authenticated`, all keyed on `(SELECT app_auth.uid())` | No (policies) | 137 `DROP POLICY IF EXISTS ...` lines in the header. Reverse 2c first. |
-| 7 | `20261108094130_rls_authenticated_grants.sql` | #816 | Table, column and function grants to `authenticated` exactly matching the 2b policies; EXECUTE on `match_course_chunks` and `apply_mastery_delta` | No (grants) | 59 `REVOKE ...` lines in the header. Run this one **first** when reversing. |
-| 8 | `20261108095241_jobs_queue.sql` | #817 | `public.jobs` (service-only, RLS on) plus `enqueue_job` / `claim_jobs` / `complete_job` / `fail_job` | No. New table, written only when `jobs_queue` is on. | Turn `jobs_queue` off, then check `SELECT status, count(*) FROM public.jobs GROUP BY 1;`, then `DROP FUNCTION IF EXISTS public.fail_job(uuid, text, integer, text, integer, boolean); DROP FUNCTION IF EXISTS public.complete_job(uuid, text, integer); DROP FUNCTION IF EXISTS public.claim_jobs(text, text[], integer, integer); DROP FUNCTION IF EXISTS public.enqueue_job(text, jsonb, text, timestamptz, integer); DROP TABLE IF EXISTS public.jobs;` |
+| 5 | `20261108092633_rls_app_auth_helpers.sql` | #821 | Schema `app_auth` with `uid()` and 4 SECURITY DEFINER membership helpers; EXECUTE on public functions revoked from PUBLIC/anon/authenticated and granted to service_role; default privileges; `room_messages` write privileges revoked (anon SELECT kept) | No | Header block, verified in a container: `ALTER DEFAULT PRIVILEGES IN SCHEMA app_auth REVOKE EXECUTE ON FUNCTIONS FROM authenticated, service_role; DROP SCHEMA IF EXISTS app_auth CASCADE; GRANT EXECUTE ON FUNCTION public.set_updated_at() TO PUBLIC, anon, authenticated; GRANT EXECUTE ON FUNCTION public.match_course_chunks(vector, integer, text, text) TO PUBLIC, anon, authenticated; ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;` On **prod**, re-grant anon only `TRUNCATE, REFERENCES, TRIGGER` on `room_messages`. Reverse 2b first. |
+| 6 | `20261108094129_rls_policies.sql` | #821 | 137 policies on 55 tables, all `TO authenticated`, all keyed on `(SELECT app_auth.uid())` | No (policies) | 137 `DROP POLICY IF EXISTS ...` lines in the header. Reverse 2c first. |
+| 7 | `20261108094130_rls_authenticated_grants.sql` | #821 | Table, column and function grants to `authenticated` exactly matching the 2b policies; EXECUTE on `match_course_chunks` and `apply_mastery_delta` | No (grants) | 59 `REVOKE ...` lines in the header. Run this one **first** when reversing. |
+| 8 | `20261108095241_jobs_queue.sql` | #821 | `public.jobs` (service-only, RLS on) plus `enqueue_job` / `claim_jobs` / `complete_job` / `fail_job` | No. New table, written only when `jobs_queue` is on. | Turn `jobs_queue` off, then check `SELECT status, count(*) FROM public.jobs GROUP BY 1;`, then `DROP FUNCTION IF EXISTS public.fail_job(uuid, text, integer, text, integer, boolean); DROP FUNCTION IF EXISTS public.complete_job(uuid, text, integer); DROP FUNCTION IF EXISTS public.claim_jobs(text, text[], integer, integer); DROP FUNCTION IF EXISTS public.enqueue_job(text, jsonb, text, timestamptz, integer); DROP TABLE IF EXISTS public.jobs;` |
 
 To reverse the RLS stack, go in the opposite order: 2c (7), then 2b (6), then 2a
 (5). Leave #807 in place.
@@ -432,6 +434,14 @@ and finally the smoke tests (`backend/promotion/smoke.py` against
 
 ## 9. What ran
 
+**Restack after the final pass (2026-11-08).** All four migrations, with their DB
+tests and the policy generator, moved into one PR, #821. #811 and #816 were
+closed, and the stack above was rebased with their commits dropped. The new top
+commit has a tree **byte-identical** to the tree the final pass below ran on, so
+those results hold for the new top. #812–#815 differ from their old trees only by
+the files that now sit below them in #821, and CI re-ran on every restacked PR.
+The SHAs in the CI table are the pre-restack ones.
+
 Hermetic (backend, CI env and ignore list, primary venv):
 
 | Point in the stack | Result |
@@ -448,12 +458,12 @@ bases are not whitelisted.
 |---|---|---|---|---|---|
 | #809 | pass | pass | pass | — | pass |
 | #810 | pass | pass | pass | — | pass |
-| #811 | pass | pass | pass | — | pass |
+| #811 (closed, now in #821) | pass | pass | pass | — | pass |
 | #812 | pass | pass | pass | — | pass |
 | #813 | pass | pass | pass | — | pass |
 | #814 | pass | pass | pass | pass | pass |
 | #815 | pass | pass | pass | — | pass |
-| #816 | pass | pass | pass | — | pass |
+| #816 (closed, now in #821) | pass | pass | pass | — | pass |
 | #817 | pass | pass | pass | pass | pass |
 | #818 | pass | flake, rerun requested* | pass | pass | pass |
 | #819 | pass | pass | pass | — | pass |
