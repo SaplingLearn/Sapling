@@ -129,6 +129,14 @@ def test_event_taxonomy_is_pinned():
         # #620: admin feature-flag change (audit). Emit coverage lives in
         # test_admin_flags_routes.py.
         "flag.changed",
+        # Admin account tools. Emit coverage lives in test_admin_accounts.py /
+        # test_account_sync_routes.py.
+        "account.seed",
+        "account.wipe",
+        "account.copy_push",
+        "account.copy_pull",
+        "account.export",
+        "account.import",
         # #640/#642 (ADR 0027): one row per typed-decision call. Emit
         # coverage lives in test_decisions.py / test_tutor_router.py.
         "decision.made",

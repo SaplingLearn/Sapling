@@ -84,6 +84,12 @@ rag.relevance_scored          usage     doc_id, course_id (BU code), category, s
                                         of the upload vs the course's catalog embedding —
                                         observe-only, #628: the data a threshold gets picked from)
 flag.changed                  audit     key, field, before, after
+account.seed                  audit     major, counts (admin account tools)
+account.wipe                  audit     counts
+account.copy_push             audit     direction, peer_env, outcome, counts
+account.copy_pull             audit     direction, peer_env, outcome, counts
+account.export                audit     outcome (internal, peer-initiated)
+account.import                audit     outcome, counts (internal, peer-initiated)
 decision.made                 system    feature, backend (who answered: jev | flash_lite |
                                         function | none), requested, fallback_reason (an
                                         enum-like reason, never a message), model, latency_ms,
@@ -209,6 +215,14 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "rag.visibility_resync_failed",
     # #620: admin feature-flag change (audit).
     "flag.changed",
+    # Admin account tools: seed by major / wipe / copy between environments
+    # (routes/admin_accounts.py, admin_account_sync.py, internal_account_sync.py).
+    "account.seed",
+    "account.wipe",
+    "account.copy_push",
+    "account.copy_pull",
+    "account.export",
+    "account.import",
     # #640/#642 (ADR 0027): one row per typed-decision call — the answers, the
     # backend that actually served them, and (in shadow mode) the second
     # backend's answers plus per-key agreement. category="system": the server
