@@ -240,6 +240,11 @@ function PlanRow({ item, primary, onSelect }: { item: PlanItem; primary: boolean
  *  the column, so the gutters read as one grid. */
 export const PANEL_GAP = 16;
 
+/** The plan reserves room for this many items, and the height of one
+ *  (11px padding top and bottom around a 13px title and an 11px meta line). */
+const PLAN_SLOTS = 4;
+const PLAN_ROW_H = 58;
+
 /** Tallest a course row's track may grow to fill the mastery card. */
 const COURSE_ROW_MAX = 56;
 
@@ -344,7 +349,7 @@ export function TodayColumn(props: {
           aria-valuemin={0}
           aria-valuemax={checkable.length}
           aria-valuenow={doneCount}
-          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 12px" }}
+          style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", overflow: "hidden", margin: "8px 0 10px" }}
         >
           <div
             style={{
@@ -354,7 +359,9 @@ export function TodayColumn(props: {
             }}
           />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {/* Room for PLAN_SLOTS items whatever today's count, so the cards
+            below don't jump as the plan fills up. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: PLAN_SLOTS * PLAN_ROW_H + (PLAN_SLOTS - 1) * 6 }}>
           {plan.map((item) => (
             <PlanRow key={item.key} item={item} primary={item.key === primaryKey} onSelect={() => select(item)} />
           ))}
@@ -366,19 +373,19 @@ export function TodayColumn(props: {
         className="card"
         data-testid="dashboard-streak"
         style={{
-          padding: "16px 18px",
+          padding: "14px 18px",
           background: "linear-gradient(170deg, color-mix(in srgb, var(--warn-soft) 55%, var(--bg-panel)), var(--bg-panel) 65%)",
           borderColor: "color-mix(in srgb, var(--warn-soft) 70%, var(--border))",
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 12 }}>
           <span aria-hidden style={{ color: "var(--alert-warn)", opacity: stats.streak > 0 ? 1 : 0.35, display: "grid" }}>
-            <Icon name="fire" size={32} />
+            <Icon name="fire" size={28} />
           </span>
           <div>
             <span
               className="h-serif"
-              style={{ fontSize: 38, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
+              style={{ fontSize: 34, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
             >
               {stats.streak}
             </span>{" "}
@@ -386,11 +393,20 @@ export function TodayColumn(props: {
               {stats.streak === 1 ? "day" : "days"}{stats.streak > 0 ? " in a row" : ""}
             </span>
           </div>
-          {!!bestStreak && bestStreak > 0 && (
-            <span style={{ marginLeft: "auto", alignSelf: "flex-start", fontSize: 12, color: "var(--text-muted)" }}>
-              best {bestStreak}
-            </span>
-          )}
+          {/* The message rides the top row (not its own line) to keep the
+              card short enough for the plan's reserved slots above it. */}
+          <div style={{ marginLeft: "auto", alignSelf: "center", textAlign: "right", fontSize: 11.5, lineHeight: 1.35, maxWidth: 150 }}>
+            <div style={{ color: "var(--warn)" }}>
+              {/* Keyed on the server's streak first: activity alone (a session
+                  row, a concept's last_studied_at) doesn't prove it advanced. */}
+              {stats.streak > 0
+                ? todayDone ? "Today counted. Nice work." : "One session today keeps it alive."
+                : todayDone ? "Nice work today." : "One session today starts your streak."}
+            </div>
+            {!!bestStreak && bestStreak > 0 && (
+              <div style={{ color: "var(--text-muted)" }}>best {bestStreak}</div>
+            )}
+          </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
           {weekDays.map((d) => {
@@ -406,7 +422,7 @@ export function TodayColumn(props: {
                 <div
                   aria-label={`${d.toLocaleDateString("en-US", { weekday: "long" })}${done ? ", studied" : ""}`}
                   style={{
-                    margin: "4px auto 0", width: 26, height: 26, borderRadius: 8,
+                    margin: "3px auto 0", width: 24, height: 24, borderRadius: 7,
                     display: "grid", placeItems: "center", fontSize: 11, fontWeight: 600,
                     background: done ? "var(--alert-warn)" : isToday ? "transparent" : "var(--bg-subtle)",
                     color: done ? "#fff" : isToday ? "var(--warn)" : "var(--text-muted)",
@@ -420,13 +436,6 @@ export function TodayColumn(props: {
               </div>
             );
           })}
-        </div>
-        <div style={{ fontSize: 11.5, color: "var(--warn)", marginTop: 10 }}>
-          {/* Keyed on the server's streak first: activity alone (a session row,
-              a concept's last_studied_at) doesn't prove the streak advanced. */}
-          {stats.streak > 0
-            ? todayDone ? "Today counted. Nice work." : "One session today keeps it alive."
-            : todayDone ? "Nice work today." : "One session today starts your streak."}
         </div>
       </div>
 
@@ -443,7 +452,7 @@ export function TodayColumn(props: {
       >
         {stats.total > 0 ? (
           <>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
               <span className="h-serif" style={{ fontSize: 26, fontWeight: 600, lineHeight: 1 }}>{stats.mastered}</span>
               <span style={{ fontSize: 13, color: "var(--text-muted)" }}>of {stats.total} concepts mastered</span>
             </div>
@@ -452,7 +461,7 @@ export function TodayColumn(props: {
                 <span key={label} style={{ flex: n, background: color }} />
               ))}
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
               {legend.map(([label, n, color]) => (
                 <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                   <span style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
@@ -473,12 +482,12 @@ export function TodayColumn(props: {
           <div
             data-testid="dashboard-course-rows"
             style={{
-              marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)",
+              marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
               // basis 0 + grow: take the spare height, but never more than
               // COURSE_ROW_MAX per row; space-between spreads them within it.
               flex: "1 1 0", minHeight: "min-content",
               maxHeight: React.Children.count(courseRows) * COURSE_ROW_MAX,
-              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 12,
+              display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 4,
             }}
           >
             {courseRows}
