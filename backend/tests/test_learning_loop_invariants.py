@@ -888,10 +888,15 @@ def test_inv_07_learning_tables_only_via_connection():
 
 #: The one sanctioned amendment (spec §13 A123). 7717dc24 folded the report
 #: quarantine into A124's hold by editing 20261108072715_learning_evidence_void.sql,
-#: which 2bbeaf82 had created on the same unmerged branch, before any
-#: environment applied it. The migration ledger keys on basename, so an edit
-#: AFTER an apply is what inv_08 exists to stop. Keyed on the full commit and the
-#: one file it may touch. Never add a migration that any environment has applied.
+#: which 2bbeaf82 had created on the same unmerged branch.
+#: - The migration was never applied anywhere: no environment, no ledger row,
+#:   when the edit was made.
+#: - The exception is keyed to this one commit (its full hash) and this one file.
+#:   Any other commit that modifies a series migration, or this commit touching
+#:   any other file, still fails inv_08.
+#: The migration ledger keys on basename, so an edit AFTER an apply is what
+#: inv_08 exists to stop. Never add an entry for a migration that any
+#: environment has applied.
 _AMENDED_BEFORE_ANY_APPLY = {
     "7717dc247bbc9150e469ab1960130d61425e1ffa": frozenset(
         {"20261108072715_learning_evidence_void.sql"}
