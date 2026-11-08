@@ -11,7 +11,6 @@ import io
 import ipaddress
 import json
 import logging
-import math
 import os
 import re
 import socket
@@ -24,8 +23,6 @@ from pathlib import Path
 from typing import TypedDict
 
 import httpcore
-from services import request_limits
-
 import httpx
 from bs4 import BeautifulSoup
 from Levenshtein import distance as _levenshtein
@@ -39,7 +36,7 @@ from db.connection import table
 from agents._run import run_agent_sync
 from agents.flashcard import flashcard_agent
 from agents.usage import record_agent_usage
-from services import extraction_service
+from services import extraction_service, request_limits
 from services.encryption import decrypt_if_present
 
 logger = logging.getLogger(__name__)
@@ -99,9 +96,9 @@ def dedup_against_existing(
 
 _RATE_WINDOW_SEC = 60
 _RATE_LIMIT = 5
-#: The shared limiter's state (#117): one store, so the `stateless_rate_limit`
-#: flag moves this budget to Postgres along with every other limiter's.
-_rate_state = request_limits._rate_state
+#: This limiter's keys in the shared store (#117: one store, so the
+#: `stateless_rate_limit` flag moves this budget to Postgres with every other).
+_RATE_KEY_PREFIX = "flashcard_import:"
 
 
 def check_rate_limit(user_id: str) -> int | None:
@@ -109,8 +106,16 @@ def check_rate_limit(user_id: str) -> int | None:
     shared sliding window in services/request_limits, key
     ``flashcard_import:<user_id>``)."""
     return request_limits.check_rate_limit(
-        f"flashcard_import:{user_id}", limit=_RATE_LIMIT, window_sec=_RATE_WINDOW_SEC,
+        f"{_RATE_KEY_PREFIX}{user_id}", limit=_RATE_LIMIT, window_sec=_RATE_WINDOW_SEC,
     )
+
+
+def clear_rate_state() -> None:
+    """Test helper: forget this limiter's in-memory windows, and only these
+    (the store is shared with every other limiter)."""
+    state = request_limits._rate_state
+    for key in [k for k in state if k.startswith(_RATE_KEY_PREFIX)]:
+        state.pop(key, None)
 
 
 def parse_xlsx(file_bytes: bytes) -> list[Card]:
