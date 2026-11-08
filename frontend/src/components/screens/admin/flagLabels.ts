@@ -30,10 +30,17 @@ export function flagMeta(key: string): FlagMeta {
 /** Flags grouped in nav order (Learn, Organize, …), anything else last. */
 export function groupFlags(flags: AdminFlag[]): { group: string; flags: AdminFlag[] }[] {
   const order = [...NAV_SECTIONS.map((s) => s.label), OTHER_GROUP];
-  const navOrder = NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.flag)).filter(Boolean);
+  // Section rows first, then nested features in their declared order.
+  const navOrder = [
+    ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.flag)),
+    ...NESTED_NAV_FEATURES.map((n) => n.flag),
+  ].filter(Boolean);
   const groups = new Map<string, AdminFlag[]>();
   for (const f of flags) {
-    const g = flagMeta(f.key).group;
+    // A group the tab doesn't render (a nested feature naming a section that
+    // was renamed, say) falls back to Other instead of vanishing.
+    const meta = flagMeta(f.key).group;
+    const g = order.includes(meta) ? meta : OTHER_GROUP;
     groups.set(g, [...(groups.get(g) ?? []), f]);
   }
   return order
