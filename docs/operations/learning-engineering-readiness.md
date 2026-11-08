@@ -299,10 +299,15 @@ unfinished engineering requirement.
    the `misconceptions.resolved_reason` CHECK admits A127's
    `correct_unassisted_isomorph` beside A123's `evidence_void`; code ahead of
    it has every `misconceptions.resolve()` refused, so no misconception closes
-   and each refused call logs a WARNING) and
+   and each refused call logs a WARNING),
    `20261108115157_learning_evidence_void_grants.sql` (A123: service_role keeps
    only SELECT and INSERT on `learning_evidence_voids` and
-   `misconception_attempts`; no code depends on it). The verifier's
+   `misconception_attempts`; no code depends on it) and
+   `20261108115720_learning_evidence_snapshot_exact_floats.sql` (A123: the two
+   snapshots the evidence writer plans from return exact doubles under the
+   Supabase image's `extra_float_digits = 0`; without it nothing fails, but the
+   writer plans from states rounded to 15 digits and a staff retire's
+   recompute differs from them in the last digits). The verifier's
    `--db-audit` requires the columns they add and the `posttest_anchors`
    function. It reads no constraint body or grant: what holds 110805 and
    115157 is its ledger check, which fails while any migration file is

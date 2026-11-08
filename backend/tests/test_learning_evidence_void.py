@@ -308,3 +308,32 @@ def test_the_backend_holds_select_and_insert_only_on_both_records():
     granted = re.findall(r"GRANT ([^;]*?) ON TABLE \w+ TO service_role;", ddl)
     assert granted == ["SELECT, INSERT", "SELECT, INSERT"]
 
+
+@pytest.mark.parametrize("function", ["learning_evidence_snapshot", "learning_evidence_void_snapshot"])
+def test_the_snapshots_the_writer_plans_from_return_exact_floats(function):
+    """The Supabase image sets extra_float_digits = 0, so to_jsonb() rounds a
+    float8 to 15 significant digits. The writer planned from rounded states
+    while its replay (A123) read them exactly, and a recompute differed from
+    the writer's own state (20261108115720). The last migration statement that
+    defines or alters each snapshot function must set extra_float_digits = 3:
+    a CREATE OR REPLACE replaces every SET clause, so a later re-creation
+    carries it itself."""
+    import pathlib
+    import re
+
+    migrations = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
+    head = re.compile(
+        rf"(CREATE\s+OR\s+REPLACE\s+FUNCTION|ALTER\s+FUNCTION)\s+(?:public\.)?{function}\s*\(", re.I
+    )
+    statements = []
+    for path in sorted(migrations.glob("*.sql")):
+        sql = re.sub(r"--[^\n]*", "", path.read_text())
+        for m in head.finditer(sql):
+            if m.group(1).upper().startswith("CREATE"):
+                end = re.compile(r"\$[A-Za-z_]*\$").search(sql, m.end()).start()  # up to the body
+            else:
+                end = sql.index(";", m.end())
+            statements.append((path.name, sql[m.start() : end]))
+    assert statements, function
+    name, last = statements[-1]
+    assert re.search(r"SET\s+extra_float_digits\s*=\s*3\b", last), (function, name)
