@@ -244,6 +244,45 @@ class TestList:
         ]
 
 
+class TestDeletedAccountsAreDropped:
+    """#115: a soft-deleted account leaves every list that shows OTHER
+    students — the delete is soft, so its rows stay behind."""
+
+    def test_list_friends_reads_live_users_only(self):
+        handles = {"friendships": MagicMock(), "users": MagicMock()}
+        handles["friendships"].select.return_value = [{"friend_id": "u2"}, {"friend_id": "gone"}]
+        handles["users"].select.return_value = [{"id": "u2", "level": 7, "total_xp": 900}]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.get_display_names", return_value={"u2": "Priya"}) as names:
+            r = client.get("/api/social/friends/u1")
+        _, kwargs = handles["users"].select.call_args
+        assert kwargs["filters"]["deleted_at"] == "is.null"
+        assert [f["user_id"] for f in r.json()["friends"]] == ["u2"]
+        names.assert_called_once_with(["u2"])
+
+    def test_friend_requests_drop_deleted_counterparts(self):
+        handles = {"friend_requests": MagicMock()}
+        handles["friend_requests"].select.side_effect = [
+            [{"id": "r1", "from_user_id": "u2", "created_at": "t"},
+             {"id": "r2", "from_user_id": "gone", "created_at": "t"}],
+            [{"id": "r3", "to_user_id": "gone2", "created_at": "t"}],
+        ]
+        with patch("routes.social.table", side_effect=_tables(handles)), \
+             patch("routes.social.live_user_ids", return_value={"u2"}), \
+             patch("routes.social.get_display_names", return_value={"u2": "Priya"}):
+            r = client.get("/api/social/friends/requests?user_id=u1")
+        body = r.json()
+        assert [x["id"] for x in body["incoming"]] == ["r1"]
+        assert body["outgoing"] == []
+
+    def test_room_members_drop_deleted_accounts(self):
+        from routes.social import _live_members
+        with patch("routes.social.live_user_ids", return_value={"u1", "u3"}):
+            assert _live_members(
+                [{"user_id": "u1"}, {"user_id": "gone"}, {"user_id": "u3"}]
+            ) == ["u1", "u3"]
+
+
 class TestAuthGuard:
     """Each friends endpoint must call require_self(user_id, request) before
     touching the DB — matching the rest of routes/social.py. These patch

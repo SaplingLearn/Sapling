@@ -645,6 +645,94 @@ class TestPublicProfileDeletedAndAnonymous:
         assert r.json()["roles"] == []
 
 
+_STAFF_TITLE = {"id": "c-staff", "type": "title", "name": "Staff", "slug": "staff-title",
+                "asset_url": None, "css_value": None, "rarity": "legendary"}
+_EARNED_BANNER = {"id": "c-earned", "type": "banner", "name": "Sunrise", "slug": "sunrise",
+                  "asset_url": None, "css_value": None, "rarity": "common"}
+
+
+def _decorated_tables(touched=None):
+    """An admin who features the admin role and equips a role-granted title
+    (role_cosmetics) plus an ordinary earned banner."""
+    base = _roles_tables()
+
+    def table_side_effect(name):
+        if touched is not None:
+            touched.append(name)
+        m = MagicMock()
+        if name == "user_settings":
+            m.select.return_value = [{
+                "user_id": USER_ID, "profile_visibility": "public",
+                "featured_role_id": "r1", "equipped_title_id": "c-staff",
+                "equipped_banner_id": "c-earned",
+            }]
+        elif name == "roles":
+            m.select.return_value = [dict(_ADMIN_ROLE)]
+        elif name == "cosmetics":
+            def _sel(cols, filters=None, **kw):
+                cid = (filters or {}).get("id", "").removeprefix("eq.")
+                return [c for c in (_STAFF_TITLE, _EARNED_BANNER) if c["id"] == cid]
+            m.select.side_effect = _sel
+        elif name == "role_cosmetics":
+            def _rc(cols, filters=None, **kw):
+                assert "c-staff" in filters["cosmetic_id"]
+                return [{"cosmetic_id": "c-staff"}]
+            m.select.side_effect = _rc
+        else:
+            return base(name)
+        return m
+    return table_side_effect
+
+
+class TestAnonymousViewerSeesNoRoleDecoration:
+    """#115: roles may not leak to anonymous viewers through the cosmetics
+    either — the featured role IS a role, and a role-granted cosmetic names
+    one."""
+
+    def test_anonymous_loses_featured_role_and_role_cosmetics_only(self):
+        touched: list[str] = []
+        with _viewer(None), \
+             patch("routes.profile.table", side_effect=_decorated_tables(touched)):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        eq = r.json()["equipped_cosmetics"]
+        assert "featured_role" not in eq
+        assert "title" not in eq                  # granted by a role
+        assert eq["banner"]["id"] == "c-earned"   # earned: stays
+        assert r.json()["roles"] == []
+        # Anonymous skips the roles read altogether.
+        assert "user_roles" not in touched
+
+    def test_signed_in_viewer_keeps_them(self):
+        with _viewer(VIEWER_ID), \
+             patch("routes.profile.table", side_effect=_decorated_tables()):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        eq = r.json()["equipped_cosmetics"]
+        assert eq["featured_role"]["slug"] == "admin"
+        assert eq["title"]["id"] == "c-staff"
+
+
+class TestViewerResolution:
+    def test_account_state_503_propagates_instead_of_anonymous(self):
+        """Only "no usable session" is anonymous; a 503 (the guard could not
+        read the viewer's account state) must not silently serve the
+        anonymous view."""
+        with patch("routes.profile.get_session_user_id",
+                   side_effect=HTTPException(status_code=503, detail="x")), \
+             patch("routes.profile.table", side_effect=_roles_tables()):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 503
+
+    def test_unapproved_viewer_gets_the_anonymous_view(self):
+        with patch("routes.profile.get_session_user_id",
+                   side_effect=HTTPException(status_code=403, detail={"code": "not_approved"})), \
+             patch("routes.profile.table", side_effect=_roles_tables()):
+            r = client.get(f"/api/profile/{USER_ID}")
+        assert r.status_code == 200
+        assert r.json()["roles"] == []
+
+
 # ── GET /api/profile/username/check ────────────────────────────────────────
 
 class TestCheckUsername:
