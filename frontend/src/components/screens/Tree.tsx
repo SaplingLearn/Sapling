@@ -577,6 +577,7 @@ export function Tree() {
                 highlightId={suggestId || selected?.id}
                 onNodeClick={(n) => setSelected(n)}
                 zoomControlsTop={FULLSCREEN_BTN.top + FULLSCREEN_BTN.h + 6}
+                legible
               />
               {/* The graph's own top-right corner: a Fullscreen icon the
                   width of the zoom stack, which sits directly below it. */}
@@ -682,6 +683,7 @@ function FullscreenGraph({
         height={size.h}
         highlightId={highlightId}
         onNodeClick={onNodeClick}
+        legible
       />
     </div>
   );

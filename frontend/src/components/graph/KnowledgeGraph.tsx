@@ -88,6 +88,9 @@ type Props = {
   /** 2D only: top offset of the zoom stack, for a host that puts its own
    *  control (the Tree's Fullscreen icon) in the corner above it. */
   zoomControlsTop?: number;
+  /** 2D only: Obsidian-style legibility (hover focus, zoom-faded labels,
+   *  importance sizing, arrows, course legend). The Tree turns it on. */
+  legible?: boolean;
 };
 
 const TIERS: MasteryTier[] = ["mastered", "learning", "struggling", "unexplored"];
