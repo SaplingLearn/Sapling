@@ -429,7 +429,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // (the fixtures re-seed before every test), so every concept is a first measurement
   // and none starts at the BKT prior: a probed concept starts at its check-in result
   // (where teaching on it began, else after its last check-in answer), any other at
-  // its first evidence. Recomputed here from the journal and the probe history.
+  // its first evidence; every concept ends at its last evidence. Recomputed here from
+  // the journal and the probe history, and the wrap-up's direction from those two.
   const record = JSON.parse(await decryptText(closed[0].close_json)) as {
     concepts: { node_id: string; p_before: number; p_after: number; baseline?: string }[];
   };
@@ -444,30 +445,47 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   )) as { history: { question_hash: string }[] | null }[];
   const probeHashes = new Set((probeRow?.history ?? []).map((h) => h.question_hash));
   expect(probeHashes.size).toBeGreaterThan(0);
-  const starts = new Map<string, { baseline: string; p: number; inCheckIn: boolean }>();
+  const starts = new Map<string, { baseline: string; p: number; inCheckIn: boolean; end: number }>();
   for (const row of journal) {
     const isProbe = row.question_hash !== null && probeHashes.has(row.question_hash);
     const start = starts.get(row.node_id);
-    if (!start) starts.set(row.node_id, { baseline: isProbe ? "check_in" : "teaching", p: Number(row.p_after), inCheckIn: isProbe });
-    else if (start.inCheckIn && isProbe) start.p = Number(row.p_after);
+    if (!start) {
+      starts.set(row.node_id, {
+        baseline: isProbe ? "check_in" : "teaching",
+        p: Number(row.p_after),
+        inCheckIn: isProbe,
+        end: Number(row.p_after),
+      });
+      continue;
+    }
+    if (start.inCheckIn && isProbe) start.p = Number(row.p_after);
     else if (start.inCheckIn) Object.assign(start, { p: Number(row.p_before), inCheckIn: false });
+    start.end = Number(row.p_after);
   }
+  // The move from a concept's start to its end, compared as the close compares them
+  // (learning/session_close.py::move, LoopLearn's closeConceptView): exactly, with no
+  // tolerance — any rise is "up", any fall "down", an unmoved estimate "same".
+  const moved = ({ p, end }: { p: number; end: number }) => (end > p ? "up" : end < p ? "down" : "same");
   expect(record.concepts.map((c) => c.node_id).sort()).toEqual([...starts.keys()].sort());
   for (const concept of record.concepts) {
     const start = starts.get(concept.node_id)!;
     expect(concept.baseline).toBe(start.baseline);
     expect(concept.p_before).toBeCloseTo(start.p, 9);
+    expect(concept.p_after).toBeCloseTo(start.end, 9);
     const item = page.getByTestId(`loop-close-concept-${concept.node_id}`);
     await expect(item).toHaveAttribute("data-baseline", start.baseline);
+    await expect(item).toHaveAttribute("data-direction", moved(start));
     // Nothing in this walk lowered a concept after its first measurement.
-    await expect(item).not.toHaveAttribute("data-direction", "down");
+    expect(moved(start)).not.toBe("down");
   }
-  // The explicitly checked concept: its correct check after teaching reads as a rise
-  // from its check-in result; first measured by that check itself, as a starting point.
-  await expect(page.getByTestId(`loop-close-concept-${checkedNodeId}`)).toHaveAttribute(
-    "data-direction",
-    starts.get(checkedNodeId)?.baseline === "check_in" ? "up" : "same",
-  );
+  // The explicitly checked concept: its only teaching-phase evidence is the check it
+  // answered after the worked example — weight 0, no upward credit (spec §13 A122; its
+  // evidence row is asserted above) — so the journal leaves it where it started (its
+  // check-in result, or that check itself) and its wrap-up row, asserted equal to the
+  // journal's move in the loop above, must not read as a rise.
+  const checkedStart = starts.get(checkedNodeId);
+  expect(checkedStart, "the explicitly checked concept is on the wrap-up").toBeDefined();
+  expect(moved(checkedStart!)).toBe("same");
 
   const events = (await queryRaw(
     `SELECT DISTINCT event_type FROM events WHERE user_id = $1 AND event_type = ANY($2)`,
