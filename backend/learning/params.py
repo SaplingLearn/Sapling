@@ -134,9 +134,10 @@ MISCONCEPTION_MIN_ISOMORPHS = 2
 # candidate. Read on the served path since spec §13 A127 (the 3-point control).
 GAP_CONFIDENCE_MAX = 0.4
 # † Spec §13 A127: the student's stated confidence — "Guessing" / "Fairly sure"
-# / "Sure" on the loop's check and probe cards and on the review card (never
-# the post-test) — on the 0..1 scale the §3.3 rule reads (Attempt.confidence)
-# and the evidence journal keeps (node_mastery_events.student_confidence). Each
+# / "Sure" on the loop's check and probe cards, on the review card and (A132) on
+# every quiz question (never the post-test) — on the 0..1 scale the §3.3 rule
+# reads (Attempt.confidence) and the evidence journal keeps
+# (node_mastery_events.student_confidence). Each
 # label is the midpoint of the rule's band it stands for: "guessing" of
 # [0, GAP_CONFIDENCE_MAX] (a wrong answer → gap), "fairly_sure" of
 # (GAP_CONFIDENCE_MAX, MISCONCEPTION_CONFIDENCE) (→ unknown), "sure" of
