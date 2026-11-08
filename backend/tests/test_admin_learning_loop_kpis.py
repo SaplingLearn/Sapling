@@ -315,9 +315,16 @@ def test_scans_ask_for_only_the_rows_they_need(monkeypatch):
 
     monkeypatch.setattr(analytics, "table", _Rec)
     assert client.get(URL, params=RANGE).status_code == 200
-    by_table = {n: f for n, _, f in calls}
+    by_table: dict = {}
+    for n, _, f in calls:  # the first scan of each table
+        by_table.setdefault(n, f)
     # spec §13 A133: the hint-unlocking attempts ride the same events scan
     assert by_table["events"]["event_type"] == "in.(zpd.step,zpd.leak,zpd.reveal,zpd.attempt)"
+    # spec §13 A141: the multi-concept report's own reads — the stored items
+    # (apex_key set) and the served events — after the report's scans
+    assert ("check_items", analytics._MULTI_ITEM_COLS, {"apex_key": "not.is.null"}) in calls
+    served = [f for n, _, f in calls if n == "events"][1]
+    assert served["event_type"] == "eq.learn.multi_concept_served"
     assert by_table["node_mastery_events"]["event_type"] == "eq.evidence"
     # A133: the help ledger's loop poses and help only, ranged on `at`
     ledger = by_table["learning_reveals"]

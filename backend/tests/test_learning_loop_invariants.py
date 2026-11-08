@@ -45,6 +45,7 @@ PURE_MODULES = (
     "cost_per_gain.py",  # A137: the loop's spend against its learning-gain pairs (admin KPI report)
     "surface.py",  # A140: the surface descriptor and the cue-familiarity dial (descriptors in, ranks out)
     "multi_concept.py",  # A141: combination identity, the gate and the session dial (keys/states in)
+    "multi_concept_report.py",  # A141: served and outcomes per course (rows in, report out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)

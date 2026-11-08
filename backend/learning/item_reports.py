@@ -39,6 +39,7 @@ from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, rpc, table
 from learning.checks import held_flags
+from learning.multi_concept import components_of
 from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS, ITEM_REPORT_REASONS
 from services.timestamps import parse_ts
 
@@ -234,7 +235,7 @@ def review_entry(
     flags = list(row.get("lint_flags") or [])
     status = decision.get("status")
     reports = {r: (count or {}).get(r, 0) for r in ITEM_REPORT_REASONS}
-    return {
+    entry = {
         "id": row.get("id"),
         "course_id": key[0],
         "concept_key": row.get("concept_key"),
@@ -250,6 +251,10 @@ def review_entry(
         # A124, A123: withdrawn from every student until staff decide
         "held": held_flags(flags, row.get("canonical_verified")),
     }
+    comps = components_of(row.get("concept_key"))
+    if comps:  # spec §13 A141: a multi-concept item says what it combines, apex first
+        entry["components"] = list(comps)
+    return entry
 
 
 def queue_entries(

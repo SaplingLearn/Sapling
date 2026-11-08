@@ -811,18 +811,20 @@ def course_has_items(course_id: str) -> bool:
     (A124) does not count (feeds /probe/next's no_check_items and the A26 "No
     check items for this course yet" state). Plaintext columns only, read a
     page at a time until one unheld row: almost always the first row, all of
-    them only for a course whose every item is held."""
+    them only for a course whose every item is held. A multi-concept item
+    (spec §13 A141) does not count: it is served only beside its concepts'
+    own items, never on its own."""
     offset = 0
     while True:
         rows = table(_TABLE).select(
-            "id,lint_flags,canonical_verified",
+            "id,concept_key,lint_flags,canonical_verified",
             filters={"course_id": f"eq.{course_id}"},
             order="id",
             limit=_HAS_ITEMS_PAGE,
             offset=offset,
         )
         rows = rows or []
-        if any(not _row_held(r) for r in rows):
+        if any(not _row_held(r) and not components_of(r.get("concept_key")) for r in rows):
             return True
         if len(rows) < _HAS_ITEMS_PAGE:
             return False
@@ -1047,7 +1049,13 @@ def check_stored_alignment(
     learning.item_alignment.align against `scope` ({concept_key: name}; each
     item's own concept is always in scope). None when the check was
     unavailable — the backfill then changes nothing (an outage never deletes
-    a stored item). Usage is recorded against the system actor."""
+    a stored item). Usage is recorded against the system actor.
+
+    Spec §13 A141: a multi-concept item is checked as it was drafted — the
+    multi-concept check (every criterion asked, every component needed),
+    applied by align_components, never re-tagged — its components named from
+    `scope` (else their keys). A course with none sends exactly the A119
+    requests."""
     if not items:
         return []
     deps = SaplingDeps(
@@ -1057,13 +1065,28 @@ def check_stored_alignment(
         request_id=current_request_id() or f"check_items_verify:{course_id}",
         feature="check_items_verify",
     )
-    found = _verdicts_for([_item_subject(i) for i in items], scope, deps=deps, flex=flex)
-    if found is None:
-        return None
-    return [
-        align(len(content_criteria(item)), item.concept_key, verdict, scope)
-        for item, verdict in zip(items, found)
-    ]
+    singles = [(n, i) for n, i in enumerate(items) if not components_of(i.concept_key)]
+    multis = [(n, i) for n, i in enumerate(items) if components_of(i.concept_key)]
+    out: list[Alignment | None] = [None] * len(items)
+    if singles:
+        found = _verdicts_for([_item_subject(i) for _, i in singles], scope, deps=deps, flex=flex)
+        if found is None:
+            return None
+        for (n, item), verdict in zip(singles, found):
+            out[n] = align(len(content_criteria(item)), item.concept_key, verdict, scope)
+    if multis:
+        named = [
+            (_item_subject(i), tuple(scope.get(k, k) for k in components_of(i.concept_key)))
+            for _, i in multis
+        ]
+        found = _combo_verdicts_for(named, deps=deps, flex=flex)
+        if found is None:
+            return None
+        for (n, item), (_, names), verdict in zip(multis, named, found):
+            out[n] = align_components(
+                len(content_criteria(item)), len(names), item.concept_key, verdict
+            )
+    return out
 
 
 def mark_aligned(item_ids: Iterable[str], *, at: str) -> int:
@@ -1190,6 +1213,12 @@ def key_check_passages(rows: Iterable[dict], names: dict[str, str]) -> dict[str,
     out: dict[str, list[dict]] = {}
     for key, docs in docs_by_key.items():
         chunks = [c for d in sorted(docs) for c in chunks_by_doc.get(d, [])]
+        comps = components_of(key)
+        if comps:
+            # A141: a multi-concept item's passages are its drafting call's —
+            # each component's, merged; none when one component has none
+            out[key] = _combo_passages([names.get(k) or k for k in comps], chunks) or []
+            continue
         out[key] = rank_chunks_for_concept(names.get(key) or key, chunks, limit=CHECK_ITEM_MAX_CHUNKS)
     return out
 
@@ -2098,6 +2127,27 @@ def _solve_screened(
 # ── multi-concept alignment (spec §13 A141) ─────────────────────────────────
 
 
+def _combo_verdicts_for(
+    subjects: list[tuple[_Subject, tuple[str, ...]]], *, deps: SaplingDeps, flex: bool
+) -> list | None:
+    """The multi-concept check's verdict (item_alignment.ComponentVerdict) for
+    each (subject, its components' names) in order — None for one it left
+    unanswered — CHECK_ITEM_VERIFY_MAX_ITEMS per call. None when any call was
+    unavailable: the caller's rule decides what that means."""
+    out: list = []
+    for start in range(0, len(subjects), CHECK_ITEM_VERIFY_MAX_ITEMS):
+        batch = [
+            ComboVerifyItem(VerifyItem(str(n), *subject), names)
+            for n, (subject, names) in enumerate(subjects[start : start + CHECK_ITEM_VERIFY_MAX_ITEMS], start=1)
+        ]
+        result = run_agent_sync(verify_combo_items(batch, deps=deps, flex=flex))
+        if isinstance(result, CheckItemsUnavailable):
+            return None
+        found = component_verdicts(result)
+        out.extend(found.get(entry.item.id) for entry in batch)
+    return out
+
+
 def _align_combo_screened(
     screened: dict[str, list[_Screened]],
     components: dict[str, list[str]],
@@ -2116,19 +2166,12 @@ def _align_combo_screened(
     if not valid:
         return screened
     subjects = [
-        ComboVerifyItem(
-            VerifyItem(str(n), *_draft_subject(entry.draft)), tuple(components.get(key, ()))
-        )
-        for n, (key, entry) in enumerate(valid, start=1)
+        (_draft_subject(entry.draft), tuple(components.get(key, ()))) for key, entry in valid
     ]
-    found: dict = {}
-    for start in range(0, len(subjects), CHECK_ITEM_VERIFY_MAX_ITEMS):
-        batch = subjects[start : start + CHECK_ITEM_VERIFY_MAX_ITEMS]
-        result = run_agent_sync(verify_combo_items(batch, deps=deps, flex=flex))
-        if isinstance(result, CheckItemsUnavailable):
-            return None
-        found.update(component_verdicts(result))
-    verdict_at = iter(subjects)
+    found = _combo_verdicts_for(subjects, deps=deps, flex=flex)
+    if found is None:
+        return None
+    verdict_at = iter(zip(subjects, found))
     out: dict[str, list[_Screened]] = {key: [] for key in screened}
     rejected = trimmed = 0
     for key, rows in screened.items():
@@ -2136,11 +2179,9 @@ def _align_combo_screened(
             if entry.draft is None:
                 out[key].append(entry)
                 continue
-            subject = next(verdict_at)
+            (_, names), verdict = next(verdict_at)
             criteria = _draft_criteria(entry.draft)
-            result = align_components(
-                len(criteria), len(subject.components), key, found.get(subject.item.id)
-            )
+            result = align_components(len(criteria), len(names), key, verdict)
             if result.reject:
                 rejected += 1
                 logger.warning(

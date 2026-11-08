@@ -35,6 +35,7 @@ from learning.evidence_void import is_void_row, pose_is_void
 from learning.help_abuse import LOOP_SOURCE as HELP_LOOP_SOURCE
 from learning.help_abuse import help_abuse as help_abuse_report
 from learning.item_reports import retired_items
+from learning.multi_concept_report import multi_concept_report
 from learning.learning_gain import (
     due_windows,
     learning_gain,
@@ -870,6 +871,31 @@ class HelpAbuse(BaseModel):
     truncated: bool = False
 
 
+class MultiConceptBlock(BaseModel):
+    """Spec §13 A141: one course's (or, course_id None, every course's)
+    multi-concept items — stored, served and their outcomes in the range."""
+
+    course_id: str | None
+    items: int  # stored multi-concept items (held ones included)
+    held: int
+    served: int  # learn.multi_concept_served in the range
+    answered: int  # graded answers on them in the range (void rows left out)
+    correct: int
+    unassisted: int
+    unassisted_correct: int
+    students: int  # distinct students who answered one
+    correct_rate: float | None  # correct / answered; None when nothing was answered
+    correct_ci_low: float | None  # its Wilson 95% interval
+    correct_ci_high: float | None
+
+
+class MultiConcept(BaseModel):
+    """Spec §13 A141 (learning/multi_concept_report.py)."""
+
+    overall: MultiConceptBlock
+    courses: list[MultiConceptBlock]
+
+
 class LearningLoopKpis(BaseModel):
     range: Range
     steps_total: int
@@ -897,6 +923,9 @@ class LearningLoopKpis(BaseModel):
     slot_warnings: list[SlotWarning] = Field(default_factory=list)
     # spec §13 A133: help abuse — None when its reads failed (the rest stands)
     help_abuse: HelpAbuse | None = None
+    # spec §13 A141: multi-concept items stored, served and their outcomes —
+    # None when its reads failed (the rest stands)
+    multi_concept: MultiConcept | None = None
     truncated: bool = False
 
 
@@ -1249,6 +1278,65 @@ def _help_abuse(
         return None
 
 
+#: Spec §13 A141: a loop check posed a multi-concept item (services/varied_practice.py)
+_MULTI_SERVED_EVENT = "learn.multi_concept_served"
+#: the stored multi-concept items (apex_key from 20261108185101)
+_MULTI_ITEM_COLS = "id,course_id,question_hash,lint_flags,canonical_verified"
+#: the evidence a multi-concept outcome is read from (item_stats' unassisted rule)
+_MULTI_EVIDENCE_COLS = (
+    "id,check_item_id,correct,assisted,max_rung,same_session_recheck,weight,confidence,"
+    "channel,reason,question_hash,created_at,graph_nodes!inner(user_id,course_id)"
+)
+
+
+class _MultiItemsRead:
+    """A page_all handle over check_items' multi-concept rows (apex_key set)."""
+
+    def select_with_count(self, *args, **kwargs):
+        return table("check_items").select_with_count(*args, **kwargs)
+
+
+def _multi_concept(from_iso: str, to_iso: str, retired) -> tuple[MultiConcept | None, bool]:
+    """Spec §13 A141: the multi-concept items stored, served in the range and
+    their outcomes in it, per course and overall with every n
+    (learning/multi_concept_report.py). One read of the stored items, one
+    events scan, and — only when such items exist — one evidence scan of their
+    rows; void rows left out (A123: `retired`). Additive: a failed read (a
+    database before the migration among them) answers None, the rest of the
+    report stands."""
+    try:
+        items = list(
+            page_all(
+                _MultiItemsRead(), _MULTI_ITEM_COLS, filters={"apex_key": "not.is.null"}, order="id"
+            )
+        )
+        served, served_truncated = _scan_range(
+            "events",
+            "event_type,user_id,payload,created_at",
+            from_iso,
+            to_iso,
+            extra_filters={"event_type": f"eq.{_MULTI_SERVED_EVENT}"},
+        )
+        evidence: list[dict] = []
+        evidence_truncated = False
+        ids = [r["id"] for r in items if r.get("id")]
+        for batch in _batches(ids):
+            rows, cut = _scan_range(
+                "node_mastery_events",
+                _MULTI_EVIDENCE_COLS,
+                from_iso,
+                to_iso,
+                extra_filters={"event_type": "eq.evidence", "check_item_id": _in(batch)},
+            )
+            evidence.extend(r for r in rows if not is_void_row(r, retired))
+            evidence_truncated = evidence_truncated or cut
+        report = multi_concept_report(items, [_payload(e) for e in served], evidence)
+        return MultiConcept(**report), served_truncated or evidence_truncated
+    except Exception:
+        logger.warning("admin learning-loop: the multi-concept report could not be built", exc_info=True)
+        return None, False
+
+
 #: A137: the llm_usage columns the cost report reads (course_id from
 #: 20261108163653; a database before it is read without the column)
 _USAGE_COST_COLS = "id,task,cost_usd,user_id,session_id,course_id,created_at"
@@ -1433,6 +1521,7 @@ def learning_loop_kpis(
     # spec §13 A133: help abuse, over the same events and non-void evidence
     help_abuse = _help_abuse(events, steps, valid, from_iso, to_iso)
     cost = _cost_per_gain(from_iso, to_iso, poses, pretests, retired)  # A137
+    multi, multi_truncated = _multi_concept(from_iso, to_iso, retired)  # A141
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -1460,10 +1549,12 @@ def learning_loop_kpis(
         cost_per_gain=cost.report,
         slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
         help_abuse=help_abuse,
+        multi_concept=multi,
         truncated=events_truncated
         or evidence_truncated
         or poses_truncated
         or funnel_truncated
         or bool(help_abuse is not None and help_abuse.truncated)
-        or cost.truncated,
+        or cost.truncated
+        or multi_truncated,
     )
