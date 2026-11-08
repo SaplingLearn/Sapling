@@ -119,7 +119,7 @@ export function PasteTab({ cards, onCards }: Props) {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <div style={{ minWidth: 180 }}>
             <div className="label-micro">Between term and definition</div>
-            <CustomSelect value={termSel} onChange={setTermSel} options={TERM_OPTIONS} />
+            <CustomSelect ariaLabel="Between term and definition" value={termSel} onChange={setTermSel} options={TERM_OPTIONS} />
             {termSel === "custom" && (
               <input
                 value={termCustom}
@@ -131,7 +131,7 @@ export function PasteTab({ cards, onCards }: Props) {
           </div>
           <div style={{ minWidth: 180 }}>
             <div className="label-micro">Between cards</div>
-            <CustomSelect value={cardSel} onChange={setCardSel} options={CARD_OPTIONS} />
+            <CustomSelect ariaLabel="Between cards" value={cardSel} onChange={setCardSel} options={CARD_OPTIONS} />
             {cardSel === "custom" && (
               <input
                 value={cardCustom}

@@ -1504,6 +1504,7 @@ function LearnInner() {
           <div className="card" style={{ padding: "var(--pad-xl)" }}>
             <div className="label-micro" style={{ marginBottom: 8 }}>Course (optional)</div>
             <CustomSelect<string>
+              ariaLabel="Course (optional)"
               value={selectedCourseId}
               options={[
                 { value: "", label: "No course" },

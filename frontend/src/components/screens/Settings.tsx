@@ -531,6 +531,7 @@ export function Settings() {
                 </div>
                 <div style={{ minWidth: 180 }}>
                   <CustomSelect
+                    ariaLabel="Layout"
                     size="sm"
                     value={layoutPref}
                     onChange={(v) => setLayoutPref(v as LayoutPref)}
@@ -562,6 +563,7 @@ export function Settings() {
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
                   <div style={{ minWidth: 180 }}>
                     <CustomSelect
+                      ariaLabel={label}
                       size="sm"
                       value={(settings[key] as string) ?? options[0]}
                       onChange={(v) => patch({ [key]: v } as Partial<UserSettings>)}

@@ -349,6 +349,7 @@ function StepSchool({ school, year, onSchool, onYear }: {
       <TextInput data-testid="onboarding-school" value={school} onChange={e => onSchool(e.target.value)} disabled style={{ marginBottom: 16 }} />
       <FieldLabel>Year</FieldLabel>
       <CustomSelect<string>
+        ariaLabel="Year"
         value={year}
         placeholder="Select your year…"
         options={YEARS.map(y => ({ value: y, label: y.charAt(0).toUpperCase() + y.slice(1) }))}

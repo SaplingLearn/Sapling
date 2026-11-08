@@ -413,6 +413,7 @@ function GuideMode({
               <span className="label-micro">Course</span>
             </div>
             <CustomSelect
+              ariaLabel="Course"
               value={courseId}
               onChange={selectCourse}
               placeholder="Pick a course…"
@@ -439,6 +440,7 @@ function GuideMode({
               <span className="label-micro">Exam</span>
             </div>
             <CustomSelect
+              ariaLabel="Exam"
               value={examId}
               onChange={v => setExamId(v)}
               placeholder={loadingExams ? "Loading…" : (courseId ? "Pick an exam…" : "Select a course first")}
