@@ -195,12 +195,25 @@ def review_session_id(user_id: str, course_id: str | None, now: datetime) -> str
 
 
 def _session_view(doc: dict | None = None) -> dict:
-    """{"sr": …, "review": {"spent_s", "served_hashes", …}} off a stored loop_state."""
-    doc = doc or {}
-    review = dict(doc.get("review") or {})
+    """{"sr": …, "review": {"spent_s", "served_hashes", …}, "open": {key: entry}}
+    off a stored loop_state — a deep copy, never an alias of the row as read
+    (the routes apply their deltas to the view in memory; only
+    `_persist_loop_state` writes, and it re-applies them to a fresh load).
+
+    "open" is what the routes read the served items from (§13 A115):
+    `/review/next` re-serves the open item on a refresh (`is_open`; never item
+    shopping) and `/review/answer` anchors A93's unscanned-marker rule on its
+    `served_at` (`_review_posed_at`). A non-object "open" reads as {}."""
+    doc = copy.deepcopy(doc or {})
+    review = doc.get("review") if isinstance(doc.get("review"), dict) else {}
     review.setdefault("spent_s", 0)
     review.setdefault("served_hashes", [])
-    return {"sr": dict(doc.get("sr") or {}), "review": review}
+    opened = doc.get("open")
+    return {
+        "sr": doc.get("sr") if isinstance(doc.get("sr"), dict) else {},
+        "review": review,
+        "open": opened if isinstance(opened, dict) else {},
+    }
 
 
 def _read_session(sid: str, user_id: str) -> list[dict]:

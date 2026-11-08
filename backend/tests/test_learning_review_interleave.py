@@ -587,7 +587,12 @@ def test_review_next_serves_the_sibling_of_the_concept_just_graded(queue_env, mo
         return LoadedLoopState(replaced or saved, 1)
 
     monkeypatch.setattr(review, "update_loop_state", store)
-    monkeypatch.setattr(review, "load_or_create_review_session", lambda u, c, now: (sid, state))
+    # the REAL loader reads the stored document (spec §13 A115: never a hand-built view)
+    monkeypatch.setattr(
+        review,
+        "_read_session",
+        lambda s, u: [{"id": s, "user_id": u, "loop_state": saved.to_json()}],
+    )
     monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
     monkeypatch.setattr(review, "log_event", lambda *a, **kw: None)
     monkeypatch.setattr("routes.learn_loop._review_now", lambda: NOW)
@@ -604,4 +609,5 @@ def test_review_next_serves_the_sibling_of_the_concept_just_graded(queue_env, mo
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["item"]["node_id"] == "b" and body["in_budget"] == 3
+    assert body["session_id"] == sid  # the real loader derived today's session
     assert saved.extra["open"]["b"]["item_id"] == "ci-b"
