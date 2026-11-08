@@ -33,10 +33,11 @@
 import type { Browser, Page, Response } from "@playwright/test";
 
 import { expect, killSwitchLane, test } from "./support/fixtures";
-import { queryRaw, seedGoalContinuationItems } from "./support/db";
+import { queryRaw, seedGoalContinuationItems, seedTeachPromptItems, setUserFlag } from "./support/db";
 import { decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
+import { showsAnotherItem } from "./support/probe";
 import { LOOP_STREAM_CAPTURE_SCRIPT, loopStreamCompleted, markLoopStream, readLoopStream, type LoopStreamTicket } from "./support/loop-streams";
 import { mintStorageState } from "./support/session";
 import { FRONTEND_URL, USER_ACTIVE, USER_CAPPED, USER_LOOP } from "./support/stack";
@@ -85,6 +86,20 @@ const CLOSE_SUMMARY =
 const CLOSE_IF_THEN =
   "If the next session opens with a recursion check, then write the base case " +
   "before the recursive step.";
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PREQUESTION_REPLY
+ *  (spec §13 A138: the explanation turn that follows a segment's guess). */
+const LOOP_PREQUESTION_REPLY =
+  "Key idea: [e2e-function-model] Deterministic prequestion explanation: the answer rests on the one idea the question tests.\n\n" +
+  "Set your guess beside the answer above and find where they part.\n\n" +
+  "What would you check first on a question like this next time?";
+/** What the explanation leads with, from code: the seeded multiple-choice
+ *  guess's key (backend/db/seed_learning_teach_prompts.py — B is correct). */
+const PREQUESTION_ANSWER_LEAD = "The answer: B. the kilo sentinel phrase";
+/** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_SELF_EXPLAIN_ACK_BODY
+ *  (spec §13 A139: the turn after a reply acknowledges it, flag on). */
+const LOOP_SELF_EXPLAIN_ACK_BODY = "Thanks for putting that step into your own words.";
+/** Spec §13 A139: the worked example's "why" prompt, served by code. */
+const WORKED_EXAMPLE_PROMPT = "Why does each step of that worked example follow from the one before it?";
 // Mirrors backend/db/seed_local_rich.py::CAPPED_FLASHCARD (id, front).
 const CAPPED_CARD_ID = "rich-fc-capped-1";
 const CAPPED_CARD_FRONT = "What is a bit?";
@@ -139,15 +154,14 @@ async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<
       .poll(async () => {
         if ((await phase.getAttribute("data-phase")) !== "probe") return true;
         if (!(await probeItem.isVisible())) return false;
-        const now = await probeItem.getAttribute("data-question-hash");
-        return (await page.getByTestId("loop-probe-reference").isVisible()) || (now !== null && now !== qh);
+        return (await page.getByTestId("loop-probe-reference").isVisible()) || (await showsAnotherItem(probeItem, qh));
       })
       .toBe(true);
     if (await page.getByTestId("loop-probe-reference").isVisible()) {
       expect(difficulty).toBeGreaterThan(1);
       await page.getByTestId("loop-probe-next").click();
       await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-        (await probeItem.getAttribute("data-question-hash")) !== qh).toBe(true);
+        (await showsAnotherItem(probeItem, qh))).toBe(true);
     } else {
       expect(difficulty).toBe(1);
       await expect(page.getByTestId("loop-probe-reference")).toHaveCount(0);
@@ -212,6 +226,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   const phase = page.getByTestId("loop-phase");
   const answered = await walkProbeAndPlan(page, P);
   expect(answered).toBeGreaterThanOrEqual(Number(P.PROBE_ITEMS_PER_SKILL_MIN));
+  // spec §13 A138: the segment prequestion is off by default — approval opens no guess
+  await expect(page.getByTestId("loop-prequestion")).toHaveCount(0);
   await expect(page.getByTestId("loop-tree-link")).toHaveAttribute("href", /^\/tree/); // the map stays reachable
   await expect(page.getByRole("radiogroup", { name: "Tutor model" })).toHaveCount(0); // no model toggle (A26)
 
@@ -244,6 +260,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // the served leak guards (the oracle below re-reads the transcript for leaks).
   await expect(hintReply).toContainText(LOOP_HINT_BODY);
   await expect(hintButton).toBeEnabled();
+  // spec §13 A139: self-explanation prompts are off by default — the worked example asks no "why"
+  await expect(page.getByTestId("loop-self-explain")).toHaveCount(0);
 
   // Nothing after the worked example is free: H5 keeps the attempt gate, so a hint
   // with no attempt since → denied with a reason from learning/gates.py.
@@ -895,6 +913,170 @@ test("spec §13 A121 (loop_tutor_v2 on): the reply to the tutor's question gets 
   }
 });
 
+/** The student's evidence rows (event_type 'evidence'), through their graph nodes. */
+async function evidenceCount(userId: string): Promise<number> {
+  const [row] = (await queryRaw(
+    `SELECT count(*)::int AS n FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
+      WHERE g.user_id = $1 AND e.event_type = 'evidence'`,
+    [userId],
+  )) as { n: number }[];
+  return Number(row.n);
+}
+
+test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungraded guess, its answer follows at once, and nothing is graded", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  // The flag on for this student only (feature_flag_targets; the per-test reset wipes it).
+  await setUserFlag("segment_prequestion", USER_LOOP, "on");
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await walkProbeAndPlan(page, P, false);
+    // After the check-in, so it still asks only the seeded free-text items: a
+    // fresh multiple-choice pool the segment's guess can draw from while the
+    // segment's checks keep theirs.
+    await seedTeachPromptItems();
+    const phase = page.getByTestId("loop-phase");
+    await page.getByTestId("loop-plan-approve").click();
+    await expect(phase).toHaveAttribute("data-phase", "teach");
+
+    // The segment opens on its guess: one open prompt, no "Start with".
+    const card = page.getByTestId("loop-prequestion");
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute("data-format", "mc_reason");
+    await expect(card).toHaveAttribute("data-answered", "false");
+    await expect(card).toContainText("isn't scored");
+    await expect(page.getByTestId("loop-teach-start")).toHaveCount(0);
+    await expect(page.getByTestId("loop-prequestion-option-B")).toContainText("the kilo sentinel phrase");
+    const guessHash = await card.getAttribute("data-question-hash");
+    expect(guessHash).toBeTruthy();
+    const sessionId = await phase.getAttribute("data-session-id");
+    expect(sessionId).toBeTruthy();
+    const evidenceBefore = await evidenceCount(USER_LOOP);
+
+    // A wrong guess (A); the answer and its explanation follow in the same stream.
+    await page.getByTestId("loop-prequestion-option-A").click();
+    const explained = await markLoopStream(page, "/api/learn/loop/prequestion/answer/stream");
+    await page.getByTestId("loop-prequestion-submit").click();
+    const replyParts = [PREQUESTION_ANSWER_LEAD, ...LOOP_PREQUESTION_REPLY.split("\n\n")];
+    const result = await expectCompletedLoopTurn(page, explained, replyParts);
+    expect(result.graded).not.toBe(true); // never graded
+    await expect(card).toHaveCount(0);
+    await expectTurn(page, `${PREQUESTION_ANSWER_LEAD}\n\n${LOOP_PREQUESTION_REPLY}`);
+    await expect(page.getByTestId("loop-messages")).toContainText("My guess: A");
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+
+    // The guess is stored encrypted, with no evidence anywhere.
+    const rows = (await queryRaw(
+      `SELECT question_hash, no_idea, guess_json, session_id FROM learning_prequestions WHERE user_id = $1`,
+      [USER_LOOP],
+    )) as { question_hash: string; no_idea: boolean; guess_json: string | null; session_id: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ question_hash: guessHash, no_idea: false, session_id: sessionId });
+    expect(rows[0].guess_json).toBeTruthy();
+    expect(rows[0].guess_json).not.toContain("option"); // ciphertext at rest
+    expect(JSON.parse(await decryptText(rows[0].guess_json!))).toMatchObject({ option: "A" });
+    const [onItem] = (await queryRaw(
+      `SELECT count(*)::int AS n FROM node_mastery_events e JOIN graph_nodes g ON g.id = e.node_id
+        WHERE g.user_id = $1 AND e.event_type = 'evidence' AND e.question_hash = $2`,
+      [USER_LOOP, guessHash],
+    )) as { n: number }[];
+    expect(Number(onItem.n)).toBe(0);
+    expect(await evidenceCount(USER_LOOP)).toBe(evidenceBefore); // no BKT/FSRS movement from the guess
+    // ...and its answer, once shown, makes the item exposed for good (A88's durable reveal).
+    const reveals = (await queryRaw(
+      `SELECT kind, source FROM learning_reveals WHERE user_id = $1 AND question_hash = $2`,
+      [USER_LOOP, guessHash],
+    )) as { kind: string; source: string }[];
+    expect(reveals).toEqual([{ kind: "reveal", source: "prequestion" }]);
+    const [doc] = (await queryRaw(
+      `SELECT loop_state->>'concept' AS concept, loop_state->'prequestion' AS prequestion FROM sessions WHERE id = $1`,
+      [sessionId],
+    )) as { concept: string; prequestion: Record<string, { status: string; question_hash: string }> }[];
+    expect(doc.prequestion[doc.concept]).toMatchObject({ status: "resolved", question_hash: guessHash });
+
+    // The segment's checks never serve the guessed item.
+    await page.getByTestId("loop-check-me").click();
+    const check = page.getByTestId("loop-check-prompt");
+    await expect(check).toBeVisible();
+    expect(await check.getAttribute("data-question-hash")).not.toBe(guessHash);
+
+    // The learn_loop oracle: the answer the explanation states counts as released
+    // by the answered guess, so no pre-release leak is reported.
+    const oracle = await runOracle(["--check", "learn_loop"]);
+    expect(oracle.findings, oracle.stderr).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+test("spec §13 A139 (self_explanation_prompts on): the worked example asks why its steps follow; the reply is stored and never graded", async ({ browser }) => {
+  test.skip(killSwitchLane, "loop path: default lane only");
+  test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
+  await setUserFlag("self_explanation_prompts", USER_LOOP, "on");
+  const P = await learningParams(["PROBE_SESSION_CAP"]);
+  const { context, page } = await signIn(browser, USER_LOOP, "Lou Loop");
+  try {
+    await page.goto("/learn");
+    await walkProbeAndPlan(page, P);
+    await firstTeachTurn(page);
+
+    // spec §13 A122: this novice's first check opens on its worked example (H4),
+    // asked for at once — and with the flag on, that hint's question is the
+    // "why" prompt, served by code (juncture worked_example).
+    await page.getByTestId("loop-check-me").click();
+    const check = page.getByTestId("loop-check-prompt");
+    await expect(check).toBeVisible();
+    const hintReply = page.getByTestId("loop-hint-reply");
+    await expect(hintReply).toContainText(LOOP_HINT_BODY);
+    await expect(hintReply).toContainText(WORKED_EXAMPLE_PROMPT);
+    expect(((await hintReply.textContent()) ?? "").trim().endsWith(WORKED_EXAMPLE_PROMPT)).toBe(true);
+    const prompt = page.getByTestId("loop-self-explain");
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toHaveAttribute("data-juncture", "worked_example");
+    await expect(page.getByTestId("loop-self-explain-prompt")).toHaveText(WORKED_EXAMPLE_PROMPT);
+    await expect(page.getByRole("region", { name: "Check your understanding" }).getByTestId("loop-self-explain")).toHaveCount(1);
+
+    const sessionId = await page.getByTestId("loop-phase").getAttribute("data-session-id");
+    expect(sessionId).toBeTruthy();
+    const evidenceBefore = await evidenceCount(USER_LOOP);
+    const reply = "Each step applies the same rule to the next bit.";
+    await page.getByTestId("loop-self-explain-input").fill(reply);
+    const sent = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/learn/loop/self-explain");
+    await page.getByTestId("loop-self-explain-send").click();
+    expect((await sent).status()).toBe(200);
+    await expect(page.getByTestId("loop-self-explain-saved")).toHaveText("Saved — thanks.");
+    await expect(prompt).toHaveCount(0);
+    await expect(check).toBeVisible(); // the check is still open: the reply graded nothing
+
+    // Stored encrypted with its juncture; never evidence.
+    const rows = (await queryRaw(
+      `SELECT juncture, status, reply_chars, reply_text, session_id FROM learning_self_explanations WHERE user_id = $1`,
+      [USER_LOOP],
+    )) as { juncture: string; status: string; reply_chars: number; reply_text: string; session_id: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ juncture: "worked_example", status: "replied", session_id: sessionId });
+    expect(Number(rows[0].reply_chars)).toBe(reply.length);
+    expect(rows[0].reply_text).not.toContain(reply); // ciphertext at rest
+    expect(await decryptText(rows[0].reply_text)).toBe(reply);
+    expect(await evidenceCount(USER_LOOP)).toBe(evidenceBefore);
+
+    // The next tutor turn acknowledges the reply (flag-on prompt; the function-mode
+    // seam answers with its fixed line), and asks no second "why" on the concept.
+    const graded = await markLoopStream(page, "/api/learn/loop/check/answer/stream");
+    await page.getByTestId("loop-attempt-input").fill(`working: ${GRADER_CORRECT_TOKEN}`);
+    await page.getByTestId("loop-attempt-submit").click();
+    const result = await expectCompletedLoopTurn(page, graded, [LOOP_SELF_EXPLAIN_ACK_BODY]);
+    expect(result.graded).toBe(true);
+    await expect(page.getByTestId("loop-messages")).toContainText(LOOP_SELF_EXPLAIN_ACK_BODY);
+    await expect(page.getByTestId("loop-self-explain")).toHaveCount(0);
+    await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("budget cap: tutor chat pauses on /learn; review still serves and grades on /study", async ({ browser }) => {
   test.skip(killSwitchLane, "loop path: default lane only");
   test.setTimeout(LOOP_JOURNEY_TIMEOUT_MS);
@@ -1393,12 +1575,12 @@ test("independent prerequisite recovery unlocks a fresh goal plan requiring appr
       if (miss) missedFoundation = true;
       await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
         await page.getByTestId("loop-probe-reference").isVisible() ||
-        (await probe.getAttribute("data-question-hash")) !== hash).toBe(true);
+        (await showsAnotherItem(probe, hash))).toBe(true);
       if (await page.getByTestId("loop-probe-reference").isVisible()) {
         expect(miss).toBe(true);
         await page.getByTestId("loop-probe-next").click();
         await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-          (await probe.getAttribute("data-question-hash")) !== hash).toBe(true);
+          (await showsAnotherItem(probe, hash))).toBe(true);
       }
     }
     expect(missedFoundation).toBe(true);
@@ -1521,11 +1703,11 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
       answered += 1;
       await expect.poll(async () => await phase.getAttribute("data-phase") !== "probe" ||
         await page.getByTestId("loop-probe-reference").isVisible() ||
-        await item.getAttribute("data-question-hash") !== hash).toBe(true);
+        await showsAnotherItem(item, hash)).toBe(true);
       if (await page.getByTestId("loop-probe-reference").isVisible()) {
         await page.getByTestId("loop-probe-next").click();
         await expect.poll(async () => await phase.getAttribute("data-phase") !== "probe" ||
-          await item.getAttribute("data-question-hash") !== hash).toBe(true);
+          await showsAnotherItem(item, hash)).toBe(true);
       }
     }
     expect(answered).toBeGreaterThan(0);

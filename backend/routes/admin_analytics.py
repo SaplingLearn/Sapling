@@ -35,6 +35,9 @@ from learning.evidence_void import is_void_row, pose_is_void
 from learning.help_abuse import LOOP_SOURCE as HELP_LOOP_SOURCE
 from learning.help_abuse import help_abuse as help_abuse_report
 from learning.item_reports import retired_items
+from learning.self_explain_report import self_explanation_report
+from learning.self_explain_store import REPORT_COLUMNS as SELF_EXPLAIN_COLUMNS
+from learning.self_explain_store import TABLE as SELF_EXPLAIN_TABLE
 from learning.learning_gain import (
     due_windows,
     learning_gain,
@@ -870,6 +873,47 @@ class HelpAbuse(BaseModel):
     truncated: bool = False
 
 
+class SelfExplainNextItem(BaseModel):
+    n: int  # prompts with a later graded item on the concept in the range
+    unassisted: int
+    rate: float | None
+    none: int  # prompts with no later graded item in the range
+
+
+class SelfExplainNext(BaseModel):
+    replied: SelfExplainNextItem
+    not_replied: SelfExplainNextItem
+
+
+class SelfExplainChars(BaseModel):
+    median: float | None
+    n: int
+
+
+class SelfExplainJuncture(BaseModel):
+    juncture: str
+    shown: int
+    replied: int
+    reply_rate: float | None
+    next_item: SelfExplainNext
+
+
+class SelfExplanation(BaseModel):
+    """Spec §13 A139: self-explanation prompts — shown, the reply rate, the
+    median reply length and next-item unassisted success after replying vs
+    not, each with its n (learning/self_explain_report.py)."""
+
+    shown: int
+    replied: int
+    skipped: int
+    open: int
+    reply_rate: float | None
+    reply_chars: SelfExplainChars
+    next_item: SelfExplainNext
+    by_juncture: list[SelfExplainJuncture]
+    truncated: bool = False
+
+
 class LearningLoopKpis(BaseModel):
     range: Range
     steps_total: int
@@ -897,6 +941,8 @@ class LearningLoopKpis(BaseModel):
     slot_warnings: list[SlotWarning] = Field(default_factory=list)
     # spec §13 A133: help abuse — None when its reads failed (the rest stands)
     help_abuse: HelpAbuse | None = None
+    # spec §13 A139: self-explanation prompts — None when its read failed
+    self_explanation: SelfExplanation | None = None
     truncated: bool = False
 
 
@@ -1249,6 +1295,26 @@ def _help_abuse(
         return None
 
 
+def _self_explanation(valid: list[dict], from_iso: str, to_iso: str) -> SelfExplanation | None:
+    """Spec §13 A139 over the range: the prompts served in it (one ranged
+    `learning_self_explanations` scan; never the reply) against the non-void
+    evidence the endpoint already scanned. Additive: a failed read logs a
+    WARNING and answers None — the rest of the report stands."""
+    try:
+        prompts, truncated = _scan_range(
+            SELF_EXPLAIN_TABLE,
+            SELF_EXPLAIN_COLUMNS,
+            from_iso,
+            to_iso,
+            time_column="prompted_at",
+            order="prompted_at.asc,id.asc",
+        )
+        return SelfExplanation(**self_explanation_report(prompts, valid), truncated=truncated)
+    except Exception:
+        logger.warning("admin learning-loop: the self-explanation report could not be built", exc_info=True)
+        return None
+
+
 #: A137: the llm_usage columns the cost report reads (course_id from
 #: 20261108163653; a database before it is read without the column)
 _USAGE_COST_COLS = "id,task,cost_usd,user_id,session_id,course_id,created_at"
@@ -1368,7 +1434,10 @@ def learning_loop_kpis(
     when its reads failed); the loop's spend in the range against those
     learning-gain pairs, overall and per course (A137: per active student-month
     against §3.5's target, per session, per pair and per gain point, each with
-    its n); `truncated: true` means a scan cap cut the aggregation short."""
+    its n); self-explanation prompts (A139: shown, the reply rate, the median
+    reply length and the next item's unassisted success after replying vs
+    not, overall and per juncture — None when its read failed);
+    `truncated: true` means a scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -1433,6 +1502,7 @@ def learning_loop_kpis(
     # spec §13 A133: help abuse, over the same events and non-void evidence
     help_abuse = _help_abuse(events, steps, valid, from_iso, to_iso)
     cost = _cost_per_gain(from_iso, to_iso, poses, pretests, retired)  # A137
+    self_explanation = _self_explanation(valid, from_iso, to_iso)  # spec §13 A139
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -1460,10 +1530,12 @@ def learning_loop_kpis(
         cost_per_gain=cost.report,
         slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
         help_abuse=help_abuse,
+        self_explanation=self_explanation,
         truncated=events_truncated
         or evidence_truncated
         or poses_truncated
         or funnel_truncated
         or bool(help_abuse is not None and help_abuse.truncated)
+        or bool(self_explanation is not None and self_explanation.truncated)
         or cost.truncated,
     )

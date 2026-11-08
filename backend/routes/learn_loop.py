@@ -85,6 +85,8 @@ from agents.loop_tutor import (
     new_nonce,
     phase_prefix,
     plan_focus_block,
+    prequestion_answer_block,
+    prequestion_item_block,
     routable_tier,
     student_envelope,
     tier_run_kwargs,
@@ -95,6 +97,11 @@ from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, pg_quote_value, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
 from learning import grade_checkpoint, item_reports
+from learning import prequestion as prequestion_rules
+from learning import self_explain
+from learning.prequestion_store import store_answer as store_prequestion_answer
+from learning.self_explain_store import close_prompt as close_self_explain_prompt
+from learning.self_explain_store import record_prompt as record_self_explain_prompt
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
 from learning.checks import (
@@ -242,9 +249,11 @@ from models import (
     PosttestAnswerBody,
     PosttestShownBody,
     PosttestStartBody,
+    PrequestionAnswerBody,
     ProbeAnswerBody,
     ProbeNextBody,
     ReviewAnswerBody,
+    SelfExplainBody,
     StartSessionBody,
 )
 from routes.learn import (  # legacy helpers, reused verbatim — never copied
@@ -402,6 +411,34 @@ def _help_gate_strict_on(user_id: str | None) -> bool:
     strict rule when on, and POST /hint words its time-alone denial by it. No
     student means off; the resolver fails closed (feature_flags)."""
     return bool(user_id) and flag_on(HELP_GATE_STRICT_FLAG, user_id)
+
+
+#: Spec §13 A138: the segment prequestion's flag (services/feature_flags.py).
+PREQUESTION_FLAG = "segment_prequestion"
+#: Spec §13 A139: the self-explanation prompts' flag.
+SELF_EXPLAIN_FLAG = "self_explanation_prompts"
+
+
+def _prequestion_on(user_id: str | None) -> bool:
+    """The `segment_prequestion` flag for this student (spec §13 A138), read
+    once per request where a segment can start or a prequestion be answered.
+    Off: nothing is posed, explained or read. No student means off; the
+    resolver fails closed (feature_flags)."""
+    return bool(user_id) and flag_on(PREQUESTION_FLAG, user_id)
+
+
+def _self_explain_on(user_id: str | None) -> bool:
+    """The `self_explanation_prompts` flag for this student (spec §13 A139),
+    read once per turn. Off: no juncture is ever a prompt and no
+    acknowledgement line is sent."""
+    return bool(user_id) and flag_on(SELF_EXPLAIN_FLAG, user_id)
+
+
+#: Spec §13 A138: the server cue of the turn that explains an answered
+#: prequestion (trusted route text, like an [ACTION: …] turn's).
+_PREQUESTION_CUE = "[ACTION: The student has just answered the prequestion; explain its answer now.]"
+_NO_OPEN_PREQUESTION = "no open prequestion"
+_NO_OPEN_SELF_EXPLAIN = "no open self-explanation prompt"
 
 #: The three "[ACTION: ...]" texts, copied verbatim from routes/learn.py::_action_turn
 #: (:1406–1411), where they are a local dict.
@@ -1051,6 +1088,7 @@ def _prepare_loop_run(
     nonce: str | None = None,
     v2: bool = False,
     focus_block: str | None = None,
+    extra_blocks: list[str] | None = None,
     out: dict | None = None,
 ) -> tuple:
     """One loop run's agent, user message, run kwargs and deps. `user_message`
@@ -1062,8 +1100,9 @@ def _prepare_loop_run(
     v2 variant's run arguments (spec §13 A121, `variant_run_args`):
     none when off. `focus_block` (v2 teach turns only) is the plan concept's
     untrusted block (`plan_focus_block`), first among the context blocks.
-    `out` receives what the context assembly found (A128: `retrieval:
-    "failed"`)."""
+    `extra_blocks` (spec §13 A138: the prequestion's answer block) follow the
+    context blocks. `out` receives what the context assembly found (A128:
+    `retrieval: "failed"`)."""
     deps = SaplingDeps(
         user_id=user_id,
         course_id=course_id or None,
@@ -1085,6 +1124,9 @@ def _prepare_loop_run(
     )
     if focus_block:
         blocks = [focus_block, *blocks]
+    if extra_blocks:
+        # spec §13 A138: the prequestion's answer, as data, after the context
+        blocks = [*blocks, *extra_blocks]
     assembled = assemble_turn_message(
         prefix=prefix,
         blocks=blocks,
@@ -1299,6 +1341,7 @@ def served_template(
     poses_check: bool = False,
     answer_check: bool = False,
     v2: bool = False,
+    question_text: str | None = None,
 ) -> TurnTemplate:
     """Spec §13 A121: how this turn is served. Always: no question of its own
     when it poses a check (the card is the one open prompt). With the
@@ -1306,11 +1349,14 @@ def served_template(
     content (`labels_new_content`: teach or hint at H2+, never feedback), and
     the verdict line first when it answers the reply to the tutor's own
     question. Off, the label is on every turn, exactly as at 7fa9cd0e — the
-    rendering every recorded rung judgement was made of."""
+    rendering every recorded rung judgement was made of. Spec §13 A139:
+    `question_text`, a self-explanation prompt code serves in place of the
+    model's question (None: the model's, as before)."""
     return TurnTemplate(
         label=labels_new_content(phase, int(rung)) if v2 else True,
         question=not poses_check,
         answer_check=answer_check,
+        question_text=question_text,
     )
 
 
@@ -1323,6 +1369,7 @@ def served_render(
     poses_check: bool = False,
     answer_check: bool = False,
     v2: bool = False,
+    question_text: str | None = None,
 ) -> str:
     """`render_turn` of the turn as served (`_served_fields`, `served_template`)."""
     return render_turn(
@@ -1333,6 +1380,7 @@ def served_render(
             poses_check=poses_check,
             answer_check=answer_check,
             v2=v2,
+            question_text=question_text,
         ),
     )
 
@@ -1346,6 +1394,7 @@ def served_partial(
     poses_check: bool = False,
     answer_check: bool = False,
     v2: bool = False,
+    question_text: str | None = None,
 ) -> str:
     """`render_partial` of a streamed partial as served — the same fields and
     template as `served_render`, so the stream is a prefix of the final text."""
@@ -1357,6 +1406,7 @@ def served_partial(
             poses_check=poses_check,
             answer_check=answer_check,
             v2=v2,
+            question_text=question_text,
         ),
     )
 
@@ -1898,8 +1948,9 @@ class _LoopTurn:
         self.served_model: str | None = None
         self.mode = body.mode
         self.message, self.kind, self.persist_user_row = message, kind, persist_user_row
-        # an [ACTION: ...] turn's message is server text; every other is the student's
-        self.trusted, self.instruction = kind == "action", None
+        # an [ACTION: ...] turn's message is server text (so is the prequestion
+        # cue, spec §13 A138); every other is the student's
+        self.trusted, self.instruction = kind in ("action", "prequestion"), None
         self.loop_on, self.refused = loop_on, refused
         self.request_id = _request_id(request)
         # PKG-14 (A20): an arm session is never downgraded; it pauses at hard
@@ -1975,6 +2026,106 @@ class _LoopTurn:
         self.focus: tuple[str, str] | None = None
         # Spec §13 A121: the v2 variant, resolved ONCE for the turn
         self.v2 = _tutor_v2_on(self.user_id)
+        # Spec §13 A138 / A139: their flags, each resolved ONCE for the turn
+        self.pq_on = _prequestion_on(self.user_id)
+        self.se_on = _self_explain_on(self.user_id)
+        # A138: the plan concept's answered prequestion this teach turn explains
+        self.pq_record, self.pq_item = self._prequestion_to_explain()
+        # A138: this feedback turn hands the student to the next segment's
+        # prequestion card, so it is served without its own question (set in _plan)
+        self.pq_follows = False
+        # A139: the self-explanation prompt this turn's question becomes (set in _plan)
+        self.se_prompt: dict | None = None
+        # A139: the student replied to the last prompt; this turn acknowledges it
+        self.se_ack = self_explain.ack_due(self.state) if self.se_on else None
+
+    def _prequestion_to_explain(self) -> tuple[dict | None, object | None]:
+        """Spec §13 A138: (record, item) of the plan concept's ANSWERED
+        prequestion when this turn explains it — a teach turn with no active
+        item (a chat or action turn, or the answer route's own), flag on. The
+        explanation is owed until a turn serves it, so a failed explaining turn
+        is retried by the next one. A withdrawn item (A23) has nothing left to
+        explain: (record, None), and the turn closes the record."""
+        if not getattr(self, "pq_on", False) or self.phase != "teach" or self.item is not None:
+            return None, None
+        if self.withdrawn_feedback or self.kind not in ("chat", "action", "prequestion"):
+            return None, None
+        rec = prequestion_rules.answered(self.state, self.state.get("concept"))
+        if rec is None:
+            return None, None
+        try:
+            item = get_check_item(rec["check_item_id"]) if rec.get("check_item_id") else None
+        except Exception:
+            logger.warning("prequestion item unreadable; this turn does not explain it", exc_info=True)
+            return None, None
+        return rec, item
+
+    def _self_explain_juncture(self) -> dict | None:
+        """Spec §13 A139: the self-explanation prompt this turn carries, or None.
+        Decided in code, flag on: a hint turn at H4 (the worked example) or H5/H6
+        (a shown solution — a leaking payload served as H6 counts as H6), or a
+        feedback turn that released the answer, or the feedback turn of the
+        session's first check on the concept answered correctly with no help.
+        Never twice on a concept in a session (SELF_EXPLAIN_MAX_PER_CONCEPT, the
+        first juncture takes it), never in a quiz-ask session (its sheet shows
+        no reply box), and never on a confronting turn (PKG-10): a recorded
+        misconception's contradiction needs the turn's question, and the
+        prompt then waits for the concept's next juncture."""
+        if not self.se_on or self.item is None or self.withdrawn_feedback or self.paused:
+            return None
+        if self.phase not in ("hint", "feedback") or not _auto_poses_checks(self.state):
+            return None
+        if self.tier != "none" and self.confront_line is not None:
+            return None  # a template turn serves no confrontation line
+        node = self.node_id or self.concept_node
+        if not self_explain.may_prompt(self.state, node):
+            return None
+        rung = int(Rung.H6) if self.served_as_h6 else int(self.rung)
+        first = (
+            self.phase == "feedback"
+            and self.verdict == "correct"
+            and self_explain.first_unhelped_on_concept(self.state.get("steps") or {}, node, self.active)
+        )
+        found = self_explain.juncture(
+            phase=self.phase, rung=rung, answer_released=self.answer_released, first_correct=first
+        )
+        if found is None:
+            return None
+        juncture, prompt_key = found
+        return {
+            "id": uuid.uuid4().hex,
+            "node_id": node,
+            "juncture": juncture,
+            "prompt_key": prompt_key,
+            "question_hash": self.active,
+            "rung": rung if self.phase == "hint" else int(self.entry.get("max_rung") or 0),
+            "prompted_at": _now_s(),
+        }
+
+    def _prequestion_follows(self) -> bool:
+        """Spec §13 A138 × A121: whether this FEEDBACK turn's completion starts a
+        new segment whose prequestion is then posed — settled before the model
+        runs, so the turn is served without its own question (the card is the
+        one open prompt). A read-only trial of `_apply_turn`'s cursor move and of
+        the pose on a copy of the loop state. A turn that carries a
+        self-explanation prompt never hands over: the prompt is about the
+        concept just finished and comes first; the next segment's prequestion is
+        posed when the prompt closes. A failed read plans the turn with its
+        question."""
+        if not self.pq_on or self.phase != "feedback" or self.withdrawn_feedback or self.se_prompt:
+            return False
+        entry = (self.state.get("steps") or {}).get(self.active)
+        if not isinstance(entry, dict):
+            return False
+        trial = copy.deepcopy(self.state)
+        try:
+            if trial.get("current") == self.active:
+                trial["current"] = None
+            _count_feedback_and_move(trial, trial["steps"][self.active])
+            return _pose_prequestion(self.user_id, self.course_id, trial, now=_now_s()).item is not None
+        except Exception:
+            logger.warning("prequestion trial failed; the turn keeps its question", exc_info=True)
+            return False
 
     def _answer_check_due(self) -> bool:
         """Spec §13 A121: this turn answers the student's reply to the tutor's
@@ -2162,6 +2313,7 @@ class _LoopTurn:
         self.tier, self.text, self.paused = "none", None, False
         self.revealed_hash, self.served_as_h6 = None, False
         self.poses_check, self.answer_check, self.focus = False, False, None
+        self.pq_follows, self.se_prompt = False, None
         self.retrieval_failed = False
         if decision.pause_novice and self.band == "novice" and self.phase in ("check", "hint"):
             self.paused = True  # novice-band concepts pause at the hard level (§3.5)
@@ -2193,6 +2345,14 @@ class _LoopTurn:
             )
         if self.tier == "none":
             self.paused = self.text is None
+            if not self.paused:
+                # spec §13 A139: a template hint or feedback turn at a juncture
+                # (an H4 sibling, an H6 answer, the hard-level feedback) closes
+                # on the prompt, its one question; no model, so no tier cost
+                self.se_prompt = self._self_explain_juncture()
+                if self.se_prompt is not None:
+                    self.text = self.text + FIELD_JOIN + self_explain.prompt_text(self.se_prompt)
+                self.pq_follows = self._prequestion_follows()
             return
         if self.tier not in CONFRONT_TIERS:
             self.confront_line = None  # A75: served only where its eval passes; the marker waits
@@ -2227,6 +2387,12 @@ class _LoopTurn:
         self.answer_check = self._answer_check_due() and not self._reply_states_posed_answer()
         # Spec §13 A121 (v2): a teach turn names the plan's concept and why it is there
         self.focus = self._plan_focus()
+        # Spec §13 A139: a juncture's prompt replaces the model's question in the
+        # served render (the request is unchanged); A138: a feedback turn that
+        # hands over to the next segment's prequestion is served without one
+        self.se_prompt = self._self_explain_juncture()
+        self.pq_follows = self._prequestion_follows()
+        explaining = self.pq_item is not None  # A138: this teach turn explains a prequestion
         self.prefix = phase_prefix(
             phase=self.phase,
             band=self.band,
@@ -2242,6 +2408,14 @@ class _LoopTurn:
             poses_check=self.poses_check,
             answer_check=self.answer_check,
             plan_reason=self.focus[1] if self.focus else None,
+            prequestion_block=(
+                prequestion_item_block(
+                    self.pq_item.prompt, self.pq_item.format, prequestion_rules.option_lines(self.pq_item)
+                )
+                if explaining
+                else None
+            ),
+            self_explain_ack=self.se_ack is not None,
         )
         if self.confront_line:
             # PKG-10: right after the phase instruction, before the context blocks
@@ -2250,6 +2424,16 @@ class _LoopTurn:
             self.prefix = with_confrontation(self.prefix, self.confront_line)
             self.confront_used = confront_of(self.state)
         assembly: dict = {}  # A128: what the context assembly found
+        context_item = self.item
+        extra_blocks: list[str] = []
+        if explaining:
+            # spec §13 A138: the explanation draws on the prequestion item's own
+            # source passages (resolved for this student, A17/A18) instead of a
+            # retrieval keyed on the route's cue, and gets the released answer as
+            # data — the model never states it (the lead is code's, A51 m1)
+            context = context._replace(rag_k=0, source_chunks=LOOP_SOURCE_CHUNKS_MAX)
+            context_item = self.pq_item
+            extra_blocks.append(prequestion_answer_block(self.pq_item.reference_answer))
         self.agent, self.assembled, self.run_kwargs, self.deps = _prepare_loop_run(
             user_id=self.user_id,
             session_id=self.session_id,
@@ -2263,7 +2447,7 @@ class _LoopTurn:
             state=self.state,
             tier=self.tier,
             context=context,
-            item=self.item,
+            item=context_item,
             learning_loop=self.loop_on,
             loop_turn=turn_limits(
                 self.phase,
@@ -2278,6 +2462,7 @@ class _LoopTurn:
             nonce=nonce,
             v2=self.v2,
             focus_block=plan_focus_block(self.focus[0]) if self.focus else None,
+            extra_blocks=extra_blocks,
             out=assembly,
         )
         self.retrieval_failed = assembly.get("retrieval") == "failed"
@@ -2358,6 +2543,10 @@ class _LoopTurn:
         if self.phase == "feedback" and hard and self.item is not None:
             reference = self.item.reference_answer if self.answer_released else None
             return _template_feedback(self.verdict, reference)
+        if self.phase == "teach" and hard and self.pq_item is not None:
+            # spec §13 A138: the answer follows promptly whatever the budget —
+            # at the hard level as a template (no model): the answer, one line
+            return prequestion_rules.answer_lead(self.pq_item) + FIELD_JOIN + prequestion_rules.HARD_LEVEL_LINE
         return None
 
     def pre_events(self) -> list[SaplingEvent]:
@@ -2428,6 +2617,15 @@ class _LoopTurn:
             "verdict": self._lead_verdict(),
         }
 
+    def _prequestion_lead(self) -> str:
+        """Spec §13 A138: what code serves above the model text of a turn that
+        explains an answered prequestion — the correct answer (A51 m1: the
+        model never states it); "" on every other turn and on a template turn
+        (whose text already carries it)."""
+        if self.tier == "none" or self.pq_item is None:
+            return ""
+        return prequestion_rules.answer_lead(self.pq_item) + FIELD_JOIN
+
     def _lead_verdict(self) -> str | None:
         """The grader verdict whose plain line code serves first: a feedback
         turn's, with the v2 variant on (spec §13 A121)."""
@@ -2455,7 +2653,7 @@ class _LoopTurn:
         feedback turn's verdict line, A121, then the released answer, m1), so
         the verdict is the first thing the stream shows."""
         if self.tier == "none" or self.item is None:
-            return text
+            return self._prequestion_lead() + text
         lead = served_lead(
             reference=self.item.reference_answer,
             answer_released=self.answer_released,
@@ -2469,15 +2667,20 @@ class _LoopTurn:
         return lead + (_cut_before_leak(text, spans) if spans else text)
 
     def _render_kwargs(self) -> dict:
-        """`served_render` / `served_partial` keywords for this turn (A121)."""
-        return {
+        """`served_render` / `served_partial` keywords for this turn (A121; A138:
+        a turn that hands over to a prequestion card asks nothing itself; A139:
+        a juncture's prompt is the turn's question)."""
+        kwargs = {
             "phase": self.phase,
             "rung": self._leak_rung(),
             "verdict": self.verdict,
-            "poses_check": self.poses_check,
+            "poses_check": self.poses_check or self.pq_follows,
             "answer_check": self.answer_check,
             "v2": self.v2,
         }
+        if self.se_prompt is not None:
+            kwargs["question_text"] = self_explain.prompt_text(self.se_prompt)
+        return kwargs
 
     def render(self, out) -> str:
         """The served render of the model's structured turn (`served_render`)."""
@@ -2491,7 +2694,7 @@ class _LoopTurn:
         """stream_structured_turn's `transform_final`: the served text of the
         final render (`served_model_text`)."""
         if self.tier == "none" or self.item is None:
-            return text
+            return self._prequestion_lead() + text
         served, _ = served_model_text(text, leak_rung=self._leak_rung(), **self._item_leak_kwargs())
         return served
 
@@ -2500,7 +2703,7 @@ class _LoopTurn:
         it is served at (`_leak_rung`; A34: the item's structured final answer),
         through `served_model_text` (strict; the released lead in front)."""
         if self.tier == "none" or self.item is None:
-            return reply, False
+            return self._prequestion_lead() + reply, False
         served, verdict = served_model_text(
             reply, leak_rung=self._leak_rung(), **self._item_leak_kwargs()
         )
@@ -2603,6 +2806,7 @@ class _LoopTurn:
         save_message(self.session_id, "assistant", reply, merged or None)
         if check is not None:
             save_message(self.session_id, "assistant", check["prompt"])
+        teach_prompts = self._after_teach_prompts(out)
         if self.persist_user_row:
             events_service.log_event(
                 "chat.message_sent",
@@ -2638,7 +2842,90 @@ class _LoopTurn:
             "budget": _budget_data(self.planned) if self.planned.level == "hard" else None,
             "check": check,
             **_materials_notice(out),
+            **teach_prompts,
+            # spec §13 A138: the answer route's turn (present only there)
+            **({"prequestion_answered": True} if self.kind == "prequestion" else {}),
         }
+
+    def _after_teach_prompts(self, out: dict) -> dict:
+        """Spec §13 A138 / A139, after the save that recorded this turn: the
+        prompts' rows and events, and the response keys — `prequestion` (the
+        card this turn posed) and `self_explain` (the prompt this turn's
+        question is), each present only when there is one (never null), so a
+        flag-off response is the one it was. Never raises into the turn."""
+        keys: dict = {}
+        try:
+            if out.get("pq_superseded"):
+                node, rec = out["pq_superseded"]
+                _emit_prequestion(
+                    self.user_id, self.request_id, self.session_id, node, "superseded",
+                    question_hash=rec.get("question_hash"),
+                )
+            if out.get("pq_resolved"):
+                _emit_prequestion(
+                    self.user_id, self.request_id, self.session_id, out["pq_resolved"], "resolved",
+                    question_hash=(self.pq_record or {}).get("question_hash"),
+                )
+            pose = out.get("pq_pose")
+            if pose is not None:
+                payload = _posed_prequestion(self.user_id, self.session_id, self.request_id, pose)
+                if payload is not None:
+                    keys["prequestion"] = payload
+            prompt = out.get("se_prompt")
+            if prompt is not None:
+                record_self_explain_prompt(
+                    prompt, user_id=self.user_id, session_id=self.session_id, course_id=self.course_id
+                )
+                _emit_self_explanation(self.user_id, self.request_id, self.session_id, prompt, "shown")
+                keys["self_explain"] = _self_explain_payload(prompt)
+        except Exception:
+            logger.warning("teach-prompt bookkeeping failed after the turn was saved", exc_info=True)
+        return keys
+
+    def _apply_teach_prompts(self, state: dict, out: dict) -> None:
+        """Spec §13 A138 / A139, inside this turn's compare-and-set mutate (no
+        side effects; `out` carries what `_after_teach_prompts` does after the
+        save).
+          • A139: any served turn closes the open self-explanation prompt (the
+            student moved on; its row stays 'open': never replied), then opens
+            its own; a pending acknowledgement is consumed by this turn.
+          • A138: a teach turn served while the concept's card is still open
+            supersedes it (the student went on without guessing; nothing was
+            revealed, and its item stays out of this session's checks); the
+            turn that explained an answered prequestion resolves it; a feedback
+            turn that started a new segment poses (or skips) its prequestion —
+            unless this turn carries a self-explanation prompt, which comes
+            first (the prequestion waits for the prompt to close), or the turn
+            was planned with its own question (`_undo_pose`, A121).
+        The cleanup halves run whatever the flags say, so a flag turned off
+        mid-session leaves nothing open; with both flags off they find nothing."""
+        self_explain.close_open(state)
+        if self.se_prompt is not None:
+            self_explain.record_prompt(state, self.se_prompt)
+            out["se_prompt"] = self.se_prompt
+        if self_explain.ack_due(state):
+            self_explain.set_ack(state, None)
+        if self.phase == "teach" and self.kind in ("chat", "action"):
+            rec = prequestion_rules.open_record(state, self.concept_node)
+            if rec is not None:
+                records = dict(prequestion_rules.records(state))
+                records[self.concept_node] = {**rec, "status": prequestion_rules.SUPERSEDED}
+                state[prequestion_rules.KEY] = records
+                out["pq_superseded"] = (self.concept_node, rec)
+        if self.pq_record is not None:
+            node = self.concept_node
+            rec = prequestion_rules.answered(state, node)
+            if rec is not None:
+                records = dict(prequestion_rules.records(state))
+                records[node] = {**rec, "status": prequestion_rules.RESOLVED, "resolved_at": self._now}
+                state[prequestion_rules.KEY] = records
+                out["pq_resolved"] = node
+        if self.phase == "feedback" and self.pq_on and self.se_prompt is None and not self.withdrawn_feedback:
+            pose = _pose_prequestion(self.user_id, self.course_id, state, now=self._now)
+            if pose.item is not None and not self.pq_follows:
+                _undo_pose(state, pose)
+                pose = _NO_POSE
+            out["pq_pose"] = pose
 
     def begin_activity(self) -> None:
         """Persist pending timing before planning/model work, including a crash.
@@ -2877,11 +3164,7 @@ class _LoopTurn:
             # A27: one more graded check on the concept; the cursor advances at the
             # cap — unless the band controller's verdict on this grade (spec §13
             # A122) already moved it: stop practice, wheel-spin, prerequisite repair
-            state["concept_checks"] = int(state.get("concept_checks") or 0) + 1
-            state["teach_turns"] = 0
-            moved = _apply_band_control(state, entry)
-            if not moved and state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
-                _advance_cursor(state)
+            _count_feedback_and_move(state, entry)
         if self.retrieval_failed and _note_retrieval_failure(state, self.concept_node):
             out["materials_notice"] = True  # A128: once per session (the stored key)
         state["phase_served"] = self.phase
@@ -2922,10 +3205,18 @@ class _LoopTurn:
                 if qh is not None:
                     out["activated"] = state["steps"][qh]["check_item_id"]
                     out["activated_qh"] = qh
+        # Spec §13 A138 / A139: the teach-phase prompts' part of this write
+        self._apply_teach_prompts(state, out)
         # Spec §13 A121: whether the next teach-phase chat message replies to the
-        # tutor's own open question (its turn then opens with the verdict)
+        # tutor's own open question (its turn then opens with the verdict). A139:
+        # a self-explanation prompt is answered on its own card, never in chat;
+        # A138: a turn that handed over to a prequestion card asked nothing
         state[OPEN_QUESTION_KEY] = (
-            self.tier != "none" and self.phase in ("teach", "feedback") and not self.poses_check
+            self.tier != "none"
+            and self.phase in ("teach", "feedback")
+            and not self.poses_check
+            and not self.pq_follows
+            and self.se_prompt is None
         )
 
     def _submission_extra(self) -> dict:
@@ -3216,6 +3507,177 @@ def _advance_cursor(state: dict, *, no_items: bool = False) -> bool:
     return True
 
 
+def _count_feedback_and_move(state: dict, entry: dict) -> None:
+    """A27: one more graded check on the concept; the cursor advances at the
+    cap — unless the band controller's verdict on this grade (spec §13 A122)
+    already moved it: stop practice, wheel-spin, prerequisite repair. The
+    feedback turn's own compare-and-set mutate (and, read-only on a copy,
+    spec §13 A138's prequestion trial) runs it."""
+    state["concept_checks"] = int(state.get("concept_checks") or 0) + 1
+    state["teach_turns"] = 0
+    moved = _apply_band_control(state, entry)
+    if not moved and state["concept_checks"] >= LOOP_CHECKS_PER_CONCEPT:
+        _advance_cursor(state)
+
+
+# ── The segment prequestion (spec §13 A138) ────────────────────────────────
+
+
+class _Pose(NamedTuple):
+    """What a segment start decided: the concept, the item posed (None: a skip,
+    with its reason — or no segment start at all, when `node` is None too)."""
+
+    node: str | None
+    item: object | None
+    reason: str | None
+
+
+_NO_POSE = _Pose(None, None, None)
+
+
+def _pose_prequestion(user_id: str, course_id: str, state: dict, *, now: float) -> _Pose:
+    """Spec §13 A138: at a segment start (`learning.prequestion.segment_open`;
+    the caller has read the flag), decide the concept's prequestion and record
+    it in `state` — a compare-and-set mutate's document, so no side effects
+    beyond reads (as `_activate_next_item`): a pose (and the card becomes the
+    one open prompt, A121) or a skip with its reason. Excluded like every
+    selection (A23, A113): seen, revealed and reported items, this session's
+    steps and earlier prequestions, the concept's post-test reserves (inside
+    `choose`). A failed read poses nothing and records nothing: the segment
+    simply opens without one (a learning activity, never a gate)."""
+    node = prequestion_rules.segment_open(state)
+    if node is None:
+        return _NO_POSE
+    try:
+        _, p_known = _band_for(user_id, node)
+        reason = prequestion_rules.skip_reason(state, node, p_known=p_known)
+        item = None
+        if reason is None:
+            excluded = (
+                seen_hashes(user_id)
+                | revealed_hashes(user_id)
+                | reported_hashes(user_id)
+                | set(state.get("steps") or {})
+                | prequestion_rules.session_hashes(state)
+            )
+            key = _concept_key_for_node(user_id, node)
+            bank = list_items(course_id, key) if key and course_id else []
+            item, reason = prequestion_rules.choose(bank, excluded)
+    except Exception:
+        logger.warning("prequestion: the concept could not be read; the segment opens without one", exc_info=True)
+        return _NO_POSE
+    records = dict(prequestion_rules.records(state))
+    if item is None:
+        records[node] = prequestion_rules.skip_record(reason)
+        state[prequestion_rules.KEY] = records
+        return _Pose(node, None, reason)
+    records[node] = prequestion_rules.pose_record(item, node, now)
+    state[prequestion_rules.KEY] = records
+    state[OPEN_QUESTION_KEY] = False  # A121: the card is the one open prompt
+    return _Pose(node, item, None)
+
+
+def _undo_pose(state: dict, pose: _Pose) -> None:
+    """Spec §13 A138 × A121: a pose the turn was not planned for (its trial
+    found none, so the turn kept its own question) is dropped in the same
+    compare-and-set: never two open prompts. The segment then opens without
+    a prequestion, as when a planned check cannot be posed (A121 (b))."""
+    if pose.item is None or pose.node is None:
+        return
+    records = dict(prequestion_rules.records(state))
+    records.pop(pose.node, None)
+    state[prequestion_rules.KEY] = records
+
+
+def _emit_prequestion(user_id: str, request_id: str, session_id: str, node_id: str, status: str, **extra) -> None:
+    """`learn.prequestion` (spec §6, §13 A138): ids, enums and counts only —
+    never the question or the guess. One per lifecycle step of a segment's
+    prequestion: posed, skipped (with its reason), answered (no_idea), superseded."""
+    events_service.log_event(
+        "learn.prequestion",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={"session_id": session_id, "node_id": node_id, "status": status, **extra},
+    )
+
+
+def _posed_prequestion(user_id: str, session_id: str, request_id: str, pose: _Pose) -> dict | None:
+    """After the write that recorded `pose`: a posed item's assistant row (the
+    transcript shows what was asked; the card hides it while open) and its
+    event, and the payload for the response; a skip's event only."""
+    if pose.node is None:
+        return None
+    if pose.item is None:
+        _emit_prequestion(user_id, request_id, session_id, pose.node, "skipped", reason=pose.reason)
+        return None
+    try:
+        save_message(session_id, "assistant", prequestion_rules.pose_text(pose.item))
+    except Exception:
+        # the card is posed (the write above): only the transcript row is lost;
+        # the explaining turn carries the question in its own prefix block
+        logger.warning("prequestion pose row not saved", exc_info=True)
+    _emit_prequestion(
+        user_id,
+        request_id,
+        session_id,
+        pose.node,
+        "posed",
+        question_hash=pose.item.question_hash,
+        format=pose.item.format,
+        difficulty=int(pose.item.difficulty),
+    )
+    return prequestion_rules.pose_payload(pose.item)
+
+
+def _emit_self_explanation(user_id: str, request_id: str, session_id: str, prompt: dict, status: str, **extra) -> None:
+    """`learn.self_explanation` (spec §6, §13 A139): ids, enums and counts only
+    — never the prompt's reply. shown (the turn carrying it was served),
+    replied (with reply_chars) or skipped."""
+    events_service.log_event(
+        "learn.self_explanation",
+        category="usage",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "session_id": session_id,
+            "node_id": prompt.get("node_id"),
+            "juncture": prompt.get("juncture"),
+            "status": status,
+            **extra,
+        },
+    )
+
+
+def _self_explain_payload(prompt: dict) -> dict:
+    """The client's view of an open prompt: its id (echoed by the reply), juncture and text."""
+    return {"prompt_id": prompt["id"], "juncture": prompt["juncture"], "prompt": self_explain.prompt_text(prompt)}
+
+
+def _open_teach_prompts(user_id: str, state: dict) -> dict:
+    """GET /status's spec §13 A138 / A139 keys: the plan concept's prequestion
+    card while it is open (posed, or answered with its explanation owed —
+    `answered: true`) and the open self-explanation prompt, each behind its
+    flag and present only when there is one. Reads one item at most."""
+    keys: dict = {}
+    rec = prequestion_rules.record_for(state, state.get("concept"))
+    if (
+        rec is not None
+        and rec.get("status") in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
+        and not state.get("current")
+        and _prequestion_on(user_id)
+    ):
+        item = get_check_item(rec["check_item_id"]) if rec.get("check_item_id") else None
+        if item is not None:
+            keys["prequestion"] = prequestion_rules.pose_payload(
+                item, answered=rec.get("status") == prequestion_rules.ANSWERED
+            )
+    prompt = self_explain.open_prompt(state)
+    if prompt is not None and _self_explain_on(user_id):
+        keys["self_explain"] = _self_explain_payload(prompt)
+    return keys
+
+
 # ── Band control on the plan (spec §3.3, §13 A122) ──────────────────────────
 #: loop_state key: node id → the target difficulty band control set for that
 #: concept's next item this session (ids → ints only; read by activation)
@@ -3427,6 +3889,9 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             | revealed_hashes(user_id)
             | reported_hashes(user_id)
             | set(state.get("steps") or {})
+            # spec §13 A138: an item this session posed as a prequestion (empty
+            # with the flag off) — its answer is shown, or its stem was seen
+            | prequestion_rules.session_hashes(state)
         )
     except Exception as exc:
         if state.get("goal"):
@@ -3515,6 +3980,7 @@ def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_i
             | revealed_hashes(user_id)
             | reported_hashes(user_id)
             | set(state.get("steps") or {})
+            | prequestion_rules.session_hashes(state)  # spec §13 A138, as activation
         )
         unavailable = set()
         for node in node_ids:
@@ -3850,7 +4316,11 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
     phase = ("check" if pending_grade and pending_grade["kind"] == "check"
              else "feedback" if pending_withdrawn_feedback
              else _phase_for(dict(state, current=active if item is not None else None)))
+    # spec §13 A138 / A139: an open card is restored READ-ONLY on resume — each
+    # key present only when there is one (never null), behind its flag
+    teach_prompts = _open_teach_prompts(user_id, state) if not pending_grade else {}
     return {
+        **teach_prompts,
         "active": True,
         "session_id": session_id,
         "loop_phase": _loop_phase(state),  # PKG-08: probe | plan | teach (resume point)
@@ -6193,6 +6663,17 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
             # question; the card is now the one open prompt, so a later chat
             # message is no reply to that question
             st[OPEN_QUESTION_KEY] = False
+            # Spec §13 A139 / A138: so is it over an open self-explanation prompt
+            # (its row stays 'open': never replied) and over a prequestion card
+            # on the concept the check opens (the segment started on a check)
+            self_explain.close_open(st)
+            node = (st.get("steps") or {}).get(out["qh"], {}).get("node_id")
+            rec = prequestion_rules.open_record(st, node)
+            if rec is not None:
+                records = dict(prequestion_rules.records(st))
+                records[node] = {**rec, "status": prequestion_rules.SUPERSEDED}
+                st[prequestion_rules.KEY] = records
+                out["pq_superseded"] = (node, rec)
 
     trial: dict = {}
     activate(state, trial)
@@ -6229,7 +6710,260 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     pose = _pose_payload(item, worked_first=_worked_example_owed(body.user_id, saved, qh))
     _ledger(record_posed, body.user_id, qh, source="loop", session_id=body.session_id)  # A93
     save_message(body.session_id, "assistant", pose["prompt"])
+    if out.get("pq_superseded"):  # spec §13 A138
+        node, rec = out["pq_superseded"]
+        _emit_prequestion(
+            body.user_id, _request_id(request), body.session_id, node, "superseded",
+            question_hash=rec.get("question_hash"),
+        )
     return {"phase": "check", "check": pose}
+
+
+# ── The segment prequestion's answer (spec §13 A138) ───────────────────────
+#
+# One request records the guess and serves its explanation: the guess is
+# stored encrypted (learning_prequestions), the item is revealed for the
+# student at once (learning_reveals, A88 — before any text goes out), the
+# card's record moves to `answered`, the guess is saved as the student's
+# message, and the turn that explains it runs (its lead, from code, is the
+# answer; A51 m1). Nothing is graded: no grade_answer, no evidence (invariant
+# 26: this route is not an evidence writer), no misconception, no help-ledger
+# rung, no band-control input. A retry after a failed explanation (a stored
+# guess) ignores the guess fields and serves the explanation again; so does
+# the next teach turn, whatever it is.
+
+
+def _validated_guess(body: PrequestionAnswerBody, item) -> tuple[bool, dict | None]:
+    """(no_idea, guess) for a posed prequestion: "no idea"; a choice among the
+    item's own letters, with an optional reason (multiple choice); or a
+    non-empty answer (free). Anything else is a 422 and nothing is stored."""
+    if body.no_idea:
+        return True, None
+    if item.format == "mc_reason":
+        option = (body.option or "").strip()
+        if option not in {o.letter for o in item.options or []}:
+            raise HTTPException(status_code=422, detail="Choose one of the options, or say you have no idea.")
+        return False, {"option": option, "reason": body.reason.strip()}
+    answer = body.answer.strip()
+    if not answer:
+        raise HTTPException(status_code=422, detail="Write a guess, or say you have no idea.")
+    return False, {"answer": answer}
+
+
+async def _prequestion_answer(body: PrequestionAnswerBody, request: Request) -> tuple[dict, tuple[str, str]]:
+    """Record the guess (a stored one stands) and return (loop state, scope)
+    for the explaining turn. 409 when no prequestion with this hash is open on
+    the plan's current concept — or the flag is off for the student."""
+    scope = _session_scope(body.session_id, body.user_id)
+    course_id = scope[1]
+    if not _prequestion_on(body.user_id):
+        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+    state = _load_loop_state(body.session_id)
+    _require_teaching(state)
+    if _pending_grade(state):
+        raise HTTPException(status_code=409, detail="Finish checking the saved answer before continuing")
+    node = state.get("concept")
+    rec = prequestion_rules.record_for(state, node)
+    if (
+        rec is None
+        or state.get("current")
+        or rec.get("question_hash") != body.question_hash
+        or rec.get("status") not in (prequestion_rules.POSED, prequestion_rules.ANSWERED)
+    ):
+        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+    item = get_check_item(rec["check_item_id"]) if rec.get("check_item_id") else None
+    if item is None:  # A23 withdrawal / A124, A123 holds: nothing left to explain
+        raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+    if rec.get("status") == prequestion_rules.ANSWERED:
+        return state, scope  # a retry: the stored guess stands
+    no_idea, guess = _validated_guess(body, item)
+    now = _now_s()
+    posed = rec.get("posed_at")
+    posed_at = datetime.fromtimestamp(
+        float(posed) if isinstance(posed, (int, float)) and not isinstance(posed, bool) else now, tz=timezone.utc
+    )
+    try:
+        await asyncio.to_thread(
+            store_prequestion_answer,
+            user_id=body.user_id,
+            session_id=body.session_id,
+            course_id=course_id or None,
+            node_id=node,
+            item=item,
+            no_idea=no_idea,
+            guess=guess,
+            posed_at=posed_at,
+        )
+    except Exception as exc:
+        logger.warning("prequestion guess not stored", exc_info=True)
+        raise HTTPException(status_code=503, detail="Your guess could not be saved; try again") from exc
+    # its answer is about to be shown: durable now (A88), so the item never
+    # serves this student again — a check, a review item or a post-test item
+    await asyncio.to_thread(
+        _persist_reveals,
+        body.user_id,
+        body.session_id,
+        [item.question_hash],
+        unscanned=False,
+        source="prequestion",
+        at=datetime.fromtimestamp(now, tz=timezone.utc),
+    )
+    won: dict = {}
+
+    def mark(doc: dict) -> None:
+        won.clear()
+        _refuse_while_closing(doc, now)
+        cur = prequestion_rules.record_for(doc, node)
+        if cur is None or cur.get("question_hash") != item.question_hash or doc.get("current"):
+            raise HTTPException(status_code=409, detail=_NO_OPEN_PREQUESTION)
+        if cur.get("status") == prequestion_rules.POSED:
+            records = dict(prequestion_rules.records(doc))
+            records[node] = {**cur, "status": prequestion_rules.ANSWERED, "answered_at": now, "no_idea": no_idea}
+            doc[prequestion_rules.KEY] = records
+            won["first"] = True
+
+    state = _update_loop_state(body.session_id, mark, require_open=True, require_existing=True)
+    if won.get("first"):  # a concurrent duplicate records nothing twice
+        save_message(
+            body.session_id,
+            "user",
+            prequestion_rules.render_guess(
+                no_idea=no_idea,
+                answer=body.answer,
+                option=(guess or {}).get("option"),
+                reason=body.reason,
+            ),
+        )
+        _emit_prequestion(
+            body.user_id,
+            _request_id(request),
+            body.session_id,
+            node,
+            "answered",
+            question_hash=item.question_hash,
+            no_idea=no_idea,
+            format=item.format,
+            difficulty=int(item.difficulty),
+        )
+    return state, scope
+
+
+def _prequestion_turn(
+    state: dict, scope: tuple[str, str], body: PrequestionAnswerBody, request: Request, *, loop_on: bool
+) -> _LoopTurn:
+    """The turn that explains the answered prequestion: a teach turn on the
+    plan's concept, its message the route's cue (trusted server text; the
+    guess is the student's saved message, enveloped in the history, A51)."""
+    chat_body = ChatBody(session_id=body.session_id, user_id=body.user_id, message=_PREQUESTION_CUE)
+    return _LoopTurn(
+        body=chat_body,
+        request=request,
+        message=_PREQUESTION_CUE,
+        kind="prequestion",
+        persist_user_row=False,
+        state=state,
+        scope=scope,
+        loop_on=loop_on,
+    )
+
+
+@router.post(
+    "/prequestion/answer",
+    dependencies=_screened("loop_prequestion_answer", "answer", "reason", respond=crisis_support.turn_response),
+)
+async def prequestion_answer(body: PrequestionAnswerBody, request: Request):
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
+    state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
+    return await _json_turn(
+        lambda: _prequestion_turn(state, scope, body, request, loop_on=loop_on), "loop prequestion agent"
+    )
+
+
+@router.post(
+    "/prequestion/answer/stream",
+    dependencies=_screened("loop_prequestion_answer", "answer", "reason", respond=crisis_support.turn_stream),
+)
+async def prequestion_answer_stream(body: PrequestionAnswerBody, request: Request):
+    loop_on = await guard_off_loop(_gate, body.user_id, request)
+    await _consume_pending_off_loop(body.session_id, body.user_id)
+    state, scope = await _agent_turn_or_http_error(_prequestion_answer(body, request), what="loop prequestion")
+    return _sse(_prequestion_turn(state, scope, body, request, loop_on=loop_on))
+
+
+# ── The self-explanation reply (spec §13 A139) ─────────────────────────────
+
+
+@router.post(
+    "/self-explain",
+    dependencies=_screened("loop_self_explain", "reply", respond=crisis_support.plain_response(recorded=False)),
+)
+def self_explain_reply(body: SelfExplainBody, request: Request) -> dict:
+    """The student's reply to the open self-explanation prompt, or a skip (an
+    empty reply is a skip). Stored encrypted with its juncture
+    (learning_self_explanations) and saved as the student's message; never
+    graded, never evidence, never a misconception — no model reads it here (the
+    next tutor turn may acknowledge it, flag-on prompt only). Then, when the
+    prompt closed a segment, the next segment's prequestion is posed (A138:
+    the self-explanation comes first, one open prompt at a time)."""
+    _gate(body.user_id, request)
+    _, course_id = _session_scope(body.session_id, body.user_id)
+    if not _self_explain_on(body.user_id):
+        raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
+    state = _load_loop_state(body.session_id)
+    _require_teaching(state)
+    prompt = self_explain.open_prompt(state)
+    if prompt is None or prompt.get("id") != body.prompt_id:
+        raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
+    reply = "" if body.skip else body.reply.strip()
+    now = _now_s()
+    try:
+        close_self_explain_prompt(
+            prompt,
+            user_id=body.user_id,
+            session_id=body.session_id,
+            course_id=course_id,
+            reply=reply or None,
+            closed_at=datetime.fromtimestamp(now, tz=timezone.utc),
+        )
+    except Exception as exc:
+        logger.warning("self-explanation reply not stored", exc_info=True)
+        raise HTTPException(status_code=503, detail="Your explanation could not be saved; try again") from exc
+    pq_on = _prequestion_on(body.user_id)
+    out: dict = {}
+
+    def close(doc: dict) -> None:
+        out.clear()
+        _refuse_while_closing(doc, now)
+        cur = self_explain.open_prompt(doc)
+        if cur is None or cur.get("id") != body.prompt_id:
+            raise HTTPException(status_code=409, detail=_NO_OPEN_SELF_EXPLAIN)
+        self_explain.close_open(doc)
+        if reply:
+            self_explain.set_ack(doc, body.prompt_id)
+        out["pose"] = _pose_prequestion(body.user_id, course_id, doc, now=now) if pq_on else _NO_POSE
+
+    _update_loop_state(body.session_id, close, require_open=True, require_existing=True)
+    request_id = _request_id(request)
+    if reply:
+        try:
+            save_message(body.session_id, "user", reply)
+        except Exception:
+            logger.warning("self-explanation reply row not saved", exc_info=True)
+    _emit_self_explanation(
+        body.user_id,
+        request_id,
+        body.session_id,
+        prompt,
+        "replied" if reply else "skipped",
+        **({"reply_chars": len(reply)} if reply else {}),
+    )
+    prequestion = _posed_prequestion(body.user_id, body.session_id, request_id, out.get("pose", _NO_POSE))
+    return {
+        "recorded": True,
+        "status": "replied" if reply else "skipped",
+        **({"prequestion": prequestion} if prequestion else {}),
+    }
 
 
 # ── The session close (PKG-09; spec §4, §6, §9, §13 A11/A19/A20/A25) ────────
@@ -7735,6 +8469,9 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
     view = _current_plan(snapshot, body.user_id, course_id) if snapshot.get("goal") else None
     chosen = list(body.concept_ids)
     out: dict = {}
+    # spec §13 A138: the first concept's segment starts here — its prequestion
+    # is posed (or skipped) in the approval's own write; flag read once
+    pq_on = _prequestion_on(body.user_id)
 
     def approve(doc: dict) -> None:
         _require_phase(doc, "plan")
@@ -7769,8 +8506,10 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
         doc["teach_turns"] = 0
         doc["concept_checks"] = 0
         doc["phase"] = "teach"
+        out["pose"] = _pose_prequestion(body.user_id, course_id, doc, now=_now_s()) if pq_on else _NO_POSE
 
     _update_loop_state(body.session_id, approve, require_open=bool(snapshot.get("goal")))
+    prequestion = _posed_prequestion(body.user_id, body.session_id, _request_id(request), out["pose"])
     # PKG-09 post-hoc (spec §13 A19): the learner brief is built once per session, here.
     try:
         store_brief(body.session_id, body.user_id, course_id or None, chosen)
@@ -7786,7 +8525,8 @@ def plan_approve(body: PlanApproveBody, request: Request) -> dict:
         request_id=_request_id(request),
         payload={"concept_ids": chosen, "n_reviews_first": out["n_reviews_first"]},
     )
-    return {"phase": "teach", "concept_ids": chosen}
+    # spec §13 A138: present only when a prequestion was posed (never null)
+    return {"phase": "teach", "concept_ids": chosen, **({"prequestion": prequestion} if prequestion else {})}
 
 
 # ── PKG-12: the daily review queue (spec §3.2, §3.5, §5; A16, A20, A22, A23, A33, A52) ──

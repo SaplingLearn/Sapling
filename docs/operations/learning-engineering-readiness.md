@@ -381,6 +381,33 @@ unfinished engineering requirement.
    claude-* model. The defaults that still run on Gemini are unaffected, so
    there is nothing to order.
 
+### Learning-loop wave-4 rollout ordering: the teach-phase prompts (A138, A139)
+
+1. `20261108184825_learning_teach_prompts.sql` (spec §13 A138, A139) creates
+   `learning_prequestions` (an answered segment prequestion; the guess
+   encrypted in `guess_json`) and `learning_self_explanations` (a served
+   self-explanation prompt; the reply encrypted in `reply_text`). Both are
+   backend-only: RLS on, `service_role` holds SELECT + INSERT on the first and
+   SELECT + INSERT + UPDATE on the second, nothing else. Apply it BEFORE the
+   code. Code ahead of it still grades exactly as before: A76's re-check rule
+   reads `learning_prequestions` on every grade and a failed read decides
+   nothing, and with both flags off nothing writes either table.
+   `--db-audit` requires both tables' 26 columns (`REQUIRED_COLUMNS`).
+2. The flags `segment_prequestion` and `self_explanation_prompts` ship OFF.
+   Off, the loop is byte-identical to the wave-4 base: every tutor request,
+   served text and response (pinned by
+   `tests/test_learning_teach_prompts_flag_off.py` against f9eca612). Each
+   flag sends an unrecorded tutor-prompt line when on (the prequestion's
+   explaining turn; the acknowledgement of a self-explanation reply), so turn
+   either on only after that path is recorded live in the loop_tutor evals and
+   passes. Turning `segment_prequestion` on also makes a segment's first graded
+   check an A76 re-check (`WEIGHT_SAME_SESSION_RECHECK`): the price of showing
+   a worked answer before teaching. Judge `self_explanation_prompts` by the
+   Learning loop panel's "Do students explain their steps?" section.
+3. Rollback: the flags off (the admin flags API, or `SAPLING_FLAG_*`). The
+   tables stay; nothing reads them but A76's release rule and the admin
+   report, and rows written meanwhile keep their meaning.
+
 ### Kill-switch and rollback drill
 
 1. Capture candidate and rollback artifact identities, approved environment,

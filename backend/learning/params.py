@@ -762,3 +762,43 @@ HELP_BOTTOM_OUT_RUNG = 5
 # compared with what is kept, so the check errs toward counting it (the time
 # rule still binds) — never toward withholding help it cannot judge.
 HELP_NOVELTY_DIGESTS_MAX = 256
+
+# ── Teach-phase prompts: the segment prequestion and self-explanation (spec §13 A138, A139) ──
+# Spec §13 A138 (flag `segment_prequestion`): the formats a segment's ungraded
+# prequestion may be drawn from, in preference order. † A closed choice first:
+# a guess among options is the quickest honest prediction and the form most
+# prequestion studies used (Pan & Carpenter 2023 review multiple-choice and
+# short-answer prequestions alike; a choice lowers the cost of a guess, so
+# "no idea" is rarer); then a free item with a structured final answer. Never
+# `teachback`: it asks the student to explain the concept — before teaching that
+# is no prediction, and its "answer" is the whole explanation the one
+# resolving turn would have to deliver.
+PREQUESTION_FORMATS = ("mc_reason", "free")
+# † the difficulties a prequestion may have, easiest first: its answer must rest
+# on one idea the next teach turn can explain within STEP_MAX_SENTENCES (the
+# answer must follow promptly, Pan & Carpenter 2023); a difficulty-3 item needs
+# a multi-step solution one turn cannot carry.
+PREQUESTION_DIFFICULTIES = (1, 2)
+# † A138: the prequestion never takes an item the segment's checks need. It is
+# drawn only when the concept keeps at least this many fresh, servable,
+# non-reserve items for its graded checks beside it — graded checks are the
+# only evidence (spec §1); a learning activity must not starve them.
+PREQUESTION_MIN_CHECKS_LEFT = LOOP_CHECKS_PER_CONCEPT
+# Why a segment opens without a prequestion (loop_state + learn.prequestion's
+# `reason`): no eligible item; taking one would leave its checks short; a due
+# review (retrieval of learned material, not new material); a concept the
+# learner model already puts in the proficient band; a session in §3.3's exam
+# mode (its H1 cap forbids the released answer the explanation shows).
+PREQUESTION_SKIP_REASONS = ("no_item", "pool_for_checks", "review", "proficient", "exam_mode")
+# Spec §13 A139 (flag `self_explanation_prompts`): the junctures, decided in
+# code — after an H4 worked example, after a released solution (an H5
+# completion problem, an H6 worked answer, or feedback that released the
+# answer), and after the first correct unassisted answer on a concept.
+SELF_EXPLAIN_JUNCTURES = ("worked_example", "released_solution", "first_correct")
+# † prompts per concept per session. Bisra et al. 2018 (g = 0.55; interrogative
+# 0.56) and the studies behind it prompt at key junctures, not at every step,
+# and VanLehn 2011 found interaction finer than the step adds little; one per
+# concept keeps the prompt where it carries the most — the first juncture the
+# concept reaches (most often its worked example) — and keeps a two-check
+# segment from asking "why" after every item.
+SELF_EXPLAIN_MAX_PER_CONCEPT = 1

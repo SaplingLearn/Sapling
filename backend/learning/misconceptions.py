@@ -248,18 +248,63 @@ def recheck_after_release(
         graded since (R4-1/R5-2), and every class when the released item cannot
         be read (R5-3; owed_isomorph).
     A failed journal read decides nothing (False). Reads only: `loop_state` is
-    never changed."""
+    never changed.
+
+    Spec §13 A138: an ANSWERED segment prequestion is a release too — its
+    item's worked answer was shown before any teaching — so it joins both
+    rules (`_prequestion_owes`): the next graded item on the concept after it
+    is a re-check, and so is every class-mate of its item for the window. It
+    writes no evidence, so it is read from this session's loop state and,
+    across sessions, from `learning_prequestions`."""
     last = last_release_on_node(loop_state or {}, node_id)
     if last:
         return True
     since = now - timedelta(hours=RECHECK_RELEASE_WINDOW_HOURS)
+    shape = (getattr(item, "format", None), getattr(item, "difficulty", None))
+    if _prequestion_owes(user_id, node_id, loop_state, last=last, since=since, shape=shape):
+        return True
     rows = recent_evidence(user_id, node_id, since=since.isoformat())
     if not rows:
         return False
     if last is None and rows[-1]["released"]:
         return True
-    shape = (getattr(item, "format", None), getattr(item, "difficulty", None))
     return owed_isomorph(rows, shape)
+
+
+def _prequestion_owes(
+    user_id: str, node_id: str, loop_state: dict | None, *, last: bool | None, since: datetime, shape: tuple
+) -> bool:
+    """Spec §13 A138 × A76: whether an answered prequestion on the concept
+    makes this grade a re-check.
+      • This session: a prequestion is posed only at a segment start, before
+        any attempt on the concept in the session, so with no attempt on it in
+        the session log (`last is None`) the session's answered prequestion is
+        the concept's latest release — this is the next graded item after it.
+      • Every answered prequestion in the window (this session's, and
+        `learning_prequestions` across sessions) owes its item's isomorph class,
+        as owed_isomorph does for a journal release; an unknown class of the
+        graded item owes on any release (R5-3).
+      • Across sessions, with no attempt on the concept in this one: the newest
+        prequestion release in the window decides when no evidence row on the
+        concept was journaled after it (the journal's newest row would
+        otherwise be older than the release).
+    A failed read decides nothing (A76's rule for its own journal)."""
+    from learning.prequestion import released_on_node
+    from learning.prequestion_store import evidence_since, releases
+
+    cutoff = since.timestamp()
+    session = [r for r in released_on_node(loop_state, node_id) if r["at"] >= cutoff]
+    if last is None and session:
+        return True
+    durable = releases(user_id, node_id, since=since) or []
+    shapes = {r["shape"] for r in session} | {r["shape"] for r in durable}
+    if shapes and (None in shape or shape in shapes):
+        return True
+    if last is None and durable:
+        later = evidence_since(user_id, node_id, max(r["at"] for r in durable))
+        if later is False:
+            return True
+    return False
 
 
 def attempts_for_node(log: list, node_id: str) -> list[Attempt]:

@@ -41,6 +41,7 @@ import {
   nextLoopCheck,
   nextLoopProbe,
   postLoopAttempt,
+  postLoopSelfExplain,
   reportCheckItem,
   requestLoopHint,
   requestLoopHintTurn,
@@ -49,6 +50,7 @@ import {
   startLoopSession,
   streamLoopChat,
   streamLoopCheckAnswer,
+  streamLoopPrequestionAnswer,
   submitLoopRating,
   type EnrolledCourse,
   type LoopCheckAnswer,
@@ -64,10 +66,13 @@ import {
   type LoopPendingGrade,
   type LoopPhase,
   type LoopPlanConcept,
+  type LoopPrequestion,
+  type LoopPrequestionGuess,
   type LoopProbeItem,
   type LoopProbeAnswerResult,
   type LoopRating,
   type LoopReportReason,
+  type LoopSelfExplain,
   type LoopSessionStatus,
   type LoopTurnResult,
   type StreamChatHandlers,
@@ -84,7 +89,9 @@ import { ReportQuestion } from "./ReportQuestion";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 import { ConfidenceControl } from "./ConfidenceControl";
-import { useRadioGroup } from "./useRadioGroup";
+import { OptionList } from "./OptionList";
+import { PrequestionCard, renderGuess } from "./PrequestionCard";
+import { SelfExplainCard } from "./SelfExplainCard";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -108,6 +115,10 @@ const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before an
 // spec §13 A113 (#695): the check card's "Report this question" went through
 const REPORTED_COPY = "Thanks — that question is reported and won't be shown to you again. Use Check me for another.";
 const WITHDRAWN_DETAIL = "check item withdrawn";
+// spec §13 A139: a self-explanation reply was saved (a polite live region)
+const SELF_EXPLAIN_SAVED_COPY = "Saved — thanks.";
+/** routes/learn_loop.py: the prompt was superseded (a later turn closed it). */
+const SELF_EXPLAIN_GONE_DETAIL = "no open self-explanation prompt";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -304,6 +315,13 @@ export function LoopLearn() {
   const [pendingGrade, setPendingGrade] = useState<LoopPendingGrade | null>(null);
   // PKG-14: the session a graded check asked to rate (done.ask_rating); one click hides it
   const [askRating, setAskRating] = useState<string | null>(null);
+  // Spec §13 A138: the open segment-opening guess; A139: the open "why" prompt.
+  // Both are server-driven: a served turn closes them and may open new ones.
+  const [prequestion, setPrequestion] = useState<LoopPrequestion | null>(null);
+  const [prequestionBusy, setPrequestionBusy] = useState(false);
+  const [selfExplain, setSelfExplain] = useState<LoopSelfExplain | null>(null);
+  const [selfExplainBusy, setSelfExplainBusy] = useState(false);
+  const [selfExplainSaved, setSelfExplainSaved] = useState(false);
 
   // Close
   const [close, setClose] = useState<LoopCloseResponse | null>(null);
@@ -340,6 +358,8 @@ export function LoopLearn() {
   const continueRef = useRef<HTMLButtonElement>(null);
   const checkMeRef = useRef<HTMLButtonElement>(null);
   const teachStartRef = useRef<HTMLButtonElement>(null);
+  // spec §13 A139: the reply box of a "why" prompt that replaced the Continue row
+  const selfExplainRef = useRef<HTMLTextAreaElement>(null);
   const invalidateHint = useCallback(() => {
     ++hintEpoch.current;
     earnedHint.current = null;
@@ -455,6 +475,8 @@ export function LoopLearn() {
     setCloseBusy(false);
     setFeedbackPending(false);
     setPendingGrade(null);
+    setPrequestion(null);
+    setSelfExplain(null);
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "close" });
     dropFromPicker(sid);
@@ -495,6 +517,10 @@ export function LoopLearn() {
     dispatch({ type: "check", item: st.check ?? null });
     dispatch({ type: "phase", phase: statusPhase(st) });
     setFeedbackPending(statusPhase(st) === "feedback");
+    // spec §13 A138/A139: an open guess or "why" prompt is restored read-only
+    // (its pose row is already in the transcript)
+    setPrequestion(st.prequestion ?? null);
+    setSelfExplain(st.self_explain ?? null);
   }, [enterClosed, applyLearningScope, invalidateHint]);
 
   /** After a submission that did not settle (a 409, a stream error, Stop): the
@@ -557,6 +583,11 @@ export function LoopLearn() {
     setFeedbackPending(false);
     setPendingGrade(null);
     setAskRating(null);
+    setPrequestion(null);
+    setPrequestionBusy(false);
+    setSelfExplain(null);
+    setSelfExplainBusy(false);
+    setSelfExplainSaved(false);
     setClose(null);
     setCloseBusy(false);
     setCloseNote(null);
@@ -964,6 +995,16 @@ export function LoopLearn() {
     }
   };
 
+  /** Spec §13 A138: a guess the server just posed (plan approval, a turn that
+   *  opened the next segment, a closed "why" prompt that held it back). The
+   *  server saved its pose as an assistant row; the log mirrors it and hides
+   *  it while the card shows it. */
+  const showPrequestion = useCallback((pq: LoopPrequestion | null | undefined) => {
+    if (!pq?.question_hash) return;
+    setPrequestion(pq);
+    if (pq.text) setMessages((prev) => [...prev, asMsg("assistant", pq.text)]);
+  }, []);
+
   // ── Plan ───────────────────────────────────────────────────────────────
   const approvePlan = async () => {
     if (!sessionId || !plan || plan.length === 0 || planBusy) return;
@@ -979,6 +1020,8 @@ export function LoopLearn() {
         dispatch({ type: "phase", phase: r.phase });
         setPlanJustApproved(true);
         setGoalProgress((current) => current?.status === "continue_available" ? null : current);
+        // spec §13 A138: the first segment opens on its ungraded guess
+        showPrequestion(r.prequestion);
       }
     } catch (err) {
       if (g !== gen.current) return;
@@ -1027,6 +1070,7 @@ export function LoopLearn() {
     let feedbackStarted = false;
     let streamed = "";
     let hardSeen = false;
+    setSelfExplainSaved(false);
     // Abort is cooperative: a queued event may arrive after Stop or a session
     // switch. Only the currently owned, live stream may change the learner UI.
     const ownsTurn = () => mounted.current && g === gen.current && streamAbort.current === controller;
@@ -1102,6 +1146,11 @@ export function LoopLearn() {
         dispatch({ type: "learner_state", state: learnerState });
       }
       applyActivated(res.check);
+      // spec §13 A138/A139: a served turn closes any open guess or "why" prompt
+      // (the server superseded it) and may open new ones
+      setSelfExplain(res.self_explain ?? null);
+      setPrequestion(null);
+      showPrequestion(res.prequestion);
       if (res.budget?.level === "hard") {
         dispatch({ type: "budget", level: "hard", resetAt: res.budget.reset_at, sessionCapped: res.budget.session_capped });
       } else if (!hardSeen) {
@@ -1133,7 +1182,7 @@ export function LoopLearn() {
         setStreamingText(null);
       }
     }
-  }, [applyActivated, reportError, reconcile, invalidateHint, feedbackPending]);
+  }, [applyActivated, reportError, reconcile, invalidateHint, feedbackPending, showPrequestion]);
 
   const send = (text: string) => {
     // A budget pause does not stop a message: the server screens it for a crisis
@@ -1182,6 +1231,62 @@ export function LoopLearn() {
     );
     if (g === gen.current) setAttemptBusy(false);
     if (res?.graded) void refreshGraph();
+  };
+
+  /** Spec §13 A138: the guess at the segment's ungraded prequestion — or, once a
+   *  guess is saved (`explain`), the owed explanation — then, in the same
+   *  stream, the explanation turn: the answer first (from code), then why.
+   *  Nothing is graded. A stream that does not settle re-reads the session
+   *  (the guess may be saved: the card then offers the explanation). */
+  const submitPrequestion = async (guess: LoopPrequestionGuess | "explain") => {
+    if (!sessionId || !prequestion || prequestionBusy || streamingText !== null || starting || scopeLoading) return;
+    focusAfter.current = "turn"; // the explanation is a tutor turn: then the composer
+    const g = gen.current;
+    const pq = prequestion;
+    const body: LoopPrequestionGuess = guess === "explain" ? { no_idea: false } : guess;
+    if (guess !== "explain") setMessages((prev) => [...prev, asMsg("user", renderGuess(guess))]);
+    setPlanJustApproved(false); // the explanation is the segment's first teaching turn
+    setPrequestionBusy(true);
+    await runTurn(
+      (h) => streamLoopPrequestionAnswer(sessionId, userId, pq.question_hash, body, h),
+      { submission: true },
+    );
+    if (g === gen.current) setPrequestionBusy(false);
+  };
+
+  /** Spec §13 A139: the reply to a "why" prompt (or Skip). Stored for diagnosis
+   *  only — never graded. A prequestion the prompt was holding back (the next
+   *  segment's, A138: one open prompt at a time) comes back with it. */
+  const sendSelfExplain = async (reply: string | null) => {
+    if (!sessionId || !selfExplain || selfExplainBusy) return;
+    const g = gen.current;
+    const prompt = selfExplain;
+    // the card goes: lost focus returns to the card's answer, or Continue
+    focusAfter.current = "answered";
+    setSelfExplainBusy(true);
+    try {
+      const r = await postLoopSelfExplain(
+        sessionId, userId, prompt.prompt_id, reply === null ? { skip: true } : { reply, skip: false },
+      );
+      if (g !== gen.current) return;
+      if (interceptCrisis(r)) return; // the card instead: nothing was recorded, the prompt stays
+      setSelfExplain(null);
+      if (reply !== null) {
+        setMessages((prev) => [...prev, asMsg("user", reply)]);
+        setSelfExplainSaved(true);
+      }
+      if (r.recorded) showPrequestion(r.prequestion);
+    } catch (err) {
+      if (g !== gen.current) return;
+      const { status, detail } = extractErrorDetail(err);
+      if (status === 409 && detail === SELF_EXPLAIN_GONE_DETAIL) {
+        setSelfExplain(null); // a later turn already closed it
+        return;
+      }
+      reportError(err, "Couldn't save your explanation.");
+    } finally {
+      if (g === gen.current) setSelfExplainBusy(false);
+    }
   };
 
   const recoverGrade = async () => {
@@ -1260,6 +1365,10 @@ export function LoopLearn() {
       // (the server saved it as an assistant row, so a reload shows it there).
       setHint({ reply: t.reply });
       setMessages((prev) => [...prev, asMsg("assistant", t.reply)]);
+      // spec §13 A139: a worked example or a shown solution asks "why" — a
+      // served hint turn closes an older prompt and may open a new one
+      setSelfExplainSaved(false);
+      setSelfExplain(t.self_explain ?? null);
       if (t.phase) dispatch({ type: "phase", phase: t.phase });
       if (t.budget?.level === "hard") {
         dispatch({ type: "budget", level: "hard", resetAt: t.budget.reset_at, sessionCapped: t.budget.session_capped });
@@ -1307,6 +1416,7 @@ export function LoopLearn() {
     if (g !== gen.current) return true;
     focusAfter.current = "check-me"; // the card goes; "Check me" brings another
     invalidateHint();
+    setSelfExplain(null);
     dispatch({ type: "check", item: null });
     dispatch({ type: "phase", phase: "teach" });
     setAttempt(EMPTY_DRAFT);
@@ -1346,8 +1456,10 @@ export function LoopLearn() {
         return;
       }
       dispatch({ type: "phase", phase: r.phase });
-      if (r.check) applyActivated(r.check);
-      else setCheckNote(
+      if (r.check) {
+        setSelfExplain(null); // spec §13 A139: the new check supersedes an open "why" prompt
+        applyActivated(r.check);
+      } else setCheckNote(
         r.practice_unavailable_node_ids?.length ? null
           : r.preparing ? PREPARING_COPY // A128: the student's upload is still being drafted
             : r.plan_done ? PLAN_DONE_COPY : NO_ITEM_COPY,
@@ -1384,6 +1496,8 @@ export function LoopLearn() {
       setCloseBusy(false);
       setClose(r);
       setFeedbackPending(false);
+      setPrequestion(null);
+      setSelfExplain(null);
       dispatch({ type: "check", item: null });
       dispatch({ type: "phase", phase: "close" });
       void refreshGraph();
@@ -1433,10 +1547,12 @@ export function LoopLearn() {
     const inCard = new Set<string>();
     if (item?.prompt) inCard.add(item.prompt);
     if (item && hint && "reply" in hint) inCard.add(hint.reply);
+    // spec §13 A138: the guess's pose, while its card shows it
+    if (prequestion?.text) inCard.add(prequestion.text);
     return inCard.size === 0
       ? messages
       : messages.map((m) => (m.role === "assistant" && inCard.has(m.content) ? { ...m, visuallyHidden: true } : m));
-  }, [messages, item, hint]);
+  }, [messages, item, hint, prequestion]);
 
   // spec §13 A135: apply `focusAfter` once the screen has settled — no reply
   // streaming, the target rendered and enabled. Only a lost focus (left on the
@@ -1457,7 +1573,8 @@ export function LoopLearn() {
     const answer = rootRef.current?.querySelector<HTMLElement>("[data-answer-start]") ?? null;
     const composer = composerRef.current;
     const target =
-      want === "answered" ? continueRef.current ?? answer ?? checkMeRef.current
+      // spec §13 A139: a "why" prompt that replaced the Continue row takes it first
+      want === "answered" ? selfExplainRef.current ?? continueRef.current ?? answer ?? checkMeRef.current
         : want === "turn" ? composer
           : want === "check-me" ? checkMeRef.current
             : want === "teaching" ? teachStartRef.current ?? composer
@@ -1905,6 +2022,39 @@ export function LoopLearn() {
             onIdk={() => void submitAttempt(true)}
             onHint={() => void askHint()}
             onReport={reportsOn ? reportItem : undefined}
+            selfExplain={
+              // spec §13 A139: the worked example's (or shown solution's) "why"
+              // prompt, under the hint — the Hint button keeps focus here
+              selfExplain ? (
+                <SelfExplainCard
+                  key={selfExplain.prompt_id}
+                  prompt={selfExplain}
+                  nested
+                  busy={selfExplainBusy || attemptBusy || streaming}
+                  onSend={(reply) => void sendSelfExplain(reply)}
+                  onSkip={() => void sendSelfExplain(null)}
+                />
+              ) : null
+            }
+          />
+        ) : prequestion ? (
+          // spec §13 A138: the segment opens on its ungraded guess (one open prompt)
+          <PrequestionCard
+            key={prequestion.question_hash}
+            prequestion={prequestion}
+            busy={prequestionBusy || streaming || starting || scopeLoading}
+            onGuess={(guess) => void submitPrequestion(guess)}
+            onExplain={() => void submitPrequestion("explain")}
+          />
+        ) : selfExplain ? (
+          // spec §13 A139: the feedback's "why" prompt stands in for Continue / Check me
+          <SelfExplainCard
+            key={selfExplain.prompt_id}
+            prompt={selfExplain}
+            inputRef={selfExplainRef}
+            busy={selfExplainBusy || streaming || starting || scopeLoading}
+            onSend={(reply) => void sendSelfExplain(reply)}
+            onSkip={() => void sendSelfExplain(null)}
           />
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1959,6 +2109,14 @@ export function LoopLearn() {
         {/* Always in the DOM, so a close that must wait is announced (spec §13 A135). */}
         <div aria-live="polite">
           {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
+        </div>
+        {/* Always in the DOM, so a saved explanation is announced (spec §13 A139, A135). */}
+        <div aria-live="polite">
+          {selfExplainSaved && (
+            <div role="status" data-testid="loop-self-explain-saved" style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              {SELF_EXPLAIN_SAVED_COPY}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2102,72 +2260,6 @@ function RailGraph({ nodes, edges, highlightId }: { nodes: GraphNode[]; edges: G
       {width > 0 && (
         <KnowledgeGraph nodes={nodes} edges={edges} width={width} height={RAIL_GRAPH_HEIGHT} highlightId={highlightId} />
       )}
-    </div>
-  );
-}
-
-/** The served options of an `mc_reason` item, in stored order; the UI never
- *  marks one correct (A22). A radio group (spec §13 A135) named by the question
- *  (`labelledBy`): one tab stop, the arrow keys move and choose, Home / End
- *  choose the ends (`useRadioGroup`, shared with ConfidenceControl). Its tab
- *  stop carries `data-answer-start`, so a new question focuses it. */
-function OptionList({
-  options,
-  selected,
-  onSelect,
-  testIdPrefix,
-  labelledBy,
-  disabled,
-}: {
-  options: { letter: string; text: string }[];
-  selected: string;
-  onSelect: (letter: string) => void;
-  testIdPrefix: string;
-  labelledBy: string;
-  disabled?: boolean;
-}) {
-  const letters = useMemo(() => options.map((o) => o.letter), [options]);
-  const group = useRadioGroup(letters, selected || null, onSelect);
-  return (
-    <div
-      role="radiogroup"
-      aria-labelledby={labelledBy}
-      data-testid={`${testIdPrefix}s`}
-      style={{ display: "flex", flexDirection: "column", gap: 6 }}
-    >
-      {options.map((o, i) => {
-        const on = selected === o.letter;
-        const radio = group.optionProps(i);
-        return (
-          <button
-            key={o.letter}
-            {...radio}
-            type="button"
-            // "B. It writes …": the letter and the text read as one name
-            aria-label={`${o.letter}. ${o.text}`}
-            data-answer-start={radio.tabIndex === 0 ? "" : undefined}
-            data-testid={`${testIdPrefix}-${o.letter}`}
-            disabled={disabled}
-            onClick={() => onSelect(o.letter)}
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "flex-start",
-              textAlign: "left",
-              padding: "9px 12px",
-              borderRadius: "var(--r-md)",
-              border: `1px solid ${on ? "var(--accent-border)" : "var(--border)"}`,
-              background: on ? "var(--accent-soft)" : "var(--bg-panel)",
-              fontSize: 14,
-              cursor: disabled ? "default" : "pointer",
-              color: "var(--text)",
-            }}
-          >
-            <strong style={{ minWidth: 16 }}>{o.letter}</strong>
-            <span>{o.text}</span>
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -2460,7 +2552,7 @@ function PlanPanel({
 }
 
 function CheckCard({
-  item, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport,
+  item, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport, selfExplain,
 }: {
   item: LoopCheckItem;
   draft: Draft;
@@ -2474,6 +2566,8 @@ function CheckCard({
   onHint: () => void;
   /** spec §13 A113: present while the `item_reports` flag is on. */
   onReport?: (reason: LoopReportReason) => Promise<boolean>;
+  /** spec §13 A139: an open "why" prompt, rendered under the hint it follows. */
+  selfExplain?: React.ReactNode;
 }) {
   const mc = item.format === "mc_reason";
   const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
@@ -2605,6 +2699,7 @@ function CheckCard({
           {hint.reply}
         </div>
       )}
+      {selfExplain}
       {onReport && <ReportQuestion testIdPrefix="loop-check-report" disabled={busy} onReport={onReport} />}
     </section>
   );

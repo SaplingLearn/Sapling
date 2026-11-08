@@ -33,7 +33,7 @@ declare global {
 // and protocol metadata only, never tokens, request bodies or raw replies.
 export const LOOP_STREAM_CAPTURE_SCRIPT = String.raw`(() => {
   if (window.__saplingTestLoopStreams) return;
-  const paths = new Set(['/api/learn/loop/chat/stream', '/api/learn/loop/check/answer/stream']);
+  const paths = new Set(['/api/learn/loop/chat/stream', '/api/learn/loop/check/answer/stream', '/api/learn/loop/prequestion/answer/stream']);
   const kinds = new Set(['status','progress','result','error','token','graph_update','done','phase','check','hint_offer','learner_state','budget','retract']);
   const phases = new Set(['probe','plan','teach','check','feedback','close','hint']);
   const state = {records: [], overflowed: false};

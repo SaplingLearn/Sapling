@@ -851,6 +851,53 @@ export interface LearningLoopKpisData {
   /** spec §13 A133: help abuse. null: its reads failed (the rest of the report
    *  stands); absent from a pre-A133 backend. */
   help_abuse?: LoopHelpAbuse | null;
+  /** spec §13 A139: the "why does this follow?" prompts. null: its reads failed
+   *  (the rest of the report stands); absent from a pre-A139 backend. */
+  self_explanation?: LoopSelfExplanation | null;
+  truncated: boolean;
+}
+
+/** spec §13 A139: the student's next graded item on the concept after a prompt
+ *  (another item than the one it was about). `unassisted`: right with no help;
+ *  `n`: prompts with such a next item; `none`: prompts with no later graded item
+ *  in the range (never counted in `n`). `rate` is null when n = 0. */
+export interface LoopSelfExplainNext {
+  n: number;
+  unassisted: number;
+  rate: number | null;
+  none: number;
+}
+
+/** After a reply, against after no reply (skipped, or never answered). */
+export interface LoopSelfExplainNextPair {
+  replied: LoopSelfExplainNext;
+  not_replied: LoopSelfExplainNext;
+}
+
+/** One juncture's prompts (worked_example / released_solution / first_correct). */
+export interface LoopSelfExplainJuncture {
+  juncture: string;
+  shown: number;
+  replied: number;
+  /** replied / shown; null when none was shown */
+  reply_rate: number | null;
+  next_item: LoopSelfExplainNextPair;
+}
+
+/** spec §13 A139: self-explanation prompts over the range — diagnosis only:
+ *  a reply is never graded, never evidence. */
+export interface LoopSelfExplanation {
+  shown: number;
+  replied: number;
+  skipped: number;
+  /** shown and never replied to or skipped */
+  open: number;
+  /** replied / shown (n = shown); null when none was shown */
+  reply_rate: number | null;
+  /** the replies' length in characters: the median over n replies */
+  reply_chars: { median: number | null; n: number };
+  next_item: LoopSelfExplainNextPair;
+  by_juncture: LoopSelfExplainJuncture[];
   truncated: boolean;
 }
 

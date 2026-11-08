@@ -219,6 +219,38 @@ class LoopCheckAnswerBody(BaseModel):
     confidence: Optional[StudentConfidence] = None  # spec §13 A127; ignored on an idk
 
 
+class PrequestionAnswerBody(BaseModel):
+    """Spec §13 A138: /api/learn/loop/prequestion/answer(/stream) — the student's
+    UNGRADED guess at the segment's prequestion: `answer` (a free item),
+    `option` with an optional `reason` (a multiple-choice item), or
+    `no_idea`. Never graded and never evidence; stored encrypted. Once a guess
+    is stored the guess fields are ignored and the explanation is served again
+    (a retry). Unknown fields are a 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    user_id: str
+    question_hash: str
+    answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    option: Optional[str] = Field(None, max_length=8)
+    reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    no_idea: bool = False
+
+
+class SelfExplainBody(BaseModel):
+    """Spec §13 A139: /api/learn/loop/self-explain — the student's reply to the
+    open self-explanation prompt (`prompt_id`), or `skip`. Diagnostic only:
+    stored encrypted, never graded, never evidence. An empty reply is a skip.
+    Unknown fields are a 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    user_id: str
+    prompt_id: str = Field(..., min_length=1, max_length=64)
+    reply: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
+    skip: bool = False
+
+
 class LoopCheckNextBody(BaseModel):
     """PKG-07 /api/learn/loop/check/next ("Check me", spec §9, A27): activates
     the current concept's next check item and returns its pose; no model call."""

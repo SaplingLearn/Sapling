@@ -74,6 +74,9 @@ Surface = Literal[
     "loop_probe_answer",
     "loop_review_answer",
     "loop_posttest_answer",
+    # learning-loop spec §13 A138 / A139: a prequestion guess, a self-explanation reply
+    "loop_prequestion_answer",
+    "loop_self_explain",
     # /api/notes/*
     "note_chat",
     "note_send_to_tutor",

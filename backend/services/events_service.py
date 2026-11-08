@@ -175,6 +175,17 @@ learn.misconception_resolved  usage     node_id, wrong_key, check_item_id, recor
                                         correct, unassisted answer on an isomorph closed one
                                         open misconception (spec §13 A127); ids, the
                                         plaintext key, a count and enums only
+learn.prequestion             usage     session_id, node_id, status (posed / skipped /
+                                        answered / superseded / resolved), question_hash,
+                                        reason (skipped: no_item / pool_for_checks /
+                                        review / proficient / exam_mode), no_idea, format,
+                                        difficulty — a segment's ungraded prequestion
+                                        (spec §13 A138); never the question or the guess
+learn.self_explanation        usage     session_id, node_id, juncture (worked_example /
+                                        released_solution / first_correct), status (shown
+                                        / replied / skipped), reply_chars — a
+                                        self-explanation prompt (spec §13 A139); never the
+                                        reply
 learn.check_item_reported     usage     course_id, question_hash, reason (wrong_answer /
                                         unclear / not_from_my_course), surface (loop /
                                         review), first, reporters — a student reported a
@@ -435,6 +446,15 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # node_id, wrong_key, check_item_id (the answered item), recorded_on (the item
     # it was recorded on), count, surface (check / probe / review), session_id.
     "learn.misconception_resolved",
+    # Learning-loop spec §13 A138: the segment prequestion's lifecycle — posed,
+    # skipped (with its reason), answered (no_idea), superseded, resolved.
+    # Payload ids, the item's hash, enums and counts only (never the question
+    # or the guess, which is stored encrypted in learning_prequestions).
+    "learn.prequestion",
+    # Learning-loop spec §13 A139: a self-explanation prompt shown, replied (with
+    # reply_chars) or skipped. Payload ids, enums and a count only (never the
+    # reply, which is stored encrypted in learning_self_explanations).
+    "learn.self_explanation",
     # Learning loop PKG-12: the daily review queue. `served` once per kind in
     # a built queue (n = how many), `graded` per answer. Reviews are evidence,
     # so `graded` is the countable twin of the node_mastery_events row.

@@ -158,6 +158,38 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "that time since the question was posed, so later rungs need only the "
             "8 s dwell. Judge it by the help-abuse report on the admin learning-"
             "loop page (by gate).", False),
+    # Learning loop spec §13 A138: the segment prequestion — one ungraded guess
+    # at the start of a teaching segment, its answer and explanation right
+    # after. Resolved ONCE per request, for the student, by
+    # routes/learn_loop.py::_prequestion_on. Server-only: the card is posed by
+    # the server's responses. Off: nothing is posed or read, and every tutor
+    # request is byte-identical to before A138.
+    FlagDef("segment_prequestion", ("off", "on"),
+            "Segment prequestion (A138): when the plan reaches a new concept, the "
+            "student first takes an ungraded guess at one vetted question on it "
+            "(multiple choice or short answer, difficulty 1-2, never a post-test "
+            "item; 'No idea' allowed); the answer and an explanation that starts "
+            "from the guess follow at once. No grade, no evidence, no mastery "
+            "change; the item is revealed for that student. Skipped for due "
+            "reviews, concepts already proficient, exam mode, and when the "
+            "question would leave the concept's checks short. On sends a changed "
+            "tutor prompt on the explaining turn, so turn it on only after that "
+            "path is recorded live in the loop_tutor evals. Off: byte-identical "
+            "to before A138.", False),
+    # Learning loop spec §13 A139: self-explanation prompts — one interrogative
+    # "why does this follow?" as a turn's question at a code-decided juncture.
+    # Resolved ONCE per request, for the student, by
+    # routes/learn_loop.py::_self_explain_on. Server-only. The reply is stored
+    # (encrypted) for diagnosis only: never evidence, mastery or a misconception.
+    FlagDef("self_explanation_prompts", ("off", "on"),
+            "Self-explanation prompts (A139): after a worked example, after a "
+            "shown solution, or after a first unaided correct answer, the turn's "
+            "question becomes a 'why does this follow?' prompt (at most once per "
+            "concept per session) with its own reply box; the reply is stored for "
+            "staff analysis and is never graded or used as evidence. The next "
+            "tutor turn acknowledges a reply briefly, a changed prompt: turn it on "
+            "only after that path is recorded live in the loop_tutor evals. Off: "
+            "byte-identical to before A139.", False),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface

@@ -43,6 +43,7 @@ const api = vi.hoisted(() => ({
   getLoopPlan: vi.fn(), approveLoopPlan: vi.fn(), streamLoopChat: vi.fn(), streamLoopCheckAnswer: vi.fn(),
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
   getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(), reportCheckItem: vi.fn(),
+  streamLoopPrequestionAnswer: vi.fn(), postLoopSelfExplain: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 // Every flag "off" (the provider's default) unless a test turns one on.
@@ -2716,5 +2717,236 @@ describe("LoopLearn — cards that stand in for the screen (spec §13 A135)", ()
     await act(async () => { fail(new ApiError("x", 503, { body: { detail: "temporarily unavailable" } })); });
     await screen.findByTestId("loop-start-error");
     expect(elsewhere).toHaveFocus();
+  });
+});
+
+describe("LoopLearn — segment prequestion (spec §13 A138)", () => {
+  const pq = {
+    question_hash: "pq1",
+    format: "mc_reason",
+    difficulty: 1,
+    prompt: "Which option names the sentinel?",
+    options: [{ letter: "A", text: "the alpha sentinel phrase" }, { letter: "B", text: "the kilo sentinel phrase" }],
+    text: "Take a guess first — this one isn't scored. Which option names the sentinel?",
+  };
+  const freePq = { ...pq, question_hash: "pq2", format: "free", options: null, prompt: "What stops a recursion?", text: "Guess: what stops a recursion?" };
+  const explained = turn({ reply: "The answer: B. the kilo sentinel phrase\n\nKey idea: it rests on one idea.", phase: "teach", prequestion_answered: true });
+
+  /** A plan-phase session; approving it opens the first segment on `pose`. */
+  async function approvedWith(pose: object | undefined) {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.2 }], order: [] });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach", concept_ids: ["n1"], ...(pose ? { prequestion: pose } : {}) });
+    render(<LoopLearn />);
+    fireEvent.click(await screen.findByTestId("loop-plan-approve"));
+  }
+
+  it("approving the plan opens the first segment on its guess: the card, not Start with; the pose is in the log, not painted", async () => {
+    await approvedWith(pq);
+    const card = await screen.findByTestId("loop-prequestion");
+    expect(card.getAttribute("data-question-hash")).toBe("pq1");
+    expect(screen.queryByTestId("loop-teach-start")).toBeNull();
+    expect(screen.queryByTestId("loop-check-me")).toBeNull(); // one open prompt: the guess
+    expect(logRow(pq.text).closest("[data-visually-hidden]")).not.toBeNull();
+    // a new question takes focus: the options' tab stop
+    await waitFor(() => expect(screen.getByTestId("loop-prequestion-option-A")).toHaveFocus());
+  });
+
+  it("with no guess posed (flag off, or skipped), approving shows Start with as before", async () => {
+    await approvedWith(undefined);
+    await screen.findByTestId("loop-teach-start");
+    expect(screen.queryByTestId("loop-prequestion")).toBeNull();
+  });
+
+  it("a guess streams its explanation; the card closes and the log shows the guess and the answer", async () => {
+    api.streamLoopPrequestionAnswer.mockResolvedValue(explained);
+    await approvedWith(pq);
+    fireEvent.click(await screen.findByTestId("loop-prequestion-option-A"));
+    fireEvent.click(screen.getByTestId("loop-prequestion-submit"));
+    await waitFor(() => expect(screen.queryByTestId("loop-prequestion")).toBeNull());
+    expect(api.streamLoopPrequestionAnswer).toHaveBeenCalledExactlyOnceWith(
+      "s2", "u1", "pq1", { option: "A", no_idea: false }, expect.any(Object),
+    );
+    expect(logRow("My guess: A")).toBeTruthy();
+    expect(await screen.findByText(/The answer: B\. the kilo sentinel phrase/)).toBeTruthy();
+    expect(screen.queryByTestId("loop-teach-start")).toBeNull(); // the explanation was the first teaching turn
+    expect(screen.getByTestId("loop-check-me")).toBeTruthy();
+  });
+
+  it("No idea sends no guess and is shown as such", async () => {
+    api.streamLoopPrequestionAnswer.mockResolvedValue(explained);
+    await approvedWith(freePq);
+    fireEvent.click(await screen.findByTestId("loop-prequestion-no-idea"));
+    await waitFor(() => expect(api.streamLoopPrequestionAnswer).toHaveBeenCalled());
+    expect(api.streamLoopPrequestionAnswer.mock.calls[0][3]).toEqual({ no_idea: true });
+    expect(logRow("No idea.")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByTestId("loop-prequestion")).toBeNull());
+  });
+
+  it("a stream that does not settle re-reads the session: a saved guess offers its explanation, and asks nothing again", async () => {
+    api.streamLoopPrequestionAnswer
+      .mockRejectedValueOnce(new Error("Chat stream ended without a done event."))
+      .mockResolvedValueOnce(explained);
+    await approvedWith(freePq);
+    api.getLoopSessionStatus.mockResolvedValue(status({ prequestion: { ...freePq, answered: true } }));
+    fireEvent.change(await screen.findByTestId("loop-prequestion-input"), { target: { value: "a base case" } });
+    fireEvent.click(screen.getByTestId("loop-prequestion-submit"));
+    const explain = await screen.findByTestId("loop-prequestion-explain");
+    expect(screen.getByTestId("loop-prequestion").getAttribute("data-answered")).toBe("true");
+    fireEvent.click(explain);
+    await waitFor(() => expect(api.streamLoopPrequestionAnswer).toHaveBeenCalledTimes(2));
+    expect(api.streamLoopPrequestionAnswer.mock.calls[1][3]).toEqual({ no_idea: false }); // the saved guess stands
+    await waitFor(() => expect(screen.queryByTestId("loop-prequestion")).toBeNull());
+    expect(within(screen.getByTestId("tutor-messages")).getAllByText("My guess: a base case")).toHaveLength(1);
+  });
+
+  it("a resumed session restores an open guess read-only (no route that writes is called)", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ prequestion: freePq }));
+    await resumedTeach();
+    expect((await screen.findByTestId("loop-prequestion")).getAttribute("data-question-hash")).toBe("pq2");
+    expect(api.streamLoopPrequestionAnswer).not.toHaveBeenCalled();
+    expect(api.approveLoopPlan).not.toHaveBeenCalled();
+  });
+
+  it("a chat turn while the card is open closes it (the server superseded it)", async () => {
+    api.getLoopSessionStatus.mockResolvedValue(status({ prequestion: freePq }));
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Sure, let's look at that.", phase: "teach" }));
+    await resumedTeach();
+    await screen.findByTestId("loop-prequestion");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "can we skip this?" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("Sure, let's look at that.");
+    expect(screen.queryByTestId("loop-prequestion")).toBeNull();
+  });
+
+  it("a feedback turn that opens the next segment poses its guess", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(
+      turn({ reply: "Correct.", phase: "feedback", graded: true, verdict: "correct", prequestion: freePq }),
+    );
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    expect((await screen.findByTestId("loop-prequestion")).getAttribute("data-question-hash")).toBe("pq2");
+    expect(screen.queryByTestId("loop-continue")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your guess" })).toHaveFocus());
+  });
+});
+
+describe("LoopLearn — self-explanation prompts (spec §13 A139)", () => {
+  const prompt = {
+    prompt_id: "se-1",
+    juncture: "worked_example",
+    prompt: "Why does each step of that worked example follow from the one before it?",
+  };
+  const feedbackPrompt = { prompt_id: "se-2", juncture: "first_correct", prompt: "Why does your answer follow from what the question gives you?" };
+  const pq = { question_hash: "pq9", format: "free", difficulty: 1, prompt: "Next concept: what is a bit?", options: null, text: "Guess: what is a bit?" };
+  const dropFocus = () => (document.activeElement as HTMLElement | null)?.blur();
+
+  /** A posed check that opens on its worked example, whose hint asks "why". */
+  async function workedExampleAsksWhy() {
+    api.requestLoopHint.mockResolvedValue({ rung: 4, intent: "Worked example on an isomorph." });
+    api.requestLoopHintTurn.mockResolvedValue(
+      turn({ reply: `Here is a similar problem, worked.\n\n${prompt.prompt}`, phase: "hint", self_explain: prompt }),
+    );
+    await withCheckItem({ ...pose, worked_first: true });
+    return screen.findByTestId("loop-self-explain");
+  }
+
+  /** A graded check whose feedback turn asks "why". */
+  async function feedbackAsksWhy() {
+    api.streamLoopCheckAnswer.mockResolvedValue(
+      turn({ reply: `Correct.\n\n${feedbackPrompt.prompt}`, phase: "feedback", graded: true, verdict: "correct", self_explain: feedbackPrompt }),
+    );
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    const submit = screen.getByTestId("loop-attempt-submit");
+    submit.focus();
+    fireEvent.click(submit);
+    dropFocus(); // Submit is disabled while the answer is checked
+    return screen.findByTestId("loop-self-explain");
+  }
+
+  it("a worked example's hint asks why inside the check card, and leaves focus where it was", async () => {
+    const card = await workedExampleAsksWhy();
+    const check = screen.getByRole("region", { name: "Check your understanding" });
+    expect(check).toContainElement(card);
+    expect(card.getAttribute("data-juncture")).toBe("worked_example");
+    expect(screen.getByTestId("loop-self-explain-prompt").textContent).toBe(prompt.prompt);
+    // the posed check took focus (its answer box); the prompt does not steal it
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
+  });
+
+  it("Send posts the reply; the log shows it, the saved note is announced and focus returns to the answer", async () => {
+    api.postLoopSelfExplain.mockResolvedValue({ recorded: true, status: "replied" });
+    await workedExampleAsksWhy();
+    fireEvent.change(screen.getByTestId("loop-self-explain-input"), { target: { value: "Each step applies the same rule." } });
+    const send = screen.getByTestId("loop-self-explain-send");
+    send.focus();
+    fireEvent.click(send);
+    await waitFor(() => expect(screen.queryByTestId("loop-self-explain")).toBeNull());
+    expect(api.postLoopSelfExplain).toHaveBeenCalledExactlyOnceWith("s2", "u1", "se-1", { reply: "Each step applies the same rule.", skip: false });
+    expect(logRow("Each step applies the same rule.")).toBeTruthy();
+    const note = await screen.findByTestId("loop-self-explain-saved");
+    expect(note.textContent).toBe("Saved — thanks.");
+    expect(note.closest('[aria-live="polite"]')).not.toBeNull();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
+    expect(screen.getByTestId("loop-check-prompt")).toBeTruthy(); // the check is still open: nothing was graded
+  });
+
+  it("a feedback turn's prompt stands in for Continue and takes the lost focus; Skip brings Continue back", async () => {
+    api.postLoopSelfExplain.mockResolvedValue({ recorded: true, status: "skipped" });
+    const card = await feedbackAsksWhy();
+    expect(card.getAttribute("data-juncture")).toBe("first_correct");
+    expect(screen.queryByTestId("loop-continue")).toBeNull();
+    expect(screen.queryByTestId("loop-check-me")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("loop-self-explain-input")).toHaveFocus());
+    fireEvent.click(screen.getByTestId("loop-self-explain-skip"));
+    await screen.findByTestId("loop-continue");
+    expect(api.postLoopSelfExplain).toHaveBeenCalledExactlyOnceWith("s2", "u1", "se-2", { skip: true });
+    expect(screen.queryByTestId("loop-self-explain-saved")).toBeNull(); // a skip saves no reply
+  });
+
+  it("a prompt that was holding back the next segment's guess hands over to it", async () => {
+    api.postLoopSelfExplain.mockResolvedValue({ recorded: true, status: "replied", prequestion: pq });
+    await feedbackAsksWhy();
+    fireEvent.change(screen.getByTestId("loop-self-explain-input"), { target: { value: "It matched the rule." } });
+    fireEvent.click(screen.getByTestId("loop-self-explain-send"));
+    expect((await screen.findByTestId("loop-prequestion")).getAttribute("data-question-hash")).toBe("pq9");
+    expect(screen.queryByTestId("loop-self-explain")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your guess" })).toHaveFocus());
+    expect(logRow(pq.text).closest("[data-visually-hidden]")).not.toBeNull();
+  });
+
+  it("a prompt a later turn already closed just goes (409), with no error", async () => {
+    api.postLoopSelfExplain.mockRejectedValue(new ApiError("gone", 409, { body: { detail: "no open self-explanation prompt" } }));
+    await feedbackAsksWhy();
+    fireEvent.change(screen.getByTestId("loop-self-explain-input"), { target: { value: "Because." } });
+    fireEvent.click(screen.getByTestId("loop-self-explain-send"));
+    await waitFor(() => expect(screen.queryByTestId("loop-self-explain")).toBeNull());
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-continue")).toBeTruthy();
+  });
+
+  it("a reply answered with the crisis card records nothing: the prompt stays open", async () => {
+    api.postLoopSelfExplain.mockResolvedValue({ recorded: false, reply: "the card as text", crisis_support: crisisFixture });
+    await feedbackAsksWhy();
+    fireEvent.change(screen.getByTestId("loop-self-explain-input"), { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("loop-self-explain-send"));
+    expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
+    expect(screen.getByTestId("loop-self-explain")).toBeTruthy();
+    expect(screen.queryByTestId("loop-self-explain-saved")).toBeNull();
+  });
+
+  it("a resumed session restores an open prompt; the next served turn closes it", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "feedback", "2026-09-21T10:00:00Z")]));
+    api.getLoopSessionStatus.mockResolvedValue(status({ phase: "feedback", self_explain: feedbackPrompt }));
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "On we go.", phase: "teach" }));
+    render(<LoopLearn />);
+    expect((await screen.findByTestId("loop-self-explain")).getAttribute("data-prompt-id")).toBe("se-2");
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "next please" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    await screen.findByText("On we go.");
+    expect(screen.queryByTestId("loop-self-explain")).toBeNull();
+    expect(api.postLoopSelfExplain).not.toHaveBeenCalled();
   });
 });

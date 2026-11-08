@@ -308,6 +308,7 @@ def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable,
 #: §13 A112, A113, A119, A123, A124, A126, A127, A128; A137). Extend this when a
 #: learning migration adds one.
 _LEARNING_SCHEMA_MIGRATIONS = (
+    "20261108184825_learning_teach_prompts.sql",  # A138, A139
     "20261108163653_learning_llm_usage_course_id.sql",  # A137
     "20261108041639_learning_item_quality.sql",  # A113
     "20261108041742_learning_posttest_windows.sql",  # A112
@@ -363,9 +364,12 @@ def test_every_column_the_learning_wave2_migrations_add_is_required():
     # on node_mastery_events, check_item_reviews and misconceptions), 2 for A128
     # (documents.check_items_status / check_items_at), 1 for A127
     # (node_mastery_events.student_confidence), 12 for A126 (6 pose columns and
-    # the 6-column posttest_skips table), 1 for A137 (llm_usage.course_id)
-    assert len(introduced) == 70
+    # the 6-column posttest_skips table), 1 for A137 (llm_usage.course_id), 26 for
+    # A138/A139 (the 13-column learning_prequestions and learning_self_explanations)
+    assert len(introduced) == 96
     assert ("llm_usage", "course_id", "text") in introduced
+    assert ("learning_prequestions", "guess_json", "text") in introduced
+    assert ("learning_self_explanations", "reply_chars", "integer") in introduced
     assert ("node_mastery_events", "student_confidence", "double precision") in introduced
     required = {
         (table, column, kind)
