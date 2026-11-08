@@ -28,15 +28,28 @@ from learning.params import (
 
 class ProbeItem(Protocol):
     """The caller binds a stored check item to the student's node_id. It may
-    also say `unsourced: bool` (spec §13 A128: drafted from extracted text
-    after a failed index) — read with a False default, so an item without it
-    ranks as sourced."""
+    also say `quality: tuple` (spec §13 A129: how the item ranks by its key
+    and its lint, lower first — the caller's `checks.serve_quality`; this
+    module never imports checks) or, without it, `unsourced: bool` (A128:
+    drafted from extracted text after a failed index). Both are read with
+    defaults, so an item that says neither ranks as a confirmed, clean,
+    sourced one."""
 
     id: str
     node_id: str
     format: str
     difficulty: int
     question_hash: str
+
+
+def _quality(item) -> tuple:
+    """The item's serving quality (spec §13 A129), lower first: its own
+    `quality` when the caller bound one; else confirmed and clean, with A128's
+    `unsourced` alone ranking it after an equal item with its sources."""
+    quality = getattr(item, "quality", None)
+    if quality is not None:
+        return tuple(quality)
+    return (0, 0, bool(getattr(item, "unsourced", False)))
 
 
 class ProbeObservation(TypedDict):
@@ -277,9 +290,14 @@ def next_probe_item(
             0 if PROBE_TARGET_LO <= es <= PROBE_TARGET_HI else 1,
             abs(es - mid),
             it.difficulty,
-            # A128: among equal challenges an item with its sources goes first
-            # (never ahead of the adaptive difficulty: the diagnosis decides that)
-            bool(getattr(it, "unsourced", False)),
+            # A129 (A128's sourced-first among them): among equal challenges —
+            # the same difficulty and, through the channel's guess and slip,
+            # the same expected success, so in practice the same format — a
+            # confirmed key, then clean, never-linted, flagged. Never ahead of
+            # the strand, the adaptive difficulty or the channel: the diagnosis
+            # decides those, so a flagged item still serves when it is all the
+            # strand has at the challenge the diagnosis wants.
+            *_quality(it),
             it.question_hash,
         )
 

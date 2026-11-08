@@ -105,6 +105,7 @@ from learning.checks import (
     posttest_skip_reason,
     pretest_match,
     select_item,
+    serve_quality,
 )
 from learning.checks import unsourced as item_unsourced
 from learning.evidence import (
@@ -3115,7 +3116,14 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
     if rung == Rung.H4:
         concept_items = list_items(item.course_id, item.concept_key)
         reserves = posttest_reserves(concept_items)  # A23, A126: both protected items
-        siblings = [s for s in concept_items if s.question_hash != item.question_hash]
+        # spec §13 A129: deterministic_content shows the FIRST isomorph left, so
+        # the siblings go best-first — a confirmed key (the worked example IS
+        # its solution), then clean, never-linted, flagged; ties keep the
+        # bank's (created_at, id) order (a stable sort)
+        siblings = sorted(
+            (s for s in concept_items if s.question_hash != item.question_hash),
+            key=serve_quality,
+        )
     payload = ladder.deterministic_content(
         rung,
         _item_like(item),
@@ -3375,7 +3383,13 @@ def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set
     last = next((i for i in items if i.question_hash == tail[-1].question_hash), None)
     if last is None:
         return None
-    candidates = [i for i in items if i.question_hash not in exclude and is_servable(i)]
+    # spec §13 A129: next_isomorph takes the FIRST isomorph in the given
+    # order — every isomorph is equal under its rule (same concept, format and
+    # difficulty) — so the candidates go best-first by serve_quality; ties keep
+    # the bank's (created_at, id) order (a stable sort)
+    candidates = sorted(
+        (i for i in items if i.question_hash not in exclude and is_servable(i)), key=serve_quality
+    )
     return policy.next_isomorph(last, candidates)
 
 
@@ -6514,6 +6528,13 @@ class _BoundItem:
         """A128: drafted from extracted text after a failed index — the probe
         ranks such an item after an equal one with its sources."""
         return item_unsourced(self.item)
+
+    @property
+    def quality(self) -> tuple:
+        """Spec §13 A129: checks.serve_quality — the probe ranks an item by it
+        among equal challenges (a confirmed key, then clean, never-linted,
+        flagged; A128's sourced item first among flagged ones)."""
+        return serve_quality(self.item)
 
     def __getattr__(self, name: str):
         return getattr(self.item, name)

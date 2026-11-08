@@ -1643,6 +1643,24 @@ def rank_chunks_for_concept(
 # ── selection ──────────────────────────────────────────────────────────────
 
 
+def serve_quality(item) -> tuple[int, int, bool]:
+    """How a serving picker ranks two items its own rule treats as equal
+    (spec §13 A129): a confirmed key first (`_verify_rank`: an independent
+    blind solve agreed, staff approved it or an audit found it correct, A124),
+    then the item-flaw lint tier (`lint_rank`: linted clean, never linted,
+    flagged — A113, A119, A128), then, between two flagged items, one with its
+    sources before an `unsourced` one (A128). It is the post-test's order
+    (`_quality_rank`, A126) without its hash tie-break, refined by A128's
+    provenance, so no picker contradicts the post-test.
+
+    Every picker compares it only AFTER its own rule's keys (the difficulty
+    target, the strand, the channel, novelty, the reserve exclusions), so it
+    only ever chooses among items that rule leaves equal, and a flagged item
+    still serves when it is all the rule allows. It is no evidence weight: a
+    flag is not a wrong key, and a held item is never servable at all."""
+    return (_verify_rank(item), lint_rank(item), unsourced(item))
+
+
 def select_item(
     items: Iterable[CheckItem],
     *,
@@ -1651,12 +1669,14 @@ def select_item(
     exclude_hashes: Iterable[str] = (),
 ) -> CheckItem | None:
     """A servable item (A34: it states a final answer; A124: not held) of exactly `format`
-    whose hash is not excluded: the first at exactly `difficulty` (ties by
-    (created_at, id)), else the nearest difficulty (lower first on ties), else
-    None. Format is never substituted — each format is a different evidence
-    channel (spec §3.1). A128: at the chosen difficulty an item with its
-    sources goes before an `unsourced` one — difficulty stays first, because
-    the band's target is a learning requirement and provenance is support."""
+    whose hash is not excluded: the nearest to `difficulty` (exactly it first,
+    then the nearest, lower first on ties), else None. Format is never
+    substituted — each format is a different evidence channel (spec §3.1).
+    At the chosen difficulty, the best by `serve_quality` (A129: a confirmed
+    key, then clean, never-linted, flagged; A128: an item with its sources
+    before an `unsourced` one), then the oldest (created_at, id). Difficulty
+    stays first, because the band's target is a learning requirement and an
+    item's quality is a preference among items that meet it."""
     excluded = set(exclude_hashes)
     candidates = [
         i
@@ -1670,7 +1690,7 @@ def select_item(
         key=lambda i: (
             abs(i.difficulty - difficulty),
             i.difficulty,
-            unsourced(i),
+            *serve_quality(i),
             i.created_at or "",
             i.id,
         ),
