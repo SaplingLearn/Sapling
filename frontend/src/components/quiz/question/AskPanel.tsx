@@ -53,6 +53,8 @@ import {
   type QuizAskOrigin,
 } from "@/lib/api";
 import { tutorStepLabel } from "@/components/chat/ChatPanel";
+import { CrisisSupportCard } from "@/components/safety/CrisisSupportCard";
+import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
 
 // The same renderer the tutor uses, loaded the same way `ChatPanel` loads it:
 // `MarkdownChat` statically imports mermaid, katex and highlight.js, and a
@@ -106,6 +108,8 @@ interface AskTurn {
   /** ADR 0020: the stream was cut off after producing this much. The partial
    *  stays in the thread, marked; Retry drops it and starts the answer over. */
   interrupted?: boolean;
+  /** docs/safety/crisis-support.md: the crisis card instead of a tutor reply. */
+  crisisSupport?: CrisisSupport;
 }
 
 /**
@@ -222,6 +226,14 @@ export function AskPanel({
               { signal: controller.signal },
               origin,
             );
+            const startCrisis = crisisSupportIn(started);
+            if (startCrisis) {
+              // The card instead of a session: none was opened.
+              if (runRef.current === token && mountedRef.current) {
+                setTurns(t => [...t, { id: nextId(), role: "assistant", text: started.reply || "", crisisSupport: startCrisis }]);
+              }
+              return;
+            }
             sid = started.session_id ?? null;
           } catch (err) {
             if (controller.signal.aborted) return;
@@ -237,6 +249,13 @@ export function AskPanel({
               undefined,
               origin,
             );
+            const startCrisis = crisisSupportIn(started);
+            if (startCrisis) {
+              if (runRef.current === token && mountedRef.current) {
+                setTurns(t => [...t, { id: nextId(), role: "assistant", text: started.initial_message || "", crisisSupport: startCrisis }]);
+              }
+              return;
+            }
             sid = started.session_id;
           }
           if (!sid) throw new Error("The tutor didn't open a session.");
@@ -245,6 +264,7 @@ export function AskPanel({
         }
 
         let reply: string;
+        let crisisSupport: CrisisSupport | null = null;
         try {
           // `graph_update` events are deliberately unhandled: this panel is a
           // read of the student's own mistake, not a study turn that should
@@ -266,6 +286,7 @@ export function AskPanel({
             signal: controller.signal,
           }, turnId);
           reply = res.reply || "";
+          crisisSupport = crisisSupportIn(res);
         } catch (err) {
           if (controller.signal.aborted) return;
           // Tokens already on screen, or a failure the JSON route would repeat
@@ -276,10 +297,11 @@ export function AskPanel({
           setStatus(null);
           const res = await sendChat(sid, userId, message, TUTOR_MODE, true, undefined, turnId);
           reply = res.reply || "";
+          crisisSupport = crisisSupportIn(res);
         }
 
         if (runRef.current !== token || !mountedRef.current) return;
-        setTurns(t => [...t, { id: nextId(), role: "assistant", text: reply }]);
+        setTurns(t => [...t, { id: nextId(), role: "assistant", text: reply, ...(crisisSupport ? { crisisSupport } : {}) }]);
       } catch (err) {
         if (controller.signal.aborted || runRef.current !== token || !mountedRef.current) return;
         // ADR 0020, and the whole reason `partial` exists: half an answer the
@@ -427,7 +449,9 @@ export function AskPanel({
 
         <div className="quiz-ask__thread" aria-live="polite">
           {turns.map(turn =>
-            turn.role === "user" ? (
+            turn.crisisSupport ? (
+              <CrisisSupportCard key={turn.id} support={turn.crisisSupport} />
+            ) : turn.role === "user" ? (
               <p key={turn.id} className="quiz-ask__turn--user">
                 {turn.text}
               </p>

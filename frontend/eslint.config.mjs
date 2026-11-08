@@ -104,6 +104,8 @@ const eslintConfig = [
       "src/components/screens/Tree.tsx",
       // Learning loop review queue (PKG-12) — the launch Study surface.
       "src/components/learn/DueQueue.tsx",
+      // The crisis-support card (docs/safety/crisis-support.md). New file, no backlog.
+      "src/components/safety/CrisisSupportCard.tsx",
       "src/components/marketing/graph/KnowledgeGraphDemo.tsx",
       "src/components/marketing/FeatureBand.tsx",
       "src/components/marketing/SurfaceBento.tsx",

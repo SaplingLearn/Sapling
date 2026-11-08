@@ -15,6 +15,7 @@ import type {
   GamificationMe, LeaderboardRow, ActivityData, Friend,
 } from '@/lib/types';
 import { statusOf } from '@/lib/errorMessage';
+import type { WithCrisisSupport } from '@/lib/crisisSupport';
 import { createStreamPacer } from '@/lib/streamPacer';
 
 export const API_URL = '';
@@ -347,7 +348,8 @@ export const startSession = (
   modelPref?: ModelPref,
   quizAsk?: QuizAskOrigin,
 ) =>
-  fetchJSON<{ session_id: string; initial_message: string; graph_state: any }>('/api/learn/start-session', {
+  // A crisis-support answer carries `crisis_support` and no session (session_id null).
+  fetchJSON<{ session_id: string; initial_message: string; graph_state: any } & WithCrisisSupport>('/api/learn/start-session', {
     method: 'POST',
     body: JSON.stringify({
       user_id: userId,
@@ -381,7 +383,7 @@ export const sendChat = (
   modelPref?: ModelPref,
   turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean } & WithCrisisSupport>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -399,7 +401,7 @@ export interface GraphDelta {
   mastery_changes: MasteryChange[];
 }
 
-export interface ChatResult {
+export interface ChatResult extends WithCrisisSupport {
   reply: string;
   graph_update: GraphUpdate;
   mastery_changes: MasteryChange[];
@@ -1106,7 +1108,7 @@ export interface ReviewAnswerBody {
   reason?: string;
   rating?: number;
 }
-export interface ReviewAnswerResponse {
+export interface ReviewAnswerResponse extends WithCrisisSupport {
   correct: boolean | null;
   hint: string | null;
   next_due_at: string | null;
@@ -1209,7 +1211,7 @@ export interface LoopGoalProgress {
   unresolved_prerequisite_ids: string[];
   attempted_node_ids: string[];
 }
-export interface LoopGoalResult extends LoopLearningScope { phase: LoopPhase }
+export interface LoopGoalResult extends LoopLearningScope, WithCrisisSupport { phase: LoopPhase }
 
 /** A served option (A22): stored letter + text, never marked correct. */
 export interface LoopOption { letter: string; text: string }
@@ -1234,7 +1236,7 @@ export type LoopProbeNext = LoopLearningScope & (
   | ({ done: false } & LoopProbeItem)
   | { done: false; pending_grade: LoopPendingGrade }
   | { done: true; phase: LoopPhase; no_check_items?: boolean });
-export type LoopProbeAnswerResult = LoopLearningScope & (
+export type LoopProbeAnswerResult = LoopLearningScope & WithCrisisSupport & (
   | { graded: true; correct: boolean; p_known: number; probe_done: boolean; novice_floor: boolean; reference_answer?: string }
   // unavailable → counted as not asked; refused (A33) → the item stays posed;
   // recorded: false → graded but lost to a stale claim (the probe moved on)
@@ -1264,7 +1266,7 @@ export interface LoopBudgetNotice {
   scope: string | null;
   session_capped: boolean;
 }
-export interface LoopStartResult extends LoopLearningScope {
+export interface LoopStartResult extends LoopLearningScope, WithCrisisSupport {
   session_id: string;
   initial_message: string;
   graph_state?: unknown;
@@ -1298,7 +1300,7 @@ export interface LoopCheckNext extends LoopLearningScope {
 /** POST /hint moves the rung only: `{denied}` or `{rung, intent}`; the hint TEXT
  *  is the next `[ACTION: hint]` turn (requestLoopHintTurn). */
 export interface LoopHintResponse { denied?: string; rung?: number; intent?: string }
-export interface LoopAttemptResult { genuine: boolean; counted: boolean; attempts: number; independent_s: number }
+export interface LoopAttemptResult extends WithCrisisSupport { genuine: boolean; counted: boolean; attempts: number; independent_s: number }
 /** A60: `close_json` as stored — no student answer to `self_eval`/`if_then`. */
 /** Spec §13 A117 (backend learning/session_close.py::Baseline): where a concept's
  *  reported change starts. `pre_session` — the estimate it had before the session;
@@ -1494,9 +1496,11 @@ export const reportCheckItem = (body: LoopReportBody) =>
   loopPost<LoopReportResult>('/report', body);
 
 export interface RetentionItem extends LoopCheckItem { node_id: string }
-export type RetentionAnswerResult =
+export type RetentionAnswerResult = WithCrisisSupport & (
   | { graded: false; refused: true }
-  | { correct: boolean; confidence: number };
+  | { correct: boolean; confidence: number }
+  // docs/safety/crisis-support.md: the card instead of a grade (nothing recorded)
+  | { graded: false; crisis_support: NonNullable<WithCrisisSupport['crisis_support']> });
 /** Explicitly opening commits a delayed pose; never call during page load. */
 export const startRetentionCheck = (userId: string, courseId: string) =>
   loopPost<{ items: RetentionItem[] }>('/posttest/start', { user_id: userId, course_id: courseId });
@@ -2549,25 +2553,25 @@ export const unlinkNoteConcept = (noteId: string, userId: string, conceptNodeId:
   );
 
 export const summarizeNote = (noteId: string, userId: string) =>
-  fetchJSON<{ summary: string }>(`/api/notes/${noteId}/summarize`, {
+  fetchJSON<{ summary?: string } & WithCrisisSupport>(`/api/notes/${noteId}/summarize`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
 
 export const extractNoteConcepts = (noteId: string, userId: string) =>
-  fetchJSON<{ concepts: string[]; linked: number }>(
+  fetchJSON<{ concepts?: string[]; linked?: number } & WithCrisisSupport>(
     `/api/notes/${noteId}/extract-concepts`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );
 
 export const noteChat = (noteId: string, userId: string, message: string) =>
-  fetchJSON<{ reply: string }>(`/api/notes/${noteId}/chat`, {
+  fetchJSON<{ reply: string } & WithCrisisSupport>(`/api/notes/${noteId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, message }),
   });
 
 export const sendNoteToTutor = (noteId: string, userId: string) =>
-  fetchJSON<{ topic: string; course_id: string; preface: string }>(
+  fetchJSON<{ topic?: string; course_id?: string; preface?: string } & WithCrisisSupport>(
     `/api/notes/${noteId}/send-to-tutor`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );

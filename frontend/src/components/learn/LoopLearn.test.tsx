@@ -58,6 +58,7 @@ import {
 } from "@/lib/feedbackPacing";
 import { FeedbackFlow } from "../FeedbackFlow";
 import { LoopLearn } from "./LoopLearn";
+import crisisFixture from "@/test-utils/crisisSupport.json";
 
 const course = { course_id: "c1", course_name: "Intro CS", course_code: "CS 101" }; // the EnrolledCourse fields LoopLearn reads
 const open = (id: string, phase: string, started: string) => ({ session_id: id, topic: `t ${id}`, started_at: started, phase });
@@ -2098,5 +2099,78 @@ describe("LoopLearn — no feedback survey mid-learning", () => {
     fireEvent.click(screen.getByTestId("loop-close-button"));
     await screen.findByTestId("loop-close-done");
     expect(await screen.findByText(PULSE)).toBeTruthy();
+  });
+});
+
+describe("LoopLearn — crisis support (docs/safety/crisis-support.md)", () => {
+  const crisisTurn = { reply: "the card as text", graph_update: {}, mastery_changes: [], crisis_support: crisisFixture };
+
+  it("a chat turn answered with the card shows it in the conversation and changes nothing else", async () => {
+    api.streamLoopChat.mockResolvedValue(crisisTurn);
+    await resumedTeach();
+    fireEvent.change(await screen.findByTestId("tutor-input"), { target: { value: "i want to kill myself" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    const card = await screen.findByTestId("crisis-support-card");
+    expect(screen.getByTestId("loop-messages").contains(card)).toBe(true);
+    expect(card.textContent).toContain(crisisFixture.title);
+    expect(screen.queryByText("the card as text")).toBeNull();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+    expect((screen.getByTestId("tutor-input") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it("an answer answered with the card is not graded: the check stays posed, its box emptied", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(crisisTurn);
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "i want to die" } });
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
+    expect(screen.getByTestId("loop-check-prompt")).toBeTruthy(); // still posed
+    expect((screen.getByTestId("loop-attempt-input") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).not.toBe("feedback");
+  });
+
+  it("a session start answered with the card opens no session; Back to studying starts one on the course", async () => {
+    search.params = new URLSearchParams({ topic: "i want to kill myself" }); // e.g. a note title sent to the tutor
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession
+      .mockResolvedValueOnce({ session_id: null, initial_message: "…", reply: "…", crisis_support: crisisFixture })
+      .mockResolvedValueOnce({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    const slot = await screen.findByTestId("loop-start-crisis");
+    expect(slot.textContent).toContain(crisisFixture.title);
+    expect(api.startLoopSession).toHaveBeenCalledTimes(1);
+    expect(api.nextLoopProbe).not.toHaveBeenCalled();
+    expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("");
+    fireEvent.click(screen.getByTestId("crisis-support-dismiss"));
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalledTimes(2));
+    // the course, never the deep-link text the card answered
+    expect(api.startLoopSession.mock.calls[1].slice(0, 3)).toEqual(["u1", "c1", "Intro CS"]);
+    await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s9"));
+    expect(screen.queryByTestId("loop-start-crisis")).toBeNull();
+  });
+
+  it("a probe answer answered with the card is not graded: the item stays posed", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    api.answerLoopProbe.mockResolvedValue({ graded: false, reply: "…", crisis_support: crisisFixture });
+    render(<LoopLearn />);
+    fireEvent.change(await screen.findByTestId("loop-probe-input"), { target: { value: "i want to end my life" } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    expect((await screen.findByRole("dialog")).textContent).toContain(crisisFixture.title);
+    expect(screen.queryByTestId("loop-probe-reference")).toBeNull();
+    expect(screen.getByTestId("loop-probe-item")).toBeTruthy();
+    expect(api.nextLoopProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hint whose draft is answered with the card stops: no rung, no hint turn", async () => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: false, counted: false, reply: "…", crisis_support: crisisFixture });
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "i want to hurt myself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    expect((await screen.findByRole("dialog")).textContent).toContain(crisisFixture.title);
+    expect(api.requestLoopHint).not.toHaveBeenCalled();
+    expect(api.requestLoopHintTurn).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("loop-hint-reply")).toBeNull();
   });
 });

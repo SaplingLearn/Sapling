@@ -21,6 +21,8 @@ import { useIsMobile } from "@/lib/useIsMobile";
 import { useActiveSemester, courseInTerm } from "@/lib/useActiveSemester";
 import { useUser } from "@/context/UserContext";
 import { LoopLearn } from "../learn/LoopLearn";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
+import { crisisSupportIn } from "@/lib/crisisSupport";
 import { useLoopStatus } from "../learn/useLoopStatus";
 import { readResumeParam } from "../learn/resumeParam";
 import {
@@ -375,6 +377,8 @@ export function Learn() {
 }
 
 function LearnInner() {
+  // docs/safety/crisis-support.md: a session start the crisis screen answered
+  const crisis = useCrisisSupport();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { userId, userReady } = useUser();
@@ -732,6 +736,8 @@ function LearnInner() {
           },
           signal: controller.signal,
         });
+        // The crisis card instead of a greeting: no session was opened.
+        if (crisis.intercept(res)) return;
         if (!res.session_id) throw new Error("Session stream completed without a session_id.");
         newSessionId = res.session_id;
         replyText = res.reply || "Let's begin.";
@@ -753,6 +759,7 @@ function LearnInner() {
         if (!isCurrent()) return;
         setStreamingText(null);
         const res = await startSession(userId, topicName, mode, selectedCourseId || undefined, sharedCtx, modelPref);
+        if (crisis.intercept(res)) return;
         newSessionId = res.session_id;
         replyText = res.initial_message || "Let's begin.";
       }
@@ -1015,7 +1022,9 @@ function LearnInner() {
       // it loses nothing: the JSON route persisted the pair server-side, so
       // re-opening the original session shows the turn (PR #461 review).
       if (sessionIdRef.current === turnSessionId) {
-        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "" }]);
+        // docs/safety/crisis-support.md: a crisis turn renders as the card
+        const crisisSupport = crisisSupportIn(res) ?? undefined;
+        setMessages(m => [...m, { id: msgId(), role: "assistant", content: res.reply || "", crisisSupport }]);
       }
     } catch (err) {
       if (isSessionEndedError(err)) { endedTurn(); return; }
@@ -1476,6 +1485,7 @@ function LearnInner() {
     return (
       <FullHeightScreen className="fade-in">
         <DisclaimerModal />
+        {crisis.dialog}
         <TopBar
           title="Start a session"
           subtitle="Pick a topic. Sapling will adapt to your chosen mode."

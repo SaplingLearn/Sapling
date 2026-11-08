@@ -33,6 +33,7 @@ import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
 import { ReportQuestion } from "./ReportQuestion";
+import { useCrisisSupport } from "../safety/CrisisSupportCard";
 
 // Review 409s (routes/learn_loop.py): "loop state changed, retry" — a concurrent write
 // won; it can come BEFORE the grade (nothing recorded) or AFTER it (the record lost its
@@ -63,6 +64,8 @@ const RATINGS: { n: number; label: string }[] = [
 
 export function DueQueue({ userId, courseId }: { userId: string; courseId?: string }) {
   const reportsOn = useFlag("item_reports") === "on";
+  // docs/safety/crisis-support.md: an answer the crisis screen answered
+  const crisis = useCrisisSupport();
   // the last item was reported: say so above the next one
   const [reported, setReported] = React.useState(false);
   const [next, setNext] = React.useState<ReviewNextResponse | null>(null);
@@ -152,6 +155,13 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
         ...body,
       });
       if (mine !== seq.current) return; // the panel moved on: never attach it
+      if (crisis.intercept(r)) {
+        // the card, not a grade: nothing was recorded and the item stays due
+        setAnswer("");
+        setReason("");
+        setBusy(false);
+        return;
+      }
       setResult(r);
       if (!r.unavailable) setPause(null); // a graded answer got through
       setNext({ ...next, remaining_budget_s: r.remaining_budget_s });
@@ -226,6 +236,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       className="card"
       style={{ margin: "14px 32px 0", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}
     >
+      {crisis.dialog}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div className="h-serif" style={{ fontSize: 17 }}>Due today</div>
         <div style={{ flex: 1 }} />

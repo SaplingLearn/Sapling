@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { __resetScrollLocksForTests } from "@/lib/useScrollLock";
 import { AskPanel, composeAskMessage, type AskSeed } from "./AskPanel";
+import crisisFixture from "@/test-utils/crisisSupport.json";
 
 const api = vi.hoisted(() => ({
   startSessionStream: vi.fn(),
@@ -514,5 +515,30 @@ describe("AskPanel", () => {
     renderPanel({ open: false });
     expect(api.startSessionStream).not.toHaveBeenCalled();
     expect(screen.queryByTestId("quiz-ask-panel")).toBeNull();
+  });
+});
+
+describe("AskPanel — crisis support (docs/safety/crisis-support.md)", () => {
+  it("shows the card in the thread instead of a tutor reply, and the student can keep asking", async () => {
+    renderPanel();
+    await screen.findByText("The base case is the exit.");
+    api.streamChat.mockResolvedValueOnce({ reply: "the card as text", crisis_support: crisisFixture });
+    fireEvent.change(screen.getByTestId("quiz-ask-input"), { target: { value: "honestly i want to die" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quiz-ask-send"));
+    });
+    const card = await screen.findByTestId("crisis-support-card");
+    expect(card).toHaveTextContent(crisisFixture.title);
+    expect(screen.queryByText("the card as text")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull(); // a card, not an error strip
+    expect(screen.getByTestId("quiz-ask-input")).not.toBeDisabled();
+  });
+
+  it("a session start answered with the card opens no session and sends nothing", async () => {
+    api.startSessionStream.mockResolvedValueOnce({ session_id: null, reply: "…", crisis_support: crisisFixture });
+    renderPanel();
+    expect(await screen.findByTestId("crisis-support-card")).toBeTruthy();
+    expect(api.streamChat).not.toHaveBeenCalled();
+    expect(api.sendChat).not.toHaveBeenCalled();
   });
 });
