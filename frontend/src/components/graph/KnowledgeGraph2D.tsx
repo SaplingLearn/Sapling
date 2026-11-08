@@ -146,6 +146,51 @@ function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
+/** How far a freed concept trails the one it follows before it's pulled along. */
+const FOLLOW_GAP = 70;
+/** Share of the extra gap closed per tick (before velocity decay). */
+const FOLLOW_PULL = 0.1;
+/** How many links out from a dragged concept are freed to follow it. */
+const FOLLOW_HOPS = 2;
+
+/**
+ * The concepts that follow a dragged one: everything within FOLLOW_HOPS
+ * concept links, each mapped to the node it was reached through (its
+ * leader). The dragged concept maps to null. Course spokes (anchor links)
+ * don't count — a course root is pulled along by the orbit force instead.
+ */
+export function followersOf(
+  dragId: string,
+  links: ReadonlyArray<{ source: string | { id: string }; target: string | { id: string }; anchor?: boolean }>,
+  hops = FOLLOW_HOPS,
+): Map<string, string | null> {
+  const idOf = (end: string | { id: string }) => (typeof end === "string" ? end : end.id);
+  const adjacent = new Map<string, string[]>();
+  for (const l of links) {
+    if (l.anchor) continue;
+    const s = idOf(l.source);
+    const t = idOf(l.target);
+    if (!adjacent.has(s)) adjacent.set(s, []);
+    if (!adjacent.has(t)) adjacent.set(t, []);
+    adjacent.get(s)!.push(t);
+    adjacent.get(t)!.push(s);
+  }
+  const leader = new Map<string, string | null>([[dragId, null]]);
+  let frontier = [dragId];
+  for (let hop = 0; hop < hops && frontier.length; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const m of adjacent.get(id) ?? []) {
+        if (leader.has(m)) continue;
+        leader.set(m, id);
+        next.push(m);
+      }
+    }
+    frontier = next;
+  }
+  return leader;
+}
+
 function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -345,14 +390,19 @@ function KnowledgeGraph2DImpl({
   const movedRootsRef = React.useRef(new Set<string>());
   // Legible: where each free course root settles back to.
   const rootHomeRef = React.useRef(new Map<string, { x: number; y: number }>());
-  // Released concepts still moving: their orbit target follows them each tick
-  // (the "coast" force) so the layout doesn't pull them back while they drift.
-  const coastingRef = React.useRef(new Set<string>());
+  // A dragged concept and the concepts linked to it (up to two hops), freed
+  // from their rings while the drag plays out: each follows the one that
+  // leads it (the "follow" force), so the cluster moves together instead of
+  // leaving one long stretched link. `leader` is null for the dragged node.
+  const freeRef = React.useRef<{ leader: Map<string, string | null>; dragging: string | null }>({
+    leader: new Map(),
+    dragging: null,
+  });
   // Make a course's current arrangement its new resting layout: its root's
   // home becomes where the root is now, and each of its concepts keeps the
-  // angle it now sits at (the dropped one also keeps its distance). After a
-  // drag nothing springs back to where it was planned.
-  const adoptLayoutAround = React.useCallback((rootId: string | null, droppedId?: string) => {
+  // angle it now sits at (the ones that moved also keep their distance).
+  // After a drag nothing springs back to where it was planned.
+  const adoptLayoutAround = React.useCallback((rootId: string | null, movedIds: ReadonlySet<string>) => {
     const root = rootId ? simNodesRef.current.find((sn) => sn.id === rootId) : undefined;
     if (!root || root.x == null || root.y == null) return;
     rootHomeRef.current.set(root.id, { x: root.x, y: root.y });
@@ -361,9 +411,17 @@ function KnowledgeGraph2DImpl({
       const o = planRef.current.orbit.get(m.id);
       if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
       o.angle = Math.atan2(m.y - root.y, m.x - root.x);
-      if (m.id === droppedId) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
+      if (movedIds.has(m.id)) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
     }
   }, []);
+  // Every course a set of freed concepts belongs to adopts its new layout.
+  const settleFreed = React.useCallback(() => {
+    const ids = new Set(freeRef.current.leader.keys());
+    freeRef.current = { leader: new Map(), dragging: null };
+    const roots = new Set<string | null>();
+    for (const id of ids) roots.add(planRef.current.orbit.get(id)?.rootId ?? null);
+    for (const rootId of roots) adoptLayoutAround(rootId, ids);
+  }, [adoptLayoutAround]);
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
@@ -481,25 +539,39 @@ function KnowledgeGraph2DImpl({
               : 20 + (d.mastery_score || 0) * 6,
         ),
       )
-      .force("coast", (alpha: number) => {
-        // A released concept drifts on its own momentum: retarget its orbit
-        // to wherever it is each tick so the orbit force (next) exerts no
-        // pull. Once it has slowed down, its resting spot becomes its home.
-        for (const id of coastingRef.current) {
+      .force("follow", (alpha: number) => {
+        // Freed concepts (see freeRef): each is pulled after the node that
+        // leads it once their gap is wider than a link, and its orbit target
+        // tracks it so the orbit force (next) doesn't hold it on its old
+        // ring. While the drag is on, the dragged node keeps its orbit pull,
+        // which tugs its course root along. Once everything has slowed down,
+        // wherever it all came to rest becomes the layout.
+        const free = freeRef.current;
+        if (!free.leader.size) return;
+        let moving = free.dragging != null;
+        for (const [id, leaderId] of free.leader) {
           const n = nodeById.get(id);
+          if (!n || n.x == null || n.y == null) continue;
+          const l = leaderId ? nodeById.get(leaderId) : undefined;
+          if (l && l.x != null && l.y != null) {
+            const dx = l.x - n.x;
+            const dy = l.y - n.y;
+            const len = Math.hypot(dx, dy) || 1e-6;
+            const slack = len - FOLLOW_GAP;
+            if (slack > 0) {
+              n.vx = (n.vx ?? 0) + (dx / len) * slack * FOLLOW_PULL;
+              n.vy = (n.vy ?? 0) + (dy / len) * slack * FOLLOW_PULL;
+            }
+          }
           const o = planRef.current.orbit.get(id);
-          if (!n || !o || n.x == null || n.y == null) {
-            coastingRef.current.delete(id);
-            continue;
+          if (o && id !== free.dragging) {
+            const c = centerOf(o.rootId);
+            o.angle = Math.atan2(n.y - c.y, n.x - c.x);
+            o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
           }
-          const c = centerOf(o.rootId);
-          o.angle = Math.atan2(n.y - c.y, n.x - c.x);
-          o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
-          if (Math.hypot(n.vx ?? 0, n.vy ?? 0) < 0.1 || alpha < 0.02) {
-            coastingRef.current.delete(id);
-            adoptLayoutAround(o.rootId, id);
-          }
+          if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
         }
+        if (!moving || (free.dragging == null && alpha < 0.02)) settleFreed();
       })
       .force(
         "orbit",
@@ -756,6 +828,11 @@ function KnowledgeGraph2DImpl({
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
     flingRef.current = n.x != null && n.y != null ? { x: n.x, y: n.y, t: performance.now(), vx: 0, vy: 0 } : null;
     simRef.current?.alphaTarget(0.3).restart();
+    if (!n.is_subject_root) {
+      // A still-settling earlier drag adopts its layout before this one starts.
+      if (freeRef.current.leader.size) settleFreed();
+      freeRef.current = { leader: followersOf(n.id, simLinksRef.current), dragging: n.id };
+    }
     n.fx = n.x;
     n.fy = n.y;
     // dragRef/fx are refs — render once so the tooltip hides and the pinned
@@ -859,9 +936,15 @@ function KnowledgeGraph2DImpl({
           const [vx, vy] = releaseVelocity(flingRef.current, performance.now(), prefersReducedMotion());
           n.vx = vx;
           n.vy = vy;
-          if (!n.is_subject_root && movedRef.current) {
-            adoptLayoutAround(planRef.current.orbit.get(n.id)?.rootId ?? null, n.id);
-            coastingRef.current.add(n.id);
+        }
+        if (freeRef.current.dragging === n.id) {
+          if (movedRef.current) {
+            // Let go: the dropped concept coasts on, its linked concepts keep
+            // following, and the follow force settles the layout once still.
+            freeRef.current.dragging = null;
+          } else {
+            // A click, not a drag: nothing moved, so nothing to adopt.
+            freeRef.current = { leader: new Map(), dragging: null };
           }
         }
       }
