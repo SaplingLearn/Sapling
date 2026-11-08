@@ -55,7 +55,10 @@ def test_a_resolved_row_never_blocks_a_new_open_one(db_conn):
     key = f"it_{uuid.uuid4().hex[:12]}"
     try:
         assert record(USER, node, None, key, "x")["count"] == 1
-        assert resolve(USER, node, key) == 1
+        # spec §13 A127's resolve: the keys, and the isomorph whose correct,
+        # unassisted answer closes them (any item but the one recorded on)
+        (closed,) = resolve(USER, node, [key], by_item="it-isomorph-item")
+        assert closed["wrong_key"] == key
         assert record(USER, node, None, key, "y")["count"] == 1
     finally:
         db_conn.execute("DELETE FROM misconceptions WHERE wrong_key = %s", (key,))
