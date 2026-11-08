@@ -226,9 +226,17 @@ def test_the_pose_shows_the_question_and_options_never_the_key():
     assert payload["prompt"] == item.prompt and [o["letter"] for o in payload["options"]] == list("ABCD")
     dumped = str(payload)
     assert "correct" not in dumped and "wrong_key" not in dumped and item.final_answer not in payload["prompt"]
-    assert payload["text"] == pq.pose_text(item)
-    assert payload["text"].startswith(pq.POSE_LEAD) and "B. the next free slot" in payload["text"]
+    assert payload["text"] == pq.pose_text(item) == f"{pq.POSE_LEAD}\n\n{item.prompt}"
     assert "answered" not in payload and pq.pose_payload(item, answered=True)["answered"] is True
+
+
+def test_the_saved_pose_row_carries_no_option_text_so_no_key_before_the_release():
+    # The row is written before the answer is released; the options include the
+    # key (B here), so like a posed check's row it is the stem only.
+    item = _item("m1", "mc_reason", 1)
+    assert "the next free slot" not in pq.pose_text(item)
+    assert all(line not in pq.pose_text(item) for line in pq.option_lines(item))
+    assert pq.option_lines(item)[1] == "B. the next free slot"  # the model's block still lists them
 
 
 def test_the_answer_lead_names_the_correct_option_or_the_reference():

@@ -216,14 +216,14 @@ def option_lines(item) -> list[str]:
 
 
 def pose_text(item) -> str:
-    """The assistant row the pose is saved as: the lead, the question and, for
-    a multiple-choice item, its options. The client's card shows the same
-    question and hides this row while the card is open (A135's pattern)."""
-    parts = [POSE_LEAD, item.prompt.strip()]
-    lines = option_lines(item)
-    if lines:
-        parts.append("\n".join(lines))
-    return "\n\n".join(parts)
+    """The assistant row the pose is saved as: the lead and the question's stem,
+    never its options. A multiple-choice item's options include its key, and a
+    transcript row written before the answer is released carries no key text —
+    the rule a posed check's row already follows (its stem only), and the one
+    the e2e `learn_loop` oracle checks. The card shows the options from
+    `pose_payload` and hides this row while it is open (A135's pattern); the
+    explaining turn gives the model the options in its own block."""
+    return "\n\n".join([POSE_LEAD, item.prompt.strip()])
 
 
 def pose_payload(item, *, answered: bool = False) -> dict:
