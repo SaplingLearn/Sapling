@@ -5,18 +5,18 @@
  * #695), over /api/admin/check-items. A check item is drafted by a model from
  * a classmate's upload and keyed from peer material — no instructor reviewed
  * it — so this lists every item the item-flaw linter flagged, the alignment
- * check changed (A119: a criterion dropped, a concept re-tagged), a key hold
- * withdraws (A124: an independent solve disputed its key, or an audit found it
- * wrong or ambiguous — "Held" items are served to no one until approved) or a
- * student reported (counts by reason), worst first, with its text (decrypted
- * by the server for this page only) and two actions: Approve (reviewed, OK —
- * it leaves the queue until a newer report, its key is confirmed, and a
- * quarantined question is restored to students) and Retire (withdrawn for the
- * whole course and never drafted again, and every student's results on it are
- * voided and their mastery recomputed — A123; two clicks). Reports alone never
- * delete a question: enough of them quarantine it (hidden from students) until
- * staff decide here. An item whose retire did not finish is listed first, then
- * the quarantined ones, then the held ones.
+ * check changed (A119: a criterion dropped, a concept re-tagged), a hold
+ * withdraws — "Held" items are served to no one until approved: a key hold
+ * (A124: an independent solve disputed its key, or an audit found it wrong or
+ * ambiguous) or a quarantine (A123: enough students reported it; nothing is
+ * deleted) — or a student reported (counts by reason), worst first, with its
+ * text (decrypted by the server for this page only) and two actions: Approve
+ * (reviewed, OK — it leaves the queue until a newer report, its key is
+ * confirmed and any hold lifted, so a held question is restored to students)
+ * and Retire (withdrawn for the whole course and never drafted again, and
+ * every student's results on it are voided and their mastery recomputed —
+ * A123; two clicks). Reports alone never delete a question. An item whose
+ * retire did not finish is listed first, then the held ones.
  *
  * The "Key audit" tab (spec §13 A124) draws a stratified sample of one
  * course's stored keys (format × difficulty × concept) for staff to judge
@@ -63,6 +63,9 @@ export const LINT_FLAG_LABELS: Record<CheckItemLintFlag, string> = {
   key_unsolved: "An independent solve found the passages don't settle it",
   key_audit_wrong: "An audit found the key wrong",
   key_audit_ambiguous: "An audit found the question ambiguous",
+  // spec §13 A123: why staff hold it (the database sets these from the decision)
+  reports_threshold: "Quarantined by student reports",
+  staff_retired: "Retired — waiting to be removed",
 };
 
 export const REPORT_REASON_LABELS: Record<LoopReportReason, string> = {
@@ -295,11 +298,6 @@ function QueueRow({
         <span className="label-micro">{entry.course_id} · {entry.concept_key}</span>
         <span className="chip">{entry.format} · difficulty {entry.difficulty}</span>
         {entry.retire_pending && <span className="chip chip--err">Retire not finished — retire again</span>}
-        {entry.quarantined && (
-          <span className="chip chip--err" data-testid={`admin-items-quarantined-${entry.id}`}>
-            Quarantined — hidden from students until you decide
-          </span>
-        )}
         {entry.held && (
           <span className="chip chip--err" data-testid={`admin-items-held-${entry.id}`}>
             Held — served to no one until approved
@@ -326,7 +324,7 @@ function QueueRow({
             disabled={busy}
             onClick={onApprove}
           >
-            {entry.quarantined ? "Approve and restore" : "Approve"}
+            {entry.held ? "Approve and restore" : "Approve"}
           </button>
         )}
         <button

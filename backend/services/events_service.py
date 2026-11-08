@@ -140,14 +140,16 @@ learn.check_item_reported     usage     course_id, question_hash, reason (wrong_
                                         review), first, reporters — a student reported a
                                         check item (spec §13 A113, #695); enums only
 learn.check_item_quarantined  audit     course_id, question_hash, reporters — reports from
-                                        ITEM_REPORT_QUARANTINE_MIN_REPORTERS students withheld
-                                        a check item from its course until staff decide (A123)
+                                        ITEM_REPORT_QUARANTINE_MIN_REPORTERS students held a
+                                        check item from its course until staff decide (A123;
+                                        A124's hold, code reports_threshold)
 learn.check_item_retired      audit     course_id, question_hash, decided_by (admin), items,
                                         students, voided — staff retired a check item
                                         course-wide: its evidence voided, its rows deleted
                                         (A113, A123)
 learn.check_item_approved     audit     course_id, question_hash, restored — an admin cleared
-                                        a flagged, reported or quarantined check item (A113)
+                                        a flagged, reported or held check item (A113; restored:
+                                        a held one is served again, A123/A124)
 review.session_started        usage     session_id, offering_id (a daily review session row; never
                                         session.started — it is not a tutor session)
 review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
@@ -301,9 +303,9 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "learn.check_items_topup",
     # Learning loop spec §13 A113 (#695), A123: a student reported a check item
     # ("usage": a counted student action); ITEM_REPORT_QUARANTINE_MIN_REPORTERS
-    # reporters quarantined one (withheld from its course, nothing deleted);
+    # reporters quarantined one (held from its course, nothing deleted);
     # staff retired one (its evidence voided, its rows deleted) or approved one
-    # (a quarantine lifted) — "audit": decisions on content, for staff review
+    # (a hold lifted) — "audit": decisions on content, for staff review
     # (the admin review queue at /admin/check-items lists what is still open).
     # Payloads: course_id, question_hash (a sha256, never the prompt), and enums
     # and counts only — reason / surface / first / reporters; reporters;

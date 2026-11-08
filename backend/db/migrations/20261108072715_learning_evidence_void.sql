@@ -5,17 +5,28 @@
 -- timestamps only — never item or answer text. Idempotent; no row of
 -- node_mastery_events is ever updated or deleted here.
 --
--- 1. Quarantine (A113 amended). ITEM_REPORT_QUARANTINE_MIN_REPORTERS distinct
---    reporters put a course item in check_item_reviews with status
---    'quarantined' (decided_by 'reports'): it is never served, and its rows and
---    evidence stay. Staff decide in the admin queue: 'approved' restores it,
---    'retired' (decided_by 'admin', the ONLY way an item becomes 'retired')
---    deletes it and voids its evidence (3, 5). Only a staff retire blocks
---    re-drafting the question for the course. `approved_at` remembers the last
---    approval, so reporters still count "since the last approval" while an item
---    sits in quarantine. Rows the A113 auto-retire wrote ('retired' by
---    'reports') were never a staff decision: they become 'quarantined' (their
---    rows are already gone; a re-draft of the question is stored quarantined).
+-- 1. Quarantine (A113 amended), as a HOLD (A124's). ITEM_REPORT_QUARANTINE_MIN_REPORTERS
+--    distinct reporters put a course item in check_item_reviews with status
+--    'quarantined' (decided_by 'reports'): nothing is deleted, no evidence
+--    changes. Staff decide in the admin queue: 'approved' lifts it, 'retired'
+--    (decided_by 'admin', the ONLY way an item becomes 'retired') deletes it
+--    and voids its evidence (3, 5). Only a staff retire blocks re-drafting the
+--    question for the course. `approved_at` remembers the last approval, so
+--    reporters still count "since the last approval" while an item sits in
+--    quarantine. Rows the A113 auto-retire wrote ('retired' by 'reports') were
+--    never a staff decision: they become 'quarantined'.
+--    What keeps the item from every student is the one hold of spec §13 A124:
+--    a hold code in check_items.lint_flags, which every student read drops
+--    (learning/checks.py held_flags / is_servable). Two codes are the staff's,
+--    DERIVED from this table and never written by hand: 'reports_threshold'
+--    while the status is 'quarantined', 'staff_retired' while it is 'retired'
+--    (its rows wait there for the void and the delete). check_item_hold_flags
+--    is the one derivation: the report and decision functions apply it to the
+--    course item's rows in the decision's own transaction, and a trigger on
+--    check_items applies it to every row written later — a re-draft of a
+--    quarantined question, a re-lint, an alignment or key-check rewrite, an
+--    audit — so no write path can drop or forge one. A confirmed key
+--    (canonical_verified, A124) lifts neither.
 --    check_item_report_quarantine(...) is the report function now;
 --    check_item_report(...) keeps its signature for a backend deployed before
 --    this migration and never retires anything (its `retire` is always false).
@@ -99,11 +110,78 @@ END $$;
 UPDATE check_item_reviews SET status = 'quarantined'
  WHERE status = 'retired' AND decided_by = 'reports';
 
+-- The staff holds. A course item's lint_flags with its staff-hold code set to
+-- what its decision says: 'reports_threshold' while 'quarantined',
+-- 'staff_retired' while 'retired', neither otherwise; every other code, and
+-- their order, kept (the staff codes are stored last, after A124's key holds:
+-- learning/checks.py HOLD_FLAGS). A never-linted row (NULL) stays NULL unless a
+-- hold must be written onto it. Pure.
+CREATE OR REPLACE FUNCTION check_item_hold_flags(p_flags text[], p_status text)
+RETURNS text[]
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE p_status
+    WHEN 'quarantined' THEN
+      coalesce(array_remove(array_remove(p_flags, 'reports_threshold'), 'staff_retired'), '{}'::text[])
+        || 'reports_threshold'::text
+    WHEN 'retired' THEN
+      coalesce(array_remove(array_remove(p_flags, 'reports_threshold'), 'staff_retired'), '{}'::text[])
+        || 'staff_retired'::text
+    ELSE array_remove(array_remove(p_flags, 'reports_threshold'), 'staff_retired')
+  END
+$$;
+
+-- Every row written after a decision carries the decision's hold. A row
+-- JOINING a course item (an insert, or a move to another course item) first
+-- takes the item's lock SHARED — a decision in flight holds it exclusively —
+-- so either the decision's own UPDATE sees this row or this row sees the
+-- decision. A row already in the course item takes no lock (its row lock is
+-- held before a BEFORE trigger runs, and the decision updates that row while
+-- holding the item lock: taking the lock here could deadlock); the status read
+-- below is a fresh snapshot, and a decision that commits after it updates this
+-- row once this write commits, so the last writer is always the derivation.
+CREATE OR REPLACE FUNCTION check_items_staff_hold()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_status text;
+BEGIN
+  IF TG_OP = 'INSERT' OR NEW.course_id IS DISTINCT FROM OLD.course_id
+     OR NEW.question_hash IS DISTINCT FROM OLD.question_hash THEN
+    PERFORM pg_advisory_xact_lock_shared(
+      hashtextextended('check-item-review:' || NEW.course_id || ':' || NEW.question_hash, 0));
+  END IF;
+  SELECT r.status INTO v_status
+    FROM check_item_reviews r
+   WHERE r.course_id = NEW.course_id AND r.question_hash = NEW.question_hash;
+  NEW.lint_flags := check_item_hold_flags(NEW.lint_flags, v_status);
+  RETURN NEW;
+END
+$$;
+
+DROP TRIGGER IF EXISTS check_items_staff_hold ON check_items;
+CREATE TRIGGER check_items_staff_hold
+  BEFORE INSERT OR UPDATE OF lint_flags, course_id, question_hash ON check_items
+  FOR EACH ROW EXECUTE FUNCTION check_items_staff_hold();
+
+-- Every stored row of a decided course item, held as its decision says (the
+-- retired-but-still-stored rows of an unfinished retire included).
+UPDATE check_items c
+   SET lint_flags = check_item_hold_flags(c.lint_flags, r.status)
+  FROM check_item_reviews r
+ WHERE r.course_id = c.course_id AND r.question_hash = c.question_hash
+   AND c.lint_flags IS DISTINCT FROM check_item_hold_flags(c.lint_flags, r.status);
+
 -- One report. Returns first_report (this student had not reported the item
 -- before; a repeat records nothing), reporters (distinct reporters of the
 -- course item since its last approval) and quarantine (this report is the one
 -- that reached p_min_reporters on an item neither quarantined nor retired: it
--- is quarantined now). Under the per-item advisory lock, so of reporters
+-- is quarantined now, and every stored row of it held — `reports_threshold` —
+-- in this same transaction). Under the per-item advisory lock, so of reporters
 -- arriving together exactly one is told it quarantined the item.
 CREATE OR REPLACE FUNCTION check_item_report_quarantine(
   p_user_id text,
@@ -150,6 +228,10 @@ BEGIN
     ON CONFLICT (course_id, question_hash) DO UPDATE
       SET status = 'quarantined', decided_by = 'reports', reviewed_by = NULL,
           reviewed_at = EXCLUDED.reviewed_at;
+    UPDATE check_items c
+       SET lint_flags = check_item_hold_flags(c.lint_flags, 'quarantined')
+     WHERE c.course_id = p_course_id AND c.question_hash = p_question_hash
+       AND c.lint_flags IS DISTINCT FROM check_item_hold_flags(c.lint_flags, 'quarantined');
   END IF;
   RETURN NEXT;
 END
@@ -177,7 +259,10 @@ $$;
 -- A staff decision ('approved' | 'retired') under the same lock. Returns
 -- previous (the status before, NULL for none) and applied (false only when
 -- approving an item already retired: a retire is final). An approval clears a
--- quarantine and records approved_at, from which reporters count afresh.
+-- quarantine and records approved_at, from which reporters count afresh. The
+-- course item's stored rows take the decision's hold in this same
+-- transaction: an approval lifts `reports_threshold`, a retire holds every row
+-- (`staff_retired`) until the void and the delete finish.
 CREATE OR REPLACE FUNCTION check_item_review_decide(
   p_course_id text,
   p_question_hash text,
@@ -214,6 +299,10 @@ BEGIN
           reviewed_at = EXCLUDED.reviewed_at,
           approved_at = CASE WHEN EXCLUDED.status = 'approved' THEN EXCLUDED.approved_at
                              ELSE check_item_reviews.approved_at END;
+    UPDATE check_items c
+       SET lint_flags = check_item_hold_flags(c.lint_flags, p_status)
+     WHERE c.course_id = p_course_id AND c.question_hash = p_question_hash
+       AND c.lint_flags IS DISTINCT FROM check_item_hold_flags(c.lint_flags, p_status);
   END IF;
   RETURN NEXT;
 END
@@ -896,6 +985,8 @@ REVOKE ALL ON FUNCTION learning_evidence_void_pending(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION learning_evidence_void_snapshot(text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION learning_evidence_void_commit(text, text, text, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION learning_evidence_voids_append_only() FROM PUBLIC;
+REVOKE ALL ON FUNCTION check_item_hold_flags(text[], text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION check_items_staff_hold() FROM PUBLIC;
 DO $$
 DECLARE
     r TEXT;
@@ -914,6 +1005,8 @@ BEGIN
             EXECUTE format('REVOKE ALL ON FUNCTION learning_evidence_void_snapshot(text, text, text) FROM %I', r);
             EXECUTE format('REVOKE ALL ON FUNCTION learning_evidence_void_commit(text, text, text, uuid, jsonb) FROM %I', r);
             EXECUTE format('REVOKE ALL ON FUNCTION learning_evidence_voids_append_only() FROM %I', r);
+            EXECUTE format('REVOKE ALL ON FUNCTION check_item_hold_flags(text[], text) FROM %I', r);
+            EXECUTE format('REVOKE ALL ON FUNCTION check_items_staff_hold() FROM %I', r);
         END IF;
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
@@ -928,7 +1021,8 @@ BEGIN
             learning_evidence_commit(text, text, uuid, text, jsonb),
             learning_evidence_void_pending(text, text),
             learning_evidence_void_snapshot(text, text, text),
-            learning_evidence_void_commit(text, text, text, uuid, jsonb)
+            learning_evidence_void_commit(text, text, text, uuid, jsonb),
+            check_item_hold_flags(text[], text)
           TO service_role;
     END IF;
 END $$;

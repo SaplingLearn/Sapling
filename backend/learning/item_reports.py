@@ -9,22 +9,28 @@ Two tables (migrations 20261108041639_learning_item_quality.sql and
   stored) and the surface it came from. The row stops the item being served to
   that student; the read half is loop_state_store.reported_hashes, which every
   selection unions with the seen/revealed sets.
-- check_item_reviews — one row per course item (course_id, question_hash):
-  'quarantined' by params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS distinct
-  reporters (A123: withheld from every student, nothing deleted), then decided
-  by staff: 'approved' (restored; a report newer than the approval counts
-  toward a quarantine afresh) or 'retired' (deleted, its evidence voided —
-  A123; final: a retired item is never approved, and the ONLY status that
-  blocks re-drafting the question). `withheld_hashes` is what every selection
-  excludes: quarantined or retired.
+- check_item_reviews — one row per course item (course_id, question_hash),
+  the decision record: 'quarantined' by
+  params.ITEM_REPORT_QUARANTINE_MIN_REPORTERS distinct reporters (A123:
+  nothing deleted), then decided by staff: 'approved' (a report newer than
+  the approval counts toward a quarantine afresh) or 'retired' (deleted, its
+  evidence voided — A123; final: a retired item is never approved, and the
+  ONLY status that blocks re-drafting the question).
+
+What keeps a quarantined or retired item from every student is the A124 HOLD,
+not a read of this table: the database writes the matching staff-hold code
+(learning/checks.py STAFF_HOLD_FLAGS — `reports_threshold`, `staff_retired`)
+onto every row of the course item in the decision's own transaction, and a
+trigger re-derives it on every later write of a row, so every student read
+that drops a held item (check_item_service `_unheld`, checks.is_servable)
+drops these too, and an approval lifts it.
 
 Both decisions are the database's: `record_report` and `decide` call the
 migration's SQL functions, which take one per-item advisory lock, so two
 reporters arriving together are counted one after the other and exactly one of
 them is told it quarantined the item. Hashes, ids, enums and timestamps only —
 never item text. Every function RAISES on a failed store call; the callers
-decide (the report route answers 503, a selection fails closed, the drafting
-write drops the batch)."""
+decide (the report route answers 503, the drafting write drops the batch)."""
 
 from __future__ import annotations
 
@@ -32,7 +38,7 @@ from collections.abc import Iterable
 from typing import NamedTuple
 
 from db.connection import page_all, pg_quote_value, rpc, table
-from learning.checks import key_held_flags
+from learning.checks import held_flags
 from learning.params import ITEM_REPORT_QUARANTINE_MIN_REPORTERS, ITEM_REPORT_REASONS
 from services.timestamps import parse_ts
 
@@ -47,8 +53,6 @@ _DECIDE_RPC = "check_item_review_decide"
 APPROVED = "approved"
 QUARANTINED = "quarantined"
 RETIRED = "retired"
-#: Never served to anyone: a quarantine awaiting staff, or a staff retire.
-WITHHELD = (QUARANTINED, RETIRED)
 DECIDED_BY_REPORTS = "reports"
 DECIDED_BY_ADMIN = "admin"
 #: hashes per `in.(...)` read (a URL-length bound, check_item_service's batch)
@@ -66,7 +70,7 @@ class ReportOutcome(NamedTuple):
 
 
 class Decision(NamedTuple):
-    previous: str | None  # the item's status before ('approved' / 'retired' / None)
+    previous: str | None  # the status before ('approved' / 'quarantined' / 'retired' / None)
     applied: bool  # False only when approving an item already retired
 
 
@@ -107,9 +111,11 @@ def record_report(
 
 
 def decide(course_id: str, question_hash: str, status: str, *, reviewed_by: str) -> Decision:
-    """An admin's decision on a course item ('approved' — restores a
-    quarantined item — or 'retired'), under the same lock as the reports;
-    approving a retired item is refused (applied False) and changes nothing."""
+    """An admin's decision on a course item ('approved' — lifts a quarantine
+    — or 'retired' — holds every row until `retire_course_item` deletes it),
+    under the same lock as the reports; the database moves the staff-hold code
+    with the status. Approving a retired item is refused (applied False) and
+    changes nothing."""
     if status not in (APPROVED, RETIRED):
         raise ValueError(f"unknown review status {status!r}")
     row = _one_row(
@@ -127,48 +133,30 @@ def decide(course_id: str, question_hash: str, status: str, *, reviewed_by: str)
     return Decision(previous=row.get("previous"), applied=bool(row.get("applied")))
 
 
-def retired_hashes(course_id: str, hashes: Iterable[str]) -> set[str]:
-    """Which of `hashes` staff retired for the course: a retired question is
-    never stored again (check_item_service._store_drafts drops it). Only a
-    staff retire blocks a re-draft (A123): a quarantined question may be
-    drafted again, and is stored quarantined (withheld) until staff decide."""
+def review_statuses(course_id: str, hashes: Iterable[str]) -> dict[str, str]:
+    """The pending-or-final decision on each of `hashes` for the course:
+    question_hash -> 'quarantined' or 'retired' (an approved or undecided one
+    is absent). The drafting write reads it once per batch: a retired question
+    is never stored again; a quarantined one is stored held, like its other
+    rows (A123: only a staff retire blocks a re-draft)."""
     keys = sorted({h for h in hashes if h})
-    out: set[str] = set()
+    out: dict[str, str] = {}
     for start in range(0, len(keys), _HASH_BATCH):
         batch = keys[start : start + _HASH_BATCH]
         rows = table(REVIEWS).select(
-            "question_hash",
+            "question_hash,status",
             filters={
                 "course_id": f"eq.{course_id}",
-                "status": f"eq.{RETIRED}",
+                "status": f"in.({QUARANTINED},{RETIRED})",
                 "question_hash": f"in.({','.join(pg_quote_value(h) for h in batch)})",
             },
         )
-        out.update(r["question_hash"] for r in rows or [] if r.get("question_hash"))
-    return out
-
-
-def withheld_hashes(course_id: str) -> set[str]:
-    """The course's question hashes no student is served (spec §13 A123):
-    quarantined by reporters and awaiting staff, or retired by staff (deleted
-    once its void finished; withheld while that is pending). Every selection
-    excludes them beside the student's own reported, seen and revealed sets.
-    One paged read; raises on a failed read (a selection then fails closed)."""
-    if not course_id:
-        return set()
-    return {
-        row["question_hash"]
-        for row in page_all(
-            table(REVIEWS),
-            "question_hash",
-            filters={
-                "course_id": f"eq.{course_id}",
-                "status": f"in.({','.join(WITHHELD)})",
-            },
-            order="question_hash",
+        out.update(
+            (r["question_hash"], r["status"])
+            for r in rows or []
+            if r.get("question_hash") and r.get("status") in (QUARANTINED, RETIRED)
         )
-        if row.get("question_hash")
-    }
+    return out
 
 
 def retired_items() -> set[tuple[str, str]]:
@@ -240,16 +228,15 @@ def queue_entries(
     id, course_id, concept_key, question_hash, format, difficulty,
     lint_flags, canonical_verified), given `report_counts()` and `reviews()`.
     An item is in the queue when it carries lint flags or reports and no
-    approval at or after its last report clears it, when its reporters
-    quarantined it (A123: withheld from every student until staff approve or
-    retire it — `quarantined`), when it is retired but still stored (the
-    retire — the void of its evidence and the delete — did not finish:
-    `retire_pending`), or when a key hold still withdraws it (`held`, spec §13
-    A124: listed until staff confirm its key or retire it, whatever an older
-    approval said, so a held item is never stuck out of both the queue and the
-    students' reach). Ordered: retire-pending first, then quarantined, then
-    held, then the most-reported (latest first), then the most-flagged; ties
-    by course, concept and id. Pure."""
+    approval at or after its last report clears it, when it is retired but
+    still stored (the retire — the void of its evidence and the delete — did
+    not finish: `retire_pending`), or when a hold withdraws it (`held`: a key
+    hold, spec §13 A124, or a staff hold, A123 — its reporters quarantined it,
+    `reports_threshold` in its flags and 'quarantined' its status), whatever
+    an older approval said, so a held item is never stuck out of both the
+    queue and the students' reach. Ordered: retire-pending first, then held,
+    then the most-reported (latest first), then the most-flagged; ties by
+    course, concept and id. Pure."""
     out: list[dict] = []
     for row in rows:
         key = (row.get("course_id"), row.get("question_hash"))
@@ -260,12 +247,11 @@ def queue_entries(
         reviewed_at = parse_ts(decision.get("reviewed_at"))
         last = count["last_reported_at"] if count else None
         retire_pending = status == RETIRED
-        quarantined = status == QUARANTINED
-        held = key_held_flags(flags, row.get("canonical_verified"))
+        held = held_flags(flags, row.get("canonical_verified"))
         cleared = status == APPROVED and (
             last is None or (reviewed_at is not None and last <= reviewed_at)
         )
-        if not (retire_pending or quarantined or held) and (cleared or not (flags or count)):
+        if not (retire_pending or held) and (cleared or not (flags or count)):
             continue
         reports = {r: (count or {}).get(r, 0) for r in ITEM_REPORT_REASONS}
         out.append(
@@ -282,15 +268,13 @@ def queue_entries(
                 "status": status,
                 "reviewed_at": _iso(reviewed_at),
                 "retire_pending": retire_pending,
-                "quarantined": quarantined,
-                # A124: withdrawn from students until staff confirm the key
+                # A124, A123: withdrawn from every student until staff decide
                 "held": held,
             }
         )
     out.sort(
         key=lambda e: (
             not e["retire_pending"],
-            not e["quarantined"],
             not e["held"],
             -e["reports"]["total"],
             -(parse_ts(e["last_reported_at"]).timestamp() if e["last_reported_at"] else 0.0),

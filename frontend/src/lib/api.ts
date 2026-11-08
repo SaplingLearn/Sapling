@@ -2044,8 +2044,10 @@ export const adminLearningLoopKpis = (params?: { from?: string; to?: string }) =
 // Admin — learning-loop check-item review queue (spec §13 A113;
 // backend/routes/admin_check_items.py). Items the item-flaw linter flagged,
 // the alignment check changed (A119: rubric_unasked_dropped, concept_retagged),
-// a key hold withdraws (A124: the last four codes) or students reported; the
-// text comes decrypted for the first `page_size` only.
+// a hold withdraws (A124's key holds: key_disputed … key_audit_ambiguous;
+// A123's staff holds: reports_threshold — its reporters quarantined it —
+// and staff_retired) or students reported; the text comes decrypted for the
+// first `page_size` only.
 export type CheckItemLintFlag =
   | 'correct_longest'
   | 'correct_repeats_stem'
@@ -2057,7 +2059,9 @@ export type CheckItemLintFlag =
   | 'key_disputed'
   | 'key_unsolved'
   | 'key_audit_wrong'
-  | 'key_audit_ambiguous';
+  | 'key_audit_ambiguous'
+  | 'reports_threshold'
+  | 'staff_retired';
 /** What staff judge an item's key by (decrypted by the server for admins only). */
 export interface AdminCheckItemText {
   prompt: string | null;
@@ -2083,10 +2087,9 @@ export interface AdminCheckItemEntry extends AdminCheckItemText {
   /** The retire was decided but did not finish (its results not all voided, or
    *  the question still stored): retire it again. */
   retire_pending: boolean;
-  /** Spec §13 A123: enough students reported it, so it is withheld from every
-   *  student — nothing deleted — until staff approve (restore) or retire it. */
-  quarantined: boolean;
-  /** A124: a key hold withdraws it from students until it is approved or retired. */
+  /** A hold withdraws it from every student until it is approved or retired:
+   *  a key hold (A124) or a staff hold (A123: `reports_threshold` — enough
+   *  students reported it, status 'quarantined'; nothing is deleted). */
   held: boolean;
 }
 export interface AdminCheckItemQueue {
@@ -2098,7 +2101,8 @@ export interface AdminCheckItemQueue {
 }
 export const adminCheckItemQueue = () =>
   fetchJSON<AdminCheckItemQueue>('/api/admin/check-items/queue');
-/** `restored`: the approval lifted a quarantine (spec §13 A123). */
+/** `restored`: the item was held (a quarantine, A123, or a key hold, A124)
+ *  and the approval serves it to students again. */
 export const adminApproveCheckItem = (itemId: string) =>
   fetchJSON<{ id: string; status: 'approved'; restored: boolean }>(
     `/api/admin/check-items/${encodeURIComponent(itemId)}/approve`,

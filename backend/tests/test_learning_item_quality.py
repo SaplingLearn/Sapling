@@ -360,7 +360,9 @@ class TestServiceWrites:
         from services import check_item_service as svc
 
         retired = question_hash(_mc_draft().prompt)
-        factory, mocks = _cached_tables({"check_item_reviews": [{"question_hash": retired}]})
+        factory, mocks = _cached_tables(
+            {"check_item_reviews": [{"question_hash": retired, "status": "retired"}]}
+        )
         with (
             patch("services.check_item_service.table", side_effect=factory),
             patch("learning.item_reports.table", side_effect=factory),
@@ -372,8 +374,37 @@ class TestServiceWrites:
         assert write.mc_drops == [svc._RETIRED]  # the top-up is told why
         read = mocks["check_item_reviews"].select.call_args
         assert read.kwargs["filters"]["course_id"] == "eq.course-1"
-        assert read.kwargs["filters"]["status"] == "eq.retired"
+        assert read.kwargs["filters"]["status"] == "in.(quarantined,retired)"
         assert any("retired for the course" in r.getMessage() for r in caplog.records)
+
+    def test_a_quarantined_question_drafted_again_is_stored_held(self, caplog):
+        """A123: only a staff retire blocks a re-draft. A question its reporters
+        quarantined is stored again, HELD like its other rows (the database's
+        trigger adds `reports_threshold` whatever the write says; the write
+        adds it too so it takes no top-up slot and counts toward no floor)."""
+        from learning.checks import REPORTS_THRESHOLD, held
+        from services import check_item_service as svc
+
+        quarantined = question_hash(_mc_draft().prompt)
+        fresh = _mc_draft(prompt="Which quantity does the learning rate set? Pick one and give your reason.")
+        factory, mocks = _cached_tables(
+            {"check_item_reviews": [{"question_hash": quarantined, "status": "quarantined"}]}
+        )
+        with (
+            patch("services.check_item_service.table", side_effect=factory),
+            patch("learning.item_reports.table", side_effect=factory),
+            caplog.at_level("INFO", logger="sapling.services.check_items"),
+        ):
+            write = svc._store_drafts("course-1", "learning rate", None, [_mc_draft(), fresh], limit=1)
+        stored = mocks["check_items"].upsert.call_args[0][0]
+        by_hash = {r["question_hash"]: r for r in stored}
+        assert set(by_hash) == {quarantined, question_hash(fresh.prompt)}  # both stored
+        assert by_hash[quarantined]["lint_flags"][-1] == REPORTS_THRESHOLD
+        assert held(svc._row_to_item(by_hash[quarantined]))
+        assert REPORTS_THRESHOLD not in by_hash[question_hash(fresh.prompt)]["lint_flags"]
+        assert write.mc_drops == [svc._QUARANTINED]  # the top-up is told why
+        assert write.mc_reason == {by_hash[question_hash(fresh.prompt)]["id"]: fresh.difficulty}
+        assert any("quarantined for the course" in r.getMessage() for r in caplog.records)
 
     def test_a_retired_draft_never_takes_a_top_up_slot(self):
         """The top-up asks for exactly the missing count (`limit`): a retired
@@ -382,7 +413,9 @@ class TestServiceWrites:
 
         fresh = _mc_draft(prompt="Which quantity does the learning rate set? Pick one and give your reason.")
         retired = question_hash(_mc_draft().prompt)
-        factory, mocks = _cached_tables({"check_item_reviews": [{"question_hash": retired}]})
+        factory, mocks = _cached_tables(
+            {"check_item_reviews": [{"question_hash": retired, "status": "retired"}]}
+        )
         with (
             patch("services.check_item_service.table", side_effect=factory),
             patch("learning.item_reports.table", side_effect=factory),
@@ -630,11 +663,17 @@ class TestQueue:
         decisions = {("c1", "q"): {"status": "approved", "reviewed_at": NOW.isoformat()}}
         assert item_reports.queue_entries(rows, counts, decisions) == []
 
-    def test_a_quarantined_item_waits_for_staff_after_the_retire_pending(self):
-        """A123: an item its reporters quarantined is listed — after an
-        unfinished retire, before the merely reported — until staff decide;
-        an approval (the quarantine lifted) clears it like any approval."""
-        rows = [_row("reported", "q1"), _row("quarantined", "q2"), _row("pending", "q3")]
+    def test_a_quarantined_item_is_a_held_one_listed_after_the_retire_pending(self):
+        """A123 on A124's hold: an item its reporters quarantined carries the
+        database's `reports_threshold` code, so it is `held` — listed after an
+        unfinished retire, before the merely reported, whatever an older
+        approval said — until staff decide; the approval drops the code (the
+        database's), and then it clears like any approval."""
+        rows = [
+            _row("reported", "q1"),
+            _row("quarantined", "q2", flags=["negative_stem", "reports_threshold"]),
+            _row("pending", "q3", flags=["staff_retired"]),
+        ]
         counts = {("c1", "q1"): _count(3), ("c1", "q2"): _count(2)}
         decisions = {
             ("c1", "q2"): {"status": "quarantined", "reviewed_at": NOW.isoformat()},
@@ -642,17 +681,36 @@ class TestQueue:
         }
         entries = item_reports.queue_entries(rows, counts, decisions)
         assert [e["id"] for e in entries] == ["pending", "quarantined", "reported"]
-        assert [e["quarantined"] for e in entries] == [False, True, False]
-        cleared = {("c1", "q2"): {"status": "approved", "reviewed_at": (NOW + timedelta(hours=1)).isoformat()}}
-        assert [e["id"] for e in item_reports.queue_entries(rows[1:2], counts, cleared)] == []
+        assert [e["held"] for e in entries] == [True, True, False]
+        assert entries[1]["status"] == "quarantined" and "quarantined" not in entries[1]
+        # a key the solve confirmed does not lift a staff hold
+        verified = [{**rows[1], "canonical_verified": True}]
+        assert item_reports.queue_entries(verified, counts, decisions)[0]["held"] is True
+        # a quarantine whose code is not read back yet still waits for staff: its reports list it
+        bare = [_row("quarantined", "q2")]
+        (entry,) = item_reports.queue_entries(bare, counts, decisions)
+        assert entry["held"] is False and entry["status"] == "quarantined"
+        approved = {("c1", "q2"): {"status": "approved", "reviewed_at": (NOW + timedelta(hours=1)).isoformat()}}
+        assert item_reports.queue_entries([_row("quarantined", "q2")], counts, approved) == []
 
-    def test_withheld_hashes_are_the_courses_quarantined_and_retired_items(self):
-        factory, mocks = _cached_tables({"check_item_reviews": [{"question_hash": "q1"}, {"question_hash": "q2"}]})
+    def test_review_statuses_reads_the_pending_and_final_decisions(self):
+        reviews = [
+            {"question_hash": "q1", "status": "quarantined"},
+            {"question_hash": "q2", "status": "retired"},
+            {"question_hash": "q3", "status": "approved"},  # never asked for; ignored if served
+        ]
+        factory, mocks = _cached_tables({"check_item_reviews": reviews})
         with patch("learning.item_reports.table", side_effect=factory):
-            assert item_reports.withheld_hashes("c1") == {"q1", "q2"}
-            assert item_reports.withheld_hashes("") == set()
-        kwargs = mocks["check_item_reviews"].select_with_count.call_args.kwargs
-        assert kwargs["filters"] == {"course_id": "eq.c1", "status": "in.(quarantined,retired)"}
+            assert item_reports.review_statuses("c1", ["q2", "q1", "q3", ""]) == {
+                "q1": "quarantined",
+                "q2": "retired",
+            }
+        filters = mocks["check_item_reviews"].select.call_args.kwargs["filters"]
+        assert filters == {
+            "course_id": "eq.c1",
+            "status": "in.(quarantined,retired)",
+            "question_hash": 'in.("q1","q2","q3")',
+        }
 
     def test_retired_items_are_the_staff_retires_only(self):
         rows = [{"course_id": "c1", "question_hash": "q1"}, {"course_id": "c2", "question_hash": "q1"}]
@@ -721,10 +779,14 @@ def admin_client(monkeypatch):
     monkeypatch.setattr(admin, "get_session_user_id", lambda request: "admin-1")
     events = []
     monkeypatch.setattr(admin, "log_event", lambda et, **kw: events.append({"event_type": et, **kw}))
+    # spec §13 A123: an approval re-lints the course item's rows (a store write)
+    relints = []
+    monkeypatch.setattr(admin, "relint_course_item", lambda c, q: relints.append((c, q)) or 0)
     from main import app
 
     c = TestClient(app)
     c.events = events
+    c.relints = relints
     return c
 
 
@@ -796,17 +858,22 @@ def test_approve_records_the_decision_and_an_audit_event(admin_client, monkeypat
     r = admin_client.post(f"{ADMIN}/i1/approve")
     assert r.status_code == 200 and r.json() == {"id": "i1", "status": "approved", "restored": False}
     assert calls == [("c1", "qh-1", "approved", "admin-1"), ("confirm", "c1", "qh-1")]
+    assert admin_client.relints == [("c1", "qh-1")]  # A123: after the confirmation
     assert admin_client.events[0]["event_type"] == "learn.check_item_approved"
     assert admin_client.events[0]["category"] == "audit"
     assert admin_client.events[0]["payload"]["restored"] is False
 
 
-def test_approving_a_quarantined_item_restores_it(admin_client, monkeypatch):
-    """A123: the staff approval lifts the quarantine (the database's decision
-    under the item lock); the response and the audit event say so."""
+@pytest.mark.parametrize("flag", ["reports_threshold", "key_disputed"])
+def test_approving_a_held_item_restores_it(admin_client, monkeypatch, flag):
+    """A123 on A124's hold: the approval lifts a quarantine (the database
+    drops `reports_threshold` with the decision, under the item lock) as it
+    lifts a key hold (the confirmation); the response and the audit event say
+    the item is served again. The hold is read off the row staff decided on,
+    before the decision."""
     import routes.admin_check_items as admin
 
-    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i, lint=[flag]))
     monkeypatch.setattr(
         admin.item_reports, "decide",
         lambda *a, **k: item_reports.Decision(previous="quarantined", applied=True),
@@ -815,6 +882,22 @@ def test_approving_a_quarantined_item_restores_it(admin_client, monkeypatch):
     r = admin_client.post(f"{ADMIN}/i1/approve")
     assert r.json() == {"id": "i1", "status": "approved", "restored": True}
     assert admin_client.events[0]["payload"] == {"course_id": "c1", "question_hash": "qh-1", "restored": True}
+
+
+def test_a_failed_relint_is_a_503_finished_by_approving_again(admin_client, monkeypatch):
+    import routes.admin_check_items as admin
+
+    monkeypatch.setattr(admin, "get_check_item", lambda i, **k: _stored("qh-1", id=i))
+    monkeypatch.setattr(admin.item_reports, "decide", lambda *a, **k: item_reports.Decision(None, True))
+    monkeypatch.setattr(admin, "confirm_course_item", lambda c, q: None)
+
+    def down(c, q):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(admin, "relint_course_item", down)
+    r = admin_client.post(f"{ADMIN}/i1/approve")
+    assert r.status_code == 503 and "approve it again" in r.json()["detail"]
+    assert admin_client.events == []
 
 
 def test_a_retired_item_cannot_be_approved(admin_client, monkeypatch):

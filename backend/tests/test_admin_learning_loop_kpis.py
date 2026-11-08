@@ -760,6 +760,28 @@ def test_calibration_and_next_session_success_leave_out_void_evidence(monkeypatc
     assert body["calibration"]["all"]["n"] == 3 and body["calibration"]["excluded_void"] == 0
 
 
+def test_next_session_success_opens_on_the_first_valid_row(monkeypatch):
+    """The same rule for unassisted next-session success: a void row (graded
+    against a staff-retired item) is no opportunity, so a session whose first
+    row is void opens on the row after it."""
+    def row(i, *, session, qh, correct):
+        return {**_evidence(i, session=session, correct=correct), "question_hash": qh,
+                "check_item_id": f"ci-{qh}", "graph_nodes": {"course_id": "c1"}}
+
+    evidence = [
+        row(0, session="s1", qh="q-ok", correct=True),
+        row(1, session="s2", qh="q-bad", correct=False),  # void: s2's first row were it counted
+        row(2, session="s2", qh="q-ok2", correct=True),
+    ]
+    _serve(monkeypatch, {"node_mastery_events": evidence})
+    monkeypatch.setattr(analytics, "retired_items", lambda: {("c1", "q-bad")})
+    nxt = client.get(URL, params=RANGE).json()["unassisted_next_session"]
+    assert (nxt["sessions"], nxt["successes"]) == (1, 1)
+    monkeypatch.setattr(analytics, "retired_items", lambda: set())
+    nxt = client.get(URL, params=RANGE).json()["unassisted_next_session"]
+    assert (nxt["sessions"], nxt["successes"]) == (1, 0)
+
+
 def test_a_void_pretest_anchor_is_no_pretest(monkeypatch):
     """The concept's first evidence (the post-test anchor) was a probe grade on
     an item staff retired since: no pretest — the pair is dropped, the

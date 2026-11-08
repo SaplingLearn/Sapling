@@ -6,13 +6,13 @@ peer material; no instructor reviews them before they grade students. This is
 where staff do: every stored item the item-flaw linter flagged
 (`check_items.lint_flags`, learning/item_lint.py) or a student reported
 (`check_item_reports`, counted by reason), unless an admin approved it after its
-last report — and every item a key hold withdraws (A124: the blind solve
-disputed its key or found the passages do not settle it, or an audit found it
-wrong or ambiguous), whatever an older approval said. An item whose retire
-was decided but did not finish (a void or the delete failed) is listed first,
-as `retire_pending`; then every item its reporters quarantined (A123:
-withheld from every student, nothing deleted, until a decision here); held
-items next.
+last report — and every item a hold withdraws from students, whatever an
+older approval said: a key hold (A124: the blind solve disputed its key or
+found the passages do not settle it, or an audit found it wrong or
+ambiguous) or a staff hold (A123: its reporters quarantined it —
+`reports_threshold`; nothing is deleted until a decision here). An item whose
+retire was decided but did not finish (a void or the delete failed) is
+listed first, as `retire_pending`; held items next.
 
 - `GET /queue` — the queue. Every entry by its plaintext columns; the first
   QUEUE_PAGE also carry the item's text (prompt, options with the correct one
@@ -20,13 +20,15 @@ items next.
   tolerance — what the A22 numeric gate grades with once the key is
   confirmed), decrypted here, at the read boundary
   (check_item_service.items_by_ids → `_row_to_item`).
-- `POST /{item_id}/approve` — reviewed, OK: restores a quarantined item,
-  clears the course item from the queue until a newer report (which counts
-  toward a quarantine afresh), and confirms its key (A124:
-  `canonical_verified`, the A22 instructor confirmation — a held item is
-  served again). A retired item cannot be approved (409).
+- `POST /{item_id}/approve` — reviewed, OK: lifts a quarantine (the
+  database drops `reports_threshold` with the decision), clears the course
+  item from the queue until a newer report (which counts toward a quarantine
+  afresh), confirms its key (A124: `canonical_verified`, the A22 instructor
+  confirmation, which lifts a key hold) and re-lints its rows — a held item
+  is served again (`restored`). A retired item cannot be approved (409).
 - `POST /{item_id}/retire` — retires the course item: the decision first (no
-  new grade of it commits, nothing serves it), then every student's evidence
+  new grade of it commits; the database holds every row, `staff_retired`, so
+  nothing serves it), then every student's evidence
   graded against it is VOIDED and their learner state recomputed from the rest
   of their journal through the single graph writer, then every row of the
   course with its question_hash is deleted (check_item_service's A23 retire
@@ -55,7 +57,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from learning import item_reports
-from learning.checks import CheckItem
+from learning.checks import CheckItem, held
 from learning.item_audit import stratified_sample, summary
 from learning.params import (
     ITEM_AUDIT_SAMPLE_DEFAULT,
@@ -73,6 +75,7 @@ from services.check_item_service import (
     items_by_ids,
     key_status,
     record_item_audit,
+    relint_course_item,
     retire_course_item,
 )
 from services.events_service import log_event
@@ -116,16 +119,15 @@ def _item_text(item: CheckItem | None) -> dict:
 
 @router.get("/queue")
 def review_queue(request: Request) -> dict:
-    """The review queue: flagged, reported, quarantined or held items still
-    needing a decision — retire-pending first, then quarantined, then held,
-    then the most reported, then the most flagged."""
+    """The review queue: flagged, reported or held items still needing a
+    decision — retire-pending first, then held (a key hold, or a quarantine
+    by reports), then the most reported, then the most flagged."""
     require_admin(request)
     counts = item_reports.report_counts()
     decisions = item_reports.reviews()
     rows = {r["id"]: r for r in flagged_item_rows() if r.get("id")}
-    wanted = set(counts) | {
-        k for k, d in decisions.items() if d.get("status") in item_reports.WITHHELD
-    }
+    awaiting = (item_reports.QUARANTINED, item_reports.RETIRED)
+    wanted = set(counts) | {k for k, d in decisions.items() if d.get("status") in awaiting}
     for row in item_rows_for(wanted):
         if row.get("id"):
             rows.setdefault(row["id"], row)
@@ -158,20 +160,25 @@ def _decide(item: CheckItem, status: str, admin: str) -> item_reports.Decision:
 
 @router.post("/{item_id}/approve")
 def approve(item_id: str, request: Request) -> dict:
-    """Reviewed, OK: the course item leaves the queue until a newer report; a
-    quarantined item is restored to every student (`restored`), and its key
-    is confirmed (A124) — a held item is served again. The decision is
-    recorded first; a failed confirmation (503) is finished by approving
-    again, and the queue lists a still-held item meanwhile."""
+    """Reviewed, OK: the course item leaves the queue until a newer report,
+    its quarantine is lifted (A123) and its key confirmed (A124), so a held
+    item is served to every student again (`restored`: it was held — the
+    row staff decided on, read with its hold before the decision). The
+    decision is recorded first; a failed confirmation or re-lint (503) is
+    finished by approving again, and the queue lists a still-held item
+    meanwhile."""
     require_admin(request)
     admin = get_session_user_id(request)
     item = _stored(item_id)
+    restored = held(item)
     decision = _decide(item, item_reports.APPROVED, admin)
     if not decision.applied:
         raise HTTPException(status_code=409, detail="This question was retired; it cannot be approved.")
-    restored = decision.previous == item_reports.QUARANTINED
     try:
         confirm_course_item(item.course_id, item.question_hash)
+        # A123: a never-linted row a quarantine held reads "linted clean" once
+        # the hold is lifted; lint it now (a no-op for every other row)
+        relint_course_item(item.course_id, item.question_hash)
     except Exception:
         logger.warning("check item key not confirmed (item %s)", item.id, exc_info=True)
         raise HTTPException(

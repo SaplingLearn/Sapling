@@ -561,7 +561,6 @@ def probe():
         ns.items = p("_probe_items", side_effect=lambda _u, _c, _ids: list(ns.full))
         ns.revealed = p("revealed_hashes", return_value=set())
         ns.seen = p("seen_hashes", return_value=set())
-        ns.withheld = p("withheld_hashes", return_value=set())  # spec §13 A123
         ns.read_states = p("read_states", side_effect=_read_states)
         ns.names = p("_plan_node_names", side_effect=lambda _u, ids: {i: f"name-{i}" for i in ids})
         # Most planner tests model an available bank. Dedicated availability
@@ -854,35 +853,6 @@ def test_probe_next_excludes_revealed_and_unavailable_items(probe):
     _probing(probe, unavailable=["h-A-u"])
     assert _served_until_done(probe, 4) == ["h-A-k"]
     probe.revealed.assert_called_with(UID)
-
-
-def test_probe_next_never_poses_an_item_the_course_withholds(probe):
-    """Spec §13 A123: a quarantined (or retired) item is never a probe item for
-    any student — the course's withheld set is read, and the reserve is
-    chosen among the items still served (so a withheld lowest hash never
-    shifts which item the post-test poses)."""
-    probe.full = [
-        _ci("A-w", "A", "free", 2, "h-A-0"),  # the lowest hash: the reserve were it served
-        _ci("A-r", "A", "free", 2, "h-A-1"),  # the reserve among the items served
-        _ci("A-k", "A", "free", 2, "h-A-k"),
-        _ci("A-practice", "A", "free", 2, "h-A-z"),  # the practice reserve
-    ]
-    probe.withheld.return_value = {"h-A-0"}
-    _probing(probe)
-    assert _served_until_done(probe, 4) == ["h-A-k"]
-    probe.withheld.assert_called_with("c1")
-
-
-def test_probe_next_moves_past_an_open_item_the_course_withholds_since(probe):
-    """Posed, then quarantined before it was answered: never served again (it
-    is marked unavailable and another is posed) — unlike an item under a live
-    grading claim, which is left to its grade."""
-    probe.full = [_ci(f"A-{x}", "A", "free", 2, f"h-A-{x}") for x in ("a", "b", "c", "d", "z")]
-    first = client.post(f"{LOOP}/probe/next", json=NEXT).json()
-    probe.withheld.return_value = {first["question_hash"]}
-    again = client.post(f"{LOOP}/probe/next", json=NEXT).json()
-    assert again["question_hash"] != first["question_hash"]
-    assert first["question_hash"] in probe.store["doc"]["probe"]["unavailable"]
 
 
 def test_probe_next_counts_asked_items_toward_the_per_skill_cap_even_once_revealed(probe):

@@ -396,12 +396,12 @@ KEY_DISPUTED = "key_disputed"  # an independent solve gave a different answer
 KEY_UNSOLVED = "key_unsolved"  # an independent solve found the passages do not settle one
 KEY_AUDIT_WRONG = "key_audit_wrong"  # a human audit verdict: the key is wrong
 KEY_AUDIT_AMBIGUOUS = "key_audit_ambiguous"  # a human audit verdict: more than one answer fits
-#: Every hold code, in the order they are stored (after the A113 and A119 codes).
+#: Every key-hold code, in the order they are stored (after the A113 and A119 codes).
 KEY_HOLD_FLAGS = (KEY_DISPUTED, KEY_UNSOLVED, KEY_AUDIT_WRONG, KEY_AUDIT_AMBIGUOUS)
 
 
 def key_held_flags(flags, canonical_verified) -> bool:
-    """A124: held — a hold code among `flags` and the key not confirmed."""
+    """A124: key-held — a key-hold code among `flags` and the key not confirmed."""
     return not canonical_verified and any(f in KEY_HOLD_FLAGS for f in flags or ())
 
 
@@ -411,11 +411,46 @@ def key_held(item) -> bool:
     return key_held_flags(getattr(item, "lint_flags", None), getattr(item, "canonical_verified", False))
 
 
+# ── staff holds (A123, on the same hold) ───────────────────────────────────
+#
+# Two more hold codes, both the staff's. REPORTS_THRESHOLD: enough students
+# reported the item (ITEM_REPORT_QUARANTINE_MIN_REPORTERS) and it is
+# quarantined until staff decide (check_item_reviews status 'quarantined').
+# STAFF_RETIRED: staff retired it, and its rows go once its evidence is voided
+# (status 'retired'). A confirmed key lifts neither — a report can be about
+# more than the key — only a staff decision does. The database derives both
+# from check_item_reviews (check_item_hold_flags, applied by the report and
+# decision functions in the decision's own transaction and by a trigger on
+# every later write of the row; migration 20261108072715), so no write path
+# here can drop or forge one.
+
+REPORTS_THRESHOLD = "reports_threshold"
+STAFF_RETIRED = "staff_retired"
+#: The staff-hold codes, in the order they are stored (after KEY_HOLD_FLAGS).
+STAFF_HOLD_FLAGS = (REPORTS_THRESHOLD, STAFF_RETIRED)
+#: Every hold code, key holds (A124) then staff holds (A123).
+HOLD_FLAGS = (*KEY_HOLD_FLAGS, *STAFF_HOLD_FLAGS)
+
+
+def held_flags(flags, canonical_verified) -> bool:
+    """Held — served to no student, its key never released: a staff hold
+    (A123) whatever the key's status, or a key hold on a key nobody confirmed
+    (A124, `key_held_flags`). The one hold every student read applies."""
+    return any(f in STAFF_HOLD_FLAGS for f in flags or ()) or key_held_flags(flags, canonical_verified)
+
+
+def held(item) -> bool:
+    """`held_flags` over a stored item (or anything with its lint_flags and
+    canonical_verified)."""
+    return held_flags(getattr(item, "lint_flags", None), getattr(item, "canonical_verified", False))
+
+
 def is_servable(item) -> bool:
     """A34: only an item that states a final answer can be leak-checked, so
     only such an item is ever selected (fail closed; a legacy row is None).
-    A124: and never a held one (a key nobody has confirmed after a dispute)."""
-    return states_final_answer(item) and not key_held(item)
+    A124: and never a held one (a key nobody has confirmed after a dispute;
+    A123: an item its reporters quarantined or staff retired)."""
+    return states_final_answer(item) and not held(item)
 
 
 # ── identity ───────────────────────────────────────────────────────────────

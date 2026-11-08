@@ -62,7 +62,7 @@ from pydantic import BaseModel, Field
 
 from agents.tools.check import CheckAnswer, grade_answer  # PKG-05 — the ONLY grading path
 from db.connection import pg_quote_value, table
-from learning import fsrs, item_reports, loop_state_store
+from learning import fsrs, loop_state_store
 from learning.bkt import band, decayed_p
 from learning.checks import is_servable, posttest_reserve_hash, select_item
 from learning.evidence import PREREQ_RELATIONSHIP_TYPE
@@ -137,13 +137,6 @@ def reported_hashes(user_id: str) -> set[str]:
     them again, in neither pass — `loop_state_store.reported_hashes` (see
     seen_hashes)."""
     return set(loop_state_store.reported_hashes(user_id))
-
-
-def withheld_hashes(course_id: str) -> set[str]:
-    """The course's check items no student is served (spec §13 A123):
-    quarantined by reporters, or retired by staff —
-    `item_reports.withheld_hashes`, read once per course per queue build."""
-    return set(item_reports.withheld_hashes(course_id))
 
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -568,26 +561,15 @@ class _Selector:
     from another surface: a review's own answer closes its open entry), revealed
     (a wrong attempt in the tutor loop, an H4 sibling) nor reported (A113). The
     seen/revealed/reported reads happen once, on the first concept that needs an
-    item. An item the course withholds (A123: quarantined or retired) is not in
-    the pool at all — never chosen, never re-used as the open item, and the
-    reserve is the one the post-test poses among the items served (one read
-    per course)."""
+    item."""
 
     def __init__(self, user_id: str, served_today: set[str], opened: dict[str, str]):
         self.user_id, self.served_today, self.opened = user_id, served_today, opened
         self.history: dict[str, set[str]] = {}
-        self.withheld: dict[str, set[str]] = {}
 
     def item(self, c: _Concept, now: datetime) -> ReviewItem | None:
         node = c.node
-        course = node["course_id"]
-        if course not in self.withheld:
-            self.withheld[course] = withheld_hashes(course)
-        pool = [
-            i
-            for i in list_items(course, _normalize_concept(node.get("concept_name") or ""))
-            if i.question_hash not in self.withheld[course]
-        ]
+        pool = list_items(node["course_id"], _normalize_concept(node.get("concept_name") or ""))
         if not self.history:
             self.history["seen"] = set(seen_hashes(self.user_id))
             self.history["revealed"] = set(revealed_hashes(self.user_id))
