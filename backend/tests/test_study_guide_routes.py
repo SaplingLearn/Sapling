@@ -343,6 +343,96 @@ class TestRegenerateGuide:
         assert body["guide"]["exam"] == "Midterm"
         assert delete_called["n"] == 1
 
+    @staticmethod
+    def _guarded_stack(calls, assignments):
+        """table() side_effect recording study_guides insert/delete order."""
+        def table_side_effect(name):
+            m = MagicMock()
+            if name == "study_guides":
+                m.select.return_value = []
+                def _insert(row):
+                    calls.append(("insert", row["id"]))
+                    return [row]
+                m.insert.side_effect = _insert
+                def _delete(filters=None):
+                    calls.append(("delete", dict(filters or {})))
+                    return []
+                m.delete.side_effect = _delete
+            elif name == "assignments":
+                m.select.return_value = assignments
+            else:
+                m.select.return_value = []
+            return m
+        return table_side_effect
+
+    def test_foreign_or_missing_exam_leaves_cached_guide_untouched(self):
+        """Regression: regenerate used to delete the cached guide BEFORE the
+        exam was validated, so a bad/foreign exam_id 404'd AND wiped the
+        student's guide. The exam lookup (scoped to the caller's enrollment)
+        finds nothing here → 404, and nothing is deleted or generated."""
+        calls = []
+        agent_run = _agent_run_returning({"exam": "X", "topics": []})
+        with patch("routes.study_guide.table", side_effect=self._guarded_stack(calls, [])), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"), \
+             patch("routes.study_guide.study_guide_agent.run", new=agent_run):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": "someone-elses-exam"},
+            )
+        assert r.status_code == 404
+        assert calls == []
+        agent_run.assert_not_called()
+
+    def test_not_enrolled_leaves_cached_guide_untouched(self):
+        calls = []
+        with patch("routes.study_guide.table", side_effect=self._guarded_stack(calls, [{"title": "M"}])), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID},
+            )
+        assert r.status_code == 404
+        assert calls == []
+
+    def test_generation_failure_leaves_cached_guide_untouched(self):
+        calls = []
+        failing = AsyncMock(side_effect=RuntimeError("provider down"))
+        with patch("routes.study_guide.table",
+                   side_effect=self._guarded_stack(calls, [{"title": "Midterm", "due_date": "2026-04-01"}])), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"), \
+             patch("routes.study_guide.study_guide_agent.run", new=failing):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID},
+            )
+        assert r.status_code == 502
+        assert calls == []
+
+    def test_old_guides_replaced_only_after_new_one_inserted(self):
+        calls = []
+        with patch("routes.study_guide.table",
+                   side_effect=self._guarded_stack(calls, [{"title": "Midterm", "due_date": "2026-04-01"}])), \
+             patch("routes.study_guide.user_enrollment_ids", return_value=[{"id": "enr1", "offering_id": "off1"}]), \
+             patch("routes.study_guide.resolve_offering", return_value="off1"), \
+             patch("routes.study_guide.study_guide_agent.run",
+                   new=_agent_run_returning({"exam": "Midterm", "topics": []})):
+            r = client.post(
+                "/api/study-guide/regenerate",
+                json={"user_id": USER_ID, "course_id": COURSE_ID, "exam_id": EXAM_ID},
+            )
+        assert r.status_code == 200
+        assert [c[0] for c in calls] == ["insert", "delete"]
+        new_id = calls[0][1]
+        assert calls[1][1] == {
+            "user_id": f"eq.{USER_ID}",
+            "offering_id": "eq.off1",
+            "exam_id": f"eq.{EXAM_ID}",
+            "id": f"neq.{new_id}",
+        }
+
     def test_missing_fields_returns_400(self):
         r = client.post("/api/study-guide/regenerate", json={"user_id": USER_ID})
         assert r.status_code == 400

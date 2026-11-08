@@ -275,7 +275,7 @@ def _generate_and_insert(user_id: str, offering_id: str, exam_id: str) -> dict:
         )
         table("study_guides").delete(filters={"id": f"eq.{row['id']}"})
 
-    return {"content": content, "generated_at": now}
+    return {"id": row["id"], "content": content, "generated_at": now}
 
 
 @router.get("/{user_id}/cached")
@@ -445,12 +445,17 @@ def regenerate_guide(request: Request, body: dict = Body(...)):
         )
     flight = _guide_lock(user_id, offering_id, exam_id)
     with flight.lock:
+        # Generate FIRST, replace after: _generate_and_insert validates the exam
+        # (404 for a missing/foreign one) and raises 502 on a failed generation,
+        # and either must leave the student's existing guide in place. Only once
+        # the new row is in do the older rows for this key go.
+        result = _generate_and_insert(user_id, offering_id, exam_id)
         table("study_guides").delete(
             filters={
                 "user_id": f"eq.{user_id}",
                 "offering_id": f"eq.{offering_id}",
                 "exam_id": f"eq.{exam_id}",
+                "id": f"neq.{result['id']}",
             }
         )
-        result = _generate_and_insert(user_id, offering_id, exam_id)
     return {"success": True, "guide": result["content"], "generated_at": result["generated_at"]}
