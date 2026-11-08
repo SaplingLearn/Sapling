@@ -14,6 +14,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -192,14 +193,17 @@ def test_an_unknown_skip_reason_is_refused_and_never_fails_the_start(db_conn):
 
 
 def _open_pose(node, *, qh="q1", posed=None, window=W1):
+    """Open (or renew) a pose with the row /posttest/start writes
+    (`learn_loop._new_pose`): every answer column NULL, the outcome (A112) as
+    well as what the answer reports (A126), so a renewal resets them all."""
     from routes import learn_loop
 
-    learn_loop._record_poses([{
-        "user_id": USER, "node_id": node, "course_id": COURSE, "window_days": window,
-        "question_hash": qh, "posed_at": (posed or _now()).isoformat(), "answered_at": None,
-        "claim": None, "claimed_at": None, "item_match": "difficulty", "item_source": "reserve",
-        "served_at": None, "answer_latency_s": None, "hidden_count": None, "hidden_s": None,
-    }])
+    at = posed or _now()
+    choice = SimpleNamespace(
+        item=SimpleNamespace(question_hash=qh), match="difficulty", source="reserve"
+    )
+    span = SimpleNamespace(first_id=None, first_at=at - timedelta(days=window), last_at=at - timedelta(days=1))
+    learn_loop._record_poses([learn_loop._new_pose(USER, COURSE, node, window, choice, span, at)])
 
 
 def _pose(db_conn, node, window=W1):

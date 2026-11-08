@@ -13,6 +13,8 @@ from unittest.mock import patch
 import psycopg
 import pytest
 
+from learning.params import POSTTEST_WINDOWS_DAYS
+
 pytestmark = pytest.mark.integration
 
 USER = "rich-user-active"
@@ -105,12 +107,16 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
     ]
     for row in rows:  # one insert each: a PostgREST bulk insert needs uniform keys
         table("sessions").insert(row)
+    # A112: a pose belongs to a fixed follow-up window (window_days is part of
+    # the key, NOT NULL)
+    window = POSTTEST_WINDOWS_DAYS[0]
     learn_loop._record_poses(
         [
             {
                 "user_id": USER,
                 "node_id": f"it-node-{uuid.uuid4().hex[:8]}",
                 "course_id": "c-it",
+                "window_days": window,
                 "question_hash": "qh-p",
                 "posed_at": now.isoformat(),
                 "answered_at": None,
@@ -121,6 +127,7 @@ def test_posed_items_reads_every_posed_ungraded_item(db_conn):
                 "user_id": USER,
                 "node_id": f"it-node-{uuid.uuid4().hex[:8]}",
                 "course_id": "c-it",
+                "window_days": window,
                 "question_hash": "qh-old",
                 "posed_at": (now - timedelta(hours=48)).isoformat(),
                 "answered_at": None,

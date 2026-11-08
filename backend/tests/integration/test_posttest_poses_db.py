@@ -11,6 +11,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -29,23 +30,16 @@ def _now():
 
 
 def _open_pose(node, *, qh="q1", posed=None, window=W1):
+    """Open (or renew) a pose with the row /posttest/start writes
+    (`learn_loop._new_pose`). Every answer column is NULL in it, so a renewal
+    resets the outcome as the route's does (A89/A93, A112). A row without them
+    keeps the old outcome on the upsert, and the outcome CHECK refuses it."""
     from routes import learn_loop
 
-    learn_loop._record_poses(
-        [
-            {
-                "user_id": USER,
-                "node_id": node,
-                "course_id": COURSE,
-                "window_days": window,
-                "question_hash": qh,
-                "posed_at": (posed or _now()).isoformat(),
-                "answered_at": None,
-                "claim": None,
-                "claimed_at": None,
-            }
-        ]
-    )
+    at = posed or _now()
+    choice = SimpleNamespace(item=SimpleNamespace(question_hash=qh), match="none", source="reserve")
+    span = SimpleNamespace(first_id=None, first_at=at - timedelta(days=window), last_at=at - timedelta(days=1))
+    learn_loop._record_poses([learn_loop._new_pose(USER, COURSE, node, window, choice, span, at)])
 
 
 def _row(db_conn, node, window=W1):
