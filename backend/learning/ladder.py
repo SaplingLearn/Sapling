@@ -107,9 +107,9 @@ def deterministic_content(
     the rung.
 
     H4 never shows a sibling whose hash is in `exclude_hashes`. The caller
-    passes at least the concept's `checks.posttest_reserve_hash` (A23: only the
-    post-test serves it, and a develop-band item sits at its difficulty), plus
-    any other hash it must not reveal."""
+    passes at least the concept's `checks.posttest_reserves` (A23, A126: only
+    the post-test serves them, and a develop-band item sits at their
+    difficulty), plus any other hash it must not reveal."""
     rung = Rung(rung)
     excluded = set(exclude_hashes)
     if rung == Rung.H2:

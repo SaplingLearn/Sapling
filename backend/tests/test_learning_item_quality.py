@@ -311,7 +311,11 @@ class TestPosttestPreference:
         assert posttest_reserve_hash([_stored("qh-2"), _stored("qh-1")]) == "qh-1"
 
     def test_posttest_item_prefers_clean_within_each_rule(self):
-        from routes.learn_loop import posttest_item
+        from learning.checks import choose_posttest_item
+
+        def posttest_item(items, excluded):  # the first window, no pretest (A126's choice)
+            choice = choose_posttest_item(items, excluded, window_index=0)
+            return choice.item if choice else None
 
         reserve = _stored("qh-1", lint=[])
         flagged_mid = _stored("qh-2", lint=["negative_stem"])

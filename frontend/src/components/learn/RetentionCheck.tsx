@@ -1,11 +1,29 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { answerRetentionCheck, startRetentionCheck, type EnrolledCourse, type RetentionItem } from "@/lib/api";
+import { useRetentionDue } from "@/context/RetentionDueContext";
+import {
+  answerRetentionCheck, markRetentionShown, startRetentionCheck, type EnrolledCourse, type RetentionItem,
+} from "@/lib/api";
 import { extractErrorDetail, humanizeError } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import styles from "./LoopLearn.module.css";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
+
+/** Spec §13 A126: how often and how long the page was hidden while one item
+ *  was on screen. Telemetry for the outcome record — the server clamps it and
+ *  never grades with it. */
+interface Visibility { count: number; hiddenMs: number; hiddenSince: number | null }
+
+function visibilityNow(): Visibility {
+  const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+  return { count: hidden ? 1 : 0, hiddenMs: 0, hiddenSince: hidden ? Date.now() : null };
+}
+
+function hiddenReport(v: Visibility): { hidden_count: number; hidden_s: number } {
+  const ongoing = v.hiddenSince !== null ? Date.now() - v.hiddenSince : 0;
+  return { hidden_count: v.count, hidden_s: (v.hiddenMs + ongoing) / 1000 };
+}
 
 /** Opening a post-test commits its pose. Only an explicit learner action may
  * call it; eligibility and delayed/assisted credit remain entirely server-owned. */
@@ -43,6 +61,8 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   const [result, setResult] = useState<boolean | null>(null);
   const mounted = useRef(true);
   const request = useRef(0);
+  const visibility = useRef<Visibility>({ count: 0, hiddenMs: 0, hiddenSince: null });
+  const { refresh: refreshDue } = useRetentionDue();
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -56,6 +76,7 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
       const response = await startRetentionCheck(userId, courseId);
       if (!mounted.current || mine !== request.current) return;
       setItems(response.items); setIndex(0); resetDraft();
+      refreshDue(); // opening changed what is due (A126)
     } catch (err) {
       if (mounted.current && mine === request.current) setError(humanizeError(err, "Couldn't open retention checks. Try again."));
     } finally {
@@ -65,16 +86,41 @@ function RetentionSession({ userId, courseId }: { userId: string; courseId: stri
   const item = items?.[index];
   // No feedback survey during an opened retention check (lib/feedbackPacing.ts).
   useFeedbackHold(!!item);
+  // A126: the item is on screen — the server stamps its first display (the
+  // answer's latency runs from it), and the page's hidden periods are counted
+  // from now until the answer. A failed stamp only leaves the latency unknown.
+  const nodeId = item?.node_id;
+  const questionHash = item?.question_hash;
+  useEffect(() => {
+    if (!nodeId || !questionHash) return;
+    visibility.current = visibilityNow();
+    // The server keeps the FIRST display (a conditional UPDATE on served_at IS NULL).
+    void (async () => {
+      try { await markRetentionShown({ user_id: userId, node_id: nodeId, question_hash: questionHash }); } catch { /* telemetry only */ }
+    })();
+    const onVisibility = () => {
+      const v = visibility.current;
+      if (document.visibilityState === "hidden") {
+        if (v.hiddenSince === null) { v.count += 1; v.hiddenSince = Date.now(); }
+      } else if (v.hiddenSince !== null) {
+        v.hiddenMs += Date.now() - v.hiddenSince;
+        v.hiddenSince = null;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [nodeId, questionHash, userId]);
   const submit = async (idk: boolean) => {
     if (!item || busy || result !== null) return;
     const mine = request.current;
     setBusy(true); setError(null);
     try {
       const response = await answerRetentionCheck({ user_id: userId, node_id: item.node_id, question_hash: item.question_hash, idk,
-        ...(idk ? {} : item.format === "mc_reason" ? { selected_option: choice, reason } : { answer }) });
+        ...(idk ? {} : item.format === "mc_reason" ? { selected_option: choice, reason } : { answer }),
+        ...hiddenReport(visibility.current) });
       if (!mounted.current || mine !== request.current) return;
       if (crisis.intercept(response)) { setAnswer(""); setReason(""); return; } // nothing graded; still open
-      if ("correct" in response) setResult(response.correct);
+      if ("correct" in response) { setResult(response.correct); refreshDue(); }
       else setError("Answer in your own words. Nothing was recorded; you can try again.");
     } catch (err) {
       if (!mounted.current || mine !== request.current) return;

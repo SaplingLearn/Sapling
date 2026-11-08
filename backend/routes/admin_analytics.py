@@ -24,14 +24,22 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from agents._providers import slot_warnings
-from db.connection import pg_quote_value, table
+from db.connection import page_all, pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
 from learning.calibration import confidence_calibration
 from learning.calibration import eligible as calibration_eligible
 from learning.earnest_revise import earnest_revise
 from learning.evidence_void import is_void_row, pose_is_void
 from learning.item_reports import retired_items
-from learning.learning_gain import learning_gain, posttest_outcome, pretest_outcome
+from learning.learning_gain import (
+    due_windows,
+    learning_gain,
+    posttest_funnel,
+    posttest_outcome,
+    pretest_outcome,
+    window_bounds,
+)
+from learning.posttest_store import posttest_anchors
 from learning.params import (
     ACQ_TARGET_HI,
     ACQ_TARGET_LO,
@@ -669,14 +677,65 @@ class GainWindow(GainSummary):
     # unassisted outcomes left out because staff retired their item (A113/A123:
     # retired as broken, so the outcome is void evidence) — the drop, visible
     excluded_retired: int
+    # A126: the students behind the pairs, and the student-cluster bootstrap
+    # percentile intervals ([lo, hi]; None below two students)
+    students: int
+    post_correct_ci: list[float] | None
+    paired_difference_ci: list[float] | None
     delayed: GainSummary  # the pairs with no evidence for ≥ delayed_min_days before the pose
+    # A126: the pairs whose page was hidden while the item was on screen (nothing
+    # is excluded for it), and the outcomes with no visibility record
+    visibility_loss: GainSummary
+    visibility_unreported: int
+
+
+class GainCi(BaseModel):
+    """How the intervals were computed (A126) — enough to reproduce them."""
+
+    method: str
+    level: float
+    resamples: int
+    seed: str
+
+
+class DelayBin(GainSummary):
+    """Every window's pairs by the days from the anchor to the answer (A126)."""
+
+    lo_days: int
+    hi_days: int | None  # None: open-ended
+    posttests: int
+
+
+class FunnelWindow(BaseModel):
+    """What happened to the windows that opened in the range (A126): every due
+    window is answered, expired, open, skipped (by reason) or never opened;
+    `still_open` counts the unanswered ones whose window has not closed."""
+
+    window_days: int
+    due: int
+    opened: int
+    answered: int
+    unassisted: int
+    expired: int
+    open: int
+    skipped: int
+    skip_reasons: dict[str, int]
+    not_opened: int
+    still_open: int
 
 
 class LearningGain(BaseModel):
-    """Post-tests answered in the range, per fixed window (A112)."""
+    """Post-tests answered in the range, per fixed window (A112), with their
+    uncertainty, actual delay and visibility (A126), and the funnel of the
+    windows that opened in the range (None: the anchors could not be read)."""
 
     delayed_min_days: int
+    ci: GainCi
     windows: list[GainWindow]
+    delay_bins: list[DelayBin]
+    delay_unknown: int
+    delay_out_of_range: int
+    funnel: list[FunnelWindow] | None
 
 
 class SlotWarning(BaseModel):
@@ -873,11 +932,15 @@ def _next_session_rate(evidence_rows: list[dict], quiz_ask: set[str] | frozenset
 
 #: spec §13 A112: an answered post-test pose — its window, its recorded outcome,
 #: its anchor (the concept's first evidence row), the delay it had, and the
-#: course item it asked (what an A113 retire is keyed on)
+#: course item it asked (what an A113 retire is keyed on); A126: the anchor's
+#: time (the actual delay) and the page-hidden telemetry (the visibility stratum)
 _POSE_COLS = (
-    "user_id,node_id,window_days,answered_at,correct,max_rung,anchor_event_id,days_since_evidence,"
-    "course_id,question_hash"
+    "user_id,node_id,window_days,answered_at,correct,max_rung,anchor_event_id,anchor_at,"
+    "days_since_evidence,course_id,question_hash,hidden_count,hidden_s"
 )
+#: A126: what the funnel classifies a due window's pose and skip by
+_FUNNEL_POSE_COLS = "user_id,node_id,window_days,posed_at,answered_at,correct,max_rung"
+_FUNNEL_SKIP_COLS = "user_id,node_id,window_days,reason"
 #: an anchor row, with what learning_gain.pretest_outcome binds its envelope to
 _ANCHOR_COLS = (
     "id,node_id,session_id,question_hash,check_item_id,channel,correct,assisted,max_rung,"
@@ -952,6 +1015,50 @@ def _void_items(evidence: list[dict], poses: list[dict]) -> set[tuple[str, str]]
     return retired_items()
 
 
+def _funnel(from_iso: str, to_iso: str) -> tuple[list[dict] | None, bool]:
+    """A126: the funnel of the post-test windows that OPENED in the range
+    (learning_gain.due_windows over every concept's anchor; posttest_funnel
+    classifies each). Reads: the anchors in the one range any window could open
+    from (the `posttest_anchors` SQL function, keyset-paged, capped at
+    _SCAN_CAP — the cap sets `truncated`), then the poses and the recorded skips
+    of the students those windows belong to (user ids per `in.(…)`, paged).
+    Returns (funnel, truncated); (None, False) when a read failed — the funnel
+    is then unknown, never zeros that read as "nothing was due"."""
+    start, end = _parse_ts(from_iso), _parse_ts(to_iso)
+    if start is None or end is None:
+        return None, False
+    opens = [o for _, o, _ in window_bounds()]
+    try:
+        anchors, truncated = posttest_anchors(
+            anchor_from=start - timedelta(days=max(opens)),
+            anchor_to=end - timedelta(days=min(opens)),
+            limit=_SCAN_CAP,
+        )
+        due = due_windows(anchors, start=start, end=end)
+        users = sorted({d["user_id"] for d in due})
+        poses: dict[tuple, dict] = {}
+        skips: dict[tuple, str] = {}
+        for batch in _batches(users):
+            for row in page_all(
+                table("posttest_poses"),
+                _FUNNEL_POSE_COLS,
+                filters={"user_id": _in(batch)},
+                order="user_id.asc,node_id.asc,window_days.asc",
+            ):
+                poses[(row.get("user_id"), row.get("node_id"), row.get("window_days"))] = row
+            for row in page_all(
+                table("posttest_skips"),
+                _FUNNEL_SKIP_COLS,
+                filters={"user_id": _in(batch)},
+                order="user_id.asc,node_id.asc,window_days.asc",
+            ):
+                skips[(row.get("user_id"), row.get("node_id"), row.get("window_days"))] = row.get("reason")
+    except Exception:
+        logger.warning("learning-gain funnel unavailable", exc_info=True)
+        return None, False
+    return posttest_funnel(due, poses, skips, now=datetime.now(timezone.utc)), truncated
+
+
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
     n = ok = 0
     for row in steps:
@@ -976,12 +1083,14 @@ def learning_loop_kpis(
     BKT calibration (A110), the students' own confidence calibration per
     channel (A127: stated confidence vs correctness, over the same evidence
     scan) and the pre/post learning gain of the post-tests answered in the
-    range, per fixed window (A112). One void rule (A123) for every evidence
-    read here: an observation graded against an item staff retired is left out
-    — of the BKT calibration (counted in `excluded_void`), the confidence
-    calibration, the next-session success, the learning gain's post-tests
-    (counted per window in `excluded_retired`) and its pretests; the active
-    evidence-slot warnings of this process's configuration (A128);
+    range, per fixed window (A112), with its student-cluster bootstrap
+    intervals, actual-delay bins and visibility-loss stratum, and the funnel
+    of the windows that opened in the range (A126). One void rule (A123) for
+    every evidence read here: an observation graded against an item staff
+    retired is left out — of the BKT calibration (counted in `excluded_void`),
+    the confidence calibration, the next-session success, the learning gain's
+    post-tests (counted per window in `excluded_retired`) and its pretests;
+    the active evidence-slot warnings of this process's configuration (A128);
     `truncated: true` means a scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
@@ -1026,6 +1135,7 @@ def learning_loop_kpis(
         1 for row in evidence if is_void_row(row, retired) and calibration_eligible(row) is not None
     )
     pretests = _pretests([p for p in poses if not pose_is_void(p, retired)], retired)
+    funnel, funnel_truncated = _funnel(from_iso, to_iso)  # A126
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -1049,7 +1159,7 @@ def learning_loop_kpis(
         # A123 × A127: the one void rule here too — a confidence stated on a
         # grade against a retired item is no calibration evidence either
         confidence_calibration=ConfidenceCalibration(**confidence_calibration(valid)),
-        learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired)),
+        learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired), funnel=funnel),
         slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
-        truncated=events_truncated or evidence_truncated or poses_truncated,
+        truncated=events_truncated or evidence_truncated or poses_truncated or funnel_truncated,
     )

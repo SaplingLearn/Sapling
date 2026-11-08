@@ -326,7 +326,7 @@ def queue_env(monkeypatch):
     monkeypatch.setattr(review, "seen_hashes", lambda user_id: set())
     monkeypatch.setattr(review, "revealed_hashes", lambda user_id: set())
     monkeypatch.setattr(review, "reported_hashes", lambda user_id: set())  # spec §13 A113
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None)
+    monkeypatch.setattr(review, "posttest_reserves", lambda items: frozenset())
     monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
     monkeypatch.setattr(review, "user_offering_ids_for_course", lambda u, c: ["off-1"])
     monkeypatch.setattr(

@@ -176,6 +176,22 @@ REQUIRED_COLUMNS = {
         "days_since_evidence": "double precision",
         "correct": "boolean",
         "max_rung": "smallint",
+        # spec §13 A126: how the item was chosen, and what the answer reports
+        "item_match": "text",
+        "item_source": "text",
+        "served_at": "timestamp with time zone",
+        "answer_latency_s": "double precision",
+        "hidden_count": "integer",
+        "hidden_s": "double precision",
+    },
+    # spec §13 A126: a due post-test window with nothing fresh to pose, and why
+    "posttest_skips": {
+        "user_id": "text",
+        "node_id": "text",
+        "window_days": "integer",
+        "course_id": "text",
+        "reason": "text",
+        "skipped_at": "timestamp with time zone",
     },
 }
 # This fence must not manufacture historical activity during migration.

@@ -558,6 +558,55 @@ POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
 # † PKG-14 (spec §13 A89, owner): an unanswered post-test pose is void after this
 # long — it may be re-posed, and a late answer to it is refused (409)
 POSTTEST_POSE_TTL_HOURS = 24
+
+# ── Delayed-retention outcomes (spec §13 A126) ───────────────────────────────
+# † the LAST window closes this many days after the concept's anchor (twice its
+# delay): no pose opens at or after it, so a "28-day" outcome is never answered
+# at day 200. A pose opened before the close keeps its TTL (A89), as a pose open
+# across any window boundary does (A112), so the latest answer is the close
+# plus POSTTEST_POSE_TTL_HOURS; a pose never answered by then is expired.
+POSTTEST_LAST_WINDOW_CLOSE_DAYS = 2 * POSTTEST_WINDOWS_DAYS[-1]  # † = 56
+# Why a due window has no pose (posttest_skips.reason; the migration's CHECK
+# list reads the same values): `no_items` — the concept has no servable item
+# (none drafted, every one held (A124), retired (A113) or without a final
+# answer (A34)); `exhausted` — every servable item is seen or revealed (A23);
+# `reported` — what is left is only what the student reported (A113).
+POSTTEST_SKIP_REASONS = ("no_items", "exhausted", "reported")
+# How the posed item relates to the student's pretest — the concept's FIRST
+# graded item, the A112 anchor (posttest_poses.item_match): same format and
+# difficulty, same difficulty only, same format only, neither, or no pretest
+# item to compare (the anchor has no check item in the concept's bank).
+POSTTEST_ITEM_MATCHES = ("exact", "difficulty", "format", "none", "no_pretest")
+# Where the posed item came from (posttest_poses.item_source): one of the
+# concept's protected reserves, or a fresh unprotected item (a fallback).
+POSTTEST_ITEM_SOURCES = ("reserve", "fallback")
+# † the formats the reserves are drawn in, at the reserve difficulty
+# (CHECK_ITEM_DIFFICULTIES[1]), in order: the two strong channels first (spec
+# §3.1: free_response and mc_reasoned), selected-response second — the audit's
+# "selected-response or human-scored" outcome — and teachback (a weak channel) last.
+POSTTEST_RESERVE_FORMATS = ("free", "mc_reason", "teachback")
+# † a concept takes its SECOND reserve only when at least this many servable
+# items are left for practice after both: the probe's minimum per skill plus its
+# own practice reserve (the floor the seeded loop concepts are pinned to). A
+# smaller bank keeps its one reserve, as before A126.
+POSTTEST_RESERVE_MIN_LEFT = PROBE_ITEMS_PER_SKILL_MIN + 1
+# † page-hidden periods a retention answer may report (the client counts
+# visibilitychange → hidden while the item was on screen; untrusted, clamped,
+# never read by grading)
+POSTTEST_HIDDEN_COUNT_MAX = 1000
+# † the learning-gain report's uncertainty: a student-cluster bootstrap (a
+# student's pairs are resampled together — they are not independent), the
+# percentile interval at this level, this many resamples, seeded by
+# LEARNING_GAIN_BOOTSTRAP_SEED and the window, so a report is reproducible
+LEARNING_GAIN_CI_LEVEL = 0.95
+LEARNING_GAIN_BOOTSTRAP_RESAMPLES = 2000  # †
+LEARNING_GAIN_BOOTSTRAP_SEED = "sapling-learning-gain-v1"
+# † days from the anchor to the answer, binned for the report: [7, 14), [14,
+# 28), [28, 42), [42, ∞) — the actual delay, not the window's label
+POSTTEST_DELAY_BIN_EDGES_DAYS = (7, 14, 28, 42)
+# † the student's "retention check due" read (GET /posttest/due) is cached per
+# process this long; the post-test routes clear the student's entry
+POSTTEST_DUE_CACHE_S = 300
 # † the first A/B candidate (A6): variant B's independent-time gate for the
 # develop/profic bands (novice keeps GATE_INDEPENDENT_MIN_S_NOVICE for both)
 GATE_INDEPENDENT_MIN_S_VARIANT_B = 90

@@ -888,3 +888,110 @@ def test_an_outcome_on_a_consent_withdrawn_item_is_still_counted(monkeypatch):
     }
     first = _windows(monkeypatch, store)[W1]
     assert (first["posttests"], first["excluded_retired"]) == (1, 0)
+
+
+# ── spec §13 A126: the funnel, the intervals, the delay bins, visibility ──────
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+START = datetime.fromisoformat(RANGE["from"])
+END = datetime.fromisoformat(RANGE["to"])
+
+
+def _anchors(rows, *, calls=None, truncated=False):
+    def read(**kw):
+        if calls is not None:
+            calls.append(kw)
+        return list(rows), truncated
+
+    return read
+
+
+def test_the_funnel_counts_the_windows_that_opened_in_the_range(monkeypatch):
+    """Every due window — opened in the range — is answered, expired, open,
+    skipped (by reason) or never opened; the anchors read asks for exactly the
+    anchors whose windows can open in the range."""
+    day = timedelta(days=1)
+    opens_in_range = START + 5 * day - W1 * day  # W1 opens on July 6
+    anchors = [
+        {"user_id": "u1", "node_id": n, "course_id": "c1", "anchor_at": opens_in_range.isoformat()}
+        for n in ("answered", "expired", "skipped", "never")
+    ] + [{"user_id": "u2", "node_id": "late", "course_id": "c1",
+          "anchor_at": (END + day - W1 * day).isoformat()}]  # opens after the range
+    calls: list = []
+    monkeypatch.setattr(analytics, "posttest_anchors", _anchors(anchors, calls=calls))
+    posed = (opens_in_range + W1 * day).isoformat()
+    store = {
+        "posttest_poses": [
+            {"user_id": "u1", "node_id": "answered", "window_days": W1, "posed_at": posed,
+             "answered_at": posed, "correct": True, "max_rung": 0},
+            {"user_id": "u1", "node_id": "expired", "window_days": W1, "posed_at": posed,
+             "answered_at": None},
+        ],
+        "posttest_skips": [
+            {"user_id": "u1", "node_id": "skipped", "window_days": W1, "reason": "exhausted"},
+        ],
+    }
+    _serve(monkeypatch, store)
+    body = client.get(URL, params=RANGE).json()
+    funnel = {w["window_days"]: w for w in body["learning_gain"]["funnel"]}
+    first = funnel[W1]
+    assert (first["due"], first["opened"], first["answered"], first["unassisted"]) == (4, 2, 1, 1)
+    assert (first["expired"], first["open"], first["skipped"], first["not_opened"]) == (1, 0, 1, 1)
+    assert first["skip_reasons"] == {"no_items": 0, "exhausted": 1, "reported": 0}
+    # the same four concepts' 28-day windows open on July 27 — in the range too,
+    # never posed; u2's windows open after the range
+    assert (funnel[W2]["due"], funnel[W2]["not_opened"]) == (4, 4)
+    (read,) = calls
+    assert read["anchor_from"] == START - timedelta(days=W2)
+    assert read["anchor_to"] == END - timedelta(days=W1)
+    assert read.get("user_id") is None and read["limit"] == analytics._SCAN_CAP
+
+
+def test_the_funnel_is_unknown_not_zero_when_the_anchors_cannot_be_read(monkeypatch):
+    def _down(**_kw):
+        raise RuntimeError("function missing: migration not applied")
+
+    monkeypatch.setattr(analytics, "posttest_anchors", _down)
+    _serve(monkeypatch, {})
+    gain = client.get(URL, params=RANGE).json()["learning_gain"]
+    assert gain["funnel"] is None
+    assert [w["window_days"] for w in gain["windows"]] == list(params.POSTTEST_WINDOWS_DAYS)
+
+
+def test_a_capped_anchor_read_marks_the_report_truncated(monkeypatch):
+    monkeypatch.setattr(analytics, "posttest_anchors", _anchors([], truncated=True))
+    _serve(monkeypatch, {})
+    assert client.get(URL, params=RANGE).json()["truncated"] is True
+
+
+def test_the_gain_report_carries_intervals_delay_bins_and_visibility(monkeypatch):
+    anchors = [_anchor(f"ev-{i}", session="s1", qh=f"q{i}", correct=False, node=f"n{i}") for i in range(4)]
+    sessions = [{"id": "s1", "history": [{"question_hash": f"q{i}"} for i in range(4)]}]
+    anchor_at = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    poses = [
+        {**_answered(f"n{i}", W1, correct=i != 3, anchor=f"ev-{i}"), "user_id": f"u{i % 2}",
+         "anchor_at": anchor_at.isoformat(),
+         "answered_at": (anchor_at + timedelta(days=8 + i)).isoformat(),
+         "hidden_count": 1 if i == 0 else 0, "hidden_s": 12.0 if i == 0 else 0.0}
+        for i in range(4)
+    ]
+    monkeypatch.setattr(analytics, "posttest_anchors", _anchors([]))
+    _serve(monkeypatch, {"node_mastery_events": anchors, "sessions": sessions, "posttest_poses": poses})
+    gain = client.get(URL, params=RANGE).json()["learning_gain"]
+    first = gain["windows"][0]
+    assert first["n"] == 4 and first["students"] == 2
+    lo, hi = first["post_correct_ci"]
+    assert 0.0 <= lo <= first["post_correct_rate"] <= hi <= 1.0
+    assert first["paired_difference_ci"] is not None
+    assert first["visibility_loss"]["n"] == 1 and first["visibility_unreported"] == 0
+    assert gain["ci"]["method"] == "student_cluster_bootstrap_percentile"
+    assert gain["ci"]["resamples"] == params.LEARNING_GAIN_BOOTSTRAP_RESAMPLES
+    bins = {b["lo_days"]: b for b in gain["delay_bins"]}
+    assert bins[7]["n"] == 4 and bins[14]["n"] == 0 and bins[42]["hi_days"] is None
+    assert gain["delay_unknown"] == 0
+
+
+def test_the_pose_scan_reads_the_delay_and_visibility_columns():
+    cols = set(analytics._POSE_COLS.split(","))
+    assert {"user_id", "anchor_at", "answered_at", "hidden_count", "hidden_s"} <= cols

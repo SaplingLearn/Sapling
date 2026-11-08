@@ -345,6 +345,8 @@ never collide in the DOM.
 | `error-fallback` | root `ErrorFallback` surface (`ErrorBoundary.tsx`) — the whole-app "We hit a snag" page; journeys assert its ABSENCE (#538) so the check survives copy rewording |
 | `nav-link-<route>` | a SideNav destination row (`SideNav.tsx` `NavLink`), `<route>` = its href minus the leading slash (`nav-link-quiz`, `nav-link-course-planner`, `nav-link-settings`); a feature hidden by its `hide_*` flag (#620) renders no row, so journeys assert its count is 0 |
 | `nav-feature-gate` | `NavFeatureGate.tsx` wrapper around every shell page (`display: contents`); carries `data-veiled` while a flagged route waits for flags or is redirecting (#620) |
+| `nav-retention-due` | the "retention check due" dot on the SideNav Study row's icon (`RetentionDueDot.tsx`; spec §13 A126, behind the `retention_due_badge` flag); the row's aria-label then reads "Study, retention check due" |
+| `topnav-group-retention-due` / `topnav-retention-due` / `topnav-menu-retention-due` / `topnav-mobile-retention-due` | the same dot in `TopNav.tsx`: on the group trigger holding Study, on the Study row of its dropdown, on the closed mobile menu button, and on the Study row of the open mobile menu |
 
 ### `social`
 
@@ -404,6 +406,7 @@ never collide in the DOM.
 | `dashboard-plan-quiz` / `dashboard-plan-first-session` / `dashboard-plan-due-{assignmentId}` | plan items other than the session resume |
 | `dashboard-action-start` / `dashboard-action-calendar` | the greeting row's Start learning / Calendar buttons |
 | `dashboard-course-rows` / `dashboard-mastery-tree` | the mastery card's per-course rows and its Open Tree link |
+| `dashboard-retention-due` / `dashboard-retention-open` | the "A retention check is due" notice (spec §13 A126; only while the shell's due read says so, behind the `retention_due_badge` flag) and its button to `/study?retention-course={courseId}` — a link, never an opened check |
 
 ### `calendar`
 
@@ -450,6 +453,9 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
 | `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
 | `admin-loop-confidence` | the Learning loop panel's "Do students know what they know?" table (spec §13 A127): stated confidence vs correctness; rows `admin-loop-confidence-{channel}-{level}` (`other` for a value no level names) and `admin-loop-confidence-{channel}-all` |
+| `admin-loop-gain-{window}-post-ci` / `-diff-ci` / `admin-loop-gain-{window}-hidden` / `admin-loop-gain-ci-note` | spec §13 A126 in the learning-gain table: a window's bootstrap intervals under its post-test rate and paired change, its "page hidden while answering" stratum row, and the note naming the interval method |
+| `admin-loop-funnel` / `admin-loop-funnel-{window}` / `admin-loop-funnel-{window}-skipped` | A126: the funnel of the post-test windows that opened in the range (due, opened, answered, expired, open, skipped by reason, never opened, still open); the container says so when the funnel could not be read |
+| `admin-loop-delay` / `admin-loop-delay-{loDays}` | A126: the pairs binned by the days from the concept's first graded answer to the post-test answer |
 
 ### `admin-items`
 

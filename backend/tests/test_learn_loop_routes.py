@@ -166,6 +166,10 @@ NO_MODEL_ROUTES = [
     "/close",
     # PKG-13: the open loop sessions (read-only; never rate-limited, spec §13 A20).
     "/sessions",
+    # spec §13 A126: the post-test display stamp and the "due" read — no model;
+    # the cheap per-user limit inline (tests/test_learning_posttest_outcomes.py)
+    "/posttest/shown",
+    "/posttest/due",
 ]
 #: Runs no model but is rate-limited: every call can move a hint gate (M1, review round 3).
 RATE_LIMITED_NO_MODEL = [
@@ -405,7 +409,7 @@ def seams():
             patch("learning.misconceptions.recent_evidence", return_value=[])
         )
         ns.select_item = p("select_item", wraps=checks.select_item)
-        ns.reserve = p("posttest_reserve_hash", return_value="qh-reserve")
+        ns.reserve = p("posttest_reserves", return_value=frozenset({"qh-reserve"}))
         ns.concept_key = p("_concept_key_for_node", return_value="recursion")
         ns.flush = p("flush_pending", return_value=[{"node_id": "node-1"}])
         ns.receipts = {}
@@ -2611,7 +2615,7 @@ def test_action_hint_h4_sibling_is_revealed_and_never_the_reserve(gate_on, seams
         "qh-9", "What does sum(0) return?", "An empty sum is 0, the identity for addition.", "0"
     )
     seams.list_items.return_value = [ITEM, reserve, shown]
-    seams.reserve.side_effect = checks.posttest_reserve_hash  # the real A23 rule: qh-0 here
+    seams.reserve.side_effect = checks.posttest_reserves  # the real A23/A126 rule: qh-0 here
     with patch("routes.learn_loop.loop_tutor_agent", MagicMock()):
         body = client.post(
             "/api/learn/loop/action",
@@ -3659,7 +3663,7 @@ def test_item_selection_never_widens_the_exclusions_for_an_isomorph(seams):
 
     seams.revealed_hashes.return_value = {"qh-1"}
     seams.seen_hashes.return_value = {"qh-2"}
-    seams.reserve.return_value = "qh-5"
+    seams.reserve.return_value = frozenset({"qh-5"})
     seams.list_items.return_value = [_iso("qh-1"), _iso("qh-2"), _iso("qh-5")]
     seams.select_item.side_effect = None
     seams.select_item.return_value = None

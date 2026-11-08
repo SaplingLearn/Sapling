@@ -87,6 +87,16 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Students can report a learning-loop check question (wrong answer / "
             "unclear / not from my course); two reporters retire it course-wide.",
             True),
+    # Learning loop spec §13 A126: the "retention check due" badge on the Study
+    # nav entry and the Dashboard, and GET /api/learn/loop/posttest/due (404
+    # while off). Client-visible: the frontend fetches nothing while it is off.
+    # It turns the delayed post-test from pull to push, a change to the
+    # measurement protocol, so it is switched on deliberately (at a trial
+    # boundary), never by a deploy.
+    FlagDef("retention_due_badge", ("off", "on"),
+            "Show students a 'retention check due' badge on Study and the Dashboard "
+            "when a delayed post-test window is open with an item to pose (A126).",
+            True),
     # Learning loop spec §13 A118: upload prerequisite edges
     # (services/concept_prereqs.py). Resolved ONCE per upload, for the
     # uploading student, by upload_prereqs_on; that one answer picks the

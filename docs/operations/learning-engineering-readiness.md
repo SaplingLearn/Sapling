@@ -290,9 +290,13 @@ unfinished engineering requirement.
    `20261108092032_learning_student_confidence.sql` (A127; it re-creates
    `learning_evidence_commit` to admit `student_confidence` — before it, a grade
    that carries a stated confidence fails its batch closed, and the admin
-   learning-loop KPI scan reads the column) and
+   learning-loop KPI scan reads the column),
+   `20261108093359_learning_posttest_outcomes.sql` (A126) and
    `20261108103333_learning_evidence_commit_reconcile.sql` (A123 × A127). The
-   verifier's `--db-audit` requires the columns they add.
+   verifier's `--db-audit` requires the columns they add and the
+   `posttest_anchors` function. Code ahead of the A126 migration fails
+   `/posttest/start` (its pose upsert names the new columns) and leaves the
+   admin funnel `null`; never deploy it first.
    **`learning_evidence_commit` is re-created three times; only the last is
    correct.** A127's migration was written on the pre-A123 function, so on its
    own it drops A123's item lock and retired-item refusal and refuses A123's
@@ -311,6 +315,10 @@ unfinished engineering requirement.
    loop never says "preparing" — the pre-A128 behaviour. Apply it to retire
    those warnings. Rolling back to pre-A128 code leaves the two columns
    unread; nothing to drain.
+4. A126's `retention_due_badge` flag ships off. Turning it on moves the
+   delayed post-test from pull to push for the students it reaches — a change
+   to the measurement protocol — so switch it on at a trial boundary, record
+   when, and keep it on for the whole cohort.
 
 ### Kill-switch and rollback drill
 

@@ -48,12 +48,13 @@ import hashlib
 import logging
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from typing import NamedTuple, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -95,7 +96,16 @@ from learning import answer_guard, arms, gates, ladder, planner, policy, review,
 from learning import grade_checkpoint, item_reports
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
-from learning.checks import CheckItem, is_servable, lint_tiers, posttest_reserve_hash, select_item
+from learning.checks import (
+    CheckItem,
+    PosttestChoice,
+    choose_posttest_item,
+    is_servable,
+    posttest_reserves,
+    posttest_skip_reason,
+    pretest_match,
+    select_item,
+)
 from learning.checks import unsourced as item_unsourced
 from learning.evidence import (
     PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
@@ -116,6 +126,8 @@ from learning.goals import (
 from learning.ladder import Rung
 from learning.leak import confront_text_states_answer, detect_leak, leak_spans
 from learning.served_scan import ScanSet
+from learning.learning_gain import answer_latency_s, clamp_visibility, window_at
+from learning.posttest_store import posttest_anchors
 from learning.learner_brief import course_concept_names, store_brief
 from learning.learner_state import LearnerState, read_states
 from learning.misconceptions import (
@@ -158,7 +170,7 @@ from learning.params import (
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
-    CHECK_ITEM_DIFFICULTIES,
+    CHECK_ITEM_DIFFICULTIES,  # A122's band difficulty targets (A126 dropped its own use)
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
     CLOSE_PHASES,
@@ -177,6 +189,7 @@ from learning.params import (
     LOOP_TEACH_TURNS_BEFORE_CHECK,
     LOOP_FAILED_ANCHORS_MAX,
     PLAN_ORDER,
+    POSTTEST_DUE_CACHE_S,
     POSTTEST_MAX_ITEMS,
     POSTTEST_POSE_TTL_HOURS,
     POSTTEST_WINDOWS_DAYS,
@@ -223,6 +236,7 @@ from models import (
     LoopGoalBody,
     PlanApproveBody,
     PosttestAnswerBody,
+    PosttestShownBody,
     PosttestStartBody,
     ProbeAnswerBody,
     ProbeNextBody,
@@ -3097,17 +3111,17 @@ def _leak_checked_payload(*, user_id: str, item, rung: Rung, reference: str | No
         ids = list(item.source_chunk_ids or [])[:LOOP_SOURCE_CHUNKS_MAX]
         passages = [r["chunk_text"] for r in chunks_for_ids(ids, user_id=user_id)] if ids else []
     siblings: list = []
-    reserve = None
+    reserves: frozenset[str] = frozenset()
     if rung == Rung.H4:
         concept_items = list_items(item.course_id, item.concept_key)
-        reserve = posttest_reserve_hash(concept_items)
+        reserves = posttest_reserves(concept_items)  # A23, A126: both protected items
         siblings = [s for s in concept_items if s.question_hash != item.question_hash]
     payload = ladder.deterministic_content(
         rung,
         _item_like(item),
         [_item_like(s) for s in siblings],
         passages,
-        exclude_hashes={reserve} if reserve else (),
+        exclude_hashes=reserves,
     )
     if payload is None:
         return None, False
@@ -3450,17 +3464,16 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
 def _practice_pool(user_id: str, course_id: str, node_id: str, excluded: set[str]) -> tuple[list, set[str]]:
     """The same eligible bank for planning and actual check activation.
 
-    A probe's practice reserve is eligible here; the delayed posttest reserve
-    is not. Difficulty is not an availability filter: selection uses the
-    nearest difficulty and rotates through all supported check formats.
-    Failed reads propagate, never masquerade as an empty bank.
+    A probe's practice reserve is eligible here; the delayed post-test
+    reserves (both, A126) are not. Difficulty is not an availability filter:
+    selection uses the nearest difficulty and rotates through all supported
+    check formats. Failed reads propagate, never masquerade as an empty bank.
     """
     key = _concept_key_for_node(user_id, node_id)
     if not key:
         return [], excluded
     items = list_items(course_id, key)
-    reserve = posttest_reserve_hash(items)
-    return items, excluded | ({reserve} if reserve else set())
+    return items, excluded | posttest_reserves(items)
 
 
 def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_ids) -> set[str]:
@@ -4919,40 +4932,20 @@ def _iso_z(ts: datetime) -> str:
 
 
 def _posttest_window(anchor: datetime, now: datetime) -> int | None:
-    """A112: the fixed follow-up window `now` falls in — the largest
-    POSTTEST_WINDOWS_DAYS entry w with anchor + w days ≤ now, where `anchor` is
-    the concept's FIRST graded evidence (practice cannot move it). A window runs
-    until the next one opens (the last stays open), so a window the student was
-    away for is skipped, never posed late under its label. None before the
-    first window opens."""
-    opened = [w for w in POSTTEST_WINDOWS_DAYS if anchor + timedelta(days=w) <= now]
-    return max(opened) if opened else None
+    """A112/A126: the fixed follow-up window `now` falls in, counted from
+    `anchor`, the concept's FIRST graded evidence (practice cannot move it) —
+    learning_gain.window_at, the one rule the funnel reads too. A window runs
+    until the next one opens and the last closes POSTTEST_LAST_WINDOW_CLOSE_DAYS
+    after the anchor, so a window the student was away for is skipped, never
+    posed late under its label. None before the first window opens and after
+    the last one closes."""
+    return window_at(anchor, now)
 
 
-def posttest_item(items: list, excluded: set[str]):
-    """The concept's post-test item (A23): its reserve when that is outside
-    `excluded`; else the free item nearest CHECK_ITEM_DIFFICULTIES[1] outside
-    `excluded`; else (†) the lowest-hash servable item outside it; else None.
-    Never an excluded (seen, revealed or reported) item. Within each rule the
-    item-flaw lint decides first (A113: clean, then never linted, then
-    flagged) — the reserve itself is chosen that way (posttest_reserve_hash) —
-    so a flagged item is posed only when the concept has nothing else. A held
-    item (A124 key hold; A123 quarantined or retired) is not in `items`."""
-    reserve = posttest_reserve_hash(items)
-    if reserve is not None and reserve not in excluded:
-        return next(i for i in items if i.question_hash == reserve)
-    tiers = lint_tiers(items)
-    for tier in tiers:
-        chosen = select_item(
-            tier, format="free", difficulty=CHECK_ITEM_DIFFICULTIES[1], exclude_hashes=excluded
-        )
-        if chosen is not None:
-            return chosen
-    for tier in tiers:
-        rest = [i for i in tier if i.question_hash not in excluded and is_servable(i)]
-        if rest:
-            return min(rest, key=lambda i: i.question_hash)
-    return None
+def _posttest_exposed(user_id: str) -> set[str]:
+    """seen ∪ revealed (A23): what a post-test never poses because the student
+    has answered it or been shown its answer."""
+    return set(seen_hashes(user_id)) | set(revealed_hashes(user_id))
 
 
 def _posttest_excluded(user_id: str, reported: set[str] | None = None) -> set[str]:
@@ -4960,7 +4953,7 @@ def _posttest_excluded(user_id: str, reported: set[str] | None = None) -> set[st
     reported set is the caller's when it has read it already)."""
     if reported is None:
         reported = set(reported_hashes(user_id))
-    return set(seen_hashes(user_id)) | set(revealed_hashes(user_id)) | reported
+    return _posttest_exposed(user_id) | reported
 
 
 class _CourseNodesRead:
@@ -5036,8 +5029,8 @@ def _bound_item(items: list, node_poses: dict[int, dict], excluded: set[str]):
     window's, is that SAME item, never a fresh one to dodge it — while the item
     is still fresh (A23: neither seen nor revealed since; a stale item would
     grade practice as a delayed outcome) and not reported (A113: `excluded`
-    holds the student's reported items, never posed again). None →
-    posttest_item chooses."""
+    holds the student's reported items, never posed again). None → the
+    window's choice (`_window_choice`, A126)."""
     unanswered = [p for p in node_poses.values() if not p.get("answered_at")]
     if not unanswered:
         return None
@@ -5047,19 +5040,24 @@ def _bound_item(items: list, node_poses: dict[int, dict], excluded: set[str]):
     return next((i for i in items if i.question_hash == qh), None)
 
 
-def _new_pose(user_id: str, course_id: str, node: str, window: int, item, span, now: datetime) -> dict:
+def _new_pose(user_id: str, course_id: str, node: str, window: int, choice, span, now: datetime) -> dict:
     """A112: a pose row — its window, the window's fixed anchor (the concept's
     first graded evidence: journal row id and time), and the concept's last
     evidence before the pose with the days since it, the delay an analysis
     stratifies on (truly delayed vs recently practised — practice no longer
-    postpones a window). The outcome (`correct`, `max_rung`) stays NULL until
-    the pose is answered. Hashes, ids, times and numbers only."""
+    postpones a window). A126: how its item was chosen (`choice`, a
+    checks.PosttestChoice: `item_match` against the student's pretest item,
+    `item_source` reserve or fallback). The outcome (`correct`, `max_rung`) and
+    what the answer reports (`served_at` once the client shows the item; the
+    latency and the page-hidden telemetry once it is answered) stay NULL — a
+    renewal (A89/A93) resets them all. Hashes, ids, codes, times and numbers
+    only."""
     return {
         "user_id": user_id,
         "node_id": node,
         "course_id": course_id,
         "window_days": window,
-        "question_hash": item.question_hash,
+        "question_hash": choice.item.question_hash,
         "posed_at": now.isoformat(),
         "answered_at": None,
         "claim": None,
@@ -5070,6 +5068,12 @@ def _new_pose(user_id: str, course_id: str, node: str, window: int, item, span, 
         "days_since_evidence": max(0.0, (now - span.last_at) / _ONE_DAY),
         "correct": None,
         "max_rung": None,
+        "item_match": choice.match,
+        "item_source": choice.source,
+        "served_at": None,
+        "answer_latency_s": None,
+        "hidden_count": None,
+        "hidden_s": None,
     }
 
 
@@ -5078,6 +5082,54 @@ def _record_poses(rows: list[dict]) -> None:
     node, window) (A112)."""
     if rows:
         table(_POSES).upsert(rows, on_conflict="user_id,node_id,window_days")
+
+
+#: spec §13 A126: a due window with nothing fresh to pose, and why — one row
+#: per (student, node, window), the latest reason (written by /posttest/start)
+_SKIPS = "posttest_skips"
+
+
+def _skip_row(user_id: str, course_id: str, node: str, window: int, reason: str, now: datetime) -> dict:
+    return {
+        "user_id": user_id,
+        "node_id": node,
+        "course_id": course_id,
+        "window_days": window,
+        "reason": reason,
+        "skipped_at": now.isoformat(),
+    }
+
+
+def _record_skips(rows: list[dict]) -> None:
+    """A126: record the due windows /posttest/start had to skip, so the funnel
+    can count them. One upsert. A measurement record, not the pose: a failed
+    write logs and the start still answers (its poses are already committed)."""
+    if not rows:
+        return
+    try:
+        table(_SKIPS).upsert(rows, on_conflict="user_id,node_id,window_days")
+    except Exception:
+        logger.warning("post-test skips not recorded (%d)", len(rows), exc_info=True)
+
+
+def _stamp_served(user_id: str, node_id: str, question_hash: str, now: datetime) -> bool:
+    """A126: the first time the client SHOWS an open pose's item — one
+    conditional UPDATE of the open pose (unanswered, within its TTL) whose
+    served_at is still NULL, so a reload or a repeat call keeps the first
+    display. The server's clock: a latency is answered_at − served_at, both
+    stamped here. True when this call stamped it."""
+    rows = table(_POSES).update(
+        {"served_at": now.isoformat()},
+        filters={
+            "user_id": f"eq.{user_id}",
+            "node_id": f"eq.{node_id}",
+            "question_hash": f"eq.{question_hash}",
+            "answered_at": "is.null",
+            "served_at": "is.null",
+            "posed_at": f"gte.{_iso_z(now - timedelta(hours=POSTTEST_POSE_TTL_HOURS))}",
+        },
+    )
+    return bool(rows)
 
 
 def _claim_pose(
@@ -5115,15 +5167,27 @@ def _claim_pose(
 
 
 def _answer_pose(
-    user_id: str, node_id: str, claim: str, now: datetime, *, correct: bool, max_rung: int
+    user_id: str,
+    node_id: str,
+    claim: str,
+    now: datetime,
+    *,
+    correct: bool,
+    max_rung: int,
+    latency_s: float | None = None,
+    hidden_count: int | None = None,
+    hidden_s: float | None = None,
 ) -> bool:
     """m1/m2: re-validate the claim and CLOSE the pose before the one flush —
     a conditional UPDATE on this claim, still unanswered. The same write records
     the post-test OUTCOME (A112): `correct` and the rung the grade carries
     (`max_rung`, the floor after the in-claim re-read; above 0 it is no clean
-    delayed outcome). True → the pose is answered for good (a later failure
-    never reopens it: fail closed); False → the claim was taken over, and
-    nothing may be written."""
+    delayed outcome) — and, A126, what the answer reports beside it: the
+    latency (answered_at − served_at, None when the item's display was never
+    stamped) and the page-hidden telemetry, already clamped
+    (learning_gain.clamp_visibility). None of it reaches the grade. True → the
+    pose is answered for good (a later failure never reopens it: fail closed);
+    False → the claim was taken over, and nothing may be written."""
     rows = table(_POSES).update(
         {
             "answered_at": now.isoformat(),
@@ -5131,6 +5195,9 @@ def _answer_pose(
             "claimed_at": None,
             "correct": bool(correct),
             "max_rung": int(max_rung),
+            "answer_latency_s": latency_s,
+            "hidden_count": hidden_count,
+            "hidden_s": hidden_s,
         },
         filters={
             "user_id": f"eq.{user_id}",
@@ -5155,6 +5222,63 @@ def _release_pose(user_id: str, node_id: str, claim: str) -> None:
     )
 
 
+def _due_nodes(
+    nodes: Iterable[str], poses: Mapping[str, dict[int, dict]], anchors: Mapping[str, datetime], now: datetime
+) -> dict[str, int | None]:
+    """A112: candidate node → its due, unanswered window, or None when only an
+    open pose keeps it a candidate (an open pose stays posed until answered or
+    expired, even when no window is due). `anchors`: node → its FIRST graded
+    evidence time. Shared by /posttest/start and GET /posttest/due."""
+    due: dict[str, int | None] = {}
+    for node in nodes:
+        node_poses = poses.get(node) or {}
+        anchor = anchors.get(node)
+        window = _posttest_window(anchor, now) if anchor is not None else None
+        if window is not None and (node_poses.get(window) or {}).get("answered_at"):
+            window = None  # answered: a window is posed at most once
+        if window is not None or any(_pose_open(p, now) for p in node_poses.values()):
+            due[node] = window
+    return due
+
+
+def _posttest_plans(
+    due: Mapping[str, int | None],
+    poses: Mapping[str, dict[int, dict]],
+    anchors: Mapping[str, datetime],
+    items_of: Callable[[str], list],
+    now: datetime,
+    reported: set[str],
+) -> list[tuple]:
+    """(order, node, the open pose's item or None, the window to pose or None),
+    sorted: open poses first (A87: returned as posed), then the
+    earliest-opened windows. An open pose of a withdrawn or reported item
+    counts as no pose (A113), so its due window is posed afresh."""
+    plans = []
+    for node, window in due.items():
+        current = _open_posed_item(poses.get(node) or {}, items_of(node), now, reported)
+        if current is not None:
+            plans.append(((0, _posed_order(current[0])[0], node), node, current[1], None))
+        elif window is not None:
+            opened = anchors[node] + timedelta(days=window)
+            plans.append(((1, opened, node), node, None, window))
+    return sorted(plans, key=lambda p: p[0])
+
+
+def _window_choice(items: list, node_poses: dict[int, dict], excluded: set[str], window: int, pretest):
+    """The item a due window poses (A23, A93, A113, A126) — a
+    checks.PosttestChoice, or None (nothing fresh: the window is skipped). The
+    newest unanswered pose's item first while it is fresh (A93: bound across
+    windows, never shopped away); else checks.choose_posttest_item: a fresh
+    protected reserve matched to the student's pretest item, else a fallback."""
+    bound = _bound_item(items, node_poses, excluded)
+    if bound is not None:
+        source = "reserve" if bound.question_hash in posttest_reserves(items) else "fallback"
+        return PosttestChoice(bound, pretest_match(bound, pretest), source)
+    return choose_posttest_item(
+        items, excluded, window_index=POSTTEST_WINDOWS_DAYS.index(window), pretest=pretest
+    )
+
+
 @router.post("/posttest/start", dependencies=_RATE_LIMITED)
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     """Rung 3 (spec §10) at FIXED follow-up windows (A112): this student's
@@ -5162,19 +5286,24 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     POSTTEST_WINDOWS_DAYS counted from its FIRST graded evidence (the journal's
     earliest evidence row: practice cannot postpone it) and that window is not
     answered yet — each window is posed at most once per student, concept and
-    window, and a window the student was away for is skipped. The item is the
-    concept's reserve unless seen or revealed (A23), never an item the student
-    reported or one held or retired (A124, A123), and a
-    lint-clean item first (A113, posttest_item);
-    an unanswered pose's item stays bound to the node while it is fresh (A93) —
-    never once reported (A113: an open pose of a reported item counts as no
-    pose, like a withdrawn one). Open poses first, then the earliest-opened
+    window, a window the student was away for is skipped, and the last one
+    closes POSTTEST_LAST_WINDOW_CLOSE_DAYS after the anchor (A126). The item is
+    a fresh protected reserve matched to the student's pretest item, else a
+    fresh fallback (A126, `_window_choice`; a confirmed key, then the lint
+    tier, A124/A113, so an `unsourced` item comes after one with its sources,
+    A128) — never one seen or revealed (A23), reported (A113), or held or
+    retired (A124, A123: a held item is not in the course's items); an
+    unanswered pose's item stays bound to the node while it is fresh (A93) —
+    never once reported (an open pose of a reported item counts as no pose,
+    like a withdrawn one). A due window with nothing fresh is skipped and the
+    skip recorded with its reason (`posttest_skips`, A126). Open poses first,
+    then the earliest-opened
     windows, at most POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the pose
-    records its window, its anchor and the days since the concept's last
-    evidence, and a repeat start returns the same item for a node with an open
-    pose — never a fresh one. The pose only: the prompt verbatim and an
-    mc_reason item's options, never a key or a reference. No brief, no RAG, no
-    tutor, no session row, no model call. Rate-limited (A20)."""
+    records its window, its anchor, the days since the concept's last evidence
+    and how its item was chosen, and a repeat start returns the same item for a
+    node with an open pose — never a fresh one. The pose only: the prompt
+    verbatim and an mc_reason item's options, never a key or a reference. No
+    brief, no RAG, no tutor, no session row, no model call. Rate-limited (A20)."""
     if not body.user_id:
         body.user_id = get_session_user_id(request)
     _gate(body.user_id, request)
@@ -5182,49 +5311,44 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     nodes = _course_nodes(body.user_id, body.course_id)
     poses = _read_poses(body.user_id, body.course_id)
     spans = evidence_spans(body.user_id, body.course_id)
-    due: dict[str, int | None] = {}  # candidate node → its due, unanswered window (or None)
-    for node in nodes:
-        node_poses = poses.get(node) or {}
-        span = spans.get(node)
-        window = _posttest_window(span.first_at, now) if span is not None else None
-        if window is not None and (node_poses.get(window) or {}).get("answered_at"):
-            window = None  # answered: a window is posed at most once
-        # an open pose stays posed until answered or expired, even when no window is due
-        if window is not None or any(_pose_open(p, now) for p in node_poses.values()):
-            due[node] = window
+    anchors = {node: span.first_at for node, span in spans.items()}
+    due = _due_nodes(nodes, poses, anchors, now)
     if not due:
         return {"items": []}
     by_key = items_for_concepts(body.course_id, sorted({nodes[n] for n in due}))
     # A113: read once — an item the student reported is never posed again: an
-    # open pose of it counts as no pose, a bound one is excluded (posttest_item
+    # open pose of it counts as no pose, a bound one is excluded (the choice
     # excludes it too; a held or retired item is gone from the course's items)
     reported = set(reported_hashes(body.user_id))
-    plans = []  # (order, node, the open pose's item or None, the window to pose or None)
-    for node, window in due.items():
-        current = _open_posed_item(
-            poses.get(node) or {}, by_key.get(nodes[node]) or [], now, reported
-        )
-        if current is not None:
-            plans.append(((0, _posed_order(current[0])[0], node), node, current[1], None))
-        elif window is not None:  # no open pose (or its item was withdrawn or reported): pose the window
-            opened = spans[node].first_at + timedelta(days=window)
-            plans.append(((1, opened, node), node, None, window))
-    excluded = _posttest_excluded(body.user_id, reported) if any(p[2] is None for p in plans) else set()
+    plans = _posttest_plans(
+        due, poses, anchors, lambda node: by_key.get(nodes[node]) or [], now, reported
+    )
+    exposed = _posttest_exposed(body.user_id) if any(p[2] is None for p in plans) else set()
+    excluded = exposed | reported
     out: list[dict] = []
     new: list[dict] = []
-    for _, node, item, window in sorted(plans, key=lambda p: p[0]):
+    skips: list[dict] = []
+    for _, node, item, window in plans:
         if item is None:
             items = by_key.get(nodes[node]) or []
-            item = _bound_item(items, poses.get(node) or {}, excluded) or posttest_item(items, excluded)
-            if item is None:
-                continue  # nothing fresh left for this concept: skipped
-            new.append(_new_pose(body.user_id, body.course_id, node, window, item, spans[node], now))
+            span = spans[node]
+            # A126: the student's pretest item — the concept's first graded item
+            pretest = next((i for i in items if i.question_hash == span.first_hash), None)
+            choice = _window_choice(items, poses.get(node) or {}, excluded, window, pretest)
+            if choice is None:  # nothing fresh left for this concept: skipped, and why
+                reason = posttest_skip_reason(items, exposed=exposed)
+                skips.append(_skip_row(body.user_id, body.course_id, node, window, reason, now))
+                continue
+            new.append(_new_pose(body.user_id, body.course_id, node, window, choice, span, now))
+            item = choice.item
         out.append({"node_id": node, **_pose_payload(item)})
         if len(out) >= POSTTEST_MAX_ITEMS:
             break
     _record_poses(new)
+    _record_skips(skips)
     for row in new:  # A93: posed — in the scan set until graded
         _ledger(record_posed, body.user_id, row["question_hash"], source="posttest")
+    clear_posttest_due_cache(body.user_id)
     return {"items": out}
 
 
@@ -5290,7 +5414,10 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
     The pose is claimed by one conditional UPDATE, so it is graded once; a
     refusal (A33) releases the claim and asks again (never an idk here); an
     outage or the grade cap releases it too and is a 503 with nothing recorded
-    for either outcome (invariant 28)."""
+    for either outcome (invariant 28). A126: the pose also records the answer
+    latency (answered_at − the served_at /posttest/shown stamped) and the
+    page-hidden telemetry the client sends — untrusted, clamped
+    (learning_gain.clamp_visibility), and never read by the grade."""
     if not body.user_id:
         body.user_id = await guard_off_loop(get_session_user_id, request)
     loop_on = await guard_off_loop(_gate, body.user_id, request)
@@ -5353,13 +5480,26 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
         floor = Rung(
             _refloor(deps.pending_evidence, body.user_id, item, _ts(pose.get("posed_at")), int(floor))
         )
+        answered_at = _posttest_now()
+        # A126: telemetry beside the outcome, bounded by the server's own clock:
+        # the item cannot have been hidden for longer than it was on screen
+        served = _ts(pose.get("served_at"))
+        shown_from = served or _ts(pose.get("posed_at"))
+        hidden_count, hidden_s = clamp_visibility(
+            body.hidden_count,
+            body.hidden_s,
+            (answered_at - shown_from).total_seconds() if shown_from else None,
+        )
         answered = _answer_pose(
             body.user_id,
             body.node_id,
             claim,
-            _posttest_now(),
+            answered_at,
             correct=bool(outcome.correct),
             max_rung=int(floor),
+            latency_s=answer_latency_s(served, answered_at),
+            hidden_count=hidden_count,
+            hidden_s=hidden_s,
         )
         if not answered:
             raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
@@ -5377,8 +5517,164 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
                 _release_pose(body.user_id, body.node_id, claim)
             except Exception:
                 logger.warning("post-test claim on %s not released", body.node_id, exc_info=True)
+        clear_posttest_due_cache(body.user_id)
     _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor)
     return {"correct": bool(outcome.correct), "confidence": outcome.confidence}
+
+
+def _posttest_light_limit(user_id: str) -> None:
+    """A126: the cheap per-user limit (services/request_limits' in-process
+    sliding window) on the two no-model post-test routes — the display stamp
+    and the "due" read. Not the A20 rate limit: no model runs behind them."""
+    retry = check_rate_limit(
+        f"loop_posttest_light:{user_id}", limit=config.LOOP_PROBE_PLAN_READS_PER_MIN, window_sec=60
+    )
+    if retry is not None:
+        raise HTTPException(
+            status_code=429, detail="too many requests", headers={"Retry-After": str(retry)}
+        )
+
+
+@router.post("/posttest/shown")
+def posttest_shown(body: PosttestShownBody, request: Request) -> dict:
+    """A126: the client shows an open pose's item — stamp its `served_at` (the
+    first display only; the server's clock), so the answer's latency is
+    answered_at − served_at. Writes nothing else: no evidence, no ledger, no
+    model. An item with no open pose stamps nothing (`served: false`); a failed
+    stamp logs and leaves the latency unknown, never an error the student sees."""
+    if not body.user_id:
+        body.user_id = get_session_user_id(request)
+    _gate(body.user_id, request)
+    _posttest_light_limit(body.user_id)
+    try:
+        stamped = _stamp_served(body.user_id, body.node_id, body.question_hash, _posttest_now())
+    except Exception:
+        logger.warning("post-test display not stamped", exc_info=True)
+        stamped = False
+    return {"served": stamped}
+
+
+# ── "A retention check is due" (spec §13 A126) ───────────────────────────────
+
+#: Client-visible flag (services/feature_flags.py): off → GET /posttest/due
+#: 404s and the app shows no badge. Pushing students toward the retention check
+#: changes the measurement protocol (pull → push), so it is switched on
+#: deliberately — at a trial boundary — not by a deploy.
+RETENTION_DUE_FLAG = "retention_due_badge"
+#: user id → (monotonic expiry, payload): a per-process TTL cache (CLAUDE.md
+#: #98): POSTTEST_DUE_CACHE_S, cleared for the student by /posttest/start and
+#: /posttest/answer (the routes that change what is due); other workers and
+#: evidence written elsewhere converge within the TTL.
+_DUE_CACHE: dict[str, tuple[float, dict]] = {}
+_DUE_CACHE_MAX = 10_000
+_DUE_LOCK = threading.Lock()
+
+
+def clear_posttest_due_cache(user_id: str | None = None) -> None:
+    """Drop one student's cached "due" answer (every student's with None)."""
+    with _DUE_LOCK:
+        if user_id is None:
+            _DUE_CACHE.clear()
+        else:
+            _DUE_CACHE.pop(user_id, None)
+
+
+def _due_cache_get(user_id: str) -> dict | None:
+    with _DUE_LOCK:
+        hit = _DUE_CACHE.get(user_id)
+        if hit is None or hit[0] <= time.monotonic():
+            return None
+        return copy.deepcopy(hit[1])
+
+
+def _due_cache_put(user_id: str, payload: dict) -> None:
+    with _DUE_LOCK:
+        if len(_DUE_CACHE) >= _DUE_CACHE_MAX and user_id not in _DUE_CACHE:
+            _DUE_CACHE.pop(min(_DUE_CACHE, key=lambda k: _DUE_CACHE[k][0]))
+        _DUE_CACHE[user_id] = (time.monotonic() + POSTTEST_DUE_CACHE_S, copy.deepcopy(payload))
+
+
+def _read_student_poses(user_id: str) -> dict[str, dict[int, dict]]:
+    """node id → window → the student's pose rows, every course (one read)."""
+    rows = table(_POSES).select(
+        "node_id,course_id,window_days,question_hash,posed_at,answered_at",
+        filters={"user_id": f"eq.{user_id}"},
+    )
+    poses: dict[str, dict[int, dict]] = {}
+    for r in rows or []:
+        if r.get("node_id"):
+            poses.setdefault(r["node_id"], {})[int(r["window_days"])] = r
+    return poses
+
+
+def _retention_due(user_id: str, now: datetime) -> dict:
+    """Does the student have a retention check to take now — an open pose
+    whose item can still be answered, or a due, unanswered window with an item
+    /posttest/start would pose? The same rules as /posttest/start
+    (`_due_nodes`, `_open_posed_item`, `_window_choice`), never a pose: nothing
+    is written. Cheap first: one anchors read and one poses read; only when
+    some node is a candidate, its courses' items and the exclusion sets."""
+    rows, _ = posttest_anchors(user_id=user_id)
+    anchors: dict[str, dict] = {}
+    anchor_at: dict[str, datetime] = {}
+    for row in rows:
+        at = _ts(row.get("anchor_at"))
+        if row.get("node_id") and row.get("course_id") and at is not None:
+            anchors[row["node_id"]] = row
+            anchor_at[row["node_id"]] = at
+    poses = _read_student_poses(user_id)
+    due = _due_nodes(anchors, poses, anchor_at, now)
+    if not due:
+        return {"due": False, "course_ids": []}
+    by_course: dict[str, list[str]] = {}
+    for node in due:
+        by_course.setdefault(anchors[node]["course_id"], []).append(node)
+    reported = set(reported_hashes(user_id))
+    excluded: set[str] | None = None
+    courses = []
+    for course_id, course_nodes in sorted(by_course.items()):
+        keys = {n: _normalize_concept(anchors[n].get("concept_name") or "") for n in course_nodes}
+        by_key = items_for_concepts(course_id, sorted(set(keys.values())))
+        for node in course_nodes:
+            items = by_key.get(keys[node]) or []
+            node_poses = poses.get(node) or {}
+            if _open_posed_item(node_poses, items, now, reported) is not None:
+                courses.append(course_id)
+                break
+            if due[node] is None:
+                continue
+            if excluded is None:
+                excluded = _posttest_exposed(user_id) | reported
+            if _window_choice(items, node_poses, excluded, due[node], None) is not None:
+                courses.append(course_id)
+                break
+    return {"due": bool(courses), "course_ids": courses}
+
+
+@router.get("/posttest/due")
+def posttest_due(request: Request, user_id: str = Query("")) -> dict:
+    """A126: {due, course_ids} — whether the student has a retention check to
+    take now (`_retention_due`), for the app's "retention check due" badge on
+    Study and the Dashboard. Behind the `retention_due_badge` flag (off → 404)
+    and the loop gate; cached per student for POSTTEST_DUE_CACHE_S. Read-only:
+    it never opens a pose. A failed read is a 503 (the badge stays hidden),
+    never a "nothing due" it cannot vouch for."""
+    if not user_id:
+        user_id = get_session_user_id(request)
+    _gate(user_id, request)
+    if not flag_on(RETENTION_DUE_FLAG, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    cached = _due_cache_get(user_id)
+    if cached is not None:
+        return cached
+    _posttest_light_limit(user_id)
+    try:
+        payload = _retention_due(user_id, _posttest_now())
+    except Exception:
+        logger.warning("retention-due read failed", exc_info=True)
+        raise HTTPException(status_code=503, detail="retention status unavailable") from None
+    _due_cache_put(user_id, payload)
+    return payload
 
 
 def _emit_posttest_step(body, request, item, outcome, band, p_before, changes, floor: Rung) -> None:
@@ -6597,10 +6893,11 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     # A113: an item the student reported is never posed again, like a revealed one
     revealed = (revealed_hashes(body.user_id) | reported_hashes(body.user_id)) if items else set()
     seen = seen_hashes(body.user_id) if items else set()
-    reserves = {
-        posttest_reserve_hash([it for it in items if it.node_id == n])
+    reserves = {  # A23, A126: every concept's protected post-test items
+        qh
         for n in {it.node_id for it in items}
-    } - {None}
+        for qh in posttest_reserves([it for it in items if it.node_id == n])
+    }
     by_hash = {it.question_hash: it for it in items}
     now = _now_s()
     out: dict = {}

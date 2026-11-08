@@ -57,6 +57,10 @@ from learning.params import (
     CHECK_ITEM_MIN_RUBRIC,
     CHECK_ITEM_MIN_WRONG,
     CHECK_ITEM_STEPWISE_MIN_STEPS,
+    POSTTEST_ITEM_MATCHES,
+    POSTTEST_RESERVE_FORMATS,
+    POSTTEST_RESERVE_MIN_LEFT,
+    POSTTEST_SKIP_REASONS,
 )
 
 _SEP = "\x1f"  # unit separator: never appears in normalized text
@@ -1692,19 +1696,183 @@ def lint_tiers(items: Iterable[CheckItem]) -> list[list[CheckItem]]:
     return tiers
 
 
-def posttest_reserve_hash(items: Iterable[CheckItem]) -> str | None:
-    """The concept's post-test reserve (A23): the lowest question_hash among
-    servable (A34) `free` items at CHECK_ITEM_DIFFICULTIES[1], else the lowest
-    servable overall, else None — taken from the best lint tier that has one
-    (A113: clean, then never linted, then flagged), so the item the post-test
-    poses is a flawed one only when the concept has nothing else. Probe,
-    in-session checks and review never serve it; the post-test does, so an
-    item with no final answer is never it."""
-    items = [i for i in items if is_servable(i)]
+def _verify_rank(item) -> int:
+    """0 when the key is confirmed (`canonical_verified`: an independent blind
+    solve agreed, an admin approved it or an audit found it correct, A124), else 1."""
+    return 0 if getattr(item, "canonical_verified", False) else 1
+
+
+def _quality_rank(item) -> tuple:
+    """How two items one rule allows compare (A126): a confirmed key first
+    (A124 — a wrong key is no measurement at all), then the item-flaw lint
+    (A113: clean, never linted, flagged), then the lowest question_hash."""
+    return (_verify_rank(item), lint_rank(item), item.question_hash)
+
+
+def _reserve_format_rank(fmt: str) -> int:
+    return POSTTEST_RESERVE_FORMATS.index(fmt) if fmt in POSTTEST_RESERVE_FORMATS else len(
+        POSTTEST_RESERVE_FORMATS
+    )
+
+
+def _parallel_rank(item, first) -> tuple:
+    """How close `item` is to the first reserve's shape — the second reserve
+    is its parallel form (A126): the same format and difficulty (a duplicate
+    cell — the pool allows it only when it holds more than one item there), else
+    the same difficulty in the next POSTTEST_RESERVE_FORMATS format, else the
+    same format at the nearest difficulty (the lower on a tie), else the nearest
+    difficulty in format order; then _quality_rank."""
+    same_d, same_f = item.difficulty == first.difficulty, item.format == first.format
+    level = 0 if same_d and same_f else 1 if same_d else 2 if same_f else 3
+    return (
+        level,
+        abs(item.difficulty - first.difficulty),
+        item.difficulty,
+        _reserve_format_rank(item.format),
+        *_quality_rank(item),
+    )
+
+
+def posttest_reserve_hashes(items: Iterable[CheckItem]) -> tuple[str, ...]:
+    """The concept's protected post-test items (A23, A126), in window order: up
+    to two question hashes, computed from the concept's bank at read time like
+    every A23 reserve before them — no stored status, nothing to migrate.
+
+    The FIRST is the A23 reserve: among servable (A34; never held, A124) items,
+    the `free` ones at CHECK_ITEM_DIFFICULTIES[1], else every servable one —
+    the best by _quality_rank (a confirmed key, then the lint tier, A113, then
+    the lowest hash). The SECOND is its parallel form (_parallel_rank: the same
+    cell when the pool has two items there, else the same difficulty in the
+    next format of POSTTEST_RESERVE_FORMATS, …), taken only when at least
+    POSTTEST_RESERVE_MIN_LEFT servable items remain beside both, so a small
+    bank keeps its one reserve and its practice. Probe, in-session checks,
+    review and the H4 siblings never serve either; the post-test does."""
+    servable: dict[str, CheckItem] = {}
+    for item in items:
+        if is_servable(item):
+            servable.setdefault(item.question_hash, item)
+    pool = list(servable.values())
     mid = CHECK_ITEM_DIFFICULTIES[1]
-    preferred = [i for i in items if i.format == "free" and i.difficulty == mid]
-    for pool in (preferred, items):
-        if pool:
-            best = min(lint_rank(i) for i in pool)
-            return min(i.question_hash for i in pool if lint_rank(i) == best)
-    return None
+    preferred = [i for i in pool if i.format == POSTTEST_RESERVE_FORMATS[0] and i.difficulty == mid]
+    candidates = preferred or pool
+    if not candidates:
+        return ()
+    first = min(candidates, key=_quality_rank)
+    rest = [i for i in pool if i.question_hash != first.question_hash]
+    if len(rest) - 1 < POSTTEST_RESERVE_MIN_LEFT:
+        return (first.question_hash,)
+    second = min(rest, key=lambda i: _parallel_rank(i, first))
+    return (first.question_hash, second.question_hash)
+
+
+def posttest_reserve_hash(items: Iterable[CheckItem]) -> str | None:
+    """The FIRST post-test reserve (posttest_reserve_hashes), or None."""
+    reserves = posttest_reserve_hashes(items)
+    return reserves[0] if reserves else None
+
+
+def posttest_reserves(items: Iterable[CheckItem]) -> frozenset[str]:
+    """Every protected post-test item of the concept (posttest_reserve_hashes) —
+    what probe, in-session checks, review and the H4 siblings exclude."""
+    return frozenset(posttest_reserve_hashes(items))
+
+
+# ── the outcome item a window poses (spec §13 A126) ─────────────────────────
+
+
+_MATCH_RANK = {"exact": 0, "difficulty": 1, "format": 2, "none": 3, "no_pretest": 3}
+assert set(_MATCH_RANK) == set(POSTTEST_ITEM_MATCHES)
+
+
+def pretest_match(item, pretest) -> str:
+    """How a post-test item compares with the student's pretest item (the
+    concept's FIRST graded item, the A112 anchor): `exact` (same format and
+    difficulty), `difficulty` (same difficulty only — the cognitive demand
+    matched, the response format not), `format` (same format only), `none`, or
+    `no_pretest` when there is no pretest item to compare with."""
+    if pretest is None:
+        return "no_pretest"
+    same_d, same_f = item.difficulty == pretest.difficulty, item.format == pretest.format
+    return "exact" if same_d and same_f else "difficulty" if same_d else "format" if same_f else "none"
+
+
+class PosttestChoice(NamedTuple):
+    item: CheckItem
+    match: str  # POSTTEST_ITEM_MATCHES: the item against the student's pretest item
+    source: str  # POSTTEST_ITEM_SOURCES: a protected reserve, or a fallback
+
+
+def choose_posttest_item(
+    items: Sequence[CheckItem],
+    excluded: Iterable[str],
+    *,
+    window_index: int,
+    pretest: CheckItem | None = None,
+) -> PosttestChoice | None:
+    """The item window `window_index` (its index in POSTTEST_WINDOWS_DAYS)
+    poses, and how it was chosen (A126). Never an item in `excluded` (seen,
+    revealed or reported: A23, A113) and never an unservable one (A34, A124).
+
+    1. A FRESH RESERVE (posttest_reserve_hashes) — protected from probe, check
+       and review, so whether it is still fresh never depends on how the
+       student did: the one that best matches the student's pretest item
+       (pretest_match: exact, then difficulty, then format, then neither),
+       then the window's own reserve (the first for the first window, the
+       second for the second), then reserve order. Every window has one while
+       both are fresh; the first window takes the better-matched one.
+    2. Else a FALLBACK — a fresh unprotected item — by the same match, then a
+       `free` item (A23's order), a confirmed key, the lint tier, the nearest
+       CHECK_ITEM_DIFFICULTIES[1], the lower difficulty and the lowest hash.
+       Its availability depends on what the student practised, which is why
+       the pose records the source and the match: an analysis can restrict
+       to reserve-sourced or matched outcomes.
+    None when nothing fresh and servable is left."""
+    excluded = set(excluded)
+    fresh = [i for i in items if is_servable(i) and i.question_hash not in excluded]
+    if not fresh:
+        return None
+    reserves = posttest_reserve_hashes(items)
+    own = reserves[window_index] if 0 <= window_index < len(reserves) else None
+    protected = [i for i in fresh if i.question_hash in reserves]
+    mid = CHECK_ITEM_DIFFICULTIES[1]
+    if protected:
+        chosen = min(
+            protected,
+            key=lambda i: (
+                _MATCH_RANK[pretest_match(i, pretest)],
+                0 if i.question_hash == own else 1,
+                reserves.index(i.question_hash),
+            ),
+        )
+        return PosttestChoice(chosen, pretest_match(chosen, pretest), "reserve")
+    chosen = min(
+        fresh,
+        key=lambda i: (
+            _MATCH_RANK[pretest_match(i, pretest)],
+            0 if i.format == "free" else 1,
+            _verify_rank(i),
+            lint_rank(i),
+            abs(i.difficulty - mid),
+            i.difficulty,
+            i.question_hash,
+        ),
+    )
+    return PosttestChoice(chosen, pretest_match(chosen, pretest), "fallback")
+
+
+def posttest_skip_reason(items: Iterable[CheckItem], *, exposed: Iterable[str]) -> str:
+    """Why a due window has nothing to pose (POSTTEST_SKIP_REASONS), given that
+    choose_posttest_item found nothing fresh: `no_items` when the concept has
+    no servable item at all; `exhausted` when every servable item is in
+    `exposed` (seen or revealed, A23); else `reported` — what is left is only
+    excluded because the student reported it (A113)."""
+    exposed = set(exposed)
+    servable = [i for i in items if is_servable(i)]
+    if not servable:
+        reason = "no_items"
+    elif all(i.question_hash in exposed for i in servable):
+        reason = "exhausted"
+    else:
+        reason = "reported"
+    assert reason in POSTTEST_SKIP_REASONS
+    return reason

@@ -658,11 +658,12 @@ def _learn_events(ns):
 
 
 def _reserves(full):
-    """PKG-04's A23 rule, one reserve per concept."""
-    from learning.checks import posttest_reserve_hash
+    """The concepts' protected post-test items: PKG-04's A23 reserve, and the
+    second one A126 adds when the bank is large enough."""
+    from learning.checks import posttest_reserves
 
     nodes = {it.node_id for it in full}
-    return {posttest_reserve_hash([it for it in full if it.node_id == n]) for n in nodes} - {None}
+    return {qh for n in nodes for qh in posttest_reserves([it for it in full if it.node_id == n])}
 
 
 def _probing(ns, *, current=None, history=None, skills=("A",), **probe):
@@ -830,6 +831,23 @@ def test_probe_next_never_serves_the_posttest_reserve(probe):
     assert len(practice) == len(reserves)
     assert not practice & (set(served) | reserves)
     assert len(served) == len(probe.full) - len(reserves) - len(practice)
+
+
+def test_probe_next_never_serves_either_posttest_reserve_of_a_full_bank(probe):
+    """A126: a full bank (one item per format × difficulty) protects TWO
+    post-test items — the A23 free/difficulty-2 reserve and its parallel form —
+    and the probe serves neither."""
+    from learning.checks import posttest_reserve_hashes
+
+    probe.full = [
+        _ci(f"A-{f}{d}", "A", fmt, d, f"h-A-{f}{d}")
+        for f, fmt in (("f", "free"), ("t", "teachback"), ("m", "mc_reason"))
+        for d in (1, 2, 3)
+    ]
+    reserves = posttest_reserve_hashes(probe.full)
+    assert reserves == ("h-A-f2", "h-A-m2")
+    served = _served_until_done(probe, len(probe.full))
+    assert served and not set(reserves) & set(served)
 
 
 def test_probe_next_never_serves_an_item_without_a_final_answer(probe):

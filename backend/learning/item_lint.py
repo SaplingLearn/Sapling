@@ -28,8 +28,8 @@ of the mc_reason yield in the A37 review). The flags are stored on
 check_items.lint_flags when an item is written
 (services/check_item_service.py) and by scripts/backfill_check_item_lint.py;
 the delayed post-test prefers items without them (learning/checks.py::
-posttest_reserve_hash, routes/learn_loop.py::posttest_item) and the admin
-review queue lists every flagged item.
+posttest_reserve_hashes and choose_posttest_item) and the admin review queue
+lists every flagged item.
 """
 
 from __future__ import annotations

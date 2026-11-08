@@ -108,6 +108,7 @@ def tables():
         "poses": {},  # (user, node, window) → pose row
         "claims": [],
         "evidence_since": [],  # A89: the node's evidence journaled after the pose
+        "skips": [],  # A126: the skip rows /posttest/start recorded
     }
 
     def _spans(user_id, course_id):  # the route keeps only its course's nodes itself
@@ -167,11 +168,15 @@ def tables():
         p["claim"] = claim
         return dict(p)
 
-    def _answer_pose(user_id, node_id, claim, now, *, correct, max_rung):
+    def _answer_pose(
+        user_id, node_id, claim, now, *, correct, max_rung, latency_s=None, hidden_count=None, hidden_s=None
+    ):
         for p in _node_poses(user_id, node_id):
             if p.get("claim") == claim and not p.get("answered_at"):
                 p["claim"], p["answered_at"] = None, now.isoformat()
                 p["correct"], p["max_rung"] = correct, max_rung
+                # A126: what the answer reports beside its outcome
+                p["answer_latency_s"], p["hidden_count"], p["hidden_s"] = latency_s, hidden_count, hidden_s
                 return True
         return False
 
@@ -188,6 +193,7 @@ def tables():
         patch("routes.learn_loop._course_nodes", side_effect=_nodes),
         patch("routes.learn_loop._read_poses", side_effect=_read),
         patch("routes.learn_loop._record_poses", side_effect=_record),
+        patch("routes.learn_loop._record_skips", side_effect=lambda rows: t["skips"].extend(rows)),
         patch("routes.learn_loop._claim_pose", side_effect=_claim),
         patch("routes.learn_loop._answer_pose", side_effect=_answer_pose),
         patch("routes.learn_loop._release_pose", side_effect=_release),
@@ -515,7 +521,10 @@ def test_an_open_pose_stays_posed_when_the_node_is_no_longer_due(
         (timedelta(days=W1), W1),  # it opens exactly at anchor + W1 days
         (timedelta(days=W2) - timedelta(seconds=1), W1),  # runs until the next one opens
         (timedelta(days=W2), W2),
-        (timedelta(days=10 * W2), W2),  # the last window stays open
+        # A126: the last window closes at its bound, never "stays open"
+        (timedelta(days=params.POSTTEST_LAST_WINDOW_CLOSE_DAYS) - timedelta(seconds=1), W2),
+        (timedelta(days=params.POSTTEST_LAST_WINDOW_CLOSE_DAYS), None),
+        (timedelta(days=10 * W2), None),
     ],
 )
 def test_the_window_is_counted_from_the_fixed_anchor(age, window):
@@ -1053,6 +1062,10 @@ def test_answer_release_and_record_poses():
         "claimed_at": None,
         "correct": True,  # A112: the outcome, in the write that closes the pose
         "max_rung": 0,
+        # A126: what the answer reports beside it (none here: unknown, never 0)
+        "answer_latency_s": None,
+        "hidden_count": None,
+        "hidden_s": None,
     }
     assert answered.kwargs["filters"]["claim"] == "eq.c-1"
     assert answered.kwargs["filters"]["answered_at"] == "is.null"  # m1: re-validated
@@ -1382,3 +1395,336 @@ def test_band_control_ceilings_never_reach_the_posttest(
     assert step["payload"]["ceiling"] == 0 and step["payload"]["ceiling_reason"] == "posttest"
     (call,) = applied
     assert call["graph_update"]["evidence"][0]["max_rung"] == 0
+
+
+# ══ spec §13 A126: matched outcome items, skips, the close, the telemetry ══
+
+CLOSE = params.POSTTEST_LAST_WINDOW_CLOSE_DAYS
+FMT = {"f": "free", "t": "teachback", "m": "mc_reason"}
+
+
+def _grid(key="k1"):
+    """A full bank: one item per (format, difficulty) — hashes 'f1' … 'm3'.
+    The reserves (checks.posttest_reserve_hashes) are f2, then m2."""
+    return [item(key, f"{f}{d}", FMT[f], d) for f in "ftm" for d in params.CHECK_ITEM_DIFFICULTIES]
+
+
+def _grid_concept(tables, *, pretest, first=OLD):
+    tables["spans"] = {"n1": EvidenceSpan("ev-anchor", first, first, pretest)}
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = _grid()
+
+
+def _start():
+    return client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+
+
+def test_the_reserves_are_matched_to_the_students_pretest_item(gate_on, tables, freeze_now, seen_revealed):
+    """The pretest was m1 (mc_reason, difficulty 1): of the two protected
+    reserves (f2, m2), m2 shares its format, so the first window poses it —
+    and the pose records the match and that the item was a reserve."""
+    freeze_now(NOW)
+    _grid_concept(tables, pretest="m1")
+    seen_revealed(seen={"m1"})
+    assert [i["question_hash"] for i in _start()] == ["m2"]
+    pose = tables["poses"][("u", "n1", W1)]
+    assert (pose["item_match"], pose["item_source"]) == ("format", "reserve")
+    assert pose["served_at"] is None and pose["answer_latency_s"] is None
+    assert pose["hidden_count"] is None and pose["hidden_s"] is None
+
+
+def test_without_a_pretest_item_each_window_takes_its_own_reserve(gate_on, tables, freeze_now, seen_revealed):
+    """No pretest to match (the anchor's item is not in the bank — a quiz
+    question, a retired item): the first window's reserve, then the second's."""
+    freeze_now(NOW)
+    _grid_concept(tables, pretest="quiz-question")
+    assert [i["question_hash"] for i in _start()] == ["f2"]
+    assert tables["poses"][("u", "n1", W1)]["item_match"] == "no_pretest"
+    tables["poses"][("u", "n1", W1)]["answered_at"] = FRESH.isoformat()
+    seen_revealed(seen={"f2"})
+    tables["spans"]["n1"] = EvidenceSpan("ev-anchor", NOW - timedelta(days=W2 + 1), FRESH, None)
+    assert [i["question_hash"] for i in _start()] == ["m2"]
+    second = tables["poses"][("u", "n1", W2)]
+    assert (second["item_match"], second["item_source"]) == ("no_pretest", "reserve")
+
+
+def test_with_no_fresh_reserve_a_fallback_is_posed_and_recorded(gate_on, tables, freeze_now, seen_revealed):
+    """Both reserves seen (an older student practised them before they were
+    protected): the fresh item nearest the pretest (m1 → difficulty 1, a free
+    item first) is posed, and the pose says it was a fallback."""
+    freeze_now(NOW)
+    _grid_concept(tables, pretest="m1")
+    seen_revealed(seen={"m1", "f2", "m2"})
+    assert [i["question_hash"] for i in _start()] == ["f1"]
+    pose = tables["poses"][("u", "n1", W1)]
+    assert (pose["item_match"], pose["item_source"]) == ("difficulty", "fallback")
+    assert tables["skips"] == []
+
+
+@pytest.mark.parametrize(
+    "bank,seen,reported_items,reason",
+    [
+        ([item("k1", "q1", final_answer=None)], set(), set(), "no_items"),  # nothing servable (A34)
+        ([], set(), set(), "no_items"),  # no item drafted for the concept
+        ([item("k1", "q1"), item("k1", "q2")], {"q1"}, set(), "exhausted"),  # q2 revealed below
+        ([item("k1", "q1"), item("k1", "q2")], {"q1"}, {"q2"}, "reported"),
+    ],
+)
+def test_a_due_window_with_nothing_fresh_is_skipped_with_its_reason(
+    gate_on, tables, freeze_now, seen_revealed, reported, bank, seen, reported_items, reason
+):
+    freeze_now(NOW)
+    _one_concept(tables, *bank)
+    seen_revealed(seen=seen, revealed=set() if reported_items else {"q2"})
+    reported.hashes.update(reported_items)
+    assert _start() == []
+    assert tables["poses"] == {}
+    (skip,) = tables["skips"]
+    assert skip == {
+        "user_id": "u",
+        "node_id": "n1",
+        "course_id": "c",
+        "window_days": W1,
+        "reason": reason,
+        "skipped_at": NOW.isoformat(),
+    }
+    assert reason in params.POSTTEST_SKIP_REASONS
+
+
+def test_the_skip_write_never_fails_the_start():
+    from routes import learn_loop
+
+    class _Down:
+        def upsert(self, *_a, **_kw):
+            raise RuntimeError("db down")
+
+    with patch("routes.learn_loop.table", return_value=_Down()):
+        learn_loop._record_skips([{"user_id": "u"}])  # logged, not raised
+    with patch("routes.learn_loop.table") as tbl:
+        learn_loop._record_skips([])
+    tbl.assert_not_called()
+
+
+def test_the_last_window_closes(gate_on, tables, freeze_now, seen_revealed):
+    """A126: no pose opens at or after the close; a concept whose last window
+    closed is neither posed nor skipped — and a pose opened before the close
+    is still returned within its TTL (A89), like any pose open across a
+    boundary (A112)."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"))
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=CLOSE))
+    assert _start() == [] and tables["poses"] == {} and tables["skips"] == []
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=CLOSE) + timedelta(minutes=1))
+    assert [i["question_hash"] for i in _start()] == ["q1"]
+    assert list(tables["poses"]) == [("u", "n1", W2)]
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=CLOSE, hours=2))  # closed since
+    assert [i["question_hash"] for i in _start()] == ["q1"]  # the open pose, as posed
+
+
+def test_the_answer_records_latency_and_clamped_visibility(gate_on, one_item, grader_says, applied):
+    """The latency is answered_at − served_at (the display /posttest/shown
+    stamped); the client's hidden seconds can never exceed it."""
+    grader_says(correct=True, confidence=0.9)
+    one_item["poses"][("u", "n1", W1)]["served_at"] = (NOW - timedelta(seconds=90)).isoformat()
+    r = client.post(
+        ANSWER, json=_answer(answer="its lexical scope", hidden_count=3, hidden_s=500.0)
+    )
+    assert r.status_code == 200, r.text
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answer_latency_s"] == pytest.approx(90.0)
+    assert (pose["hidden_count"], pose["hidden_s"]) == (3, pytest.approx(90.0))
+
+
+def test_without_a_display_stamp_the_latency_is_unknown_and_the_bound_is_the_pose(
+    gate_on, one_item, grader_says, applied
+):
+    grader_says(correct=True, confidence=0.9)
+    r = client.post(ANSWER, json=_answer(answer="its lexical scope", hidden_count=1, hidden_s=10**6))
+    assert r.status_code == 200
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answer_latency_s"] is None  # never posed_at standing in for the display
+    assert pose["hidden_s"] == pytest.approx(3600.0)  # bounded by posed_at (an hour ago)
+
+
+@pytest.mark.parametrize("telemetry", [{}, {"hidden_count": "lots", "hidden_s": {"x": 1}}, {"hidden_s": None}])
+def test_missing_or_malformed_telemetry_is_not_reported_and_never_a_422(
+    gate_on, one_item, grader_says, applied, telemetry
+):
+    grader_says(correct=True, confidence=0.9)
+    r = client.post(ANSWER, json=_answer(answer="its lexical scope", **telemetry))
+    assert r.status_code == 200, r.text
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["hidden_count"] is None and pose["hidden_s"] is None
+
+
+def test_visibility_never_reaches_the_grade(gate_on, one_item, grader_says, grader_calls, applied):
+    """The same answer with and without page-hidden telemetry writes the same
+    evidence and calls the grader with the same arguments."""
+    grader_says(correct=True, confidence=0.9)
+    assert client.post(ANSWER, json=_answer(answer="its lexical scope")).status_code == 200
+    pose = one_item["poses"][("u", "n1", W1)]
+    pose.update(answered_at=None, claim=None, correct=None, max_rung=None)  # posed again
+    hidden = _answer(answer="its lexical scope", hidden_count=9, hidden_s=120.0)
+    assert client.post(ANSWER, json=hidden).status_code == 200
+    first, second = applied
+    assert first["graph_update"] == second["graph_update"]
+
+    def _args(call):  # the request id differs per request; nothing else may
+        return {k: v for k, v in call.items() if k != "deps"}
+
+    assert _args(grader_calls[0]) == _args(grader_calls[1])
+    assert "hidden" not in repr(grader_calls[1])
+
+
+def test_shown_stamps_the_first_display_once():
+    """One conditional UPDATE of the OPEN pose of this item whose served_at is
+    still NULL (a reload keeps the first display)."""
+    from unittest.mock import MagicMock
+
+    from routes import learn_loop
+
+    handle = MagicMock()
+    handle.update.return_value = [{"node_id": "n1"}]
+    with patch("routes.learn_loop.table", return_value=handle) as tbl:
+        assert learn_loop._stamp_served("u", "n1", "q1", NOW) is True
+    tbl.assert_called_with("posttest_poses")
+    data = handle.update.call_args.args[0]
+    filters = handle.update.call_args.kwargs["filters"]
+    assert data == {"served_at": NOW.isoformat()}
+    assert filters["served_at"] == "is.null" and filters["answered_at"] == "is.null"
+    assert filters["question_hash"] == "eq.q1" and filters["node_id"] == "eq.n1"
+    ttl = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS)
+    assert filters["posed_at"] == f"gte.{learn_loop._iso_z(ttl)}"
+    handle.update.return_value = []
+    with patch("routes.learn_loop.table", return_value=handle):
+        assert learn_loop._stamp_served("u", "n1", "q1", NOW) is False
+
+
+def test_the_shown_route_stamps_and_never_fails_the_student(gate_on, freeze_now):
+    freeze_now(NOW)
+    body = {"user_id": "u", "node_id": "n1", "question_hash": "q1"}
+    with patch("routes.learn_loop._stamp_served", return_value=True) as stamp:
+        r = client.post("/api/learn/loop/posttest/shown", json=body)
+    assert r.status_code == 200 and r.json() == {"served": True}
+    stamp.assert_called_once_with("u", "n1", "q1", NOW)
+    with patch("routes.learn_loop._stamp_served", side_effect=RuntimeError("down")):
+        r = client.post("/api/learn/loop/posttest/shown", json=body)
+    assert r.status_code == 200 and r.json() == {"served": False}
+    r = client.post("/api/learn/loop/posttest/shown", json={**body, "extra": 1})
+    assert r.status_code == 422  # extra="forbid"
+
+
+def test_the_shown_route_is_gated(gate_off):
+    r = client.post(
+        "/api/learn/loop/posttest/shown", json={"user_id": "u", "node_id": "n1", "question_hash": "q1"}
+    )
+    assert r.status_code == 404
+
+
+# ── "a retention check is due" (GET /posttest/due) ───────────────────────────
+
+DUE = "/api/learn/loop/posttest/due?user_id=u"
+
+
+@pytest.fixture
+def due_reads(tables):
+    """The badge's reads, served from the same tables: the anchors function
+    (one row per node with evidence) and the student's poses (every course)."""
+    calls = {"anchors": 0}
+
+    def _anchors(*, user_id=None, **_kw):
+        calls["anchors"] += 1
+        nodes = {r["id"]: r for r in tables["graph_nodes"]}
+        rows = [
+            {
+                "node_id": node,
+                "user_id": "u",
+                "course_id": nodes[node]["course_id"],
+                "concept_name": nodes[node]["concept_name"],
+                "anchor_at": span.first_at.isoformat(),
+            }
+            for node, span in tables["spans"].items()
+            if node in nodes and user_id == "u"
+        ]
+        return rows, False
+
+    def _poses(user_id):
+        out: dict = {}
+        for (u, n, w), p in tables["poses"].items():
+            if u == user_id:
+                out.setdefault(n, {})[w] = dict(p)
+        return out
+
+    with (
+        patch("routes.learn_loop.flag_on", return_value=True) as flag,
+        patch("routes.learn_loop.posttest_anchors", side_effect=_anchors),
+        patch("routes.learn_loop._read_student_poses", side_effect=_poses),
+    ):
+        yield SimpleNamespace(calls=calls, flag=flag)
+
+
+def test_due_is_404_while_the_flag_is_off(gate_on, tables, due_reads):
+    due_reads.flag.return_value = False
+    assert client.get(DUE).status_code == 404
+    assert due_reads.calls["anchors"] == 0
+    due_reads.flag.assert_called_with("retention_due_badge", "u")
+
+
+def test_due_is_404_with_the_loop_off(gate_off, tables, due_reads):
+    assert client.get(DUE).status_code == 404
+
+
+def test_due_says_yes_for_an_open_window_with_an_item(gate_on, tables, freeze_now, seen_revealed, due_reads):
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"))
+    r = client.get(DUE)
+    assert r.status_code == 200 and r.json() == {"due": True, "course_ids": ["c"]}
+    assert tables["poses"] == {} and tables["skips"] == []  # read-only: no pose, no skip
+
+
+def test_nothing_due_reads_no_items(gate_on, tables, freeze_now, seen_revealed, due_reads):
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"))
+    tables["spans"] = _due("n1", first=FRESH)  # the first window has not opened
+    with patch("routes.learn_loop.items_for_concepts") as items:
+        assert client.get(DUE).json() == {"due": False, "course_ids": []}
+    items.assert_not_called()  # the cheap path: anchors + poses only
+
+
+def test_due_says_no_when_the_window_has_nothing_fresh(gate_on, tables, freeze_now, seen_revealed, due_reads):
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"))
+    seen_revealed(seen={"q1"})
+    assert client.get(DUE).json() == {"due": False, "course_ids": []}
+
+
+def test_an_open_pose_is_due_even_outside_a_window(gate_on, tables, freeze_now, seen_revealed, due_reads):
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"))
+    tables["spans"] = _due("n1", first=FRESH)
+    _pose(tables)  # posed an hour ago, still open
+    assert client.get(DUE).json() == {"due": True, "course_ids": ["c"]}
+
+
+def test_due_is_cached_and_the_post_test_routes_clear_it(
+    gate_on, tables, freeze_now, seen_revealed, due_reads
+):
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"))
+    assert client.get(DUE).json()["due"] is True
+    assert client.get(DUE).json()["due"] is True
+    assert due_reads.calls["anchors"] == 1  # the second read is the cache
+    _start()  # opens the pose: the student's entry is dropped
+    assert client.get(DUE).json()["due"] is True  # the open pose
+    assert due_reads.calls["anchors"] == 2
+
+
+def test_an_unreadable_due_state_is_a_503_never_a_cached_no(gate_on, tables, freeze_now, due_reads):
+    freeze_now(NOW)
+    with patch("routes.learn_loop.posttest_anchors", side_effect=RuntimeError("no function")):
+        assert client.get(DUE).status_code == 503
+    _one_concept(tables, item("k1", "q1"))
+    with patch("routes.learn_loop.seen_hashes", return_value=set()), patch(
+        "routes.learn_loop.revealed_hashes", return_value=set()
+    ):
+        assert client.get(DUE).json()["due"] is True  # nothing was cached by the failure

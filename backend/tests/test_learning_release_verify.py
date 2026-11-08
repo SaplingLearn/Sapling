@@ -300,7 +300,7 @@ def test_evidence_touch_fence_is_nullable_and_has_no_synthetic_default(nullable,
 
 
 #: the learning-loop wave-2 migrations that add tables or columns (spec §13
-#: A112, A113, A119, A123, A124, A127, A128). Extend this when a learning migration adds one.
+#: A112, A113, A119, A123, A124, A126, A127, A128). Extend this when a learning migration adds one.
 _LEARNING_SCHEMA_MIGRATIONS = (
     "20261108041639_learning_item_quality.sql",  # A113
     "20261108041742_learning_posttest_windows.sql",  # A112
@@ -309,6 +309,7 @@ _LEARNING_SCHEMA_MIGRATIONS = (
     "20261108073631_learning_item_keys.sql",  # A124
     "20261108091912_learning_document_drafting.sql",  # A128
     "20261108092032_learning_student_confidence.sql",  # A127
+    "20261108093359_learning_posttest_outcomes.sql",  # A126
 )
 #: SQL type -> information_schema.columns.data_type (an array column reads ARRAY)
 _DATA_TYPE = {
@@ -354,8 +355,9 @@ def test_every_column_the_learning_wave2_migrations_add_is_required():
     # 22 for A123 (learning_evidence_voids 11, misconception_attempts 6, five columns
     # on node_mastery_events, check_item_reviews and misconceptions), 2 for A128
     # (documents.check_items_status / check_items_at), 1 for A127
-    # (node_mastery_events.student_confidence)
-    assert len(introduced) == 57
+    # (node_mastery_events.student_confidence), 12 for A126 (6 pose columns and
+    # the 6-column posttest_skips table)
+    assert len(introduced) == 69
     assert ("node_mastery_events", "student_confidence", "double precision") in introduced
     required = {
         (table, column, kind)

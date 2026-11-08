@@ -1,3 +1,4 @@
+import math
 import re
 from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -86,13 +87,41 @@ class PosttestStartBody(BaseModel):
 
 class PosttestAnswerBody(BaseModel):
     """PKG-14 /api/learn/loop/posttest/answer — one post-test answer, graded
-    through grade_answer with the ceiling forced to H0 (A16, A33 length bound)."""
+    through grade_answer with the ceiling forced to H0 (A16, A33 length bound).
+    Spec §13 A126: `hidden_count` / `hidden_s` are the client's page-hidden
+    telemetry for the item (hidden periods, total hidden seconds) — untrusted:
+    anything that is not a finite number reads as not reported, never a 422,
+    and the route clamps the rest (learning_gain.clamp_visibility). The grade
+    never reads them."""
     node_id: str
     question_hash: str
     answer: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
     selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
     reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
     idk: bool = False
+    user_id: str = ""
+    hidden_count: Optional[float] = None
+    hidden_s: Optional[float] = None
+
+    @field_validator("hidden_count", "hidden_s", mode="before")
+    @classmethod
+    def _telemetry_or_none(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        try:
+            value = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+
+class PosttestShownBody(BaseModel):
+    """Spec §13 A126 /api/learn/loop/posttest/shown — the client shows an open
+    post-test item; the server stamps its first display (served_at)."""
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(..., min_length=1, max_length=128)
+    question_hash: str = Field(..., min_length=1, max_length=128)
     user_id: str = ""
 
 

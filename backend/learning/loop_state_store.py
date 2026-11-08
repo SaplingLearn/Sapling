@@ -280,6 +280,9 @@ class EvidenceSpan(NamedTuple):
     first_id: str  # node_mastery_events.id of the FIRST evidence row: the post-test anchor
     first_at: datetime  # its time; the journal is append-only, so practice never moves it
     last_at: datetime  # the latest evidence time (what a pose's delay is measured from)
+    # A126: the anchor row's question_hash — the concept's first graded item, the
+    # pretest a post-test item is matched to; None when the row names none
+    first_hash: str | None = None
 
 
 def _journal_time(raw) -> datetime:
@@ -305,7 +308,7 @@ def evidence_spans(user_id: str, course_id: str) -> dict[str, EvidenceSpan]:
     spans: dict[str, EvidenceSpan] = {}
     for row in page_all(
         _MasteryEventsRead(),
-        "id,node_id,created_at,evidence_seq,graph_nodes!inner(user_id,course_id)",
+        "id,node_id,created_at,evidence_seq,question_hash,graph_nodes!inner(user_id,course_id)",
         filters={
             "graph_nodes.user_id": f"eq.{user_id}",
             "graph_nodes.course_id": f"eq.{course_id}",
@@ -319,7 +322,8 @@ def evidence_spans(user_id: str, course_id: str) -> dict[str, EvidenceSpan]:
         at = _journal_time(row.get("created_at"))
         span = spans.get(node)
         if span is None:
-            spans[node] = EvidenceSpan(str(row["id"]), at, at)
+            qh = row.get("question_hash")
+            spans[node] = EvidenceSpan(str(row["id"]), at, at, qh if isinstance(qh, str) and qh else None)
         elif at > span.last_at:
             spans[node] = span._replace(last_at=at)
     return spans

@@ -170,7 +170,7 @@ def _no_review_history(monkeypatch):
     real = {name: getattr(review, name) for name in ("seen_hashes", "revealed_hashes")}
     monkeypatch.setattr(review, "seen_hashes", lambda user_id: set(), raising=False)
     monkeypatch.setattr(review, "revealed_hashes", lambda user_id: set(), raising=False)
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None, raising=False)
+    monkeypatch.setattr(review, "posttest_reserves", lambda items: frozenset(), raising=False)
     return real
 
 
@@ -603,7 +603,7 @@ def test_due_queue_excludes_seen_revealed_and_reserve_then_falls_back(monkeypatc
         for h in ("qh-reserve", "qh-seen", "qh-revealed", "qh-served", "qh-fresh")
     ]
     monkeypatch.setattr(review, "list_items", lambda course_id, concept_key, **kw: list(pool))
-    monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: "qh-reserve")
+    monkeypatch.setattr(review, "posttest_reserves", lambda items: frozenset({"qh-reserve"}))
     history_reads = []
     monkeypatch.setattr(
         review, "seen_hashes", lambda user_id: history_reads.append("seen") or {"qh-seen"}
@@ -1731,7 +1731,7 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(_no_review_history):
     with pytest.MonkeyPatch.context() as mp:
         for name, real in _no_review_history.items():  # the real A23 readers, not the stubs
             mp.setattr(review, name, real)
-        mp.setattr(review, "posttest_reserve_hash", lambda items: None)
+        mp.setattr(review, "posttest_reserves", lambda items: frozenset())
         mp.setattr(loop_state_store, "seen_hashes", lambda uid: reads.append("seen") or {"q-seen"})
         mp.setattr(loop_state_store, "revealed_hashes", lambda uid: reads.append("rev") or {"q-rev"})
         mp.setattr(loop_state_store, "reported_hashes", lambda uid: reads.append("rep") or {"q-rep"})
