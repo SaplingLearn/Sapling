@@ -190,6 +190,10 @@ learn.check_item_retired      audit     course_id, question_hash, decided_by (ad
 learn.check_item_approved     audit     course_id, question_hash, restored — an admin cleared
                                         a flagged, reported or held check item (A113; restored:
                                         a held one is served again, A123/A124)
+learn.multi_concept_served    usage     course_id, question_hash, components (2 or 3), format,
+                                        session_id — a loop check posed a multi-concept item
+                                        (spec §13 A141, flag multi_concept_items); ids, a
+                                        count and an enum only
 review.session_started        usage     session_id, offering_id (a daily review session row; never
                                         session.started — it is not a tutor session)
 review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
@@ -381,6 +385,11 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "learn.check_item_quarantined",
     "learn.check_item_retired",
     "learn.check_item_approved",
+    # Learning loop spec §13 A141 (flag multi_concept_items): a loop check posed
+    # a multi-concept item — the admin report's "served". category="usage".
+    # Payload: course_id, question_hash (a sha256), components (a count),
+    # format and session_id. Never item text.
+    "learn.multi_concept_served",
     # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
     # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
     # the loop tutor. Payloads are ids/counts/enums — the question_hash is a

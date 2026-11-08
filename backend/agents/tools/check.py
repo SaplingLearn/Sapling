@@ -361,6 +361,7 @@ async def grade_answer(
     max_rung: int = 0,
     same_session_recheck: bool = False,
     confront: bool = True,
+    multi_concept: bool = False,
 ) -> GradeOutcome:
     """Grade one explicit submission and append its Evidence to deps.pending_evidence.
 
@@ -376,6 +377,9 @@ async def grade_answer(
     `answer.confidence` (spec §13 A127) rides the Evidence as
     `student_confidence` (the journal column, never a weight) and the attempt
     the §3.3 rule reads; none is stated for an idk.
+    `multi_concept` (spec §13 A141): `item` is a multi-concept item and
+    `node_id` its apex concept's node; the Evidence carries the flag, so its
+    weight is WEIGHT_MULTI_CONCEPT's partial observation.
     """
     if not deps.learning_loop:
         return GradeOutcome(unavailable=True)
@@ -391,6 +395,8 @@ async def grade_answer(
         same_session_recheck=same_session_recheck,
         student_confidence=stated_confidence(answer.confidence, idk=answer.idk),
     )
+    if multi_concept:  # A141: set only then, so every other dict is as before
+        base["multi_concept"] = True
 
     answer_text = grader_answer_text(item, answer)  # PKG-10: the wrong-reason match
 

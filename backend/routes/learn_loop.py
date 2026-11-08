@@ -110,6 +110,8 @@ from learning.checks import (
     serve_quality,
 )
 from learning.checks import unsourced as item_unsourced
+from learning.multi_concept import STEP_KEY as MULTI_CONCEPT_STEP_KEY  # spec §13 A141
+from learning.multi_concept import evidence_key, is_multi_concept
 from learning.evidence import (
     PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
 )
@@ -173,6 +175,7 @@ from learning.params import (
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
+    SURFACE_FAMILIARITY_UNKNOWN,
     CHECK_ITEM_DIFFICULTIES,  # A122's band difficulty targets (A126 dropped its own use)
     CHECK_ITEM_FORMATS,
     CHECK_REFUSALS_AS_IDK,
@@ -283,6 +286,7 @@ from services.check_item_service import (
     list_items,
 )
 from services.feature_flags import flag_on
+from services import varied_practice  # spec §13 A140, A141
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
 from services.prompt_safety import neutralise_control_tags, wrap_untrusted
@@ -792,7 +796,10 @@ def _load_loop_history(
 def _node_for_item(user_id: str, item) -> str | None:
     """The student's graph node for a course-asset item (A2): the user's
     `graph_nodes` row in the item's course whose normalised concept name is the
-    item's `concept_key`. None when the student has never met the concept."""
+    item's `concept_key` — for a multi-concept item (spec §13 A141) its APEX
+    concept's, where its evidence goes. None when the student has never met
+    the concept."""
+    key = evidence_key(item)
     rows = (
         table("graph_nodes").select(
             "id,concept_name",
@@ -801,7 +808,7 @@ def _node_for_item(user_id: str, item) -> str | None:
         or []
     )
     for row in rows:
-        if _normalize_concept(row.get("concept_name") or "") == item.concept_key:
+        if _normalize_concept(row.get("concept_name") or "") == key:
             return row.get("id")
     return None
 
@@ -2598,6 +2605,7 @@ class _LoopTurn:
             check = _pose_payload(item, worked_first=owed) if item is not None else None
             if item is not None:  # A93: posed — in the scan set until graded
                 _ledger(record_posed, self.user_id, item.question_hash, source="loop", session_id=self.session_id)
+                varied_practice.note_posed(self.user_id, self.session_id, item)  # A141
         if self.persist_user_row:
             save_message(self.session_id, "user", self.message)
         save_message(self.session_id, "assistant", reply, merged or None)
@@ -3386,12 +3394,16 @@ def plan_focus(state: dict) -> tuple[str, str] | None:
     return concept, moved if moved in _MOVE_REASONS else "plan_order"
 
 
-def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set):
+def _isomorph_after_unknown(
+    state: dict, node_id: str, items: list, exclude: set, *, familiarity: dict | None = None
+):
     """PKG-10 (spec §3.3 "unknown → re-ask an isomorph"; §13 A27): when the
     session's last attempt on this concept was `unknown`, the isomorph of that
     attempt's item (policy.next_isomorph) among the site's own candidates —
     everything `exclude` leaves (seen, revealed, session hashes, the post-test
-    reserve; A23), servable only (A34) — else None (the normal pick)."""
+    reserve; A23), servable only (A34) — else None (the normal pick).
+    `familiarity` (spec §13 A140, varied_isomorphs on): among isomorphs of
+    equal quality, the one whose surface the student has met least first."""
     tail = attempts_for_node(attempts_of(state), node_id)
     if not tail or slip_or_misconception(tail) != "unknown":
         return None
@@ -3402,10 +3414,21 @@ def _isomorph_after_unknown(state: dict, node_id: str, items: list, exclude: set
     # order — every isomorph is equal under its rule (same concept, format and
     # difficulty) — so the candidates go best-first by serve_quality; ties keep
     # the bank's (created_at, id) order (a stable sort)
-    candidates = sorted(
-        (i for i in items if i.question_hash not in exclude and is_servable(i)), key=serve_quality
+    candidates = (i for i in items if i.question_hash not in exclude and is_servable(i))
+    if familiarity is None:
+        return policy.next_isomorph(last, sorted(candidates, key=serve_quality))
+    # spec §13 A140: then the least familiar surface (the re-ask's "different
+    # surface", §3.3, read off the stored descriptors)
+    return policy.next_isomorph(
+        last,
+        sorted(
+            candidates,
+            key=lambda i: (
+                *serve_quality(i),
+                familiarity.get(i.question_hash, SURFACE_FAMILIARITY_UNKNOWN),
+            ),
+        ),
     )
-    return policy.next_isomorph(last, candidates)
 
 
 def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float) -> str | None:
@@ -3432,6 +3455,9 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
         if state.get("goal"):
             raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
         raise
+    # spec §13 A140 / A141: the student's two varied-practice dials, read once
+    # per activation; both off → every pick below is exactly the plain one
+    varied, combos = varied_practice.varied_on(user_id), varied_practice.multi_concept_on(user_id)
     while True:
         item = None
         try:
@@ -3442,17 +3468,33 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
             raise
         learner = None
         if items:
-            item = _isomorph_after_unknown(state, concept, items, exclude)
+            # A140: how familiar each item's surface is to the student on this
+            # concept (met = seen, revealed, reported, posed this session)
+            familiarity = (
+                varied_practice.familiarity_for(course_id, items[0].concept_key, excluded)
+                if varied
+                else None
+            )
+            item = _isomorph_after_unknown(state, concept, items, exclude, familiarity=familiarity)
             learner = _learner_state(user_id, concept)
             band, _ = _band_of(learner)
             rotation = int(state.get("concept_checks") or 0) % len(CHECK_ITEM_FORMATS)
             formats = CHECK_ITEM_FORMATS[rotation:] + CHECK_ITEM_FORMATS[:rotation]
+            target = _target_difficulty(state, concept, band)
+            if item is None and combos:
+                # A141: the ideas-combined dial — a multi-concept item whose
+                # apex is this concept, when its gate and the session dial allow
+                item = varied_practice.multi_concept_pick(
+                    user_id, course_id, state, concept, items[0].concept_key,
+                    target=target, formats=formats, excluded=excluded,
+                )
             for fmt in formats if item is None else ():
                 item = select_item(
                     items,
                     format=fmt,
-                    difficulty=_target_difficulty(state, concept, band),
+                    difficulty=target,
                     exclude_hashes=exclude,
+                    familiarity=familiarity,
                 )
                 if item is not None:
                     break
@@ -3470,6 +3512,9 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
                 # the H6 predicate (spec §3.3, A32): taught earlier in this session
                 "taught": bool(state.get("teach_turns") or state.get("concept_checks")),
             }
+            if is_multi_concept(item):
+                # A141: counted by the session dial (one per concept a session)
+                step[MULTI_CONCEPT_STEP_KEY] = True
             # spec §13 A122: a novice without the prerequisite (policy.attempt_first
             # says no) gets the worked example FIRST on the concept's first item of
             # the session; the item after it is the near-transfer, attempted
@@ -4178,6 +4223,9 @@ async def _grade_submission(
     claim = str(uuid.uuid4())
     _claim_grading(body.session_id, qh, claim, now)
     checkpointed = False
+    # spec §13 A141: a multi-concept item's answer is a partial observation on
+    # its apex (node_id above); the keyword is passed only for one
+    combo = {"multi_concept": True} if is_multi_concept(item) else {}
     answer = CheckAnswer(
         question_hash=qh,
         answer_text=body.answer,
@@ -4195,6 +4243,7 @@ async def _grade_submission(
             node_id=node_id,
             max_rung=rung,
             same_session_recheck=recheck,
+            **combo,
         )
         refused = bool(outcome.refused)
         if refused:  # A33, read BEFORE `unavailable`: not an outage, never a genuine attempt
@@ -4226,6 +4275,7 @@ async def _grade_submission(
                 node_id=node_id,
                 max_rung=rung,
                 same_session_recheck=recheck,
+                **combo,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome; the item stays open
 
@@ -6228,6 +6278,7 @@ def check_next(body: LoopCheckNextBody, request: Request) -> dict:
     # A122: an item that opens on the worked example says so (the client asks for it)
     pose = _pose_payload(item, worked_first=_worked_example_owed(body.user_id, saved, qh))
     _ledger(record_posed, body.user_id, qh, source="loop", session_id=body.session_id)  # A93
+    varied_practice.note_posed(body.user_id, body.session_id, item)  # A141
     save_message(body.session_id, "assistant", pose["prompt"])
     return {"phase": "check", "check": pose}
 
@@ -7880,6 +7931,8 @@ def review_next(
         now,
         loop_state=loop_state,
         pause_novice=lambda: _pause_novice(user_id),
+        # spec §13 A140: passed only when on, so a flag-off build is the plain one
+        **({"varied": True} if varied_practice.varied_on(user_id) else {}),
     )
     # the item already open for its key first: a refresh never moves on
     ordered = sorted(queue, key=lambda i: not review.is_open(loop_state, i, now))
@@ -7982,6 +8035,8 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             confidence=body.confidence,  # spec §13 A127 (a check's; a flashcard body has none)
             deps=deps,
             claim=claim,
+            # spec §13 A140: the interleave's anchor records the graded difficulty
+            **({"varied": True} if varied_practice.varied_on(body.user_id) else {}),
             # A88/A93: an item with recorded help anywhere has no unassisted credit
             max_rung=(review_floor := (
                 _reveal_floor(body.user_id, check, _review_posed_at(loop_state, item))

@@ -20,6 +20,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -35,6 +36,7 @@ from learning.params import (
     STUDENT_CONFIDENCE_LEVELS,
     WEIGHT_ASSISTED,
     WEIGHT_LOW_CONFIDENCE,
+    WEIGHT_MULTI_CONCEPT,
     WEIGHT_SAME_SESSION_RECHECK,
 )
 
@@ -170,6 +172,12 @@ class Evidence(BaseModel):
     # A132 (learning/quiz_evidence.py).
     student_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     same_session_recheck: bool = False
+    # Spec §13 A141: the observation is a multi-concept item's, recorded on its
+    # apex concept — evidence_weight applies WEIGHT_MULTI_CONCEPT. No column
+    # journals it: the journal keeps the derived weight (as for every factor),
+    # and the item's row says what it combines. Absent from the fingerprint
+    # when False (learning.evidence_transaction._semantic).
+    multi_concept: bool = False
     grader_backend: GraderBackend | None = None  # A22 provenance; PKG-05 reopen of PKG-03
     # PKG-10 reopen of PKG-03 (spec §5): the rule's verdict (None when it did not
     # run) and the key the student's reason matched (A22). No column journals
@@ -225,6 +233,17 @@ class Evidence(BaseModel):
             raise ValueError("planning provenance does not bind this check item")
         return self
 
+    @model_serializer(mode="wrap")
+    def _dump(self, handler):
+        """Spec §13 A141: `multi_concept` is dumped only when set, so every
+        other observation's dict — the pending evidence a grade checkpoint
+        seals, its fingerprint, its receipt — is exactly what it was before
+        the field existed (an older sealed checkpoint reads False)."""
+        data = handler(self)
+        if isinstance(data, dict) and not self.multi_concept:
+            data.pop("multi_concept", None)
+        return data
+
 
 def planning_observation(ev: Evidence) -> dict | None:
     """Derive from final Evidence, after refloor and writer-forced rechecks."""
@@ -266,6 +285,9 @@ def evidence_weight(ev: Evidence) -> float:
     apply_graph_update then leaves p_known untouched and lets FSRS record
     the Again rating. A wrong answer (idk included) at any rung is a standard
     incorrect observation: WEIGHT_ASSISTED applies to correct answers only.
+    A multi-concept item's observation on its apex (spec §13 A141) is a
+    partial one either way: WEIGHT_MULTI_CONCEPT for a correct and a wrong
+    answer alike.
     """
     if ev.correct and ev.max_rung >= RUNG_NO_CREDIT_MIN:
         return 0.0
@@ -276,6 +298,8 @@ def evidence_weight(ev: Evidence) -> float:
         w *= WEIGHT_SAME_SESSION_RECHECK
     if ev.confidence is not None and ev.confidence < GRADER_LOW_CONFIDENCE:
         w *= WEIGHT_LOW_CONFIDENCE
+    if ev.multi_concept:
+        w *= WEIGHT_MULTI_CONCEPT
     return w
 
 

@@ -79,6 +79,7 @@ from learning.misconceptions import (  # PKG-10 (A76, A114); A127's resolution
 from learning.params import (
     EDGE_PREREQ_SOURCE_IS_PREREQ,
     FSRS_S0_GOOD,
+    INTERLEAVE_DEFINITIONAL_DIFFICULTY,
     LOOP_GRADING_CLAIM_STALE_S,
     REVIEW_DAILY_BUDGET_MIN,
     REVIEW_DIFFICULTY_BY_BAND,
@@ -92,6 +93,7 @@ from learning.params import (
 from services.academics import resolve_offering, user_offering_ids_for_course
 from services.achievement_service import check_achievements
 from services.check_item_service import list_items
+from services.varied_practice import familiarity_for  # spec §13 A140
 from services.encryption import decrypt_if_present
 from services.events_service import log_event
 from services.exam_proximity import days_until_next_exam
@@ -456,15 +458,27 @@ def _formats_for(band_name: str) -> list[str]:
     return [primary, *sorted(set(REVIEW_FORMAT_BY_BAND.values()) - {primary})]
 
 
-def _pick_item(pool, band_name: str, strict: set[str], fallback: set[str]):
+def _pick_item(
+    pool, band_name: str, strict: set[str], fallback: set[str], familiarity: dict | None = None
+):
     """Rule 1 / A23: the strict exclusions in every format first; only when
     that finds nothing, the fallback exclusions. select_item itself falls back
     to the nearest difficulty and never returns an item without a final answer
-    (A34)."""
+    (A34). `familiarity` (spec §13 A140, varied_isomorphs on): select_item's
+    cue-familiarity tie-break, after its difficulty and quality keys."""
     difficulty = REVIEW_DIFFICULTY_BY_BAND[band_name]
     for exclude in (strict, fallback):
         for fmt in _formats_for(band_name):
-            item = select_item(pool, format=fmt, difficulty=difficulty, exclude_hashes=exclude)
+            if familiarity is None:
+                item = select_item(pool, format=fmt, difficulty=difficulty, exclude_hashes=exclude)
+            else:
+                item = select_item(
+                    pool,
+                    format=fmt,
+                    difficulty=difficulty,
+                    exclude_hashes=exclude,
+                    familiarity=familiarity,
+                )
             if item is not None:
                 return item
     return None
@@ -569,13 +583,17 @@ class _Selector:
     seen/revealed/reported reads happen once, on the first concept that needs an
     item."""
 
-    def __init__(self, user_id: str, served_today: set[str], opened: dict[str, str]):
+    def __init__(
+        self, user_id: str, served_today: set[str], opened: dict[str, str], *, varied: bool = False
+    ):
         self.user_id, self.served_today, self.opened = user_id, served_today, opened
+        self.varied = varied  # spec §13 A140: the cue-familiarity dial for this student
         self.history: dict[str, set[str]] = {}
 
     def item(self, c: _Concept, now: datetime) -> ReviewItem | None:
         node = c.node
-        pool = list_items(node["course_id"], _normalize_concept(node.get("concept_name") or ""))
+        key = _normalize_concept(node.get("concept_name") or "")
+        pool = list_items(node["course_id"], key)
         if not self.history:
             self.history["seen"] = set(seen_hashes(self.user_id))
             self.history["revealed"] = set(revealed_hashes(self.user_id))
@@ -600,7 +618,13 @@ class _Selector:
             # one; A23/A126: so are both post-test reserves
             fallback = self.history["revealed"] | reported | posttest_reserves(pool)
             strict = self.served_today | self.history["seen"] | fallback
-            chosen = _pick_item(pool, c.band, strict, fallback)
+            familiarity = None
+            if self.varied:
+                # A140: the surfaces this student has met on the concept —
+                # served today, seen, revealed, reported (never a reserve)
+                met = self.served_today | answered_elsewhere
+                familiarity = familiarity_for(node["course_id"], key, met)
+            chosen = _pick_item(pool, c.band, strict, fallback, familiarity)
         if chosen is None:
             return None
         streak = c.row.get("streak_unassisted") or 0
@@ -679,18 +703,35 @@ def _last_graded(loop_state: dict | None) -> dict:
     return last if ok else {}
 
 
+def _definitional(difficulty) -> bool:
+    """Spec §13 A140 × A114: a recall-or-definition check item (the drafter's
+    rubric: difficulty 1)."""
+    return difficulty == INTERLEAVE_DEFINITIONAL_DIFFICULTY
+
+
 def _interleaved(
-    user_id: str, queue: list[ReviewItem], loop_state: dict | None
+    user_id: str, queue: list[ReviewItem], loop_state: dict | None, *, varied: bool = False
 ) -> list[ReviewItem]:
     """A114: the budgeted DASH queue in serve order (`interleave.serve_order`),
     anchored on the item this session graded last, so the order survives the
     per-request rebuild. The confusable relation (`interleave.confusable_partners`)
     costs one graph_edges and one misconceptions read, made only when two
-    concepts could pair; the set never changes."""
+    concepts could pair; the set never changes.
+
+    `varied` (spec §13 A140, varied_isomorphs on): a definitional check item —
+    recall or definition, INTERLEAVE_DEFINITIONAL_DIFFICULTY — is treated as
+    flashcards always were: it is never pulled forward as a partner and never
+    anchors one (the last graded item's difficulty rides `last_graded`). Off:
+    exactly the A114 order."""
     last = _last_graded(loop_state)
     previous = last.get("key")
-    courses = {i.node_id: i.course_id for i in queue if i.kind == "check" and i.node_id}
-    if previous and not previous.startswith(_FLASHCARD_KEY_PREFIX):
+    courses = {
+        i.node_id: i.course_id
+        for i in queue
+        if i.kind == "check" and i.node_id and not (varied and _definitional(i.difficulty))
+    }
+    anchors = not (varied and _definitional(last.get("difficulty")))
+    if previous and not previous.startswith(_FLASHCARD_KEY_PREFIX) and anchors:
         courses.setdefault(previous, last.get("course_id"))
     partners: dict[str, frozenset[str]] = {}
     if len(queue) > 1 and len(courses) > 1:
@@ -721,6 +762,7 @@ def due_queue_with_stats(
     loop_state: dict | None = None,
     pause_novice: bool | Callable[[], bool] = False,
     interleave: bool = True,
+    varied: bool = False,
 ) -> tuple[list[ReviewItem], dict]:
     """Rule 1. Returns (the ordered, budgeted queue, stats).
 
@@ -733,6 +775,8 @@ def due_queue_with_stats(
     budget, and a concept whose key has an open item re-uses it. The budgeted
     queue is then put in serve order (`_interleaved`, A114) — the same items;
     `interleave=False` (the summary, which reports counts only) skips its reads.
+    `varied` (spec §13 A140): the student's varied_isomorphs — the pick's
+    cue-familiarity tie-break and the interleave's definitional-item rule.
 
     stats = {"due": {"flashcard": n, "check": n}, "in_budget": n, "unservable": n,
     "paused": n}: `due` counts everything due this session (a concept past the
@@ -753,7 +797,7 @@ def due_queue_with_stats(
         )
         if not _target_met(sr.get(c.node["id"]))
     ]
-    selector = _Selector(user_id, served_today, open_item_ids(state, now))
+    selector = _Selector(user_id, served_today, open_item_ids(state, now), varied=varied)
     remaining = remaining_budget_s(state)
     queue: list[ReviewItem] = []
     due = dict.fromkeys(_KINDS, 0)
@@ -782,7 +826,7 @@ def due_queue_with_stats(
     stats["due"] = due
     stats["in_budget"] = len(queue)
     if interleave:
-        queue = _interleaved(user_id, queue, state)
+        queue = _interleaved(user_id, queue, state, varied=varied)
     return queue, stats
 
 
@@ -1003,9 +1047,12 @@ def _apply_grade(
     retention: float,
     claim: str | None = None,
     now_s: float | None = None,
+    varied: bool = False,
 ) -> dict | None:
     """The record of one graded answer. With a `claim`, only while that claim
-    holds the item's open entry (else nothing), and it closes the entry."""
+    holds the item's open entry (else nothing), and it closes the entry.
+    `varied` (spec §13 A140): the interleave's anchor also records the graded
+    item's difficulty, so a definitional anchor pairs nothing."""
     if claim is not None:
         opened = (doc.get("open") or {}).get(sr_key(item))
         if not isinstance(opened, dict) or opened.get("claim") != claim:
@@ -1033,6 +1080,8 @@ def _apply_grade(
     review["retention"] = retention
     # A114: the interleave's anchor — the next queue build continues from here
     review["last_graded"] = {"key": sr_key(item), "course_id": item.course_id}
+    if varied:
+        review["last_graded"]["difficulty"] = item.difficulty
     return entry
 
 
@@ -1125,13 +1174,15 @@ def _record(
     retention: float,
     claim: str | None = None,
     now: datetime | None = None,
+    varied: bool = False,
 ) -> tuple[dict, bool]:
     """Both kinds, after the grade is written: SR + budget, persisted (under the
     answer claim, which this write closes), then `review.graded` — only when the
     record was saved (a claim no longer held, or a missing row, records nothing
     and emits nothing). Returns (the SR view, whether the record was saved)."""
     entry = _apply_grade(
-        loop_state, item, correct=correct, session_id=session_id, retention=retention
+        loop_state, item, correct=correct, session_id=session_id, retention=retention,
+        varied=varied,
     )
     now_s = now.timestamp() if now is not None else None
     saved = _persist_loop_state(
@@ -1144,6 +1195,7 @@ def _record(
             retention=retention,
             claim=claim,
             now_s=now_s,
+            varied=varied,
         ),
     )
     if saved is None:
@@ -1200,6 +1252,7 @@ async def grade_review(
     claim: str | None = None,
     max_rung: int = 0,
     refloor=None,
+    varied: bool = False,
 ) -> ReviewOutcome:
     """Rule 6. A check item is graded by grade_answer ONCE (unassisted:
     max_rung 0; a re-check only when it is the next graded item on its concept
@@ -1291,6 +1344,7 @@ async def grade_review(
         request_id=request_id,
         retention=retention,
         claim=claim,
+        varied=varied,
         now=now,
     )
     if saved and item.kind == "check" and outcome is not None:

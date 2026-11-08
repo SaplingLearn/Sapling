@@ -41,7 +41,7 @@ import math
 import re
 import string
 import unicodedata
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Literal, NamedTuple
 
@@ -62,6 +62,7 @@ from learning.params import (
     POSTTEST_RESERVE_MIN_LEFT,
     POSTTEST_SKIP_REASONS,
     PRETEST_FORM_MATCHES,
+    SURFACE_FAMILIARITY_UNKNOWN,
 )
 
 _SEP = "\x1f"  # unit separator: never appears in normalized text
@@ -1682,6 +1683,7 @@ def select_item(
     format: str,
     difficulty: int,
     exclude_hashes: Iterable[str] = (),
+    familiarity: Mapping[str, int] | None = None,
 ) -> CheckItem | None:
     """A servable item (A34: it states a final answer; A124: not held) of exactly `format`
     whose hash is not excluded: the nearest to `difficulty` (exactly it first,
@@ -1691,7 +1693,15 @@ def select_item(
     key, then clean, never-linted, flagged; A128: an item with its sources
     before an `unsourced` one), then the oldest (created_at, id). Difficulty
     stays first, because the band's target is a learning requirement and an
-    item's quality is a preference among items that meet it."""
+    item's quality is a preference among items that meet it.
+
+    `familiarity` (spec §13 A140, the cue-familiarity dial; a student with
+    varied_isomorphs on): question_hash → how familiar the item's surface is
+    to the student on this concept (learning.surface.familiarity_by_hash).
+    It ranks after serve_quality and before the age tie-break, so it chooses
+    only among items the difficulty and quality keys leave equal; an item it
+    does not list ranks as an unknown surface. None (the flag off): the key is
+    exactly the one above."""
     excluded = set(exclude_hashes)
     candidates = [
         i
@@ -1700,12 +1710,24 @@ def select_item(
     ]
     if not candidates:
         return None
+    if familiarity is None:
+        return min(
+            candidates,
+            key=lambda i: (
+                abs(i.difficulty - difficulty),
+                i.difficulty,
+                *serve_quality(i),
+                i.created_at or "",
+                i.id,
+            ),
+        )
     return min(
         candidates,
         key=lambda i: (
             abs(i.difficulty - difficulty),
             i.difficulty,
             *serve_quality(i),
+            familiarity.get(i.question_hash, SURFACE_FAMILIARITY_UNKNOWN),
             i.created_at or "",
             i.id,
         ),

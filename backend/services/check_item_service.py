@@ -136,7 +136,7 @@ from learning.item_keys import (
 from learning.item_lint import LINT_FLAGS, lint_check_item, lint_item
 from learning.item_reports import QUARANTINED, RETIRED, review_statuses
 from learning.multi_concept import components_of
-from learning.surface import SurfacedCheckItemDraft, from_varied, surface, surface_of
+from learning.surface import Surface, SurfacedCheckItemDraft, from_varied, surface, surface_of
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
@@ -813,6 +813,39 @@ def course_has_items(course_id: str) -> bool:
         if len(rows) < _HAS_ITEMS_PAGE:
             return False
         offset += _HAS_ITEMS_PAGE
+
+
+def concept_surfaces(course_id: str, concept_key: str) -> dict[str, Surface | None]:
+    """Spec §13 A140: question_hash → surface descriptor (learning.surface.
+    Surface, None without one) of EVERY stored item of one course concept —
+    held ones too: a surface a student met stays met when its item is held —
+    the contexts decrypted. The cue-familiarity dial's one read per pick, made
+    only for a student with varied_isomorphs on. Raises on a failed read (the
+    caller degrades to its plain order)."""
+    rows = table(_TABLE).select(
+        "question_hash,surface_representation,surface_context",
+        filters={"course_id": f"eq.{course_id}", "concept_key": f"eq.{concept_key}"},
+    )
+    return {
+        row["question_hash"]: surface(
+            row.get("surface_representation"), decrypt_if_present(row.get("surface_context"))
+        )
+        for row in rows or []
+        if row.get("question_hash")
+    }
+
+
+def multi_concept_items(course_id: str, apex_key: str) -> list[CheckItem]:
+    """Spec §13 A141: the course's multi-concept items whose apex is this
+    concept, that a student may be served (A124/A123: no held one),
+    decrypted, oldest first. Reads the apex_key column (migration
+    20261108185101): called only for a student with multi_concept_items on."""
+    rows = table(_TABLE).select(
+        _COLUMNS,
+        filters={"course_id": f"eq.{course_id}", "apex_key": f"eq.{apex_key}"},
+        order="created_at,id",
+    )
+    return [i for i in _unheld(_to_items(rows)) if components_of(i.concept_key)]
 
 
 def count_items(course_id: str, concept_key: str) -> int:
