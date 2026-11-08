@@ -368,20 +368,24 @@ export function TodayColumn(props: {
           borderColor: "color-mix(in srgb, var(--warn-soft) 70%, var(--border))",
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 12 }}>
-          <span aria-hidden style={{ color: "var(--alert-warn)", opacity: stats.streak > 0 ? 1 : 0.35, display: "grid" }}>
-            <Icon name="fire" size={28} />
-          </span>
-          <div>
-            <span
-              className="h-serif"
-              style={{ fontSize: 34, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
-            >
-              {stats.streak}
-            </span>{" "}
-            <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              {stats.streak === 1 ? "day" : "days"}{stats.streak > 0 ? " in a row" : ""}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          {/* Flame + count read as one unit: a tight gap, centred on the
+              number (the icon's viewBox carries its own side bearing). */}
+          <div data-testid="dashboard-streak-count" style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <span aria-hidden style={{ color: "var(--alert-warn)", opacity: stats.streak > 0 ? 1 : 0.35, display: "grid", marginLeft: -4 }}>
+              <Icon name="fire" size={28} />
             </span>
+            <div>
+              <span
+                className="h-serif"
+                style={{ fontSize: 34, fontWeight: 600, lineHeight: 1, color: stats.streak > 0 ? "var(--warn)" : "var(--text-dim)" }}
+              >
+                {stats.streak}
+              </span>{" "}
+              <span style={{ fontSize: 13, color: "var(--text-dim)" }}>
+                {stats.streak === 1 ? "day" : "days"}{stats.streak > 0 ? " in a row" : ""}
+              </span>
+            </div>
           </div>
           {/* The message rides the top row (not its own line) to keep the
               card short enough for the plan's reserved slots above it. */}
