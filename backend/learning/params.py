@@ -83,7 +83,7 @@ FSRS_LARGE_SET_CONCEPTS = 150
 FSRS_RETENTION_EXAM = 0.95
 FSRS_EXAM_WINDOW_DAYS = 14
 FSRS_S0_GOOD = FSRS_W[2]
-REVIEW_ORDER_THRESHOLD = 0.33
+REVIEW_ORDER_THRESHOLD = 0.33  # DASH selection policy (Lindsey et al. 2014; see fsrs.order_due)
 REVIEW_DAILY_BUDGET_MIN = 12
 REVIEW_SECONDS_PER_CHECK = 45
 MC_STABILITY_GAIN_CAP = 2.0
@@ -332,6 +332,9 @@ BAND_CONTROL_HI = 0.90
 BAND_CONTROL_STOP_WINDOWS = 2
 # §3.3 ceiling: profic "H3 after 2 failed genuine attempts"; develop "H6 after ≥ 2".
 CEILING_PROFIC_ESCALATE_FAILS = 2
+# † A110 (c): a profic belief needs this many strong unassisted observations
+# before the profic ceiling (H1) applies; below it the develop row does.
+CEILING_PROFIC_CONFIRM_MIN_STRONG = 1
 CEILING_DEVELOP_H6_FAILS = 2
 # §3.3 wheelspin, clause 2: "opps ≥ 6 AND unassisted_next < 0.50".
 WHEELSPIN_OPPS_EARLY = 6
@@ -480,6 +483,9 @@ ZPD_IN_ZONE_MIN_ASSISTED = 0.6  # †
 ZPD_IN_ZONE_MAX_UNASSISTED = 0.85  # †
 # † weeks of the admin KPI htc_k trend and the metrics script's report window (A6)
 KPI_TREND_WEEKS = 4
+# † reliability bins of the admin KPI's BKT calibration report (learning/calibration.py):
+# five equal-width bins over predicted P(correct); a reporting choice, not a finding
+CALIBRATION_BINS = 5
 # spec §10 gates (not KPIs): 0 solution reveals, ≥ 95% ceiling compliance
 GATE_LEAKS_MAX = 0
 GATE_CEILING_COMPLIANCE_MIN = 0.95
@@ -487,8 +493,13 @@ GATE_CEILING_COMPLIANCE_MIN = 0.95
 # counts as earnest-blocked (a /hint denied by the ceiling or the H6 gate on a
 # step with a genuine attempt) is Sapling's operationalisation, not the paper's.
 GATE_EARNEST_REVISE_MAX = 0.05
-# † research §"Measure learning…" (rung 3 is tool-removed and ≥ 2 days delayed)
-POSTTEST_MIN_AGE_DAYS = 2
+# † rung 3 is tool-removed and delayed. Raised from 2 to 7 days on 2026-11-07
+# (docs/research/learning-loop/2026-11-07-direction-audit.md, rec. 2): retention
+# claims rest on ≥ 1-week delays (Roediger & Karpicke 2006 test vs restudy at
+# 1 week; Oreopoulos et al. 2026 NBER w35621 one-week delayed test), and a
+# 2-day item mostly measures short-term retrieval. FSRS reviews still run
+# between; a review is journaled evidence, so it restarts this clock.
+POSTTEST_MIN_AGE_DAYS = 7
 POSTTEST_MAX_ITEMS = 10  # † engineering cap (A6)
 # † PKG-14 (spec §13 A89, owner): an unanswered post-test pose is void after this
 # long — it may be re-posed, and a late answer to it is refused (409)

@@ -28,6 +28,7 @@ from learning.checks import CheckItem, Option, RubricItem, WrongReason
 from learning.ladder import Rung, intent
 from learning.learner_state import LearnerState
 from learning.params import (
+    BAND_DEVELOP_MAX,
     LOOP_HISTORY_MAX_MESSAGES,
     LOOP_MAX_VISIBLE_TOKENS,
     LOOP_PRO_THINKING_BUDGET,
@@ -294,10 +295,19 @@ def seams():
         return SaveOutcome.SAVED
 
     p_known = {"node-1": 0.5}
+    n_strong: dict[str, int] = {}
 
     def _read_states(user_id, node_ids, **kw):
         return {
-            n: LearnerState(user_id=user_id, node_id=n, p_known=p_known[n], exists=True)
+            n: LearnerState(
+                user_id=user_id,
+                node_id=n,
+                p_known=p_known[n],
+                exists=True,
+                # A110 (c): a seeded profic belief is a confirmed one (one strong
+                # unassisted observation) unless a test overrides it
+                n_strong_unassisted=n_strong.get(n, 1 if p_known[n] >= BAND_DEVELOP_MAX else 0),
+            )
             for n in node_ids
             if n in p_known
         }
@@ -307,7 +317,7 @@ def seams():
         def p(name, **kw):
             return stack.enter_context(patch(f"routes.learn_loop.{name}", **kw))
 
-        ns = SimpleNamespace(store=store, p_known=p_known)
+        ns = SimpleNamespace(store=store, p_known=p_known, n_strong=n_strong)
         ns.load = p("load_loop_state", side_effect=_load)
         # the REAL update_loop_state runs over the store's own load/save
         stack.enter_context(patch("learning.loop_state_store.load_loop_state", side_effect=_load))
@@ -597,8 +607,14 @@ def test_ceiling_for_the_profic_floor_needs_genuine_work():
     from routes.learn_loop import _ceiling_for, _learner_view, _step_state
 
     step = _step_state(_state(), "qh-1")
-    learner = _learner_view(None, band="profic", prereq_proficient=True)
+    confirmed = LearnerState(user_id="", node_id="", n_strong_unassisted=1)  # A110 (c)
+    learner = _learner_view(confirmed, band="profic", prereq_proficient=True)
     assert _ceiling_for(step=step, learner=learner, message="", independent_s=500.0)[0] == Rung.H1
+    unconfirmed = _learner_view(None, band="profic", prereq_proficient=True)
+    assert _ceiling_for(step=step, learner=unconfirmed, message="", independent_s=500.0) == (
+        Rung.H3,
+        policy.CeilingReason.PROFIC_UNCONFIRMED,
+    )
     shown = _ceiling_for(
         step=step, learner=learner, message="I tried n = 0 first", independent_s=500.0
     )

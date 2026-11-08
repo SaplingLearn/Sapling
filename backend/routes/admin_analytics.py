@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from db.connection import table
+from learning.calibration import calibration as bkt_calibration
 from learning.earnest_revise import earnest_revise
 from learning.params import (
     ACQ_TARGET_HI,
@@ -520,7 +521,10 @@ def errors(
 _STEP_EVENT = "zpd.step"
 _LEAK_EVENT = "zpd.leak"
 _REVEAL_EVENT = "zpd.reveal"  # spec §13 A88 (m5): a solution SERVED for an open posed item
-_EVIDENCE_COLS = "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at"
+_EVIDENCE_COLS = (
+    "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at,"
+    "channel,p_before,weight"
+)
 TrendDirection = Literal["falling", "flat", "rising", "insufficient"]
 
 
@@ -568,6 +572,32 @@ class Gates(BaseModel):
     earnest_revise_ok: bool | None
 
 
+class CalibrationBin(BaseModel):
+    lo: float
+    hi: float
+    n: int
+    mean_predicted: float | None
+    observed: float | None
+
+
+class CalibrationReport(BaseModel):
+    """BKT's predicted P(correct) vs observed outcomes on independent
+    (strong-channel, unassisted, rung-0, full-weight) evidence
+    (learning/calibration.py). None rates mean nothing to judge."""
+
+    n: int
+    brier: float | None
+    mean_predicted: float | None
+    observed_rate: float | None
+    ece: float | None
+    bins: list[CalibrationBin]
+
+
+class Calibration(BaseModel):
+    all: CalibrationReport
+    posttest: CalibrationReport  # rung 3: fresh reserve item, tool-free, delayed
+
+
 class LearningLoopKpis(BaseModel):
     range: Range
     steps_total: int
@@ -584,6 +614,7 @@ class LearningLoopKpis(BaseModel):
     ceiling_compliance: CeilingCompliance
     earnest_revise: EarnestRevise
     gates: Gates
+    calibration: Calibration
     truncated: bool = False
 
 
@@ -807,5 +838,6 @@ def learning_loop_kpis(
             and compliance.rate >= GATE_CEILING_COMPLIANCE_MIN,
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
+        calibration=Calibration(**bkt_calibration(evidence)),
         truncated=events_truncated or evidence_truncated,
     )
