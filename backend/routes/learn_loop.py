@@ -6629,11 +6629,16 @@ def end_session(body: EndSessionBody, request: Request) -> None:
     """The legacy end_session's loop delegate (PKG-07's pass-through, filled by
     PKG-09): a materialised session with loop state gets its real close first
     (A20 inline check: rate-limited, the deterministic close; the run bounded by
-    CLOSE_RUN_TIMEOUT_S; a check still being graded → no close, WARNING);
-    the legacy body then runs unchanged (ended_at, XP, the `summary_json`
-    `flashcards._get_session_summary` reads, achievements). A pending session
-    keeps the legacy early return. A pending grade or an unacknowledged close
-    prevents the legacy handler from setting ended_at and stranding recovery.
+    CLOSE_RUN_TIMEOUT_S); the legacy body then runs unchanged (ended_at, XP,
+    the `summary_json` `flashcards._get_session_summary` reads, achievements).
+    A pending session keeps the legacy early return. A check still being
+    graded — a live grading claim, or a saved grade checkpoint (ADR 0038) —
+    propagates the close's 409, and a close that was not acknowledged is a
+    503: either way the legacy handler never sets ended_at over an unsettled
+    grade (spec §13 A142 corrects A60, which said the session ended without a
+    close). Nobody is stuck: a claim with no checkpoint goes stale after
+    LOOP_GRADING_CLAIM_STALE_S, and a checkpoint is finished by the student's
+    explicit retry (`pending_grade`), after which the end goes through.
     The legacy handler is sync (a worker thread), so the async close runs
     through the sanctioned `run_agent_sync` seam. Always returns None."""
     if body.session_id in PENDING_SESSIONS:
