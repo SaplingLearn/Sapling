@@ -45,6 +45,7 @@ from services.durable import workflow_id
 from services.document_indexing import schedule_document_index
 from services import document_jobs
 from services.documents_read import decrypt_document_row
+from services.llm_budget import LLMBudgetExceeded
 from services.xp_service import award_xp_safe
 from agents import WORKER_LIMITS
 from agents.classifier import classifier_agent
@@ -786,6 +787,8 @@ async def upload_document_sync(
     try:
         with workflow_id(f"doc:{user_id}:{request_id}"):
             result: DocumentProcessingResult = await process_document(extracted_text, deps)
+    except LLMBudgetExceeded:
+        raise  # #119: the 429 itself, not "upload failed" (services/llm_budget.py)
     except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
         logger.warning(
             "Agent guardrails tripped for '%s'; returning 502",
@@ -1121,6 +1124,19 @@ async def upload_document(
                 message="Processing complete.",
                 data=final_output.model_dump(mode="json"),
             ))
+        except LLMBudgetExceeded as e:
+            # #119: the per-user LLM budget refused the pipeline before any
+            # model call; nothing was persisted. Same terminal tail, with the
+            # budget's own message instead of "please try again".
+            yield sapling_event_to_sse(SaplingEvent(
+                type="error", step="failed", message=e.detail,
+                data={"request_id": request_id, "code": e.code, "reset_at": e.reset_at_iso},
+            ))
+            yield sapling_event_to_sse(SaplingEvent(
+                type="status", step="done",
+                message="Failed.",
+            ))
+            return
         except (UsageLimitExceeded, UnexpectedModelBehavior) as e:
             # Terminal (#151b): `step="fallback"` left the SSE vocabulary
             # with the legacy pipeline (ADR 0024). Emit the exact

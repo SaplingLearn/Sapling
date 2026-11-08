@@ -72,6 +72,7 @@ def _clear_lru_caches():
     from agents._providers import _unfreeze_model_mode_for_tests, clear_override_model_cache
     from services import (
         academics, analytics_consent, auth_guard, course_context_service, feature_flags, growth,
+        llm_budget,
     )
     _unfreeze_model_mode_for_tests()  # #771: a lifespan run latches the mode
     clear_override_model_cache()
@@ -82,6 +83,7 @@ def _clear_lru_caches():
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
     auth_guard.clear_account_state_cache()
+    llm_budget.clear_llm_budget_cache()
     # #756: the OAuth callback honours each state nonce once per process, and
     # the callback harnesses reuse fixed nonces. Only if already imported.
     auth_routes = sys.modules.get("routes.auth")
@@ -97,9 +99,21 @@ def _clear_lru_caches():
     feature_flags.clear_feature_flags_cache()
     feature_flags.clear_user_roles_cache()
     auth_guard.clear_account_state_cache()
+    llm_budget.clear_llm_budget_cache()
     auth_routes = sys.modules.get("routes.auth")
     if auth_routes is not None:
         auth_routes.clear_consumed_oauth_nonces()
+
+
+@pytest.fixture(autouse=True)
+def _llm_budget_off(request, monkeypatch):
+    """#119: pin the `llm_budget` kill switch to "off" for the hermetic suite,
+    for the reason `_db_user_scope_off` gives: a real-model run inside a
+    request would otherwise resolve the flag from the fake store and warm the
+    process's flag snapshot. tests/test_llm_budget.py turns it on per test."""
+    if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
+        return
+    monkeypatch.setenv("SAPLING_FLAG_LLM_BUDGET", "off")
 
 
 @pytest.fixture(autouse=True)

@@ -35,6 +35,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("main.py", "/api/admin/email admin_email_router", "admin_service_route"): "email_* tables are service-only",
     ("main.py", "/api/admin/jobs admin_jobs_router", "admin_service_route"):
         "#116 queue depth + dead letters (jobs is service-only)",
+    ("main.py", "/api/admin/llm admin_llm_router", "admin_service_route"):
+        "#119 llm_budgets / llm_usage are service-only",
     ("main.py", "/api/admin/flags admin_flags_router", "admin_service_route"): "feature_flags is service-only",
     ("main.py", "gemini_test", "admin_service_route"): "admin LLM probe (records usage)",
     ("main.py", "/api/auth auth.router", "service_route"):
@@ -130,6 +132,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "#116 gradescope_syncs: an inline run records its outcome",
     ("services/gradescope_jobs.py", "latest_sync", "runs_as_service"):
         "#116 gradescope_syncs: the status route's read (filtered to the caller)",
+    ("services/llm_budget.py", "read_status", "runs_as_service"):
+        "#119 llm_budgets / llm_usage are service-only (bucket E)",
     ("services/profiles.py", "get_display_name", "runs_as_service"): "other users' names",
     ("services/profiles.py", "get_display_names", "runs_as_service"): "other users' names",
     ("services/profiles.py", "live_user_ids", "runs_as_service"):

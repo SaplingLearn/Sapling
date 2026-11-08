@@ -262,3 +262,16 @@ def test_both_providers_down_surfaces_the_primary_error(monkeypatch, no_sdk):
     assert not isinstance(exc.value, CircuitOpenError)
     assert exc.value.body["provider"] == "anthropic"  # the primary's error, not the fallback's
 
+
+# ── the admin view of the drill ──────────────────────────────────────────
+
+
+def test_admin_drill_endpoint_reports_the_switch_and_breakers(monkeypatch):
+    from main import app
+
+    monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "on")
+    _resilience.breaker_for("anthropic")
+    body = TestClient(app).get("/api/admin/llm/drill").json()
+    assert body["forced_outage"]["providers"] == ["anthropic"]
+    assert body["llm_fallback"] == "on"
+    assert body["breakers"] == {"anthropic": "closed"}

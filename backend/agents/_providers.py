@@ -555,6 +555,9 @@ class _ResilientModelMixin:
         # The health probe has no task, so no fallback: it must report the
         # real provider, not a stand-in.
         self._res_allow_fallback = allow_fallback and task is not None
+        # Only a task's PRIMARY model checks the per-user budget: a fallback
+        # model is the same run, and the health probe is no student's work.
+        self._res_budgeted = allow_fallback and task is not None
         self._res_fallback: Any = None
         self._res_fallback_built = False
         self._res_fallback_lock = threading.Lock()
@@ -607,9 +610,18 @@ class _ResilientModelMixin:
     def _fallback_settings(self, model_settings):
         return _resilience.settings_without(model_settings, self.settings)
 
+    async def _check_budget(self, messages) -> None:
+        """#119: refuse a run's FIRST request for a student past today's
+        token budget (`services/llm_budget.py`; flag `llm_budget`)."""
+        if self._res_budgeted:
+            from services import llm_budget
+
+            await llm_budget.check_before_request(messages)
+
     # -- requests ---------------------------------------------------------
 
     async def request(self, messages, model_settings, model_request_parameters):
+        await self._check_budget(messages)
         send = super().request  # type: ignore[misc]
         settings = self._with_timeout(model_settings)
         try:
@@ -639,6 +651,7 @@ class _ResilientModelMixin:
     async def request_stream(
         self, messages, model_settings, model_request_parameters, run_context=None
     ):
+        await self._check_budget(messages)
         open_stream = super().request_stream  # type: ignore[misc]
         settings = self._with_timeout(model_settings)
         async with AsyncExitStack() as stack:

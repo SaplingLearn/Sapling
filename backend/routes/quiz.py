@@ -25,6 +25,7 @@ from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
 from services.auth_guard import require_self, guard_off_loop
+from services.llm_budget import LLMBudgetExceeded
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
@@ -1926,6 +1927,18 @@ async def _generate_or_502(
             # only tell it what we just saw — once per generation, forever.
             has_graph=True,
         )
+    except LLMBudgetExceeded as e:
+        # #119: the per-user LLM budget refused the run before it spent
+        # anything. Answered with the code the quiz spend cap (#544 F1) uses,
+        # which the client already renders; the slot goes back like any
+        # refusal that generated nothing.
+        _refund_generate_slot(body.user_id, slot)
+        raise QuizAPIError(
+            status_code=429,
+            code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
+            message=e.detail,
+            headers=e.headers,
+        ) from e
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
         # never swallow a known HTTP state.

@@ -88,6 +88,13 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "When an agent's LLM provider is down (retries exhausted or its "
             "circuit breaker open), retry the call on the other provider's "
             "model. Global: per-user rules and rollouts do not apply.", False),
+    # #119: per-user daily LLM token budget (services/llm_budget.py), checked
+    # at the model chokepoint before an agent run starts. Per user, so role
+    # rules and rollouts apply. Budgets live in `llm_budgets` (/api/admin/llm).
+    # Server-only. Kill switch: SAPLING_FLAG_LLM_BUDGET=off.
+    FlagDef("llm_budget", ("off", "on"),
+            "Refuse new AI runs (429) for a student who has used today's LLM "
+            "token budget (llm_budgets: default, role and user overrides).", False),
     # #116: move background work onto the Postgres job queue. Server-only.
     # Resolved for the student whose action triggered the work. It covers
     # course-context aggregation (course_context_service.
