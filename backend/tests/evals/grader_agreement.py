@@ -30,11 +30,16 @@ Input: JSON Lines, one answer per line:
      "human_a": true, "human_b": false}       # human_b optional
 
 Run from backend/ (real model mode and provider keys; every answer is one or
-more grader calls):
+more grader calls). It lives beside the grader's replay eval (tests/evals/
+grader.py) because it is an evaluation tool, never application code — the
+SANCTIONED_GRADING_CALLERS scan keeps every application caller of the grader
+gated:
 
-    python scripts/grader_agreement.py answers.jsonl            # grade, then report
-    python scripts/grader_agreement.py answers.jsonl --out r.json
-    python scripts/grader_agreement.py scored.jsonl --no-grade  # lines carry "grader": bool
+    python tests/evals/grader_agreement.py answers.jsonl            # grade, then report
+    python tests/evals/grader_agreement.py answers.jsonl --out r.json
+    python tests/evals/grader_agreement.py scored.jsonl --no-grade  # lines carry "grader": bool
+
+Not a dataset: run_all.py runs only its explicit DATASETS list.
 
 `--no-grade` reads a previous run's per-answer verdicts (the `grader` field)
 and only recomputes the statistics. A REPORT <json> line is always printed.
@@ -53,7 +58,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # backend/
 
 FORMATS = ("free", "teachback", "mc_reason")
 

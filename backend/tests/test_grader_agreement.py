@@ -1,4 +1,4 @@
-"""scripts/grader_agreement.py: the grader against human scorers."""
+"""tests/evals/grader_agreement.py: the grader against human scorers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import grader_agreement as ga
+from tests.evals import grader_agreement as ga
 
 
 def test_kappa_perfect_and_chance():
