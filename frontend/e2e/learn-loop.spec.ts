@@ -329,7 +329,8 @@ test("loop user completes probe → plan → check (explicit submission) with a 
   // Spec §13 A122: band control ran on this grade. The concept's unassisted
   // first-attempt rate is below PRACTICE_TARGET_LO (the probe's misses and this
   // helped answer), so it checks prerequisites — Binary Numbers has none to
-  // repair — and steps the next item's difficulty down.
+  // repair — steps the next item's difficulty down and raises the concept's
+  // ceiling one rung (§3.3 "ceiling +1 rung").
   await expect
     .poll(
       async () =>
@@ -343,10 +344,19 @@ test("loop user completes probe → plan → check (explicit submission) with a 
         payload: expect.objectContaining({
           direction: "easier_check_prereqs",
           trigger: "low",
+          ceiling_delta: 1,
           window_stats: expect.objectContaining({ repair: false }),
         }),
       },
     ]);
+  // The verdict is stored on the graded step with the ceiling it leaves the
+  // concept's next item: a novice whose prerequisite is unknown sits on the
+  // worked-example-first row (H4), one rung up → H5.
+  const [stored] = (await queryRaw(
+    `SELECT loop_state->'steps'->$2->'band_control' AS verdict FROM sessions WHERE id = $1`,
+    [checkedSessionId, checkHash],
+  )) as { verdict: Record<string, unknown> | null }[];
+  expect(stored.verdict).toMatchObject({ action: "easier_check_prereqs", ceiling_delta: 1, ceiling: 5 });
 
   // A15/A16/A26: no loop request carried a model preference, and the answer never went
   // through the chat route.

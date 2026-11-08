@@ -3056,3 +3056,52 @@ def test_review_next_moves_past_a_reported_open_item_through_the_real_loader(
     assert next_id() == "ci-q2"
     assert store.state.extra["open"]["n1"]["item_id"] == "ci-q2"  # opened in its place
     assert next_id() == "ci-q2" and len(store.calls) == 2  # and now it is the one re-served
+
+
+def test_band_control_ceilings_never_reach_review(client, monkeypatch, store):
+    """Spec §13 A122: band control's ceiling clause moves an in-session band
+    ceiling only. A review answer reads no band ceiling and no ceiling at all:
+    it grades at the help floor (no hints before the attempt)."""
+    from learning import review
+    from learning.review import ReviewOutcome
+    import routes.learn_loop as loop_routes
+
+    def never(*a, **k):
+        raise AssertionError("review read a ceiling")
+
+    monkeypatch.setattr(loop_routes, "_band_ceiling_delta", never)
+    monkeypatch.setattr(loop_routes, "_ceiling_for", never)
+    monkeypatch.setattr(loop_routes.policy, "ceiling_with_reason", never)
+    _session(
+        monkeypatch,
+        {"sr": {}, "review": {"spent_s": 45, "retention": 0.93}, "band_ceiling": {"n-due": 1}},
+    )
+    _check_answer_seams(monkeypatch, _check_item("n-due", "qh-1"))
+    _opened(store, "n-due", "ci-qh-1")
+    seen = {}
+
+    async def fake_grade(user_id, item, **kw):
+        seen.update(kw)
+        return ReviewOutcome(
+            correct=True,
+            hint="Nice.",
+            next_due_at="2026-10-01T00:00:00+00:00",
+            rating=3,
+            sr={"stage": "acquire", "correct": 1, "target": 3},
+        )
+
+    monkeypatch.setattr(review, "grade_review", fake_grade)
+    with _loop():
+        r = client.post(
+            f"{REVIEW}/answer",
+            json={
+                "user_id": USER,
+                "session_id": _sid(),
+                "course_id": COURSE,
+                "kind": "check",
+                "item_id": "ci-qh-1",
+                "answer": "because",
+            },
+        )
+    assert r.status_code == 200, r.text
+    assert seen["max_rung"] == 0  # the help floor, whatever a band ceiling says

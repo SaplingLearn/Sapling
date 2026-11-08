@@ -148,6 +148,7 @@ from learning.help_ledger import (
 )
 from learning.params import (
     LOOP_SCAN_POSED_MAX,
+    BAND_CONTROL_CEILING_STEP,
     BKT_L0,
     BKT_PROFICIENT,
     MISCONCEPTION_CONFRONT_MIN_RUNG,
@@ -806,13 +807,37 @@ def _ceiling_for(
     independent_s: float,
     variant: str = "A",
     teach_attempt: bool = False,
+    band_delta: int = 0,
 ) -> tuple[Rung, policy.CeilingReason]:
     """policy.ceiling_with_reason on typed state only (invariant 4). The shown-work
     floor applies when the step already records shown work or this message is a
-    genuine attempt; exam mode is the step's own flag (False until PKG-08)."""
+    genuine attempt; exam mode is the step's own flag (False until PKG-08).
+    `band_delta`: band control's ceiling clause for the concept (spec §13 A122,
+    `_band_ceiling_delta`)."""
     showed = step.showed_work or _genuine(message, independent_s, learner.band, variant)
     raise_ = {"teach_attempt": True} if teach_attempt else {}  # A85; typed state only
+    if band_delta:
+        raise_["band_delta"] = band_delta
     return policy.ceiling_with_reason(learner, dataclasses.replace(step, showed_work=showed), **raise_)
+
+
+#: loop_state key (spec §13 A122): node id → band control's ceiling delta for
+#: that concept this session (−1 after HARDER, +1 after EASIER_CHECK_PREREQS;
+#: set when a verdict's feedback turn is served, held through HOLD)
+_BAND_CEILING = "band_ceiling"
+
+
+def _band_ceiling_delta(state: dict, node_id: str | None) -> int:
+    """The concept's band-control ceiling delta in this session (0 when none,
+    or for a malformed stored value: no adjustment is ever invented)."""
+    deltas = state.get(_BAND_CEILING) if node_id else None
+    delta = deltas.get(node_id) if isinstance(deltas, dict) else None
+    if type(delta) is int and delta in (
+        -BAND_CONTROL_CEILING_STEP,
+        BAND_CONTROL_CEILING_STEP,
+    ):
+        return delta
+    return 0
 
 
 def _failed_on_concept(state: dict, node_id: str | None) -> int:
@@ -1674,6 +1699,8 @@ class _LoopTurn:
             independent_s=_seconds_since(self.step.first_shown_at, _now_s()),
             variant=self.variant,
             teach_attempt=self._teach_attempt(),
+            # spec §13 A122: band control's ceiling clause for this concept
+            band_delta=_band_ceiling_delta(self.state, self.concept_node),
         )
         self.planned = None
         self.given = ""
@@ -2145,7 +2172,9 @@ class _LoopTurn:
             self._scan_served(reply, whole=True)  # A105: the final text, whole
             self._record_served()
         activity_write = {"require_open": True, "require_existing": True} if getattr(self, "activity_id", None) else {}
-        _update_loop_state(self.session_id, lambda state: self._apply_turn(state, out), **activity_write)
+        saved = _update_loop_state(
+            self.session_id, lambda state: self._apply_turn(state, out), **activity_write
+        )
         self._emit_reveal()
         if out.get("step") is not None:
             self._emit_step(out["step"])
@@ -2153,11 +2182,8 @@ class _LoopTurn:
         if out.get("activated"):
             item = get_check_item(out["activated"])
             # A122: an item that opens on the worked example says so — the client asks for it now
-            check = (
-                _pose_payload(item, worked_first=bool(out.get("worked_first")))
-                if item is not None
-                else None
-            )
+            owed = _worked_example_owed(self.user_id, saved, out.get("activated_qh"))
+            check = _pose_payload(item, worked_first=owed) if item is not None else None
             if item is not None:  # A93: posed — in the scan set until graded
                 _ledger(record_posed, self.user_id, item.question_hash, source="loop", session_id=self.session_id)
         if self.persist_user_row:
@@ -2471,7 +2497,7 @@ class _LoopTurn:
                 qh = _activate_next_item(self.user_id, self.course_id, state, now=self._now)
                 if qh is not None:
                     out["activated"] = state["steps"][qh]["check_item_id"]
-                    out["worked_first"] = state["steps"][qh].get("worked_first") is True
+                    out["activated_qh"] = qh
 
     def _submission_extra(self) -> dict:
         """The check-answer response keys (A16) — only on a submission's turn."""
@@ -2746,6 +2772,9 @@ def _apply_band_control(state: dict, entry: dict) -> bool:
     §13 A122) as its feedback turn is served — inside that turn's
     compare-and-set mutate, from the stored verdict alone (no reads). The next
     item's difficulty: `state["band_difficulty"][node]` (activation reads it).
+    The concept's ceiling clause: `state["band_ceiling"][node]` (−1 / +1 rung,
+    `policy.ceiling_delta`; every ceiling on the concept reads it through
+    `_band_ceiling_delta`, gates unchanged; HOLD keeps the last one).
     The cursor: policy.cursor_move — STOP_PRACTICE leaves the concept,
     WHEELSPIN stops more-of-the-same (repairing the weakest unproficient
     prerequisite in its place when there is one), EASIER_CHECK_PREREQS repairs
@@ -2766,6 +2795,12 @@ def _apply_band_control(state: dict, entry: dict) -> bool:
     if type(target) is int and target in CHECK_ITEM_DIFFICULTIES:
         targets = state.get(_BAND_DIFFICULTY)
         state[_BAND_DIFFICULTY] = {**(targets if isinstance(targets, dict) else {}), node: target}
+    # §3.3's ceiling clause, from the action itself (never a stored number):
+    # HARDER −1 rung, EASIER_CHECK_PREREQS +1; the band's ceiling only
+    delta = policy.ceiling_delta(action)
+    if delta:
+        deltas = state.get(_BAND_CEILING)
+        state[_BAND_CEILING] = {**(deltas if isinstance(deltas, dict) else {}), node: delta}
     plan = state.get("plan")
     if node != state.get("concept") or not isinstance(plan, dict):
         return False
@@ -2980,7 +3015,8 @@ def _worked_example_owed(user_id: str, state: dict, qh: str | None) -> bool:
     band, _ = _band_of(learner)
     view = _learner_view(learner, band=band, prereq_proficient=_prereq_proficient(user_id, node_id))
     step = _step_state(state, qh)
-    return policy.worked_example_rung(view, step, worked_first=True) is not None
+    delta = _band_ceiling_delta(state, node_id)
+    return policy.worked_example_rung(view, step, worked_first=True, band_delta=delta) is not None
 
 
 def _ms(seconds: float) -> int:
@@ -3259,6 +3295,7 @@ def status(request: Request, user_id: str = Query(...), session_id: str = Query(
         learner=_learner_view(learner, band=band, prereq_proficient=prereq),
         message="",
         independent_s=0.0,
+        band_delta=_band_ceiling_delta(state, node_id),  # spec §13 A122
     )
     pending_withdrawn_feedback = item is None and _phase_for(state) == "feedback"
     phase = ("check" if pending_grade and pending_grade["kind"] == "check"
@@ -3883,17 +3920,24 @@ def _band_verdict(user_id: str, node_id: str, difficulty: int | None) -> _BandOu
             opps=state.opps,
             max_streak_unassisted=state.max_streak_unassisted,
         )
+        band, _ = _band_of(state)
+        adjusts = verdict.action is not policy.BandAction.HOLD
+        # prerequisites: the repair target (EASIER_CHECK_PREREQS, WHEELSPIN), and
+        # the novice rows of the effective ceiling (prerequisite known or not)
         checks_prereqs = verdict.action in (
             policy.BandAction.EASIER_CHECK_PREREQS,
             policy.BandAction.WHEELSPIN,
-        )
+        ) or (adjusts and band == "novice")
         prerequisites = _prerequisites(user_id, node_id) if checks_prereqs else []
     except Exception as exc:
         logger.warning("band control skipped for this grade: %s", type(exc).__name__)
         return None
     target = policy.repair_target(prerequisites)
+    delta = policy.ceiling_delta(verdict.action)
     stored = None
-    if verdict.action is not policy.BandAction.HOLD:
+    if adjusts:
+        proficient = policy.prerequisite_status(prerequisites) is policy.PrerequisiteStatus.PROFICIENT
+        view = _learner_view(state, band=band, prereq_proficient=proficient)
         stored = {
             "action": verdict.action.value,
             "difficulty": (
@@ -3902,6 +3946,13 @@ def _band_verdict(user_id: str, node_id: str, difficulty: int | None) -> _BandOu
                 else None
             ),
             "repair": target.node_id if target is not None else None,
+            # §3.3's ceiling clause and the ceiling it leaves a fresh item on the
+            # concept (0 failed attempts, outside exam mode): the band's row moved
+            # by the delta, clamped — gates still apply turn by turn
+            "ceiling_delta": delta,
+            "ceiling": int(
+                policy.ceiling(view, StepState(question_hash=""), band_delta=delta)
+            ),
         }
     return _BandOutcome(
         stored=stored,
@@ -3940,6 +3991,7 @@ def _emit_band_verdict(user_id: str, request_id: str, node_id: str, band: _BandO
             "next_difficulty": stored.get("difficulty"),
             "repair": stored.get("repair") is not None,
         },
+        ceiling_delta=policy.ceiling_delta(verdict.action),  # spec §13 A122
     )
     if verdict.action is policy.BandAction.WHEELSPIN:
         zpd_events.emit_zpd_wheelspin(
@@ -4971,12 +5023,15 @@ def hint(body: LoopHintBody, request: Request) -> dict:
     band, _ = _band_of(learner)
     prereq = _prereq_proficient(body.user_id, node_id) if node_id else True
     view = _learner_view(learner, band=band, prereq_proficient=prereq)
-    jump = policy.worked_example_rung(view, step, worked_first=may_jump)
+    delta = _band_ceiling_delta(state, node_id)  # spec §13 A122: the band's ceiling only
+    jump = policy.worked_example_rung(view, step, worked_first=may_jump, band_delta=delta)
     if jump is None and may_jump and (denied := _rung_gate_denial(step, now)):
         return denied  # the learner left the worked-example row: the ordinary gate
     # an empty message: showed_work comes from the step alone — the floor-at-H3 rule
     # is applied by the turn that carried the work, never by a hint request
-    ceiling, _ = _ceiling_for(step=step, learner=view, message="", independent_s=0.0)
+    ceiling, _ = _ceiling_for(
+        step=step, learner=view, message="", independent_s=0.0, band_delta=delta
+    )
     next_rung = int(jump) if jump is not None else int(step.rung) + 1
     if next_rung > int(ceiling):
         _mark_earnest_blocked(body.session_id, qh, step, entry)

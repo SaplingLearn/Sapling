@@ -268,8 +268,12 @@ def test_harder_steps_the_next_item_up_and_keeps_the_concept(loop):
     _, read_window = _answer(loop, [HIT] * 4)
     read_window.assert_called_once_with("u1", "node-1")
     doc = loop.store["doc"]
-    assert doc["steps"]["qh-1"]["band_control"] == {"action": "harder", "difficulty": 3, "repair": None}
+    assert doc["steps"]["qh-1"]["band_control"] == {
+        "action": "harder", "difficulty": 3, "repair": None,
+        "ceiling_delta": -1, "ceiling": int(Rung.H2),  # develop H3, one rung down
+    }
     assert doc["band_difficulty"] == {"node-1": 3}
+    assert doc["band_ceiling"] == {"node-1": -1}
     assert doc["concept"] == "node-1" and doc["plan"]["cursor"] == 0 and doc["concept_checks"] == 1
     [ev] = _band_events(loop)
     assert ev["direction"] is BandAction.HARDER and ev["trigger"] == "high"
@@ -278,7 +282,8 @@ def test_harder_steps_the_next_item_up_and_keeps_the_concept(loop):
         "rate": 1.0, "n": 4, "full_windows": 0, "stable": False, "p_known": 0.6, "opps": 4,
         "difficulty": 2, "next_difficulty": 3, "repair": False,
     }
-    assert set(ev) == {"user_id", "request_id", "direction", "trigger", "window_stats"}
+    assert set(ev) == {"user_id", "request_id", "direction", "trigger", "window_stats", "ceiling_delta"}
+    assert ev["ceiling_delta"] == -1
     assert _wheel_events(loop) == []
     # the next activation on node-1 targets the controller's difficulty, not the band's
     loop.list_items.return_value = [routes.ITEM.model_copy(update={"question_hash": "qh-2", "id": "item-2"})]
@@ -287,18 +292,21 @@ def test_harder_steps_the_next_item_up_and_keeps_the_concept(loop):
     assert {c.kwargs["difficulty"] for c in loop.select_item.call_args_list} == {3}
 
 
-def test_easier_without_a_weak_prerequisite_only_lowers_the_difficulty(loop):
+def test_easier_without_a_weak_prerequisite_lowers_the_difficulty_and_raises_the_ceiling(loop):
     _learner_reads(loop, p=0.4, prereqs={"node-0": 0.9})
     _answer(loop, [MISS], correct=False, edges=[("node-0", "node-1")])
     doc = loop.store["doc"]
     assert doc["steps"]["qh-1"]["band_control"] == {
         "action": "easier_check_prereqs", "difficulty": 1, "repair": None,
+        "ceiling_delta": 1, "ceiling": int(Rung.H4),  # develop H3, one rung up
     }
     assert doc["band_difficulty"] == {"node-1": 1}
+    assert doc["band_ceiling"] == {"node-1": 1}
     assert doc["concept"] == "node-1" and doc["plan"]["approved"] == ["node-1", "node-2"]
     [ev] = _band_events(loop)
     assert ev["direction"] is BandAction.EASIER_CHECK_PREREQS and ev["trigger"] == "low"
     assert ev["window_stats"]["repair"] is False and ev["window_stats"]["next_difficulty"] == 1
+    assert ev["ceiling_delta"] == 1
 
 
 def test_easier_with_a_weak_prerequisite_repairs_it_first_then_comes_back(loop):
@@ -333,7 +341,11 @@ def test_stop_practice_hands_the_concept_to_the_scheduler(loop):
     _learner_reads(loop, p=0.97, opps=16, streak=16)
     _answer(loop, [STEADY] * 16)
     doc = loop.store["doc"]
-    assert doc["steps"]["qh-1"]["band_control"] == {"action": "stop_practice", "difficulty": None, "repair": None}
+    assert doc["steps"]["qh-1"]["band_control"] == {
+        "action": "stop_practice", "difficulty": None, "repair": None,
+        "ceiling_delta": 0, "ceiling": int(Rung.H1),  # confirmed profic, no clause
+    }
+    assert "band_ceiling" not in doc
     # one check below LOOP_CHECKS_PER_CONCEPT, yet the concept is left
     assert params.LOOP_CHECKS_PER_CONCEPT > 1
     assert doc["plan"]["cursor"] == 1 and doc["concept"] == "node-2" and doc["concept_checks"] == 0
@@ -347,7 +359,11 @@ def test_wheelspin_stops_more_of_the_same_and_repairs_in_its_place(loop):
     window = [HIT, MISS] * 5
     _answer(loop, window, correct=False, edges=[("node-0", "node-1")])
     doc = loop.store["doc"]
-    assert doc["steps"]["qh-1"]["band_control"] == {"action": "wheelspin", "difficulty": None, "repair": "node-0"}
+    assert doc["steps"]["qh-1"]["band_control"] == {
+        "action": "wheelspin", "difficulty": None, "repair": "node-0",
+        "ceiling_delta": 0, "ceiling": int(Rung.H3),  # develop, no clause
+    }
+    assert "band_ceiling" not in doc
     plan = doc["plan"]
     assert plan["approved"] == ["node-0", "node-2"]  # node-1 does not come back this session
     assert doc["concept"] == "node-0" and doc["concept_checks"] == 0
@@ -426,7 +442,9 @@ def test_band_verdict_reads_prerequisites_only_when_the_verdict_checks_them():
     ):
         got = _band_verdict("u1", "node-1", 2)
     edges.assert_not_called()  # HARDER checks no prerequisite
-    assert got.stored == {"action": "harder", "difficulty": 3, "repair": None}
+    assert got.stored == {
+        "action": "harder", "difficulty": 3, "repair": None, "ceiling_delta": -1, "ceiling": int(Rung.H2),
+    }
     assert got.prerequisite_ids == []
 
 
@@ -474,42 +492,55 @@ def test_a_verdict_on_a_concept_the_cursor_left_moves_no_cursor():
     ],
 )
 def test_a_malformed_stored_verdict_is_ignored_safely(stored):
+    """A malformed field is ignored; a valid action still applies what it
+    names. The ceiling clause comes from the action itself, never a stored
+    number, so a bad difficulty cannot stop HARDER's one rung down."""
     from routes.learn_loop import _apply_band_control
 
     state = routes._plan_state()
     entry = {"node_id": "node-1", "band_control": stored}
     before = json.loads(json.dumps(state))
     moved = _apply_band_control(state, entry)
-    if isinstance(stored, dict) and stored.get("action") == "wheelspin":
+    action = stored.get("action") if isinstance(stored, dict) else None
+    if action == "wheelspin":
         assert moved is True and state["concept"] == "node-2"  # no valid repair: stop and advance
+    elif action == "harder":
+        assert moved is False and "band_difficulty" not in state
+        assert state == {**before, "band_ceiling": {"node-1": -1}}
     else:
         assert moved is False and state == before
 
 
-def test_without_a_plan_the_verdict_only_sets_the_difficulty():
+def test_without_a_plan_the_verdict_sets_only_the_difficulty_and_the_ceiling():
     from routes.learn_loop import _apply_band_control
 
     state = {"phase": "teach", "concept": "node-1"}
     entry = {"node_id": "node-1", "band_control": {"action": "easier_check_prereqs", "difficulty": 1, "repair": "node-0"}}
     assert _apply_band_control(state, entry) is False
-    assert state == {"phase": "teach", "concept": "node-1", "band_difficulty": {"node-1": 1}}
+    assert state == {
+        "phase": "teach", "concept": "node-1",
+        "band_difficulty": {"node-1": 1}, "band_ceiling": {"node-1": 1},
+    }
 
 
-def test_the_controller_never_changes_how_much_help_a_turn_gets(loop):
-    """Ceilings, gates and leak guards are untouched: after an EASIER verdict
-    the next item opens at H0 with the same ceiling the band gives, and the
-    stored verdict carries no ceiling or rung."""
+def test_easier_raises_the_next_items_ceiling_one_rung_and_the_gate_still_holds(loop):
+    """§3.3 "unassisted_next < 0.65 → … ceiling +1 rung": after the verdict's
+    feedback turn the concept's next item opens at H0 under the band's ceiling
+    plus one (develop H3 → H4); the attempt/dwell gate still answers first."""
     _learner_reads(loop, p=0.5)
     _answer(loop, [MISS], correct=False)
     doc = loop.store["doc"]
-    assert set(doc["steps"]["qh-1"]["band_control"]) == {"action", "difficulty", "repair"}
+    assert doc["steps"]["qh-1"]["band_control"]["ceiling"] == int(Rung.H4)
     loop.list_items.return_value = [routes.ITEM.model_copy(update={"question_hash": "qh-2", "id": "item-2"})]
     routes.client.post("/api/learn/loop/check/next", json={"session_id": "s1", "user_id": "u1"})
     new = loop.store["doc"]["steps"]["qh-2"]
     assert new["rung"] == int(Rung.H0) and new["attempts"] == 0
     st = routes.client.get("/api/learn/loop/status", params={"user_id": "u1", "session_id": "s1"}).json()
-    assert st["band"] == "develop"
-    assert st["ceiling"] == int(Rung.H3)  # develop, no failed attempt: §3.3's H3, not raised
+    assert st["band"] == "develop" and st["ceiling"] == int(Rung.H4)
+    r = routes.client.post(
+        "/api/learn/loop/hint", json={"session_id": "s1", "user_id": "u1", "question_hash": "qh-2"}
+    )
+    assert r.json() == {"denied": "no_genuine_attempt"}  # more help allowed, never help before effort
 
 
 def test_band_control_reads_happen_after_the_flush(loop):

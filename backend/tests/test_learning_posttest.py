@@ -1340,3 +1340,26 @@ def test_an_unreadable_reported_set_refuses_the_answer(gate_on, one_item, applie
     with patch("routes.learn_loop.reported_hashes", side_effect=RuntimeError("down")):
         r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
     assert r.status_code == 503 and one_item["claims"] == [] and applied == []
+
+
+def test_band_control_ceilings_never_reach_the_posttest(
+    gate_on, one_item, grader_says, applied, captured_events, monkeypatch
+):
+    """Spec §13 A122: band control's ceiling clause moves an in-session band
+    ceiling only. The tool-removed post-test stays at H0 (spec §10 rung 3): it
+    reads no band ceiling and no table ceiling at all."""
+    import routes.learn_loop as loop_routes
+
+    def never(*a, **k):
+        raise AssertionError("the post-test read a ceiling")
+
+    monkeypatch.setattr(loop_routes, "_band_ceiling_delta", never)
+    monkeypatch.setattr(loop_routes, "_ceiling_for", never)
+    monkeypatch.setattr(loop_routes.policy, "ceiling_with_reason", never)
+    grader_says(correct=True, confidence=0.9)
+    r = client.post(ANSWER, json=_answer(answer="a function with its lexical scope"))
+    assert r.status_code == 200, r.text
+    (step,) = [e for e in captured_events if e["event_type"] == "zpd.step"]
+    assert step["payload"]["ceiling"] == 0 and step["payload"]["ceiling_reason"] == "posttest"
+    (call,) = applied
+    assert call["graph_update"]["evidence"][0]["max_rung"] == 0

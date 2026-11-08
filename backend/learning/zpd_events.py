@@ -162,18 +162,24 @@ def emit_zpd_band_adjust(
     direction: BandAction,
     trigger: BandTrigger,
     window_stats: dict,
+    ceiling_delta: int | None = None,
 ) -> None:
-    _emit(
-        "zpd.band_adjust",
-        "usage",
-        user_id,
-        request_id,
-        lambda: {
+    """`ceiling_delta` (spec §13 A122): the rungs the verdict's ceiling clause
+    moves the concept's band ceiling (−1 HARDER, +1 EASIER_CHECK_PREREQS, 0
+    otherwise); present whenever the band controller emits, omitted only by a
+    caller that has none."""
+
+    def build() -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "direction": BandAction(direction).value,
             "trigger": trigger,
             "window_stats": dict(window_stats),
-        },
-    )
+        }
+        if ceiling_delta is not None:
+            payload["ceiling_delta"] = int(ceiling_delta)
+        return payload
+
+    _emit("zpd.band_adjust", "usage", user_id, request_id, build)
 
 
 def emit_zpd_wheelspin(

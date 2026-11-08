@@ -28,6 +28,10 @@ ToolChoice = Literal["auto", "none"]
 LOOP_STATE_VERSION = 1
 WINDOW_KEEP = params.BAND_WINDOW * params.BAND_CONTROL_STOP_WINDOWS
 _BANDS = get_args(Band)
+# spec §13 A122: the band-control ceiling moves §3.3 states ("ceiling −1 / +1 rung")
+_CEILING_DELTAS = frozenset(
+    {-params.BAND_CONTROL_CEILING_STEP, 0, params.BAND_CONTROL_CEILING_STEP}
+)
 
 
 class BandAction(str, Enum):
@@ -54,6 +58,8 @@ class CeilingReason(str, Enum):
     TEACH_ATTEMPT = "teach_attempt"
     # PKG-14 (spec §10 rung 3): the tool-removed post-test forces H0
     POSTTEST = "posttest"
+    # spec §13 A122: band control's ceiling clause moved the band's row a rung
+    BAND_CONTROL = "band_control"
 
 
 @dataclass
@@ -111,7 +117,7 @@ TEACH_ATTEMPT_CEILING_CAP: dict[str, Rung] = {
 
 
 def ceiling_with_reason(
-    learner: LearnerView, step: StepState, *, teach_attempt: bool = False
+    learner: LearnerView, step: StepState, *, teach_attempt: bool = False, band_delta: int = 0
 ) -> tuple[Rung, CeilingReason]:
     """Highest rung this turn may reach, first-match over the §3.3 table.
 
@@ -120,6 +126,14 @@ def ceiling_with_reason(
     rises TEACH_ATTEMPT_CEILING_RAISE rung (TEACH_ATTEMPT_CEILING_RAISE_PROFIC for
     the profic band, owner decision 2026-10-01), capped at TEACH_ATTEMPT_CEILING_CAP
     for the band, never in exam mode. It moves no evidence and no state.
+
+    `band_delta` (spec §13 A122): band control's ceiling clause for the concept
+    (`ceiling_delta`: −1 after HARDER, +1 after EASIER_CHECK_PREREQS, 0 else)
+    moves the band's row that many rungs, clamped to the ladder (H0..H6); the
+    reason is then BAND_CONTROL. It changes the band's ceiling only: exam mode
+    still returns H1, the shown-work floor and the teach-attempt cap apply after
+    it, and every gate — the attempt/dwell gate, the H6 item predicates (A32),
+    the help floor, the leak checks — runs where it always ran.
 
     While a step is open every recorded genuine attempt is a failed one (a
     correct attempt closes the step), so `genuine_attempts` is the table's
@@ -130,6 +144,8 @@ def ceiling_with_reason(
         raise ValueError(f"genuine_attempts must be >= 0, got {fails}")
     if learner.band not in _BANDS:
         raise ValueError(f"unknown band {learner.band!r}")
+    if isinstance(band_delta, bool) or band_delta not in _CEILING_DELTAS:
+        raise ValueError(f"band_delta must be one of {sorted(_CEILING_DELTAS)}, got {band_delta!r}")
     if step.exam_mode:
         return Rung.H1, CeilingReason.EXAM
     unconfirmed = (
@@ -165,6 +181,10 @@ def ceiling_with_reason(
         rung, reason = Rung.H4, CeilingReason.NOVICE_WORKED_FIRST
     else:
         rung, reason = Rung.H5, CeilingReason.NOVICE_PREREQ_GAP
+    if band_delta:
+        moved = Rung(min(max(int(rung) + band_delta, int(Rung.H0)), int(Rung.H6)))
+        if moved != rung:
+            rung, reason = moved, CeilingReason.BAND_CONTROL
     if step.showed_work and rung < Rung.H3:
         return Rung.H3, CeilingReason.SHOWED_WORK_FLOOR
     if teach_attempt:
@@ -180,8 +200,8 @@ def ceiling_with_reason(
     return rung, reason
 
 
-def ceiling(learner: LearnerView, step: StepState) -> Rung:
-    return ceiling_with_reason(learner, step)[0]
+def ceiling(learner: LearnerView, step: StepState, *, band_delta: int = 0) -> Rung:
+    return ceiling_with_reason(learner, step, band_delta=band_delta)[0]
 
 
 def attempt_first(learner: LearnerView) -> bool:
@@ -206,17 +226,18 @@ def opens_on_worked_example(learner: LearnerView, *, shown_on_concept: bool) -> 
 
 
 def worked_example_rung(
-    learner: LearnerView, step: StepState, *, worked_first: bool
+    learner: LearnerView, step: StepState, *, worked_first: bool, band_delta: int = 0
 ) -> Rung | None:
     """The rung the next hint on an item that opens on the worked example
     unlocks (§13 A122): H4 — with no genuine attempt and no dwell before it,
     since the example comes FIRST — while the step is below H4, `attempt_first`
-    still says no and the step's ceiling admits H4 (exam mode's H1 does not).
-    None: the ordinary ladder (gates.rung_unlock, one rung at a time). H5 and
-    every later rung keep the attempt + dwell gate."""
+    still says no and the step's ceiling (band control's `band_delta` applied)
+    admits H4 (exam mode's H1 does not). None: the ordinary ladder
+    (gates.rung_unlock, one rung at a time). H5 and every later rung keep the
+    attempt + dwell gate."""
     if not worked_first or attempt_first(learner) or step.rung >= Rung.H4:
         return None
-    return Rung.H4 if ceiling(learner, step) >= Rung.H4 else None
+    return Rung.H4 if ceiling(learner, step, band_delta=band_delta) >= Rung.H4 else None
 
 
 # ── evidence mapping (spec §3.3 EVIDENCE MAPPING) ────────────────────────────
@@ -423,6 +444,19 @@ def next_difficulty(action: BandAction, difficulty: int) -> int | None:
     else:
         return None
     return min(max(difficulty + step, min(levels)), max(levels))
+
+
+def ceiling_delta(action: BandAction) -> int:
+    """§3.3's ceiling clause for a verdict (spec §13 A122): HARDER "ceiling −1
+    rung", EASIER_CHECK_PREREQS "ceiling +1 rung" (BAND_CONTROL_CEILING_STEP);
+    0 for every other verdict. The concept's delta is the last nonzero one
+    (HOLD holds it, as it holds the difficulty); `ceiling_with_reason` applies
+    it to the band's row only, clamped, never past a gate."""
+    if action is BandAction.HARDER:
+        return -params.BAND_CONTROL_CEILING_STEP
+    if action is BandAction.EASIER_CHECK_PREREQS:
+        return params.BAND_CONTROL_CEILING_STEP
+    return 0
 
 
 class PrerequisiteStatus(str, Enum):

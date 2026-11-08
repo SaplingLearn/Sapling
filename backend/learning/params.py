@@ -337,6 +337,10 @@ BAND_CONTROL_STOP_WINDOWS = 2
 # Down is "free" in that no minimum window gates it (HARDER alone needs
 # BAND_CONTROL_HARDER_MIN_ATTEMPTS), so consecutive low verdicts walk it down.
 BAND_CONTROL_DIFFICULTY_STEP = 1
+# spec §13 A122: §3.3 band control's "ceiling −1 rung" (HARDER) and "ceiling +1
+# rung" (EASIER_CHECK_PREREQS) — the band's ceiling moves this many rungs,
+# clamped to the ladder; no gate moves with it (policy.ceiling_with_reason).
+BAND_CONTROL_CEILING_STEP = 1
 # † spec §13 A122: §3.3 STOP_PRACTICE's "belief stable" — the concept's newest
 # graded opportunity moved p_known by less than this. The spec's one named
 # stability threshold (PROBE_STOP_DELTA: "the last two posteriors move less
