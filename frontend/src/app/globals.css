@@ -3073,8 +3073,3 @@ html.ld-noscrollbar::-webkit-scrollbar { display: none; }
 [style*="--font-gummi"][style*="font-weight:500"],
 [style*="--font-display"][style*="font-weight: 500"],
 [style*="--font-display"][style*="font-weight:500"] { -webkit-text-stroke-width: var(--medium-stroke); }
-
-/* Licensed heading font stand-in: when the Gummi files were not fetched
-   (src/app/fonts/gummi.fallback.ts), headings fall back to Aleo. */
-/* Aleo has a real 500, so the faux-medium stroke is switched off too. */
-.gummi-fallback { --font-gummi: var(--font-aleo); --medium-stroke: 0px; }

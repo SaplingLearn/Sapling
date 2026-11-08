@@ -1,9 +1,0 @@
-{
-  "repo": "SaplingLearn/sapling-licensed-fonts",
-  "ref": "main",
-  "files": [
-    { "name": "Gummi-Regular.woff2", "source": "fonts/Gummi-Regular.woff2", "sha256": "33747583dddc38cdfab8215807eaf7db411ad478c198645a9d2c1a0436e5b991" },
-    { "name": "Gummi-Italics.woff2", "source": "fonts/Gummi-Italics.woff2", "sha256": "795541deb1cdb7d4aadc540da18da6bfa002d3afdb9a08491e30e6ca49dcc696" },
-    { "name": "Gummi-Bold.otf", "source": "fonts/Gummi-Bold.otf", "sha256": "9b4073800821a7fb11640b957075a170d4354ed589f694474c2a9a703800b928" }
-  ]
-}

@@ -6,10 +6,6 @@ import { UserProvider } from '@/context/UserContext';
 import { FlagsProvider } from '@/context/FlagsContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-// Gummi, the heading face: ./fonts/gummi.licensed.ts when the licensed files
-// were fetched, ./fonts/gummi.fallback.ts (Aleo stand-in) otherwise. The alias
-// is chosen in next.config.ts; see docs/licensed-fonts.md.
-import { gummi } from '@gummi-font';
 import './globals.css';
 
 /*
@@ -24,7 +20,7 @@ import './globals.css';
  *
  * The type is the approved Pen set from the redesign (#728) — Aleo for
  * long-form reading text, SUSE for UI, IBM Plex Mono for numerals and code —
- * with headings since moved to the licensed Gummi (imported above).
+ * with headings since moved to the licensed Gummi (below).
  * Each woff2 in ./fonts is a lossless conversion of the official
  * google/fonts binary (ttf SHA-256 62b6cb49… Aleo, 9b4c074d… Aleo Italic,
  * 16bda691… SUSE, 6a3412f0… / a9b4c49b… / d3c38e55… / ac27abd6… Plex Mono
@@ -41,6 +37,29 @@ const aleo = localFont({
     { path: './fonts/Aleo-variable-italic.woff2', weight: '100 900', style: 'italic' },
   ],
   variable: '--font-aleo',
+  display: 'swap',
+  fallback: ['Georgia', 'serif'],
+  adjustFontFallback: 'Times New Roman',
+});
+
+/*
+ * Gummi (ZEKUTYPE, via fonts.xyz): the heading face. It owns the display role
+ * (`--font-display`, FONT_DISPLAY, the landing's section headings).
+ *
+ * Commercially licensed, NOT OFL (terms in ./fonts/Gummi-LICENSE.md): the
+ * files may not be redistributed, which is why this repository must stay
+ * PRIVATE while they are in it.
+ *
+ * Gummi ships no medium: a 500 heading renders Regular, thickened by the
+ * `--medium-stroke` rules in globals.css so it doesn't read thin.
+ */
+const gummi = localFont({
+  src: [
+    { path: './fonts/Gummi-Regular.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/Gummi-Italics.woff2', weight: '400', style: 'italic' },
+    { path: './fonts/Gummi-Bold.otf', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-gummi',
   display: 'swap',
   fallback: ['Georgia', 'serif'],
   adjustFontFallback: 'Times New Roman',

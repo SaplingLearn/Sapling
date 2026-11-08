@@ -3,26 +3,8 @@ import type { NextConfig } from "next";
 // against Cloudflare bindings (R2/KV/env vars). See the guarded call at the
 // foot of this file for why it is not simply invoked.
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { checkFrontendDeployEnv, resolveFrontendEnv } from "./src/lib/deployGuard";
-import { chooseGummiFont } from "./src/lib/licensedFonts";
 import { TRAILING_SLASH_REDIRECT } from "./src/lib/trailingSlashRedirect";
-
-// The licensed heading font (Gummi) is fetched into src/app/fonts/licensed/ by
-// scripts/fetch-licensed-fonts.mjs (the prebuild/predev hook). Bundle the real
-// module when every file is there, the Aleo stand-in when not — and refuse a
-// deploy build (WORKERS_CI=1) that would ship the stand-in. docs/licensed-fonts.md.
-const FONTS_DIR = path.join(process.cwd(), "src/app/fonts");
-const LICENSED_FONT_FILES: string[] = JSON.parse(
-  readFileSync(path.join(FONTS_DIR, "licensed-fonts.json"), "utf8"),
-).files.map((f: { name: string }) => f.name);
-const GUMMI_FONT = chooseGummiFont({
-  files: LICENSED_FONT_FILES,
-  exists: (name) => existsSync(path.join(FONTS_DIR, "licensed", name)),
-  env: process.env,
-});
-if ("error" in GUMMI_FONT) throw new Error(GUMMI_FONT.error);
 
 // Cross-check BEFORE deriving: checkFrontendDeployEnv's "explicit lock"
 // branch exists to fail the build when DEPLOY_ENV disagrees with explicit
@@ -96,12 +78,6 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
-  // `@gummi-font` → the licensed Gummi module or its Aleo stand-in (see the
-  // GUMMI_FONT choice at the top of this file). tsconfig `paths` and the
-  // vitest alias both point at the stand-in, which has the same shape.
-  turbopack: {
-    resolveAlias: { "@gummi-font": GUMMI_FONT.module },
-  },
   // `next dev` blocks cross-origin requests for its /_next dev resources (HMR,
   // chunks, fonts) from any host but localhost, so opening the dev server by
   // LAN IP — e.g. from a phone — renders unhydrated with fallback fonts.
