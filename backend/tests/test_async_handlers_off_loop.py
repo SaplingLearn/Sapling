@@ -34,13 +34,23 @@ client = TestClient(app)
 
 class Wire:
     def __init__(self):
-        self.calls: list[tuple[str, str, bool]] = []  # (method, table, on_loop)
+        self.calls: list[tuple[str, str, bool]] = []  # sync client: (method, table, on_loop)
+        self.native: list[tuple[str, str]] = []  # the native async client's requests
         self.rows: dict[tuple[str, str], object] = {}
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
+        name = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json=self.rows.get((request.method, name), []),
+                              headers={"Content-Range": "0-0/1"})
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         name = request.url.path.rsplit("/", 1)[-1]
         self.calls.append((request.method, name, asyncio._get_running_loop() is not None))
-        return httpx.Response(200, json=self.rows.get((request.method, name), []))
+        return self._answer(request)
+
+    def native_handler(self, request: httpx.Request) -> httpx.Response:
+        self.native.append((request.method, request.url.path.rsplit("/", 1)[-1]))
+        return self._answer(request)
 
     def to(self, method: str, name: str) -> list[bool]:
         return [on_loop for m, n, on_loop in self.calls if (m, n) == (method, name)]
@@ -50,13 +60,13 @@ class Wire:
 def wire(monkeypatch, no_sync_db_on_loop):
     monkeypatch.setattr(dbconn, "REST_URL", "http://supabase.test/rest/v1")
     w = Wire()
-    transport = httpx.MockTransport(w.handler)
     monkeypatch.setattr(dbconn, "_client", httpx.Client(
-        transport=transport, headers=dbconn._HEADERS, timeout=30.0))
-    monkeypatch.setattr(adb, "_async_client", lambda: httpx.AsyncClient(transport=transport))
+        transport=httpx.MockTransport(w.handler), headers=dbconn._HEADERS, timeout=30.0))
+    native = httpx.MockTransport(w.native_handler)
+    monkeypatch.setattr(adb, "_async_client", lambda: httpx.AsyncClient(transport=native))
     yield w
     assert not any(on_loop for _m, _n, on_loop in w.calls), (
-        f"PostgREST request(s) sent from the event loop: {w.calls}")
+        f"sync PostgREST request(s) sent from the event loop: {w.calls}")
 
 
 def test_careers_apply(wire):
@@ -174,3 +184,41 @@ def test_the_fixture_would_catch_a_regression(wire, monkeypatch):
 
     with pytest.raises(adb.SyncDbOnLoop):
         asyncio.run(_blocking_apply())
+
+
+# ── The first router read converted end to end (design §4.1, wave 2) ───────
+
+
+@pytest.mark.parametrize("async_mode", ["off", "on"])
+def test_quiz_list_attempts_on_the_async_seam(wire, monkeypatch, async_mode):
+    monkeypatch.setenv("SAPLING_FLAG_ASYNC_DB_CLIENT", async_mode)
+    wire.rows[("GET", "quiz_attempts")] = [{
+        "id": "q1", "concept_node_id": "node1", "difficulty": "easy", "score": 1,
+        "total": 2, "mastery_before": 0.5, "mastery_after": 0.6,
+        "completed_at": None, "abandoned_at": None,
+        "created_at": "2099-01-01T00:00:00+00:00",
+    }]
+    wire.rows[("GET", "graph_nodes")] = [
+        {"id": "node1", "concept_name": "Loops", "course_id": "c1"}]
+    wire.rows[("GET", "quiz_responses")] = [
+        {"attempt_id": "q1", "answered_at": "2099-01-01T00:01:00+00:00"}]
+
+    r = client.get("/api/quiz/attempts", params={"user_id": "user_andres"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == 1
+    (attempt,) = body["attempts"]
+    assert attempt["concept_name"] == "Loops" and attempt["status"] == "in_progress"
+    assert attempt["mastery_delta"] == 0.1
+
+    reads = {("GET", "quiz_attempts"), ("GET", "graph_nodes"), ("GET", "quiz_responses")}
+    if async_mode == "on":
+        # The three handler reads went native, from the loop; only the sweep
+        # (a sync service: its own reads + the conditional PATCH) used the
+        # sync client, on a worker thread.
+        assert reads <= set(wire.native)
+        assert {(m, n) for m, n, _ in wire.calls} <= reads | {("PATCH", "quiz_attempts")}
+        assert ("GET", "graph_nodes") not in {(m, n) for m, n, _ in wire.calls}
+    else:
+        assert wire.native == []
+        assert reads <= {(m, n) for m, n, _ in wire.calls}

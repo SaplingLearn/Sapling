@@ -374,12 +374,29 @@ def _recent_activity(attempt_ids: set[str]) -> dict[str, str]:
     if not attempt_ids:
         return {}
     rows = table("quiz_responses").select(
-        "attempt_id,answered_at",
-        filters={
-            "attempt_id": f"in.({','.join(sorted(attempt_ids))})",
-            "answered_at": f"gte.{_abandon_cutoff().isoformat()}",
-        },
+        "attempt_id,answered_at", filters=_activity_filters(attempt_ids),
     ) or []
+    return _latest_answers(rows)
+
+
+async def _arecent_activity(attempt_ids: set[str]) -> dict[str, str]:
+    """`_recent_activity` on the async seam (#117), for `async def` readers."""
+    if not attempt_ids:
+        return {}
+    rows = await table("quiz_responses").aselect(
+        "attempt_id,answered_at", filters=_activity_filters(attempt_ids),
+    ) or []
+    return _latest_answers(rows)
+
+
+def _activity_filters(attempt_ids: set[str]) -> dict:
+    return {
+        "attempt_id": f"in.({','.join(sorted(attempt_ids))})",
+        "answered_at": f"gte.{_abandon_cutoff().isoformat()}",
+    }
+
+
+def _latest_answers(rows: list[dict]) -> dict[str, str]:
     latest: dict[str, str] = {}
     for r in rows:
         aid, ts = r.get("attempt_id"), r.get("answered_at")
@@ -2257,7 +2274,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
 
 
 @router.get("/attempts")
-def list_attempts(
+async def list_attempts(
     request: Request,
     user_id: str,
     limit: int = 20,
@@ -2265,17 +2282,21 @@ def list_attempts(
 ):
     """#542 D4: paginated attempt history for the signed-in user — the
     plaintext scalars (#521/#527) finally get their reader. No question
-    payloads here (and therefore no answer keys)."""
-    require_self(user_id, request)
+    payloads here (and therefore no answer keys).
+
+    #117: the first handler converted end to end onto the async DB seam
+    (docs/design/async-db-client.md §4): its reads are `a*` calls, and the
+    sync guard and the sweep's writes hop to a worker thread."""
+    await guard_off_loop(require_self, user_id, request)
     limit = max(1, min(limit, 100))
     # Clamp BOTH ends: an unbounded offset is stringified into PostgREST's
     # offset param and Postgres rejects it as bigint-out-of-range — a 500
     # where an empty page is the honest answer.
     offset = max(0, min(offset, _MAX_HISTORY_OFFSET))
     # Lazy lifecycle sweep (#542 D2) — the read paths keep statuses honest.
-    _sweep_abandoned(user_id)
+    await asyncio.to_thread(_sweep_abandoned, user_id)
 
-    rows, total = table("quiz_attempts").select_with_count(
+    rows, total = await table("quiz_attempts").aselect_with_count(
         "id,concept_node_id,difficulty,score,total,mastery_before,"
         "mastery_after,completed_at,abandoned_at,created_at",
         filters={"user_id": f"eq.{user_id}"},
@@ -2292,7 +2313,7 @@ def list_attempts(
     node_ids = sorted({r["concept_node_id"] for r in rows if r.get("concept_node_id")})
     nodes: dict[str, dict] = {}
     if node_ids:
-        node_rows = table("graph_nodes").select(
+        node_rows = await table("graph_nodes").aselect(
             "id,concept_name,course_id",
             filters={"id": f"in.({','.join(node_ids)})", "user_id": f"eq.{user_id}"},
         ) or []
@@ -2306,7 +2327,7 @@ def list_attempts(
         if not r.get("completed_at") and not r.get("abandoned_at")
     }
     try:
-        activity = _recent_activity(open_ids)
+        activity = await _arecent_activity(open_ids)
     except Exception:
         logger.exception("quiz: history activity read failed user=%s", user_id)
         activity = {}
