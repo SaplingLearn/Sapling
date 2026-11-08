@@ -522,3 +522,121 @@ def test_decision_router_resolves_like_any_flag(monkeypatch):
 def test_decision_router_is_server_only_and_off_first():
     fd = ff.REGISTRY["decision_router"]
     assert fd.variants == ("off", "jev", "jev_shadow") and not fd.client_visible
+
+
+# ── #117: cross-replica invalidation through feature_flags_version ─────────
+
+
+def _versioned(version_box, flags_box):
+    """table() factory whose version row and flag rows a test can move, as
+    another replica's admin write (and the trigger) would."""
+    reads = {"version": 0, "config": 0}
+
+    def factory(name):
+        m = MagicMock()
+        if name == "feature_flags_version":
+            def sel(*a, **k):
+                reads["version"] += 1
+                return [{"version": version_box[0]}]
+            m.select.side_effect = sel
+        elif name == "feature_flags":
+            def swc(*a, **k):
+                if not k.get("offset"):
+                    reads["config"] += 1
+                rows = flags_box[0]
+                return (rows if not k.get("offset") else [], len(rows))
+            m.select_with_count.side_effect = swc
+        elif name == "feature_flag_targets":
+            m.select_with_count.side_effect = _paged([])
+        else:
+            m.select.return_value = []
+        return m
+    return factory, reads
+
+
+def test_another_replicas_write_is_seen_within_the_version_interval(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    version, flags = [3], [[_row("off")]]
+    factory, reads = _versioned(version, flags)
+    with patch("services.feature_flags.table", side_effect=factory):
+        assert ff.flag_variant(KEY, "u1") == "off"
+        assert reads == {"version": 1, "config": 1}
+
+        # Another replica writes: its trigger bumps the version. This process
+        # never called clear_feature_flags_cache().
+        flags[0], version[0] = [_row("on")], 4
+        clock[0] += ff.DEFAULT_VERSION_CHECK_S - 1
+        assert ff.flag_variant(KEY, "u1") == "off"  # inside the interval: snapshot
+        assert reads["version"] == 1
+
+        clock[0] += 2  # past the interval, well inside the 30 s snapshot TTL
+        assert ff.flag_variant(KEY, "u1") == "on"
+        assert reads["config"] == 2
+
+
+def test_an_unchanged_version_keeps_the_snapshot(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    factory, reads = _versioned([7], [[_row("on")]])
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.flag_variant(KEY, "u1")
+        for _ in range(3):
+            clock[0] += ff.DEFAULT_VERSION_CHECK_S + 0.1
+            assert ff.flag_variant(KEY, "u1") == "on"
+    assert reads["config"] == 1  # three version checks, no reload
+    assert reads["version"] == 4
+
+
+def test_no_version_row_means_ttl_only_and_no_checks(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    with patch("services.feature_flags.table", side_effect=_tables(flags=[_row("on")])):
+        ff.flag_variant(KEY, "u1")
+        clock[0] += ff.DEFAULT_VERSION_CHECK_S + 1
+        assert ff.cached_explain(KEY, "u1").variant == "on"  # nothing due
+    assert ff._version is None
+
+
+def test_cached_explain_defers_a_due_version_check_off_the_loop(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    factory, _reads = _versioned([1], [[_row("on")]])
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.flag_variant(KEY, "u1")
+    with patch("services.feature_flags.table", side_effect=AssertionError("I/O")):
+        assert ff.cached_explain(KEY, "u1").variant == "on"
+        clock[0] += ff.DEFAULT_VERSION_CHECK_S + 0.1
+        assert ff.cached_explain(KEY, "u1") is None  # needs a read: caller hops
+
+
+def test_a_failed_version_read_never_fails_resolution(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    factory, _reads = _versioned([1], [[_row("on")]])
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.flag_variant(KEY, "u1")
+
+    def broken(name):
+        if name == "feature_flags_version":
+            raise httpx.ConnectError("down")
+        return factory(name)
+    clock[0] += ff.DEFAULT_VERSION_CHECK_S + 0.1
+    with patch("services.feature_flags.table", side_effect=broken):
+        r = ff.explain(KEY, "u1")
+    assert (r.variant, r.step) == ("on", "default")
+    assert not ff.store_unreadable()
+
+
+def test_the_version_check_can_be_turned_off(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(ff.time, "monotonic", lambda: clock[0])
+    monkeypatch.setenv(ff.VERSION_CHECK_ENV, "0")
+    version, flags = [1], [[_row("off")]]
+    factory, reads = _versioned(version, flags)
+    with patch("services.feature_flags.table", side_effect=factory):
+        ff.flag_variant(KEY, "u1")
+        version[0], flags[0] = 2, [_row("on")]
+        clock[0] += 10
+        assert ff.flag_variant(KEY, "u1") == "off"  # TTL (30 s) still governs
+    assert reads["version"] == 1

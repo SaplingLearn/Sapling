@@ -118,6 +118,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("services/events_service.py", "_insert_late", "runs_as_service"): "events/llm_usage",
     ("services/feature_flags.py", "_user_roles", "service_scope"): "flag store (decides db_user_scope itself)",
     ("services/feature_flags.py", "read_config", "service_scope"): "flag store (decides db_user_scope itself)",
+    ("services/feature_flags.py", "_read_version", "service_scope"):
+        "#117 flag store's version row (cross-replica cache bust)",
     ("services/graph_service.py", "ensure_user_exists", "runs_as_service"): "inserts a users row",
     ("services/gradescope_jobs.py", "stage_sync", "runs_as_service"):
         "#116 gradescope_syncs is service-only (bucket E): staged sync",
