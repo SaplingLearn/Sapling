@@ -354,8 +354,6 @@ def seams():
         ns.context_policy = p("policy.context_policy", wraps=policy.context_policy)
         ns.ai_budget = p("ai_budget")
         ns.detect = p("detect_leak", wraps=leak.detect_leak)
-        # fix round 2 (N1): the served path never masks in place (no strip_leak)
-        ns.strip = MagicMock(name="strip_leak_unused")
         ns.zpd = p("zpd_events")
         ns.save_msg = p("save_message")
         ns.events = p("events_service")
@@ -1109,7 +1107,6 @@ def test_leak_path_on_a_model_turn_serves_the_ladder_line_persists_it_and_emits(
     item_kw = {"final_answer": ITEM.final_answer, "canonical_answer": None, "correct_option": None}
     assert {k: kw[k] for k in item_kw} == item_kw
     assert kw["strict"] is True and isinstance(kw["given"], str), "served mode"
-    seams.strip.assert_not_called()
     assert kw["rung"] == Rung.H3, "a correct verdict does not release the answer"
     tokens = [e for e in _sse_events(r.text) if e["type"] == "token"]
     assert tokens and all(ITEM.reference_answer not in e["data"]["delta"] for e in tokens), (

@@ -113,13 +113,6 @@ def _detect(text, *, strict=False, key="C", **over):
     return detect_leak(reference=REF, emitted=text, rung=Rung.H0, strict=strict, **kw)
 
 
-def _strip(text, *, strict=False, key="C", **over):
-    from learning.leak import strip_leak
-
-    kw = {"final_answer": FINAL, "correct_option": key, **over}
-    return strip_leak(emitted=text, reference=REF, strict=strict, **kw)
-
-
 @pytest.mark.parametrize("hint", OWNER_PHRASINGS)
 def test_every_owner_phrasing_leaks_in_strict_mode(hint):
     assert _detect(hint, strict=True) == (True, "option"), hint
@@ -133,13 +126,11 @@ def test_the_context_rule_catches_them_in_default_mode(hint):
 @pytest.mark.parametrize("hint", DEFAULT_CLEAN)
 def test_honest_non_leaks_in_default_mode(hint):
     assert _detect(hint) == (False, "none"), hint
-    assert _strip(hint) == hint
 
 
 @pytest.mark.parametrize("hint", DEFAULT_CLEAN_KEY_A)
 def test_the_article_a_is_no_leak_for_key_a_in_default_mode(hint):
     assert _detect(hint, key="A") == (False, "none"), hint
-    assert _strip(hint, key="A") == hint
 
 
 def test_the_letter_a_still_leaks_for_key_a_where_it_is_a_label():
@@ -197,7 +188,6 @@ CLAUSE_BREAK_NOW_FLAGGED = [("Ｃ", "C"), ("C.", "C"), ("(C", "C"), ("I would st
 @pytest.mark.parametrize("hint, key", DEFAULT_CLEAN_ROUND2)
 def test_round2_honest_prose_is_clean_in_default_mode(hint, key):
     assert _detect(hint, key=key) == (False, "none"), (hint, key)
-    assert _strip(hint, key=key) == hint
 
 
 # ── A38 fix round 2 (MAJOR 2): strict mode keeps the article exemption ──────
@@ -254,31 +244,19 @@ def test_strict_mode_catches_the_restated_correct_option_text():
     assert _detect(hint, option_text=text) == (False, "none"), "default: no option text rule"
     assert _detect(hint, strict=True, option_text=text) == (True, "option")
     assert _detect("Think about the stack.", strict=True, option_text=text) == (False, "none")
-    once = _strip(hint, strict=True, option_text=text)
-    assert "overflows" not in once
-    assert _detect(once, strict=True, option_text=text) == (False, "none")
 
 
-@pytest.mark.parametrize("strict", [False, True])
-@pytest.mark.parametrize("hint", OWNER_PHRASINGS + DEFAULT_LEAKS)
-def test_strip_withholds_and_is_idempotent(hint, strict):
-    once = _strip(hint, strict=strict)
-    assert _detect(once, strict=strict) == (False, "none"), once
-    assert _strip(once, strict=strict) == once
-    if _detect(hint, strict=strict).leaked:
-        assert "[withheld]" in once
-
-
-def test_see_part_c_strips_to_balanced_brackets_in_strict_mode():
-    once = _strip("(see part C)", strict=True)
-    assert once == "(see part [withheld])"
-    assert once.count("(") == once.count(")")
-
-
-def test_random_texts_strip_clean_and_idempotent_in_both_modes():
+def test_random_texts_cut_clean_on_the_served_stream_in_both_modes():
     """Property: for random mixes of option contexts, markup, separators,
-    look-alikes, invisible characters and existing markers, one strip pass leaves
-    nothing the same mode flags, and a second pass is a no-op."""
+    look-alikes, invisible characters and existing markers, the served
+    stream's cut (routes.learn_loop._cut_before_leak: the text up to the last
+    sentence end before the first leak, never masked in place — spec §13
+    A51 N1) leaves nothing the same mode's served check flags. It replaces the
+    removed stripper's "one pass leaves nothing" property (spec §13 A142):
+    the cut is what a student can see stream before the final text."""
+    from learning.leak import leak_spans
+    from routes.learn_loop import _cut_before_leak
+
     pieces = [
         "option", "opt.", "choice", "answer", "answer is", "correct:", "it's", "It is",
         "the third one", "second choice", "#", "++", ", b or", "Plan", "(A, B, C)", "x",
@@ -297,14 +275,17 @@ def test_random_texts_strip_clean_and_idempotent_in_both_modes():
         key = rng.choice("ABCD")
         for strict in (False, True):
             extra = {"option_text": "the calls pile up"} if strict else {}
-            once = _strip(text, strict=strict, key=key, **extra)
-            assert _detect(once, strict=strict, key=key, **extra) == (False, "none"), (
+            kw = {"final_answer": FINAL, "correct_option": key, "strict": strict, **extra}
+            spans = leak_spans(emitted=text, reference=REF, given="", **kw)
+            if not spans:
+                continue
+            cut = _cut_before_leak(text, spans)
+            assert leak_spans(emitted=cut, reference=REF, given="", **kw) == [], (
                 text,
-                once,
+                cut,
                 key,
                 strict,
             )
-            assert _strip(once, strict=strict, key=key, **extra) == once, (text, key, strict)
 
 
 @pytest.mark.parametrize("strict", [False, True])
@@ -321,8 +302,18 @@ def test_no_redos_on_a_long_adversarial_text(strict):
         return (mixed, "(" * size, "option " * (size * 7 // 50), "*" * size + "C")
 
     def check(text):
+        from learning.leak import leak_spans
+
         _detect(text, strict=strict)
-        _strip(text, strict=strict)
+        # the served path's span check, which runs on every streamed delta
+        leak_spans(
+            emitted=text,
+            reference=REF,
+            final_answer=FINAL,
+            correct_option="C",
+            strict=strict,
+            given="",
+        )
 
     for index, text in enumerate(adversarial(50_000)):
         assert_linear(lambda size, index=index: adversarial(size)[index], check, 12_500, text[:40])
@@ -369,20 +360,6 @@ def _num(text, final, canonical=None, *, strict=True):
 )
 def test_numeric_paraphrases_leak_in_strict_mode(hint, final, canonical):
     assert _num(hint, final, canonical) == (True, "final_answer"), hint
-    once = _strip_num(hint, final, canonical)
-    assert _num(once, final, canonical) == (False, "none"), once
-
-
-def _strip_num(text, final, canonical):
-    from learning.leak import strip_leak
-
-    return strip_leak(
-        emitted=text,
-        reference=NUM_REF,
-        final_answer=final,
-        canonical_answer=canonical,
-        strict=True,
-    )
 
 
 @pytest.mark.parametrize(
@@ -437,8 +414,6 @@ KEY_I_LEAKS = [
 @pytest.mark.parametrize("hint", KEY_A_LEAKS)
 def test_key_a_in_a_keyword_context_leaks_in_both_modes(hint, strict):
     assert _detect(hint, key="A", strict=strict) == (True, "option"), hint
-    once = _strip(hint, key="A", strict=strict)
-    assert _detect(once, key="A", strict=strict) == (False, "none"), once
 
 
 @pytest.mark.parametrize("strict", [False, True])
@@ -505,8 +480,6 @@ ROUND4_TEMPLATES = [
 def test_round4_true_positives_in_both_modes(template, key, strict):
     hint = template.format(x=key)
     assert _detect(hint, key=key, strict=strict) == (True, "option"), hint
-    once = _strip(hint, key=key, strict=strict)
-    assert _detect(once, key=key, strict=strict) == (False, "none"), once
 
 
 @pytest.mark.parametrize("strict", [False, True])

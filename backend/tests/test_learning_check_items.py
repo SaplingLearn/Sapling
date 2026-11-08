@@ -279,7 +279,7 @@ def _item(**over):
 
 class TestAnswerTokens:
     """A34's answer normalisation: the one reading of a final answer that
-    validate_draft (here) and leak.detect_leak / strip_leak (PKG-06) share."""
+    validate_draft (here) and leak.detect_leak / leak_spans (PKG-06) share."""
 
     @pytest.mark.parametrize(
         "text,run",

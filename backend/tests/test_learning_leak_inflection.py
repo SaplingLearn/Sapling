@@ -1,8 +1,8 @@
 """PKG-06 reopen (PKG-07 review round 3, C1(c)): strict mode folds simple
 inflections of a WORD answer.
 
-The loop's served path runs detect_leak/strip_leak in strict mode against the
-active item. A word answer's other inflections ("mitochondria" for
+The loop's served path runs the leak check (detect_leak, and leak_spans for
+the stream cut) in strict mode against the active item. A word answer's other inflections ("mitochondria" for
 "Mitochondrion", "viruses" for "virus") state it just as plainly; the rule is
 structural — two alphabetic answer tokens are one lemma when they share a stem
 of at least LEAK_STEM_MIN_CHARS characters that covers at least
@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from learning.ladder import Rung
-from learning.leak import WITHHELD, detect_leak, strip_leak
+from learning.leak import detect_leak, leak_spans
 from learning.params import LEAK_STEM_MIN_CHARS, LEAK_STEM_MIN_SHARE
 
 MITO = dict(
@@ -96,14 +96,22 @@ def test_honest_prose_is_not_an_inflection(final_answer, text):
     assert not _leaks(text, reference="x", final_answer=final_answer)
 
 
-def test_strip_withholds_the_inflection_and_leaves_nothing_the_detector_flags():
+def test_the_served_stream_cuts_before_the_inflection():
+    """The served path never masks in place (spec §13 A51 N1; the stripper
+    was removed, A142): the stream stops before the sentence holding the
+    inflection, so nothing the detector flags is shown."""
+    from routes.learn_loop import _cut_before_leak
+
     text = "Key idea: the mitochondria make ATP.\n\nWhich organelle is it?"
-    out = strip_leak(emitted=text, strict=True, **MITO)
-    assert "mitochondri" not in out.lower() and WITHHELD in out
-    assert not _leaks(out, **MITO)
+    spans = leak_spans(emitted=text, strict=True, given="", **MITO)
+    assert spans and text[spans[0][0] : spans[0][1]].lower().startswith("mitochondri")
+    cut = _cut_before_leak(text, spans)
+    assert cut == "" and not _leaks(cut, **MITO)
 
 
 def test_strict_mode_catches_the_numeric_answer_written_in_words():
     item = dict(reference="f'(1) = 8. Final answer: 8.", final_answer="8", canonical_answer="8")
     assert _leaks("f'(one) is eight", **item)
-    assert "eight" not in strip_leak(emitted="f'(one) is eight", strict=True, **item)
+    text = "f'(one) is eight"
+    spans = leak_spans(emitted=text, strict=True, given="", **item)
+    assert [text[a:b] for a, b in spans] == ["eight"]
