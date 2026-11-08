@@ -384,12 +384,14 @@ def test_a_probe_answer_matching_a_common_wrong_key_reaches_the_rule(real_probe)
 
 def test_the_same_key_on_a_second_probe_isomorph_writes_one_row_after_the_flush(real_probe):
     """§3.3's isomorph rule, recorded by the route after its one flush and the
-    claimed save (A75 (a)); evidence_text = the text the grader saw."""
+    claimed save (A75 (a)); evidence_text = the text the grader saw. Spec §13
+    A123: the row also records the supporting attempt's item (the probe's
+    question_hash), so a later retire of that item can close it."""
     _answer(real_probe, 1)
     flushed_before = len(real_probe.commits)
     _answer(real_probe, 2, "it keeps the key in a chain at the full slot")
     real_probe.record.assert_called_once_with(
-        UID, "A", "A-i2", KEY, "it keeps the key in a chain at the full slot"
+        UID, "A", "A-i2", KEY, "it keeps the key in a chain at the full slot", question_hash="h-A-2"
     )
     assert len(real_probe.commits) == flushed_before + 1
     doc = real_probe.store["doc"]
