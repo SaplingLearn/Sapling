@@ -350,3 +350,29 @@ def test_updated_at_is_maintained(db_conn):
     before = _row(db_conn, job["id"])["updated_at"]
     _claim(db_conn, "w1")
     assert _row(db_conn, job["id"])["updated_at"] > before
+
+
+# ── through PostgREST, the way the app calls it ─────────────────────────────
+
+
+def test_services_jobs_round_trip_through_postgrest(db_conn):
+    from services import jobs
+
+    out = jobs.enqueue("t.rest", {"offering_id": "o1"}, dedupe_key="rest:o1")
+    assert out["inserted"] is True and out["id"]
+    assert jobs.enqueue("t.rest", {"offering_id": "o1"}, dedupe_key="rest:o1") == {
+        "id": out["id"], "inserted": False}
+
+    (job,) = jobs.claim("w-rest", types=["t.rest"], limit=5, lease_seconds=LEASE)
+    assert job.id == out["id"] and job.payload == {"offering_id": "o1"}
+    assert job.attempt == 1 and job.locked_by == "w-rest"
+    assert jobs.claim("w-other", types=["t.rest"]) == []
+
+    assert jobs.fail(job, "transient") == "failed"
+    db_conn.execute("UPDATE public.jobs SET run_after = now() - interval '1 second' "
+                    "WHERE id = %s", (job.id,))
+    (retry,) = jobs.claim("w-rest", types=["t.rest"])
+    assert retry.attempt == 2
+    assert jobs.complete(job) is False  # the first claim's fence is stale
+    assert jobs.complete(retry) is True
+    assert _row(db_conn, job.id)["status"] == "succeeded"
