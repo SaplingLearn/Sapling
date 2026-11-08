@@ -162,7 +162,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
 
   // spec §13 A135: apply `focusNext` once nothing is in flight and its target is
   // on screen. A dialog (the crisis-support card) keeps focus.
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const want = focusNext.current;
     if (!want || busy) return;
     if (document.querySelector('[aria-modal="true"]')) {

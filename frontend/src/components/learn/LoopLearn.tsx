@@ -11,7 +11,7 @@
 // never as a chat turn (A16). Spec:
 // docs/superpowers/specs/2026-09-26-learning-loop-design.md §9, §11.3; routes:
 // backend/routes/learn_loop.py.
-import React, { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -201,6 +201,11 @@ const hasDeepLink = (d: DeepLink) => !!(d.resume || d.topic || d.course || d.mod
 const statusPhase = (st: LoopSessionStatus) => (st.loop_phase === "teach" ? st.phase : st.loop_phase);
 
 // ── Keyboard focus (spec §13 A135) ────────────────────────────────────────
+// Every focus move runs in a layout effect, synchronously with the commit that
+// shows the new content. A passive effect could still be pending when the next
+// input event arrives; React then flushes it inside that event, and the focus
+// change it makes dispatches a nested event that restores the controlled field
+// before its new value has rendered.
 /** A modal dialog (the AI notice, the crisis-support card) owns focus while it
  *  is open: nothing on the screen behind it may take it. */
 const modalOpen = () => typeof document !== "undefined" && document.querySelector('[aria-modal="true"]') !== null;
@@ -1438,7 +1443,7 @@ export function LoopLearn() {
   // page itself when the control that started the action was disabled or
   // removed) moves: new content that took focus first — a posed check, the
   // plan's heading, a dialog — keeps it.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const want = focusAfter.current;
     if (!want) return;
     if (modalOpen()) {
@@ -2060,7 +2065,7 @@ function isOpenPhase(phase: LoopPhase): boolean {
  *  so it is read out and Tab continues from it. */
 function CenteredCard({ testId, children }: { testId: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const active = document.activeElement;
     if (modalOpen() || (active && active !== document.body && !active.matches(":disabled"))) return;
     const heading = ref.current?.querySelector<HTMLElement>("h2, h3");
@@ -2200,12 +2205,12 @@ function ProbePanel({
   // the question (or the options' tab stop, named by it) — so a screen reader
   // reads the question and the student can answer at once.
   const questionHash = item?.question_hash;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!questionHash || modalOpen()) return;
     focusAnswerStart(cardRef.current);
   }, [questionHash]);
   // ...and the answer shown after a miss takes focus, so it is read out.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (reference === null || modalOpen()) return;
     referenceRef.current?.focus();
   }, [reference]);
@@ -2300,7 +2305,10 @@ function ProbePanel({
                       placeholder="In one sentence: why?"
                       value={draft.reason}
                       disabled={busy}
-                      onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
+                      onChange={(e) => {
+                        const reason = e.target.value;
+                        setDraft((d) => ({ ...d, reason }));
+                      }}
                     />
                   </>
                 ) : (
@@ -2314,7 +2322,10 @@ function ProbePanel({
                     placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer"}
                     value={draft.answer}
                     disabled={busy}
-                    onChange={(e) => setDraft((d) => ({ ...d, answer: e.target.value }))}
+                    onChange={(e) => {
+                      const answer = e.target.value;
+                      setDraft((d) => ({ ...d, answer }));
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
                     }}
@@ -2371,7 +2382,7 @@ function PlanPanel({
   // spec §13 A135: the plan replaces the check-in (or its retry), so its heading
   // takes focus — read out, and the place Tab continues from.
   const headingRef = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!modalOpen()) headingRef.current?.focus();
   }, []);
   return (
@@ -2475,7 +2486,7 @@ function CheckCard({
   // question appeared, and the student can answer at once. The pose and the
   // hint also stay in the conversation log (visually hidden while the card
   // shows them), so they are announced as they arrive.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (modalOpen()) return;
     focusAnswerStart(cardRef.current);
   }, [item.question_hash]);
@@ -2515,7 +2526,10 @@ function CheckCard({
             placeholder="In one sentence: why?"
             value={draft.reason}
             disabled={busy}
-            onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
+            onChange={(e) => {
+              const reason = e.target.value;
+              setDraft((d) => ({ ...d, reason }));
+            }}
           />
         </>
       ) : (
@@ -2529,7 +2543,10 @@ function CheckCard({
           placeholder={item.format === "teachback" ? "Explain it in your own words" : "Your answer — this is what gets checked"}
           value={draft.answer}
           disabled={busy}
-          onChange={(e) => setDraft((d) => ({ ...d, answer: e.target.value }))}
+          onChange={(e) => {
+            const answer = e.target.value;
+            setDraft((d) => ({ ...d, answer }));
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) onSubmit();
           }}
@@ -2636,7 +2653,7 @@ function ClosePanel({
     focusTarget.current = el;
   };
   const ready = close !== null || note !== null;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (ready && !modalOpen()) focusTarget.current?.focus();
   }, [ready]);
   if (!close) {
