@@ -234,22 +234,29 @@ async def apply_misconception_rule(
     item,
     grade: GradeOutcome,
     evidence: Evidence,
+    confront: bool = True,
 ) -> Verdict | None:
     """PKG-10 (spec §3.3; A16: the hook lives in grade_answer). Append this
     attempt to the session attempt log on `deps.loop_state`, run the rule over
     this concept's attempts, and on a keyed `misconception` set the
     confrontation marker and mark the store row to write
     (`grade.diagnosis["record"]`). grade_answer never persists (spec §13 A75):
-    the check route writes the row with learning.misconceptions.record AFTER
-    its one flush_pending, under the grading claim, so a failed flush never
-    leaves a row behind for a resubmission to count twice. The key is grade.wrong_key — the seam-matched key
+    the route (the check route; the probe since A120) writes the row with
+    learning.misconceptions.record AFTER its one flush_pending, under the
+    grading claim, so a failed flush never leaves a row behind for a
+    resubmission to count twice. The key is grade.wrong_key — the seam-matched key
     after PKG-05's A22 option filter; the option → key map alone never reaches
     here. Student-stated confidence only: CheckAnswer has none yet, and
     grade.confidence is the grader's, deliberately not read. The change is
     also left on `grade.diagnosis` for the route's compare-and-set save.
+
+    `confront=False` (the probe, spec §13 A120): the rule runs and may mark the
+    row, but the confrontation marker is never set or cleared — the probe stays
+    a diagnostic (no teaching or feedback turn depends on it); a later check on
+    the concept that matches the key again confronts it.
     None (inert, nothing read or written) unless the loop is on and the caller
-    loaded a loop state (only the check route does: the probe and the review
-    pass none)."""
+    loaded a loop state (the check route and the probe do; the review passes
+    none)."""
     if not deps.learning_loop or deps.loop_state is None:
         return None
     log = attempts_of(deps.loop_state)
@@ -280,10 +287,12 @@ async def apply_misconception_rule(
     verdict = slip_or_misconception(attempts_for_node(log, node_id))
     marker = cleared = to_record = None
     if verdict == "misconception" and grade.wrong_key:
-        marker = {"node_id": node_id, "wrong_key": grade.wrong_key, "check_item_id": item.id}
-        to_record = dict(marker)  # the store row the route writes after the flush
-        set_confront(deps.loop_state, marker)
-    elif evidence.correct:
+        row = {"node_id": node_id, "wrong_key": grade.wrong_key, "check_item_id": item.id}
+        to_record = dict(row)  # the store row the route writes after the flush
+        if confront:
+            marker = row
+            set_confront(deps.loop_state, marker)
+    elif evidence.correct and confront:
         # a marker still waiting for a model turn (its feedback turn was a template)
         # never confronts a student who has since answered this concept right
         pending = confront_of(deps.loop_state)
@@ -305,6 +314,7 @@ async def _record(
     ev: Evidence,
     *,
     item,
+    confront: bool = True,
 ) -> GradeOutcome:
     """Append the Evidence dict. Its weight is PKG-03's evidence_weight(ev),
     derived by the model at validation from the flags: assisted (a correct
@@ -313,7 +323,9 @@ async def _record(
     slip/misconception rule runs first; its verdict and the matched key ride
     the Evidence dict (spec §5) — nothing journals them (no column), the
     misconceptions row is the durable record."""
-    outcome.verdict = await apply_misconception_rule(deps, item=item, grade=outcome, evidence=ev)
+    outcome.verdict = await apply_misconception_rule(
+        deps, item=item, grade=outcome, evidence=ev, confront=confront
+    )
     row = ev.model_copy(update={"verdict": outcome.verdict, "wrong_key": outcome.wrong_key})
     row = Evidence.model_validate(row.model_dump()).model_dump()
     deps.pending_evidence.append(row)
@@ -329,6 +341,7 @@ async def grade_answer(
     node_id: str,
     max_rung: int = 0,
     same_session_recheck: bool = False,
+    confront: bool = True,
 ) -> GradeOutcome:
     """Grade one explicit submission and append its Evidence to deps.pending_evidence.
 
@@ -339,6 +352,8 @@ async def grade_answer(
     Evidence derives `assisted` from it (PKG-03). Raises ValueError for a rung off
     the ladder and KeyError for an unknown format, before any grader call; a
     grader failure never raises (GradeOutcome(unavailable=True)).
+    `confront=False` (the probe, spec §13 A120): the misconception rule never
+    sets or clears the confrontation marker (apply_misconception_rule).
     """
     if not deps.learning_loop:
         return GradeOutcome(unavailable=True)
@@ -362,6 +377,7 @@ async def grade_answer(
             GradeOutcome(correct=False),
             Evidence(idk=True, correct=False, **base),
             item=item,
+            confront=confront,
         )
 
     if item.format == _MC_REASON:  # the reason check runs for BOTH option outcomes (A22)
@@ -404,4 +420,4 @@ async def grade_answer(
         grader_backend=backend,
     )
     ev = Evidence(correct=correct, confidence=confidence, grader_backend=backend, **base)
-    return await _record(deps, outcome, ev, item=item)
+    return await _record(deps, outcome, ev, item=item, confront=confront)

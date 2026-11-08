@@ -5781,6 +5781,10 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         session_id=body.session_id,
         feature="loop_probe",
         learning_loop=loop_on,
+        # spec §13 A120: the probe feeds the §3.3 slip/misconception rule too —
+        # the hook appends this answer to the session attempt log on a copy;
+        # the change rides the checkpoint into the claimed save below
+        loop_state=copy.deepcopy(state),
     )
     # PKG-10 (spec §13 A76, fix round 3): a probe item is the next graded item
     # on its concept after a release too — the same rule as the check route
@@ -5796,20 +5800,22 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
     # A93: a probe item graded with help anywhere (another session's hints, a
     # reveal) carries no unassisted credit — the same help floor as every grade
     floor = _reveal_floor(body.user_id, item.item, None)
+    answer = CheckAnswer(
+        question_hash=qh,
+        answer_text=body.answer,
+        selected_option=body.option,
+        reason=body.reason,
+        idk=idk,
+    )
     try:
         outcome = await grade_answer(
             item.item,
-            CheckAnswer(
-                question_hash=qh,
-                answer_text=body.answer,
-                selected_option=body.option,
-                reason=body.reason,
-                idk=idk,
-            ),
+            answer,
             deps=deps,
             node_id=node_id,
             max_rung=floor,
             same_session_recheck=recheck,
+            confront=False,  # A120: the probe is a diagnostic — it never sets a marker
         )
         if outcome.refused:  # A33, read BEFORE `unavailable`: never a skip
 
@@ -5828,13 +5834,15 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
                 return {"graded": False, "refused": True}
             synthetic_idk = True
             idk = True  # the CHECK_REFUSALS_AS_IDK-th refusal is an idk observation (A1)
+            answer = CheckAnswer(question_hash=qh, idk=True)
             outcome = await grade_answer(
                 item.item,
-                CheckAnswer(question_hash=qh, idk=True),
+                answer,
                 deps=deps,
                 node_id=node_id,
                 max_rung=floor,
                 same_session_recheck=recheck,
+                confront=False,
             )
         if outcome.unavailable:  # invariant 28: nothing for either outcome
             _update_loop_state(body.session_id, _under_probe_claim(qh, claim, _not_asked))
@@ -5859,7 +5867,10 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
             session_id=body.session_id, course_id=course_id or None, question_hash=qh,
             goal_version=goal_version(state), evidence=copy.deepcopy(deps.pending_evidence),
             continuation={"observation": observation, "correct": correct,
-                          "check_item_id": item.id},
+                          "check_item_id": item.id,
+                          # A120: the attempt log change (and a row to record), re-applied below
+                          "diagnosis": getattr(outcome, "diagnosis", None),
+                          "answer": answer.model_dump(mode="json")},
         )
         checkpointed = True
         _save_grade_checkpoint(checkpoint)
@@ -5889,7 +5900,8 @@ def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
     committed = _committed_grade_observation(checkpoint, receipt, node_id)
     observation = {**checkpoint.continuation["observation"], **committed, "p_after": p_after,
                    "grade_operation_id": checkpoint.operation_id}
-    reference = None
+    diagnosis = checkpoint.continuation.get("diagnosis")  # A120; None before A120
+    reference = item = None
     if not checkpoint.continuation["correct"]:
         # Read corrective source text while the checkpoint is still recoverable.
         try:
@@ -5917,12 +5929,26 @@ def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
         _refuse_while_closing(doc, _now_s())
         _check_goal_version(doc, checkpoint.goal_version)
         _under_probe_claim(checkpoint.question_hash, checkpoint.operation_id, record)(doc)
+        if out.get("recorded"):
+            # spec §13 A120: this answer joins the session attempt log the §3.3
+            # rule reads, on the FRESH document, in the write that records it
+            carry(doc, diagnosis)
         if out.get("done"):
             doc["phase"] = "plan"
 
     saved = _update_loop_state(checkpoint.session_id, record_posed, require_open=True, require_existing=True)
     if not out.get("recorded"):
         raise HTTPException(status_code=409, detail=_ALREADY_GRADED)
+    if (diagnosis or {}).get("record") and item is not None:
+        # A120 (A75 (a)'s order): the row the rule marked, written only after the
+        # one flush and the save that recorded the answer under OUR claim
+        try:
+            _write_misconception(
+                checkpoint.user_id, GradeOutcome(diagnosis=diagnosis), _item_like(item),
+                CheckAnswer.model_validate(checkpoint.continuation["answer"]),
+            )
+        except Exception:
+            logger.warning("probe misconception not recorded after saved grade")
     if out.get("done"):
         _emit_probe_done(saved, checkpoint.user_id, _request_id(request))
     response = {

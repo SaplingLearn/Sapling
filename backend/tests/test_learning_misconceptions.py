@@ -1083,8 +1083,9 @@ def test_idk_is_an_attempt_with_no_key_and_no_grader_call(graded):
 
 
 def test_grade_answer_without_loop_state_is_unchanged(graded):
-    """The probe and the review pass no loop state: no rule, no attempt, no
-    record; the Evidence carries the matched key and no verdict."""
+    """The review passes no loop state (the probe passes one since spec §13
+    A120): no rule, no attempt, no record; the Evidence carries the matched
+    key and no verdict."""
     from agents.tools.check import CheckAnswer, grade_answer
 
     graded["set"](item_results={"r1": True, "r2": False}, all_yes=False, matched_wrong_key="w_loop")
