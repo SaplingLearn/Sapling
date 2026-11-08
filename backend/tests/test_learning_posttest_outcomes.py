@@ -200,6 +200,65 @@ def test_a_held_item_is_never_posed():
     assert choose_posttest_item([held], set(), window_index=0) is None
 
 
+# ── A123 / A124 holds and A113 reports on the wave-2 base ────────────────────
+
+
+@pytest.mark.parametrize(
+    "hold,verified",
+    [
+        ("key_disputed", False),  # A124's key holds, on a key nobody confirmed
+        ("key_unsolved", False),
+        ("key_audit_wrong", False),
+        ("key_audit_ambiguous", False),
+        ("reports_threshold", True),  # A123's staff holds: a confirmed key lifts neither
+        ("staff_retired", True),
+    ],
+)
+def test_no_held_item_is_a_reserve_or_an_outcome_item(hold, verified):
+    """Every hold, A124's and A123's, takes the item out of both reserves and
+    out of every window's choice, even when a read hands it over."""
+    held = _item("f2", "free", 2, lint=[hold], verified=verified)
+    grid = _grid(f2=held)
+    assert "f2" not in posttest_reserve_hashes(grid)
+    for window in (0, 1):
+        choice = choose_posttest_item(grid, set(), window_index=window)
+        assert choice is not None and choice.item.question_hash != "f2"
+    assert choose_posttest_item([held], set(), window_index=0) is None
+    assert posttest_skip_reason([held], exposed=set()) == "no_items"
+
+
+def test_a_reserve_the_student_reported_is_never_their_outcome_item():
+    """A113: a student's report keeps the item from THEM (the route passes it
+    in `excluded`), reserve or not. The concept's reserves stay what they are
+    for everyone else; this student gets the other reserve, then a fallback."""
+    grid = _grid()
+    first, second = posttest_reserve_hashes(grid)
+    choice = choose_posttest_item(grid, {first}, window_index=0)
+    assert choice.item.question_hash == second and choice.source == "reserve"
+    fallback = choose_posttest_item(grid, {first, second}, window_index=0)
+    assert fallback.item.question_hash not in {first, second}
+    assert fallback.source == "fallback"
+    assert posttest_skip_reason([_by(grid, first)], exposed=set()) == "reported"
+
+
+def test_a_hold_on_a_reserve_makes_the_next_window_pick_a_new_one():
+    """The reserves are computed from the bank at read time, so a hold placed
+    on the second reserve after the first window was answered moves the second
+    window to a NEW reserve, never to the held item."""
+    grid = _grid()
+    first, second = posttest_reserve_hashes(grid)
+    answered = {first}  # the first window was posed and answered: now seen
+    before = choose_posttest_item(grid, answered, window_index=1)
+    assert before.item.question_hash == second and before.source == "reserve"
+    held = _item(second, _by(grid, second).format, _by(grid, second).difficulty,
+                 lint=["reports_threshold"], verified=True)
+    after_hold = [held if i.question_hash == second else i for i in grid]
+    new_first, new_second = posttest_reserve_hashes(after_hold)
+    assert new_first == first and new_second not in {first, second}
+    after = choose_posttest_item(after_hold, answered, window_index=1)
+    assert after.item.question_hash == new_second and after.source == "reserve"
+
+
 # ── why a window is skipped ──────────────────────────────────────────────────
 
 
