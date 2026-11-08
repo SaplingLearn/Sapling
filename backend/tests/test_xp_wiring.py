@@ -245,7 +245,7 @@ class TestNoteCreatedAward:
             }
 
         with (
-            patch("routes.notes.resolve_offering", return_value="off-xp"),
+            patch("routes.notes.require_course_enrollment", return_value="off-xp"),
             patch("routes.notes.create_note", side_effect=fake_create),
             patch("services.xp_service.table", side_effect=xp_table),
         ):

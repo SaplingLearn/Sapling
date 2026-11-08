@@ -21,8 +21,9 @@ from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
 from services import events_service
-from services.academics import offering_course_id, resolve_offering, term_id_for_label
-from services.academics import require_course_enrollment
+from services.academics import (
+    offering_course_id, require_course_enrollment, resolve_offering, term_id_for_label,
+)
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
     create_note,
@@ -185,13 +186,14 @@ async def list_user_notes(
 @router.post("")
 async def create(body: CreateNoteBody, request: Request):
     await guard_off_loop(require_self, body.user_id, request)
-    # #115: only under a course the student is enrolled in (else 404).
-    await asyncio.to_thread(require_course_enrollment, body.user_id, body.course_id)
-    # Abstract course id from the client → the current-term offering the note
-    # is stored against (create=True so a fresh note lands in the real term).
-    # CREATE path: deliberately NOT semester-scoped (#141) — new content
-    # belongs to the current term by design.
-    offering_id = resolve_offering(body.course_id, create=True)
+    # #115: only under a course the student is enrolled in (else 404). The
+    # gate returns the offering the note is stored against: the student's own
+    # enrollment in the abstract course — the current term's when they hold
+    # it, else their latest term's — so the check and the write agree.
+    # CREATE path: deliberately NOT semester-scoped (#141).
+    offering_id = await asyncio.to_thread(
+        require_course_enrollment, body.user_id, body.course_id,
+    )
     note = await create_note(
         user_id=body.user_id,
         offering_id=offering_id,
@@ -248,10 +250,12 @@ async def patch(note_id: str, body: UpdateNoteBody, request: Request):
     if body.tags is not None:
         patch_dict["tags"] = body.tags
     if body.course_id is not None:
-        # RE-HOME path: moving a note onto another abstract course files it
-        # under that course's CURRENT-term offering — deliberately not
-        # semester-scoped (#141), like the create path above.
-        patch_dict["offering_id"] = resolve_offering(body.course_id, create=True)
+        # RE-HOME path: moving a note onto another abstract course passes the
+        # same #115 gate as create (404 unless enrolled) and files it under
+        # the offering the gate returns — not semester-scoped (#141).
+        patch_dict["offering_id"] = await asyncio.to_thread(
+            require_course_enrollment, body.user_id, body.course_id,
+        )
     if not patch_dict:
         raise HTTPException(status_code=400, detail="No fields to update.")
     updated = await update_note(

@@ -497,24 +497,40 @@ def live_accounts(monkeypatch):
     monkeypatch.setattr(auth_guard, "_read_account_state", lambda _uid: auth_guard.ACCOUNT_ACTIVE)
 
 
+#: The offering `_bypass_course_enrollment` hands a gated write when the
+#: test's fake table resolves none.
+BYPASS_OFFERING_ID = "off-bypass"
+
+
 @pytest.fixture(autouse=True)
 def _bypass_course_enrollment(request, monkeypatch):
-    """#115: course-keyed writes (upload, course scan-concepts, notes create)
-    call `academics.require_course_enrollment`. Tests that mock `table()` for
+    """#115: course-keyed writes (upload, scan-concepts, notes create/move,
+    tutor start-session with a course_id) go through
+    `academics.require_course_enrollment`, which answers with ONE read:
+    `academics.enrolled_offering_for_course`. Tests that mock `table()` for
     the route's own logic predate it and do not model enrollments, so — like
-    the auth guard below — it is a no-op at the route import sites unless the
-    test opts in with `@pytest.mark.real_course_enrollment` (or runs against a
-    real DB: integration / e2e_staging)."""
+    the auth guard below — that read is replaced by the pre-#115 resolution
+    (the current-term offering, `resolve_offering(create=True)`, or the
+    stand-in `BYPASS_OFFERING_ID` when the test's fake table models no
+    offering): the gate passes and the write lands where it used to. One
+    module-level patch covers every importer, because
+    `require_course_enrollment` looks the function up as a module global. A
+    test that pins the offering patches `routes.<module>.require_course_enrollment`.
+
+    Opt out with `@pytest.mark.real_course_enrollment`; tests against a real
+    DB (integration / e2e_staging) always run the real gate."""
     if (request.node.get_closest_marker("real_course_enrollment")
             or request.node.get_closest_marker("e2e_staging")
             or request.node.get_closest_marker("integration")):
         return
-    for mod_name in list(sys.modules):
-        if not mod_name.startswith("routes."):
-            continue
-        mod = sys.modules[mod_name]
-        if hasattr(mod, "require_course_enrollment"):
-            monkeypatch.setattr(mod, "require_course_enrollment", lambda *_a, **_k: None)
+    from services import academics
+
+    monkeypatch.setattr(
+        academics, "enrolled_offering_for_course",
+        lambda _user_id, course_id: (
+            academics.resolve_offering(course_id, create=True) or BYPASS_OFFERING_ID
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)
