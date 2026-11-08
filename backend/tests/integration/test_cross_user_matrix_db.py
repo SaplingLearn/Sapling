@@ -388,3 +388,36 @@ def test_reply_to_cannot_pull_a_private_message_into_a_shared_room(mode, matrix_
         must_contain=("matrix stored cross-room reply",),
     )
     _report(_run(b_client, db_conn, [post, read], mode), f"reply_to probe [{mode}]")
+
+
+#: A note B owns in the rich seed (seed_local_rich._NOTES): where the
+#: link-concept probe links.
+B_NOTE = "rich-note-hist-timeline"
+
+
+@pytest.mark.parametrize("mode", m.MODES)
+def test_link_concept_refuses_a_foreign_graph_node(mode, matrix_world, db_conn, b_client):
+    """A secondary-param probe the one-case-per-route matrix cannot express:
+    the note is B's own, only concept_node_id is A's.
+
+    Fixed by #115 (notes_service.link_concept checks the node's owner): the
+    link is refused with the same 404 as a node id that names nothing, and no
+    note_concepts row pointing at A's node lands on B's note. The fingerprint
+    only covers A's rows, so the junction write is asserted directly."""
+    a_node = matrix_world["concept_node_id"]
+    probes = [
+        m.Case(
+            "probe", "POST", "/api/notes/{note_id}/concepts",
+            f"/api/notes/{B_NOTE}/concepts",
+            json={"user_id": m.USER_B, "concept_node_id": node},
+            has_json=True, expect=(404,), probed=("concept_node_id",), note=note,
+        )
+        for node, note in ((a_node, "B's note, A's node"),
+                           (m.MISSING_ID, "B's note, no such node (same answer)"))
+    ]
+    _report(_run(b_client, db_conn, probes, mode), f"link-concept probe [{mode}]")
+    row = db_conn.execute(
+        "SELECT count(*) AS n FROM note_concepts WHERE note_id = %(n)s AND concept_node_id = %(c)s",
+        {"n": B_NOTE, "c": a_node},
+    ).fetchone()
+    assert row["n"] == 0, "a note_concepts row links B's note to A's graph node"

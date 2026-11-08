@@ -193,13 +193,32 @@ async def _note_belongs_to_user(note_id: str, user_id: str) -> bool:
     return bool(rows)
 
 
+async def _node_belongs_to_user(node_id: str, user_id: str) -> bool:
+    def _fetch() -> list[dict]:
+        return table("graph_nodes").select(
+            "id",
+            filters={"id": f"eq.{node_id}", "user_id": f"eq.{user_id}"},
+            limit=1,
+        ) or []
+    rows = await asyncio.to_thread(_fetch)
+    return bool(rows)
+
+
 async def link_concept(
     note_id: str, user_id: str, concept_node_id: str
 ) -> bool:
     """Insert a (note_id, concept_node_id) row. Returns True on success,
-    False if the note does not belong to user_id (silent reject — caller
-    converts to 404)."""
+    False if the note OR the concept node does not belong to user_id
+    (silent reject — caller converts to 404).
+
+    The node check closes a cross-user write (#115): without it a caller
+    could link another student's graph node to their own note, and the
+    FK answer (insert ok vs. violation) was an existence oracle for any
+    node id. A foreign node and a missing node take the same False.
+    """
     if not await _note_belongs_to_user(note_id, user_id):
+        return False
+    if not await _node_belongs_to_user(concept_node_id, user_id):
         return False
 
     def _insert() -> None:

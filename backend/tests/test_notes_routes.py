@@ -290,6 +290,49 @@ class TestLinkConceptRoute:
         assert r.status_code == 200
         assert r.json() == {"linked": True}
 
+    @pytest.mark.parametrize("node_id,expect", [
+        ("g-own", 200),       # u1's own node
+        ("g-foreign", 404),   # another student's node
+        ("g-missing", 404),   # no such node at all
+    ])
+    def test_link_checks_node_ownership(self, client, node_id, expect):
+        """#115: the real service decides; a foreign node and a missing one
+        get the SAME 404 body (no existence oracle) and write nothing."""
+        graph = {"g-own": "u1", "g-foreign": "u-other"}
+        inserted: list[dict] = []
+
+        class _T:
+            def __init__(self, name):
+                self.name = name
+
+            def select(self, cols, filters=None, **kw):
+                filters = filters or {}
+                if self.name == "notes":
+                    return [{"id": "n1"}] if filters.get("user_id") == "eq.u1" else []
+                if self.name == "graph_nodes":
+                    nid = filters["id"].removeprefix("eq.")
+                    uid = filters["user_id"].removeprefix("eq.")
+                    return [{"id": nid}] if graph.get(nid) == uid else []
+                raise AssertionError(self.name)
+
+            def insert(self, data, **kw):
+                assert self.name == "note_concepts"
+                inserted.append(data)
+                return [data]
+
+        with patch("services.notes_service.table", side_effect=_T):
+            r = client.post(
+                "/api/notes/n1/concepts",
+                json={"user_id": "u1", "concept_node_id": node_id},
+            )
+        assert r.status_code == expect
+        if expect == 200:
+            assert inserted == [{"note_id": "n1", "concept_node_id": "g-own"}]
+        else:
+            assert inserted == []
+            # Same answer as an unowned note (the handler appends a request id).
+            assert r.json()["detail"].startswith("Note not found.")
+
     def test_unlink(self, client):
         async def fake_unlink(note_id, user_id, concept_node_id):
             return True

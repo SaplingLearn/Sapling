@@ -174,12 +174,35 @@ from services.notes_service import (
 class TestLinkedConcepts:
     def test_link_concept_inserts_junction_row(self):
         notes_fake = FakeTable(rows=[{"id": "n1", "user_id": "u1"}])
+        nodes_fake = FakeTable(rows=[{"id": "g1"}])
         nc_fake = FakeTable()
         def picker(name):
-            return {"notes": notes_fake, "note_concepts": nc_fake}[name]
+            return {"notes": notes_fake, "graph_nodes": nodes_fake,
+                    "note_concepts": nc_fake}[name]
         with patch("services.notes_service.table", side_effect=picker):
-            _run(link_concept(note_id="n1", user_id="u1", concept_node_id="g1"))
+            ok = _run(link_concept(note_id="n1", user_id="u1", concept_node_id="g1"))
+        assert ok is True
         assert nc_fake.inserted == [{"note_id": "n1", "concept_node_id": "g1"}]
+        # The node lookup is scoped to the caller (#115).
+        _, kwargs = nodes_fake.select_calls[0]
+        assert kwargs["filters"] == {"id": "eq.g1", "user_id": "eq.u1"}
+
+    def test_link_concept_rejects_foreign_or_missing_node(self):
+        """#115: a node id the caller does not own (another student's node,
+        or one that does not exist) is refused the same way: both are zero
+        rows under the user_id filter, and nothing is written."""
+        notes_fake = FakeTable(rows=[{"id": "n1", "user_id": "u1"}])
+        nodes_fake = FakeTable(rows=[])  # filtered by user_id = u1: no row
+        nc_fake = FakeTable()
+        def picker(name):
+            return {"notes": notes_fake, "graph_nodes": nodes_fake,
+                    "note_concepts": nc_fake}[name]
+        with patch("services.notes_service.table", side_effect=picker):
+            ok = _run(link_concept(note_id="n1", user_id="u1", concept_node_id="g-other"))
+        assert ok is False
+        assert nc_fake.inserted == []
+        _, kwargs = nodes_fake.select_calls[0]
+        assert kwargs["filters"] == {"id": "eq.g-other", "user_id": "eq.u1"}
 
     def test_link_concept_rejects_unowned_note(self):
         notes_fake = FakeTable(rows=[])  # no such note for this user
