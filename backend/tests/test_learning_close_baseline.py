@@ -476,7 +476,7 @@ def test_the_session_evidence_read_carries_what_the_probe_rule_binds(monkeypatch
     assert needed <= set(cols.split(","))
 
 
-def _wire_walkthrough(monkeypatch, *, rows=WALKTHROUGH, earlier=()):
+def _wire_walkthrough(monkeypatch, *, rows=WALKTHROUGH, earlier=(), loop_state=LOOP_STATE):
     """The close route over the walkthrough session: the shared close fakes, with
     the journal answering the session read and the per-node first-evidence reads
     (`earlier`: rows journaled before this session)."""
@@ -486,7 +486,7 @@ def _wire_walkthrough(monkeypatch, *, rows=WALKTHROUGH, earlier=()):
 
     names = [{"id": n, "concept_name": v} for n, v in NAMES.items()]
     tables, events, store = _wire_close(
-        monkeypatch, evidence=rows, loop_state=LOOP_STATE, names=names
+        monkeypatch, evidence=rows, loop_state=loop_state, names=names
     )
     journal = _Journal([*earlier, *rows])
 
@@ -521,6 +521,37 @@ def test_the_close_route_gives_the_agent_honest_baselines_and_split_counts(monke
         "n-td": {"node_id": "n-td", "p_before": 0.162, "p_after": 0.162, "baseline": "check_in"},
         "n-cr": {"node_id": "n-cr", "p_before": 0.197, "p_after": 0.319, "baseline": "teaching"},
     }
+
+
+def test_probe_answers_in_the_attempt_log_are_never_counted_twice(monkeypatch):
+    """Spec §13 A120 × A117: since A120 a check-in answer also joins the
+    session attempt log (`loop_state.attempts`, the §3.3 rule's input), beside
+    the in-session checks. The close counts answers off the evidence journal
+    alone, split by the one probe rule (`learning/probe.py::is_probe_row`), so a
+    log holding every check-in and teaching answer leaves the split counts
+    exactly as the journal says: one count per graded answer."""
+    import routes.learn_loop as loop
+    from tests.test_learning_close_brief import UID, _close_out, _fake_run, client
+
+    attempts = [
+        {
+            "question_hash": r["question_hash"],
+            "node_id": r["node_id"],
+            "correct": r["correct"],
+            "difficulty": 2,
+            "idk": r["reason"].endswith(":idk"),
+            "released": not r["correct"],
+        }
+        for r in WALKTHROUGH
+    ]
+    _wire_walkthrough(monkeypatch, loop_state={**LOOP_STATE, "attempts": attempts})
+    runs: list = []
+    monkeypatch.setattr(loop, "run_session_close", _fake_run(_close_out(), runs))
+    r = client.post("/api/learn/loop/close", json={"session_id": SID, "user_id": UID})
+    assert r.status_code == 200, r.text
+    [(draft, _)] = runs
+    counts = (draft.probe_answers, draft.probe_correct, draft.teach_checks, draft.teach_correct)
+    assert counts == (3, 0, 2, 1)  # the journal's 3 check-in and 2 teaching answers, once each
 
 
 def test_the_deterministic_close_over_the_route_never_states_the_prior(monkeypatch):

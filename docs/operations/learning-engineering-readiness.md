@@ -276,6 +276,19 @@ unfinished engineering requirement.
    paused. Never delete budget/evidence receipts, fabricate missing costs, reset
    learner history or run a guessed down migration to make rollback appear safe.
 
+### Learning-loop wave-2 rollout ordering
+
+1. Apply the additive wave-2 migrations (`feat/learning-loop-wave2`) before the
+   backend code, in filename order: `20261108041639_learning_item_quality.sql`
+   (A113), `20261108041742_learning_posttest_windows.sql` (A112),
+   `20261108050630_learning_grader_backend_claude.sql` (A116; apply it before
+   any grader slot is flipped to Claude, or a `claude` evidence row fails its
+   batch closed) and `20261108051912_learning_item_alignment.sql` (A119). The
+   verifier's `--db-audit` requires the columns they add.
+2. Rolling back to pre-A120 code while an A120 probe grade checkpoint is in
+   flight cannot open that checkpoint (503). Roll forward only, or drain probe
+   checkpoints first.
+
 ### Kill-switch and rollback drill
 
 1. Capture candidate and rollback artifact identities, approved environment,
