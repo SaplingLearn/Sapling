@@ -29,6 +29,7 @@ from db.connection import page_all, pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
 from learning.calibration import confidence_calibration
 from learning.calibration import eligible as calibration_eligible
+from learning.cost_per_gain import LOOP_TASKS, cost_per_gain
 from learning.earnest_revise import earnest_revise
 from learning.evidence_void import is_void_row, pose_is_void
 from learning.help_abuse import LOOP_SOURCE as HELP_LOOP_SOURCE
@@ -743,6 +744,59 @@ class LearningGain(BaseModel):
     funnel: list[FunnelWindow] | None
 
 
+class CostWindow(BaseModel):
+    """One post-test window's pairs against the range's loop spend (A137).
+    Intervals are [lo, hi] with hi None when unbounded; None below two students."""
+
+    window_days: int
+    pairs: int
+    students: int
+    gain_points: int  # improved − worse: Σ(post − pre) over the pairs
+    per_pair: float | None
+    per_pair_ci: list[float | None] | None
+    per_gain_point: float | None  # None unless gain_points > 0
+    per_gain_point_ci: list[float | None] | None
+
+
+class CostBlock(BaseModel):
+    """The loop's spend, overall (course_id None) or for one course (A137)."""
+
+    course_id: str | None
+    cost_usd: float
+    tutor_usd: float  # the tutor tiers: what §3.5's target prices
+    drafting_usd: float  # check-item drafting and its checks (course assets)
+    rows: int
+    unpriced_rows: int  # rows with no cost_usd (an unpriced model): no dollars added
+    active_students: int
+    per_active_student_month: float | None
+    tutor_per_active_student_month: float | None
+    target_ratio: float | None  # per_active_student_month ÷ the §3.5 target
+    sessions: int
+    per_session: float | None  # the rows that carry a session, per session
+    windows: list[CostWindow]
+
+
+class CostUnattributed(BaseModel):
+    cost_usd: float
+    rows: int
+
+
+class CostPerGain(BaseModel):
+    """What the loop cost against what it measurably taught (spec §13 A137,
+    learning/cost_per_gain.py): the loop tasks' llm_usage spend in the range,
+    check-item drafting included, beside the learning-gain pairs answered in
+    it, overall and per course. Every figure has its n; None means nothing to
+    divide by, never zero. A row with no course of its own and no session is
+    `unattributed` (overall only)."""
+
+    target_usd_per_student_month: float
+    range_days: float | None
+    ci: GainCi
+    overall: CostBlock
+    courses: list[CostBlock]
+    unattributed: CostUnattributed
+
+
 class SlotWarning(BaseModel):
     """Spec §13 A128: an evidence-producing model slot this API process runs
     outside its evaluated set (`unevaluated`: reason pending_claude_eval |
@@ -836,6 +890,9 @@ class LearningLoopKpis(BaseModel):
     # spec §13 A127: do students know what they know? stated confidence vs correctness
     confidence_calibration: ConfidenceCalibration
     learning_gain: LearningGain
+    # A137: the loop's spend against the learning gain; None when the spend
+    # could not be read (the rest of the report stands)
+    cost_per_gain: CostPerGain | None = None
     # A128: the active evidence-slot warnings ([] when none; never blocking)
     slot_warnings: list[SlotWarning] = Field(default_factory=list)
     # spec §13 A133: help abuse — None when its reads failed (the rest stands)
@@ -1192,6 +1249,88 @@ def _help_abuse(
         return None
 
 
+#: A137: the llm_usage columns the cost report reads (course_id from
+#: 20261108163653; a database before it is read without the column)
+_USAGE_COST_COLS = "id,task,cost_usd,user_id,session_id,course_id,created_at"
+
+
+class _CostRead(NamedTuple):
+    report: CostPerGain | None
+    truncated: bool
+
+
+def _http_error_text(exc: BaseException) -> str:
+    """The message plus, for db.connection's httpx.HTTPStatusError, its body."""
+    try:
+        return f"{exc} {exc.response.text}"  # type: ignore[attr-defined]
+    except Exception:
+        return str(exc)
+
+
+def _range_days(from_iso: str, to_iso: str) -> float | None:
+    def parse(value: str) -> datetime:
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+    try:
+        return (parse(to_iso) - parse(from_iso)).total_seconds() / 86400
+    except ValueError:
+        return None
+
+
+def _cost_per_gain(
+    from_iso: str, to_iso: str, poses: list[dict], pretests: dict[str, bool], retired
+) -> _CostRead:
+    """A137: the loop tasks' llm_usage rows in the range (one paged read,
+    task-filtered), the courses of the sessions behind rows that name no course
+    of their own (sessions by id in `in.(…)` batches, offering → course), and
+    learning/cost_per_gain.py over them and the learning gain's own inputs.
+    Any read failure leaves the field None (one WARNING), never the report."""
+    filters = {"task": f"in.({','.join(LOOP_TASKS)})"}
+    order = "created_at.asc,id.asc"
+    try:
+        try:
+            usage, truncated = _scan_range(
+                "llm_usage", _USAGE_COST_COLS, from_iso, to_iso, extra_filters=filters, order=order
+            )
+        except Exception as exc:
+            if "course_id" not in _http_error_text(exc):
+                raise
+            logger.warning(
+                "admin_analytics: llm_usage has no course_id column (migration "
+                "20261108163653 not applied?); session-less loop spend is unattributed"
+            )
+            usage, truncated = _scan_range(
+                "llm_usage",
+                _USAGE_COST_COLS.replace(",course_id", ""),
+                from_iso,
+                to_iso,
+                extra_filters=filters,
+                order=order,
+            )
+        sessions = sorted(
+            {str(r["session_id"]) for r in usage if r.get("session_id") and not r.get("course_id")}
+        )
+        session_courses: dict[str, str] = {}
+        for batch in _batches(sessions):
+            for row in table("sessions").select("id,offering_id", filters={"id": _in(batch)}) or []:
+                course = offering_course_id(row.get("offering_id") or "")
+                if course:
+                    session_courses[str(row.get("id"))] = course
+        report = cost_per_gain(
+            usage,
+            session_courses,
+            poses,
+            pretests,
+            range_days=_range_days(from_iso, to_iso),
+            retired=retired,
+        )
+        return _CostRead(CostPerGain(**report), truncated)
+    except Exception:
+        logger.warning("admin_analytics: the loop's spend could not be read", exc_info=True)
+        return _CostRead(None, False)
+
+
 def _ceiling_compliance(steps: list[dict]) -> CeilingCompliance:
     n = ok = 0
     for row in steps:
@@ -1226,8 +1365,10 @@ def learning_loop_kpis(
     the active evidence-slot warnings of this process's configuration (A128);
     help abuse (A133: bottom-outs, their pace, the attempts that bought them
     and what the student did next, per band, gate, course and student — None
-    when its reads failed); `truncated: true` means a scan cap cut the
-    aggregation short."""
+    when its reads failed); the loop's spend in the range against those
+    learning-gain pairs, overall and per course (A137: per active student-month
+    against §3.5's target, per session, per pair and per gain point, each with
+    its n); `truncated: true` means a scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -1291,6 +1432,7 @@ def learning_loop_kpis(
     funnel_truncated = funnel_reads.truncated if funnel_reads is not None else False
     # spec §13 A133: help abuse, over the same events and non-void evidence
     help_abuse = _help_abuse(events, steps, valid, from_iso, to_iso)
+    cost = _cost_per_gain(from_iso, to_iso, poses, pretests, retired)  # A137
     return LearningLoopKpis(
         range=Range(from_=from_iso, to=to_iso),
         steps_total=len(steps),
@@ -1315,11 +1457,13 @@ def learning_loop_kpis(
         # grade against a retired item is no calibration evidence either
         confidence_calibration=ConfidenceCalibration(**confidence_calibration(valid)),
         learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired), funnel=funnel),
+        cost_per_gain=cost.report,
         slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
         help_abuse=help_abuse,
         truncated=events_truncated
         or evidence_truncated
         or poses_truncated
         or funnel_truncated
-        or bool(help_abuse is not None and help_abuse.truncated),
+        or bool(help_abuse is not None and help_abuse.truncated)
+        or cost.truncated,
     )

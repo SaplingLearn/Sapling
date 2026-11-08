@@ -818,10 +818,16 @@ async def _run_once(
                 task=task,
                 user_id=deps.user_id,
                 session_id=deps.session_id,
+                course_id=deps.course_id,  # spec §13 A137: a post-test grade has no session
             )
         raise
     record_agent_usage(
-        result, feature=deps.feature, task=task, user_id=deps.user_id, session_id=deps.session_id
+        result,
+        feature=deps.feature,
+        task=task,
+        user_id=deps.user_id,
+        session_id=deps.session_id,
+        course_id=deps.course_id,  # spec §13 A137: a post-test grade has no session
     )
     return result.output
 

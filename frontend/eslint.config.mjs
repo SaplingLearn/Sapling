@@ -104,6 +104,8 @@ const eslintConfig = [
       "src/components/screens/AdminAnalytics.tsx",
       // The learning-loop help-abuse section (spec §13 A133). New file, no backlog.
       "src/components/screens/admin/HelpAbusePanel.tsx",
+      // The Learning loop panel's cost per learning gain (spec §13 A137). New file, no backlog.
+      "src/components/screens/AdminLoopCost.tsx",
       // The /admin/check-items review queue (spec §13 A113). New file, no backlog.
       "src/components/screens/AdminCheckItems.tsx",
       "src/components/screens/Tree.tsx",

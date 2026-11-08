@@ -151,6 +151,7 @@ def record_agent_usage(
     user_id: str | None = None,
     session_id: str | None = None,
     request_id: str | None = None,
+    course_id: str | None = None,
 ) -> Any:
     """Record token usage for an agent run and return ``result`` unchanged.
 
@@ -164,6 +165,10 @@ def record_agent_usage(
     ``session_id`` (PKG-14b, spec §13 A92): pass the loop/tutor session the run
     belongs to wherever the run site knows it (``deps.session_id``); it lands in
     ``llm_usage.session_id`` so the cost report groups per session directly.
+    ``course_id`` (spec §13 A137): the course the run served, at the loop's run
+    sites that may have no session (check-item drafting and its checks, the
+    grader, the loop's decisions); ``llm_usage.course_id`` puts their cost on
+    a course in the cost-per-learning-gain report.
 
     Also warns when the run only succeeded after validation retries (#153) —
     same guarded, never-raises contract.
@@ -174,7 +179,7 @@ def record_agent_usage(
         events_service.log_llm_usage(
             feature=feature, task=task, model=served_model_name(result, task), usage=usage,
             user_id=user_id, cached_tokens=cached_tokens, thinking_tokens=thinking_tokens,
-            session_id=session_id, request_id=request_id,
+            session_id=session_id, request_id=request_id, course_id=course_id,
         )
     except Exception as exc:
         logger.warning("Usage accounting hook failed (stage=agent_usage_capture, error_type=%s)", type(exc).__name__)

@@ -463,6 +463,9 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-loop-help-abuse-{gate\|band\|course\|student}` / `…-{group}-{key}` | A133: the by-gate (standard / strict / none), by-band, by-course and by-student tables and their rows |
 | `admin-loop-help-abuse-students-toggle` | A133: "Show all N students" / "Show the top 10" under the by-student table |
 | `admin-loop-help-abuse-next` / `…-next-{none\|partial\|bottom_out}` | A133: what happened on the next item on the concept, by the help the item got |
+| `admin-loop-cost` / `admin-loop-cost-student-month` / `-tutor-month` / `-session` / `-total` | spec §13 A137 (`AdminLoopCost.tsx`): the "What did it cost?" section and its figures — $ per active student-month against the §3.5 target, the tutor share, $ per session, the loop spend — each with its n |
+| `admin-loop-cost-windows` / `admin-loop-cost-window-{window}` (`-pair-ci`, `-gain`, `-gain-ci`) | A137: per post-test window, pairs, gain points, $ per pair and per gain point with their bootstrap intervals ("unbounded" upper bound; "no net gain") |
+| `admin-loop-cost-courses` / `admin-loop-cost-course-{courseId}` / `admin-loop-cost-unattributed` / `admin-loop-cost-note` / `admin-loop-cost-unavailable` | A137: the per-course table, the spend with no course on record, the method note, and the state when the spend could not be read |
 
 ### `admin-items`
 

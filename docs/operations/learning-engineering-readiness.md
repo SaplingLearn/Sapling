@@ -112,6 +112,13 @@ rejected. The connection has read-only transaction defaults, a 5-second connect
 and statement timeout, a 1-second lock timeout, and a repeatable-read transaction.
 It never applies migrations, baselines a ledger or executes a business RPC.
 
+An optional explicit float probe (spec §13 A136) makes one bounded GET of
+`learning_float_probe()` through PostgREST, with the service key the backend
+uses. The function is constant-only and read-only. The probe reads only the
+URL and key variables you name, never reports the key, and passes only when
+every float comes back exact. The command is under "Learning-loop wave-3
+rollout ordering" below.
+
 Acceptance requires no pending/orphan filenames, required learning column types
 and the named argument/type signatures declared by learning/budget migrations.
 New static RPC declarations are discovered from those migrations. Unsupported or
@@ -342,6 +349,37 @@ unfinished engineering requirement.
    trial boundary, record when, keep it on for the cohort. It needs no
    migration; with it on, each `/probe/next` makes one `posttest_anchors`
    read while some skill could still be steered.
+
+### Learning-loop wave-3 rollout ordering
+
+1. `20261108162223_learning_exact_floats.sql` (spec §13 A136) sets
+   `extra_float_digits = 3` on `service_role` and tells PostgREST to reload.
+   It may run before or after the code: no code depends on it, and the
+   backend's float reads become exact when it lands. After it, run the fence's
+   float probe on the target. It makes one bounded GET of a constant-only
+   function through PostgREST with the service key:
+
+   ```sh
+   python scripts/learning_release_verify.py --rest-float-probe \
+     --rest-url-env STAGING_SUPABASE_URL --rest-key-env STAGING_SUPABASE_SERVICE_KEY \
+     --expected-rest-host EXACT_PROJECT_HOST --output /private/new-staging-floats.json
+   ```
+
+   `passed` means a float8, a real and a float8 inside jsonb came back exact.
+   A failure on a migrated database means PostgREST does not apply role
+   settings (it needs 11.0.0 or later); upgrade it from the project's
+   infrastructure settings. `--db-audit` also requires the stored setting.
+   Rollback: `ALTER ROLE service_role RESET extra_float_digits; NOTIFY pgrst,
+   'reload config';`. No data changes either way.
+2. `20261108163653_learning_llm_usage_course_id.sql` (A137) adds the nullable
+   `llm_usage.course_id`. Apply it before the code. Code ahead of it loses no
+   usage row: the writer drops the column and retries, with one WARNING per
+   batch. The cost-per-gain report reads without it and counts the
+   session-less loop spend as unattributed until it lands. `--db-audit`
+   requires the column.
+3. A137's prompt caching changes only the billing of a loop slot pointed at a
+   claude-* model. The defaults that still run on Gemini are unaffected, so
+   there is nothing to order.
 
 ### Kill-switch and rollback drill
 

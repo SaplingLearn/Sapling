@@ -34,6 +34,19 @@ python tests/evals/document_summary.py   # one dataset, with the full per-case t
 
 Exit code is non-zero on a regression or a missing cassette.
 
+The harness never touches a database, in any mode. The AI budget check the
+grader, decision, close and tutor paths run (`services/ai_budget.py`) reads an
+empty in-memory store instead of `llm_usage` (`_replay.py::hermetic_budget`, around
+every `evaluate_dataset` and `grader_agreement.py`'s grading), so the eval user
+has no recorded spend whatever `backend/.env` names, and the run logs no
+`ai_budget: llm_usage read failed` warning. A record or live run's model usage
+is captured rather than queued for `llm_usage` (`_replay.py::usage_log`). With
+`SAPLING_EVAL_USAGE_LOG=<path>`, each run appends one JSON line: dataset,
+task, model, prompt, completion, cached and thinking tokens, requests, and
+cost_usd as `llm_usage` would cost it. A re-record therefore measures what
+`scripts/project_loop_cost.py` estimates (spec §13 A137).
+`tests/test_eval_budget_hermetic.py` pins both.
+
 ## Refreshing after a prompt/model change
 
 Recording hits each agent's live model — Claude since ADR 0030 — so it needs

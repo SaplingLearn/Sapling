@@ -18,6 +18,7 @@ import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { HelpAbusePanel } from "./admin/HelpAbusePanel";
+import { LoopCostPanel } from "./AdminLoopCost";
 import { useUser } from "@/context/UserContext";
 import { errorRateSeries, formatCompactCount, zeroFillDays, type DayPointValue } from "@/lib/daySeries";
 
@@ -618,6 +619,13 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
         &ldquo;Excluded&rdquo;. The funnel below counts every window that opened in the range, answered or not.
       </p>
       <LearningGainTable gain={d.learning_gain} />
+      {/* spec §13 A137: the loop's spend against that gain (absent from a pre-A137 backend) */}
+      {d.cost_per_gain !== undefined && (
+        <>
+          <h3 className="h-serif" style={{ fontSize: 15, margin: "16px 0 8px" }}>What did it cost?</h3>
+          <LoopCostPanel cost={d.cost_per_gain} />
+        </>
+      )}
       {/* spec §13 A133: help abuse on the hint ladder (its own component) */}
       <HelpAbusePanel data={d.help_abuse} />
       {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}

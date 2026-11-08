@@ -322,6 +322,34 @@ _independence_warned: set[tuple[str, str, str]] = set()
 # and they rarely repeat a prefix in time to read it back.
 _ANTHROPIC_CACHED_TASKS: frozenset[AgentTask] = frozenset({"chat_tutor", "quiz", "note_chat"})
 
+#: Learning-loop slots whose STATIC prefix (tool definitions + system prompt,
+#: identical for every student and every run of the slot's agents) is long
+#: enough to cache, cached with ONE explicit breakpoint on the last static
+#: system block (`anthropic_cache_instructions`; spec §13 A137). Claude Haiku
+#: 5.5 and Sonnet 5.5 cache a prefix of 512 tokens or more; measured offline as
+#: characters / 4 from the request pydantic-ai builds: grader and its second
+#: opinion ~1,480 tokens, check_items ~1,650 (its top-up ~1,380),
+#: check_items_verify ~570, the loop tutor tiers ~2,000. Their calls recur well
+#: inside the 5-minute TTL: several grades per session, a drafting pass sends
+#: its calls seconds apart, a tutor turn every minute or so, and every student
+#: shares the one prefix. Below the minimum, left out: session_close (~450,
+#: one call per session), learning_decision (~130) and check_items_solve
+#: (~380; its key match rides the slot).
+#:
+#: Not automatic caching (`anthropic_cache`): its breakpoint follows the LAST
+#: block, which on these slots is per-request content. A grader or drafting
+#: call ends in the answer or the passages, and a tutor turn's history is
+#: re-enveloped with a fresh nonce every turn (A63) while its second request
+#: declares no tools (`_tools_until_first_round`), so an entry written at the
+#: end would never be read: a 1.25x write on every call. The breakpoint at the
+#: end of the static prefix is read by every later call within the TTL.
+#: Settings of the claude-* model only: a Gemini slot (every pending slot's
+#: default, A111) and function mode are unchanged.
+_ANTHROPIC_CACHED_PREFIX_TASKS: frozenset[AgentTask] = frozenset({
+    "check_items", "check_items_verify", "grader", "grader_second",
+    "loop_tutor_lite", "loop_tutor", "loop_tutor_deep",
+})
+
 
 def _anthropic_settings_for(task: AgentTask | None) -> AnthropicModelSettings:
     settings = AnthropicModelSettings(max_tokens=_ANTHROPIC_MAX_TOKENS)
@@ -329,6 +357,8 @@ def _anthropic_settings_for(task: AgentTask | None) -> AnthropicModelSettings:
         settings["anthropic_effort"] = _ANTHROPIC_EFFORT[task]
     if task in _ANTHROPIC_CACHED_TASKS:
         settings["anthropic_cache"] = True
+    if task in _ANTHROPIC_CACHED_PREFIX_TASKS:
+        settings["anthropic_cache_instructions"] = True
     return settings
 
 
