@@ -556,8 +556,9 @@ class _ResilientModelMixin:
         # real provider, not a stand-in.
         self._res_allow_fallback = allow_fallback and task is not None
         # Only a task's PRIMARY model checks the per-user budget: a fallback
-        # model is the same run, and the health probe is no student's work.
-        self._res_budgeted = allow_fallback and task is not None
+        # model is the same run, and the health probe is no student's work —
+        # exactly the models allowed a fallback, so one expression for both.
+        self._res_budgeted = self._res_allow_fallback
         self._res_fallback: Any = None
         self._res_fallback_built = False
         self._res_fallback_lock = threading.Lock()

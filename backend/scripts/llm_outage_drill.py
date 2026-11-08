@@ -1,7 +1,8 @@
 """LLM forced-outage drill client (#119, plan phase 5).
 
 Drives a few real tutor and quiz requests against a running backend that was
-booted with ``SAPLING_LLM_FORCE_OUTAGE=<provider>`` and reports, per request,
+drilling — the ``llm_outage_drill`` flag armed, e.g. booted with
+``SAPLING_FLAG_LLM_OUTAGE_DRILL=<anthropic|google|both>`` — and reports, per request,
 whether the student would have seen an error, then which models actually
 served the drill (from the admin LLM-cost rollup) so you can see the fallback
 happen. The runbook is docs/ops/llm-outage-drill.md.
@@ -244,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         fo = state.get("forced_outage") or {}
         print(f"  forced outage: {fo.get('providers') or 'NONE'}"
+              + (f"  (llm_outage_drill={fo['variant']})" if fo.get("variant") else "")
               + (f"  (refused: {fo['refused']})" if fo.get("refused") else ""))
         print(f"  llm_fallback: {state.get('llm_fallback')}   breakers: {state.get('breakers')}")
         if not fo.get("providers"):
@@ -259,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     models = drill.served_models(since)
     if models is None:
         print("Served models: unknown (needs an admin session). Check the backend log for "
-              "'llm fallback:' lines and 'LLM FORCED-OUTAGE DRILL ARMED' at boot.")
+              "'llm fallback:' lines and 'LLM FORCED-OUTAGE DRILL ARMED'.")
     else:
         print("Served models since the drill started (llm_usage, all users):")
         for name, calls in sorted(models.items(), key=lambda kv: -kv[1]):

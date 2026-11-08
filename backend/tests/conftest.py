@@ -110,10 +110,13 @@ def _llm_budget_off(request, monkeypatch):
     """#119: pin the `llm_budget` kill switch to "off" for the hermetic suite,
     for the reason `_db_user_scope_off` gives: a real-model run inside a
     request would otherwise resolve the flag from the fake store and warm the
-    process's flag snapshot. tests/test_llm_budget.py turns it on per test."""
+    process's flag snapshot. tests/test_llm_budget.py turns it on per test.
+    The `llm_outage_drill` flag (read on every real model request) likewise;
+    tests/test_llm_outage_drill.py arms it per test."""
     if request.node.get_closest_marker("e2e_staging") or request.node.get_closest_marker("integration"):
         return
     monkeypatch.setenv("SAPLING_FLAG_LLM_BUDGET", "off")
+    monkeypatch.setenv("SAPLING_FLAG_LLM_OUTAGE_DRILL", "off")
 
 
 @pytest.fixture(autouse=True)

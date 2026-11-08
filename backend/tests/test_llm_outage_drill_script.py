@@ -26,7 +26,7 @@ def _backend(*, fail: set[str] = frozenset(), sse_error: bool = False, admin: bo
                 return httpx.Response(403, json={"detail": "Admin access required"})
             if path == "/api/admin/llm/drill":
                 return httpx.Response(200, json={
-                    "forced_outage": {"providers": ["anthropic"], "refused": None},
+                    "forced_outage": {"variant": "anthropic", "providers": ["anthropic"], "refused": None},
                     "llm_fallback": "on", "breakers": {"anthropic": "open"}})
             return httpx.Response(200, json={"rows": [
                 {"key": "gemini-2.5-pro", "calls": 4}, {"key": "gemini-2.5-flash-lite", "calls": 1}]})

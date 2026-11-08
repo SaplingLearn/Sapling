@@ -7,7 +7,7 @@ Mounted at `/api/admin/llm` (admin_service_route: `llm_budgets` and
 * ``PUT    /budgets``                      set one row (default / role / user)
 * ``DELETE /budgets/{scope}/{subject}``    drop a role or user override
 * ``GET    /budgets/status/{user_id}``     what the gate would see for a user
-* ``GET    /drill``                        forced outage, fallback flag, breakers
+* ``GET    /drill``                        drill flag, fallback flag, breakers
 
 A budget only bites while the `llm_budget` flag is on for the student
 (services/llm_budget.py); editing rows with the flag off changes nothing.
@@ -148,17 +148,16 @@ def budget_status(user_id: str, request: Request, response: Response):
 
 @router.get("/drill")
 def drill_state(request: Request, response: Response):
-    """What this worker was booted with for the outage drill
-    (docs/ops/llm-outage-drill.md). Process-local: each worker answers for
-    itself, and they all read the same env at boot."""
+    """The outage drill as this worker sees it (docs/ops/llm-outage-drill.md):
+    the `llm_outage_drill` flag's global variant, the providers it forces down
+    here (none when this process's production interlock refuses it), and
+    this process's breakers."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from agents import _resilience
 
-    with _resilience._breakers_lock:
-        breakers = {name: b.state for name, b in _resilience._breakers.items()}
     return {
         "forced_outage": _resilience.forced_outage_status(),
         "llm_fallback": feature_flags.flag_variant(_resilience.FALLBACK_FLAG, None),
-        "breakers": breakers,
+        "breakers": _resilience.breaker_states(),
     }

@@ -16,6 +16,7 @@ immediately).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -24,6 +25,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable, TypeVar
 
 import httpx
 from fastapi import HTTPException, Request
@@ -32,6 +34,8 @@ from db.connection import page_all, table
 from db.scope import service_scope
 
 logger = logging.getLogger("sapling.feature_flags")
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,18 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     FlagDef("llm_budget", ("off", "on"),
             "Refuse new AI runs (429) for a student who has used today's LLM "
             "token budget (llm_budgets: default, role and user overrides).", False),
+    # #119: the forced provider-outage drill (agents/_resilience.py,
+    # docs/ops/llm-outage-drill.md): every request to the named provider(s)
+    # fails with a retryable 503 before it is sent. Resolved GLOBALLY
+    # (user_id=None) like llm_fallback; server-only. Usually armed for one
+    # deploy with SAPLING_FLAG_LLM_OUTAGE_DRILL=anthropic. Refused in
+    # APP_ENV=production unless SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes.
+    # A flag-store outage fails closed to "off", so it can never arm a drill.
+    FlagDef("llm_outage_drill", ("off", "anthropic", "google", "both"),
+            "Outage drill: fail every LLM request to the chosen provider(s) with "
+            "a retryable 503 (exercises retries, the breaker and llm_fallback). "
+            "Global. Refused in production without "
+            "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes.", False),
     # #116: move background work onto the Postgres job queue. Server-only.
     # Resolved for the student whose action triggered the work. It covers
     # course-context aggregation (course_context_service.
@@ -488,6 +504,26 @@ def cached_explain(key: str, user_id: str | None) -> Resolution | None:
     if down:
         return Resolution(fd.variants[0], "fail_closed", STORE_UNREADABLE)
     return None
+
+
+async def resolve_off_loop(cached: Callable[[], T | None], read: Callable[[], T]) -> T:
+    """The one way event-loop code reads a flag: ``cached()`` (must do no
+    I/O) when it answers, else ``read()`` — which may hit the store, bounded
+    by STORE_TIMEOUT_S — in a worker thread. Raises whatever ``read`` or the
+    thread hop raises (an executor shut down at teardown): each caller keeps
+    its own failure semantics — llm_budget, llm_fallback and the outage
+    drill read a failure as off, the tutor router skips the turn."""
+    hit = cached()
+    if hit is not None:
+        return hit
+    return await asyncio.to_thread(read)
+
+
+async def explain_off_loop(key: str, user_id: str | None) -> Resolution:
+    """:func:`explain` for code on the event loop (:func:`resolve_off_loop`)."""
+    return await resolve_off_loop(
+        lambda: cached_explain(key, user_id), lambda: explain(key, user_id),
+    )
 
 
 def flag_variant(key: str, user_id: str | None) -> str:

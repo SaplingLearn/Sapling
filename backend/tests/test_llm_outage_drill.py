@@ -1,4 +1,4 @@
-"""#119: the forced-outage drill (`SAPLING_LLM_FORCE_OUTAGE`,
+"""#119: the forced-outage drill (the `llm_outage_drill` flag,
 `agents/_resilience.py`) — the plan's phase-5 "done when": a forced provider
 outage falls back with no user-facing errors.
 
@@ -6,7 +6,7 @@ Proves, hermetically: with the drill on for a provider, every attempt against
 it fails with a retryable 503 BEFORE any SDK call (retries, then the breaker
 opens and fails fast); with `llm_fallback` on the run is served by the other
 provider's model; with it off the routes answer their mapped errors. The
-production refusal of the switch is pinned on the pure resolver.
+production interlock is pinned on the pure resolver and on a live run.
 """
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ from agents import _providers, _resilience
 from agents._providers import _ResilientModelMixin
 from agents._resilience import CircuitOpenError, ForcedOutageError, resolve_forced_outage
 
+DRILL_ENV = "SAPLING_FLAG_LLM_OUTAGE_DRILL"
+
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch):
@@ -37,7 +39,8 @@ def _fresh(monkeypatch):
     monkeypatch.setattr(_resilience, "_sleep", _no_sleep)
     monkeypatch.setattr(_resilience, "_rng", SimpleNamespace(uniform=lambda lo, hi: hi))
     monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "off")
-    monkeypatch.setattr(_resilience, "FORCED_OUTAGE", frozenset({"anthropic"}))
+    monkeypatch.setenv(DRILL_ENV, "anthropic")
+    monkeypatch.setenv("APP_ENV", "staging")
     yield sleeps
     _resilience.reset_for_tests()
 
@@ -94,28 +97,80 @@ def _gemini_fallback(monkeypatch, text="from gemini"):
 
 
 @pytest.mark.parametrize(
-    ("env", "providers", "refused"),
+    ("variant", "env", "providers", "refused"),
     [
-        ({}, set(), False),
-        ({"SAPLING_LLM_FORCE_OUTAGE": "anthropic", "APP_ENV": "staging"}, {"anthropic"}, False),
-        ({"SAPLING_LLM_FORCE_OUTAGE": " Google ", "APP_ENV": "local"}, {"google"}, False),
-        ({"SAPLING_LLM_FORCE_OUTAGE": "anthropic,google", "APP_ENV": "staging"},
-         {"anthropic", "google"}, False),
-        ({"SAPLING_LLM_FORCE_OUTAGE": "openai", "APP_ENV": "staging"}, set(), True),
-        ({"SAPLING_LLM_FORCE_OUTAGE": ",", "APP_ENV": "staging"}, set(), True),
+        ("off", {}, set(), False),
+        ("off", {"APP_ENV": "production"}, set(), False),
+        ("anthropic", {"APP_ENV": "staging"}, {"anthropic"}, False),
+        ("google", {"APP_ENV": "local"}, {"google"}, False),
+        ("both", {"APP_ENV": "staging"}, {"anthropic", "google"}, False),
+        ("openai", {"APP_ENV": "staging"}, set(), False),  # not a variant: off
         # production — explicitly, or by APP_ENV's own fail-closed default
-        ({"SAPLING_LLM_FORCE_OUTAGE": "anthropic", "APP_ENV": "production"}, set(), True),
-        ({"SAPLING_LLM_FORCE_OUTAGE": "anthropic"}, set(), True),
-        ({"SAPLING_LLM_FORCE_OUTAGE": "anthropic", "APP_ENV": "production",
-          "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION": "true"}, set(), True),
-        ({"SAPLING_LLM_FORCE_OUTAGE": "anthropic", "APP_ENV": "production",
-          "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION": "yes"}, {"anthropic"}, False),
+        ("anthropic", {"APP_ENV": "production"}, set(), True),
+        ("anthropic", {}, set(), True),
+        ("both", {"APP_ENV": "production",
+                  "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION": "true"}, set(), True),
+        ("anthropic", {"APP_ENV": "production",
+                       "SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION": "yes"}, {"anthropic"}, False),
     ],
 )
-def test_the_switch_and_its_production_refusal(env, providers, refused):
-    got, why = resolve_forced_outage(env)
+def test_the_drill_variants_and_the_production_interlock(variant, env, providers, refused):
+    got, why = resolve_forced_outage(variant, env)
     assert got == providers
     assert (why is not None) is refused
+
+
+def test_the_drill_flag_is_registered_server_only_and_off_first():
+    from services.feature_flags import REGISTRY
+
+    fd = REGISTRY["llm_outage_drill"]
+    assert fd.variants == ("off", "anthropic", "google", "both") and not fd.client_visible
+
+
+def test_the_drill_is_resolved_globally_and_off_the_loop(monkeypatch):
+    """Global (user_id=None) like llm_fallback, through the shared off-loop
+    flag read: no I/O when cached, a worker thread when cold."""
+    import threading
+
+    from services import feature_flags as ff
+
+    monkeypatch.delenv(DRILL_ENV)
+    monkeypatch.setattr(ff, "cached_explain", lambda key, uid: None)
+    seen = []
+
+    def cold(key, uid):
+        seen.append((key, uid, threading.current_thread()))
+        return ff.Resolution("google", "default")
+
+    monkeypatch.setattr(ff, "explain", cold)
+
+    async def main():
+        return await _resilience.forced_outage(), threading.current_thread()
+
+    providers, loop_thread = asyncio.run(main())
+    assert providers == frozenset({"google"})
+    assert [(k, u) for k, u, _ in seen] == [("llm_outage_drill", None)]
+    assert seen[0][2] is not loop_thread
+
+    def broken(key, uid):
+        raise RuntimeError("store exploded")
+
+    monkeypatch.setattr(ff, "explain", broken)
+    assert asyncio.run(_resilience.forced_outage()) == frozenset()  # unreadable: off
+
+
+def test_production_refuses_an_armed_drill_without_the_interlock(monkeypatch, caplog):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION", raising=False)
+    fn, primary = _counting("from claude")
+    with caplog.at_level("ERROR", logger="sapling.agents.resilience"):
+        assert asyncio.run(Agent(_ResilientFn(fn)).run("hi")).output == "from claude"
+    assert primary["n"] == 1
+    assert any("NOT armed" in r.getMessage() for r in caplog.records)
+    monkeypatch.setenv("SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION", "yes")
+    with pytest.raises(ModelHTTPError):
+        asyncio.run(Agent(_ResilientFn(fn)).run("hi"))
+    assert primary["n"] == 1  # the interlock released: the drill stops the request
 
 
 def test_a_forced_outage_is_a_retryable_fallback_eligible_503():
@@ -203,7 +258,7 @@ def test_the_sse_tutor_shows_no_error_during_a_fallback_drill(monkeypatch):
 
 
 def test_a_google_drill_leaves_claude_alone(monkeypatch):
-    monkeypatch.setattr(_resilience, "FORCED_OUTAGE", frozenset({"google"}))
+    monkeypatch.setenv(DRILL_ENV, "google")
     fn, primary = _counting("from claude")
     assert asyncio.run(Agent(_ResilientFn(fn)).run("hi")).output == "from claude"
     assert primary["n"] == 1
@@ -254,7 +309,7 @@ def test_both_providers_down_surfaces_the_primary_error(monkeypatch, no_sdk):
     """The real fallback (a Gemini model) is drilled too: the user gets the
     route's mapped error, and neither SDK is ever called."""
     monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "on")
-    monkeypatch.setattr(_resilience, "FORCED_OUTAGE", frozenset({"anthropic", "google"}))
+    monkeypatch.setenv(DRILL_ENV, "both")
     agent = Agent(_providers.provider_model("claude-haiku-5-5", task="quiz"))
     with pytest.raises(ModelHTTPError) as exc:
         asyncio.run(agent.run("hi"))
@@ -272,6 +327,27 @@ def test_admin_drill_endpoint_reports_the_switch_and_breakers(monkeypatch):
     monkeypatch.setenv("SAPLING_FLAG_LLM_FALLBACK", "on")
     _resilience.breaker_for("anthropic")
     body = TestClient(app).get("/api/admin/llm/drill").json()
-    assert body["forced_outage"]["providers"] == ["anthropic"]
+    assert body["forced_outage"] == {
+        "variant": "anthropic", "source": "env_override",
+        "providers": ["anthropic"], "refused": None,
+    }
     assert body["llm_fallback"] == "on"
     assert body["breakers"] == {"anthropic": "closed"}
+
+
+def test_admin_drill_endpoint_shows_a_production_refusal(monkeypatch):
+    from main import app
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION", raising=False)
+    fo = TestClient(app).get("/api/admin/llm/drill").json()["forced_outage"]
+    assert fo["variant"] == "anthropic" and fo["providers"] == []
+    assert "refused in production" in fo["refused"]
+
+
+def test_breaker_states_is_a_copy():
+    _resilience.breaker_for("google")
+    states = _resilience.breaker_states()
+    assert states == {"google": "closed"}
+    states["google"] = "open"
+    assert _resilience.breaker_states() == {"google": "closed"}

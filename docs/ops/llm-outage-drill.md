@@ -6,19 +6,20 @@ falls back with no user-facing errors.** This runbook forces one on staging,
 drives real tutor and quiz traffic through it, and checks that the other
 provider served every request.
 
-Run it on **staging**. It is refused in production unless you set a second,
-explicit variable (see [Production](#production)). Never run it against a
+Run it on **staging**. It is refused in production unless you also set a
+safety-interlock variable (see [Production](#production)). Never run it against a
 stack other people are demoing on: for the length of the drill every Claude
 call on that deployment fails.
 
 ## How it works
 
-`SAPLING_LLM_FORCE_OUTAGE` names the provider(s) to break: `anthropic`,
-`google`, or `anthropic,google`. It is read **once, at boot**
-(`agents/_resilience.py::FORCED_OUTAGE`). While it is set, every model request
-to that provider fails *inside* the retry loop, before anything is sent, with
-a retryable 503 (`ForcedOutageError`). So the drill runs the real path end to
-end:
+The `llm_outage_drill` feature flag (server-only, default `off`) names the
+provider(s) to break: `anthropic`, `google`, or `both`. It is resolved
+**globally** (no per-user rules or rollouts, like `llm_fallback`) on every
+model request, from the flag cache (`agents/_resilience.py::forced_outage`).
+While it is armed, every model request to that provider fails *inside* the
+retry loop, before anything is sent, with a retryable 503
+(`ForcedOutageError`). So the drill runs the real path end to end:
 
 1. each call retries (3 attempts, jittered backoff, about 1.5 s worst case);
 2. after 8 such failures in 60 s the provider's circuit breaker opens, and
@@ -33,9 +34,13 @@ end:
 The `llm_usage` row of a fallback run records the model that **served** it, so
 `gemini-*` rows during the drill are the fallbacks.
 
-Why an env var and not a feature flag: starting and stopping a drill should
-take a deliberate deploy, never one misclick in `/admin/flags` that every worker
-picks up within 30 s. The drill also must not depend on the flag store.
+Arm it for one deploy with the flag store's own env override,
+`SAPLING_FLAG_LLM_OUTAGE_DRILL=anthropic` (no store read, so it holds even if
+the drill stresses the flag store), or set the flag's stored default in
+`/admin/flags` (every worker picks that up within the 30 s flag snapshot). A
+flag-store outage resolves the flag fail-closed to `off`, so it can never arm
+a drill. The old `SAPLING_LLM_FORCE_OUTAGE` variable does nothing any more
+(a boot WARNING says so if it is still set).
 
 ## Before you start
 
@@ -56,15 +61,20 @@ picks up within 30 s. The drill also must not depend on the flag store.
 ## Run it
 
 1. **Force the outage.** In Railway → staging → backend service → Variables,
-   add `SAPLING_LLM_FORCE_OUTAGE=anthropic`. Railway redeploys. In the deploy
-   log, confirm the boot line:
+   add `SAPLING_FLAG_LLM_OUTAGE_DRILL=anthropic` (or set the
+   `llm_outage_drill` flag's default to `anthropic` in `/admin/flags`). With
+   the variable, Railway redeploys. Check `GET /api/admin/llm/drill`: it
+   should report `"forced_outage": {"variant": "anthropic", "providers":
+   ["anthropic"], "refused": null, ...}`. On the first model request the log
+   says:
 
    ```
    LLM FORCED-OUTAGE DRILL ARMED: every request to anthropic fails with a retryable 503 ...
    ```
 
-   If you see `llm forced-outage drill NOT armed: ...` instead, the value was
-   wrong or `APP_ENV` is `production` (check the staging service's `APP_ENV`).
+   If `/drill` shows a `refused` reason (and the log `llm forced-outage drill
+   NOT armed: ...`), `APP_ENV` is `production` (check the staging service's
+   `APP_ENV`). A value that is not a variant is ignored with a WARNING.
 
 2. **Fallback off first (the "before" picture).** In `/admin/flags`, make sure
    `llm_fallback` is `off`. Then, from `backend/`:
@@ -98,9 +108,10 @@ picks up within 30 s. The drill also must not depend on the flag store.
    session, a streamed reply, a quiz. Nothing should look different except
    speed and model voice.
 
-4. **Stop the drill.** Delete `SAPLING_LLM_FORCE_OUTAGE` in Railway and let it
-   redeploy. Confirm the boot log no longer has the ARMED line and
-   `GET /api/admin/llm/drill` reports `"providers": []`. Decide whether
+4. **Stop the drill.** Delete `SAPLING_FLAG_LLM_OUTAGE_DRILL` in Railway and
+   let it redeploy (or set the flag back to `off` in `/admin/flags`). Confirm
+   `GET /api/admin/llm/drill` reports `"variant": "off"` and
+   `"providers": []`. Decide whether
    `llm_fallback` stays on for staging (the release plan expects it to).
 
 5. **Record the result** on Trov #119: the date, both script outputs, and any
@@ -108,12 +119,12 @@ picks up within 30 s. The drill also must not depend on the flag store.
 
 ### Other variants
 
-- `SAPLING_LLM_FORCE_OUTAGE=google` breaks Gemini only: the Claude slots are
+- `SAPLING_FLAG_LLM_OUTAGE_DRILL=google` breaks Gemini only: the Claude slots are
   unaffected, and only a slot pointed back at Gemini
   (`SAPLING_MODEL_<TASK>=gemini-*`) would fall back, to Claude. RAG embeddings
   do **not** go through this switch (`services/rag_service.py` is not an
   agent), so retrieval keeps working.
-- `SAPLING_LLM_FORCE_OUTAGE=anthropic,google` is a total outage. Run it with
+- `SAPLING_FLAG_LLM_OUTAGE_DRILL=both` is a total outage. Run it with
   `--expect errors` to check that every surface degrades with its normal error
   and nothing 500s or hangs.
 
@@ -124,7 +135,7 @@ mode, real API keys). Set the variable before starting it:
 
 ```bash
 cd backend
-SAPLING_LLM_FORCE_OUTAGE=anthropic SAPLING_FLAG_LLM_FALLBACK=on python main.py
+SAPLING_FLAG_LLM_OUTAGE_DRILL=anthropic SAPLING_FLAG_LLM_FALLBACK=on python main.py
 # another shell:
 python -m scripts.llm_outage_drill --user-id <a seeded user>   # mints a session via /api/auth/test-login
 ```
@@ -134,10 +145,13 @@ stack): scripted models never go through the resilience layer.
 
 ## Production
 
-`APP_ENV=production` (also what an unset `APP_ENV` means) refuses the switch
-and logs `llm forced-outage drill NOT armed: ... refused in production` at
-ERROR. To drill production on purpose, set **both**
-`SAPLING_LLM_FORCE_OUTAGE=<provider>` and
+`APP_ENV=production` (also what an unset `APP_ENV` means) refuses an armed
+drill and logs `llm forced-outage drill NOT armed: ... refused in production`
+at ERROR. `SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION` is a **safety
+interlock**, not a feature gate: it exists so neither a stray flag value nor
+one misclick in `/admin/flags` can take production's AI features down on its
+own. To drill production on purpose, set **both**
+`SAPLING_FLAG_LLM_OUTAGE_DRILL=<provider>` and
 `SAPLING_LLM_FORCE_OUTAGE_ALLOW_PRODUCTION=yes`, with `llm_fallback` already on
 and the staging drill already passed. Real students will be on the fallback
 model for the whole window. Remove both variables straight after.
@@ -146,7 +160,7 @@ model for the whole window. Remove both variables straight after.
 
 | Symptom | Cause |
 | --- | --- |
-| Script says `forced outage: NONE` | The worker it reached was not booted with the variable (deploy still rolling, or a typo). Each worker answers `/drill` for itself. |
+| Script says `forced outage: NONE` | The flag is `off` for the worker it reached (deploy still rolling, a typo in the variable, or the stored default not yet picked up — wait 30 s), or `refused` shows the production interlock. Each worker answers `/drill` for itself. |
 | Errors with fallback on, `401` / `PERMISSION_DENIED` in the log | Staging's `GEMINI_API_KEY` is not valid. |
 | `claude-*` calls in the rollup during the drill | Calls from before the redeploy finished, or another worker still on the old deploy. Re-run once the deploy is done. |
 | `429` with "today's limit for AI features" | The drill account hit its `llm_budget` daily token budget. Raise it at `/api/admin/llm/budgets` or use another account. |
