@@ -538,19 +538,6 @@ export function Dashboard() {
             selectHint="Click to zoom to this course, again to zoom out"
           />
         )}
-        <div style={{ position: "absolute", left: 16, bottom: 14, display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
-          {([
-            ["Mastered", "var(--state-mastery)"],
-            ["Learning", "var(--state-progress)"],
-            ["Struggling", "var(--state-struggle)"],
-            ["Unexplored", "var(--state-neutral)"],
-          ] as const).map(([t, color]) => (
-            <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 10, height: 10, borderRadius: "50%", background: color }} />
-              {t}
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );

@@ -26,6 +26,7 @@ import type { GraphEdge, GraphNode } from "@/lib/data";
 import {
   MASTERY_PALETTE,
   TIER_LABEL,
+  TIER_OPACITY,
   type GraphColorMode,
   type MasteryTier,
 } from "@/lib/graph/nodeStyle";
@@ -197,10 +198,13 @@ export function KnowledgeGraph(props: Props) {
         <PaletteGlyph />
         <span>Mastery colors</span>
       </button>
-      {mastery && (
+      {(mastery || props.legible) && (
+        // Mastery colors: one colour per tier. Course colors (legible graphs
+        // only): the course's colour, with the tier carried by how solid the
+        // node is, so the key shows the same dot at each tier's opacity.
         <ul
-          data-testid="graph-color-legend"
-          aria-label="Mastery colors"
+          data-testid={mastery ? "graph-color-legend" : "graph-tier-legend"}
+          aria-label={mastery ? "Mastery colors" : "Mastery shown as how solid a node is"}
           style={{
             ...PANEL,
             bottom: 12,
@@ -223,7 +227,8 @@ export function KnowledgeGraph(props: Props) {
                   width: 9,
                   height: 9,
                   borderRadius: "50%",
-                  background: MASTERY_PALETTE[t],
+                  background: mastery ? MASTERY_PALETTE[t] : "var(--text)",
+                  opacity: mastery ? 1 : TIER_OPACITY[t],
                 }}
               />
               {TIER_LABEL[t]}

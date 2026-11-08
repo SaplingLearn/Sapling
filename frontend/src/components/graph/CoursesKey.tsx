@@ -1,7 +1,7 @@
 "use client";
 
 // The graph's course key ("My courses"): always open, one row per course with
-// its colour and code, plus the cog to add or remove courses. It is the only
+// its colour and code, and the cog to add or remove courses at its top right. It is the only
 // course legend the graph has: the host wires hover (the graph fades every other course) and click
 // (the Dashboard zooms to the course, the Tree filters to it).
 
@@ -92,6 +92,8 @@ export function CoursesKey({
   return (
     <div
       data-testid={`${testIdPrefix}-courses-key`}
+      role="group"
+      aria-label="My courses"
       style={{
         position: "absolute",
         ...(placement === "top-left" ? { top: 44, left: 12 } : { bottom: 14, right: 14 }),
@@ -99,33 +101,14 @@ export function CoursesKey({
         padding: "6px 8px",
         zIndex: 2,
         fontSize: 12,
+        // A compact rectangle: the course rows, with the cog in the top-right
+        // corner beside the first course. No title; the dots say what it is.
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 4 }}>
-        <div className="label-micro" style={{ fontSize: 10, ...legibleText }}>My courses</div>
-        {onManage && (
-          <button
-            type="button"
-            onClick={onManage}
-            title="Add or remove courses"
-            aria-label="Courses & Semesters"
-            data-testid={`${testIdPrefix}-courses-manage`}
-            style={{
-              padding: 2,
-              background: "transparent",
-              border: "none",
-              lineHeight: 0,
-              cursor: "pointer",
-              color: "var(--text-dim)",
-              filter: "drop-shadow(0 0 2px rgba(255,255,255,1)) drop-shadow(0 0 4px rgba(255,255,255,0.85))",
-            }}
-          >
-            <Icon name="cog" size={13} />
-          </button>
-        )}
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
         {courseProgress.map(({ course }) => {
           const color = course.color || "var(--accent)";
           const lit = activeCourseId === course.course_id;
@@ -184,6 +167,28 @@ export function CoursesKey({
           </div>
         )}
       </div>
+      {onManage && (
+        <button
+          type="button"
+          onClick={onManage}
+          title="Add or remove courses"
+          aria-label="Courses & Semesters"
+          data-testid={`${testIdPrefix}-courses-manage`}
+          style={{
+            padding: 2,
+            marginTop: 2,
+            flexShrink: 0,
+            background: "transparent",
+            border: "none",
+            lineHeight: 0,
+            cursor: "pointer",
+            color: "var(--text-dim)",
+            filter: "drop-shadow(0 0 2px rgba(255,255,255,1)) drop-shadow(0 0 4px rgba(255,255,255,0.85))",
+          }}
+        >
+          <Icon name="cog" size={13} />
+        </button>
+      )}
     </div>
   );
 }
