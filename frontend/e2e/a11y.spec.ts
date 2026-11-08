@@ -178,7 +178,7 @@ test("settings and a profile", async ({ page }) => {
   const loaded: Record<string, () => ReturnType<Page["getByText"]>> = {
     profile: () => page.getByRole("button", { name: /Sign out/ }),
     cosmetics: () => page.getByText("Cosmetics", { exact: true }),
-    preferences: () => page.getByText("Layout", { exact: true }),
+    preferences: () => page.getByRole("button", { name: /^Layout\b/ }), // the layout select, named by its label
     notifications: () => page.getByTestId("settings-toggle-notification_email"),
     data: () => page.getByTestId("settings-analytics-toggle"),
   };
