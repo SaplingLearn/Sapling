@@ -183,6 +183,10 @@ ID_SOURCES: dict[str, IdSource] = {
     "source_attempt_id": _owned(_ATTEMPT),  # /api/quiz/generate retry-misses source
     "document_id": _owned(_DOCUMENT),
     "doc_id": _owned(_DOCUMENT),            # /api/gradebook/syllabus/apply
+    "document_ids": _owned(_DOCUMENT, many=True),  # /api/library/documents/folder
+    "folder_id": _owned(                    # /api/library (matrix_world seeds one)
+        "SELECT id::text FROM library_folders WHERE user_id = %(a)s ORDER BY id LIMIT 1"
+    ),
     "card_id": _owned("SELECT id::text FROM flashcards WHERE user_id = %(a)s ORDER BY id LIMIT 1"),
     "node_id": _owned(_NODE),
     "concept_node_id": _owned(_NODE),

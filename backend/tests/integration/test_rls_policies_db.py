@@ -33,7 +33,7 @@ BUCKETS: dict[str, frozenset[str]] = {
         "enrollments", "documents", "notes", "flashcards", "sessions", "quiz_attempts",
         "quiz_context", "study_guides", "graph_nodes", "graph_edges", "feedback",
         "issue_reports", "user_achievements", "user_cosmetics", "user_roles", "xp_events",
-        "friend_requests", "friendships",
+        "friend_requests", "friendships", "library_folders",
     }),
     "B_via_parent": frozenset({
         "messages", "node_mastery_events", "note_concepts", "quiz_responses",

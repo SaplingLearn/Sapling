@@ -86,6 +86,7 @@ def matrix_world(_reset_between_tests, db_conn, seeded_user):
         "user_name": "Rich Active", "text": encrypt_if_present(m.PRIVATE_ROOM_MESSAGE_TEXT),
     })
     table("friend_requests").insert({"from_user_id": m.USER_A, "to_user_id": user_c})
+    table("library_folders").insert({"user_id": m.USER_A, "name": "Matrix Folder A"})
 
     codes = {cid: code for cid, code, *_ in seed._COURSES}
     table("course_chunks").insert({
@@ -122,6 +123,7 @@ _A_ROWS: dict[str, str] = {
     "note_concepts": "SELECT to_jsonb(t) AS j FROM note_concepts t "
                      "WHERE note_id IN (SELECT id FROM notes WHERE user_id = %(a)s)",
     "documents": _OWN.format(table="documents", col="user_id"),
+    "library_folders": _OWN.format(table="library_folders", col="user_id"),
     "sessions": _OWN.format(table="sessions", col="user_id"),
     "messages": "SELECT to_jsonb(t) AS j FROM messages t "
                 "WHERE session_id IN (SELECT id FROM sessions WHERE user_id = %(a)s)",

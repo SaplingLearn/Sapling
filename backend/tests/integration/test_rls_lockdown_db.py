@@ -96,7 +96,7 @@ AUTHENTICATED_TABLE_GRANTS: dict[str, frozenset[str]] = {
     **{t: _SIUD for t in (
         "oauth_tokens", "gradescope_credentials", "enrollments", "notes", "flashcards",
         "sessions", "quiz_attempts", "quiz_context", "study_guides", "graph_nodes",
-        "graph_edges", "friend_requests",
+        "graph_edges", "friend_requests", "library_folders",
     )},
     "documents": frozenset({"SELECT", "INSERT", "DELETE"}),   # + column UPDATE below
     "feedback": frozenset({"SELECT", "INSERT"}),
@@ -138,7 +138,7 @@ AUTHENTICATED_COLUMN_GRANTS: dict[tuple[str, str], frozenset[str]] = {
     ("documents", "UPDATE"): frozenset({
         "file_name", "category", "summary", "concept_notes", "flashcards", "processed_at",
         "deleted_at", "extracted_text", "shareability", "shareability_confidence",
-        "offering_id",
+        "offering_id", "folder_id",
     }),
     # Awards are server-side; the student only picks which badges to feature.
     ("user_achievements", "UPDATE"): frozenset({"is_featured"}),

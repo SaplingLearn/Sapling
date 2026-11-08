@@ -37,6 +37,7 @@ from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
 from routes.topic_checklist import router as topic_checklist_router
+from routes.library_folders import router as library_folders_router
 from services import quiz_config, quiz_errors
 from services.feature_flags import nav_feature_gate
 from db.scope import (
@@ -449,6 +450,7 @@ app.include_router(gradescope.router,  prefix="/api/gradescope")
 app.include_router(notes.router,       prefix="/api/notes", dependencies=nav_feature_gate("/api/notes"))
 app.include_router(academics.router,   prefix="/api", tags=["academics"])
 app.include_router(gamification.router, prefix="/api/gamification", dependencies=nav_feature_gate("/api/gamification"))
+app.include_router(library_folders_router, prefix="/api/library")
 # Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
 # session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
 app.include_router(internal_metrics_router, prefix="/api/internal", dependencies=_SVC)
