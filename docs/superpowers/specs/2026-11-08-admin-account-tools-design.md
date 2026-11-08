@@ -57,13 +57,29 @@ prod)**, from the admin dashboard, for a chosen existing account:
 - **Not atomic** (PostgREST has no transactions). Every operation starts with a
   wipe, so re-running after a mid-way failure converges. A per-user in-process
   lock rejects a concurrent second operation on the same account (409).
+  Once the lock is held every outcome is audited (`outcome` ok/failed + a
+  `reason`/`status` enum), since a failure may already have wiped the account.
+- **The lock is per-process only.** The backend image runs one uvicorn worker
+  (`backend/Dockerfile` CMD, no `--workers`), i.e. one process per Railway
+  service while that service runs one replica (the replica count is set in the
+  Railway dashboard, not in the repo). A multi-replica or multi-worker deploy
+  needs a DB-backed claim instead.
 - **Copy target must already exist** (the person signed in once on that env).
   Copy never creates accounts, approvals, or roles on the other side. 404 with
   "sign in on <env> first" otherwise.
 - **Copy is an overwrite**, not a merge: target is wiped, then the bundle is
   imported. Bundle = the wipe-scope data + profile fields (name/bio/etc.,
-  majors/minors/year) + settings (minus cosmetic ids) + the counters. Achievements
+  majors/minors/year) + display settings + the counters. Achievements
   move by `slug`. OAuth tokens, roles, social, telemetry never move.
+- **Consent never moves.** Of `user_settings`, only display preferences
+  (`theme`, `font_size`, `accent_color`) are copied; `share_class_context`,
+  `analytics_opt_out`, `profile_visibility`, `activity_status_visible`, the
+  `notification_*` columns and the cosmetic ids stay the target's, so imported
+  documents index under the target's own stored consent.
+- **XP is re-derived on import.** `achievement_unlocked` ledger rows are
+  remapped to the target achievement id by slug (dropped with their badge when
+  the target lacks it), and `users.total_xp`/`level` are recomputed from the
+  imported ledger (`growth.level_for_xp`) rather than copied.
 - **Copy transport**: server-to-server. Each env has
   `ACCOUNT_SYNC_PEER_URL` (other env's backend base URL),
   `ACCOUNT_SYNC_PEER_TOKEN` (what we send), `ACCOUNT_SYNC_INBOUND_TOKEN` (what we
@@ -73,8 +89,10 @@ prod)**, from the admin dashboard, for a chosen existing account:
   pull = we GET peer's export and import locally. The bundle is plaintext JSON
   in transit only (HTTPS), decrypted on the source, re-encrypted on the target.
   Self-copy refused (peer reports the same `APP_ENV` → 409).
-- **Catalog remap on import**: offerings by `(course_code, term_id, section)`
-  (created via `resolve_offering` if absent), graph `course_id` by
+- **Catalog remap on import**: offerings by the EXACT `(course_code, term_id,
+  section)` (that exact offering created if absent — never
+  `resolve_offering`'s any-section match; two enrollments that would land on one
+  target offering refuse the copy before the wipe), graph `course_id` by
   `course_code`, achievements by `slug`. Row ids are preserved (user-scoped,
   target wiped first). Documents import as `index_status='pending'` (no chunks
   copied — the target re-indexes with its own key and visibility rules).
@@ -83,7 +101,9 @@ prod)**, from the admin dashboard, for a chosen existing account:
   target account's email; every action writes `log_admin_action`
   (`account.seed` / `account.wipe` / `account.copy_push` / `account.copy_pull`,
   and `account.import` / `account.export` on the receiving side with
-  `actor_id` = null→ logged as event only) and an `events_service` audit event.
+  `actor_id` = null→ logged as an event only, with `user_id` null and the
+  account in `payload.target_user_id`, so a copy never counts the student as
+  active) and an `events_service` audit event.
   No feature flag: admin-only and inert without explicit config is the gate.
 - **Env badge**: the admin account-tools dialog shows which environment you are
   on (from a new `GET /api/admin/accounts/meta`), since the same buttons now

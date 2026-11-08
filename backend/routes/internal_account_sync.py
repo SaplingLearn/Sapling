@@ -11,8 +11,11 @@ generic 401. Every route is `include_in_schema=False`.
 Audit: these routes have no actor (the admin who clicked is on the OTHER
 environment, and is audited there via `log_admin_action`).
 `admin_audit_log.actor_id` is NOT NULL with an FK to `users`, so nothing is
-written there; each export/import logs an `events` audit row attributed to
-the target account instead.
+written there; each export/import logs an `events` audit row with NO actor
+(`user_id=None`) and the account in the payload as `target_user_id`. It must
+not be attributed to the student: an `events` row with their `user_id` counts
+them as active (canopy_metrics `active_users`, the admin DAU rollups) on a day
+they did nothing, and its PostHog mirror would name them for an admin's click.
 
 The export body is the account's data DECRYPTED — it is exactly as sensitive
 as the database, which is why the token is the whole gate and the transport is
@@ -88,8 +91,9 @@ def export(
         logger.warning("account sync export refused: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
     log_event(
-        "account.export", category="audit", user_id=user_id,
-        payload={"tables": {name: len(rows) for name, rows in bundle["tables"].items()}},
+        "account.export", category="audit", user_id=None,
+        payload={"target_user_id": user_id,
+                 "tables": {name: len(rows) for name, rows in bundle["tables"].items()}},
     )
     return bundle
 
@@ -138,8 +142,9 @@ async def import_(
         raise HTTPException(status_code=503, detail="the wipe did not finish; re-run the copy")
     source_env = bundle.get("source_env")
     log_event(
-        "account.import", category="audit", user_id=user_id,
-        payload={"source_env": source_env if isinstance(source_env, str) else None,
+        "account.import", category="audit", user_id=None,
+        payload={"target_user_id": user_id,
+                 "source_env": source_env if isinstance(source_env, str) else None,
                  "counts": counts},
     )
     return {"counts": counts}

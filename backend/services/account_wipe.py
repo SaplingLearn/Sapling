@@ -68,6 +68,33 @@ _USER_TABLES: tuple[tuple[str, str], ...] = (
     ("user_achievements", "achievement_id"),
 )
 
+#: Every table the wipe deletes from directly.
+WIPED_DIRECTLY: frozenset[str] = frozenset(
+    ("enrollments", "documents", *(name for name, _ in _USER_TABLES)),
+)
+
+#: Tables the wipe empties through an ON DELETE CASCADE, child -> parent (the
+#: parent is itself wiped directly or by cascade). The FKs are pinned against
+#: the migrations by tests/test_account_wipe.py.
+WIPED_BY_CASCADE: dict[str, str] = {
+    "gradebook_categories": "enrollments",
+    "assignments": "enrollments",
+    "gradescope_course_links": "enrollments",
+    "topic_checklists": "enrollments",
+    "topic_checklist_progress": "topic_checklists",
+    "graph_edges": "graph_nodes",
+    "node_mastery_events": "graph_nodes",
+    "note_concepts": "notes",
+    "messages": "sessions",
+    "quiz_responses": "quiz_attempts",
+}
+
+
+def wiped_tables() -> frozenset[str]:
+    """Every per-user table `wipe_account_data` empties, directly or by cascade."""
+    return WIPED_DIRECTLY | frozenset(WIPED_BY_CASCADE)
+
+
 #: The `users` gamification counters and their column defaults
 #: (20260731193214_gamification.sql; streak_count from the baseline).
 #: `last_active_date` goes too: `touch_streak` treats "last active today" as

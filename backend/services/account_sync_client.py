@@ -12,7 +12,9 @@ exception) and stays this small.
 Both probe the peer first (`ping`) to learn which environment it is: a peer
 that reports OUR `APP_ENV` is a misconfiguration pointing at ourselves, and is
 refused (409) before anything is wiped. Failures raise `PeerError` carrying
-the status the admin route should answer.
+the status the admin route should answer: the peer's 404 `account_not_found`
+→ 404, 409 → 409, 400 (the peer's BundleError) → 400 with its detail, anything
+else → 502.
 """
 
 from __future__ import annotations
@@ -117,6 +119,12 @@ def _raise_for_peer(resp: httpx.Response, peer_env: str, *, missing: str) -> Non
         raise PeerError(404, missing)
     if resp.status_code == 409:
         raise PeerError(409, f"{peer_env}: {detail[:200] or 'operation already running'}")
+    if resp.status_code == 400:
+        # The peer's BundleError (its internal routes map that, and only that,
+        # to 400): a schema mismatch ("migrate it first"), a version skew, a
+        # course its catalog lacks. The admin must act on it, so it surfaces
+        # as the same 400 a local BundleError gets, with the peer's detail.
+        raise PeerError(400, f"{peer_env}: {detail[:300] or 'the bundle was refused'}")
     raise PeerError(502, f"{peer_env} answered {resp.status_code}: {detail[:300]}".rstrip(": "))
 
 

@@ -113,8 +113,12 @@ def test_export_returns_bundle_and_audits(client, inbound, monkeypatch, events):
     resp = client.get(f"{INTERNAL}/export", params={"user_id": UID}, headers=_auth())
 
     assert resp.status_code == 200 and resp.json() == bundle
-    assert events == [("account.export", {"category": "audit", "user_id": UID,
-                                          "payload": {"tables": {"notes": 1}}})]
+    # Never attributed to the student (that would count them active in
+    # canopy_metrics / admin DAU): no user_id, the account in the payload.
+    assert events == [("account.export", {
+        "category": "audit", "user_id": None,
+        "payload": {"target_user_id": UID, "tables": {"notes": 1}},
+    })]
 
 
 def test_export_unknown_account(client, inbound, monkeypatch, events):
@@ -146,7 +150,8 @@ def test_import_applies_bundle_and_audits(client, inbound, monkeypatch, events):
     assert resp.status_code == 200 and resp.json() == {"counts": {"notes": 2}}
     assert got == {"uid": UID, "bundle": bundle}
     assert events[0][0] == "account.import"
-    assert events[0][1]["user_id"] == UID and events[0][1]["category"] == "audit"
+    assert events[0][1]["user_id"] is None and events[0][1]["category"] == "audit"
+    assert events[0][1]["payload"]["target_user_id"] == UID
     assert events[0][1]["payload"]["source_env"] == "staging"
 
 
@@ -305,6 +310,44 @@ def test_peer_500_is_502(client, configured, monkeypatch):
     Peer(monkeypatch, post=(500, {"detail": "boom"}))
     monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
     assert _copy(client, "push").status_code == 502
+
+
+def test_peer_bundle_error_400_surfaces_as_400_with_detail(client, configured, monkeypatch,
+                                                           audits):
+    # The peer's BundleError, e.g. its schema lacks a column ("migrate it first").
+    detail = "production's notes table cannot take this bundle's columns (migrate it first): x"
+    Peer(monkeypatch, post=(400, {"detail": detail}))
+    monkeypatch.setattr(account_bundle, "export_account", lambda uid: {})
+    resp = _copy(client, "push")
+    assert resp.status_code == 400
+    assert "migrate it first" in resp.json()["detail"]
+    assert resp.json()["detail"].startswith("production: ")
+    assert audits[0][4] == {"outcome": "failed", "status": 400}
+
+
+def test_pull_peer_export_400_surfaces_as_400(client, configured, monkeypatch):
+    # The peer could not export honestly (e.g. a row under another key).
+    Peer(monkeypatch, get=(400, {"detail": "notes.body (row n): ciphertext does not decrypt"}))
+    monkeypatch.setattr(account_bundle, "import_account", lambda uid, b: pytest.fail("imported"))
+    resp = _copy(client, "pull")
+    assert resp.status_code == 400 and "does not decrypt" in resp.json()["detail"]
+
+
+def test_copy_unexpected_error_is_audited_and_reraised(client, configured, monkeypatch, audits,
+                                                       events):
+    Peer(monkeypatch, get=(200, {"version": 1}))
+
+    def boom(uid, b):
+        raise RuntimeError("PostgREST 500 mid-import")
+    monkeypatch.setattr(account_bundle, "import_account", boom)
+
+    with pytest.raises(RuntimeError):
+        _copy(client, "pull")
+    assert audits == [("admin_1", "account.copy_pull", "user", UID,
+                       {"outcome": "failed", "status": 500})]
+    assert events[0][1]["payload"]["outcome"] == "failed"
+    from services.account_ops_lock import is_busy
+    assert not is_busy(UID)
 
 
 def test_peer_busy_is_409(client, configured, monkeypatch):

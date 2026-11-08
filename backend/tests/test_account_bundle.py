@@ -174,8 +174,21 @@ def use(monkeypatch):
         monkeypatch.setattr(academics, "table", db.table)
         monkeypatch.setattr(encryption, "_AESGCM", key)
         monkeypatch.setattr(account_bundle.config, "APP_ENV", env)
+        # The level curve lives in growth_stages; a stand-in keeps it pure.
+        monkeypatch.setattr(account_bundle, "level_for_xp", level_for)
 
     return _use
+
+
+def level_for(xp: int) -> int:
+    return 1 + xp // 25
+
+
+@pytest.fixture
+def consent_clears(monkeypatch):
+    calls = []
+    monkeypatch.setattr(account_bundle, "clear_analytics_consent_cache", calls.append)
+    return calls
 
 
 @pytest.fixture
@@ -217,9 +230,12 @@ def source_db() -> FakeDB:
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-02T00:00:00Z",
         }],
         "user_settings": [{
-            "user_id": UID, "theme": "dark", "share_class_context": False,
+            "user_id": UID, "theme": "dark", "font_size": "large", "accent_color": "#123456",
+            "share_class_context": False, "analytics_opt_out": True,
+            "profile_visibility": "private", "activity_status_visible": True,
+            "notification_email": True, "notification_push": False, "notification_in_app": True,
             "equipped_banner_id": "cosmetic-1", "featured_role_id": "role-1",
-            "featured_achievement_ids": [SRC_ACH_FIRST], "analytics_opt_out": True,
+            "featured_achievement_ids": [SRC_ACH_FIRST],
             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
         }],
         "schools": [{"id": SRC_SCHOOL, "slug": "bu"}],
@@ -316,10 +332,18 @@ def source_db() -> FakeDB:
             "id": "qc-1", "user_id": UID, "concept_node_id": "node-1",
             "context_json": enc_json(A, {"misconceptions": []}),
         }],
-        "xp_events": [{
-            "id": "xp-1", "user_id": UID, "rule_key": "quiz", "amount": 10,
-            "idempotency_key": f"quiz:{UID}:qa-1",
-        }],
+        "xp_events": [
+            {"id": "xp-1", "user_id": UID, "rule_key": "quiz_completed", "amount": 10,
+             "source_type": "quiz", "source_id": "qa-1",
+             "idempotency_key": "quiz_completed:quiz:qa-1"},
+            # Achievement payouts name the SOURCE catalog UUID twice.
+            {"id": "xp-2", "user_id": UID, "rule_key": "achievement_unlocked", "amount": 50,
+             "source_type": "achievement", "source_id": SRC_ACH_FIRST,
+             "idempotency_key": f"achievement_unlocked:achievement:{SRC_ACH_FIRST}"},
+            {"id": "xp-3", "user_id": UID, "rule_key": "achievement_unlocked", "amount": 25,
+             "source_type": "achievement", "source_id": SRC_ACH_GONE,
+             "idempotency_key": f"achievement_unlocked:achievement:{SRC_ACH_GONE}"},
+        ],
         "user_achievements": [
             {"user_id": UID, "achievement_id": SRC_ACH_FIRST, "earned_at": "2026-10-01T00:00:00Z",
              "is_featured": True},
@@ -332,6 +356,13 @@ def source_db() -> FakeDB:
 def target_db() -> FakeDB:
     return FakeDB({
         "users": [{"id": UID, "deleted_at": None, "total_xp": 0, "level": 1}],
+        # The target's own privacy/consent/notification choices: never overwritten.
+        "user_settings": [{
+            "user_id": UID, "theme": "light", "share_class_context": True,
+            "analytics_opt_out": False, "profile_visibility": "school",
+            "activity_status_visible": False, "notification_email": False,
+            "notification_push": True, "notification_in_app": False,
+        }],
         "user_profiles": [
             {"user_id": UID, "username": "ada-target", "avatar_url": "https://dst/avatar.png"},
             {"user_id": "someone-else", "username": "ada"},
@@ -376,7 +407,11 @@ def test_export_is_plaintext_with_natural_key_catalog(use):
     assert "avatar_url" not in bundle["profile"]
     assert "equipped_banner_id" not in bundle["settings"]
     assert "featured_achievement_ids" not in bundle["settings"]
-    assert bundle["settings"]["share_class_context"] is False
+    # Only display preferences travel; consent never leaves the source.
+    assert bundle["settings"] == {"theme": "dark", "font_size": "large", "accent_color": "#123456"}
+    assert bundle["catalog"]["achievements"] == {
+        SRC_ACH_FIRST: "first-quiz", SRC_ACH_GONE: "retired-badge",
+    }
     assert bundle["user"]["total_xp"] == 420
     assert "email" not in bundle["user"]
     assert "course_chunks" not in t
@@ -434,7 +469,7 @@ def test_export_unknown_or_deleted_account(use):
 # ── Round trip: export under key A, import under key B ──────────────────────
 
 
-def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipes):
+def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipes, consent_clears):
     bundle = export_from_source(use)
     dst = target_db()
     use(dst, KEY_B, "production")
@@ -462,6 +497,7 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert bio_off not in (SRC_OFF_BIO, DST_OFF_CS)
     created = next(o for o in d["course_offerings"] if o["id"] == bio_off)
     assert created["course_id"] == DST_BIO and created["term_id"] == "spring-2026"
+    assert created["section"] == ""
     assert d["sessions"][0]["offering_id"] == bio_off
     assert d["flashcards"][0]["offering_id"] is None
     # Graph course ids remapped by course_code; row ids preserved.
@@ -488,12 +524,20 @@ def test_round_trip_reencrypts_under_the_target_key_and_remaps_catalog(use, wipe
     assert prof["username"] == "ada-target"
     assert prof["avatar_url"] == "https://dst/avatar.png"
     assert prof["majors"] == ["Computer Science"]
-    # Settings minus cosmetics; counters.
-    settings = d["user_settings"][0]
-    assert settings["theme"] == "dark" and settings["share_class_context"] is False
-    assert "equipped_banner_id" not in settings and "featured_role_id" not in settings
+    # Settings: display preferences move; consent/privacy/notifications stay the target's.
+    [settings] = d["user_settings"]
+    assert settings == {
+        "user_id": UID, "theme": "dark", "font_size": "large", "accent_color": "#123456",
+        "share_class_context": True, "analytics_opt_out": False,
+        "profile_visibility": "school", "activity_status_visible": False,
+        "notification_email": False, "notification_push": True, "notification_in_app": False,
+    }
+    assert consent_clears == [UID]
+    # Counters: the streak moves; total_xp/level are re-derived from the imported
+    # ledger (10 + 50 — the retired badge's 25 XP went with the badge).
     user = d["users"][0]
-    assert user["total_xp"] == 420 and user["streak_count"] == 5 and user["onboarding_completed"]
+    assert user["total_xp"] == 60 and user["level"] == level_for(60)
+    assert user["streak_count"] == 5 and user["onboarding_completed"]
     assert counts["messages"] == 2 and counts["documents"] == 1 and counts["graph_nodes"] == 2
 
 
@@ -587,5 +631,163 @@ def test_unknown_table_in_bundle_is_refused(use, wipes):
     use(target_db(), KEY_B, "production")
     bundle["tables"]["oauth_tokens"] = [{"user_id": UID}]
     with pytest.raises(BundleError, match="oauth_tokens"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+
+
+# ── Consent ─────────────────────────────────────────────────────────────────
+
+
+def test_consent_in_a_peer_bundle_is_never_written(use, wipes, consent_clears):
+    """Even a bundle that carries consent columns (an older/foreign exporter)
+    cannot write them: the allowlist is enforced on the target side too."""
+    bundle = export_from_source(use)
+    bundle["settings"].update(share_class_context=False, analytics_opt_out=True,
+                              notification_email=True)
+    dst = target_db()
+    use(dst, KEY_B, "production")
+
+    account_bundle.import_account(UID, bundle)
+    [settings] = dst.data["user_settings"]
+    assert settings["share_class_context"] is True
+    assert settings["analytics_opt_out"] is False
+    assert settings["notification_email"] is False
+    assert settings["theme"] == "dark"
+
+
+def test_target_without_settings_row_gets_only_display_preferences(use, wipes, consent_clears):
+    bundle = export_from_source(use)
+    dst = target_db()
+    dst.data["user_settings"] = []
+    use(dst, KEY_B, "production")
+
+    account_bundle.import_account(UID, bundle)
+    [settings] = dst.data["user_settings"]
+    # Consent columns are absent → the column defaults (opted in to the class
+    # pool, not opted out of analytics) apply, as for any fresh account here.
+    assert set(settings) == {"user_id", "theme", "font_size", "accent_color"}
+
+
+# ── XP ledger ───────────────────────────────────────────────────────────────
+
+
+def test_achievement_xp_is_remapped_to_the_target_achievement(use, wipes, consent_clears):
+    from services.xp_service import idempotency_key
+
+    bundle = export_from_source(use)
+    dst = target_db()
+    use(dst, KEY_B, "production")
+
+    counts = account_bundle.import_account(UID, bundle)
+    xp = {r["id"]: r for r in dst.data["xp_events"]}
+    # Exactly what award_xp writes for this badge on the target (and what
+    # achievement_service._heal_grants looks up by source_id).
+    assert xp["xp-2"]["source_id"] == DST_ACH_FIRST
+    assert xp["xp-2"]["idempotency_key"] == idempotency_key(
+        "achievement_unlocked", "achievement", DST_ACH_FIRST)
+    assert xp["xp-2"]["user_id"] == UID and xp["xp-2"]["amount"] == 50
+    # The retired badge (unknown here) is dropped with its XP; other rules untouched.
+    assert "xp-3" not in xp
+    assert xp["xp-1"]["idempotency_key"] == "quiz_completed:quiz:qa-1"
+    assert counts["xp_events"] == 2 and counts["xp_events_skipped"] == 1
+    assert not any(SRC_ACH_FIRST in str(r) or SRC_ACH_GONE in str(r)
+                   for r in dst.data["xp_events"])
+
+
+def test_achievement_xp_key_held_by_another_account_gets_a_user_suffix(use, wipes, consent_clears):
+    """xp_events.idempotency_key is UNIQUE across all users and the canonical
+    achievement key has no user in it: re-inserting one another account holds
+    would fail after the wipe. Decided before the wipe instead."""
+    bundle = export_from_source(use)
+    dst = target_db()
+    canonical = f"achievement_unlocked:achievement:{DST_ACH_FIRST}"
+    dst.data["xp_events"] = [{"id": "other-xp", "user_id": "user_other", "amount": 50,
+                              "rule_key": "achievement_unlocked", "source_type": "achievement",
+                              "source_id": DST_ACH_FIRST, "idempotency_key": canonical}]
+    use(dst, KEY_B, "production")
+
+    account_bundle.import_account(UID, bundle)
+    mine = next(r for r in dst.data["xp_events"] if r["id"] == "xp-2")
+    assert mine["idempotency_key"] == f"{canonical}:{UID}"
+    assert mine["source_id"] == DST_ACH_FIRST  # what _heal_grants reads
+    keys = [r["idempotency_key"] for r in dst.data["xp_events"]]
+    assert len(keys) == len(set(keys))
+
+
+def test_bundle_without_achievement_catalog_drops_achievement_xp(use, wipes, consent_clears):
+    bundle = export_from_source(use)
+    del bundle["catalog"]["achievements"]
+    dst = target_db()
+    use(dst, KEY_B, "production")
+
+    counts = account_bundle.import_account(UID, bundle)
+    assert [r["id"] for r in dst.data["xp_events"]] == ["xp-1"]
+    assert counts["xp_events_skipped"] == 2
+    assert dst.data["users"][0]["total_xp"] == 10
+
+
+# ── Offering remap ──────────────────────────────────────────────────────────
+
+
+def test_sectionless_offering_never_lands_on_another_section(use, wipes, consent_clears):
+    """resolve_offering matches (course, term) with ANY section; the import
+    must match the exact triple and create the sectionless one."""
+    bundle = export_from_source(use)
+    dst = target_db()
+    dst.data["course_offerings"] = [
+        {"id": "dst-off-cs-a1", "course_id": DST_CS, "term_id": "fall-2026", "section": "A1",
+         "created_at": "2025-01-01"},
+    ]
+    use(dst, KEY_B, "production")
+
+    account_bundle.import_account(UID, bundle)
+    enr = {e["id"]: e for e in dst.data["enrollments"]}
+    cs_off = enr["enr-1"]["offering_id"]
+    assert cs_off != "dst-off-cs-a1"
+    made = next(o for o in dst.data["course_offerings"] if o["id"] == cs_off)
+    assert (made["course_id"], made["term_id"], made["section"]) == (DST_CS, "fall-2026", "")
+
+
+def test_null_section_resolves_as_the_empty_section(use, wipes, consent_clears):
+    bundle = export_from_source(use)
+    bundle["catalog"]["offerings"][SRC_OFF_CS]["section"] = None
+    dst = target_db()
+    use(dst, KEY_B, "production")
+
+    account_bundle.import_account(UID, bundle)
+    enr = {e["id"]: e for e in dst.data["enrollments"]}
+    assert enr["enr-1"]["offering_id"] == DST_OFF_CS
+
+
+def test_enrollments_colliding_on_one_target_offering_refuse_before_the_wipe(use, wipes):
+    # Two source courses share a course_code (two schools); the target has one.
+    src = source_db()
+    src.data["schools"].append({"id": "src-school-2", "slug": "met"})
+    src.data["courses"].append({"id": "src-course-cs-met", "course_code": "CAS CS 111",
+                                "course_name": "Intro CS (MET)", "school_id": "src-school-2"})
+    src.data["course_offerings"].append({
+        "id": "src-off-cs-met", "course_id": "src-course-cs-met", "term_id": "fall-2026",
+        "section": "", "instructor_name": None, "meeting_times": None, "location": None,
+    })
+    src.data["enrollments"].append({"id": "enr-3", "user_id": UID, "offering_id": "src-off-cs-met",
+                                    "color": "#111", "nickname": "CS2", "syllabus_doc_id": None,
+                                    "curve_mode": "raw"})
+    use(src, KEY_A, "staging")
+    bundle = json.loads(json.dumps(account_bundle.export_account(UID)))
+    dst = target_db()
+    use(dst, KEY_B, "production")
+
+    with pytest.raises(BundleError, match="would map onto one"):
+        account_bundle.import_account(UID, bundle)
+    assert wipes == []
+    assert ("insert", "course_offerings") not in dst.writes
+
+
+@pytest.mark.parametrize("bad", [["first-quiz"], {SRC_ACH_FIRST: ["first-quiz"]}])
+def test_malformed_achievement_catalog_is_refused_before_the_wipe(use, wipes, bad):
+    bundle = export_from_source(use)
+    bundle["catalog"]["achievements"] = bad
+    use(target_db(), KEY_B, "production")
+    with pytest.raises(BundleError, match="achievements"):
         account_bundle.import_account(UID, bundle)
     assert wipes == []

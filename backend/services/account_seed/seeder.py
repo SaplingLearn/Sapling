@@ -6,9 +6,10 @@ docs/superpowers/specs/2026-11-08-admin-account-tools-design.md.
 
 Shape of a run:
 
-1. Validate the major (``ValueError``) and that the ``users`` row exists
-   (``LookupError``), and resolve the current term — all BEFORE anything is
-   written, so a request that cannot succeed changes nothing.
+1. Validate the major (``UnknownMajor``) and that a live (not soft-deleted)
+   ``users`` row exists (``UnknownAccount``), and resolve the current term
+   (``NoCurrentTerm``) — all BEFORE anything is written, so a request that
+   cannot succeed changes nothing.
 2. Wipe the account's academic/study data (``services/account_wipe.py``).
    Re-seeding replaces, never stacks.
 3. Resolve each pack course in the catalog by ``course_code`` (creating the
@@ -35,6 +36,7 @@ from typing import TYPE_CHECKING
 from config import get_mastery_tier
 from db.connection import table
 from services.academics import clear_academics_caches, current_term, resolve_offering
+from services.account_bundle import account_exists
 from services.account_wipe import wipe_account_data
 from services.auth_guard import clear_account_state_cache
 from services.encryption import encrypt_if_present, encrypt_json
@@ -74,6 +76,18 @@ INSERT_ORDER = (
     "messages",
     "xp_events",
 )
+
+
+class UnknownMajor(ValueError):
+    """No pack for the requested major (raised before anything is written)."""
+
+
+class UnknownAccount(LookupError):
+    """No live (non-deleted) account with this id (raised before anything is written)."""
+
+
+class NoCurrentTerm(RuntimeError):
+    """The environment has no current term (raised before anything is written)."""
 
 
 def packs() -> dict[str, MajorPack]:
@@ -531,19 +545,22 @@ def seed_account(user_id: str, major: str, *, today: date | None = None) -> dict
     """Wipe ``user_id``'s study data, then seed a semester of ``major``.
 
     Returns ``{"major", "wiped": {table: n}, "created": {table: n}}``.
-    Raises ``ValueError`` for an unknown major, ``LookupError`` for an unknown
-    user, ``RuntimeError`` when the environment has no terms.
+    Raises ``UnknownMajor`` (a ``ValueError``), ``UnknownAccount`` (a
+    ``LookupError``; soft-deleted accounts count as unknown) or
+    ``NoCurrentTerm`` (a ``RuntimeError``) — each BEFORE the wipe. Anything
+    raised after the wipe (e.g. ``AccountWipeIncomplete``) leaves a partly
+    seeded account that a re-run converges.
     """
     try:
         pack = packs()[major]
     except KeyError:
-        raise ValueError(f"unknown major {major!r}") from None
-    if not table("users").select("id", filters={"id": f"eq.{user_id}"}, limit=1):
-        raise LookupError(f"user {user_id!r} not found")
+        raise UnknownMajor(f"unknown major {major!r}") from None
+    if not account_exists(user_id):
+        raise UnknownAccount(f"user {user_id!r} not found")
     today = today or _utc_today()
     term = current_term(today)
     if not term:
-        raise RuntimeError("no terms are configured; cannot place seeded courses")
+        raise NoCurrentTerm("no current term is configured; cannot place seeded courses")
     term_id = term["id"]
     term_start = date.fromisoformat(str(term["start_date"])[:10])
 

@@ -67,23 +67,36 @@ def copy_account(user_id: str, request: Request, body: Any = Body(default=None))
     action = f"account.copy_{direction}"
     try:
         with account_op(user_id):
-            result = (account_sync_client.push if direction == "push"
-                      else account_sync_client.pull)(user_id)
+            try:
+                result = (account_sync_client.push if direction == "push"
+                          else account_sync_client.pull)(user_id)
+            except PeerError as exc:
+                _audit(actor, action, user_id, {"outcome": "failed", "status": exc.status})
+                raise HTTPException(status_code=exc.status, detail=exc.detail) from None
+            except AccountNotFound:
+                _audit(actor, action, user_id, {"outcome": "failed", "status": 404})
+                raise HTTPException(
+                    status_code=404, detail=f"account does not exist on {config.APP_ENV}",
+                ) from None
+            except BundleError as exc:
+                _audit(actor, action, user_id, {"outcome": "failed", "status": 400})
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            except AccountWipeIncomplete:
+                # Pull only (a push's wipe runs on the peer). Nothing was imported yet.
+                logger.exception("account copy: local wipe did not finish for %s", user_id)
+                _audit(actor, action, user_id, {"outcome": "failed", "status": 503})
+                raise HTTPException(
+                    status_code=503, detail="the wipe did not finish; re-run the copy",
+                ) from None
+            except Exception:
+                # Unexpected — possibly after a pull's local wipe. Audit, then
+                # re-raise so the 500 handler still sees (and reports) it.
+                _audit(actor, action, user_id, {"outcome": "failed", "status": 500})
+                raise
     except AccountBusy:
-        raise HTTPException(status_code=409, detail="an operation is already running for this account")
-    except PeerError as exc:
-        _audit(actor, action, user_id, {"outcome": "failed", "status": exc.status})
-        raise HTTPException(status_code=exc.status, detail=exc.detail)
-    except AccountNotFound:
-        raise HTTPException(status_code=404, detail=f"account does not exist on {config.APP_ENV}")
-    except BundleError as exc:
-        _audit(actor, action, user_id, {"outcome": "failed", "status": 400})
-        raise HTTPException(status_code=400, detail=str(exc))
-    except AccountWipeIncomplete:
-        # Pull only (a push's wipe runs on the peer). Nothing was imported yet.
-        logger.exception("account copy: local wipe did not finish for %s", user_id)
-        _audit(actor, action, user_id, {"outcome": "failed", "status": 503})
-        raise HTTPException(status_code=503, detail="the wipe did not finish; re-run the copy")
+        raise HTTPException(
+            status_code=409, detail="an operation is already running for this account",
+        ) from None
 
     peer_env, counts = result["peer_env"], result["counts"]
     _audit(actor, action, user_id, {"outcome": "ok", "peer_env": peer_env, "counts": counts})

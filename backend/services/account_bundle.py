@@ -15,8 +15,10 @@ differ in exactly the ways that make a row-for-row copy wrong:
   `course_id`, and the bundle carries a `catalog` section mapping each of those
   ids to its natural key: offerings by `(course_code, term_id, section)`,
   courses by `course_code` (+ the school slug as a tie-break). Import resolves
-  them on the target (creating a missing offering, never a course or a term).
-  Achievements move by `slug`. Term ids are stable strings (`fall-2026`).
+  them on the target by the EXACT triple (creating that offering when it is
+  missing, never a course or a term). Achievements move by `slug` — and so do
+  the `achievement_unlocked` XP rows that name them. Term ids are stable
+  strings (`fall-2026`).
 - **No chunks.** `course_chunks` never moves: documents import as
   `index_status='pending'` so the target re-indexes them under its own key and
   its own visibility rules (`shareability` travels, so the decision does too).
@@ -39,7 +41,12 @@ preserved — the target's copies of them were just wiped.
 Never copied: OAuth tokens, roles, social (rooms/friendships), telemetry
 (events/llm_usage), feedback/issue reports, gradescope links (credentials do not
 move), cosmetics (`equipped_*`/`featured_*` ids), `avatar_url` (storage buckets
-differ), `course_chunks`.
+differ), `course_chunks`, and every privacy/consent/notification choice in
+`user_settings` (see `_SETTINGS_COPIED`): consent is the person's, given on
+each environment, and is never carried from one to the other. The imported
+documents therefore index under the TARGET's stored `share_class_context`.
+`users.total_xp`/`level` are not copied either: they are recomputed from the
+imported XP ledger, which is what `xp_service` treats them as (a cache of it).
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ import base64
 import binascii
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator
@@ -57,7 +65,9 @@ import httpx
 import config
 from db.connection import page_all, pg_quote_value, table
 from services import encryption
-from services.academics import resolve_offering
+from services.analytics_consent import clear_analytics_consent_cache
+from services.growth import level_for_xp
+from services.xp_service import idempotency_key as xp_idempotency_key
 
 logger = logging.getLogger(__name__)
 
@@ -248,13 +258,29 @@ USER_COUNTERS = (
     "last_active_date", "daily_goal_xp",
 )
 
-# Never copied off the profile/settings rows.
+# Recomputed on import from the imported xp_events ledger, never copied.
+_DERIVED_COUNTERS = ("total_xp", "level")
+
+# Never copied off the profile row.
 _PROFILE_DROP = {"user_id", "avatar_url", "created_at", "updated_at"}
-_SETTINGS_DROP = {
-    "user_id", "created_at", "updated_at",
-    "equipped_avatar_frame_id", "equipped_banner_id", "equipped_name_color_id",
-    "equipped_title_id", "featured_role_id", "featured_achievement_ids",
-}
+
+# The ONLY user_settings columns that move: display preferences. An allowlist,
+# not a drop list, so a consent column added later stays put by default.
+# Everything else stays the TARGET's own:
+#   - consent/privacy: share_class_context (class-pool RAG sharing, #629),
+#     analytics_opt_out (PostHog, #677), profile_visibility,
+#     activity_status_visible;
+#   - notification preferences: notification_email, notification_push,
+#     notification_in_app;
+#   - cosmetics: equipped_*_id, featured_role_id, featured_achievement_ids
+#     (catalog UUIDs differ per environment);
+#   - bookkeeping: user_id, created_at, updated_at.
+_SETTINGS_COPIED = ("theme", "font_size", "accent_color")
+
+# xp_events rows that pay out an achievement name it by catalog UUID (in
+# source_id AND inside idempotency_key), so they are remapped by slug.
+_ACH_XP_RULE = "achievement_unlocked"
+_ACH_XP_SOURCE = "achievement"
 
 # Documents re-index on the target; none of the source's indexing state applies.
 _DOCUMENT_INDEX_RESET = {
@@ -316,6 +342,11 @@ def _export_rows(spec: _Spec, user_id: str, exported: dict[str, list[dict]]) -> 
         handle = table(spec.name)
         rows.extend(page_all(handle, filters={spec.key: _in(chunk)}, order=spec.order))
     return rows
+
+
+def _is_achievement_xp(row: Any) -> bool:
+    return (isinstance(row, dict) and row.get("rule_key") == _ACH_XP_RULE
+            and row.get("source_type") == _ACH_XP_SOURCE)
 
 
 def _plain(table_name: str, row: dict) -> dict:
@@ -395,8 +426,12 @@ def export_account(user_id: str) -> dict:
     catalog = _export_catalog(exported)
 
     # Achievements travel by slug: the catalog's UUIDs differ per project.
-    ach_ids = {r["achievement_id"] for r in exported["user_achievements"]}
+    # The XP rows that paid them out name them too, so their ids join the map.
+    ach_ids = ({r["achievement_id"] for r in exported["user_achievements"]} | {
+        r.get("source_id") for r in exported["xp_events"] if _is_achievement_xp(r)
+    }) - {None}
     slugs = {a["id"]: a["slug"] for a in _select_in("achievements", "id", ach_ids, "id,slug")}
+    catalog["achievements"] = dict(sorted(slugs.items()))
     achievements = []
     for r in exported["user_achievements"]:
         slug = slugs.get(r["achievement_id"])
@@ -421,7 +456,7 @@ def export_account(user_id: str) -> dict:
         "*", filters={"user_id": f"eq.{user_id}"}, limit=1,
     ) or []
     settings = (
-        {k: v for k, v in _plain("user_settings", settings_rows[0]).items() if k not in _SETTINGS_DROP}
+        {k: v for k, v in _plain("user_settings", settings_rows[0]).items() if k in _SETTINGS_COPIED}
         if settings_rows else None
     )
 
@@ -461,6 +496,12 @@ def _validate(user_id: str, bundle: Any) -> None:
     if not isinstance(catalog, dict) or not isinstance(catalog.get("courses"), dict) \
             or not isinstance(catalog.get("offerings"), dict):
         raise BundleError("bundle has no catalog object")
+    achievements = catalog.get("achievements")
+    if achievements is not None and (
+        not isinstance(achievements, dict)
+        or not all(isinstance(v, str) for v in achievements.values())
+    ):
+        raise BundleError("bundle catalog achievements is not an id → slug object")
     for key in ("user", "profile", "settings"):
         if bundle.get(key) is not None and not isinstance(bundle[key], dict):
             raise BundleError(f"bundle {key} is not an object")
@@ -497,8 +538,83 @@ def _resolve_courses(catalog: dict) -> dict[str, str]:
     return out
 
 
+def _offering_key(ref: dict, course_map: dict[str, str], src_id: str) -> tuple[str, str, str]:
+    """The exact target (course_id, term_id, section) a source offering maps to."""
+    course_id = course_map.get(ref.get("course"))
+    if not course_id:
+        raise BundleError(f"offering {src_id} names a course the bundle does not describe")
+    # NOT NULL DEFAULT '' (0033): "no section" is the empty string, never NULL.
+    return course_id, ref["term_id"], ref.get("section") or ""
+
+
+def _check_enrollment_collisions(
+    catalog: dict, course_map: dict[str, str], enrollments: list,
+) -> None:
+    """Refuse (before anything is created or wiped) a bundle whose enrollments
+    would land on the same target offering.
+
+    Resolution is exact, so the target offering is a function of the
+    (course, term, section) triple: two enrollments sharing a triple — two
+    source courses with one course_code that the target holds once, say —
+    would collapse into one enrollment (and the second insert would fail
+    after the wipe)."""
+    refs: dict[str, dict] = catalog["offerings"]
+    seen: dict[tuple[str, str, str], str] = {}
+    for row in enrollments:
+        if not isinstance(row, dict) or row.get("offering_id") is None:
+            continue
+        src = row["offering_id"]
+        if src not in refs:
+            raise BundleError(f"enrollments: offering {src} is not in the bundle's catalog")
+        key = _offering_key(refs[src], course_map, src)
+        if key in seen:
+            raise BundleError(
+                f"enrollments {seen[key]} and {row.get('id')} would map onto one "
+                f"{config.APP_ENV} offering ({key[1]}, section {key[2]!r}); refusing the copy"
+            )
+        seen[key] = row.get("id")
+
+
+def _exact_offering(key: tuple[str, str, str], ref: dict) -> str | None:
+    """The target offering with exactly (course_id, term_id, section), created
+    when absent.
+
+    Never `academics.resolve_offering`: it matches (course, term) with ANY
+    section, so a sectionless source offering would land on, e.g., section A1
+    — and two source enrollments could collapse onto one offering. The insert
+    mirrors resolve_offering's (client-side uuid; a lost race against
+    `course_offerings_unique` re-selects the winner), with the exact section.
+    """
+    course_id, term_id, section = key
+    filters = {"course_id": f"eq.{course_id}", "term_id": f"eq.{term_id}",
+               "section": f"eq.{section}"}
+
+    def _select() -> str | None:
+        rows = table("course_offerings").select(
+            "id", filters=filters, order="created_at.asc", limit=1,
+        ) or []
+        return rows[0]["id"] if rows else None
+
+    found = _select()
+    if found:
+        return found
+    new_id = str(uuid.uuid4())
+    try:
+        table("course_offerings").insert({
+            "id": new_id, "course_id": course_id, "term_id": term_id, "section": section,
+            "instructor_name": ref.get("instructor_name"),
+            "meeting_times": ref.get("meeting_times"),
+            "location": ref.get("location"),
+        })
+    except httpx.HTTPStatusError as exc:
+        if exc.response is None or exc.response.status_code != 409:
+            raise
+        return _select()
+    return new_id
+
+
 def _resolve_offerings(catalog: dict, course_map: dict[str, str]) -> dict[str, str]:
-    """source offering id → target offering id, by (course, term, section).
+    """source offering id → target offering id, by the exact (course, term, section).
 
     A missing offering is created (the catalog has the course and the term, the
     section just has never been taught here yet); a missing TERM is an error —
@@ -512,30 +628,10 @@ def _resolve_offerings(catalog: dict, course_map: dict[str, str]) -> dict[str, s
 
     out: dict[str, str] = {}
     for src_id, ref in refs.items():
-        course_id = course_map.get(ref["course"])
-        if not course_id:
-            raise BundleError(f"offering {src_id} names a course the bundle does not describe")
-        section = ref.get("section") or ""
-        rows = table("course_offerings").select(
-            "id",
-            filters={"course_id": f"eq.{course_id}", "term_id": f"eq.{ref['term_id']}",
-                     "section": f"eq.{section}"},
-            order="created_at.asc", limit=1,
-        ) or []
-        if rows:
-            out[src_id] = rows[0]["id"]
-        elif section == "":
-            out[src_id] = resolve_offering(course_id, ref["term_id"], create=True, fallback=False)
-        else:
-            created = table("course_offerings").insert({
-                "course_id": course_id, "term_id": ref["term_id"], "section": section,
-                "instructor_name": ref.get("instructor_name"),
-                "meeting_times": ref.get("meeting_times"),
-                "location": ref.get("location"),
-            }) or []
-            out[src_id] = created[0]["id"] if created else None
-        if not out[src_id]:
+        target = _exact_offering(_offering_key(ref, course_map, src_id), ref)
+        if not target:
             raise BundleError(f"could not resolve an offering for {src_id} on {config.APP_ENV}")
+        out[src_id] = target
     return out
 
 
@@ -565,6 +661,59 @@ def _target_row(name: str, row: dict, user_id: str, offering_map: dict, course_m
         if column in out:
             out[column] = _encrypt(kind, out[column])
     return out
+
+
+def _remap_achievement_xp(
+    user_id: str, rows: list[dict], slug_of: dict, ach_by_slug: dict[str, str],
+) -> tuple[list[dict], int]:
+    """(rows with every `achievement_unlocked` row remapped, rows dropped).
+
+    Such a row names the SOURCE achievement UUID in `source_id` and inside
+    `idempotency_key`. On the target it must look exactly like the row
+    `xp_service.award_xp(user, "achievement_unlocked", source_type="achievement",
+    source_id=<target id>)` writes, because `achievement_service._heal_grants`
+    finds a badge's payout by (user_id, rule_key, source_type, source_id) and
+    re-pays one it cannot find. A row whose achievement the target lacks (or the
+    bundle cannot name) is dropped — its badge is dropped too.
+
+    `xp_events.idempotency_key` is UNIQUE across ALL users and the canonical key
+    (`achievement_unlocked:achievement:<id>`) has no user in it, so on the
+    target it may already belong to another account. Inserting it again would
+    fail AFTER the wipe; such a row keeps the canonical shape plus a
+    `:<user_id>` suffix instead. `_heal_grants` reads `source_id`, not the
+    key, so both shapes satisfy it; checked here, before the wipe.
+    """
+    out: list[dict] = []
+    skipped = 0
+    canonical: dict[str, dict] = {}
+    for r in rows:
+        if not _is_achievement_xp(r):
+            out.append(r)
+            continue
+        src = r.get("source_id")
+        aid = ach_by_slug.get(slug_of.get(src)) if isinstance(src, str) else None
+        if not aid:
+            skipped += 1
+            continue
+        key = xp_idempotency_key(_ACH_XP_RULE, _ACH_XP_SOURCE, aid)
+        if key in canonical:  # two source rows for one badge: keep the first
+            skipped += 1
+            continue
+        row = {**r, "source_id": aid, "idempotency_key": key}
+        canonical[key] = row
+        out.append(row)
+
+    keys = sorted(canonical)
+    for chunk in _chunks(keys, _IN_CHUNK):
+        quoted = ",".join(pg_quote_value(k) for k in chunk)
+        for held in table("xp_events").select(
+            "idempotency_key",
+            filters={"idempotency_key": f"in.({quoted})", "user_id": f"neq.{user_id}"},
+        ) or []:
+            row = canonical.get(held.get("idempotency_key"))
+            if row is not None:
+                row["idempotency_key"] = f"{row['idempotency_key']}:{user_id}"
+    return out, skipped
 
 
 def _probe_columns(name: str, columns: Iterable[str]) -> None:
@@ -609,14 +758,19 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
     _user_row(user_id)
 
     catalog = bundle["catalog"]
-    course_map = _resolve_courses(catalog)
-    offering_map = _resolve_offerings(catalog, course_map)
     tables: dict[str, list] = bundle["tables"]
+    course_map = _resolve_courses(catalog)
+    _check_enrollment_collisions(catalog, course_map, tables.get("enrollments", []))
+    offering_map = _resolve_offerings(catalog, course_map)
 
     # Achievements by slug; one this environment does not have is dropped
     # (counted), not fatal — the rest of the account still moves.
     ach_rows = tables.get("user_achievements", [])
-    slugs = sorted({r.get("achievement_slug") for r in ach_rows if isinstance(r, dict)} - {None})
+    ach_slug_of: dict = catalog.get("achievements") or {}  # source achievement id → slug
+    slugs = sorted(
+        ({r.get("achievement_slug") for r in ach_rows if isinstance(r, dict)}
+         | {v for v in ach_slug_of.values() if isinstance(v, str)}) - {None}
+    )
     ach_by_slug: dict[str, str] = {}
     for chunk in _chunks(slugs, _IN_CHUNK):
         for a in table("achievements").select("id,slug", filters={"slug": _in(chunk)}) or []:
@@ -640,8 +794,19 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
             prepared[spec.name] = [
                 _target_row(spec.name, r, user_id, offering_map, course_map) for r in rows
             ]
+    prepared["xp_events"], xp_skipped = _remap_achievement_xp(
+        user_id, prepared["xp_events"], ach_slug_of, ach_by_slug,
+    )
 
-    user_update = {k: v for k, v in (bundle.get("user") or {}).items() if k in USER_COUNTERS}
+    user_update = {
+        k: v for k, v in (bundle.get("user") or {}).items()
+        if k in USER_COUNTERS and k not in _DERIVED_COUNTERS
+    }
+    # users.total_xp/level are a cache of the ledger (xp_service._ledger_total):
+    # derive them from the rows actually imported, so dropped achievement XP
+    # is not still counted and the cache agrees with /activity on day one.
+    total_xp = sum(int(r.get("amount") or 0) for r in prepared["xp_events"])
+    user_update.update(total_xp=total_xp, level=level_for_xp(total_xp))
 
     profile = None
     if bundle.get("profile"):
@@ -659,11 +824,11 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
                 profile.pop("username")
         profile = {"user_id": user_id, **_target_row("user_profiles", profile, user_id, {}, {})}
     settings = None
-    if bundle.get("settings"):
-        settings = {
-            "user_id": user_id,
-            **{k: v for k, v in bundle["settings"].items() if k not in _SETTINGS_DROP},
-        }
+    copied = {k: v for k, v in (bundle.get("settings") or {}).items() if k in _SETTINGS_COPIED}
+    if copied:
+        # Allowlist on the TARGET side too: whatever the peer sends, the
+        # target's consent/privacy/notification columns are never written.
+        settings = {"user_id": user_id, **copied}
 
     # Schema probe: every column about to be written must exist here.
     for name, rows in prepared.items():
@@ -697,4 +862,9 @@ def import_account(user_id: str, bundle: dict) -> dict[str, int]:
         counts[spec.name] = len(rows)
     if achievements_skipped:
         counts["user_achievements_skipped"] = achievements_skipped
+    if xp_skipped:
+        counts["xp_events_skipped"] = xp_skipped
+    # Not a consent change (consent never moves), but this is a user_settings
+    # mutator and CLAUDE.md asks every one of those to drop the cached answer.
+    clear_analytics_consent_cache(user_id)
     return counts

@@ -6,6 +6,9 @@ sends and models the FK cascades the wipe relies on. The REAL
 chunk rules are exercised end to end rather than mocked away (one test swaps
 it for a recorder to pin call order, one for a failure).
 """
+import re
+from pathlib import Path
+
 import pytest
 
 from services import account_wipe as aw
@@ -339,3 +342,71 @@ def test_classmates_shared_chunk_survives_and_orphan_private_rows_go(db):
     assert db.rows["course_chunk_contributors"] == [{"chunk_id": "joint", "user_id": OTHER}]
     assert counts["course_chunks"] == 2
     assert counts["course_chunk_contributors"] == 1
+
+
+# ── The three per-user table sets agree (bundle / wipe / seeder) ────────────
+
+_MIGRATIONS = Path(__file__).resolve().parent.parent / "db" / "migrations"
+
+#: Seeder writes that are not per-user account data (catalog rows it may
+#: create on a bare stack, and the account rows it only UPDATEs).
+_SEEDER_NOT_ACCOUNT_DATA = {"courses", "course_offerings", "schools", "users", "user_profiles"}
+
+
+def _create_table_body(name: str) -> str:
+    """The column list of the LAST `CREATE TABLE <name>` across the migrations
+    (a later rebuild supersedes an earlier definition)."""
+    pattern = re.compile(
+        rf"CREATE TABLE(?: IF NOT EXISTS)?\s+(?:public\.)?{name}\s*\((.*?)\n\);",
+        re.S | re.I,
+    )
+    bodies = [m.group(1) for f in sorted(_MIGRATIONS.glob("*.sql"))
+              for m in pattern.finditer(f.read_text())]
+    assert bodies, f"no CREATE TABLE {name} in the migrations"
+    return bodies[-1]
+
+
+def test_every_bundle_table_is_wiped():
+    """Copy = wipe + import: a table the bundle imports but the wipe misses
+    would collide with (or stack onto) the target's old rows."""
+    from services.account_bundle import SPECS
+
+    wiped = aw.wiped_tables()
+    for spec in SPECS:
+        assert spec.name in wiped, f"{spec.name} is copied but never wiped"
+        if spec.parent is None:
+            # Top-level user_id tables: deleted directly, or through a documented
+            # cascade parent that is itself deleted directly.
+            parent = aw.WIPED_BY_CASCADE.get(spec.name)
+            assert spec.name in aw.WIPED_DIRECTLY or parent in aw.WIPED_DIRECTLY, spec.name
+
+
+def test_cascade_chains_end_in_a_direct_delete():
+    for child, parent in aw.WIPED_BY_CASCADE.items():
+        seen = {child}
+        while parent in aw.WIPED_BY_CASCADE:
+            assert parent not in seen, f"cascade loop at {parent}"
+            seen.add(parent)
+            parent = aw.WIPED_BY_CASCADE[parent]
+        assert parent in aw.WIPED_DIRECTLY, f"{child}'s cascade never reaches a direct delete"
+
+
+@pytest.mark.parametrize("child,parent", sorted(aw.WIPED_BY_CASCADE.items()))
+def test_documented_cascades_exist_in_the_schema(child, parent):
+    body = re.sub(r"\s+", " ", _create_table_body(child))
+    assert re.search(rf"REFERENCES {parent}\s*\([a-z_]+\) ON DELETE CASCADE", body, re.I), (
+        f"{child} does not ON DELETE CASCADE from {parent}; the wipe would leave its rows"
+    )
+
+
+def test_every_seeded_table_is_wiped_and_copied():
+    """What seed writes, wipe must remove (re-seed replaces, never stacks) and
+    copy must move (a seeded account copies whole)."""
+    from services.account_bundle import SPECS
+    from services.account_seed.seeder import INSERT_ORDER
+
+    copied = {s.name for s in SPECS}
+    wiped = aw.wiped_tables()
+    for name in set(INSERT_ORDER) - _SEEDER_NOT_ACCOUNT_DATA:
+        assert name in wiped, f"seeder writes {name} but the wipe never removes it"
+        assert name in copied, f"seeder writes {name} but the copy never moves it"

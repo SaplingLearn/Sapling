@@ -14,8 +14,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 import routes.admin_accounts as admin_accounts
-from services.account_ops_lock import account_op
+from services.account_ops_lock import account_op, is_busy
 from services.account_seed import seeder
+from services.account_wipe import AccountWipeIncomplete
 from tests.test_account_seeder import PACK
 
 BASE = "/api/admin/accounts"
@@ -33,12 +34,7 @@ def state(monkeypatch):
         users={USER},
     )
 
-    class _Users:
-        def select(self, columns="*", filters=None, **_):
-            uid = (filters or {}).get("id", "").removeprefix("eq.")
-            return [{"id": uid}] if uid in st.users else []
-
-    monkeypatch.setattr(admin_accounts, "table", lambda name: _Users())
+    monkeypatch.setattr(admin_accounts, "account_exists", lambda uid: uid in st.users)
     monkeypatch.setattr(admin_accounts, "require_admin", lambda request: None)
     monkeypatch.setattr(admin_accounts, "get_session_user_id", lambda request, **_: ADMIN)
     monkeypatch.setattr(admin_accounts, "log_admin_action",
@@ -178,14 +174,84 @@ def test_seed_releases_the_lock(state):
     assert not is_busy(USER)
 
 
-def test_seed_user_vanishing_mid_request_is_404(state, monkeypatch):
+def test_soft_deleted_account_is_404_via_account_exists(state, monkeypatch):
+    # account_exists (account_bundle's, which filters deleted_at) says no.
+    seen = []
+
+    def exists(uid):
+        seen.append(uid)
+        return False
+
+    monkeypatch.setattr(admin_accounts, "account_exists", exists)
+    for path, body in ((f"{BASE}/{USER}/seed", {"major": PACK.key, "confirm": "SEED"}),
+                       (f"{BASE}/{USER}/wipe", {"confirm": "WIPE"})):
+        assert state.client.post(path, json=body).status_code == 404
+    assert seen == [USER, USER]
+    assert state.seeds == [] and state.wipes == []
+
+
+def test_route_uses_the_deleted_at_aware_lookup():
+    from services import account_bundle
+
+    assert admin_accounts.account_exists is account_bundle.account_exists
+    assert seeder.account_exists is account_bundle.account_exists
+
+
+def test_seed_user_vanishing_mid_request_is_404_and_audited(state, monkeypatch):
     def gone(user_id, major, **_):
-        raise LookupError(user_id)
+        raise seeder.UnknownAccount(user_id)
 
     monkeypatch.setattr(seeder, "seed_account", gone)
     r = state.client.post(f"{BASE}/{USER}/seed", json={"major": PACK.key, "confirm": "SEED"})
     assert r.status_code == 404
-    assert state.audits == []
+    [audit] = state.audits
+    assert audit["payload"] == {"outcome": "failed", "reason": "user_not_found",
+                                "major": PACK.key}
+
+
+def test_seed_no_current_term_is_503_audited(state, monkeypatch):
+    def no_term(user_id, major, **_):
+        raise seeder.NoCurrentTerm("no current term")
+
+    monkeypatch.setattr(seeder, "seed_account", no_term)
+    r = state.client.post(f"{BASE}/{USER}/seed", json={"major": PACK.key, "confirm": "SEED"})
+    assert r.status_code == 503
+    assert "term" in r.json()["detail"]
+    [audit] = state.audits
+    assert audit["action"] == "account.seed"
+    assert audit["payload"]["outcome"] == "failed"
+    assert audit["payload"]["reason"] == "no_current_term"
+
+
+def test_seed_wipe_incomplete_is_503_and_audited(state, monkeypatch):
+    def stuck(user_id, major, **_):
+        raise AccountWipeIncomplete("withdrawal failed for doc-secret-name")
+
+    monkeypatch.setattr(seeder, "seed_account", stuck)
+    r = state.client.post(f"{BASE}/{USER}/seed", json={"major": PACK.key, "confirm": "SEED"})
+    assert r.status_code == 503
+    assert r.json()["detail"] == "wipe incomplete — re-run"
+    [audit] = state.audits
+    assert audit["payload"] == {"outcome": "failed", "reason": "wipe_incomplete",
+                                "major": PACK.key}
+    [(event_type, kw)] = state.events
+    assert event_type == "account.seed" and kw["payload"]["outcome"] == "failed"
+    # ids/enums only: the exception text never reaches the audit trail.
+    assert "doc-secret-name" not in repr(state.audits) + repr(state.events)
+    assert not is_busy(USER)
+
+
+def test_seed_unexpected_error_is_audited_and_reraised(state, monkeypatch):
+    def boom(user_id, major, **_):
+        raise KeyError("Idea A1")  # a LookupError that must NOT become a 404
+
+    monkeypatch.setattr(seeder, "seed_account", boom)
+    client = TestClient(state.client.app, raise_server_exceptions=False)
+    r = client.post(f"{BASE}/{USER}/seed", json={"major": PACK.key, "confirm": "SEED"})
+    assert r.status_code == 500
+    [audit] = state.audits
+    assert audit["payload"] == {"outcome": "failed", "reason": "error", "major": PACK.key}
+    assert not is_busy(USER)
 
 
 # ── wipe ─────────────────────────────────────────────────────────────────────
@@ -198,9 +264,10 @@ def test_wipe_runs_and_audits(state):
     assert state.wipes == [USER]
     [audit] = state.audits
     assert audit["action"] == "account.wipe" and audit["target_id"] == USER
-    assert audit["payload"] == {"wiped": {"notes": 2, "documents": 1}}
+    assert audit["payload"] == {"outcome": "ok", "wiped": {"notes": 2, "documents": 1}}
     [(event_type, kw)] = state.events
     assert event_type == "account.wipe" and kw["category"] == "audit"
+    assert kw["payload"]["outcome"] == "ok"
 
 
 @pytest.mark.parametrize("body", [{"confirm": "SEED"}, {"confirm": "wipe"}, {}])
@@ -221,3 +288,31 @@ def test_wipe_while_busy_is_409(state):
         r = state.client.post(f"{BASE}/{USER}/wipe", json={"confirm": "WIPE"})
     assert r.status_code == 409
     assert state.wipes == [] and state.audits == []
+
+
+def test_wipe_incomplete_is_503_and_audited(state, monkeypatch):
+    def stuck(user_id):
+        raise AccountWipeIncomplete("chunk withdrawal failed")
+
+    monkeypatch.setattr(admin_accounts, "wipe_account_data", stuck)
+    r = state.client.post(f"{BASE}/{USER}/wipe", json={"confirm": "WIPE"})
+    assert r.status_code == 503 and r.json()["detail"] == "wipe incomplete — re-run"
+    [audit] = state.audits
+    assert audit["action"] == "account.wipe"
+    assert audit["payload"] == {"outcome": "failed", "reason": "wipe_incomplete"}
+    [(event_type, kw)] = state.events
+    assert kw["payload"] == {"target_user_id": USER, "outcome": "failed",
+                             "reason": "wipe_incomplete"}
+    assert not is_busy(USER)
+
+
+def test_wipe_unexpected_error_is_audited_and_reraised(state, monkeypatch):
+    def boom(user_id):
+        raise RuntimeError("postgrest 500")
+
+    monkeypatch.setattr(admin_accounts, "wipe_account_data", boom)
+    with pytest.raises(RuntimeError):
+        state.client.post(f"{BASE}/{USER}/wipe", json={"confirm": "WIPE"})
+    [audit] = state.audits
+    assert audit["payload"] == {"outcome": "failed", "reason": "error"}
+    assert not is_busy(USER)

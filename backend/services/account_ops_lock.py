@@ -6,9 +6,16 @@ account would leave a mix of both results, so a second operation on an account
 that already has one running is REJECTED (the route answers 409), never queued:
 the admin who clicked twice wants to know, not to wait.
 
-In-process only. Every operation re-starts from a wipe, so a run that slips
-past this guard on another worker still converges when re-run; the guard's job
-is the common double-submit, not a distributed mutex.
+PER-PROCESS ONLY — a known limitation, not a distributed mutex. Two requests
+for the same account that land in different processes both get the slot. The
+deploy today is one process per service: the backend image runs a single
+uvicorn worker (`backend/Dockerfile` CMD, no `--workers`; uvicorn would honour
+`WEB_CONCURRENCY` if an environment set it). The replica count lives in the
+Railway dashboard, not in this repo; a multi-replica (or multi-worker) deploy
+needs a DB-backed claim here (a row claimed with a unique key and a lease)
+before these operations are safe against a concurrent double-submit. Every
+operation re-starts from a wipe, so a run that slips past this guard still
+converges when re-run; the guard's job is the common double-submit.
 """
 
 from __future__ import annotations

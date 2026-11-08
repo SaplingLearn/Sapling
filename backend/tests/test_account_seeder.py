@@ -193,7 +193,7 @@ class FakeDB:
 @pytest.fixture
 def db(monkeypatch):
     fake = FakeDB()
-    fake.rows["users"].append({"id": USER, "onboarding_completed": False})
+    fake.rows["users"].append({"id": USER, "onboarding_completed": False, "deleted_at": None})
     fake.rows["user_profiles"].append({"user_id": USER, "name": "enc-name", "majors": []})
     # Three of the four codes are in the catalog; the fourth exercises the fallback.
     for n in (1, 2, 3):
@@ -210,6 +210,10 @@ def db(monkeypatch):
 
     monkeypatch.setattr(seeder, "wipe_account_data", wipe_account_data)
     monkeypatch.setattr(seeder, "table", fake.table)
+    # The real account_exists (deleted_at-aware), pointed at this fake.
+    from services import account_bundle
+
+    monkeypatch.setattr(account_bundle, "table", fake.table)
     monkeypatch.setattr(seeder, "packs", lambda: {PACK.key: PACK})
     monkeypatch.setattr(seeder, "current_term", lambda today=None: {
         "id": "fall-2026", "start_date": TERM_START.isoformat(), "end_date": "2027-01-03",
@@ -238,17 +242,26 @@ def test_unknown_major_is_a_value_error_and_writes_nothing(db):
 
 
 def test_unknown_user_is_a_lookup_error_and_wipes_nothing(db):
-    with pytest.raises(LookupError):
+    with pytest.raises(seeder.UnknownAccount):
         seeder.seed_account("user_nobody", PACK.key, today=TODAY)
+    assert db.wiped_calls == []
+    assert db.log == []
+
+
+def test_soft_deleted_user_is_unknown_and_wipes_nothing(db):
+    db.rows["users"][0]["deleted_at"] = "2026-11-01T00:00:00+00:00"
+    with pytest.raises(seeder.UnknownAccount):
+        _seed(db)
     assert db.wiped_calls == []
     assert db.log == []
 
 
 def test_no_terms_refuses_before_the_wipe(db, monkeypatch):
     monkeypatch.setattr(seeder, "current_term", lambda today=None: None)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(seeder.NoCurrentTerm):
         _seed(db)
     assert db.wiped_calls == []
+    assert db.log == []
 
 
 # ── ordering + result ────────────────────────────────────────────────────────
