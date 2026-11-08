@@ -47,6 +47,7 @@ from services.request_context import (
     privacy_signal_in,
 )
 from services.encryption_canary import verify_encryption_key
+from services.learning_schema_check import check_learning_schema
 from services.storage_service import (
     ALLOWED_CONTENT_TYPES,
     ICON_CONTENT_TYPES,
@@ -135,6 +136,9 @@ async def _lifespan(_app: FastAPI):
     # read helpers fail soft, so a mismatch otherwise surfaces as garbage reads
     # and writes the real environment can never decrypt.
     verify_encryption_key()
+    # Learning-loop spec §13 A138 review: one ERROR when the wave-4 learning
+    # schema is behind the code. Warn only: its readers read no rows meanwhile.
+    check_learning_schema()
     async with AsyncExitStack() as stack:
         await _start(stack)
         yield

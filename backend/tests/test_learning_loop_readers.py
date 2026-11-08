@@ -177,6 +177,49 @@ def test_revealed_hashes_are_wrong_or_no_credit_plus_shown_siblings(evidence_db)
     assert all("u1" in json.dumps(f) for _, f, _, _ in evidence_db), "every read is scoped to the user"
 
 
+class _PgError(Exception):
+    """db.connection's failure shape: an httpx error whose response body
+    carries the PostgREST/Postgres code."""
+
+    def __init__(self, code):
+        super().__init__("Client error '404 Not Found'")
+        self.response = SimpleNamespace(json=lambda: {"code": code, "message": "x"})
+
+
+@pytest.mark.parametrize("code", ["PGRST205", "42P01"])
+def test_a_missing_prequestions_table_reads_as_no_rows(evidence_db, monkeypatch, code):
+    # review fix (spec §13 A138): code deployed ahead of the migration must not
+    # fail every selection and grade — nothing can be stored without the table
+    import learning.loop_state_store as store
+    from learning.loop_state_store import revealed_hashes
+
+    real = store.page_all
+
+    def missing(handle, columns="*", *, filters=None, order, **kw):
+        if handle.name == "learning_prequestions":
+            raise _PgError(code)
+        return real(handle, columns, filters=filters, order=order, **kw)
+
+    monkeypatch.setattr(store, "page_all", missing)
+    assert revealed_hashes("u1") == {"qb", "qc", "qd"}
+
+
+def test_any_other_prequestions_read_failure_still_fails_closed(evidence_db, monkeypatch):
+    import learning.loop_state_store as store
+    from learning.loop_state_store import revealed_hashes
+
+    real = store.page_all
+
+    def broken(handle, columns="*", *, filters=None, order, **kw):
+        if handle.name == "learning_prequestions":
+            raise _PgError("57014")  # a statement timeout: not a missing table
+        return real(handle, columns, filters=filters, order=order, **kw)
+
+    monkeypatch.setattr(store, "page_all", broken)
+    with pytest.raises(_PgError):
+        revealed_hashes("u1")
+
+
 def test_an_answered_prequestion_is_revealed(evidence_db, monkeypatch):
     import learning.loop_state_store as store
     from learning.loop_state_store import revealed_hashes
