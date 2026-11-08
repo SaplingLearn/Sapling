@@ -2942,19 +2942,22 @@ def _report(**over):
 
 @pytest.fixture
 def review_report(monkeypatch):
-    """The served review item, today's view of it, and the report store faked;
-    the `item_reports` flag on. /report carries the A20 rate-limit dependency
-    (it reads llm_usage): overridden here, as tests/test_learn_loop_routes.py does."""
-    from learning import item_reports, review
+    """The served review item, today's review session (the CAS store, read by
+    the real loader) and the report store faked; the `item_reports` flag on.
+    /report carries the A20 rate-limit dependency (it reads llm_usage):
+    overridden here, as tests/test_learn_loop_routes.py does."""
+    from learning import item_reports
     from main import app
     from services import ai_budget
 
     app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
     item = _check_item("n-due", "qh-1")
-    view = {"sr": {}, "review": {"spent_s": 0, "served_hashes": ["qh-1"]}}
-    ns = SimpleNamespace(item=item, view=view, calls=[], events=MagicMock())
+    ns = SimpleNamespace(item=item, calls=[], events=MagicMock())
     monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: ns.item if item_id == item.id else None)
-    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now: ns.view)
+    # today's review session served qh-1, and the route reads it through the
+    # REAL loader (peek_review_session → _session_view) over the CAS store's
+    # document — "open" included (spec §13 A115), never a hand-built view
+    _session(monkeypatch, {"sr": {}, "review": {"spent_s": 0, "served_hashes": ["qh-1"]}})
     monkeypatch.setattr("routes.learn_loop.flag_on", lambda key, uid: True)
     monkeypatch.setattr("routes.learn_loop.events_service", ns.events)
 
@@ -2998,7 +3001,7 @@ def test_a_graded_review_item_keeps_its_record_when_reported(client, store, revi
 def test_only_an_item_todays_review_served_can_be_reported(client, store, review_report):
     with _loop():
         expired = client.post("/api/learn/loop/report", json=_report(session_id="yesterday"))
-        review_report.view = {"sr": {}, "review": {"spent_s": 0, "served_hashes": []}}
+        store.state.extra["review"]["served_hashes"] = []
         not_served = client.post("/api/learn/loop/report", json=_report())
         gone = client.post("/api/learn/loop/report", json=_report(item_id="ci-withdrawn"))
         other_course = client.post("/api/learn/loop/report", json=_report(course_id="not-mine"))
@@ -3007,3 +3010,49 @@ def test_only_an_item_todays_review_served_can_be_reported(client, store, review
     assert gone.status_code == 409 and gone.json()["detail"] == "check item withdrawn"
     assert other_course.status_code == 404
     assert review_report.calls == []
+
+
+def test_review_next_moves_past_a_reported_open_item_through_the_real_loader(
+    client, monkeypatch, store
+):
+    """A113 × A115: today's review has an item open for its concept (served,
+    unanswered) when the student reports it on ANOTHER surface — the loop's
+    check card, which leaves the review's open entry in place. The REAL loader
+    hands the route "open" since A115, and a refresh re-serves an open item
+    without a write (MAJOR 2) — never a reported one: the next GET serves
+    another item for the concept and opens it in place of the reported one."""
+    from learning import review
+
+    past = (NOW - timedelta(days=3)).isoformat()
+    table, _ = _tables_with_session(
+        {
+            "flashcards": [],
+            "learner_state": [_due_row("n1", 0.5, past)],
+            "graph_nodes": [{"id": "n1", "course_id": COURSE, "concept_name": "N1"}],
+        },
+        store,
+    )
+    monkeypatch.setattr(review, "table", table)
+    pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q1", "q2")]
+    monkeypatch.setattr(review, "list_items", lambda course, key, **kw: pool)
+    monkeypatch.setattr(
+        "routes.learn_loop.get_check_item", lambda item_id: next(i for i in pool if i.id == item_id)
+    )
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    monkeypatch.setattr(review, "log_event", lambda et, **kw: None)
+    reported: set[str] = set()
+    monkeypatch.setattr(review, "reported_hashes", lambda user_id: set(reported))
+
+    def next_id() -> str:
+        with _loop():
+            r = client.get(f"{REVIEW}/next?user_id={USER}&course_id={COURSE}")
+        assert r.status_code == 200, r.text
+        return r.json()["item"]["id"]
+
+    assert [next_id(), next_id()] == ["ci-q1", "ci-q1"]  # open: re-served, never shopped
+    assert len(store.calls) == 1
+    reported.add("q1")  # reported on the loop's check card
+    assert store.state.extra["open"]["n1"]["item_id"] == "ci-q1"  # the review entry stays
+    assert next_id() == "ci-q2"
+    assert store.state.extra["open"]["n1"]["item_id"] == "ci-q2"  # opened in its place
+    assert next_id() == "ci-q2" and len(store.calls) == 2  # and now it is the one re-served

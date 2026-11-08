@@ -1239,3 +1239,104 @@ def test_start_prefers_a_lint_clean_item(gate_on, tables, freeze_now, seen_revea
     seen_revealed(seen={"q2", "q3"})
     (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
     assert served["question_hash"] == "q1"  # flagged only when nothing else is left
+
+
+# ── A112 × A113: no window ever poses, or grades, an item the student reported ──
+
+
+def test_the_28_day_window_never_poses_a_reported_item(
+    gate_on, tables, freeze_now, seen_revealed, reported
+):
+    """The second window's pose skips an item the student reported: posed
+    there before the report, its open pose counts as no pose and the window is
+    re-posed with the next fresh item; with nothing fresh and unreported left,
+    the window is skipped. The answered first window is never touched."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"), item("k1", "q2"), item("k1", "q3"))
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2 + 1), last=FRESH)
+    _pose(tables, qh="q1", answered=FRESH.isoformat())  # the first window, answered
+    seen_revealed(seen={"q1"})  # its answer made the reserve seen
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q2"]  # the A23 fallback
+    reported.hashes.add("q2")  # reported since, on another surface
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q3"]
+    assert tables["poses"][("u", "n1", W2)]["question_hash"] == "q3"  # the 28-day pose moved
+    first = tables["poses"][("u", "n1", W1)]
+    assert first["question_hash"] == "q1" and first["answered_at"] == FRESH.isoformat()
+    del tables["poses"][("u", "n1", W2)]
+    reported.hashes.add("q3")
+    assert client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"] == []
+    assert ("u", "n1", W2) not in tables["poses"]
+
+
+def test_an_expired_first_window_pose_never_binds_a_reported_item_into_the_next(
+    gate_on, tables, freeze_now, seen_revealed, reported
+):
+    """A93 binds an expired, unanswered pose's item into the next window
+    (test_an_expired_pose_binds_its_item_into_the_next_window) — never once the
+    student reported it: the 28-day window gets a fresh item, and the missed
+    first-window row stays as it was."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"), item("k1", "q2"))
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2 + 1))
+    expired = NOW - timedelta(days=W2 - W1)
+    _pose(tables, qh="q2", posed=expired)
+    reported.hashes.add("q2")
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+    assert tables["poses"][("u", "n1", W2)]["question_hash"] == "q1"
+    missed = tables["poses"][("u", "n1", W1)]
+    assert missed["question_hash"] == "q2" and missed["answered_at"] is None
+    assert missed["posed_at"] == expired.isoformat()
+
+
+def test_an_open_first_window_pose_of_a_reported_item_gives_way_to_the_28_day_window(
+    gate_on, tables, freeze_now, seen_revealed, reported, grader_says, applied
+):
+    """A87 returns the first window's pose while it is open, across the window
+    boundary (test_an_open_pose_is_returned_across_a_window_boundary) — not
+    once its item is reported: the 28-day window is posed with a fresh item.
+    The first window's row is left as posed but is never answerable: a stale
+    submission of the reported item is refused before any claim, and the fresh
+    item answers the 28-day window only."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"), item("k1", "q2"))
+    tables["spans"] = _due("n1", first=NOW - timedelta(days=W2))  # the second window opens now
+    _pose(tables, qh="q2")  # the first window's pose, still open
+    reported.hashes.add("q2")
+    items = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert [i["question_hash"] for i in items] == ["q1"]
+    assert tables["poses"][("u", "n1", W2)]["question_hash"] == "q1"
+    assert tables["poses"][("u", "n1", W1)]["question_hash"] == "q2"
+    grader_says(correct=True, confidence=0.9)
+    stale = client.post(ANSWER, json=_answer(question_hash="q2", answer="its lexical scope"))
+    assert stale.status_code == 409 and stale.json()["detail"] == "not a post-test item"
+    assert tables["claims"] == [] and applied == []
+    fresh = client.post(ANSWER, json=_answer(question_hash="q1", answer="its lexical scope"))
+    assert fresh.status_code == 200 and len(applied) == 1
+    assert tables["poses"][("u", "n1", W2)]["answered_at"] is not None
+    assert tables["poses"][("u", "n1", W1)]["answered_at"] is None
+
+
+def test_an_open_pose_whose_item_was_reported_since_is_not_answerable(
+    gate_on, one_item, reported, grader_says, applied
+):
+    """Reported on another surface after it was posed, before any new start:
+    refused before the claim (nothing graded, claimed or recorded), so the
+    window stays unanswered and the next start poses a fresh item in it."""
+    reported.hashes.add("q1")
+    grader_says(correct=True, confidence=0.9)
+    r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 409 and r.json()["detail"] == "not a post-test item"
+    assert one_item["claims"] == [] and applied == []
+    pose = one_item["poses"][("u", "n1", W1)]
+    assert pose["answered_at"] is None and pose["claim"] is None and pose.get("correct") is None
+
+
+def test_an_unreadable_reported_set_refuses_the_answer(gate_on, one_item, applied):
+    """Fail closed: whether the item was reported cannot be told, so nothing is
+    claimed or graded (503, retry)."""
+    with patch("routes.learn_loop.reported_hashes", side_effect=RuntimeError("down")):
+        r = client.post(ANSWER, json=_answer(answer="its lexical scope"))
+    assert r.status_code == 503 and one_item["claims"] == [] and applied == []

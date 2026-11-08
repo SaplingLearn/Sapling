@@ -4335,6 +4335,20 @@ def _posttest_node(user_id: str, node_id: str) -> dict:
     return rows[0]
 
 
+def _posttest_reported(user_id: str, question_hash: str) -> bool:
+    """A113 across A112's windows: an item the student reported is never posed
+    again, so an open pose of it is not answerable either — /posttest/start
+    replaces such a pose in its own window, but one left open in an EARLIER
+    window (the next window was posed with a fresh item) would otherwise still
+    be claimable. Read before the claim: a refusal claims and records nothing.
+    An unreadable reported set refuses too (503, fail closed)."""
+    try:
+        return question_hash in reported_hashes(user_id)
+    except Exception:
+        logger.warning("post-test: reported items unread; the answer is refused", exc_info=True)
+        raise HTTPException(status_code=503, detail="post-test unavailable; retry") from None
+
+
 def _posttest_floor(user_id: str, node_id: str, item, posed_at: datetime | None) -> int:
     """A88/A89: the open post-test item's grading floor — `_reveal_floor`
     (revealed → no credit; an unscanned marker since the pose → assisted), and
@@ -4357,7 +4371,9 @@ def _posttest_floor(user_id: str, node_id: str, item, posed_at: datetime | None)
 async def posttest_answer(body: PosttestAnswerBody, request: Request):
     """Grade the node's OPEN post-test pose (A87) through grade_answer (A16):
     ceiling H0, max_rung 0, no session — unless the item was revealed or seen
-    since it was posed, when the grade carries no unassisted credit (A86).
+    since it was posed, when the grade carries no unassisted credit (A86). An
+    item the student reported is never graded here (A113, any window: 409
+    before the claim, `_posttest_reported`).
     The pose is claimed by one conditional UPDATE, so it is graded once; a
     refusal (A33) releases the claim and asks again (never an idk here); an
     outage or the grade cap releases it too and is a 503 with nothing recorded
@@ -4376,6 +4392,8 @@ async def posttest_answer(body: PosttestAnswerBody, request: Request):
             raise HTTPException(status_code=422, detail="an mc_reason answer needs selected_option")
         if item.format != "mc_reason" and not body.answer:
             raise HTTPException(status_code=422, detail="a free answer needs answer")
+    if _posttest_reported(body.user_id, item.question_hash):
+        raise HTTPException(status_code=409, detail=_NOT_A_POSTTEST_ITEM)
     now = _posttest_now()
     claim = str(uuid.uuid4())
     pose = _claim_pose(body.user_id, body.node_id, item.question_hash, claim, now)

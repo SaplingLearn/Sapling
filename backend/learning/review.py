@@ -14,7 +14,10 @@ student's seen/revealed sets or the concept's post-test reserve (A23); when that
 leaves nothing, only revealed items and the reserve are excluded; still nothing
 → the concept is counted `unservable`. An item the student reported (spec §13
 A113) is excluded in both passes, like a revealed one — even when it is the
-item the session has open for its concept, so a refresh moves past it. At the
+item the session has open for its concept (the view carries "open" since
+A115), so a refresh moves past it. The interleave only reorders what the
+selector chose, so a reported item never comes back as a confusable partner
+either: the partner is served with another item, or is `unservable`. At the
 tutor hard budget level the route passes `pause_novice=True` and novice-band
 concepts are held back (`paused`); flashcards and develop/profic concepts keep
 being served (A20).

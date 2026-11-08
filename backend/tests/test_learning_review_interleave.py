@@ -325,6 +325,7 @@ def queue_env(monkeypatch):
 
     monkeypatch.setattr(review, "seen_hashes", lambda user_id: set())
     monkeypatch.setattr(review, "revealed_hashes", lambda user_id: set())
+    monkeypatch.setattr(review, "reported_hashes", lambda user_id: set())  # spec §13 A113
     monkeypatch.setattr(review, "posttest_reserve_hash", lambda items: None)
     monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
     monkeypatch.setattr(review, "user_offering_ids_for_course", lambda u, c: ["off-1"])
@@ -611,3 +612,125 @@ def test_review_next_serves_the_sibling_of_the_concept_just_graded(queue_env, mo
     assert body["item"]["node_id"] == "b" and body["in_budget"] == 3
     assert body["session_id"] == sid  # the real loader derived today's session
     assert saved.extra["open"]["b"]["item_id"] == "ci-b"
+
+
+# ── A114 × A113 (× A115): a reported item is never an interleave partner ──────
+
+
+def _pool_with_a_second_item(monkeypatch, key: str) -> None:
+    """`key`'s pool holds its own item — the selector's first choice (the lowest
+    id at the same format and difficulty) — and a second one, `ci-{key}2`."""
+    from learning import review
+
+    def list_items(course_id, concept_key, **kw):
+        items = [_check_item(concept_key, course_id)]
+        if concept_key == key:
+            items.append(_check_item(f"{key}2", course_id))
+        return items
+
+    monkeypatch.setattr(review, "list_items", list_items)
+
+
+def test_a_reported_item_never_comes_back_as_an_interleave_partner(queue_env, monkeypatch):
+    """The sibling of the concept just graded comes next (A114), and an item the
+    student reported is never served again (A113). The interleave only orders
+    what the selector chose, so the partner comes next with ANOTHER item —
+    whether the reported one was its first choice or the item the session has
+    open for it — and with nothing else left the partner is unservable: never
+    pulled forward, and the DASH order holds."""
+    from learning import review
+
+    queue_env(["x", "y", "b"], edges=[("p", "a"), ("p", "b")])
+    _pool_with_a_second_item(monkeypatch, "b")
+    anchored = {"review": {"last_graded": {"key": "a", "course_id": COURSE}}}
+    opened = {**anchored, "open": {"b": {"item_id": "ci-b", "served_at": NOW.timestamp() - 60}}}
+
+    def queue(state):
+        items, stats = review.due_queue_with_stats(
+            USER, COURSE, NOW, loop_state=copy.deepcopy(state)
+        )
+        return [(i.node_id, i.id) for i in items], stats
+
+    # unreported (the control): the partner is pulled forward with its first choice
+    assert queue(anchored)[0] == [("b", "ci-b"), ("x", "ci-x"), ("y", "ci-y")]
+    assert queue(opened)[0] == [("b", "ci-b"), ("x", "ci-x"), ("y", "ci-y")]
+    monkeypatch.setattr(review, "reported_hashes", lambda user_id: {"qh-b"})
+    assert queue(anchored)[0] == [("b", "ci-b2"), ("x", "ci-x"), ("y", "ci-y")]
+    assert queue(opened)[0] == [("b", "ci-b2"), ("x", "ci-x"), ("y", "ci-y")]
+    # nothing else left for the partner: unservable, the rest keeps its DASH order
+    monkeypatch.setattr(
+        review, "list_items", lambda course_id, key, **kw: [_check_item(key, course_id)]
+    )
+    order, stats = queue(opened)
+    assert order == [("x", "ci-x"), ("y", "ci-y")]
+    assert stats["unservable"] == 1 and stats["in_budget"] == 2
+
+
+def test_review_next_never_re_serves_a_reported_open_item_as_the_partner(
+    queue_env, monkeypatch
+):
+    """Through the route and the REAL loader: the session graded `a`, then served
+    its sibling `b` (open, unanswered). Since A115 the view carries "open", so a
+    refresh re-serves that item — the partner, first (A114) — with no write.
+    Once the student reports it on another surface (the loop's check card, which
+    leaves the review entry in place), `b` still comes next, with its other item,
+    opened in place of the reported one (A113)."""
+    from fastapi.testclient import TestClient
+
+    from learning import review
+    from learning.loop_state_store import LoadedLoopState
+    from learning.policy import LoopState
+    from main import app
+
+    queue_env(["x", "y", "b"], edges=[("p", "a"), ("p", "b")])
+    _pool_with_a_second_item(monkeypatch, "b")
+    reported: set[str] = set()
+    monkeypatch.setattr(review, "reported_hashes", lambda user_id: set(reported))
+    saved = LoopState(
+        extra={
+            "sr": {},
+            "review": {
+                "spent_s": 45,
+                "served_hashes": ["qh-a", "qh-b"],
+                "last_graded": {"key": "a", "course_id": COURSE},
+            },
+            "open": {"b": {"item_id": "ci-b", "served_at": NOW.timestamp() - 60}},
+        }
+    )
+    writes: list[str] = []
+
+    def store(session_id, mutate):
+        writes.append(session_id)
+        replaced = mutate(saved)
+        return LoadedLoopState(replaced or saved, 1)
+
+    monkeypatch.setattr(review, "update_loop_state", store)
+    monkeypatch.setattr(
+        review,
+        "_read_session",
+        lambda s, u: [{"id": s, "user_id": u, "loop_state": saved.to_json()}],
+    )
+    monkeypatch.setattr(review, "review_retention", lambda u, c: params.FSRS_RETENTION_DEFAULT)
+    monkeypatch.setattr(review, "log_event", lambda *a, **kw: None)
+    monkeypatch.setattr("routes.learn_loop._review_now", lambda: NOW)
+    monkeypatch.setattr("routes.learn_loop._pause_novice", lambda user_id: False)
+    monkeypatch.setattr("routes.learn_loop.user_offering_ids_for_course", lambda u, c: ["off-1"])
+    monkeypatch.setattr(
+        "routes.learn_loop.get_check_item", lambda item_id: _check_item(item_id.removeprefix("ci-"))
+    )
+
+    def served() -> dict:
+        with (
+            patch("routes.learn_loop.require_self", return_value=None),
+            patch("routes.learn_loop.learning_loop_for_request", return_value=True),
+        ):
+            r = TestClient(app).get(f"/api/learn/loop/review/next?user_id={USER}&course_id={COURSE}")
+        assert r.status_code == 200, r.text
+        return r.json()["item"]
+
+    first = served()
+    assert (first["node_id"], first["id"]) == ("b", "ci-b") and writes == []  # re-served
+    reported.add("qh-b")
+    moved = served()
+    assert (moved["node_id"], moved["id"]) == ("b", "ci-b2")
+    assert saved.extra["open"]["b"]["item_id"] == "ci-b2" and len(writes) == 1
