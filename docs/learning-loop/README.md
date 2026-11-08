@@ -95,8 +95,11 @@ flowchart LR
 
   subgraph Session["A Learn session (routes/learn_loop.py)"]
     PROBE["Probe"] --> PLAN["Plan<br/>(outer fringe)"]
-    PLAN --> TEACH["Teach turn<br/>(loop_tutor tier, ceiling,<br/>leak strip, served scan)"]
+    PLAN --> TEACH["Teach turn<br/>(loop_tutor tier, ceiling,<br/>leak cut, served scan)"]
+    PLAN -. flag .-> PREQ["Segment prequestion<br/>(ungraded guess,<br/>then the answer)"]
+    PREQ -.-> TEACH
     TEACH <--> CHECK["Check<br/>(pose item, attempts,<br/>hint ladder H0–H6)"]
+    CHECK -. flag .-> SE["Why does this follow?<br/>(self-explanation,<br/>never evidence)"]
     CHECK --> GRADE["grade_answer<br/>(guard → grader →<br/>second opinion)"]
     GRADE --> FB["Feedback turn"]
     FB --> TEACH
@@ -172,12 +175,28 @@ fails when a path or name it cites stops existing.
 
 ## Status
 
-The guide describes the code at commit `f9eca612` (the tip of
-`feat/learning-loop-wave4`, PR #801), through §13 A137, and the
-reconciliation of the spec, these pages and the code recorded as §13 A142
-([amendments.md](amendments.md#where-the-spec-and-the-code-disagree) lists
-the two questions still open).
+The guide describes the code at commit `9a8233aa` (wave 4 merged into
+`feat/learning-loop-wave4`), through §13 A142: the original series, waves 2
+and 3, the reconciliation of the spec, these pages and the code (A142;
+[amendments.md](amendments.md#where-the-spec-and-the-code-disagree) lists
+the two owner questions still open), and wave 4.
 
-**Wave 4 (in progress):** A138 (segment prequestion), A139 (self-explanation
-prompts), A140 (surface-varied isomorphs) and A141 (multi-concept items) are
-being built and are not documented here yet.
+**Wave 4** added four features, each behind a per-student flag that ships
+**off** and is byte-identical to the earlier code while off:
+
+- A138, `segment_prequestion`: each new concept in a session opens on one
+  ungraded guess, followed at once by the answer and why
+  ([flows.md](flows.md#the-segment-prequestion-flag-segment_prequestion-a138)).
+- A139, `self_explanation_prompts`: at a worked example, a shown solution or
+  a first unhelped correct answer, the tutor asks "why does this follow?";
+  the reply is kept for staff analysis only
+  ([flows.md](flows.md#self-explanation-prompts-flag-self_explanation_prompts-a139)).
+- A140, `varied_isomorphs`: items drafted on varied scenarios and
+  representations, and pickers that prefer a surface the student has not met.
+- A141, `multi_concept_items`: items that combine a concept with its
+  prerequisites, posed only when every component is proficient and counted
+  as one half-weight observation on the apex.
+
+Neither a prequestion nor a self-explanation is ever evidence. Each flag
+waits for a live eval recording of its new prompts before it is turned on
+([operations.md](operations.md#feature-flags)).

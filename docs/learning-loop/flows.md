@@ -115,6 +115,44 @@ sequenceDiagram
 10. **Status.** The document is marked `done`, `unavailable` (some concept
     could not be drafted) or `failed`; the "preparing" notice ends.
 
+### Two drafting variants behind flags (wave 4)
+
+Both flags are read once per drafting run for the **uploader**
+(`backend/services/check_item_service.py::drafting_flags`; the backfill has no
+student, so it is always plain). Off, every drafting request, fingerprint,
+stored row and pick is byte-identical to before wave 4 (pinned by
+`backend/tests/test_learning_varied_drafting.py` and
+`backend/tests/test_learning_varied_serving.py`).
+
+- **Surface-varied isomorphs** (`varied_isomorphs`, A140). The drafter and the
+  top-up are replaced by `backend/agents/check_items_varied.py` and
+  `backend/agents/check_items_varied_topup.py`: one prompt each, asking that
+  a concept's items be the same idea at the same depth on different
+  scenarios and, where the concept allows, different representations, and
+  telling the model which surfaces the concept's stored items already use
+  (`check_item_service.used_surfaces`). Each item carries a **surface
+  descriptor**: a representation (verbal, symbolic, numeric, visual, applied;
+  stored in plaintext) and a short scenario label (at most four words,
+  **encrypted**) (`backend/learning/surface.py`). The lint, alignment and key
+  checks run unchanged and never see the descriptor.
+- **Multi-concept items** (`multi_concept_items`, A141). After the document's
+  own concepts, `check_item_service.generate_combos_for_document` drafts
+  **combinations**: an apex concept from the document with one or two of its
+  direct prerequisites in the uploader's course graph
+  (`backend/learning/multi_concept.py::combinations`; at most three per apex
+  and six per document, two-concept ones first). A combination is drafted only
+  when the document's passages discuss every component.
+  `backend/agents/check_items_combo.py` writes one item per format at
+  difficulty 3, each needing every component together. A combination
+  alignment check (`backend/agents/check_items_combo_verify.py`, applied by
+  `backend/learning/item_alignment.py::align_components`) rejects an item that
+  one of its components is not needed for, and never re-tags it; the blind key
+  check then runs as for any item. The item is stored under a joined concept
+  key with `apex_key` and `component_keys`, so no single concept's read,
+  probe, review, H4 sibling or post-test ever meets it. Combinations come only
+  from prerequisite edges, so this does nothing unless the uploader also has
+  `upload_prereq_edges` (A118).
+
 ### Holds and what readers do with them
 
 A **hold** is a code in `check_items.lint_flags` that keeps an item from
@@ -262,6 +300,51 @@ commits.
   at most 1,800 characters, from structured data only (A19, A62), stored
   encrypted in `sessions.loop_brief`. It activates no item yet.
 
+### The segment prequestion (flag `segment_prequestion`, A138)
+
+Off by default; off, nothing is posed and every request is byte-identical
+(`backend/tests/test_learning_teach_prompts_flag_off.py`). On, each teaching
+**segment** — the plan's cursor reaching a concept whose teaching has not
+begun this session — opens on one **ungraded** guess, and the answer and an
+explanation follow at once (prequestions help "provided the correct answer
+follows", Pan & Carpenter 2023; one per segment, never per step).
+
+1. **When.** At `/plan/approve` (the first concept), at a feedback turn whose
+   cursor move lands on a new concept, or when a self-explanation prompt that
+   ended a segment closes (`backend/learning/prequestion.py::segment_open`;
+   the route side is `_pose_prequestion`). Never in a quiz-ask session.
+2. **Skips** (`skip_reason`, recorded with the reason): the concept was
+   planned as a due **review**; it is already **proficient**
+   (p ≥ 0.80); a step is in **exam mode**. A probe answer on the concept does
+   not count as its prequestion: the probe is placement.
+3. **The item** (`choose`; vetted, never generated): from the concept's bank,
+   never a post-test reserve, nothing seen, revealed or reported, nothing
+   already in this session; servable only; `mc_reason` before `free`, never
+   `teachback`; difficulty 1 or 2; then item quality. **The pool rule:** an
+   item is taken only if at least `PREQUESTION_MIN_CHECKS_LEFT` (2) fresh items
+   stay for the segment's graded checks — otherwise `pool_for_checks`, and the
+   segment opens without one.
+4. **The card** is the turn's one open prompt (A121). The student picks an
+   option (with an optional reason), writes a guess, or says "No idea".
+   `POST /prequestion/answer` (or `/stream`) stores the guess **encrypted**
+   (`learning_prequestions`, through
+   `backend/learning/prequestion_store.py::store_answer`), records the item as
+   **revealed** before any text goes out (so it never serves that student
+   again as a check, review or post-test item), saves the guess as the
+   student's message, and runs the explaining turn: code serves the correct
+   answer first, and the tutor, given the guess only as the student's own
+   enveloped words and the answer as data, explains why
+   (`backend/agents/loop_tutor.py::PREQUESTION_LINE`). At the hard budget level
+   the explanation is a template that still shows the answer.
+5. **Never evidence.** No grader, no `Evidence`, no misconception, no
+   help-ledger rung, no band-control input. But it is a **release** (A76): the
+   segment's next graded item on the concept counts as a re-check (half
+   weight), as do the item's class-mates (same format and difficulty) for
+   `RECHECK_RELEASE_WINDOW_HOURS`, across sessions.
+6. A teach turn or "Check me" while the card is open supersedes it (nothing
+   revealed). Events: `learn.prequestion` (posed, skipped, answered,
+   superseded, resolved).
+
 ### 2.4 Teach turns
 
 `POST /chat` / `/chat/stream` (and `/action` for server-written `[ACTION: …]`
@@ -328,6 +411,30 @@ difficulty first, best quality first. A concept with nothing servable
 advances the cursor; an exhausted plan sets `plan.done` and the UI offers the
 close. The pose is template text, never a model turn, and is recorded in the
 help ledger as posed.
+
+Two wave-4 dials change which item is chosen, each behind a per-student flag
+that is off by default (`backend/services/varied_practice.py`):
+
+- **Cue familiarity** (`varied_isomorphs`, A140). Among items the picker's own
+  rules and the quality order leave equal, it prefers one whose surface
+  (representation, scenario) the student has not met on the concept — met
+  meaning seen, revealed, reported or posed this session
+  (`backend/learning/surface.py::familiarity_by_hash`). An item with no
+  descriptor (everything drafted before A140) counts as neutral, so an old
+  bank orders exactly as before. It never overrides the difficulty target,
+  the format, the reserves or a hold. The isomorph re-ask uses it too; the
+  probe and the H4 worked example do not (the probe measures; a worked
+  example should stay close to the item it helps with).
+- **Ideas combined** (`multi_concept_items`, A141). Before the single-concept
+  pick, `multi_concept_pick` may pose a multi-concept item whose apex is the
+  current concept — at most once a session per concept, only after a check
+  on the concept was graded this session, only while its target difficulty
+  is the top one (no "easier" verdict pending), never in a goal session, and
+  only when **every component** is proficient: p ≥ 0.95 with at least one
+  strong unassisted observation behind it
+  (`backend/learning/multi_concept.py::gate_open`). Two-concept items come
+  before three-concept ones. Each pose logs `learn.multi_concept_served`.
+  How its answer counts is in [§3](#3-grading-and-the-evidence-write).
 
 **Attempts.** `POST /step/attempt` records a hint-unlocking attempt; it is
 never graded and its text is never stored. It counts if
@@ -403,6 +510,35 @@ worked example (`policy.opens_on_worked_example`).
 **Feedback** is one tutor turn with the verdict in its prefix: standard tier
 (deep when confronting a misconception or after two failures), never ending
 on the answer. A novice who answered wrong is offered a hint.
+
+### Self-explanation prompts (flag `self_explanation_prompts`, A139)
+
+Off by default and byte-identical off. On, at a **juncture decided in code**
+(`backend/learning/self_explain.py::juncture`, never by the model) the turn's
+one question becomes an interrogative prompt such as "Why does each step of
+that worked example follow from the one before it?":
+
+| Juncture | When |
+|---|---|
+| `worked_example` | a hint turn served at H4 |
+| `released_solution` | a hint turn at H5 or H6, or a feedback turn that released the answer |
+| `first_correct` | the feedback turn of the session's first correct answer on the concept given with no help (rung 0 after the help floor, not assisted) |
+
+At most one prompt per concept per session (`SELF_EXPLAIN_MAX_PER_CONCEPT`).
+A misconception confrontation keeps the turn's question (the prompt waits for
+the next juncture); a prequestion's own explaining turn is never a juncture;
+never in a quiz-ask session. Code puts the prompt in the **served** text in
+place of the model's question, so the model's request does not change. The
+reply (`POST /self-explain`, or a skip) is stored **encrypted** with its
+length (`learning_self_explanations`, through
+`backend/learning/self_explain_store.py::close_prompt`) for diagnosis only:
+**never evidence**, never a misconception, never a band-control input, and
+nothing reads it to choose an item. The next model turn acknowledges a reply
+once, without judging it (`SELF_EXPLAIN_ACK_LINE`). On a turn that ends a
+segment, the prompt comes first and the next segment's prequestion follows
+its reply or skip. Staff see the reply rate and the next item's unassisted
+success after a reply or not (a description, not a causal claim) in the
+admin report's `self_explanation` block.
 
 ### 2.6 Close
 
@@ -538,6 +674,24 @@ sequenceDiagram
 flagged with an item-writing flaw (A132). **Review** passes its retention
 target to the writer (`backend/learning/review.py::grade_review`).
 
+**A multi-concept answer** (A141, flag `multi_concept_items`) is graded like
+any check but recorded as **one partial observation on the apex**: the
+evidence goes on the apex's node with `multi_concept` set, and
+`backend/learning/evidence.py::evidence_weight` multiplies its weight by
+`WEIGHT_MULTI_CONCEPT` (0.5, an unvalidated choice) whether the answer is
+right or wrong. The other components move only through the existing one-hop
+propagation: a correct answer credits the apex's prerequisites weakly, a
+wrong one blames none (a wrong answer on a combined item cannot say which
+part failed). Counters and FSRS follow the row as for any evidence; the
+planner reads the answer as the apex's observation; the band controller sees
+it in the apex's window. The flag is dumped only when set, so every other
+evidence row, checkpoint and fingerprint is unchanged.
+
+**Prequestions and self-explanations are never evidence** (A138, A139): their
+routes are not evidence writers, so invariant 26's scan keeps them away from
+`grade_answer` and the writer. The one way a prequestion touches grading is
+A76's re-check rule (see [§2](#2-a-session-probe--plan--teach--check--close)).
+
 ## 4. Spaced review and confusable interleaving
 
 The Study screen's **DueQueue** works through today's reviews, one item at a
@@ -581,7 +735,12 @@ sequenceDiagram
    when there is one. Confusable means two different concepts of the same
    course that share a prerequisite parent or carry the same open
    misconception wrong key. The day's set and budget never change; flashcards
-   are never pulled forward.
+   are never pulled forward. With `varied_isomorphs` on (A140), a
+   difficulty-1 check item — recall or definition, word-like material where
+   interleaving does not help — is treated like a flashcard (never pulled
+   forward, never an anchor), and a concept's review item prefers a surface
+   the student has not met (seen, revealed, reported or served today); a
+   review never serves a multi-concept item.
 5. **Serving is a claim.** The open item is re-served until answered; an
    answer claims it (A70), so a double submit grades once.
 6. **Grading.** A check item goes through `grade_answer` with the help floor
@@ -732,6 +891,12 @@ not deleted), reviews, reports, audits, poses and receipts. Some paths delete
 items **without** voiding: consent withdrawal (`retire_items_for_documents`),
 an alignment re-key and the missing-final-answer backfill — that evidence
 stands, because the item was not judged broken.
+
+A multi-concept item (A141) is retired and voided like any other: its rows
+sit on the apex node, and the recompute replays the propagation they caused.
+Prequestion and self-explanation rows are not evidence, so a retire leaves
+them as they are; the item they used stays revealed for the student who saw
+its answer.
 
 ## 7. The kill switch
 

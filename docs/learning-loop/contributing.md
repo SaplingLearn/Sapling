@@ -58,7 +58,12 @@ baselines were recorded against that request; a changed request makes every
 replayed score meaningless. The flag-on variant gets its own cassettes,
 recorded live and passing before the flag is turned on — the pattern is
 `LOOP_EVAL_VARIANT=v2` in `backend/tests/evals/loop_tutor.py` (A121), and
-A118's upload extraction is the other worked example.
+A118's upload extraction is the other worked example. Wave 4 shows how to
+pin it: `backend/tests/test_learning_teach_prompts_flag_off.py` digests whole
+route scenarios (the assembled model request, every run argument, the served
+text, the response, the saved rows) against digests captured from the
+pre-feature commit, and `backend/tests/test_learning_varied_drafting.py`
+does the same for every drafting request.
 
 ### 4. A new model task needs the full slot wiring
 
@@ -95,7 +100,15 @@ For a new agent task (slot):
   `graph_edges` (invariant 1).
 - Evidence comes only from an explicit answer submission (A16). A new
   submission handler joins the allow-list in
-  `test_inv_26_evidence_only_from_explicit_submission`.
+  `test_inv_26_evidence_only_from_explicit_submission`. A new learning
+  activity that is not a measurement — a guess before teaching (A138), an
+  explanation after help (A139) — stays off that list: store it for
+  diagnosis if you must, but never grade it or let it reach the writer.
+- A new kind of item that is not a plain single-concept question decides,
+  in a spec row, what one answer to it is evidence of and at what weight
+  (A141's answer: one half-weight observation on the apex, components only by
+  propagation), and makes the weight a flag on `Evidence` that is dumped only
+  when set, so every other evidence row and fingerprint stays unchanged.
 - Take the help floor from the ledger (`backend/learning/help_ledger.py::max_help`)
   immediately before the write (A93), and claim the item before grading
   (A52) so it is graded once.

@@ -2,7 +2,7 @@
 
 Every table the loop reads or writes, the SQL functions that guard them, and
 who writes what. Schema lives in append-only migrations under
-`backend/db/migrations/`; the 45 learning ones are named
+`backend/db/migrations/`; the 48 learning ones are named
 `<UTC timestamp>_learning_<desc>.sql` (`backend/db/migrations/*_learning_*.sql`).
 The spec's §4 ([the spec](../superpowers/specs/2026-09-26-learning-loop-design.md))
 gives the original DDL; it predates most of the tables below, so the
@@ -50,6 +50,8 @@ erDiagram
   misconceptions ||--o{ misconception_attempts : "which item each came from"
   posttest_poses }o--|| graph_nodes : "one per (user, node, window)"
   learning_reveals }o--|| users : "reveal / unscanned / help / posed rows"
+  learning_prequestions }o--|| users : "answered prequestions (never evidence)"
+  learning_self_explanations }o--|| users : "served prompts and replies (never evidence)"
 ```
 
 Check items are **course assets**, keyed on `(course_id, concept_key)` and
@@ -85,6 +87,11 @@ section is derived from it.
   void's replay needs, A123).
 - **Ids** are derived from the operation (`uuid5(operation_id, seq)`), so a
   replayed commit cannot double-write.
+- **A multi-concept answer (A141) adds no column.** Its row sits on the
+  apex's node with the derived half `weight` journaled, so a void's replay
+  reproduces it; the item's own row (`apex_key`, `component_keys`) says what
+  it combined. Prequestions and self-explanations write no journal row at
+  all.
 - **Append-only by convention plus tests:** only the SQL function
   `learning_evidence_commit` inserts, and invariant 1's scan forbids any
   other writer. A void never edits a row. Rows disappear only by foreign-key
@@ -185,9 +192,21 @@ Course-asset questions, created in
 | `question_hash` | sha256 of the normalised **plaintext** prompt: the item's identity | no |
 | `lint_flags` | NULL never linted, `{}` clean; flaw, alignment, key-hold, staff-hold and `unsourced` codes | no |
 | `aligned_at`, `key_checked_at` | when the alignment and key checks ran (A119, A124) | no |
+| `surface_representation` | a varied item's representation: `verbal`, `symbolic`, `numeric`, `visual` or `applied` (A140) | no |
+| `surface_context` | a varied item's scenario label, at most four words (A140) | **yes** |
+| `apex_key`, `component_keys` | a multi-concept item's apex and its two or three component concept keys, apex first (A141) | no |
 
 - Unique on `(course_id, concept_key, question_hash)`; indexed by
-  `(course_id, concept_key, format, difficulty)` and by source documents.
+  `(course_id, concept_key, format, difficulty)`, by source documents, and by
+  `(course_id, apex_key)` for multi-concept items.
+- **Wave-4 columns** (`backend/db/migrations/20261108185101_learning_varied_practice.sql`):
+  all four nullable and written only when their flag is on for the uploader.
+  CHECKs keep the surface descriptor whole (both or neither,
+  `check_items_surface_whole`) and its representation known, and give a
+  multi-concept row its shape (`check_items_multi_concept_shape`): two or
+  three components, the apex first, and `concept_key` equal to the components
+  joined by the ASCII unit separator — a character no single concept's key can
+  hold, so no per-concept read ever meets a multi-concept item.
 - **Mutable.** Writers are all in `backend/services/check_item_service.py`
   (store, lint, alignment, key check, confirm, audit, retire) plus the SQL
   report and decide functions, which write `lint_flags`.
@@ -234,7 +253,7 @@ say "preparing" for up to two hours while the student's own upload drafts.
 
 | Column | Meaning |
 |---|---|
-| `loop_state` (jsonb) | the session's state document: phase, plan and cursor, the probe, the steps per posed item (rung, attempts, timestamps, the grading claim), the seen/revealed id lists, review counters, goal, turn activity |
+| `loop_state` (jsonb) | the session's state document: phase, plan and cursor, the probe, the steps per posed item (rung, attempts, timestamps, the grading claim), the seen/revealed id lists, review counters, goal, turn activity; with the wave-4 flags on, the prequestion records per concept and the open self-explanation prompt (ids, enums and times only, A138, A139) |
 | `loop_state_rev` (bigint) | the compare-and-set token: a save filters on the loaded value and sets it plus one (A38) |
 | `mode` | `review` marks a daily review session (A9, A73) |
 | `close_json` | the session close — **encrypted** (JSON), written once |
@@ -258,7 +277,7 @@ session, so it survives any session boundary):
 
 | `kind` | Written when | Read for |
 |---|---|---|
-| `reveal` | a served tutor turn stated an open posed item's answer (A88) | the revealed set; the help floor |
+| `reveal` | a served tutor turn stated an open posed item's answer (A88), or a segment prequestion's answer is about to be shown (source `prequestion`, A138) | the revealed set; the help floor |
 | `unscanned` | a turn's open items could not be read (fail closed) | items posed before it grade as assisted |
 | `help` | a hint rung was granted or planned, or an outside surface helped (`rung` 0–6) | the help floor: `help_ledger.max_help` (A93) |
 | `posed` | an item was posed (`graded_at` set when graded) | the open posed items the served scan checks |
@@ -290,6 +309,32 @@ Both backend-only; migrations
 `backend/db/migrations/20261108041742_learning_posttest_windows.sql` and
 `backend/db/migrations/20261108093359_learning_posttest_outcomes.sql`.
 
+### `learning_prequestions` and `learning_self_explanations` (wave 4)
+
+Both from `backend/db/migrations/20261108184825_learning_teach_prompts.sql`,
+both backend-only, and **neither is evidence**: nothing that grades, plans or
+models the learner reads them, except A76's release rule (below).
+
+- `learning_prequestions` (A138): one row per **answered** segment
+  prequestion, unique per `(user_id, session_id, node_id)`: the item posed
+  (`check_item_id`, `question_hash`, `format`, `difficulty`), `no_idea`,
+  `guess_json` (the guess — **encrypted**, NULL exactly when the student said
+  "no idea", a CHECK), `posed_at` and `answered_at`. Written once by
+  `backend/learning/prequestion_store.py::store_answer`; `service_role` holds
+  `SELECT` and `INSERT` only. Its one other reader is A76: an answered
+  prequestion is a release of that item's answer, so the next graded item on
+  the concept, and the item's class-mates for a day, count as re-checks
+  (`backend/learning/prequestion_store.py::releases`).
+- `learning_self_explanations` (A139): one row per **served** prompt: the
+  concept, the item, the `juncture` (`worked_example`, `released_solution`,
+  `first_correct`), the rung, `prompted_at`, `status` (`open`, `replied`,
+  `skipped`), `closed_at`, `reply_text` (**encrypted**) and `reply_chars`.
+  CHECKs tie the reply to the `replied` status and `closed_at` to a closed
+  one. Written by `backend/learning/self_explain_store.py` (insert on serve,
+  update on reply or skip; `service_role` holds `SELECT`, `INSERT` and
+  `UPDATE`); read only by the admin report
+  (`backend/learning/self_explain_report.py`), which never reads the reply.
+
 ## Misconceptions
 
 - `misconceptions`: per student, node and `wrong_key` (plaintext,
@@ -298,7 +343,8 @@ Both backend-only; migrations
   `evidence_void` from A123). At most one **open** row per key (partial
   unique index). `evidence_text` (the answer it was recorded from) is
   **encrypted** and never read back. Written by the SQL function
-  `misconception_record` (atomic insert-or-increment), closed by
+  `misconception_record` (atomic insert-or-increment; since A142 it records
+  nothing on a node the student does not own), closed by
   `misconceptions.resolve` and by the void commit.
 - `misconception_attempts`: one row per increment, naming the item it came
   from, so a void can tell which misconceptions rest only on retired items.
@@ -334,10 +380,10 @@ through `backend/db/connection.py::rpc`.
 | `learning_evidence_void_pending` | read-only: the students with un-voided evidence on an item | `backend/learning/evidence_transaction.py::void_pending` |
 | `learning_evidence_void_snapshot` | read-only: the course's journal with void flags, states, edges, retired hashes, open misconceptions | `backend/learning/evidence_transaction.py::commit_void_transaction` |
 | `learning_evidence_void_commit` | owner and item locks; refuses an item that is not retired; the void set must be exactly the student's rows on the item; inserts voids, writes changed states and mirrors, closes misconceptions; idempotent | the same |
-| `check_item_report_quarantine` | exclusive item lock; one report per student; quarantines once at two reporters (counted since the last approval) and holds every row in the same transaction | `backend/learning/item_reports.py::record_report` |
+| `check_item_report_quarantine` | exclusive item lock; one report per student per course item; quarantines once at two reporters (counted since the last approval) and holds every row in the same transaction | `backend/learning/item_reports.py::record_report` |
 | `check_item_review_decide` | exclusive item lock; approve or retire; approving a retired item is refused; re-derives the holds | `backend/learning/item_reports.py::decide` |
 | `check_item_hold_flags`, `check_items_staff_hold` | derive the staff-hold codes (the second is the trigger function) | — |
-| `misconception_record` (7 arguments) | shared item lock; records nothing for a retired item; atomic insert-or-increment of the open row, plus an attempt row | `backend/learning/misconceptions.py::record` |
+| `misconception_record` (7 arguments) | shared item lock; records nothing for a retired item or on a node the student does not own (A142); atomic insert-or-increment of the open row, plus an attempt row | `backend/learning/misconceptions.py::record` |
 | `misconception_rollup` | **SECURITY DEFINER**; per course concept, the wrong keys held by at least five students, open rows only | `backend/learning/misconceptions.py::rollup` (no production caller; never a tutor tool, invariant 17) |
 | `posttest_anchors` | each concept's first **non-void** evidence time, keyset-paged | `backend/learning/posttest_store.py::posttest_anchors` |
 | `ai_budget_bump_tutor_calls` | a one-statement upsert-increment of the day's count | `backend/services/ai_budget.py::count_tutor_call` |
@@ -350,7 +396,8 @@ latest file in filename order wins):
 |---|---|
 | `backend/db/migrations/20261019141950_learning_evidence_forward_repair.sql` | `learning_evidence_snapshot` (its float setting added by `backend/db/migrations/20261108115720_learning_evidence_snapshot_exact_floats.sql`), `learning_evidence_receipt` |
 | `backend/db/migrations/20261108103333_learning_evidence_commit_reconcile.sql` | `learning_evidence_commit` |
-| `backend/db/migrations/20261108072715_learning_evidence_void.sql` | the three `learning_evidence_void_*` functions, `check_item_report_quarantine`, `check_item_review_decide`, `check_item_hold_flags`, `check_items_staff_hold`, `misconception_record` |
+| `backend/db/migrations/20261108072715_learning_evidence_void.sql` | the three `learning_evidence_void_*` functions, `check_item_review_decide`, `check_item_hold_flags`, `check_items_staff_hold` |
+| `backend/db/migrations/20261108193927_learning_report_course_key.sql` | `check_item_report_quarantine` (on the per-course-item report key) and the seven-argument `misconception_record` (A142) |
 | `backend/db/migrations/20260929143810_learning_misconceptions_atomic.sql` | `misconception_rollup` |
 | `backend/db/migrations/20261108105254_learning_posttest_anchors_void.sql` | `posttest_anchors` |
 | `backend/db/migrations/20260929050404_learning_ai_tutor_daily_calls.sql` | `ai_budget_bump_tutor_calls` |
@@ -376,14 +423,19 @@ trigger on `node_mastery_events`, `learning_reveals`,
 
 | Table | Encrypted columns |
 |---|---|
-| `check_items` | `prompt`, `reference_answer`, `final_answer`, `rubric_json`, `common_wrong_json`, `options_json`, `correct_option`, `canonical_answer` |
+| `check_items` | `prompt`, `reference_answer`, `final_answer`, `rubric_json`, `common_wrong_json`, `options_json`, `correct_option`, `canonical_answer`, `surface_context` (A140) |
+| `learning_prequestions` | `guess_json` (A138) |
+| `learning_self_explanations` | `reply_text` (A139) |
 | `sessions` | `close_json`, `loop_brief`; inside the plaintext `loop_state`: the goal text and a pending grade checkpoint |
 | `misconceptions` | `evidence_text` |
 | `flashcards` | `front`, `back` (not loop-specific) |
 
-The ciphertext oracle checks the `check_items` columns
-(`backend/e2e_oracles/gather.py`, `_CIPHERTEXT_MANIFEST`), and invariant 9
-forbids indexing or filtering on any of them.
+The ciphertext oracle checks the `check_items` columns and the two wave-4
+tables' (`backend/e2e_oracles/gather.py`, `_CIPHERTEXT_MANIFEST`).
+Invariant 9 forbids a `UNIQUE` or an `eq.` filter on the columns it lists
+(`ENCRYPTED_LEARNING_COLUMNS` in `backend/tests/test_learning_loop_invariants.py`);
+that list predates wave 4 and does not yet name `surface_context`,
+`guess_json` or `reply_text`, so treat them by the same rule until it does.
 
 ## The spec's §4 and the migrations
 
