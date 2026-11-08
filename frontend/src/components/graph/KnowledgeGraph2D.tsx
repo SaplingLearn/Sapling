@@ -114,6 +114,79 @@ const MIN_ZOOM = 0.4;
 const MIN_SCREEN_R = 7;
 
 /** Where a line from (x1, y1) to (x2, y2) should stop to end `inset` short. */
+/** Simulation ticks run once per animation frame; d3 velocities are per tick. */
+const MS_PER_TICK = 1000 / 60;
+/** A throw faster than this (content units per tick) is clamped. */
+const MAX_FLING = 28;
+/** Held still this long before letting go = dropped, not thrown. */
+const FLING_STALE_MS = 90;
+
+/**
+ * The velocity (per simulation tick) a released node carries on with: the
+ * pointer's smoothed speed at release, clamped, or zero when the pointer had
+ * stopped or the viewer prefers reduced motion. Exported for tests.
+ */
+export function releaseVelocity(
+  fling: { t: number; vx: number; vy: number } | null,
+  now: number,
+  reducedMotion: boolean,
+): [number, number] {
+  if (!fling || reducedMotion || now - fling.t > FLING_STALE_MS) return [0, 0];
+  let vx = fling.vx * MS_PER_TICK;
+  let vy = fling.vy * MS_PER_TICK;
+  const speed = Math.hypot(vx, vy);
+  if (speed > MAX_FLING) {
+    vx *= MAX_FLING / speed;
+    vy *= MAX_FLING / speed;
+  }
+  return [vx, vy];
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** A link may always stretch to at least this before it pulls (px). */
+const FOLLOW_GAP = 70;
+/** Share of the extra stretch closed per tick (before velocity decay). */
+const FOLLOW_PULL = 0.1;
+
+/**
+ * Everything a dragged concept is connected to, through concept links and
+ * course spokes alike, each mapped to the node it was reached through (its
+ * leader, so the tree of who pulls whom). The dragged concept maps to null.
+ */
+export function followersOf(
+  dragId: string,
+  links: ReadonlyArray<{ source: string | { id: string }; target: string | { id: string } }>,
+  hops = Infinity,
+): Map<string, string | null> {
+  const idOf = (end: string | { id: string }) => (typeof end === "string" ? end : end.id);
+  const adjacent = new Map<string, string[]>();
+  for (const l of links) {
+    const s = idOf(l.source);
+    const t = idOf(l.target);
+    if (!adjacent.has(s)) adjacent.set(s, []);
+    if (!adjacent.has(t)) adjacent.set(t, []);
+    adjacent.get(s)!.push(t);
+    adjacent.get(t)!.push(s);
+  }
+  const leader = new Map<string, string | null>([[dragId, null]]);
+  let frontier = [dragId];
+  for (let hop = 0; hop < hops && frontier.length; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const m of adjacent.get(id) ?? []) {
+        if (leader.has(m)) continue;
+        leader.set(m, id);
+        next.push(m);
+      }
+    }
+    frontier = next;
+  }
+  return leader;
+}
+
 function lineEnd(x1: number, y1: number, x2: number, y2: number, inset: number): [number, number] {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -243,6 +316,9 @@ function KnowledgeGraph2DImpl({
   }, [initialZoom, initialView]);
   const dragRef = React.useRef<DragState>(null);
   const movedRef = React.useRef(false);
+  // The dragged node's last pointer sample and smoothed velocity (content
+  // units per ms), handed to the simulation on release as momentum.
+  const flingRef = React.useRef<{ x: number; y: number; t: number; vx: number; vy: number } | null>(null);
 
   // Per-tick position updates bypass React entirely (#111): the tick handler
   // writes node-group transforms and edge endpoints straight onto these DOM
@@ -310,6 +386,43 @@ function KnowledgeGraph2DImpl({
   const movedRootsRef = React.useRef(new Set<string>());
   // Legible: where each free course root settles back to.
   const rootHomeRef = React.useRef(new Map<string, { x: number; y: number }>());
+  // A dragged concept and everything connected to it, freed from their
+  // rings while the drag plays out. Each is tethered to the node that leads
+  // it (`leader`, null for the dragged one) by a rope as long as their link
+  // was when the drag began (`gap`): stretch it further and the other end is
+  // pulled along — the course root too, which carries its rings — so no
+  // link is ever left hyperextended.
+  type Tether = { leader: string | null; gap: number };
+  const freeRef = React.useRef<{ leader: Map<string, Tether>; dragging: string | null }>({
+    leader: new Map(),
+    dragging: null,
+  });
+  // Make a course's current arrangement its new resting layout: its root's
+  // home becomes where the root is now, and each of its concepts keeps the
+  // angle it now sits at (the ones that moved also keep their distance).
+  // After a drag nothing springs back to where it was planned.
+  const adoptLayoutAround = React.useCallback((rootId: string | null, movedIds: ReadonlySet<string>) => {
+    const root = rootId ? simNodesRef.current.find((sn) => sn.id === rootId) : undefined;
+    if (!root || root.x == null || root.y == null) return;
+    rootHomeRef.current.set(root.id, { x: root.x, y: root.y });
+    movedRootsRef.current.add(root.id);
+    for (const m of simNodesRef.current) {
+      const o = planRef.current.orbit.get(m.id);
+      if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
+      o.angle = Math.atan2(m.y - root.y, m.x - root.x);
+      if (movedIds.has(m.id)) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
+    }
+  }, []);
+  // Every course a set of freed concepts belongs to adopts its new layout.
+  const settleFreed = React.useCallback(() => {
+    const ids = new Set(freeRef.current.leader.keys());
+    freeRef.current = { leader: new Map(), dragging: null };
+    const roots = new Set<string | null>();
+    for (const id of ids) {
+      roots.add(planRef.current.centers.has(id) ? id : (planRef.current.orbit.get(id)?.rootId ?? null));
+    }
+    for (const rootId of roots) adoptLayoutAround(rootId, ids);
+  }, [adoptLayoutAround]);
   // Set once the student pans or zooms; auto-fit never overrides them.
   const viewTouchedRef = React.useRef(false);
   const fittedViewRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
@@ -427,6 +540,47 @@ function KnowledgeGraph2DImpl({
               : 20 + (d.mastery_score || 0) * 6,
         ),
       )
+      .force("follow", (alpha: number) => {
+        // Freed nodes (see freeRef): a rope stretched past its length pulls
+        // the follower after its leader — or, when the follower is pinned (a
+        // classic-layout course root), pulls the leader back instead. Each
+        // freed concept's orbit target tracks it so the orbit force (next)
+        // doesn't hold it on its old ring. Once everything has slowed down,
+        // wherever it all came to rest becomes the layout.
+        const free = freeRef.current;
+        if (!free.leader.size) return;
+        let moving = free.dragging != null;
+        for (const [id, { leader: leaderId, gap }] of free.leader) {
+          const n = nodeById.get(id);
+          if (!n || n.x == null || n.y == null) continue;
+          const l = leaderId ? nodeById.get(leaderId) : undefined;
+          if (l && l.x != null && l.y != null) {
+            const dx = l.x - n.x;
+            const dy = l.y - n.y;
+            const len = Math.hypot(dx, dy) || 1e-6;
+            const slack = len - gap;
+            if (slack > 0) {
+              const px = (dx / len) * slack * FOLLOW_PULL;
+              const py = (dy / len) * slack * FOLLOW_PULL;
+              if (n.fx == null) {
+                n.vx = (n.vx ?? 0) + px;
+                n.vy = (n.vy ?? 0) + py;
+              } else if (l.fx == null) {
+                l.vx = (l.vx ?? 0) - px;
+                l.vy = (l.vy ?? 0) - py;
+              }
+            }
+          }
+          const o = planRef.current.orbit.get(id);
+          if (o && id !== free.dragging) {
+            const c = centerOf(o.rootId);
+            o.angle = Math.atan2(n.y - c.y, n.x - c.x);
+            o.radius = Math.max(40, Math.hypot(n.x - c.x, n.y - c.y));
+          }
+          if (Math.hypot(n.vx ?? 0, n.vy ?? 0) >= 0.1) moving = true;
+        }
+        if (!moving || (free.dragging == null && alpha < 0.02)) settleFreed();
+      })
       .force(
         "orbit",
         forceOrbit<SimNode>(() => planRef.current, centerOf, 0.55, 0.12, {
@@ -447,6 +601,8 @@ function KnowledgeGraph2DImpl({
         for (const [id, home] of rootHomeRef.current) {
           const root = nodeById.get(id);
           if (!root || root.fx != null || root.x == null || root.y == null) continue;
+          // A root being pulled along by a drag goes where it's pulled.
+          if (freeRef.current.leader.has(id)) continue;
           root.vx = (root.vx ?? 0) + (home.x - root.x) * 0.1 * alpha;
           root.vy = (root.vy ?? 0) + (home.y - root.y) * 0.1 * alpha;
         }
@@ -680,7 +836,21 @@ function KnowledgeGraph2DImpl({
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     movedRef.current = false;
     dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
+    flingRef.current = n.x != null && n.y != null ? { x: n.x, y: n.y, t: performance.now(), vx: 0, vy: 0 } : null;
     simRef.current?.alphaTarget(0.3).restart();
+    if (!n.is_subject_root) {
+      // A still-settling earlier drag adopts its layout before this one starts.
+      if (freeRef.current.leader.size) settleFreed();
+      const at = new Map(simNodesRef.current.map((sn) => [sn.id, sn]));
+      const leader = new Map<string, Tether>();
+      for (const [id, leaderId] of followersOf(n.id, simLinksRef.current)) {
+        const a = at.get(id);
+        const b = leaderId ? at.get(leaderId) : undefined;
+        const len = a?.x != null && a.y != null && b?.x != null && b.y != null ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+        leader.set(id, { leader: leaderId, gap: Math.max(FOLLOW_GAP, len) });
+      }
+      freeRef.current = { leader, dragging: n.id };
+    }
     n.fx = n.x;
     n.fy = n.y;
     // dragRef/fx are refs — render once so the tooltip hides and the pinned
@@ -727,6 +897,17 @@ function KnowledgeGraph2DImpl({
       const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
       n.fx = clamp(x, (r - view.tx) / view.scale, (width - r - view.tx) / view.scale);
       n.fy = clamp(y, (r - view.ty) / view.scale, (height - r - view.ty) / view.scale);
+      const f = flingRef.current;
+      const now = performance.now();
+      if (f && now > f.t) {
+        const dt = now - f.t;
+        // Smooth over the last few moves so one jittery sample doesn't decide the throw.
+        f.vx = f.vx * 0.5 + ((n.fx - f.x) / dt) * 0.5;
+        f.vy = f.vy * 0.5 + ((n.fy - f.y) / dt) * 0.5;
+        f.x = n.fx;
+        f.y = n.fy;
+        f.t = now;
+      }
     } else if (drag.kind === "pan") {
       viewTouchedRef.current = true;
       const dx = e.clientX - drag.startX;
@@ -745,10 +926,7 @@ function KnowledgeGraph2DImpl({
     try {
       (e.currentTarget as Element).releasePointerCapture(e.pointerId);
     } catch {}
-    if (drag.kind === "node" && legible) {
-      // Legible: nothing snaps back. The course's home becomes wherever its
-      // root has been pulled to, and each of its concepts keeps the angle it
-      // now sits at around the root.
+    if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (n) {
         // Drop it exactly where the pointer let go, not where the last tick
@@ -757,37 +935,41 @@ function KnowledgeGraph2DImpl({
           n.x = n.fx;
           n.y = n.fy;
         }
-        n.fx = null;
-        n.fy = null;
-        if (movedRef.current) {
-          const root = simNodesRef.current.find((sn) => sn.is_subject_root && sn.course_id === n.course_id);
-          if (root && root.x != null && root.y != null) {
-            rootHomeRef.current.set(root.id, { x: root.x, y: root.y });
-            movedRootsRef.current.add(root.id);
-            for (const m of simNodesRef.current) {
-              const o = planRef.current.orbit.get(m.id);
-              if (!o || o.rootId !== root.id || m.x == null || m.y == null) continue;
-              o.angle = Math.atan2(m.y - root.y, m.x - root.x);
-              // The dropped concept also keeps its new distance from the course.
-              if (m.id === n.id) o.radius = Math.max(40, Math.hypot(m.x - root.x, m.y - root.y));
-            }
+        if (n.is_subject_root && movedRef.current) {
+          // A dragged course moves its home: it settles where the student put
+          // it, and its concepts' rings follow it there.
+          movedRootsRef.current.add(n.id);
+          if (n.x != null && n.y != null) rootHomeRef.current.set(n.id, { x: n.x, y: n.y });
+        }
+        if (n.is_subject_root && !legible) {
+          // Classic layout: course roots stay pinned where they were dropped.
+          n.fx = n.x;
+          n.fy = n.y;
+        } else {
+          // Hand the node back to the simulation still moving: a throw carries
+          // it on and its neighbours react. Nothing pulls it back to where it
+          // was planned — a concept coasts until it slows, then stays there.
+          n.fx = null;
+          n.fy = null;
+          const [vx, vy] = releaseVelocity(flingRef.current, performance.now(), prefersReducedMotion());
+          n.vx = vx;
+          n.vy = vy;
+        }
+        if (freeRef.current.dragging === n.id) {
+          if (movedRef.current) {
+            // Let go: the dropped concept coasts on, its linked concepts keep
+            // following, and the follow force settles the layout once still.
+            freeRef.current.dragging = null;
+          } else {
+            // A click, not a drag: nothing moved, so nothing to adopt.
+            freeRef.current = { leader: new Map(), dragging: null };
           }
         }
       }
-      simRef.current?.alphaTarget(0);
-    } else if (drag.kind === "node") {
-      const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
-      if (n?.is_subject_root) {
-        // Course roots stay pinned where they were dropped; their rings follow.
-        if (movedRef.current) movedRootsRef.current.add(n.id);
-        n.fx = n.x;
-        n.fy = n.y;
-      } else if (n) {
-        // Release the pin so the simulation takes over again.
-        n.fx = null;
-        n.fy = null;
-      }
-      simRef.current?.alphaTarget(0);
+      flingRef.current = null;
+      // Reheat so the release plays out; alphaTarget 0 lets it settle again.
+      const sim = simRef.current;
+      if (sim) sim.alpha(Math.max(sim.alpha(), 0.35)).alphaTarget(0).restart();
     }
     if (svgRef.current) svgRef.current.style.cursor = "grab";
     // Restore tooltip/stroke now that dragRef cleared; reseed the tooltip
