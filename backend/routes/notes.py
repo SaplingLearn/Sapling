@@ -2,10 +2,20 @@
 
 CRUD lives here; agent-backed actions (summarize, extract concepts, chat,
 generate quiz, send to tutor) come in Phase 4 below.
+
+The three model-calling actions (chat, summarize, extract-concepts) run the
+learning loop's integrity guard (spec §13 A125, services/integrity_guard.py): a
+note or message quoting one of the student's posed checks never reaches the
+model, and model text stating one's key is never served. send-to-tutor and
+generate-quiz call no model: they hand the client a topic or a concept node, and
+the tutor that topic opens is the loop's, whose served turns it scans itself
+(A88/A93).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Iterable
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -19,7 +29,8 @@ from agents.note_summary import note_summary_agent
 from agents.tools.graph import apply_concepts_to_graph
 from agents.usage import record_agent_usage
 from db.connection import table
-from services import events_service
+from learning.gate import learning_loop_for_request
+from services import events_service, integrity_guard
 from services.academics import offering_course_id, resolve_offering, term_id_for_label
 from services.auth_guard import get_session_user_id, require_self, guard_off_loop
 from services.notes_service import (
@@ -350,6 +361,23 @@ def _note_user_prompt(note: dict) -> str:
     return f"Title: {title}\n\nBody:\n{body_text}"
 
 
+async def _integrity_guard(
+    user_id: str, surface: str, texts: Iterable[str | None]
+) -> integrity_guard.Guard:
+    """Spec §13 A125: the request's integrity guard — ONE read of the student's
+    posed items and the pre-call check of everything the model will read that the
+    student wrote, off the event loop (the reads are DB calls). Off with the loop
+    (the kill switch; the gate is read here, at route entry, once)."""
+    return await asyncio.to_thread(
+        integrity_guard.open_guard,
+        user_id,
+        surface=surface,
+        texts=list(texts),
+        active=learning_loop_for_request(user_id),
+        request_id=current_request_id(),
+    )
+
+
 def _deps_for(user_id: str, course_id: str | None, note_id: str | None) -> SaplingDeps:
     from db.connection import _client  # type: ignore  # only for opaque pass-through
     return SaplingDeps(
@@ -367,6 +395,13 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # spec §13 A125: a note holding one of the student's posed checks is never
+    # handed to the model; a summary stating one's key is never saved or served
+    guard = await _integrity_guard(
+        body.user_id, "note_summary", (note.get("title"), note.get("body"))
+    )
+    if guard.refused:
+        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
     user_prompt = _note_user_prompt(note)
     # The graph keys on the abstract course; the note carries the offering.
     course_id = offering_course_id(note.get("offering_id"))
@@ -378,6 +413,8 @@ async def summarize(note_id: str, body: AgentActionBody, request: Request):
         feature="notes", task="note_summary", user_id=body.user_id,
     )
     summary_text = result.output.summary
+    if not await asyncio.to_thread(guard.screen, summary_text):
+        raise HTTPException(status_code=409, detail=integrity_guard.WITHHELD_DETAIL)
     await save_summary(note_id=note_id, user_id=body.user_id, summary=summary_text)
     return {"summary": summary_text}
 
@@ -390,6 +427,14 @@ async def extract_concepts(
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # spec §13 A125: as summarize; a concept name the note itself holds is the
+    # student's own word (never scanned), any other name stating a posed
+    # check's key is dropped before it is filed or returned
+    guard = await _integrity_guard(
+        body.user_id, "note_concepts", (note.get("title"), note.get("body"))
+    )
+    if guard.refused:
+        raise HTTPException(status_code=409, detail=integrity_guard.REFUSED_DETAIL)
     user_prompt = _note_user_prompt(note)
     # Concepts land in the abstract-course graph; resolve offering → course.
     course_id = offering_course_id(note.get("offering_id"))
@@ -401,6 +446,9 @@ async def extract_concepts(
         feature="notes", task="note_concepts", user_id=body.user_id,
     )
     names = [n.strip() for n in (result.output.concepts or []) if n and n.strip()]
+    keep = await asyncio.to_thread(guard.screen_each, names, own=guard.own_text)
+    withheld = keep.count(False)
+    names = [n for n, ok in zip(names, keep) if ok]
     await apply_concepts_to_graph(
         user_id=body.user_id, course_id=course_id, concept_names=names
     )
@@ -412,7 +460,10 @@ async def extract_concepts(
             note_id=note_id, user_id=body.user_id,
             concept_node_id=n["id"],
         )
-    return {"concepts": names, "linked": len(nodes)}
+    out = {"concepts": names, "linked": len(nodes)}
+    if withheld:
+        out["withheld"] = withheld
+    return out
 
 
 class NoteChatBody(BaseModel):
@@ -426,8 +477,20 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
     note = await get_note(note_id=note_id, user_id=body.user_id)
     if not note:
         raise HTTPException(status_code=404, detail="Note not found.")
+    # spec §13 A125: the message and the note the agent grounds in (its
+    # read_active_note tool serves this very row, deps.note) are checked against
+    # the student's posed items before any model call; the reply after it
+    guard = await _integrity_guard(
+        body.user_id,
+        "note_chat",
+        (body.message, note.get("title"), note.get("body"), *(note.get("tags") or [])),
+    )
+    if guard.refused:
+        return {"reply": integrity_guard.REFUSED_REPLY, "degraded": False, "integrity": "refused"}
     course_id = offering_course_id(note.get("offering_id"))
     deps = _deps_for(body.user_id, course_id, note_id)
+    deps.note = note
+    deps.integrity = guard  # the agent's graph writes are screened too
     try:
         result = record_agent_usage(
             await note_chat_agent.run(
@@ -453,6 +516,8 @@ async def note_chat(note_id: str, body: NoteChatBody, request: Request):
             status_code=500,
             detail="Something went wrong answering that.",
         ) from e
+    if not await asyncio.to_thread(guard.screen, result.output):
+        return {"reply": integrity_guard.WITHHELD_REPLY, "degraded": False, "integrity": "withheld"}
     return {"reply": result.output, "degraded": False}
 
 

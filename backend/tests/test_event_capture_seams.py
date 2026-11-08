@@ -151,6 +151,9 @@ def test_event_taxonomy_is_pinned():
         "zpd.leak",
         "zpd.reveal",
         "zpd.rating",
+        # Spec §13 A125: the integrity guard of the AI surfaces outside the loop.
+        # Emit coverage lives in test_learning_outside_integrity.py.
+        "learn.outside_leak",
         # PKG-05b: the typed decision seam (spec §6). Emit coverage: test_learning_decisions.py.
         "decision.made",
         "decision.shadow",

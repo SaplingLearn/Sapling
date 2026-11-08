@@ -110,6 +110,14 @@ zpd.wheelspin                 error     concept_id, opps, unassisted_next, htc_k
 zpd.leak                      error     rung_emitted, ceiling, detector, request_id
 zpd.rating                    usage     rating (too_easy / appropriate / too_hard),
                                         checks_since_last
+learn.outside_leak            audit     surface (note_chat / note_summary / note_concepts /
+                                        flashcards), stage (request: the student's text quoted
+                                        posed checks, no model ran / reply: the model's text
+                                        stated their keys, withheld / unscanned: the posed items
+                                        could not be read), question_hashes, count,
+                                        help_recorded, request_id — an AI surface outside the
+                                        loop met the student's posed checks (spec §13 A125);
+                                        hashes and enums only, never text
 decision.made                 usage     decision, backend, request_id, latency_ms, confidence,
                                         fallback, prior — one answered decision of the learning
                                         loop's typed decision seam (PKG-05b, spec §6, §13 A24);
@@ -319,6 +327,15 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     "zpd.leak",
     "zpd.reveal",  # PKG-14 (spec §13 A88): a served turn stated open posed items' answers
     "zpd.rating",
+    # Learning-loop spec §13 A125: the leak family's event for the AI surfaces
+    # OUTSIDE the loop (services/integrity_guard.py — the notes chat, summary and
+    # concepts, the flashcard generators). stage `request`: the student's text
+    # quoted their posed checks, so no model ran; `reply`: the model's text
+    # stated their keys, so it was withheld; `unscanned`: the posed items could
+    # not be read. Never zpd.leak / zpd.reveal: nothing here was served, so it
+    # moves neither the zero-leak gate nor the launch watch (spec §11.7).
+    # category="audit" (as learn.answer_refused); hashes and enums only.
+    "learn.outside_leak",
     # Learning loop PKG-05b (spec §6, §13 A24): the typed decision seam
     # (services/decisions.py). `made` = one answered decision, with the backend
     # that answered; `fallback` = served by another backend (reason jev_absent)

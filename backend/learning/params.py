@@ -549,6 +549,19 @@ LOOP_SCAN_POSED_MAX = 200
 # answer-position look-back) and this many more non-space characters (option
 # keyword contexts, number-word phrases), snapped back to the sentence start
 LOOP_SCAN_CONTEXT_CHARS = 96
+# † spec §13 A125 (the integrity guard of AI surfaces OUTSIDE the loop,
+# services/integrity_guard.py): a text the student hands such a surface QUOTES
+# one of their posed-and-ungraded items when at least this share of the item's
+# stem tokens lie in runs of LEAK_PROVENANCE_MIN_TOKENS consecutive stem tokens
+# the text holds up to inflection (learning/stem_match.py). A pasted stem covers
+# all of it, one edited word costs one token; a shared boilerplate opening
+# ("Which of the following best describes the …") stays under it.
+INTEGRITY_STEM_MIN_SHARE = 0.6
+# † A125: the help a quoted (or withheld) open item is recorded at — the
+# student took it to an AI outside the loop, which may hand them its answer, so
+# a later grade carries no unassisted credit (A93's floor: the rung of a served
+# reveal, as services/quiz_ask.QUIZ_ASK_HELP_RUNG)
+INTEGRITY_HELP_RUNG = RUNG_NO_CREDIT_MIN
 
 # ── Check-item quality guards (spec §13 A113; GitHub #695; the 2026-11-07 ──
 # direction audit, "Item quality": peer-sourced keys no instructor reviews)

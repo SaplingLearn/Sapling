@@ -35,6 +35,7 @@ PURE_MODULES = (
     "item_lint.py",  # A113: item-flaw flags of a check item (text in, codes out)
     "interleave.py",  # A114: confusable partners + the review serve order (keys in, order out)
     "item_alignment.py",  # A119: the alignment check's answers applied (verdicts in, decisions out)
+    "stem_match.py",  # A125: does a text quote a posed item's stem (texts in, hashes out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)

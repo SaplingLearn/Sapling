@@ -1025,6 +1025,8 @@ export const scanCourseConcepts = (courseId: string, userId: string) =>
 export interface GenerateFlashcardsResponse {
   flashcards: any[];
   context_used?: { documents_found: number; weak_concepts_found: number };
+  /** Cards held back for giving away an open learning check's answer (spec §13 A125). */
+  withheld?: number;
 }
 
 // `semester` (term label, #141) grounds generation in that term's course
@@ -1507,9 +1509,11 @@ export const answerRetentionCheck = (body: {
 
 // Flashcard import
 export interface ImportCard { front: string; back: string }
-export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[] }
+// `withheld` (spec §13 A125): cards held back for giving away an open learning
+// check's answer; on cleanup, the whole cleanup was held back.
+export interface ImportParseResponse { cards: ImportCard[]; errors: { row: number; message: string }[]; withheld?: number }
 export interface ImportCommitResponse { inserted: number; skipped_duplicates: number }
-export interface ImportGenerateResponse { cards: ImportCard[] }
+export interface ImportGenerateResponse { cards: ImportCard[]; withheld?: number }
 
 export const importParse = (
   userId: string,
@@ -1553,13 +1557,13 @@ export const importGenerate = (
   });
 
 export const importCleanup = (userId: string, cards: ImportCard[]) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cleanup`, {
+  fetchJSON<{ cards: ImportCard[]; withheld?: number }>(`/api/flashcards/import/cleanup`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, cards }),
   });
 
 export const importCloze = (userId: string, paragraph: string) =>
-  fetchJSON<{ cards: ImportCard[] }>(`/api/flashcards/import/cloze`, {
+  fetchJSON<{ cards: ImportCard[]; withheld?: number }>(`/api/flashcards/import/cloze`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId, paragraph }),
   });
@@ -2555,7 +2559,8 @@ export const summarizeNote = (noteId: string, userId: string) =>
   });
 
 export const extractNoteConcepts = (noteId: string, userId: string) =>
-  fetchJSON<{ concepts: string[]; linked: number }>(
+  // `withheld` (spec §13 A125): names held back for giving away an open check's answer
+  fetchJSON<{ concepts: string[]; linked: number; withheld?: number }>(
     `/api/notes/${noteId}/extract-concepts`,
     { method: 'POST', body: JSON.stringify({ user_id: userId }) },
   );

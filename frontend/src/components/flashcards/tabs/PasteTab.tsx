@@ -4,7 +4,9 @@ import { CustomSelect } from "../../CustomSelect";
 import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importCloze } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import { detectDelimiters, splitByDelimiters, type ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 
 interface Props {
   cards: ParsedCard[];
@@ -76,8 +78,10 @@ export function PasteTab({ cards, onCards }: Props) {
       const res = await importCloze(userId, text);
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cloze cards.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
-      toast.error(`Cloze failed: ${String(err)}`);
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
+      toast.error(humanizeError(err, "Couldn't make cloze cards right now."));
     } finally {
       setClozing(false);
     }

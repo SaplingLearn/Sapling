@@ -4,7 +4,9 @@ import { Icon } from "../../Icon";
 import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importParse } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 
 interface Props { onCards: (cards: ParsedCard[]) => void }
 
@@ -36,8 +38,10 @@ export function PhotoTab({ onCards }: Props) {
       const res = await importParse(userId, "ocr", await readAsBase64(file), { filename: file.name });
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Extracted ${res.cards.length} cards from image.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
-      toast.error(`OCR failed: ${String(err)}`);
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
+      toast.error(humanizeError(err, "Couldn't read cards from that image."));
     } finally {
       setBusy(false);
     }

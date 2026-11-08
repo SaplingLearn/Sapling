@@ -4,7 +4,9 @@ import { CustomSelect } from "../../CustomSelect";
 import { useToast } from "../../ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { importGenerate } from "@/lib/api";
+import { humanizeError } from "@/lib/errorMessage";
 import type { ParsedCard } from "@/lib/flashcardParsers";
+import { withheldNotice } from "@/lib/integrityNotice";
 
 interface LibraryDoc { id: string; file_name: string; category?: string }
 
@@ -47,8 +49,10 @@ export function AiTab({ documents, onCards }: Props) {
         : await importGenerate(userId, { source: "library_doc", documentId: docId, count: numericCount, difficulty });
       onCards(res.cards.map((c, i) => ({ front: c.front, back: c.back, row: i + 1 })));
       toast.success(`Generated ${res.cards.length} cards.`);
+      if (res.withheld) toast.warn(withheldNotice(res.withheld, "card"));
     } catch (err) {
-      toast.error(`Generate failed: ${String(err)}`);
+      // humanizeError: a 409 integrity detail (spec §13 A125) reads as prose
+      toast.error(humanizeError(err, "Couldn't generate cards right now."));
     } finally {
       setBusy(false);
     }

@@ -27,6 +27,7 @@ import type {
 import { now } from "@/lib/testMode";
 import { useToast } from "@/components/ToastProvider";
 import { humanizeError } from "@/lib/errorMessage";
+import { withheldNotice } from "@/lib/integrityNotice";
 import { quizHrefForNote } from "@/lib/quiz/noteHref";
 import { useNoteAutosave, type AutosaveStatus } from "@/lib/notes/useNoteAutosave";
 
@@ -386,7 +387,9 @@ function NotetakerScreen() {
     await runAction(noteId, "extract", async () => {
       if (!(await saveBeforeAgent(noteId))) return;
       try {
-        await extractNoteConcepts(noteId, userId);
+        const res = await extractNoteConcepts(noteId, userId);
+        // spec §13 A125: names held back for giving away an open check's answer
+        if (res?.withheld) toast.warn(withheldNotice(res.withheld, "concept"));
         await refreshActiveConcepts();
       } catch (e) {
         console.error("Extract failed", e);
