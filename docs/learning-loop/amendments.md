@@ -19,10 +19,11 @@ without a validated cut-point" (a candidate for an A/B test, not a research
 finding); "reopen" means the row changed a package that was already built;
 "owner decision" means the product owner decided it, not a reviewer.
 
-**Numbering.** Rows run from A1 to A142. **A56–A59 and A64–A69 were never
+**Numbering.** Rows run from A1 to A147. **A56–A59 and A64–A69 were never
 assigned** (packages built in parallel reserved number ranges; nothing in the
 repository cites those numbers; since A142 the spec's table says so where
-they would be). There are 132 rows, all indexed below.
+they would be). There are 137 rows, all indexed below. A143–A147 are one
+package, the quiz in the learning system (five flags, all off by default).
 
 **Status markers.** Most rows are in force. These are not, or not wholly:
 
@@ -61,7 +62,7 @@ files, which the row lists. A dash means the row has no code of its own.
 
 ## By theme
 
-### Evidence and the learner model (14)
+### Evidence and the learner model (16)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -79,6 +80,8 @@ files, which the row lists. A dash means the row has no code of its own.
 | A116 | grading | Evidence names the provider that graded (`grader_backend` admits `claude`) | `backend/services/learning_decisions.py::evidence_backend` |
 | A127 | confidence | The student states a confidence, and misconceptions resolve | `backend/learning/misconceptions.py::resolve` |
 | A132 | quiz | The quiz states a confidence, and a flawed quiz item is no evidence | `backend/learning/quiz_evidence.py::evidence_exclusion` |
+| A144 | quiz | The learner model chooses each quiz question's difficulty and misconception target; the model only writes it, behind `quiz_planned_questions` | `backend/learning/quiz_plan.py::question_specs` |
+| A146 | quiz | The quiz records a "Sure" wrong answer's tagged misconception and resolves one (A127), behind `quiz_misconceptions` | `backend/services/quiz_learning.py::misconceptions_after_submit` |
 
 ### Measurement and evaluation (16)
 
@@ -101,7 +104,7 @@ files, which the row lists. A dash means the row has no code of its own.
 | A130 | post-test | A matched pretest form, behind the `probe_matched_pretest` flag | `backend/learning/checks.py::pretest_form` |
 | A133 | metrics | Help abuse is measured (bottom-outs, pace, the attempts that bought them) | `backend/learning/help_abuse.py::help_abuse` |
 
-### Item quality (16)
+### Item quality (17)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -121,8 +124,9 @@ files, which the row lists. A dash means the row has no code of its own.
 | A131 | lint/review | Classical item statistics in the staff review queue | `backend/learning/item_stats.py::item_statistics` |
 | A140 | surface | Surface-varied isomorphs and the cue-familiarity dial, behind the `varied_isomorphs` flag | `backend/learning/surface.py::familiarity_by_hash` |
 | A141 | multi-concept | Multi-concept items, gated on proficiency in every component, one half-weight observation on the apex, behind the `multi_concept_items` flag | `backend/learning/multi_concept.py::gate_open` |
+| A145 | quiz gates | Quiz questions pass A119's concept check and A124's blind solve (on `quiz_check`, another model) before they can be evidence; a disputed one is never served, behind `quiz_item_gates` | `backend/learning/quiz_gates.py::decide` |
 
-### Teaching policy (29)
+### Teaching policy (31)
 
 | A | Area | Change | Main code |
 |---|---|---|---|
@@ -155,6 +159,8 @@ files, which the row lists. A dash means the row has no code of its own.
 | A134 | gates | A stricter genuine-attempt gate, behind the `help_gate_strict` flag | `backend/learning/gates.py::strict_genuine_attempt` |
 | A138 | prequestion | A teaching segment opens on one ungraded prequestion, and its answer and explanation follow at once, behind the `segment_prequestion` flag | `backend/learning/prequestion.py::segment_open` |
 | A139 | self-explanation | At a code-decided juncture the turn's question becomes "why does this follow?"; the reply is stored for diagnosis only, behind the `self_explanation_prompts` flag | `backend/learning/self_explain.py::juncture` |
+| A143 | quiz plan | The quiz home proposes concepts from the learner model (FSRS-due first, then open misconceptions, then the ready fringe), behind `quiz_concept_plan` | `backend/learning/quiz_plan.py::rank_concepts` |
+| A147 | quiz results | The quiz results show each skill meter that moved, what is due and the next step (review, or Learn), behind `quiz_results_routing` | `backend/services/quiz_learning.py::results_block` |
 
 ### Safety and integrity (20)
 
@@ -364,6 +370,11 @@ files, which the row lists. A dash means the row has no code of its own.
 | A140 | Item quality | surface | Surface-varied isomorphs and the cue-familiarity dial, behind the `varied_isomorphs` flag |
 | A141 | Item quality | multi-concept | Multi-concept items, gated on proficiency in every component, one half-weight observation on the apex, behind the `multi_concept_items` flag |
 | A142 | Operations and process | reconciliation | Spec, docs and code reconciled: the guide's list of disagreements, each settled (code fixed, text corrected, or recorded) |
+| A143 | Teaching policy | quiz plan | The quiz home proposes concepts from the learner model, behind `quiz_concept_plan` |
+| A144 | Evidence and the learner model | quiz | The learner model chooses each quiz question; the model only writes it, behind `quiz_planned_questions` |
+| A145 | Item quality | quiz gates | Quiz questions pass the loop's concept check and blind key solve before they can be evidence, behind `quiz_item_gates` |
+| A146 | Evidence and the learner model | quiz | The quiz records and resolves misconceptions, behind `quiz_misconceptions` |
+| A147 | Teaching policy | quiz results | The quiz results route into the learning system, behind `quiz_results_routing` |
 
 ## Where the spec and the code disagree
 

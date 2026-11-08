@@ -81,7 +81,7 @@ The arrows are imports or calls. Two rules shape them:
 
 ## `backend/learning/` — policy, math and stores
 
-59 modules plus `backend/learning/__init__.py`. The tables group them by job and mark each **pure** (imports only
+61 modules plus `backend/learning/__init__.py`. The tables group them by job and mark each **pure** (imports only
 the standard library, pydantic and other `learning` modules — no database, no
 agent, no network) or **IO** (reads or writes the database through
 `backend/db/connection.py::table` / `rpc`, or reads config or encryption).
@@ -91,7 +91,7 @@ agent, no network) or **IO** (reads or writes the database through
 Two tests police imports, and they are the reason the layout above holds:
 
 - **`PURE_MODULES`** in `backend/tests/test_learning_loop_invariants.py::PURE_MODULES`
-  lists 28 modules that must import nothing whose top-level package is
+  lists 30 modules that must import nothing whose top-level package is
   `agents`, `pydantic_ai`, `google` or `db` — followed transitively through
   other `learning` modules (`test_inv_02_pure_modules_import_nothing_impure`).
   `backend/learning/ladder.py` additionally may not import `services`, `routes`, `httpx` or
@@ -138,6 +138,8 @@ a cheap way to make the claim a test.
 | `backend/learning/learner_state.py` | IO | Reads `learner_state` (decayed); `write_metrics` is the one non-evidence write, used only by the metrics script. |
 | `backend/learning/flashcard_fsrs.py` | logic (imports `services.timestamps`) | The one place a self-rated flashcard's FSRS state is computed; its two callers (`backend/routes/flashcards.py::rate_card` and `backend/learning/review.py`) write it. |
 | `backend/learning/quiz_evidence.py` | pure (listed) | The quiz's stated confidence and its item-flaw gate (A132). |
+| `backend/learning/quiz_plan.py` | pure (listed) | The quiz's choices from the learner model: the concept plan (A143), each question's difficulty and misconception target (A144), the skill-meter changes and the next step (A147). |
+| `backend/learning/quiz_gates.py` | pure (listed) | The quiz item gates' decision (verified / practice / dropped, A145), the key comparison in code, the distractor tags and the misconception record and resolve rules (A146). |
 | `backend/learning/planning_history.py` | IO | Durable planning needs read from owned evidence (ADR 0035). |
 | `backend/learning/goals.py` | IO (encryption) | Student goals: confirmed concept ids drive planning; goal prose is encrypted (ADR 0033). |
 
@@ -306,6 +308,15 @@ effort per slot (`_ANTHROPIC_EFFORT`), the slots still on Gemini
 | `loop_tutor_deep` | `backend/agents/loop_tutor.py` | Tutor tier "deep": novice teach turns, H4/H5 hints, an active misconception, two or more failed genuine attempts | `gemini-2.5-pro` | high | yes | `_loop_tutor_handler` |
 | `session_close` | `backend/agents/session_close.py` | The close: summary, one self-evaluation question, one if-then plan | `gemini-2.5-flash-lite` | low | yes | `_structured_output` (fixed close) |
 
+The quiz (not the loop) adds one slot and one agent (A144, A145): the
+planned quiz writer `backend/agents/quiz_planned.py` rides the quiz's own
+`quiz` slot (`claude-haiku-5-5`; its handler `_quiz_handler` answers both
+schemas), and `quiz_check` (`claude-sonnet-5-5`, effort low) runs the A119
+alignment agent, the A124 solve and the key match on generated quiz
+questions — a model other than the quiz writer's, which A124 requires
+(`backend/services/quiz_learning.py::checks_independent`). Neither is a loop
+slot: their spend is the quiz's, outside the loop's session cost.
+
 Handlers live in `backend/agents/function_handlers_e2e.py`; they return fixed
 constants that the E2E specs assert verbatim. The observe-only `decision` slot
 (`backend/agents/decision.py`, main's tutor router, ADR 0027) is not part of
@@ -350,6 +361,7 @@ Two non-agent helpers matter as much as the agents:
 | `backend/services/chat_stream.py` | `stream_structured_turn`: streams the structured tutor turn through the route's leak-cut transform, with `retract` events. |
 | `backend/services/prompt_safety.py` | The untrusted-content envelope for course text and student-derived text. |
 | `backend/services/quiz_ask.py` | The quiz "Ask about this" session, which starts in teach on the quiz's concept (A99). |
+| `backend/services/quiz_learning.py` | The quiz in the learning system (A143–A147): the concept plan, the generation plan, the item gates on `quiz_check`, the misconception record and resolve after submit, and the results block. |
 | `backend/services/concept_prereqs.py` | Prerequisite edges from uploads, behind `upload_prereq_edges` (A118). |
 | `backend/services/session_modes.py` | `NOT_REVIEW`: keeps review sessions out of tutor-session readers (A73). |
 | `backend/services/exam_proximity.py` | Days to the next exam: retention target and brief goal line (A13). |
@@ -380,6 +392,8 @@ Two non-agent helpers matter as much as the agents:
 | `frontend/src/components/screens/AdminCheckItems.tsx` | The staff review queue: flagged, reported and held items; approve, retire, audit, statistics. A multi-concept item reads "Combines A + B" (A141). |
 | `frontend/src/components/screens/AdminAnalytics.tsx` | The admin learning-loop panel (`GET /api/admin/analytics/learning-loop`), with `frontend/src/components/screens/admin/HelpAbusePanel.tsx`, `frontend/src/components/screens/AdminLoopCost.tsx`, `frontend/src/components/screens/admin/SelfExplanationPanel.tsx` ("Do students explain their steps?", A139) and `frontend/src/components/screens/admin/MultiConceptPanel.tsx` (A141). |
 | `frontend/src/lib/api.ts` | Every `/api/learn/loop/*` call. |
+| `frontend/src/lib/quiz/useQuizHome.ts`, `frontend/src/lib/quiz/proposals.ts` | The quiz home: with `quiz_concept_plan` on, the proposals and the due queue from `GET /api/quiz/plan` (A143). |
+| `frontend/src/components/quiz/results/LearningBlock.tsx` | The quiz results' skill meters, due line and next step (A147). |
 
 ## How the pieces connect
 

@@ -16,6 +16,9 @@ them.
 5. [The post-test windows and the learning-gain report](#5-the-post-test-windows-and-the-learning-gain-report)
 6. [Voids after a staff retire](#6-voids-after-a-staff-retire)
 7. [The kill switch](#7-the-kill-switch)
+8. [The quiz in the learning system](#8-the-quiz-in-the-learning-system) —
+   the concept plan, planned questions, item gates, misconceptions and the
+   results block (A143–A147, five flags)
 
 ## 1. From an upload to a servable item
 
@@ -670,8 +673,10 @@ sequenceDiagram
 
 **The quiz** writes `mc` evidence through the same writer
 (`backend/routes/quiz.py`), at most once per (student, question) per rolling
-24 hours, decided by an atomic claim (A94, A100), and never for an item
-flagged with an item-writing flaw (A132). **Review** passes its retention
+24 hours, decided by an atomic claim (A94, A100), never for an item
+flagged with an item-writing flaw (A132), and — behind `quiz_item_gates` —
+only for a question its item gate verified (A145; see
+[§8](#8-the-quiz-in-the-learning-system)). **Review** passes its retention
 target to the writer (`backend/learning/review.py::grade_review`).
 
 **A multi-concept answer** (A141, flag `multi_concept_items`) is graded like
@@ -931,3 +936,99 @@ flowchart LR
 - On again: the same sessions, goals and evidence are there; nothing is
   migrated either way. The drill — and what it does not prove — is in the
   readiness record, "Kill-switch and rollback drill".
+
+## 8. The quiz in the learning system
+
+The quiz (`backend/routes/quiz.py`, the Study screen's Quiz tab) is quick,
+low-stakes retrieval practice on one concept per attempt. Its answers have
+always been `mc` evidence through the single writer (§3). A143–A147 make the
+learner model choose what it asks, check its questions as the loop checks
+its items, and send its results back into the loop. Each part is behind its
+own per-student flag, all **off** by default; off, every quiz request,
+served question, evidence row and stored row is byte-identical to 50e9ded8
+(`backend/tests/test_quiz_learning_flags_off.py`). The quiz serves no check
+item: the bank lends it only its misconception keys (A145 (b)).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Quiz home / question / results
+    participant QZ as routes/quiz.py
+    participant QL as services/quiz_learning.py
+    participant P as learning/quiz_plan, quiz_gates
+    participant W as quiz_planned agent (slot quiz)
+    participant C as check agents (slot quiz_check)
+    participant G as apply_graph_update
+    UI->>QZ: GET /api/quiz/plan (quiz_concept_plan)
+    QZ->>QL: concept_plan → P.rank_concepts
+    QZ-->>UI: due reviews, open misconceptions, ready fringe
+    UI->>QZ: POST /generate
+    QZ->>QL: generation_plan (quiz_planned_questions)
+    QL->>P: question_specs: difficulty, misconception targets
+    QZ->>W: concept, QUESTION lines, keys, course material
+    W-->>QZ: items with a tag per option
+    QZ->>C: concept check + blind solve (quiz_item_gates)
+    C-->>QZ: verdicts → P.decide: verified / practice / dropped
+    QZ-->>UI: keyless questions (drops never served)
+    UI->>QZ: POST /attempts/{id}/answer (each, with a confidence)
+    UI->>QZ: POST /submit
+    QZ->>QZ: lint + gate exclusion → farm guard → help floor
+    QZ->>G: mc evidence for verified questions
+    QZ->>QL: misconceptions_after_submit (quiz_misconceptions)
+    QZ->>QL: results_block (quiz_results_routing)
+    QZ-->>UI: score + learning block → review queue or Learn
+```
+
+1. **Which concept (A143, `quiz_concept_plan`, client-visible).**
+   `GET /api/quiz/plan` returns the student's concepts in the learner
+   model's order (`backend/learning/quiz_plan.py::rank_concepts`): FSRS-due
+   reviews first, most overdue first (`fsrs.order_due`), then concepts with
+   an open misconception, then the outer fringe (`planner.outer_fringe`).
+   A concept whose prerequisites are not proficient is not proposed; a
+   proficient one waits until it is due. The quiz home
+   (`frontend/src/lib/quiz/useQuizHome.ts`) proposes the plan's concepts,
+   says why with the skill meter, and its "Review everything due" queue is
+   the FSRS-due set. A failed plan keeps the old tier ranking.
+2. **What each question asks (A144, `quiz_planned_questions`).**
+   `backend/services/quiz_learning.py::generation_plan` reads the concept's
+   decayed state, the student's open misconceptions on it and the vetted
+   keys of its check items; `quiz_plan.question_specs` gives each question
+   its difficulty (the requested one, or for "adaptive" the band's loop
+   check level) and at most one misconception target. The planned writer
+   (`backend/agents/quiz_planned.py`, no tools) writes exactly those
+   questions and tags each distractor with a named key; the route stamps
+   the concept and the difficulty and keeps a tag only when the plan named
+   it. Tags, the plan and the gate stay inside the encrypted
+   `questions_json`, never served.
+3. **The gates (A145, `quiz_item_gates`).** Each generation run's new
+   questions go through A119's concept check and A124's blind solve (and one
+   key match for written answers the quiz grader rejects), on the
+   `quiz_check` slot — a model other than the writer's, or no key is
+   verified (`quiz_learning.checks_independent`). `quiz_gates.decide`: a
+   question testing another concept or none, a disputed key, or an unsolved
+   one when it was written from course passages is **dropped** (never
+   served; it counts toward the bounded top-up); aligned with an agreed key
+   is **verified**; anything unchecked is **practice** — served, never
+   evidence. `quiz.items_gated` counts the codes.
+4. **The evidence.** Submit runs the A132 lint gate, which also keeps a
+   question its gate did not verify out of evidence (both outcomes,
+   `quiz.evidence_excluded`), then A100's farm guard and A99's help floor,
+   then one `apply_graph_update`. The channel stays `mc` (A10).
+5. **Misconceptions (A146, `quiz_misconceptions`).** After the write, in
+   question order: a "Sure" wrong answer on a verified question whose chosen
+   distractor carries a key records it under the quiz item id
+   `quiz:<question_hash>`; a correct, unassisted, first answer on a verified
+   question, not after a release on the concept, closes the open keys its
+   distractors list (`misconceptions.resolve_after_grade`, surface `quiz`).
+   The loop's readers — the brief, the close, the review interleave — see
+   both.
+6. **The results (A147, `quiz_results_routing`).** Submit's `learning` block
+   lists each skill meter that moved (the concept and the neighbours its
+   evidence reached), what is due, and the next step; the results screen
+   (`frontend/src/components/quiz/results/LearningBlock.tsx`) links to the
+   review queue (only where the loop is on) or to Learn on the weakest
+   concept the student is ready for.
+
+What stays as it was: the farm guard (A94, A100), "Ask about this" (A99),
+the stated confidence and the lint gate (A132), and the integrity guard. The
+quiz is never a post-test or a learning-gain measure.

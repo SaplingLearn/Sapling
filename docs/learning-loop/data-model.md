@@ -345,7 +345,12 @@ models the learner reads them, except A76's release rule (below).
   **encrypted** and never read back. Written by the SQL function
   `misconception_record` (atomic insert-or-increment; since A142 it records
   nothing on a node the student does not own), closed by
-  `misconceptions.resolve` and by the void commit.
+  `misconceptions.resolve` and by the void commit. `check_item_id` is a
+  plain text column naming the item it was last recorded on: a check item's
+  id, or for a quiz question (A146) `quiz:<question_hash>`
+  (`backend/services/quiz_learning.py::quiz_item_id`), so A127's "recorded on
+  another item" filter tells quiz questions from check items and from each
+  other. No foreign key, no migration.
 - `misconception_attempts`: one row per increment, naming the item it came
   from, so a void can tell which misconceptions rest only on retired items.
   Append-only by grants (`SELECT`, `INSERT` only).
@@ -357,6 +362,7 @@ models the learner reads them, except A76's release rule (below).
 | `ai_tutor_daily_calls` | `(user_id, day)` → tutor call count, incremented atomically by `ai_budget_bump_tutor_calls` (A39); the 200-a-day cap. Backend-only. |
 | `llm_usage` | every model run; the loop added `cached_tokens`, `thinking_tokens` (A21), `session_id` (A92) and `course_id` (A137), all nullable. Read by the budget, the KPIs and cost per gain. The writer drops a column the database lacks and retries. |
 | `quiz_evidence_claims` | `(user_id, question_hash)` → the claim that allows one quiz evidence per rolling 24 hours (A100). Backend-only. |
+| `quiz_attempts` | `questions_json` (**encrypted**, JSON) holds each question in its wire shape. Internal keys, never served (the keyless allowlist; `_INTERNAL_QUESTION_KEYS` on the admin keyed path): `question_hash`, `provenance`, `lint_flags` (A132), and with the quiz flags on `planned` {slot, difficulty_source, target} (A144), `gate` {status, alignment, key} (A145) and an option's `misconception` tag (A144). No column was added for A143–A147. |
 | `flashcards` | FSRS columns `fsrs_d`, `fsrs_s`, `due_at`, `reps`, `lapses` (PKG-11); updated only through `flashcard_fsrs_update`. |
 | `user_settings` | `loop_arm` (the trial arm label, set by SQL only); `learning_loop_beta` is retired and read by nothing in the app. |
 
