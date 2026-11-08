@@ -41,9 +41,11 @@ class FakeJobs:
 
     def select_with_count(self, columns="*", filters=None, order=None, limit=None,
                           offset=None, timeout=None):
-        self.counts.append({"filters": filters, "limit": limit})
+        self.counts.append({"columns": columns, "filters": filters, "order": order,
+                            "limit": limit, "offset": offset})
         rows = self._match(filters)
-        return rows[:limit], len(rows)
+        start = offset or 0
+        return rows[start:start + limit], len(rows)
 
     def select(self, columns="*", filters=None, order=None, limit=None, offset=None,
                timeout=None):
@@ -115,17 +117,37 @@ def test_dead_limit_is_bounded(fake, params):
     assert client.get(BASE, params=params).status_code == 422
 
 
-def test_the_outstanding_scan_pages_and_stops_at_its_cap(monkeypatch):
-    many = [{"id": f"q-{i}", "type": "t.x", "status": "queued"} for i in range(25)]
+def _scan(monkeypatch, n, *, page=10, cap=20):
+    many = [{"id": f"q-{i}", "type": "t.x", "status": "queued"} for i in range(n)]
     jobs = FakeJobs(many)
     monkeypatch.setattr(admin_jobs, "table", lambda name: jobs)
     monkeypatch.setattr(admin_jobs, "require_admin", lambda request: None)
-    monkeypatch.setattr(admin_jobs, "MAX_ROWS", 10)
-    monkeypatch.setattr(admin_jobs, "OUTSTANDING_SCAN_CAP", 20)
-
+    monkeypatch.setattr(admin_jobs, "MAX_ROWS", page)
+    monkeypatch.setattr(admin_jobs, "OUTSTANDING_SCAN_CAP", cap)
     body = client.get(BASE).json()
+    scans = [c for c in jobs.counts if c["columns"] == "id,type,status"]
+    return body, scans
+
+
+def test_the_outstanding_scan_pages_and_stops_at_its_cap(monkeypatch):
+    body, scans = _scan(monkeypatch, 25)
     assert body["outstanding"] == {"t.x": {"queued": 20, "failed": 0, "running": 0}}
     assert body["outstanding_truncated"] is True
     assert body["status_counts"]["queued"] == 25  # exact regardless
-    scans = [s for s in jobs.selects if s["columns"] == "id,type,status"]
-    assert [s["offset"] for s in scans] == [0, 10]
+    # page_all, a total order, and no page past the one holding row cap+1.
+    assert [s["offset"] for s in scans] == [0, 10, 20]
+    assert all(s["order"] == "created_at,id" for s in scans)
+
+
+@pytest.mark.parametrize("n", [20, 7, 0])
+def test_a_backlog_at_or_under_the_cap_is_not_truncated(monkeypatch, n):
+    body, _ = _scan(monkeypatch, n)
+    assert body["outstanding_truncated"] is False
+    assert body["outstanding"] == ({"t.x": {"queued": n, "failed": 0, "running": 0}}
+                                   if n else {})
+
+
+def test_one_row_past_the_cap_is_truncated(monkeypatch):
+    body, _ = _scan(monkeypatch, 21)
+    assert body["outstanding_truncated"] is True
+    assert body["outstanding"]["t.x"]["queued"] == 20

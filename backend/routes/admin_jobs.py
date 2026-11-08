@@ -17,9 +17,11 @@ comment), so they are returned as they are.
 """
 from __future__ import annotations
 
+from itertools import islice
+
 from fastapi import APIRouter, Query, Request
 
-from db.connection import MAX_ROWS, table
+from db.connection import MAX_ROWS, page_all, table
 from services.auth_guard import require_admin
 
 router = APIRouter()
@@ -28,7 +30,9 @@ STATUSES = ("queued", "failed", "running", "succeeded", "dead")
 _OUTSTANDING = ("queued", "failed", "running")
 
 #: Unfinished rows read for the per-type breakdown. A backlog past this is
-#: reported as `outstanding_truncated` (status_counts stays exact).
+#: reported as `outstanding_truncated` (status_counts stays exact). Follow-up:
+#: a `jobs_overview()` SQL function (GROUP BY type, status) would make this one
+#: exact aggregate instead of a capped scan, but it needs a migration.
 OUTSTANDING_SCAN_CAP = 10 * MAX_ROWS
 
 _DEAD_COLUMNS = ",".join((
@@ -50,30 +54,21 @@ def _status_counts() -> dict[str, int]:
 
 def _outstanding() -> tuple[dict[str, dict[str, int]], bool]:
     """{type: {queued, failed, running}} over unfinished rows, and whether
-    the scan stopped at OUTSTANDING_SCAN_CAP."""
+    there are more than OUTSTANDING_SCAN_CAP of them (one row past the cap is
+    read to know: `truncated` is never set for a backlog of exactly the cap)."""
     by_type: dict[str, dict[str, int]] = {}
-    seen = 0
-    offset = 0
-    truncated = False
-    while True:
-        rows = table("jobs").select(
-            "id,type,status",
-            filters={"status": f"in.({','.join(_OUTSTANDING)})"},
-            order="created_at,id",
-            limit=MAX_ROWS,
-            offset=offset,
-        ) or []
-        for row in rows:
-            counts = by_type.setdefault(row["type"], {s: 0 for s in _OUTSTANDING})
-            if row.get("status") in counts:
-                counts[row["status"]] += 1
-        seen += len(rows)
-        if len(rows) < MAX_ROWS:
-            break
-        if seen >= OUTSTANDING_SCAN_CAP:
-            truncated = True
-            break
-        offset += MAX_ROWS
+    rows = page_all(
+        table("jobs"), "id,type,status",
+        filters={"status": f"in.({','.join(_OUTSTANDING)})"},
+        order="created_at,id",
+        page=min(MAX_ROWS, OUTSTANDING_SCAN_CAP + 1),
+    )
+    scanned = list(islice(rows, OUTSTANDING_SCAN_CAP + 1))
+    truncated = len(scanned) > OUTSTANDING_SCAN_CAP
+    for row in scanned[:OUTSTANDING_SCAN_CAP]:
+        counts = by_type.setdefault(row["type"], {s: 0 for s in _OUTSTANDING})
+        if row.get("status") in counts:
+            counts[row["status"]] += 1
     return dict(sorted(by_type.items())), truncated
 
 
