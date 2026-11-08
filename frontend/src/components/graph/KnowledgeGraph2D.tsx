@@ -104,7 +104,13 @@ type Props = {
 // together.
 
 type DragState =
-  | { kind: "node"; nodeId: string; pointerId: number }
+  | {
+      kind: "node";
+      nodeId: string;
+      pointerId: number;
+      /** Legible: the whole course moves with the pointer, from this point. */
+      group?: { courseId: string; lastX: number; lastY: number };
+    }
   | { kind: "pan"; pointerId: number; startX: number; startY: number; originTx: number; originTy: number }
   | null;
 
@@ -212,6 +218,20 @@ function KnowledgeGraph2DImpl({
   React.useEffect(() => {
     viewScaleRef.current = view.scale;
   }, [view.scale]);
+  // The committed view, for handlers that ease from it; the eased target and
+  // its animation frame.
+  const viewNowRef = React.useRef(view);
+  React.useEffect(() => {
+    viewNowRef.current = view;
+  }, [view]);
+  const viewTargetRef = React.useRef<{ tx: number; ty: number; scale: number } | null>(null);
+  const viewAnimRef = React.useRef<number | null>(null);
+  React.useEffect(
+    () => () => {
+      if (viewAnimRef.current != null) cancelAnimationFrame(viewAnimRef.current);
+    },
+    [],
+  );
   // A zoomed opening view is centred on the window, so a new window size
   // re-centres it — but only while the student hasn't moved it: once they
   // have panned or zoomed, a resize keeps their view. At the default zoom the
@@ -467,7 +487,7 @@ function KnowledgeGraph2DImpl({
     const fit = Math.min(width / (reach * 2), height / (reach * 2));
     const scale = Math.min(MAX_ZOOM, Math.max(1.05, fit));
     viewTouchedRef.current = true;
-    setView({ tx: width / 2 - c.x * scale, ty: height / 2 - c.y * scale, scale });
+    easeView({ tx: width / 2 - c.x * scale, ty: height / 2 - c.y * scale, scale });
     // Only a new request zooms; layout changes alone don't re-zoom.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomSeq, zoomCourse]);
@@ -566,11 +586,76 @@ function KnowledgeGraph2DImpl({
     };
   };
 
+  // ── Smooth view changes (legible) ───────────────────────────────────────
+  // Wheel, zoom buttons, reset and course zooms ease toward a target view
+  // over a few frames instead of jumping. Other graphs (and test mode /
+  // reduced motion) still jump, so their behaviour is unchanged.
+  const easeView = (target: { tx: number; ty: number; scale: number }) => {
+    const instant =
+      !legible ||
+      IS_TEST_MODE ||
+      typeof requestAnimationFrame === "undefined" ||
+      (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    if (instant) {
+      viewTargetRef.current = null;
+      setView(target);
+      return;
+    }
+    viewTargetRef.current = target;
+    if (viewAnimRef.current != null) return;
+    let cur = viewNowRef.current;
+    const step = () => {
+      const t = viewTargetRef.current;
+      if (!t) {
+        viewAnimRef.current = null;
+        return;
+      }
+      const k = 0.22;
+      cur = { tx: cur.tx + (t.tx - cur.tx) * k, ty: cur.ty + (t.ty - cur.ty) * k, scale: cur.scale + (t.scale - cur.scale) * k };
+      const done =
+        Math.abs(cur.scale - t.scale) < 0.001 && Math.abs(cur.tx - t.tx) < 0.3 && Math.abs(cur.ty - t.ty) < 0.3;
+      if (done) {
+        cur = t;
+        viewTargetRef.current = null;
+      }
+      setView(cur);
+      viewAnimRef.current = done ? null : requestAnimationFrame(step);
+    };
+    viewAnimRef.current = requestAnimationFrame(step);
+  };
+  const stopEasing = () => {
+    viewTargetRef.current = null;
+    if (viewAnimRef.current != null) cancelAnimationFrame(viewAnimRef.current);
+    viewAnimRef.current = null;
+  };
+  /** Zoom by `factor` about a window point, from wherever the view is headed. */
+  const zoomAbout = (factor: number, mx: number, my: number) => {
+    const base = viewTargetRef.current ?? viewNowRef.current;
+    const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, base.scale * factor));
+    const f = nextScale / base.scale;
+    const c = clampView(mx - (mx - base.tx) * f, my - (my - base.ty) * f, nextScale);
+    easeView({ tx: c.tx, ty: c.ty, scale: nextScale });
+  };
+
   const onNodePointerDown = (e: React.PointerEvent, n: SimNode) => {
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
     movedRef.current = false;
+    if (legible) {
+      // Legible: dragging any node of a course moves the whole course, and it
+      // stays where it is dropped; nothing is pinned, so nothing snaps back.
+      const at = clientToSvg(e.clientX, e.clientY);
+      dragRef.current = {
+        kind: "node",
+        nodeId: n.id,
+        pointerId: e.pointerId,
+        group: { courseId: n.course_id, lastX: at.x, lastY: at.y },
+      };
+      simRef.current?.alphaTarget(0.08).restart();
+      forceRerender();
+      return;
+    }
+    dragRef.current = { kind: "node", nodeId: n.id, pointerId: e.pointerId };
     simRef.current?.alphaTarget(0.3).restart();
     n.fx = n.x;
     n.fy = n.y;
@@ -584,6 +669,7 @@ function KnowledgeGraph2DImpl({
     const svg = svgRef.current;
     if (!svg) return;
     svg.setPointerCapture(e.pointerId);
+    stopEasing();
     dragRef.current = {
       kind: "pan",
       pointerId: e.pointerId,
@@ -607,7 +693,25 @@ function KnowledgeGraph2DImpl({
     const drag = dragRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     movedRef.current = true;
-    if (drag.kind === "node") {
+    if (drag.kind === "node" && drag.group) {
+      const { x, y } = clientToSvg(e.clientX, e.clientY);
+      const dx = x - drag.group.lastX;
+      const dy = y - drag.group.lastY;
+      drag.group.lastX = x;
+      drag.group.lastY = y;
+      for (const m of simNodesRef.current) {
+        if (m.course_id !== drag.group.courseId || m.x == null || m.y == null) continue;
+        m.x += dx;
+        m.y += dy;
+        if (m.fx != null && m.fy != null) {
+          // The course root: re-pin where it now is, and keep it there.
+          m.fx += dx;
+          m.fy += dy;
+          movedRootsRef.current.add(m.id);
+        }
+      }
+      applyPositions();
+    } else if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (!n) return;
       const { x, y } = clientToSvg(e.clientX, e.clientY);
@@ -635,7 +739,9 @@ function KnowledgeGraph2DImpl({
     try {
       (e.currentTarget as Element).releasePointerCapture(e.pointerId);
     } catch {}
-    if (drag.kind === "node") {
+    if (drag.kind === "node" && drag.group) {
+      simRef.current?.alphaTarget(0);
+    } else if (drag.kind === "node") {
       const n = simNodesRef.current.find((sn) => sn.id === drag.nodeId);
       if (n?.is_subject_root) {
         // Course roots stay pinned where they were dropped; their rings follow.
@@ -663,6 +769,13 @@ function KnowledgeGraph2DImpl({
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     viewTouchedRef.current = true;
+    if (legible) {
+      // Exponential, capped per event: a mouse wheel notch (deltaY ~100) and
+      // a trackpad's many small deltas both feel even, then ease in.
+      const d = Math.max(-120, Math.min(120, e.deltaY));
+      zoomAbout(Math.exp(-d * 0.0022), mx, my);
+      return;
+    }
     const delta = -e.deltaY * 0.0015;
     setView((v) => {
       const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.scale * (1 + delta)));
@@ -674,7 +787,7 @@ function KnowledgeGraph2DImpl({
 
   const resetView = () => {
     viewTouchedRef.current = false;
-    setView(fittedViewRef.current ?? initialView());
+    easeView(fittedViewRef.current ?? initialView());
   };
 
   const hoveredMastery = hovered
@@ -969,11 +1082,18 @@ function KnowledgeGraph2DImpl({
           data-testid="graph-zoom-in"
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
-          onClick={() => setView((v) => {
-            const s = Math.min(MAX_ZOOM, v.scale * 1.2);
-            const c = clampView(v.tx, v.ty, s);
-            return { tx: c.tx, ty: c.ty, scale: s };
-          })}
+          onClick={() => {
+            if (legible) {
+              viewTouchedRef.current = true;
+              zoomAbout(1.25, width / 2, height / 2);
+              return;
+            }
+            setView((v) => {
+              const s = Math.min(MAX_ZOOM, v.scale * 1.2);
+              const c = clampView(v.tx, v.ty, s);
+              return { tx: c.tx, ty: c.ty, scale: s };
+            });
+          }}
           title="Zoom in"
         >
           +
@@ -982,11 +1102,18 @@ function KnowledgeGraph2DImpl({
           data-testid="graph-zoom-out"
           className="btn btn--ghost btn--sm"
           style={{ padding: "2px 8px", fontFamily: "var(--font-mono)" }}
-          onClick={() => setView((v) => {
-            const s = Math.max(MIN_ZOOM, v.scale / 1.2);
-            const c = clampView(v.tx, v.ty, s);
-            return { tx: c.tx, ty: c.ty, scale: s };
-          })}
+          onClick={() => {
+            if (legible) {
+              viewTouchedRef.current = true;
+              zoomAbout(1 / 1.25, width / 2, height / 2);
+              return;
+            }
+            setView((v) => {
+              const s = Math.max(MIN_ZOOM, v.scale / 1.2);
+              const c = clampView(v.tx, v.ty, s);
+              return { tx: c.tx, ty: c.ty, scale: s };
+            });
+          }}
           title="Zoom out"
         >
           −
