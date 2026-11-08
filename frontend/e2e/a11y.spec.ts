@@ -38,6 +38,7 @@ import type { Browser, Page, Route } from "@playwright/test";
 import { expectAccessible } from "./support/a11y";
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { learningParams } from "./support/params";
+import { showsAnotherItem } from "./support/probe";
 import { expectAskReply, STREAM_TIMEOUT } from "./support/quiz";
 import { mintStorageState } from "./support/session";
 import { USER_CAPPED, USER_LOOP } from "./support/stack";
@@ -319,8 +320,7 @@ async function walkCheckInAndPlan(page: Page, cap: number) {
       .poll(async () => {
         if ((await phase.getAttribute("data-phase")) !== "probe") return true;
         if (!(await probeItem.isVisible())) return false;
-        const now = await probeItem.getAttribute("data-question-hash");
-        return (await page.getByTestId("loop-probe-reference").isVisible()) || (now !== null && now !== qh);
+        return (await page.getByTestId("loop-probe-reference").isVisible()) || (await showsAnotherItem(probeItem, qh));
       })
       .toBe(true);
     if (await page.getByTestId("loop-probe-reference").isVisible()) {
@@ -330,8 +330,7 @@ async function walkCheckInAndPlan(page: Page, cap: number) {
       }
       await page.getByTestId("loop-probe-next").click();
       await expect
-        .poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-          (await probeItem.getAttribute("data-question-hash")) !== qh)
+        .poll(async () => (await phase.getAttribute("data-phase")) !== "probe" || (await showsAnotherItem(probeItem, qh)))
         .toBe(true);
     }
   }

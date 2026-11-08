@@ -21,6 +21,7 @@ import type { Browser, Page } from "@playwright/test";
 import { queryRaw } from "./support/db";
 import { expect, killSwitchLane, test } from "./support/fixtures";
 import { learningParams } from "./support/params";
+import { showsAnotherItem } from "./support/probe";
 import { mintStorageState } from "./support/session";
 import { USER_LOOP } from "./support/stack";
 
@@ -98,7 +99,7 @@ test("keyboard only: the check-in, the plan, and a check item answered wrong (ea
       await expect
         .poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
           (await reference.isVisible()) ||
-          ((await probeItem.isVisible()) && (await probeItem.getAttribute("data-question-hash")) !== qh))
+          (await showsAnotherItem(probeItem, qh)))
         .toBe(true);
       if (await reference.isVisible()) {
         // the answer shown after a miss takes focus (so it is read out); Next follows it
@@ -108,8 +109,7 @@ test("keyboard only: the check-in, the plan, and a check item answered wrong (ea
         await expect(page.getByTestId("loop-probe-next")).toBeFocused();
         await page.keyboard.press("Enter");
         await expect
-          .poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-            (await probeItem.getAttribute("data-question-hash")) !== qh)
+          .poll(async () => (await phase.getAttribute("data-phase")) !== "probe" || (await showsAnotherItem(probeItem, qh)))
           .toBe(true);
       }
     }

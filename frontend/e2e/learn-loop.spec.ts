@@ -37,6 +37,7 @@ import { queryRaw, seedGoalContinuationItems } from "./support/db";
 import { decryptText, decryptTexts } from "./support/decrypt";
 import { learningParams } from "./support/params";
 import { runOracle } from "./support/oracle";
+import { showsAnotherItem } from "./support/probe";
 import { LOOP_STREAM_CAPTURE_SCRIPT, loopStreamCompleted, markLoopStream, readLoopStream, type LoopStreamTicket } from "./support/loop-streams";
 import { mintStorageState } from "./support/session";
 import { FRONTEND_URL, USER_ACTIVE, USER_CAPPED, USER_LOOP } from "./support/stack";
@@ -139,15 +140,14 @@ async function walkProbeAndPlan(page: Page, P: Params, approve = true): Promise<
       .poll(async () => {
         if ((await phase.getAttribute("data-phase")) !== "probe") return true;
         if (!(await probeItem.isVisible())) return false;
-        const now = await probeItem.getAttribute("data-question-hash");
-        return (await page.getByTestId("loop-probe-reference").isVisible()) || (now !== null && now !== qh);
+        return (await page.getByTestId("loop-probe-reference").isVisible()) || (await showsAnotherItem(probeItem, qh));
       })
       .toBe(true);
     if (await page.getByTestId("loop-probe-reference").isVisible()) {
       expect(difficulty).toBeGreaterThan(1);
       await page.getByTestId("loop-probe-next").click();
       await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-        (await probeItem.getAttribute("data-question-hash")) !== qh).toBe(true);
+        (await showsAnotherItem(probeItem, qh))).toBe(true);
     } else {
       expect(difficulty).toBe(1);
       await expect(page.getByTestId("loop-probe-reference")).toHaveCount(0);
@@ -1393,12 +1393,12 @@ test("independent prerequisite recovery unlocks a fresh goal plan requiring appr
       if (miss) missedFoundation = true;
       await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
         await page.getByTestId("loop-probe-reference").isVisible() ||
-        (await probe.getAttribute("data-question-hash")) !== hash).toBe(true);
+        (await showsAnotherItem(probe, hash))).toBe(true);
       if (await page.getByTestId("loop-probe-reference").isVisible()) {
         expect(miss).toBe(true);
         await page.getByTestId("loop-probe-next").click();
         await expect.poll(async () => (await phase.getAttribute("data-phase")) !== "probe" ||
-          (await probe.getAttribute("data-question-hash")) !== hash).toBe(true);
+          (await showsAnotherItem(probe, hash))).toBe(true);
       }
     }
     expect(missedFoundation).toBe(true);
@@ -1521,11 +1521,11 @@ test("a new goal session respects an earlier helped prerequisite miss even when 
       answered += 1;
       await expect.poll(async () => await phase.getAttribute("data-phase") !== "probe" ||
         await page.getByTestId("loop-probe-reference").isVisible() ||
-        await item.getAttribute("data-question-hash") !== hash).toBe(true);
+        await showsAnotherItem(item, hash)).toBe(true);
       if (await page.getByTestId("loop-probe-reference").isVisible()) {
         await page.getByTestId("loop-probe-next").click();
         await expect.poll(async () => await phase.getAttribute("data-phase") !== "probe" ||
-          await item.getAttribute("data-question-hash") !== hash).toBe(true);
+          await showsAnotherItem(item, hash)).toBe(true);
       }
     }
     expect(answered).toBeGreaterThan(0);
