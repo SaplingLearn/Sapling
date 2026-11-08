@@ -6,9 +6,12 @@ merged, ordered by the DASH rule (`fsrs.order_due`: |R − REVIEW_ORDER_THRESHOL
 ascending) and cut at the daily budget. A concept's item never comes from the
 student's seen/revealed sets or the concept's post-test reserve (A23); when that
 leaves nothing, only revealed items and the reserve are excluded; still nothing
-→ the concept is counted `unservable`. At the tutor hard budget level the route
-passes `pause_novice=True` and novice-band concepts are held back (`paused`);
-flashcards and develop/profic concepts keep being served (A20).
+→ the concept is counted `unservable`. An item the student reported (spec §13
+A113) is excluded in both passes, like a revealed one — even when it is the
+item the session has open for its concept, so a refresh moves past it. At the
+tutor hard budget level the route passes `pause_novice=True` and novice-band
+concepts are held back (`paused`); flashcards and develop/profic concepts keep
+being served (A20).
 
 Grading has ONE path per kind. A check item goes through PKG-05's
 `grade_answer` (A16, invariant 19) and its one Evidence dict is persisted,
@@ -115,6 +118,13 @@ def revealed_hashes(user_id: str) -> set[str]:
     """The student's revealed check items (A23): PKG-07's
     `loop_state_store.revealed_hashes` (see seen_hashes)."""
     return set(loop_state_store.revealed_hashes(user_id))
+
+
+def reported_hashes(user_id: str) -> set[str]:
+    """The check items the student reported (spec §13 A113): never served to
+    them again, in neither pass — `loop_state_store.reported_hashes` (see
+    seen_hashes)."""
+    return set(loop_state_store.reported_hashes(user_id))
 
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -523,9 +533,10 @@ def is_open(loop_state: dict | None, item: ReviewItem, now: datetime) -> bool:
 class _Selector:
     """Chooses a due concept's check item (rule 1, A23) — or re-uses the item the
     session already opened for it, while that item is still neither seen (evidence
-    from another surface: a review's own answer closes its open entry) nor revealed
-    (a wrong attempt in the tutor loop, an H4 sibling). The seen/revealed reads
-    happen once, on the first concept that needs an item."""
+    from another surface: a review's own answer closes its open entry), revealed
+    (a wrong attempt in the tutor loop, an H4 sibling) nor reported (A113). The
+    seen/revealed/reported reads happen once, on the first concept that needs an
+    item."""
 
     def __init__(self, user_id: str, served_today: set[str], opened: dict[str, str]):
         self.user_id, self.served_today, self.opened = user_id, served_today, opened
@@ -537,7 +548,9 @@ class _Selector:
         if not self.history:
             self.history["seen"] = set(seen_hashes(self.user_id))
             self.history["revealed"] = set(revealed_hashes(self.user_id))
-        answered_elsewhere = self.history["seen"] | self.history["revealed"]
+            self.history["reported"] = set(reported_hashes(self.user_id))
+        reported = self.history["reported"]
+        answered_elsewhere = self.history["seen"] | self.history["revealed"] | reported
         chosen = None
         open_id = self.opened.get(node["id"])
         if open_id is not None:
@@ -553,7 +566,10 @@ class _Selector:
             )
         if chosen is None:
             reserve = posttest_reserve_hash(pool)
-            fallback = self.history["revealed"] | ({reserve} if reserve is not None else set())
+            # A113: a reported item is excluded in both passes, like a revealed one
+            fallback = (
+                self.history["revealed"] | reported | ({reserve} if reserve is not None else set())
+            )
             strict = self.served_today | self.history["seen"] | fallback
             chosen = _pick_item(pool, c.band, strict, fallback)
         if chosen is None:
@@ -830,6 +846,32 @@ def claim_item(session_id: str, key: str, item_id: str, claim: str, now: datetim
         entry["claim"], entry["claim_at"] = claim, now_s
 
     _persist_loop_state(session_id, take)
+
+
+def drop_reported(session_id: str, item_id: str, now: datetime) -> bool:
+    """Spec §13 A113: the student reported the review item `item_id`. Its open
+    entry — still unanswered and not under a live answer claim — is dropped in
+    one compare-and-set write, so /review/answer refuses it (not served) and
+    the next serve opens another item for its key (the queue excludes reported
+    items). A graded entry, or one being graded, stays. True when an entry
+    went; LoopStateConflict propagates."""
+    now_s = now.timestamp()
+
+    def drop(doc: dict) -> bool:
+        opened = doc.get("open") or {}
+        keys = [
+            key
+            for key, entry in opened.items()
+            if isinstance(entry, dict)
+            and entry.get("item_id") == item_id
+            and entry.get("graded_at") is None
+            and not _live_claim(entry, now_s)
+        ]
+        for key in keys:
+            opened.pop(key)
+        return bool(keys)
+
+    return bool(_persist_loop_state(session_id, drop))
 
 
 def _release_claim(session_id: str, key: str, claim: str) -> None:

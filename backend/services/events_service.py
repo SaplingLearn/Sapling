@@ -128,6 +128,15 @@ learn.plan_approved           usage     concept_ids, n_reviews_first — the stu
 learn.session_closed          usage     session_id, concepts, misconceptions, has_if_then,
                                         model_written — a loop session's close was stored
                                         (PKG-09, spec §6, §13 A8); counts and bools only
+learn.check_item_reported     usage     course_id, question_hash, reason (wrong_answer /
+                                        unclear / not_from_my_course), surface (loop /
+                                        review), first, reporters — a student reported a
+                                        check item (spec §13 A113, #695); enums only
+learn.check_item_retired      audit     course_id, question_hash, decided_by (reports /
+                                        admin), reporters, items — a check item was retired
+                                        course-wide (A113)
+learn.check_item_approved     audit     course_id, question_hash — an admin cleared a
+                                        flagged or reported check item (A113)
 review.session_started        usage     session_id, offering_id (a daily review session row; never
                                         session.started — it is not a tutor session)
 review.served                 usage     kind (flashcard / check), n, budget_min, retention_target
@@ -279,6 +288,18 @@ EVENT_TAXONOMY: frozenset[str] = frozenset({
     # learn.check_items_failed). Payload ids and counts only: document_id,
     # course_id, requested, returned, stored, mc_reason_items. Never item text.
     "learn.check_items_topup",
+    # Learning loop spec §13 A113 (#695): a student reported a check item
+    # ("usage": a counted student action) and a check item was retired
+    # course-wide by ITEM_REPORT_RETIRE_MIN_REPORTERS reporters or an admin, or
+    # approved by an admin ("audit": a decision on content, for staff review —
+    # the admin review queue at /admin/check-items lists what is still open).
+    # Payloads: course_id, question_hash (a sha256, never the prompt), and enums
+    # and counts only — reason / surface / first / reporters; decided_by /
+    # reporters / items. A failed retire also emits learn.check_items_failed
+    # (reason RetireError).
+    "learn.check_item_reported",
+    "learn.check_item_retired",
+    "learn.check_item_approved",
     # Learning loop series PKG-06 (spec §6): the ZPD policy layer's log. Emitted
     # by learning/zpd_events.py only; nothing fires them until PKG-07 wires
     # the loop tutor. Payloads are ids/counts/enums — the question_hash is a

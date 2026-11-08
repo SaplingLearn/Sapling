@@ -79,6 +79,14 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
     # "on", so analytics stays on wherever it already was.
     FlagDef("product_analytics", ("off", "on"),
             "PostHog product analytics, frontend + backend (ADR 0028).", True),
+    # #695 (learning-loop spec §13 A113): "Report this question" on the loop's
+    # check card and Study's review queue, and POST /api/learn/loop/report.
+    # Client-visible: the frontend renders the control only when "on". Reports
+    # already made keep excluding their items whatever the flag says.
+    FlagDef("item_reports", ("off", "on"),
+            "Students can report a learning-loop check question (wrong answer / "
+            "unclear / not from my course); two reporters retire it course-wide.",
+            True),
 )}
 
 STEPS = ("env_override", "fail_closed", "user", "role", "rollout", "default")

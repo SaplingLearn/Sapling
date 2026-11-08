@@ -90,10 +90,10 @@ from agents.tools.check import CHANNEL_FOR_FORMAT, CheckAnswer, GradeOutcome, gr
 from agents.usage import UnfinishedRun, record_agent_usage, served_model_name
 from db.connection import page_all, table
 from learning import answer_guard, arms, gates, ladder, planner, policy, review, turn_activity, zpd_events
-from learning import grade_checkpoint
+from learning import grade_checkpoint, item_reports
 from learning import probe as probe_policy
 from learning.bkt import band as bkt_band
-from learning.checks import CheckItem, is_servable, posttest_reserve_hash, select_item
+from learning.checks import CheckItem, is_servable, lint_tiers, posttest_reserve_hash, select_item
 from learning.evidence import (
     PREREQ_RELATIONSHIP_TYPE, PlanningObservation, PlanningPersistenceUnavailable, PlanningProvenance, flush_pending,
 )
@@ -130,6 +130,7 @@ from learning.loop_state_store import (
     LoopSessionClosed,
     load_loop_state,
     recent_evidence,
+    reported_hashes,
     revealed_hashes,
     seen_hashes,
     update_loop_state,
@@ -204,6 +205,7 @@ from models import (
     LoopCheckNextBody,
     LoopHintBody,
     LoopRatingBody,
+    LoopReportBody,
     LoopGoalBody,
     PlanApproveBody,
     PosttestAnswerBody,
@@ -246,7 +248,9 @@ from services.check_item_service import (
     items_by_ids,
     items_for_concepts,
     list_items,
+    retire_course_item,
 )
+from services.feature_flags import flag_on
 from services.graph_context import build_graph_context_block
 from services.graph_service import _normalize_concept, _prerequisite_edges, get_graph
 from services.prompt_safety import neutralise_control_tags, wrap_untrusted
@@ -2683,12 +2687,18 @@ def _activate_next_item(user_id: str, course_id: str, state: dict, *, now: float
     the band's target difficulty; the formats rotated by the concept's checks
     so far. A concept with nothing servable advances the cursor and tries the
     next (at most once per remaining concept). No plan → None (teaching only).
-    Writes no evidence and runs no model."""
+    Writes no evidence and runs no model. An item the student reported (A113)
+    is excluded like a seen or revealed one."""
     concept = state.get("concept")
     if not concept:
         return None
     try:
-        excluded = seen_hashes(user_id) | revealed_hashes(user_id) | set(state.get("steps") or {})
+        excluded = (
+            seen_hashes(user_id)
+            | revealed_hashes(user_id)
+            | reported_hashes(user_id)
+            | set(state.get("steps") or {})
+        )
     except Exception as exc:
         if state.get("goal"):
             raise HTTPException(status_code=503, detail="Practice availability unavailable; retry") from exc
@@ -2756,7 +2766,12 @@ def _goal_practice_unavailable(user_id: str, course_id: str, state: dict, node_i
     if not node_ids:
         return set()
     try:
-        excluded = seen_hashes(user_id) | revealed_hashes(user_id) | set(state.get("steps") or {})
+        excluded = (
+            seen_hashes(user_id)
+            | revealed_hashes(user_id)
+            | reported_hashes(user_id)
+            | set(state.get("steps") or {})
+        )
         unavailable = set()
         for node in node_ids:
             items, excluded_for_node = _practice_pool(user_id, course_id, node, excluded)
@@ -3790,6 +3805,193 @@ def rating(body: LoopRatingBody, request: Request) -> dict:
     return {"ok": True}
 
 
+# ── "Report this question" (spec §13 A113; GitHub #695) ────────────────────
+#
+# A check item's key comes from a classmate's upload and no instructor reviews
+# it, so a student can report a question they were posed: wrong answer, unclear
+# or not from my course (enums only). The report is recorded first (the
+# database decides, under the item's lock, whether it is the
+# ITEM_REPORT_RETIRE_MIN_REPORTERS-th distinct reporter); then the item stops
+# being served to the reporter: every selection excludes
+# loop_state_store.reported_hashes, and the item is taken off the surface it was
+# reported from (the loop session's current check; the review session's open
+# entry). The report that reaches the threshold retires the item course-wide
+# through check_item_service's A23 retire path. Evidence already written stays.
+
+_REPORTED = "learn.check_item_reported"
+_RETIRED = "learn.check_item_retired"
+_RETIRE_ERROR = "RetireError"
+_WITHDRAWN_ITEM = "check item withdrawn"
+
+
+def _report_flag(user_id: str) -> None:
+    """The `item_reports` flag (spec §13 A113): off → the route's 404."""
+    if not flag_on(item_reports.ITEM_REPORTS_FLAG, user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def _posed_loop_item(body: LoopReportBody) -> CheckItem:
+    """The loop surface: an item this session posed (a step keyed by its
+    hash, the session the student's own). A withdrawn item is a 409."""
+    _session_scope(body.session_id, body.user_id)
+    entry = (_load_loop_state(body.session_id).get("steps") or {}).get(body.question_hash)
+    if not isinstance(entry, dict) or not entry.get("check_item_id"):
+        raise HTTPException(status_code=404, detail="No such check item in this session")
+    item = get_check_item(entry["check_item_id"])
+    if item is None:
+        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
+    return item
+
+
+def _served_review_item(body: LoopReportBody, now: datetime) -> CheckItem:
+    """The review surface: today's review session (the student's, its course
+    one they are enrolled in) served this item."""
+    _review_course(body.user_id, body.course_id)
+    if body.session_id != review.review_session_id(body.user_id, body.course_id, now):
+        raise HTTPException(status_code=409, detail=_REVIEW_EXPIRED)  # a new UTC day began
+    try:
+        view = review.peek_review_session(body.user_id, body.course_id, now)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Session user mismatch") from None
+    item = get_check_item(body.item_id)
+    if item is None:
+        raise HTTPException(status_code=409, detail=_WITHDRAWN_ITEM)
+    if item.question_hash not in ((view.get("review") or {}).get("served_hashes") or []):
+        raise HTTPException(status_code=404, detail=_REVIEW_CLAIM_DETAIL["not_served"])
+    return item
+
+
+def _clear_reported_current(session_id: str, question_hash: str, now: float) -> None:
+    """Take the reported check off the loop session: its step is marked
+    reported (a session never re-activates a hash it keyed), and it stops
+    being current while it still awaits an answer. A graded step (its feedback
+    must still be served) or one being graded is left as it is."""
+
+    def withdraw(state: dict) -> None:
+        entry = _steps(state).get(question_hash)
+        if not isinstance(entry, dict):
+            return
+        entry["reported"] = True
+        claimed = entry.get("grading_claim") and not (
+            now - float(entry.get("grading_claim_at") or 0) > LOOP_GRADING_CLAIM_STALE_S
+        )
+        if (
+            state.get("current") == question_hash
+            and entry.get("graded_at") is None
+            and grade_checkpoint.KEY not in entry
+            and not claimed
+        ):
+            state["current"] = None
+
+    _update_loop_state(session_id, withdraw)
+
+
+def _retire_reported(
+    item: CheckItem, *, user_id: str, request_id: str, decided_by: str, reporters: int | None
+) -> int | None:
+    """Retire the course item now (the decision is already recorded): rows
+    deleted, or None when the delete failed — logged at ERROR and counted as
+    learn.check_items_failed (RetireError); the admin queue lists the item as
+    retire-pending until an admin's retire finishes it."""
+    try:
+        retired = retire_course_item(item.course_id, item.question_hash)
+    except Exception:
+        logger.error(
+            "check item retire FAILED (course=%s hash=%s); it stays served until retired",
+            item.course_id,
+            item.question_hash,
+            exc_info=True,
+        )
+        events_service.log_event(
+            "learn.check_items_failed",
+            category="error",
+            user_id=user_id,
+            request_id=request_id,
+            payload={"document_id": None, "course_id": item.course_id, "reason": _RETIRE_ERROR},
+        )
+        return None
+    events_service.log_event(
+        _RETIRED,
+        category="audit",
+        user_id=user_id,
+        request_id=request_id,
+        payload={
+            "course_id": item.course_id,
+            "question_hash": item.question_hash,
+            "decided_by": decided_by,
+            "reporters": reporters,
+            "items": retired,
+        },
+    )
+    return retired
+
+
+@router.post("/report", dependencies=_RATE_LIMITED)
+def report_item(body: LoopReportBody, request: Request) -> dict:
+    """POST /api/learn/loop/report (spec §13 A113; GitHub #695): the student
+    reports a check item they were posed — on the loop's check card
+    (`surface: loop`, the session's step by `question_hash`) or on Study's
+    review queue (`surface: review`, today's review session's item by
+    `item_id`). The reason is an enum; nothing else the student writes is
+    stored. Idempotent: a repeat records nothing new. Runs no model but is
+    rate-limited (A20); require_self, the gate's 404, the `item_reports`
+    flag's 404 and the owner checks run first. 503 when the report could not
+    be recorded (nothing changed; retry)."""
+    if not body.user_id:
+        body.user_id = get_session_user_id(request)
+    _gate(body.user_id, request)
+    _report_flag(body.user_id)
+    loop = body.surface == "loop"
+    review_now = None if loop else _review_now()
+    item = _posed_loop_item(body) if loop else _served_review_item(body, review_now)
+    request_id = _request_id(request)
+    try:
+        outcome = item_reports.record_report(
+            body.user_id,
+            item.course_id,
+            item.question_hash,
+            reason=body.reason,
+            surface=body.surface,
+        )
+    except Exception:
+        logger.warning("check item report not recorded (course=%s)", item.course_id, exc_info=True)
+        raise HTTPException(status_code=503, detail="report not recorded; retry") from None
+    # stop serving it to the reporter on the surface it came from (a refresh,
+    # /check/next or /review/next then moves on; every selection excludes it)
+    if loop:
+        _clear_reported_current(body.session_id, item.question_hash, _now_s())
+    else:
+        try:
+            review.drop_reported(body.session_id, item.id, review_now)
+        except LoopStateConflict:
+            raise _StateConflict() from None
+    events_service.log_event(
+        _REPORTED,
+        category="usage",
+        user_id=body.user_id,
+        request_id=request_id,
+        payload={
+            "course_id": item.course_id,
+            "question_hash": item.question_hash,
+            "reason": body.reason,
+            "surface": body.surface,
+            "first": outcome.first,
+            "reporters": outcome.reporters,
+        },
+    )
+    retired = outcome.retire and (
+        _retire_reported(
+            item,
+            user_id=body.user_id,
+            request_id=request_id,
+            decided_by=item_reports.DECIDED_BY_REPORTS,
+            reporters=outcome.reporters,
+        )
+        is not None
+    )
+    return {"reported": True, "first": outcome.first, "retired": retired}
+
+
 # ── Tool-removed post-test (PKG-14; spec §10 rung 3, A16, A23) ─────────────
 
 #: Every value `zpd.step.phase` may carry (PKG-06's Phase; spec §13 A8 adds
@@ -3826,25 +4028,37 @@ def _due_for_posttest(last_evidence_at, cutoff: datetime) -> bool:
 
 
 def posttest_item(items: list, excluded: set[str]):
-    """The concept's post-test item (A23): its reserve when that is neither seen
-    nor revealed; else the free item nearest CHECK_ITEM_DIFFICULTIES[1] outside
+    """The concept's post-test item (A23): its reserve when that is outside
+    `excluded`; else the free item nearest CHECK_ITEM_DIFFICULTIES[1] outside
     `excluded`; else (†) the lowest-hash servable item outside it; else None.
-    Never a seen or revealed item."""
+    Never an excluded (seen, revealed or reported) item. Within each rule the
+    item-flaw lint decides first (A113: clean, then never linted, then
+    flagged) — the reserve itself is chosen that way (posttest_reserve_hash) —
+    so a flagged item is posed only when the concept has nothing else. A
+    retired item is gone from `items` (deleted), so it is never posed."""
     reserve = posttest_reserve_hash(items)
     if reserve is not None and reserve not in excluded:
         return next(i for i in items if i.question_hash == reserve)
-    chosen = select_item(
-        items, format="free", difficulty=CHECK_ITEM_DIFFICULTIES[1], exclude_hashes=excluded
-    )
-    if chosen is not None:
-        return chosen
-    rest = [i for i in items if i.question_hash not in excluded and is_servable(i)]
-    return min(rest, key=lambda i: i.question_hash) if rest else None
+    tiers = lint_tiers(items)
+    for tier in tiers:
+        chosen = select_item(
+            tier, format="free", difficulty=CHECK_ITEM_DIFFICULTIES[1], exclude_hashes=excluded
+        )
+        if chosen is not None:
+            return chosen
+    for tier in tiers:
+        rest = [i for i in tier if i.question_hash not in excluded and is_servable(i)]
+        if rest:
+            return min(rest, key=lambda i: i.question_hash)
+    return None
 
 
-def _posttest_excluded(user_id: str) -> set[str]:
-    """seen ∪ revealed (A23), read once per request."""
-    return set(seen_hashes(user_id)) | set(revealed_hashes(user_id))
+def _posttest_excluded(user_id: str, reported: set[str] | None = None) -> set[str]:
+    """seen ∪ revealed (A23) ∪ reported (A113), read once per request (the
+    reported set is the caller's when it has read it already)."""
+    if reported is None:
+        reported = set(reported_hashes(user_id))
+    return set(seen_hashes(user_id)) | set(revealed_hashes(user_id)) | reported
 
 
 class _CourseNodesRead:
@@ -3948,8 +4162,9 @@ def _release_pose(user_id: str, node_id: str, claim: str) -> None:
 def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     """Rung 3 (spec §10): this student's post-test items for one course — one
     per concept whose last evidence is at least POSTTEST_MIN_AGE_DAYS old, its
-    reserve item unless seen or revealed (A23), oldest evidence first, at most
-    POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the posed item is recorded,
+    reserve item unless seen or revealed (A23), never an item they reported or
+    one retired (A113), a lint-clean item first (posttest_item), oldest
+    evidence first, at most POSTTEST_MAX_ITEMS. It COMMITS when opened (A87): the posed item is recorded,
     and a repeat start returns the same item for a node with an open pose —
     never a fresh one. The pose only: the prompt verbatim and an mc_reason
     item's options, never a key or a reference. No brief, no RAG, no tutor, no
@@ -3975,22 +4190,27 @@ def posttest_start(body: PosttestStartBody, request: Request) -> dict:
     if not rows:
         return {"items": []}
     by_key = items_for_concepts(body.course_id, sorted({nodes[r["node_id"]] for r in rows}))
-    excluded = _posttest_excluded(body.user_id)
+    reported = set(reported_hashes(body.user_id))
+    excluded = _posttest_excluded(body.user_id, reported)
     out: list[dict] = []
     new: list[dict] = []
     for r in sorted(rows, key=lambda r: (str(r.get("last_evidence_at")), r["node_id"])):
         node = r["node_id"]
         items = by_key.get(nodes[node]) or []
         pose = poses.get(node)
+        # A113: an item the student reported is never posed again — an open or a
+        # bound pose's included (posttest_item excludes it too; a retired item
+        # is gone from the course's items)
+        posed = pose.get("question_hash") if pose and pose.get("question_hash") not in reported else None
         item = None
         if _pose_open(pose, now):
-            item = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
+            item = next((i for i in items if i.question_hash == posed), None)
         bound = None
         if item is None and pose is not None and not pose.get("answered_at"):
             # A93 (minor 6): an EXPIRED, unanswered pose keeps its item bound to the
             # node — a re-pose renews the same item, never a fresh one to dodge it
-            bound = next((i for i in items if i.question_hash == pose.get("question_hash")), None)
-        if item is None:  # no open pose (or its item was withdrawn): pose one now
+            bound = next((i for i in items if i.question_hash == posed), None)
+        if item is None:  # no open pose (or its item was withdrawn or reported): pose one now
             if node not in due_ids:
                 continue
             item = bound or posttest_item(items, excluded)
@@ -5170,7 +5390,8 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     ends at once (`no_check_items`, A23/A26). A posed item is served again until
     it is answered (never a skip); one left under a stale grading claim is
     moved past. Selection never serves a concept's post-test reserve (A23), an
-    item whose answer this student has been shown (`revealed_hashes`), one the
+    item whose answer this student has been shown (`revealed_hashes`), one they
+    reported (`reported_hashes`, A113), one the
     grader could not grade (`unavailable`), or one with no final answer (A34);
     an item the student already has evidence on (`seen_hashes`) only when no
     unseen one is left (review's A23 fallback). Asked items always count toward
@@ -5220,7 +5441,8 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
     else:
         skills = [s for s in fixed if isinstance(s, str) and s in states and (scope is None or s in scope)]
     items = _probe_items(body.user_id, course_id, skills)
-    revealed = revealed_hashes(body.user_id) if items else set()
+    # A113: an item the student reported is never posed again, like a revealed one
+    revealed = (revealed_hashes(body.user_id) | reported_hashes(body.user_id)) if items else set()
     seen = seen_hashes(body.user_id) if items else set()
     reserves = {
         posttest_reserve_hash([it for it in items if it.node_id == n])

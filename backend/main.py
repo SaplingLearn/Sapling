@@ -29,6 +29,7 @@ from routes.flags import router as flags_router
 from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
+from routes.admin_check_items import router as admin_check_items_router
 from routes.admin_email import router as admin_email_router
 from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
@@ -402,6 +403,8 @@ app.include_router(flags_router,       prefix="/api/flags")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")
+# Learning-loop check-item review queue (spec §13 A113): flagged/reported items.
+app.include_router(admin_check_items_router, prefix="/api/admin/check-items")
 app.include_router(admin_email_router, prefix="/api/admin/email")
 app.include_router(newsletter_router,  prefix="/api/newsletter")
 # Public, no session: the unsubscribe page linked from every email (and the

@@ -103,6 +103,33 @@ class LoopRatingBody(BaseModel):
     rating: Literal["too_easy", "appropriate", "too_hard"]
 
 
+class LoopReportBody(BaseModel):
+    """/api/learn/loop/report (spec §13 A113; GitHub #695) — "Report this
+    question" on a check item the student was posed: on the loop's check card
+    (`surface` loop: the session's step, by `question_hash`) or in Study's
+    review queue (`surface` review: today's review session's item, by
+    `item_id`, the course scope as /review/answer takes it). The reason is an
+    enum and the body takes nothing else: no free text is ever stored.
+    Unknown fields are a 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str = ""  # resolved from the session cookie when empty, like LoopRatingBody
+    surface: Literal["loop", "review"]
+    session_id: str = Field(..., min_length=1, max_length=128)
+    reason: Literal["wrong_answer", "unclear", "not_from_my_course"]
+    question_hash: Optional[str] = Field(None, max_length=128)
+    item_id: Optional[str] = Field(None, max_length=128)
+    course_id: Optional[str] = Field(None, max_length=128)
+
+    @model_validator(mode="after")
+    def _names_its_item(self) -> "LoopReportBody":
+        if self.surface == "loop" and not self.question_hash:
+            raise ValueError("a loop report names the posed check's question_hash")
+        if self.surface == "review" and not self.item_id:
+            raise ValueError("a review report names the served item's item_id")
+        return self
+
+
 class RenameSessionBody(BaseModel):
     user_id: str
     topic: str

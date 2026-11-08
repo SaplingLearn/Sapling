@@ -161,6 +161,9 @@ class CheckItem(BaseModel):
     # A34: None on a row drafted before the column existed — never served
     # (is_servable); scripts/backfill_check_items.py regenerates its concept.
     final_answer: str | None = None
+    # A113: learning.item_lint's flags ([] = clean); None on a row stored
+    # before the linter ran (scripts/backfill_check_item_lint.py fills it).
+    lint_flags: list[str] | None = None
 
 
 class OptionDraft(BaseModel):
@@ -1542,14 +1545,37 @@ def select_item(
     )
 
 
+def lint_rank(item) -> int:
+    """How a post-test choice ranks an item by its item-flaw lint (§13 A113):
+    0 linted clean, 1 never linted (lint_flags None), 2 flagged."""
+    flags = getattr(item, "lint_flags", None)
+    if flags is None:
+        return 1
+    return 2 if flags else 0
+
+
+def lint_tiers(items: Iterable[CheckItem]) -> list[list[CheckItem]]:
+    """`items` split by lint_rank — clean, never linted, flagged — each in
+    its given order (A113: the post-test tries them in that order)."""
+    tiers: list[list[CheckItem]] = [[], [], []]
+    for item in items:
+        tiers[lint_rank(item)].append(item)
+    return tiers
+
+
 def posttest_reserve_hash(items: Iterable[CheckItem]) -> str | None:
     """The concept's post-test reserve (A23): the lowest question_hash among
     servable (A34) `free` items at CHECK_ITEM_DIFFICULTIES[1], else the lowest
-    servable overall, else None. Probe, in-session checks and review never
-    serve it; the post-test does, so an item with no final answer is never it."""
+    servable overall, else None — taken from the best lint tier that has one
+    (A113: clean, then never linted, then flagged), so the item the post-test
+    poses is a flawed one only when the concept has nothing else. Probe,
+    in-session checks and review never serve it; the post-test does, so an
+    item with no final answer is never it."""
     items = [i for i in items if is_servable(i)]
     mid = CHECK_ITEM_DIFFICULTIES[1]
-    preferred = [i.question_hash for i in items if i.format == "free" and i.difficulty == mid]
-    if preferred:
-        return min(preferred)
-    return min((i.question_hash for i in items), default=None)
+    preferred = [i for i in items if i.format == "free" and i.difficulty == mid]
+    for pool in (preferred, items):
+        if pool:
+            best = min(lint_rank(i) for i in pool)
+            return min(i.question_hash for i in pool if lint_rank(i) == best)
+    return None

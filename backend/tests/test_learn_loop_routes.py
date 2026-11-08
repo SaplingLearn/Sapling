@@ -173,6 +173,8 @@ RATE_LIMITED_NO_MODEL = [
     "/posttest/start",
     # PKG-14 review fix round: the zpd.rating answer writes state and an event
     "/rating",
+    # spec §13 A113: "Report this question" writes a report, state and an event
+    "/report",
 ]
 #: PKG-12: no review route carries the dependency — /review/answer checks the rate
 #: limit inline for a check answer only (tests/test_learning_review.py).
@@ -384,6 +386,7 @@ def seams():
         p("grade_answer", new=grade_with_evidence)
         ns.seen_hashes = p("seen_hashes", return_value=set())
         ns.revealed_hashes = p("revealed_hashes", return_value=set())
+        ns.reported_hashes = p("reported_hashes", return_value=set())  # spec §13 A113
         # PKG-14 (spec §13 A88): the open posed items a served turn is scanned
         # against, and the learning_reveals store (none by default)
         ns.open_posed = p("posed_items", return_value=([], None))  # A93: (items, overflow)
@@ -3937,3 +3940,186 @@ def test_active_loop_foreign_pending_session_is_404_without_materialization(gate
         seams.grade.assert_not_called()
     finally:
         PENDING_SESSIONS.pop("foreign-pending", None)
+
+
+# ── "Report this question" on the check card (spec §13 A113; GitHub #695) ─────
+
+REPORT = "/api/learn/loop/report"
+
+
+def _report_body(**over) -> dict:
+    return {"surface": "loop", "session_id": "s1", "user_id": "u1", "question_hash": "qh-1",
+            "reason": "wrong_answer", **over}
+
+
+@pytest.fixture
+def reports(seams):
+    """The report store and the retire path, faked; the `item_reports` flag on."""
+    from learning import item_reports
+
+    ns = SimpleNamespace(outcomes=[], calls=[], retired=[], fail_retire=False)
+
+    def record(user_id, course_id, question_hash, *, reason, surface):
+        ns.calls.append((user_id, course_id, question_hash, reason, surface))
+        if ns.outcomes:
+            return ns.outcomes.pop(0)
+        return item_reports.ReportOutcome(first=True, reporters=1, retire=False)
+
+    def retire(course_id, question_hash):
+        ns.retired.append((course_id, question_hash))
+        if ns.fail_retire:
+            raise RuntimeError("delete failed")
+        return 1
+
+    with (
+        patch("routes.learn_loop.flag_on", return_value=True) as flag,
+        patch("routes.learn_loop.item_reports.record_report", side_effect=record),
+        patch("routes.learn_loop.retire_course_item", side_effect=retire),
+    ):
+        ns.flag = flag
+        yield ns
+
+
+def _events_of(seams, name):
+    return [c for c in seams.events.log_event.call_args_list if c.args and c.args[0] == name]
+
+
+def test_activation_excludes_reported_items(seams):
+    """A113: an item the student reported is excluded like a seen or revealed one."""
+    from routes.learn_loop import _activate_next_item
+
+    seams.reported_hashes.return_value = {"qh-reported"}
+    seams.list_items.return_value = [ITEM]
+    st = _plan_state()
+    assert _activate_next_item("u1", "c1", st, now=NOW) == ITEM.question_hash
+    assert "qh-reported" in seams.select_item.call_args.kwargs["exclude_hashes"]
+    seams.reported_hashes.assert_called_with("u1")
+
+
+def test_report_is_404_when_the_flag_is_off(gate_on, seams, reports):
+    reports.flag.return_value = False
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 404
+    assert reports.calls == [] and seams.save.call_count == 0
+    reports.flag.assert_called_with("item_reports", "u1")
+
+
+def test_report_is_404_when_the_loop_gate_is_off(seams, reports):
+    with patch("routes.learn_loop.learning_loop_for_request", return_value=False):
+        r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 404 and r.json()["detail"] == "learning loop not enabled"
+    reports.flag.assert_not_called()  # the gate first, then the flag
+    assert reports.calls == []
+
+
+def test_report_records_then_takes_the_check_off_the_card(gate_on, seams, reports):
+    """The posed check is reported: recorded once (its course from the item),
+    no longer current (the card goes; /check/next activates another), its step
+    marked reported, and one learn.check_item_reported event — enums and the
+    hash only. Nothing is graded and no model runs."""
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 200, r.text
+    assert r.json() == {"reported": True, "first": True, "retired": False}
+    assert reports.calls == [("u1", ITEM.course_id, "qh-1", "wrong_answer", "loop")]
+    doc = seams.store["doc"]
+    assert doc["current"] is None and doc["steps"]["qh-1"]["reported"] is True
+    (event,) = _events_of(seams, "learn.check_item_reported")
+    assert event.kwargs["category"] == "usage" and event.kwargs["user_id"] == "u1"
+    assert event.kwargs["payload"] == {
+        "course_id": ITEM.course_id, "question_hash": "qh-1", "reason": "wrong_answer",
+        "surface": "loop", "first": True, "reporters": 1,
+    }
+    assert reports.retired == []
+    seams.grade.assert_not_called()
+    seams.ai_budget.check.assert_not_called()
+
+
+def test_a_repeat_report_records_nothing_new(gate_on, seams, reports):
+    from learning import item_reports
+
+    reports.outcomes = [item_reports.ReportOutcome(first=False, reporters=1, retire=False)]
+    r = client.post(REPORT, json=_report_body(reason="unclear"))
+    assert r.status_code == 200 and r.json()["first"] is False
+
+
+def test_the_report_that_reaches_the_threshold_retires_the_item(gate_on, seams, reports):
+    from learning import item_reports
+    from learning.params import ITEM_REPORT_RETIRE_MIN_REPORTERS
+
+    reports.outcomes = [
+        item_reports.ReportOutcome(first=True, reporters=ITEM_REPORT_RETIRE_MIN_REPORTERS, retire=True)
+    ]
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 200 and r.json()["retired"] is True
+    assert reports.retired == [(ITEM.course_id, "qh-1")]
+    (event,) = _events_of(seams, "learn.check_item_retired")
+    assert event.kwargs["category"] == "audit"
+    assert event.kwargs["payload"] == {
+        "course_id": ITEM.course_id, "question_hash": "qh-1", "decided_by": "reports",
+        "reporters": ITEM_REPORT_RETIRE_MIN_REPORTERS, "items": 1,
+    }
+
+
+def test_a_failed_retire_keeps_the_report_and_is_counted(gate_on, seams, reports):
+    from learning import item_reports
+
+    reports.outcomes = [item_reports.ReportOutcome(first=True, reporters=2, retire=True)]
+    reports.fail_retire = True
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 200 and r.json() == {"reported": True, "first": True, "retired": False}
+    assert seams.store["doc"]["current"] is None  # off the reporter's card all the same
+    (failed,) = _events_of(seams, "learn.check_items_failed")
+    assert failed.kwargs["payload"]["reason"] == "RetireError"
+    assert _events_of(seams, "learn.check_item_retired") == []
+
+
+def test_only_a_check_this_session_posed_can_be_reported(gate_on, seams, reports):
+    r = client.post(REPORT, json=_report_body(question_hash="qh-never-posed"))
+    assert r.status_code == 404 and reports.calls == []
+    seams.item.return_value = None  # withdrawn (A23) since it was posed
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 409 and r.json()["detail"] == "check item withdrawn"
+    assert reports.calls == []
+
+
+def test_another_students_session_is_refused(gate_on, seams, reports):
+    seams.scope.side_effect = HTTPException(status_code=404, detail="Session not found")
+    assert client.post(REPORT, json=_report_body()).status_code == 404
+    assert reports.calls == []
+
+
+def test_a_graded_check_stays_current_for_its_feedback(gate_on, seams, reports):
+    """The report is recorded, but a graded step's feedback still has to be
+    served: the card is not withdrawn under it (nor under a live grading claim)."""
+    from learning.params import LOOP_GRADING_CLAIM_STALE_S
+
+    seams.store["doc"] = _graded("wrong")
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 200
+    assert seams.store["doc"]["current"] == "qh-1"
+    assert seams.store["doc"]["steps"]["qh-1"]["reported"] is True
+    seams.store["doc"] = _state(grading_claim="c", grading_claim_at=NOW)
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 200, r.text
+    assert seams.store["doc"]["current"] == "qh-1"
+    # a claim left stale (a crash mid-grade) is no longer in flight: the card goes
+    seams.store["doc"] = _state(grading_claim="c", grading_claim_at=NOW - LOOP_GRADING_CLAIM_STALE_S - 1)
+    r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 200, r.text
+    assert seams.store["doc"]["current"] is None
+
+
+def test_an_unrecorded_report_is_a_503_and_changes_nothing(gate_on, seams, reports):
+    with patch("routes.learn_loop.item_reports.record_report", side_effect=RuntimeError("down")):
+        r = client.post(REPORT, json=_report_body())
+    assert r.status_code == 503
+    assert seams.store["doc"]["current"] == "qh-1"
+    assert "reported" not in seams.store["doc"]["steps"]["qh-1"]
+    assert _events_of(seams, "learn.check_item_reported") == []
+
+
+def test_a_report_never_carries_free_text(gate_on, seams, reports):
+    r = client.post(REPORT, json=_report_body(comment="the key is wrong"))
+    assert r.status_code == 422 and reports.calls == []
+    r = client.post(REPORT, json=_report_body(reason="something else"))
+    assert r.status_code == 422 and reports.calls == []
