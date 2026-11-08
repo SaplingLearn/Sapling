@@ -177,3 +177,18 @@ def set_ack(state: dict, prompt_id: str | None) -> None:
     doc = dict(_doc(state))
     doc["ack"] = prompt_id
     state[KEY] = doc
+
+
+def mark_closed_by_reply(state: dict, prompt_id: str) -> bool:
+    """Record that the reply route closed `prompt_id` — True only the FIRST
+    time, inside the one compare-and-set write that decides it, so a reply's
+    transcript row and event are written exactly once however many requests
+    committed it (second review: a slow winner and its retry both wrote them).
+    Prompt ids only (A38), at most one per concept per session."""
+    doc = dict(_doc(state))
+    done = [p for p in doc.get("replied") or [] if isinstance(p, str)]
+    if prompt_id in done:
+        return False
+    doc["replied"] = [*done, prompt_id]
+    state[KEY] = doc
+    return True
