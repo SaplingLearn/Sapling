@@ -90,6 +90,32 @@ def test_mint_realtime_uses_the_clock_seam(monkeypatch):
     assert exp == 2_000_000 + user_jwt.REALTIME_TOKEN_TTL_S
 
 
+def test_mint_realtime_expires_at_is_the_signed_exp(monkeypatch):
+    """`expires_at` is the `exp` _sign put in the token, not a recomputation:
+    a clock that moves between reads cannot make the two disagree."""
+    monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
+    ticks = iter(range(3_000_000, 3_000_100))
+    monkeypatch.setattr(user_jwt, "_now", lambda: next(ticks))
+    for _ in range(3):
+        token, exp = user_jwt.mint_realtime("u1")
+        assert exp == _decode(token)[1]["exp"]
+
+
+def test_mint_realtime_returns_whatever_exp_sign_signed(monkeypatch):
+    monkeypatch.setenv(user_jwt.SIGNING_KEY_ENV, OCT_JWK)
+    real_sign = user_jwt._sign
+    seen = {}
+
+    def spy(subject, issuer, ttl_s, now):
+        token, exp = real_sign(subject, issuer, ttl_s, now)
+        seen["exp"] = exp
+        return token, exp
+
+    monkeypatch.setattr(user_jwt, "_sign", spy)
+    token, exp = user_jwt.mint_realtime("u1", now=4_000_000)
+    assert exp == seen["exp"] == _decode(token)[1]["exp"]
+
+
 def test_mint_realtime_needs_a_subject_and_a_key(monkeypatch):
     with pytest.raises(user_jwt.SigningKeyError):
         user_jwt.mint_realtime("u1")

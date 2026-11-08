@@ -175,18 +175,20 @@ def _now() -> int:
 
 def mint(subject: str, *, now: int | None = None) -> str:
     """Sign a fresh token for ``subject`` (a users.id). Uncached."""
-    return _sign(subject, ISSUER, TOKEN_TTL_S, now)
+    return _sign(subject, ISSUER, TOKEN_TTL_S, now)[0]
 
 
 def mint_realtime(subject: str, *, now: int | None = None) -> tuple[str, int]:
     """Sign a browser Realtime token for ``subject``: ``(token, exp)``.
     Uncached (one per GET /api/auth/realtime-token, about one an hour per open
-    study room). Same key as :func:`mint`; ``iss`` is REALTIME_ISSUER."""
-    iat = _now() if now is None else now
-    return _sign(subject, REALTIME_ISSUER, REALTIME_TOKEN_TTL_S, iat), iat + REALTIME_TOKEN_TTL_S
+    study room). Same key as :func:`mint`; ``iss`` is REALTIME_ISSUER. ``exp``
+    is the claim actually signed into the token, never recomputed, so the
+    ``expires_at`` the browser schedules its refresh on cannot drift from it."""
+    return _sign(subject, REALTIME_ISSUER, REALTIME_TOKEN_TTL_S, now)
 
 
-def _sign(subject: str, issuer: str, ttl_s: int, now: int | None) -> str:
+def _sign(subject: str, issuer: str, ttl_s: int, now: int | None) -> tuple[str, int]:
+    """Sign one token; returns ``(token, exp)`` with ``exp`` the signed claim."""
     if not subject or not isinstance(subject, str):
         raise ValueError("a user-scoped token needs a subject")
     key = signing_key()
@@ -203,7 +205,7 @@ def _sign(subject: str, issuer: str, ttl_s: int, now: int | None) -> str:
         + "."
         + _b64url(json.dumps(claims, separators=(",", ":")).encode())
     )
-    return signing_input + "." + _b64url(key.sign(signing_input.encode()))
+    return signing_input + "." + _b64url(key.sign(signing_input.encode())), claims["exp"]
 
 
 def token_for(subject: str) -> str:
