@@ -72,6 +72,11 @@ const turn = (over: object = {}) => ({ reply: "ok", graph_update: {}, mastery_ch
 
 /** GET /sessions's list (+ the ?resume= lookup), as listLoopSessionsFor resolves it. */
 const listed = (sessions: object[], resume: object | null = null) => ({ sessions, resume });
+/** Elements showing `text` on screen: the log keeps a row the check card also
+ *  shows, visually hidden (spec §13 A135), and that copy is not painted. */
+const painted = (text: string) => screen.getAllByText(text).filter((el) => !el.closest("[data-visually-hidden]"));
+/** The conversation log's copy of `text` — present, and painted or not. */
+const logRow = (text: string) => within(screen.getByTestId("tutor-messages")).getByText(text);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -837,7 +842,9 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect((await screen.findByTestId("loop-check-prompt")).textContent).toContain("Why does it stop?");
     // the document is in check (PKG-07 _phase_for) though the turn itself was teach
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("check");
-    expect(screen.getAllByText("Why does it stop?")).toHaveLength(1); // the card only, no duplicate bubble
+    expect(painted("Why does it stop?")).toHaveLength(1); // the card only, no duplicate bubble
+    // spec §13 A135: the pose is in the live log too — announced, but not painted
+    expect(logRow("Why does it stop?").closest("[data-visually-hidden]")).not.toBeNull();
   });
 
   it("a check event with no pose (and no done.check) never renders a promptless card", async () => {
@@ -870,7 +877,9 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     expect((await screen.findByTestId("loop-hint-reply")).textContent).toContain("Look at when n reaches zero.");
-    expect(screen.getAllByText("Look at when n reaches zero.")).toHaveLength(1); // the card only while posed
+    expect(painted("Look at when n reaches zero.")).toHaveLength(1); // the card only while posed
+    // spec §13 A135: the hint is in the live log too — announced, but not painted
+    expect(logRow("Look at when n reaches zero.").closest("[data-visually-hidden]")).not.toBeNull();
     expect(api.postLoopAttempt).toHaveBeenCalledWith("s2", "u1", "qh7", "it keeps calling itself");
     expect(api.requestLoopHint).toHaveBeenCalledWith("s2", "u1", "qh7");
     expect(api.requestLoopHintTurn).toHaveBeenCalledWith("s2", "u1");
@@ -887,7 +896,7 @@ describe("LoopLearn — teach / check / feedback (A16, A46)", () => {
     expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(1);
     // re-renders never ask twice for the same posed item
     fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "my try" } });
-    await waitFor(() => expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("false"));
     expect(api.requestLoopHint).toHaveBeenCalledTimes(1);
   });
 
@@ -1065,11 +1074,11 @@ describe("LoopLearn — PKG-13 fix round", () => {
     api.requestLoopHint.mockImplementation(() => new Promise(() => {})); // never answers
     render(<LoopLearn />);
     fireEvent.click(await screen.findByTestId("loop-hint-button"));
-    await waitFor(() => expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("true"));
     fireEvent.click(screen.getByTestId("loop-session-s1"));
     await waitFor(() => expect(screen.getByTestId("loop-phase").getAttribute("data-session-id")).toBe("s1"));
     await screen.findByTestId("loop-check-prompt");
-    expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("false");
   });
 
   it("M2: a close that lands after a session switch still drops the closed session from the picker", async () => {
@@ -1247,10 +1256,15 @@ describe("LoopLearn — PKG-13 fix round", () => {
   it("m: the pose shows once while posed and returns to the log after the grade", async () => {
     api.streamLoopCheckAnswer.mockResolvedValue(graded());
     await withCheckItem();
-    expect(screen.getAllByText("Why does it stop?")).toHaveLength(1);
+    expect(painted("Why does it stop?")).toHaveLength(1);
+    const row = logRow("Why does it stop?");
+    expect(row.closest("[data-visually-hidden]")).not.toBeNull(); // in the log, not painted
     await submitDraft();
     await screen.findByText("Feedback.");
     expect(screen.getAllByText("Why does it stop?")).toHaveLength(1); // now the log's row
+    expect(painted("Why does it stop?")).toHaveLength(1);
+    // the same node, now painted: nothing was added to the live log, so nothing is announced twice
+    expect(logRow("Why does it stop?")).toBe(row);
     expect(screen.queryByTestId("loop-check-prompt")).toBeNull();
   });
 });
@@ -1952,13 +1966,13 @@ describe("hint ownership within a learning session", () => {
     fireEvent.click(screen.getByTestId("loop-hint-button"));
     await waitFor(() => expect(api.requestLoopHintTurn).toHaveBeenCalledTimes(2));
     await act(async () => { finishOld(turn({ phase: "hint", reply: "Obsolete hint for the previous question." })); });
-    expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("true");
     expect(screen.queryByText("Obsolete hint for the previous question.")).toBeNull();
     expect(screen.queryByTestId("loop-hint-reply")).toBeNull();
     expect(screen.getByTestId("loop-check-prompt").getAttribute("data-question-hash")).toBe("next-question");
     await act(async () => { finishNew(turn({ phase: "hint", reply: "Current question's helpful hint." })); });
     expect(screen.getByTestId("loop-hint-reply").textContent).toBe("Current question's helpful hint.");
-    expect((screen.getByTestId("loop-hint-button") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("loop-hint-button").getAttribute("aria-disabled")).toBe("false");
     expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("check");
   });
 });
@@ -2463,5 +2477,244 @@ describe("LoopLearn — stated confidence (spec §13 A127)", () => {
     fireEvent.click(screen.getByTestId("loop-probe-submit"));
     await waitFor(() => expect(api.answerLoopProbe).toHaveBeenCalled());
     expect("confidence" in sentProbe()).toBe(false);
+  });
+});
+
+describe("LoopLearn — keyboard and screen reader (spec §13 A135)", () => {
+  const graded = (over: object = {}) => turn({ reply: "Feedback.", phase: "feedback", graded: true, verdict: "not_yet", ...over });
+  const mcPose = {
+    question_hash: "qh-mc", format: "mc_reason", difficulty: 1, prompt: "Which one is binary?",
+    options: [{ letter: "A", text: "Base ten" }, { letter: "B", text: "Base two" }, { letter: "C", text: "Base sixteen" }],
+  };
+  /** What a browser does when the focused control is disabled or removed: focus falls to the page. */
+  const dropFocus = () => (document.activeElement as HTMLElement | null)?.blur();
+
+  it("a posed check takes focus: its answer box, inside a region named for the check and described by the question", async () => {
+    await withCheckItem();
+    const answer = screen.getByRole("textbox", { name: "Your answer" });
+    await waitFor(() => expect(answer).toHaveFocus());
+    expect(answer).toHaveAccessibleDescription("Why does it stop?");
+    expect(screen.getByRole("region", { name: "Check your understanding" })).toContainElement(answer);
+  });
+
+  it("a check a teach turn poses takes focus over the composer it was sent from", async () => {
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Teach reply.", phase: "teach", check: pose }));
+    await resumedTeach();
+    const composer = screen.getByTestId("tutor-input");
+    composer.focus();
+    fireEvent.change(composer, { target: { value: "go on" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await screen.findByTestId("loop-check-prompt");
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Your answer" })).toHaveFocus());
+  });
+
+  it("a teach turn with no check gives focus back to the composer", async () => {
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Teach reply.", phase: "teach" }));
+    await resumedTeach();
+    const composer = screen.getByTestId("tutor-input");
+    composer.focus();
+    fireEvent.change(composer, { target: { value: "go on" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    dropFocus(); // the composer is disabled while the reply streams
+    await screen.findByText("Teach reply.");
+    await waitFor(() => expect(screen.getByTestId("tutor-input")).toHaveFocus());
+  });
+
+  it("multiple-choice options are a radio group named by the question: one tab stop, the arrow keys move and choose", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(graded());
+    await withCheckItem(mcPose);
+    const group = screen.getByRole("radiogroup", { name: "Which one is binary?" });
+    const [a, b, c] = within(group).getAllByRole("radio");
+    expect(a).toHaveAccessibleName("A. Base ten");
+    expect([a, b, c].map((r) => r.tabIndex)).toEqual([0, -1, -1]);
+    await waitFor(() => expect(a).toHaveFocus()); // the posed check focuses the group's tab stop
+    fireEvent.keyDown(a, { key: "ArrowDown" });
+    expect(b).toHaveFocus();
+    expect(b).toHaveAttribute("aria-checked", "true");
+    expect([a, b, c].map((r) => r.tabIndex)).toEqual([-1, 0, -1]);
+    fireEvent.keyDown(b, { key: "End" });
+    expect(c).toHaveFocus();
+    fireEvent.keyDown(c, { key: "ArrowRight" }); // wraps to the first
+    expect(a).toHaveFocus();
+    expect(a).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(a, { key: "ArrowUp" }); // and back to the last
+    expect(c).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(c, { key: "Home" });
+    expect(a).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(a, { key: "ArrowLeft" });
+    expect(c).toHaveAttribute("aria-checked", "true");
+    expect(screen.getAllByRole("radio", { checked: true }).filter((r) => group.contains(r))).toEqual([c]);
+    fireEvent.click(screen.getByTestId("loop-attempt-submit"));
+    await waitFor(() => expect(api.streamLoopCheckAnswer).toHaveBeenCalled());
+    expect(api.streamLoopCheckAnswer.mock.calls[0][3]).toMatchObject({ option: "C" });
+  });
+
+  it("the pose and the hint reach the live conversation log as they arrive", async () => {
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
+    api.requestLoopHint.mockResolvedValue({ rung: 1, intent: "Orient." });
+    api.requestLoopHintTurn.mockResolvedValue(turn({ reply: "Look at when n reaches zero.", phase: "hint" }));
+    await withCheckItem();
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(log).toHaveAttribute("aria-live", "polite");
+    expect(log).toContainElement(logRow("Why does it stop?"));
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    await screen.findByTestId("loop-hint-reply");
+    expect(log).toContainElement(logRow("Look at when n reaches zero."));
+  });
+
+  it("the Hint button keeps focus while the hint loads, and takes no second press", async () => {
+    const hintTurn = deferred<ReturnType<typeof turn>>();
+    api.postLoopAttempt.mockResolvedValue({ genuine: true, counted: true, attempts: 1, independent_s: 60 });
+    api.requestLoopHint.mockResolvedValue({ rung: 1, intent: "Orient." });
+    api.requestLoopHintTurn.mockReturnValue(hintTurn.promise);
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "it keeps calling itself" } });
+    const hint = screen.getByTestId("loop-hint-button");
+    hint.focus();
+    fireEvent.click(hint);
+    await waitFor(() => expect(hint).toHaveAttribute("aria-disabled", "true"));
+    expect(hint).not.toBeDisabled(); // still focusable, so focus stays here
+    expect(hint).toHaveFocus();
+    fireEvent.click(hint);
+    expect(api.requestLoopHint).toHaveBeenCalledTimes(1);
+    await act(async () => { hintTurn.resolve(turn({ reply: "Look at n.", phase: "hint" })); });
+    expect(hint).toHaveAttribute("aria-disabled", "false");
+    expect(hint).toHaveFocus();
+  });
+
+  it("a refused hint is announced from a live region that was already on the page", async () => {
+    api.requestLoopHint.mockResolvedValue({ denied: "no_genuine_attempt" });
+    await withCheckItem();
+    const region = screen.getByRole("region", { name: "Check your understanding" }).querySelector('[aria-live="polite"]');
+    expect(region).toBeEmptyDOMElement();
+    fireEvent.click(screen.getByTestId("loop-hint-button"));
+    expect(region).toContainElement(await screen.findByTestId("loop-hint-denied"));
+  });
+
+  it("after a graded answer, focus moves to Continue once the feedback has arrived", async () => {
+    api.streamLoopCheckAnswer.mockResolvedValue(graded());
+    await withCheckItem();
+    fireEvent.change(screen.getByTestId("loop-attempt-input"), { target: { value: "n == 0" } });
+    const submit = screen.getByTestId("loop-attempt-submit");
+    submit.focus();
+    fireEvent.click(submit);
+    dropFocus(); // Submit is disabled while the answer is checked
+    await screen.findByText("Feedback.");
+    await waitFor(() => expect(screen.getByTestId("loop-continue")).toHaveFocus());
+  });
+
+  it("Check me that finds nothing keeps focus on Check me, its note in a live region", async () => {
+    api.nextLoopCheck.mockResolvedValue({ phase: "teach", check: null });
+    await resumedTeach();
+    const checkMe = await screen.findByTestId("loop-check-me");
+    checkMe.focus();
+    fireEvent.click(checkMe);
+    dropFocus(); // Check me is disabled while it asks
+    const note = await screen.findByText(/No check is ready/);
+    expect(note.closest('[aria-live="polite"]')).not.toBeNull();
+    await waitFor(() => expect(screen.getByTestId("loop-check-me")).toHaveFocus());
+  });
+
+  it("a check-in question takes focus; the answer shown after a miss takes it next, then the next question", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
+    api.nextLoopProbe
+      .mockResolvedValueOnce(probeItem)
+      .mockResolvedValueOnce({ ...probeItem, question_hash: "qh2", prompt: "What is recursion?" });
+    api.answerLoopProbe.mockResolvedValue({
+      graded: true, correct: false, p_known: 0.3, probe_done: false, novice_floor: false, reference_answer: "A case that stops.",
+    });
+    render(<LoopLearn />);
+    const answer = await screen.findByRole("textbox", { name: "Check-in answer" });
+    await waitFor(() => expect(answer).toHaveFocus());
+    expect(answer).toHaveAccessibleDescription("What is a base case?");
+    expect(screen.getByRole("region", { name: "Question 1" })).toContainElement(answer);
+    fireEvent.change(answer, { target: { value: "not sure" } });
+    fireEvent.click(screen.getByTestId("loop-probe-submit"));
+    const reference = await screen.findByTestId("loop-probe-reference");
+    await waitFor(() => expect(reference).toHaveFocus());
+    expect(reference.textContent).toContain("A case that stops.");
+    fireEvent.click(screen.getByTestId("loop-probe-next"));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveAccessibleDescription("What is recursion?"),
+    );
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveFocus());
+  });
+
+  it("the plan's heading takes focus when the plan is shown", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [] });
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-plan-concept-n1");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Today's plan" })).toHaveFocus());
+  });
+
+  it("approving the plan moves focus to Start with …", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "plan", "2026-09-21T10:00:00Z")]));
+    api.getLoopPlan.mockResolvedValue({ concepts: [{ node_id: "n1", concept_name: "Recursion", kind: "new", p_known: 0.35 }], order: [] });
+    api.approveLoopPlan.mockResolvedValue({ phase: "teach" });
+    render(<LoopLearn />);
+    const approve = await screen.findByTestId("loop-plan-approve");
+    approve.focus();
+    fireEvent.click(approve);
+    dropFocus(); // the plan, and its button, are replaced by the lesson
+    await waitFor(() => expect(screen.getByTestId("loop-teach-start")).toHaveFocus());
+  });
+
+  it("the wrap-up's heading takes focus after End session", async () => {
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach();
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-summary");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Session wrap-up" })).toHaveFocus());
+  });
+
+  it("the open-sessions strip is a list only while it lists sessions", async () => {
+    api.closeLoopSession.mockResolvedValue({ close: closeRecord, model_written: false, close_phase: "teach" });
+    await resumedTeach();
+    expect(screen.getByRole("list", { name: "Open sessions" })).toBe(screen.getByTestId("loop-session-picker"));
+    fireEvent.click(screen.getByTestId("loop-close-button"));
+    await screen.findByTestId("loop-close-summary");
+    expect(screen.getByTestId("loop-session-picker")).not.toHaveAttribute("role");
+    expect(screen.getByTestId("loop-session-picker").textContent).toContain("None yet");
+  });
+
+  it("notices go into a live region that is on the page before any of them", async () => {
+    api.streamLoopChat.mockResolvedValue(turn({ reply: "Teach reply.", phase: "teach", materials_unavailable: true }));
+    await resumedTeach();
+    const region = screen.getByTestId("loop-notices");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toBeEmptyDOMElement();
+    fireEvent.change(screen.getByTestId("tutor-input"), { target: { value: "go on" } });
+    fireEvent.click(screen.getByTestId("tutor-send"));
+    expect(region).toContainElement(await screen.findByTestId("loop-materials-unavailable"));
+  });
+});
+
+describe("LoopLearn — cards that stand in for the screen (spec §13 A135)", () => {
+  it("a failed start's card takes focus with its heading; its retry leads on to the first question", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    api.startLoopSession
+      .mockRejectedValueOnce(new ApiError("x", 503, { body: { detail: "temporarily unavailable" } }))
+      .mockResolvedValue({ session_id: "s9", initial_message: "" });
+    api.nextLoopProbe.mockResolvedValue(probeItem);
+    render(<LoopLearn />);
+    await screen.findByTestId("loop-start-error");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Couldn't start a session" })).toHaveFocus());
+    fireEvent.click(screen.getByTestId("loop-start-retry"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Check-in answer" })).toHaveFocus());
+  });
+
+  it("does not take focus a student is using elsewhere", async () => {
+    api.listLoopSessionsFor.mockResolvedValue(listed([]));
+    let fail: (error: unknown) => void = () => {};
+    api.startLoopSession.mockReturnValue(new Promise((_, reject) => { fail = reject; }));
+    render(<LoopLearn />);
+    await waitFor(() => expect(api.startLoopSession).toHaveBeenCalled());
+    const elsewhere = screen.getByTestId("loop-tree-link");
+    elsewhere.focus();
+    await act(async () => { fail(new ApiError("x", 503, { body: { detail: "temporarily unavailable" } })); });
+    await screen.findByTestId("loop-start-error");
+    expect(elsewhere).toHaveFocus();
   });
 });

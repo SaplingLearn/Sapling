@@ -76,6 +76,7 @@ export function AiTab({ documents, onCards }: Props) {
         />
       ) : (
         <CustomSelect
+          ariaLabel="Library document"
           value={docId}
           onChange={setDocId}
           placeholder={documents.length ? "Pick a document…" : "No library documents yet"}
@@ -86,11 +87,12 @@ export function AiTab({ documents, onCards }: Props) {
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <div style={{ minWidth: 140 }}>
           <div className="label-micro">Count</div>
-          <CustomSelect value={count} onChange={setCount} options={COUNT_OPTIONS} />
+          <CustomSelect ariaLabel="Count" value={count} onChange={setCount} options={COUNT_OPTIONS} />
         </div>
         <div style={{ minWidth: 180 }}>
           <div className="label-micro">Difficulty</div>
           <CustomSelect
+            ariaLabel="Difficulty"
             value={difficulty}
             onChange={v => setDifficulty(v as "recall" | "application" | "conceptual")}
             options={DIFFICULTY_OPTIONS}

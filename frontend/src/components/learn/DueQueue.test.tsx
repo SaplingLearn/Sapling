@@ -529,3 +529,63 @@ describe("DueQueue — stated confidence (spec §13 A127)", () => {
     expect("confidence" in sent()).toBe(false);
   });
 });
+
+describe("DueQueue — keyboard and screen reader (spec §13 A135)", () => {
+  it("the first load moves no focus: Study owns it when the page opens", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await act(async () => {});
+    expect(document.body).toHaveFocus();
+  });
+
+  it("names the answer box and the options by the question", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockAnswer.mockResolvedValue(graded());
+    render(<DueQueue userId="u1" courseId="c1" />);
+    expect(await screen.findByRole("textbox", { name: "Review answer" })).toHaveAccessibleDescription("What stops factorial(0)?");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await userEvent.click(await screen.findByTestId("review-next"));
+    const group = await screen.findByRole("radiogroup", { name: "Which one?" });
+    expect(group).toContainElement(screen.getByTestId("review-option-A"));
+  });
+
+  it("Check moves focus to the result, Next to the next item's answer", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockAnswer.mockResolvedValue(graded({ correct: false, hint: "Look at n == 0." }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.type(await screen.findByTestId("review-answer-input"), "a loop");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await waitFor(() => expect(screen.getByTestId("review-hint")).toHaveFocus());
+    expect(screen.getByTestId("review-hint").textContent).toContain("Look at n == 0.");
+    await userEvent.click(screen.getByTestId("review-next"));
+    await waitFor(() => expect(screen.getByTestId("review-option-A")).toHaveFocus());
+  });
+
+  it("a flashcard: Show answer moves focus to the back, a rating to the result, Next to the empty line", async () => {
+    mockNext.mockResolvedValueOnce(next(CARD)).mockResolvedValueOnce(next(null));
+    mockAnswer.mockResolvedValue(graded({ hint: "" }));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await userEvent.click(await screen.findByTestId("review-flip"));
+    await waitFor(() => expect(screen.getByText("A!")).toHaveFocus());
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    await waitFor(() => expect(screen.getByTestId("review-hint")).toHaveFocus());
+    await userEvent.click(screen.getByTestId("review-next"));
+    await waitFor(() => expect(screen.getByTestId("review-empty")).toHaveFocus());
+  });
+
+  it("a report's confirmation is announced from a live region already on the page", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockReport.mockResolvedValue({ reported: true, first: true, quarantined: false });
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    const region = screen.getByTestId("review-due-panel").querySelector('[aria-live="polite"]');
+    expect(region).toBeEmptyDOMElement();
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect(region).toContainElement(await screen.findByTestId("review-reported"));
+    await waitFor(() => expect(screen.getByTestId("review-option-A")).toHaveFocus());
+  });
+});
