@@ -1439,27 +1439,7 @@ def test_a_question_label_in_a_request_is_no_answer(text, phrases):
     assert has_non_attempt_phrase(text) is True
 
 
-def _fastest_of_three(fn, text):
-    import time
-
-    best = float("inf")
-    for _ in range(3):
-        start = time.perf_counter()
-        fn(text)
-        best = min(best, time.perf_counter() - start)
-    return best
-
-
-@pytest.mark.parametrize("size", [500, 5000])
-def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
-    """PKG-07 runs non_attempt_phrases on every raw submission, so no
-    whitespace run may make a regex backtrack super-linearly: "part" followed
-    by thousands of spaces and no digit took seconds (cubic) through
-    _QUESTION_REF's three adjacent whitespace runs. A linear scan of these
-    inputs takes well under a millisecond; 50 ms catches cubic at 500 and
-    quadratic at 5000."""
-    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
-
+def _whitespace_shapes(size):
     ws = (" ", "\t", "\n")
     shapes = [
         f"just tell me {label}{w * size}{tail}"
@@ -1473,9 +1453,31 @@ def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
         "what's the answer to step" + "\t" * size + "?",
         "just tell me " + "part. " * (size // 6),
     ]
-    for text in shapes:
+    return shapes
+
+
+@pytest.mark.parametrize("size", [500, 5000])
+def test_the_text_rules_run_in_linear_time_on_long_whitespace(size):
+    """PKG-07 runs non_attempt_phrases on every raw submission, so no
+    whitespace run may make a regex backtrack super-linearly: "part" followed
+    by thousands of spaces and no digit took seconds (cubic) through
+    _QUESTION_REF's three adjacent whitespace runs. A linear scan of these
+    inputs takes well under a millisecond; 50 ms catches cubic at 500 and
+    quadratic at 5000.
+
+    The rules' own Python work is counted, not timed (tests/work_meter.py),
+    up to 1,000 characters to keep the test quick: a quadratic term shows at
+    any size. A regex engine's steps are invisible to that count, so the
+    backtracking this test is about is held to the 50 ms ceiling on CPU
+    time rather than elapsed time."""
+    from learning.gates import has_non_attempt_phrase, non_attempt_phrases
+
+    counted = min(size, 1000)
+    for index, text in enumerate(_whitespace_shapes(size)):
         for fn in (non_attempt_phrases, has_non_attempt_phrase):
-            took = _fastest_of_three(fn, text)
+            label = f"{fn.__name__} {text[:30]!r}"
+            assert_linear(lambda s, index=index: _whitespace_shapes(s)[index], fn, counted, label)
+            took = cpu_seconds(lambda fn=fn, text=text: fn(text), limit=0.05)
             assert took < 0.05, (fn.__name__, text[:30], size, took)
 
 

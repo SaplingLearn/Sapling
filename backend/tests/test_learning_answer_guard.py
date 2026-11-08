@@ -669,16 +669,24 @@ def test_the_screen_stays_linear_at_the_longest_answer(unit):
 def test_the_screen_stays_linear_after_an_id_and_a_whitespace_run(head, run):
     """A rubric id followed by a long whitespace run: the separator between an id
     and its verdict must have one way to consume that run, not one per split
-    point (CodeRabbit PR #673 follow-up: 'r1' + 3998 spaces took 0.6 s)."""
-    import time
+    point (CodeRabbit PR #673 follow-up: 'r1' + 3998 spaces took 0.6 s).
 
+    The screen's own work is counted, not timed (tests/work_meter.py). The
+    separator's backtracking happens inside the regex engine, where no count
+    can see it, so it is held to the old 0.1 s ceiling on CPU time rather than
+    elapsed time."""
     from learning.params import GRADER_ANSWER_MAX_CHARS
 
-    text = head + run * (GRADER_ANSWER_MAX_CHARS - len(head))
-    t0 = time.perf_counter()
-    guard.screen(text, rubric_ids=IDS)
-    guard.suspicion(text, rubric_ids=IDS)
-    assert time.perf_counter() - t0 < 0.1
+    def build(size):
+        return head + run * (size - len(head))
+
+    def screen_both(text):
+        guard.screen(text, rubric_ids=IDS)
+        guard.suspicion(text, rubric_ids=IDS)
+
+    assert_linear(build, screen_both, GRADER_ANSWER_MAX_CHARS, repr(head + run))
+    text = build(GRADER_ANSWER_MAX_CHARS)
+    assert cpu_seconds(lambda: screen_both(text), limit=0.1) < 0.1
 
 
 def test_the_items_own_rubric_ids_count_whatever_they_are_named():
@@ -4796,26 +4804,30 @@ def test_an_honest_refutation_or_plain_answer_is_not_disowned(answer):
 
 
 def test_disowned_is_linear_at_the_answer_cap():
-    import time
-
+    """Counted, not timed (tests/work_meter.py). disowned's only regexes are
+    single character-class runs ([a-z']+, [.!?]+), which cannot backtrack, so
+    every way it could go superlinear is Python work the count sees: no CPU
+    ceiling is needed."""
     from learning.params import GRADER_ANSWER_MAX_CHARS as cap
 
-    shapes = [
-        "a " * (cap // 2),
-        "following " * (cap // 10),
-        "x" * cap,
-        "myth " * (cap // 5),
-        "the following is wrong because " * (cap // 30),
-        "misconception following\n\n" * (cap // 25),
-        ". " * (cap // 2),
-        "\n" * cap,
-        "that is " * (cap // 8),
+    units = [
+        "a ",
+        "following ",
+        "x",
+        "myth ",
+        "the following is wrong because ",
+        "misconception following\n\n",
+        ". ",
+        "\n",
+        "that is ",
     ]
-    for shape in shapes:
-        answer = shape[: cap - 4] + " end"
-        t0 = time.perf_counter()
-        guard.disowned(answer, "end")
-        assert time.perf_counter() - t0 < 0.5, shape[:20]
+    for unit in units:
+        assert_linear(
+            lambda size, unit=unit: (unit * size)[: size - 4] + " end",
+            lambda answer: guard.disowned(answer, "end"),
+            cap,
+            repr(unit),
+        )
 
 
 def test_an_answer_under_a_misconception_heading_is_refused_before_the_checks(

@@ -19,9 +19,10 @@ leak.detect_leak's option rule was a keyword list: "C is right", "it's C.",
 from __future__ import annotations
 
 import random
-import time
 
 import pytest
+
+from tests.work_meter import assert_linear, cpu_seconds
 
 REF = "Option C holds: it never terminates, since nothing stops the calls."
 FINAL = "It never terminates"
@@ -308,13 +309,24 @@ def test_random_texts_strip_clean_and_idempotent_in_both_modes():
 
 @pytest.mark.parametrize("strict", [False, True])
 def test_no_redos_on_a_long_adversarial_text(strict):
+    """The detector's own work is counted, not timed (tests/work_meter.py), up
+    to 12,500 characters to keep the test quick: a quadratic term shows at any
+    size. A ReDoS happens inside the regex engine, where no count can see it,
+    so each text keeps the old 1.0 s ceiling at 50,000 characters, on CPU time
+    rather than elapsed time."""
     chunks = ["option ", "(", "[", "**", "answer is ", "—", " ", "c", "it's ", "→ ", "C) "]
-    text = "".join(chunks[i % len(chunks)] for i in range(12_000))[:50_000]
-    for adversarial in (text, "(" * 50_000, "option " * 7_000, "*" * 50_000 + "C"):
-        t0 = time.perf_counter()
-        _detect(adversarial, strict=strict)
-        _strip(adversarial, strict=strict)
-        assert time.perf_counter() - t0 < 1.0, adversarial[:40]
+
+    def adversarial(size):
+        mixed = "".join(chunks[i % len(chunks)] for i in range(size * 12 // 50))[:size]
+        return (mixed, "(" * size, "option " * (size * 7 // 50), "*" * size + "C")
+
+    def check(text):
+        _detect(text, strict=strict)
+        _strip(text, strict=strict)
+
+    for index, text in enumerate(adversarial(50_000)):
+        assert_linear(lambda size, index=index: adversarial(size)[index], check, 12_500, text[:40])
+        assert cpu_seconds(lambda text=text: check(text), limit=1.0) < 1.0, text[:40]
 
 
 # ── m7: the grader hint's numeric forms (strict mode, numeric answers) ───────
