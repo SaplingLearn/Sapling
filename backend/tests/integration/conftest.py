@@ -131,16 +131,26 @@ def _truncate_mutable(conn) -> None:
     conn.execute(f"TRUNCATE {idents} RESTART IDENTITY CASCADE")
 
 
-def _reseed_baseline() -> None:
+def _reseed_baseline(floor) -> None:
+    """Restore the rich baseline through `db.connection.table()`.
+
+    Both callers run outside a test's own lift: the session check runs before
+    any test, and the per-test reset has no guaranteed order beside
+    `_hermetic_supabase_client`. So the reseed lifts the session egress floor
+    (`floor`, the `_hermetic_egress_floor` value) for the seed only, on a
+    MonkeyPatch of its own. Every test, opt-in or not, finds what it would have
+    found without the reseed."""
     from db import seed_local_rich
-    seed_local_rich.main()
+
+    with floor.supabase():
+        seed_local_rich.main()
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _require_local_stack():
+def _require_local_stack(_hermetic_egress_floor):
     if not _RUN:
         pytest.skip("integration suite: set RUN_INTEGRATION=1 (with the local stack up)")
 
@@ -167,7 +177,7 @@ def _require_local_stack():
             "lane would report green having run nothing."
         )
     # Ensure the rich dataset is present (idempotent, additive).
-    _reseed_baseline()
+    _reseed_baseline(_hermetic_egress_floor)
     yield
 
 
@@ -190,12 +200,12 @@ def db_conn():
 
 
 @pytest.fixture(autouse=True)
-def _reset_between_tests(db_conn):
+def _reset_between_tests(db_conn, _hermetic_egress_floor):
     """Truncate all mutable tables and restore the rich baseline BEFORE each test,
     so a prior test's writes (or a crash) cannot leak forward — making the suite
     pass under `-p no:randomly` and in reversed/shuffled order alike (#397)."""
     _truncate_mutable(db_conn)
-    _reseed_baseline()
+    _reseed_baseline(_hermetic_egress_floor)
     yield
 
 

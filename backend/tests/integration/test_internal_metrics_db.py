@@ -87,22 +87,25 @@ def _enabled(monkeypatch):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _function_is_in_the_schema_cache(db_conn):
+def _function_is_in_the_schema_cache(db_conn, _hermetic_egress_floor):
     """PostgREST serves /rpc/<name> from a schema cache; a function created
     after it booted is a 404 until it reloads. The migration NOTIFYs, but the
-    reload is asynchronous — ask again and wait for it rather than flake."""
+    reload is asynchronous — ask again and wait for it rather than flake.
+    A module fixture runs before any test's own lift, so it lifts the session
+    egress floor for its own wait only."""
     from db.connection import rpc
 
     db_conn.execute("NOTIFY pgrst, 'reload schema'")
     deadline = time.monotonic() + 15
-    while True:
-        try:
-            rpc("canopy_metrics", {})
-            return
-        except Exception:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.5)
+    with _hermetic_egress_floor.supabase():
+        while True:
+            try:
+                rpc("canopy_metrics", {})
+                return
+            except Exception:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.5)
 
 
 def _event(db_conn, user_id, age, event_type="chat.message_sent", category="usage"):

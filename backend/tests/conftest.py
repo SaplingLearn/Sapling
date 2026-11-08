@@ -19,6 +19,7 @@ cannot reach the network.
 """
 import sys
 import os
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -428,7 +429,9 @@ def _refuse_supabase(request):
         "session egress floor (tests/conftest.py::_hermetic_egress_floor). The "
         "per-test hermetic client was gone: the test called monkeypatch.undo() or "
         "replaced db.connection._client. Patch the module's `table` instead, and "
-        "undo only a pytest.MonkeyPatch.context() of your own."
+        "undo only a pytest.MonkeyPatch.context() of your own. An opt-in lane's "
+        "fixture that runs outside its test's own lift (session or module scope) "
+        "wraps its database calls in `with _hermetic_egress_floor.supabase():`."
     )
 
 
@@ -535,6 +538,28 @@ def _llm_opt_in(request) -> bool:
     return _db_opt_in(request) or bool(request.node.get_closest_marker("live_llm"))
 
 
+class LiveEgress(SimpleNamespace):
+    """What `_hermetic_egress_floor` replaced: the live values the opt-in lanes
+    lift it to (`supabase_client`, `llm`, `jev_transport`)."""
+
+    @contextmanager
+    def supabase(self):
+        """Lift the database floor for the length of the block only.
+
+        This is for an opt-in lane's fixture that runs outside its test's own
+        lift: a session or module fixture runs before any per-test guard, and a
+        per-test fixture's order beside `_hermetic_supabase_client` is not
+        guaranteed. Examples are the integration lane's reseed and its
+        PostgREST schema-cache wait. The lift is on a MonkeyPatch of its own,
+        so on exit the block's starting value is back: the floor, or a test's
+        own lift. A unit test that runs after the block still meets the floor."""
+        import db.connection as dbconn
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(dbconn, "_client", self.supabase_client)
+            yield self.supabase_client
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _hermetic_egress_floor():
     """The egress floor under every per-test hermetic guard (spec §13 A123 review).
@@ -556,7 +581,9 @@ def _hermetic_egress_floor():
 
     The opt-in lanes (`e2e_staging`, `integration`, `live_llm`) lift the floor
     with the test's own monkeypatch, so it is back when that test ends. Yields
-    the live values they lift it to."""
+    the live values they lift it to (a `LiveEgress`). A lane fixture that runs
+    outside its test's own lift uses `LiveEgress.supabase()`, which lifts the
+    database floor for its own block only."""
     import config
     import db.connection as dbconn
     import httpx
@@ -565,7 +592,7 @@ def _hermetic_egress_floor():
     from services import email_service
 
     llm = _llm_egress_targets()
-    live = SimpleNamespace(
+    live = LiveEgress(
         supabase_client=dbconn._client,
         llm=[(owner, name, getattr(owner, name)) for owner, name in llm],
         jev_transport=_jev._transport_override,
