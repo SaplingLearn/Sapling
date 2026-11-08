@@ -402,11 +402,12 @@ export function Settings() {
                 </button>
               </div>
               <div className="settings-field-row">
-                <div className="label-micro">Username</div>
+                <label className="label-micro" htmlFor="settings-field-username">Username</label>
                 <div>
                   <div style={{ position: "relative" }}>
-                    <span style={{ position: "absolute", left: 10, top: 9, fontSize: 13, color: "var(--text-muted)" }}>@</span>
+                    <span aria-hidden style={{ position: "absolute", left: 10, top: 9, fontSize: 13, color: "var(--text-muted)" }}>@</span>
                     <input
+                      id="settings-field-username"
                       value={usernameDraft}
                       onChange={e => setUsernameDraft(e.target.value)}
                       onBlur={async () => {
@@ -454,8 +455,9 @@ export function Settings() {
                 ] as const
               ).map(([label, key]) => (
                 <div key={key} className="settings-field-row">
-                  <div className="label-micro">{label}</div>
+                  <label className="label-micro" htmlFor={`settings-field-${key}`}>{label}</label>
                   <input
+                    id={`settings-field-${key}`}
                     defaultValue={settings[key] ?? ""}
                     onBlur={(e) => {
                       const v = e.target.value.trim();
@@ -744,6 +746,7 @@ export function Settings() {
             <button
               key={t}
               data-testid={`settings-tab-${t}`}
+              aria-current={tab === t ? "true" : undefined}
               onClick={() => setTab(t)}
               style={{
                 display: "block",
@@ -856,7 +859,8 @@ function AnalyticsPreference({
             response, and error reports from our servers. It&apos;s tied to your Sapling account ID —
             never your name or email, and never what you type or the text of your notes, documents,
             messages or AI replies. Turning it off stops all of this within about a minute.{" "}
-            <Link href="/privacy" style={{ color: "var(--accent)" }}>Privacy Policy</Link>
+            {/* Underlined: a link inside running text must not rely on colour alone (WCAG 1.4.1). */}
+            <Link href="/privacy" style={{ color: "var(--accent)", textDecoration: "underline" }}>Privacy Policy</Link>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }} data-testid="settings-analytics-note">
             {ANALYTICS_NOTES[state]}

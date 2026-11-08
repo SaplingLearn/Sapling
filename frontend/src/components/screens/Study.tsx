@@ -516,7 +516,8 @@ function GuideMode({
                 <div className="h-serif" style={{ fontSize: 22, fontWeight: 500 }}>{guide.exam}</div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   {guide.due_date && <span className="chip">Due {guide.due_date}</span>}
-                  <span className="chip" style={{ opacity: 0.7 }}>
+                  {/* Secondary by colour, not opacity: a 70% chip was 3.9:1 (spec §13 A135). */}
+                  <span className="chip" style={{ color: "var(--text-muted)" }}>
                     {cached ? "Cached" : "Fresh"} · {generatedAt ? new Date(generatedAt).toLocaleString() : ""}
                   </span>
                 </div>

@@ -585,6 +585,10 @@ function NotetakerScreen() {
             "gap var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease)",
         }}
       >
+        {/* A collapsed pane is `inert`, not just aria-hidden: its controls stay
+            in the DOM for the width transition, and inert also takes them out
+            of the tab order (aria-hidden alone left them focusable; spec §13
+            A135). */}
         <div
           style={{
             flex: fullscreen ? "0 0 0px" : "0 0 clamp(260px, 22%, 320px)",
@@ -595,7 +599,7 @@ function NotetakerScreen() {
             transition:
               "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease)",
           }}
-          aria-hidden={fullscreen}
+          inert={fullscreen}
         >
           <NotesList
             notes={filtered}
@@ -649,7 +653,7 @@ function NotetakerScreen() {
             transition:
               "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease)",
           }}
-          aria-hidden={fullscreen}
+          inert={fullscreen}
         >
           <NoteDetail
             note={active}
@@ -681,7 +685,7 @@ function NotetakerScreen() {
             transition:
               "flex-basis var(--dur-slow) var(--ease), opacity var(--dur) var(--ease), padding var(--dur-slow) var(--ease)",
           }}
-          aria-hidden={!fullscreen}
+          inert={!fullscreen}
         >
           {/* Keyed per note: switching notes starts a fresh thread + composer. */}
           <AIChatPanel key={active.id} noteId={active.id} userId={userId} />
