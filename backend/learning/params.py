@@ -202,8 +202,10 @@ LEARNER_BRIEF_MAX_CHARS = 1800
 LEARNER_BRIEF_LAST_CLOSES = 3
 LEARNER_BRIEF_TOP_STATES = 5
 LEARNER_BRIEF_MAX_MISCONCEPTIONS = 5
-# ‡ plain dicts: PKG-07/05 build pydantic_ai UsageLimits(**X) in agents/__init__.py
-LOOP_LIMITS = {"request_limit": 14, "tool_calls_limit": 14, "total_tokens_limit": 120_000}
+# ‡ a plain dict: agents/__init__.py builds pydantic_ai UsageLimits(**GRADER_LIMITS)
+# (learning/ never imports pydantic_ai). LOOP_LIMITS is not here: spec §3.4 and
+# A18 place it in agents/__init__.py alone (request 4 / tool calls 3 / tokens
+# 40_000); the stale 14/14/120_000 copy this file kept was removed (§13 A142).
 GRADER_LIMITS = {"request_limit": 2, "tool_calls_limit": 0, "total_tokens_limit": 20_000}
 # A response cap is enforced by the provider before generation; UsageLimits
 # checks billed tokens after the response and cannot stop a runaway completion.
