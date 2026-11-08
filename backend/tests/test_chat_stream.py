@@ -393,6 +393,41 @@ def test_cancel_mid_stream_persists_nothing():
     asyncio.run(run())
 
 
+def test_disconnect_closes_the_agent_event_stream_in_the_same_task():
+    """A client disconnect must close the agent's event iterator deterministically.
+
+    Left to the async-gen finalizer, pydantic-ai's `_standalone_iterator` was
+    aclose()d from a separate task while still suspended and logged
+    `RuntimeError: aclose(): asynchronous generator is already running`
+    (caught by the E2E logscan oracle when the tutor UI aborts a stream on
+    session switch). The inner iterator must be finished by the time the
+    outer generator's aclose() returns.
+    """
+    closed = []
+
+    class TrackingAgent:
+        async def run_stream_events(self, user_message, **kwargs):
+            try:
+                yield PartStartEvent("a")
+                await asyncio.sleep(0)
+                yield PartDeltaEvent("b")
+                yield AgentRunResultEvent("ab")
+            finally:
+                closed.append(True)
+
+    async def run():
+        gen = stream_agent_turn(
+            agent=TrackingAgent(), user_message="hi", run_kwargs={},
+            deps=make_deps(), on_complete=lambda r, g, m: None, request_id="r1",
+        )
+        await gen.__anext__()   # status
+        await gen.__anext__()   # first token
+        await gen.aclose()      # disconnect
+        assert closed == [True], "agent event stream left for the GC finalizer"
+
+    asyncio.run(run())
+
+
 def test_on_complete_raising_yields_error_not_unhandled_exception():
     """Persistence failing AFTER the reply fully streamed must surface as a
     structured `error` event (ADR-0020 interrupted-turn treatment), never an
@@ -1084,3 +1119,78 @@ def test_join_text_parts_adds_a_break_only_where_none_exists():
     assert join_text_parts(["a.", "\nb."]) == "a.\nb."
     assert join_text_parts(["", "a.", ""]) == "a."
     assert join_text_parts(["only"]) == "only"
+
+
+# ── #761: on_complete off the event loop; partial persistence ─────────────
+
+def test_on_complete_runs_in_a_worker_thread_not_on_the_event_loop():
+    """on_complete makes synchronous DB writes; run inline they stall every
+    other stream on the loop for the length of the round trips."""
+    import threading
+
+    async def run():
+        loop_thread = threading.current_thread()
+        seen = {}
+
+        def persist(reply, graph_update, mastery_changes):
+            seen["thread"] = threading.current_thread()
+            return {}
+
+        agent = FakeAgent([PartStartEvent("hi"), AgentRunResultEvent("hi")])
+        events = await collect(agent, make_deps(), on_complete=persist)
+        assert events[-1].type == "done"
+        assert seen["thread"] is not loop_thread
+
+    asyncio.run(run())
+
+
+def test_on_complete_partial_write_stamp_makes_the_error_non_retryable():
+    """A persist that failed AFTER some rows landed, and cannot be safely
+    re-run, stamps `sapling_wrote` — exactly like a tool write, the client
+    must not re-send the turn."""
+    async def run():
+        def half_persist(reply, graph_update, mastery_changes):
+            exc = RuntimeError("assistant row write failed")
+            exc.sapling_wrote = True
+            raise exc
+
+        agent = FakeAgent([PartStartEvent("hi"), AgentRunResultEvent("hi")])
+        events = await collect(agent, make_deps(), on_complete=half_persist)
+        assert events[-1].type == "error"
+        assert events[-1].data["retryable"] is False
+
+    asyncio.run(run())
+
+
+def test_real_agent_stream_is_iterated_managed_and_closes_on_disconnect():
+    """The real pydantic-ai AgentEventStream goes through `async with`, not the
+    deprecated standalone iterator (whose finalizer raised on disconnect)."""
+    import warnings
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(TestModel(custom_output_text="hello there world"))
+
+    async def full():
+        done = []
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            events = [ev async for ev in stream_agent_turn(
+                agent=agent, user_message="hi", run_kwargs={}, deps=make_deps(),
+                on_complete=lambda r, g, m: done.append(r), request_id="r1",
+            )]
+        assert events[-1].type == "done"
+        assert done == ["hello there world"]
+
+    async def disconnect():
+        gen = stream_agent_turn(
+            agent=agent, user_message="hi", run_kwargs={}, deps=make_deps(),
+            on_complete=lambda r, g, m: None, request_id="r1",
+        )
+        await gen.__anext__()   # status
+        await gen.__anext__()   # first token
+        await gen.aclose()      # must not leave the agent stream to the finalizer
+
+    asyncio.run(full())
+    asyncio.run(disconnect())

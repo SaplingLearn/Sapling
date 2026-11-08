@@ -26,6 +26,7 @@ import { AssignmentList } from "@/components/Gradebook/AssignmentList";
 import { AssignmentModal, type AssignmentDraft } from "@/components/Gradebook/AssignmentModal";
 import { LetterScaleEditor } from "@/components/Gradebook/LetterScaleEditor";
 import { GradescopeSyncModal } from "@/components/Gradebook/GradescopeSyncModal";
+import { gradescopeConnectionState, needsGradescopeSignIn } from "@/components/Gradebook/gradescopeState";
 import { percentColor } from "@/components/Gradebook/CourseCard";
 import { projectGrade, droppedAssignmentIds } from "@/components/Gradebook/GradeProjector";
 import { GradePredictorPanel } from "@/components/Gradebook/GradePredictorPanel";
@@ -253,49 +254,79 @@ export function GradebookCourseScreen({ courseId }: Props) {
   >(new Map());
   const [curveSettingsOpen, setCurveSettingsOpen] = React.useState(false);
 
+  // Latest-wins (#770): every mutation below ends in refresh(), so two quick
+  // edits put two course reads in flight, and the older one could land last
+  // and paint the pre-edit grade back. Only the newest read may touch state.
+  const refreshSeq = React.useRef(0);
   const refresh = React.useCallback(async () => {
     if (!userId) return;
+    const seq = ++refreshSeq.current;
     setFetchError(null);
     try {
       const fresh = await getGradebookCourse(userId, courseId, currentSemesterParam());
+      if (seq !== refreshSeq.current) return;
       setData(fresh);
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      if (seq !== refreshSeq.current) return;
+      const errMsg = humanizeError(err, "Unknown error");
       setFetchError(errMsg);
       toast.error(`Couldn't load course: ${errMsg}`);
+    } finally {
+      // Whichever read is newest ends the initial load, so a superseded
+      // loadInitial can neither drop the skeleton early nor leave it stuck.
+      if (seq === refreshSeq.current) setLoading(false);
     }
   }, [userId, courseId, toast]);
 
   const loadInitial = React.useCallback(async () => {
     setLoading(true);
     await refresh();
-    setLoading(false);
   }, [refresh]);
 
+  // A different course (or account) starts from nothing: the previous
+  // course's grades must not stay on screen, or be edited, under this URL.
   React.useEffect(() => {
-    loadInitial();
+    setData(null);
+  }, [userId, courseId]);
+
+  React.useEffect(() => {
+    void loadInitial();
+    // Cancel: a read still in flight for the previous course/account must
+    // not land on this one. (The counter ref, not a DOM ref: bumping its
+    // live value at cleanup time is exactly the intent.)
+    const seq = refreshSeq;
+    return () => { seq.current++; };
   }, [loadInitial]);
 
   // Without ?semester= the term is whatever the course load resolved. Asking
   // before then would list every term's link, and that unscoped answer could
   // land after the scoped one and mark this term as linked.
   const courseLoaded = data !== null;
+  const gscopeSeq = React.useRef(0);
   const refreshGscope = React.useCallback(async () => {
     if (!userId) return;
     if (!currentSemesterParam() && !courseLoaded) return;
+    // Latest-wins, like refresh(): an older status answer must not mark the
+    // course linked (or unlinked) over a newer one.
+    const seq = ++gscopeSeq.current;
     try {
       const status = await getGradescopeStatus(userId);
-      if (!status.has_credentials) {
+      if (seq !== gscopeSeq.current) return;
+      // Only a working connection syncs in one click. Disconnected (links
+      // survive a disconnect) or rejected credentials open the dialog instead.
+      if (gradescopeConnectionState(status) !== "connected") {
         setGscope({ ready: false, lastSyncedAt: null });
         return;
       }
       const res = await listGradescopeLinks(userId, currentSemesterParam() ?? data?.semester);
+      if (seq !== gscopeSeq.current) return;
       const myLink = res.links.find((l) => l.sapling_course_id === courseId);
       setGscope({
         ready: !!myLink,
         lastSyncedAt: myLink?.last_synced_at ?? null,
       });
     } catch {
+      if (seq !== gscopeSeq.current) return;
       setGscope({ ready: false, lastSyncedAt: null });
     }
   }, [userId, courseId, courseLoaded, data?.semester]);
@@ -319,7 +350,12 @@ export function GradebookCourseScreen({ courseId }: Props) {
     } catch (err: unknown) {
       const msg = humanizeError(err, "Sync failed");
       toast.error(msg);
-      if (statusOf(err) === 401 || /invalid|credentials|link|expired/i.test(msg)) {
+      // #770: only the typed Gradescope rejection means "reconnect Gradescope";
+      // 400 = no course linked, 409 = ambiguous links — both fixed in the
+      // dialog. A 401 is Sapling's own session: the toast says so, and the
+      // Gradescope dialog is the wrong remedy for it.
+      const status = statusOf(err);
+      if (needsGradescopeSignIn(err) || status === 400 || status === 409) {
         setSyncOpen(true);
         await refreshGscope();
       }
@@ -343,19 +379,27 @@ export function GradebookCourseScreen({ courseId }: Props) {
         next.delete(id);
         return next;
       });
-      const prev = data;
-      setData({
-        ...data,
-        assignments: data.assignments.map((a) =>
-          a.id === id ? { ...a, points_earned: points } : a,
-        ),
-      });
+      // Per-field rollback (#770): a whole-object snapshot restored on failure
+      // also wiped every other edit made while this save was in flight.
+      // Remember only this assignment's previous score, and undo only this
+      // field, and only if nothing newer has been written to it since.
+      const before = data.assignments.find((a) => a.id === id)?.points_earned ?? null;
+      const withPoints = (value: number | null, onlyIf?: number | null) =>
+        (cur: GradebookCourse | null) => cur && {
+          ...cur,
+          assignments: cur.assignments.map((a) =>
+            a.id === id && (onlyIf === undefined || a.points_earned === onlyIf)
+              ? { ...a, points_earned: value }
+              : a,
+          ),
+        };
+      setData(withPoints(points));
       try {
         await updateGradedAssignment(userId, id, { points_earned: points });
         await refresh();
       } catch (err: unknown) {
-        setData(prev);
-        toast.error(`Couldn't save: ${err instanceof Error ? err.message : String(err)}`);
+        setData(withPoints(before, points));
+        toast.error(`Couldn't save: ${humanizeError(err, "Try again.")}`);
       }
     },
     [userId, data, refresh, toast],
@@ -465,7 +509,8 @@ export function GradebookCourseScreen({ courseId }: Props) {
 
   const handleToggleCurveMode = React.useCallback(async () => {
     if (!data || !userId) return;
-    const newMode = data.curve_mode === "curved" ? "raw" : "curved";
+    const oldMode = data.curve_mode;
+    const newMode = oldMode === "curved" ? "raw" : "curved";
     setData((prev) => prev ? { ...prev, curve_mode: newMode } : prev);
     try {
       await setCurveSettings(
@@ -475,10 +520,13 @@ export function GradebookCourseScreen({ courseId }: Props) {
         currentSemesterParam(),
       );
       await refresh(); // Server recomputes data.percent with the new curve_mode
-    } catch {
-      setData((prev) => prev ? { ...prev, curve_mode: data.curve_mode } : prev);
+    } catch (err: unknown) {
+      // Undo only this toggle, and only if nothing has moved the mode since;
+      // and say so — a silent flip back read as the click not registering.
+      setData((prev) => prev && prev.curve_mode === newMode ? { ...prev, curve_mode: oldMode } : prev);
+      toast.error(`Couldn't switch to ${newMode} grades: ${humanizeError(err, "Try again.")}`);
     }
-  }, [data, userId, courseId, refresh]);
+  }, [data, userId, courseId, refresh, toast]);
 
   const handleSaveCurveSettings = React.useCallback(
     async (settings: {

@@ -99,6 +99,7 @@ def test_event_taxonomy_is_pinned():
         # and was swallowed. Emit coverage lives in
         # test_quiz_gamification_g8.py::TestNeitherFailureInventsANumber.
         "quiz.gamification_snapshot_failed",
+        "quiz.mastery_write_failed",  # #760
         "quiz.tool_empty",            # F5: a personalization input came back empty
         "quiz.rag_uncovered",         # E8: generation ran without course grounding
         # #546: the deprecated include_answer_key flag's two straggler
@@ -108,6 +109,11 @@ def test_event_taxonomy_is_pinned():
         "quiz.answer_key_flag_omitted",
         "chat.message_sent",
         "note.created",
+        # ADR 0028: flashcard generation/review had no event; added so both
+        # the events table and the PostHog mirror get them. Emit coverage
+        # lives in test_posthog_seam.py::TestFlashcardEvents.
+        "flashcard.generated",
+        "flashcard.reviewed",
         "session.started",
         "session.ended",
         "rag.retrieval_failed",
@@ -435,7 +441,7 @@ def test_metrics_route_disabled_404_still_emits_error_4xx(sink, monkeypatch):
 # ── Seam 1b: get_session_user_id stamps request.state.user_id ────────────────
 
 
-def test_get_session_user_id_stamps_request_state(sink):
+def test_get_session_user_id_stamps_request_state(sink, live_accounts):
     from services import auth_guard
 
     req = _make_request("/api/whatever", query="user_id=user_xyz")
@@ -1215,7 +1221,7 @@ def test_chat_stream_emits_message_sent_with_explicit_request_id(sink):
             return_value=(MagicMock(), "msg", {}, MagicMock()),
         ),
         patch("routes.learn._consume_pending"),
-        patch("routes.learn.require_session_owner"),
+        patch("routes.learn.require_session_owner"), patch("routes.learn.require_session_open"),
         patch("routes.learn._get_session_offering_id", return_value="off-1"),
         patch("routes.learn.offering_course_id", return_value="c1"),
         patch("routes.learn._load_message_history", return_value=[]),
@@ -1315,7 +1321,8 @@ def test_end_session_emits_session_ended(sink):
             ]
         else:
             mock.select.return_value = []
-        mock.update.return_value = []
+        # A conditional end (#761) reports the row it closed.
+        mock.update.return_value = [{"id": "s-ended"}] if name == "sessions" else []
         return mock
 
     with patch("routes.learn.table", side_effect=factory):

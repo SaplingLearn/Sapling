@@ -305,6 +305,67 @@ class TestActivity:
         assert len(body["trend"]) == 8
 
 
+class TestLapsedStreaksReadZero:
+    """#767: touch_streak only resets a broken streak on the NEXT activity, so
+    every reader goes through effective_streak, never the raw column."""
+
+    STALE = "2020-01-01"
+
+    def test_activity_tile(self):
+        handles = {"xp_events": MagicMock(), "users": MagicMock()}
+        _one_page(handles["xp_events"], [])
+        handles["users"].select.return_value = [
+            {"streak_count": 12, "last_active_date": self.STALE, "daily_goal_xp": 50}
+        ]
+        with _patched_tables(handles):
+            r = client.get("/api/gamification/activity?user_id=u1")
+        assert r.json()["tiles"]["streak"] == 0
+
+    def test_activity_tile_keeps_a_live_streak(self):
+        handles = {"xp_events": MagicMock(), "users": MagicMock()}
+        _one_page(handles["xp_events"], [])
+        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+        handles["users"].select.return_value = [
+            {"streak_count": 12, "last_active_date": yesterday, "daily_goal_xp": 50}
+        ]
+        with _patched_tables(handles):
+            r = client.get("/api/gamification/activity?user_id=u1")
+        assert r.json()["tiles"]["streak"] == 12
+
+    def test_leaderboard_rows(self):
+        now = datetime.now(timezone.utc).isoformat()
+        handles = {"xp_events": MagicMock(), "users": MagicMock(),
+                   "user_settings": MagicMock()}
+        _one_page(handles["xp_events"], [{"user_id": "u1", "amount": 5, "created_at": now}])
+        handles["users"].select.return_value = [
+            {"id": "u1", "level": 1, "total_xp": 5, "streak_count": 9,
+             "last_active_date": self.STALE},
+        ]
+        handles["user_settings"].select.return_value = []
+        with _patched_tables(handles), \
+             patch("routes.gamification.stage_for_level", return_value=STAGE), \
+             patch("routes.gamification.get_display_names", return_value={"u1": "A"}):
+            r = client.get("/api/gamification/leaderboard?user_id=u1&scope=everyone")
+        assert r.json()["rows"][0]["streak"] == 0
+
+    def test_hero_card(self):
+        handles = {"users": MagicMock(), "xp_events": MagicMock(),
+                   "user_achievements": MagicMock(), "achievements": MagicMock()}
+        handles["users"].select.return_value = [{
+            "total_xp": 0, "level": 1, "streak_count": 23,
+            "last_active_date": self.STALE, "longest_streak": 31,
+        }]
+        for k in ("xp_events", "user_achievements", "achievements"):
+            _one_page(handles[k], [])
+        with _patched_tables(handles), \
+             patch("services.gamification_service.stage_for_level", return_value=STAGE), \
+             patch("services.gamification_service.xp_into_level", return_value=(0, 50)):
+            r = client.get("/api/gamification/me?user_id=u1")
+        body = r.json()
+        assert body["streak"] == 0
+        assert body["longest_streak"] == 31
+
+
 class TestEventsSincePagination:
     def test_pages_past_a_full_page_of_xp_events(self):
         """PostgREST caps a single response at supabase/config.toml's

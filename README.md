@@ -48,7 +48,7 @@ Sapling is a study tool that adapts to how you learn. Chat with an AI tutor acro
 
 ## Tech Stack
 
-- **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (default) or 3D via `react-force-graph-3d` (three.js/WebGL), lazy-loaded so the 3D stack only enters the bundle when toggled on. Vitest with jsdom + React Testing Library for unit + component tests.
+- **Frontend** — Next.js 16 (TypeScript, App Router). The knowledge graph renders in 2D via D3.js (SVG + d3-force). Vitest with jsdom + React Testing Library for unit + component tests.
 - **Backend** — FastAPI (Python) serving a REST API. Document ingestion runs through a Pydantic AI agentic pipeline (4 typed worker agents fanned out in parallel via `asyncio.gather`). Quiz generation, the chat tutor, syllabus extraction, and the notetaker (summary / concepts / chat) are also Pydantic AI agents — every LLM call in the backend goes through these agents; the legacy structured-prompt helper (`services/gemini_service.py`) was retired in ADR 0024.
 - **AI** — Google Gemini, with per-task model routing configurable via env vars. Defaults: `gemini-2.5-flash-lite` for classifier, summary, quiz generation, and note summary/concepts; `gemini-2.5-flash` for concept extraction, syllabus parsing, and note chat; `gemini-2.5-pro` for the chat tutor. Override per task via `SAPLING_MODEL_<TASK>`.
 - **Auth** — Google OAuth sign-in with stateless HMAC-signed session cookies (`SESSION_SECRET`), role-based access control, and an email-domain allowlist (default `bu.edu`).
@@ -388,7 +388,7 @@ python -m pytest tests/ -q --ignore=tests/evals
 ruff check .
 ```
 
-**Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (e.g. `DocumentUploadModal`, `TopNav`, `KnowledgeGraph3D`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
+**Frontend** — Vitest. Pure-logic tests (`sse.ts`, `api.ts`) run in node; component tests (e.g. `DocumentUploadModal`, `TopNav`, `KnowledgeGraph`) use jsdom + React Testing Library + `@testing-library/jest-dom`. Per-file `// @vitest-environment jsdom` directive keeps the lib tests fast.
 
 ```
 cd frontend

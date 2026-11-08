@@ -441,7 +441,9 @@ class TestUnapproveUser:
         assert r.status_code == 200
         assert tables["users"].update.call_args.args[0] == {"is_approved": False}
         upsert = tables["newsletter_emails"].upsert.call_args
-        assert upsert.args[0] == {"email": "ada@bu.edu"}
+        # #757: the entry keeps the account link, so approving it again
+        # can let this account straight back in.
+        assert upsert.args[0] == {"email": "ada@bu.edu", "joined_user_id": "u1"}
 
     def test_removed_user_already_listed_is_reset_to_signup(self):
         from services.encryption import encrypt
@@ -464,8 +466,8 @@ class TestUnapproveUser:
              patch("routes.admin.log_admin_action"):
             client.patch("/api/admin/users/u1/unapprove")
         update = tables["newsletter_emails"].update.call_args
-        assert update.args[0] == {"approved_at": None, "joined_at": None, "joined_user_id": None}
-        assert update.kwargs["filters"] == {"id": "eq.w9"}
+        assert update.args[0] == {"approved_at": None, "joined_at": None, "joined_user_id": "u1"}
+        assert update.kwargs["filters"] == {"id": "in.(w9)"}
         tables["newsletter_emails"].upsert.assert_not_called()
 
 
@@ -689,6 +691,39 @@ class TestAchievementAudits:
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "achievement.update"
 
+    @pytest.mark.parametrize("bad", ["published", "LIVE", "", None, 1])
+    def test_an_invalid_status_is_a_422_not_a_check_violation(self, bad):
+        """#767: any status used to reach the achievements_status_check
+        constraint and come back as a 500."""
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action") as audit:
+            r = client.patch("/api/admin/achievements/a1", json={"status": bad})
+        assert r.status_code == 422
+        t.return_value.update.assert_not_called()
+        audit.assert_not_called()
+
+    @pytest.mark.parametrize("status", ["draft", "live"])
+    def test_a_valid_status_is_written(self, status):
+        with _mock_admin(), patch("routes.admin.table") as t, \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action"):
+            t.return_value.update.return_value = [{}]
+            r = client.patch("/api/admin/achievements/a1", json={"status": status})
+        assert r.status_code == 200
+        assert t.return_value.update.call_args[0][0] == {"status": status}
+
+    def test_unpublishing_does_not_touch_existing_grants(self):
+        """live → draft hides the badge; it does not revoke user_achievements."""
+        touched = []
+        with _mock_admin(), \
+             patch("routes.admin.table", side_effect=lambda n: touched.append(n) or MagicMock()), \
+             patch("routes.admin.get_session_user_id", return_value="u1"), \
+             patch("routes.admin.log_admin_action"):
+            r = client.patch("/api/admin/achievements/a1", json={"status": "draft"})
+        assert r.status_code == 200
+        assert touched == ["achievements"]
+
     def test_delete_logs_audit(self):
         with _mock_admin(), patch("routes.admin.table") as t, \
              patch("routes.admin.get_session_user_id", return_value="u1"), \
@@ -841,34 +876,181 @@ class TestListAllowlist:
         t.assert_not_called()
 
 
+def _waitlist_tables(waitlist=None, *, users_update=None):
+    """Per-name table fakes, shared by routes.admin and routes.auth (the
+    case-insensitive waitlist lookup lives in auth)."""
+    made: dict = {}
+
+    def factory(name):
+        if name not in made:
+            m = MagicMock(name=f"table:{name}")
+            m.select.return_value = []
+            m.select_with_count.return_value = ([], 0)
+            m.update.return_value = []
+            m.upsert.return_value = []
+            made[name] = m
+        return made[name]
+
+    factory("newsletter_emails").select.return_value = list(waitlist or [])
+    factory("newsletter_emails").select_with_count.return_value = (list(waitlist or []), len(waitlist or []))
+    factory("newsletter_emails").update.return_value = list(waitlist or [])[:1]
+    if users_update is not None:
+        factory("users").update.return_value = users_update
+    return factory, made
+
+
+def _allowlist_call(factory, path, json, actor="admin1"):
+    with _mock_admin(), patch("routes.admin.table", side_effect=factory), \
+         patch("routes.auth.table", side_effect=factory), \
+         patch("routes.admin.get_session_user_id", return_value=actor), \
+         patch("routes.admin.email_service.queue_waitlist_approved") as queued, \
+         patch("routes.admin.log_admin_action") as audit:
+        r = client.post(path, json=json)
+    return r, audit, queued
+
+
 class TestAllowlistAudits:
     def test_approve_logs_audit(self):
-        with _mock_admin(), patch("routes.admin.table") as t, \
-             patch("routes.admin.get_session_user_id", return_value="u1"), \
-             patch("routes.admin.log_admin_action") as audit:
-            t.return_value.upsert.return_value = [{"email": "a@b.c"}]
-            r = client.post("/api/admin/allowlist/approve", json={"email": "A@B.c"})
+        factory, _ = _waitlist_tables()
+        r, audit, _ = _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": "A@B.co"})
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "allowlist.approve"
-        assert audit.call_args.kwargs["payload"]["email"] == "A@B.c"
+        # #757: the audit names the normalised address, as the bulk path does.
+        assert audit.call_args.kwargs["payload"]["email"] == "a@b.co"
 
     def test_revoke_logs_audit(self):
-        with _mock_admin(), patch("routes.admin.table") as t, \
-             patch("routes.admin.get_session_user_id", return_value="u1"), \
-             patch("routes.admin.log_admin_action") as audit:
-            t.return_value.update.return_value = [{"email": "a@b.c"}]
-            r = client.post("/api/admin/allowlist/revoke", json={"email": "A@B.c"})
+        factory, _ = _waitlist_tables([{"id": "w1", "email": "a@b.co", "approved_at": "t"}])
+        r, audit, _ = _allowlist_call(factory, "/api/admin/allowlist/revoke", {"email": "A@B.co"})
         assert r.status_code == 200
         assert audit.call_args.kwargs["action"] == "allowlist.revoke"
-        assert r.json() == {"email": {"email": "a@b.c"}}
+        assert r.json() == {"email": {"id": "w1", "email": "a@b.co", "approved_at": "t"}}
 
     def test_revoke_404_does_not_audit(self):
-        with _mock_admin(), patch("routes.admin.table") as t, \
-             patch("routes.admin.get_session_user_id", return_value="u1"), \
-             patch("routes.admin.log_admin_action") as audit:
-            t.return_value.update.return_value = []
-            r = client.post("/api/admin/allowlist/revoke", json={"email": "missing@b.c"})
+        factory, made = _waitlist_tables([])
+        r, audit, _ = _allowlist_call(factory, "/api/admin/allowlist/revoke", {"email": "missing@b.co"})
         assert r.status_code == 404
+        audit.assert_not_called()
+        made["newsletter_emails"].update.assert_not_called()
+
+
+class TestAllowlistStateConsistency:
+    """#757: single approve and revoke follow the bulk path's rules —
+    normalised email, every case twin, no re-stamped approval — and both reach
+    the account itself instead of waiting for its next sign-in."""
+
+    def test_approve_rejects_a_malformed_address(self):
+        factory, made = _waitlist_tables()
+        r, _, _ = _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": "not an email"})
+        assert r.status_code == 422
+        assert "newsletter_emails" not in made or not made["newsletter_emails"].upsert.called
+
+    def test_approve_of_an_existing_twin_neither_twins_nor_restamps(self):
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "Ada@BU.edu", "approved_at": "2026-01-01T00:00:00Z"},
+        ])
+        r, _, queued = _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": " ada@bu.edu"})
+        assert r.status_code == 200
+        nl = made["newsletter_emails"]
+        nl.upsert.assert_not_called()  # no lowercased twin
+        assert not any("approved_at" in c.args[0] for c in nl.update.call_args_list)  # no re-stamp
+        # The "you're in" email goes to the stored spelling.
+        assert queued.call_args.args[1] == "Ada@BU.edu"
+
+    def test_approve_stamps_only_unapproved_twins(self):
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "Ada@BU.edu", "approved_at": None},
+            {"id": "w2", "email": "ada@bu.edu", "approved_at": None},
+        ])
+        _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": "ADA@bu.edu"})
+        (stamp,) = [c for c in made["newsletter_emails"].update.call_args_list if "approved_at" in c.args[0]]
+        assert stamp.kwargs["filters"] == {"id": "in.(w1,w2)", "approved_at": "is.null"}
+
+    def test_approve_of_a_new_address_inserts_it_normalised_without_overwriting(self):
+        factory, made = _waitlist_tables([])
+        _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": "New@BU.edu "})
+        ins = made["newsletter_emails"].upsert.call_args
+        assert [row["email"] for row in ins.args[0]] == ["new@bu.edu"]
+        assert ins.kwargs == {"on_conflict": "email", "ignore_duplicates": True}
+
+    def test_approve_lets_an_existing_account_in_at_once(self):
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "ada@bu.edu", "approved_at": None, "joined_user_id": "user_1"},
+        ])
+        r, _, _ = _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": "ada@bu.edu"})
+        assert r.status_code == 200
+        users_update = made["users"].update.call_args
+        assert users_update.args[0] == {"is_approved": True}
+        assert users_update.kwargs["filters"] == {"id": 'in.("user_1")'}
+        joined = [c for c in made["newsletter_emails"].update.call_args_list if "joined_at" in c.args[0]]
+        assert joined and joined[0].kwargs["filters"] == {"id": "in.(w1)", "joined_at": "is.null"}
+
+    def test_approve_without_a_linked_account_touches_no_users(self):
+        factory, made = _waitlist_tables([{"id": "w1", "email": "ada@bu.edu", "approved_at": None}])
+        _allowlist_call(factory, "/api/admin/allowlist/approve", {"email": "ada@bu.edu"})
+        assert "users" not in made
+
+    def test_bulk_approve_lets_existing_accounts_in_at_once(self):
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "ada@bu.edu", "approved_at": None, "joined_user_id": "user_1"},
+            {"id": "w2", "email": "bo@bu.edu", "approved_at": None},
+        ])
+        r, _, _ = _allowlist_call(
+            factory, "/api/admin/allowlist/approve-bulk", {"emails": ["ada@bu.edu", "bo@bu.edu"]},
+        )
+        assert r.status_code == 200, r.text
+        (users_update,) = made["users"].update.call_args_list
+        assert users_update.args[0] == {"is_approved": True}
+        assert users_update.kwargs["filters"] == {"id": 'in.("user_1")'}
+
+    def test_revoke_reaches_every_case_twin(self):
+        """Sign-in reads the APPROVED twin; an exact-case revoke of the other
+        spelling used to leave it approved."""
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "Ada@bu.edu", "approved_at": None},
+            {"id": "w2", "email": "ada@bu.edu", "approved_at": "t", "joined_at": "t"},
+        ])
+        r, _, _ = _allowlist_call(factory, "/api/admin/allowlist/revoke", {"email": "Ada@bu.edu"})
+        assert r.status_code == 200
+        (upd,) = made["newsletter_emails"].update.call_args_list
+        assert upd.kwargs["filters"] == {"id": "in.(w2,w1)"}
+
+    def test_revoke_clears_joined_and_removes_the_accounts_access(self):
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "ada@bu.edu", "approved_at": "t", "joined_at": "t",
+             "joined_user_id": "user_1"},
+        ])
+        r, audit, _ = _allowlist_call(factory, "/api/admin/allowlist/revoke", {"email": "ada@bu.edu"})
+        assert r.status_code == 200
+        (upd,) = made["newsletter_emails"].update.call_args_list
+        # No "joined but not approved" row; the account link is kept so a
+        # re-approve (or a retried revoke) can still reach the account.
+        assert upd.args[0] == {"approved_at": None, "joined_at": None}
+        users_update = made["users"].update.call_args
+        assert users_update.args[0] == {"is_approved": False}
+        assert users_update.kwargs["filters"] == {"id": 'in.("user_1")'}
+        assert audit.call_args.kwargs["payload"]["user_ids"] == ["user_1"]
+
+    def test_revoke_writes_the_waitlist_before_the_account(self):
+        """A failed account write must be retryable by repeating the revoke,
+        not undone by the student's next sign-in reading an approved row."""
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "ada@bu.edu", "approved_at": "t", "joined_user_id": "user_1"},
+        ])
+        order = []
+        made["newsletter_emails"].update.side_effect = lambda *a, **k: order.append("waitlist") or [{"id": "w1"}]
+        factory("users").update.side_effect = lambda *a, **k: order.append("users") or []
+        _allowlist_call(factory, "/api/admin/allowlist/revoke", {"email": "ada@bu.edu"})
+        assert order == ["waitlist", "users"]
+
+    def test_admin_cannot_revoke_their_own_access(self):
+        factory, made = _waitlist_tables([
+            {"id": "w1", "email": "me@bu.edu", "approved_at": "t", "joined_user_id": "admin1"},
+        ])
+        r, audit, _ = _allowlist_call(
+            factory, "/api/admin/allowlist/revoke", {"email": "me@bu.edu"}, actor="admin1",
+        )
+        assert r.status_code == 409
+        made["newsletter_emails"].update.assert_not_called()
         audit.assert_not_called()
 
 

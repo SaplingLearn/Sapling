@@ -18,11 +18,37 @@ class TestInsertNewAssignments:
                 {"title": "HW1", "due_date": "2026-03-01", "course_id": "CS101", "assignment_type": "homework"},
             ], source="manual")
         assert n == 1
-        eif.assert_called_with("user_andres", "CS101", create=True)
+        # #766: a calendar write never creates an enrollment.
+        eif.assert_called_with("user_andres", "CS101", create=False)
         inserted = assignments_tbl.insert.call_args[0][0]
         assert inserted[0]["enrollment_id"] == "e1"
         assert inserted[0]["source"] == "manual"
         assert "user_id" not in inserted[0] and "course_id" not in inserted[0]
+
+    def test_dropped_course_is_skipped_not_re_enrolled(self):
+        # #766: saving an assignment for a course the student dropped used to
+        # silently re-create the enrollment. Run the REAL resolver against a
+        # user with no enrollment: nothing may be inserted anywhere.
+        tables: dict = {}
+
+        def factory(name):
+            if name not in tables:
+                m = MagicMock()
+                m.select.return_value = []
+                m.insert.return_value = []
+                tables[name] = m
+            return tables[name]
+
+        with patch("services.calendar_service.table", side_effect=factory), \
+             patch("services.academics.table", side_effect=factory), \
+             patch("services.academics.current_term", return_value={"id": "spring-2026"}):
+            n = cs.insert_new_assignments("user_andres", [
+                {"title": "HW1", "due_date": "2026-03-01", "course_id": "CS101"},
+            ])
+        assert n == 0
+        for name in ("enrollments", "course_offerings", "assignments"):
+            if name in tables:
+                tables[name].insert.assert_not_called()
 
     def test_skips_when_no_course(self):
         with patch("services.calendar_service.table", return_value=_tbl(select=[], insert=[])), \

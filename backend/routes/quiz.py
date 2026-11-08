@@ -23,7 +23,7 @@ from db.connection import pg_quote_value, table
 from models import AnswerQuestionBody, GenerateQuizBody, SubmitQuizBody
 from routes.learn import _get_catalog_chunk
 from services import events_service
-from services.auth_guard import require_self
+from services.auth_guard import require_self, guard_off_loop
 from services.quiz_config import (
     CONCRETE_DIFFICULTIES,
     QUIZ_ATTEMPT_ABANDON_TTL_HOURS,
@@ -37,7 +37,7 @@ from services.quiz_config import (
     mastery_after,
     quiz_config_payload,
 )
-from services.request_limits import check_rate_limit, refund_rate_limit
+from services.request_limits import claim_rate_limit, refund_rate_limit
 from services.quiz_errors import QuizAPIError, QuizErrorCode
 from services.profiles import get_display_name
 from services.encryption import encrypt_json, decrypt_json_column
@@ -154,7 +154,7 @@ def _daily_spend_exceeded(user_id: str) -> bool:
         return False
 
 
-def _refund_generate_slot(user_id: str) -> None:
+def _refund_generate_slot(user_id: str, slot: float | None) -> None:
     """Hand back the rate-limit slot a failed generation consumed (#544 F1).
 
     The slot is claimed BEFORE the model runs (so a burst can't get past
@@ -163,9 +163,12 @@ def _refund_generate_slot(user_id: str) -> None:
     out for five with a message saying they'd generated too many quizzes,
     having received none. A failure the student didn't cause shouldn't
     cost them anything, and the 502 explicitly invites a retry.
+
+    `slot` is the one THIS request claimed (#760) — refunding "the newest"
+    would hand back a concurrent request's slot instead.
     """
     try:
-        refund_rate_limit(f"quiz_generate:{user_id}")
+        refund_rate_limit(f"quiz_generate:{user_id}", slot)
     except Exception:
         logger.exception("quiz: rate-limit refund failed user=%s", user_id)
 
@@ -355,15 +358,53 @@ def _refuse_if_abandoned(attempt: dict) -> None:
         )
 
 
+def _recent_activity(attempt_ids: set[str]) -> dict[str, str]:
+    """Newest answer time per attempt, among answers inside the abandon window.
+
+    The `last_activity_at` half of `_attempt_status`, read in bulk. Only
+    answers newer than the cutoff can change a derived status (an answer is
+    never older than its attempt's `created_at`), so filtering on the cutoff
+    keeps the read small without changing any answer. Raises on a failed read:
+    callers decide whether "unknown" means skip (the sweep) or fall back.
+    """
+    if not attempt_ids:
+        return {}
+    rows = table("quiz_responses").select(
+        "attempt_id,answered_at",
+        filters={
+            "attempt_id": f"in.({','.join(sorted(attempt_ids))})",
+            "answered_at": f"gte.{_abandon_cutoff().isoformat()}",
+        },
+    ) or []
+    latest: dict[str, str] = {}
+    for r in rows:
+        aid, ts = r.get("attempt_id"), r.get("answered_at")
+        if not aid or not ts:
+            continue
+        prev = latest.get(aid)
+        parsed, prev_parsed = _parse_ts(ts), _parse_ts(prev)
+        if prev is None or (
+            parsed is not None and (prev_parsed is None or parsed > prev_parsed)
+        ):
+            latest[aid] = ts
+    return latest
+
+
 def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None) -> None:
     """Stamp abandoned_at on this user's stale in-progress attempts (#542
     D2). Conditional-update filters arbitrate — same idiom as the submit
     claim — and it runs lazily on the read paths, so no scheduler is
     needed. Best-effort: a failure never breaks the read.
 
-    `active_attempt_ids` are attempts with recent recorded answers, which
-    must survive the sweep even though they were created before the
-    cutoff — the student is mid-quiz.
+    #760: "stale" is `_attempt_status`'s rule, not `created_at` alone. An
+    attempt generated more than a TTL ago but ANSWERED inside it is being
+    worked on; stamping it (as opening history used to) made the student's
+    next answer and submit 409. Candidates old by `created_at` are checked
+    against their recent responses and the live ones are exempted. If that
+    activity read fails, nothing is swept — a later read will try again,
+    whereas a wrong stamp cannot be taken back.
+
+    `active_attempt_ids` are attempts the caller already knows are live.
     """
     filters = {
         "user_id": f"eq.{user_id}",
@@ -371,9 +412,15 @@ def _sweep_abandoned(user_id: str, *, active_attempt_ids: set[str] | None = None
         "abandoned_at": "is.null",
         "created_at": f"lt.{_abandon_cutoff().isoformat()}",
     }
-    if active_attempt_ids:
-        filters["id"] = f"not.in.({','.join(sorted(active_attempt_ids))})"
     try:
+        candidates = table("quiz_attempts").select("id", filters=filters) or []
+        stale = {r["id"] for r in candidates if r.get("id")}
+        stale -= active_attempt_ids or set()
+        if stale:
+            stale -= set(_recent_activity(stale))
+        if not stale:
+            return
+        filters["id"] = f"in.({','.join(sorted(stale))})"
         table("quiz_attempts").update(
             {"abandoned_at": datetime.now(timezone.utc).isoformat()},
             filters=filters,
@@ -1846,11 +1893,13 @@ async def _generate_or_502(
     concept_name: str,
     times_studied: int | None,
     count: int,
+    slot: float | None,
 ) -> GeneratedQuiz:
     """Run generation, or raise the error the client contract calls for.
 
     `count` is what to generate NOW, which is not `body.num_questions` when
-    G5 recovered part of the quiz from a previous attempt.
+    G5 recovered part of the quiz from a previous attempt. `slot` is the
+    rate-limit slot this request claimed, refunded on every failure exit.
     """
     try:
         # Each agent run inside is individually bounded by
@@ -1878,7 +1927,7 @@ async def _generate_or_502(
     except HTTPException:
         # The 404 for an unknown concept node is raised before the agent call;
         # never swallow a known HTTP state.
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         raise
     except asyncio.TimeoutError as e:
         # #544 F2: distinct from a generic failure — the client can say
@@ -1890,7 +1939,7 @@ async def _generate_or_502(
             "quiz: generation timed out after %ss request_id=%s",
             QUIZ_GENERATION_TIMEOUT_SEC, request_id,
         )
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         _log_generation_failed(body, request_id, "timeout")
         raise QuizAPIError(
             status_code=502,
@@ -1901,7 +1950,7 @@ async def _generate_or_502(
         # The raw-Gemini legacy fallback was retired in #145; degrade to 502
         # rather than serving a quiz from a second LLM path.
         logger.warning("Quiz agent guardrails tripped; returning 502", exc_info=e)
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         _log_generation_failed(body, request_id, "agent_guardrail")
         raise QuizAPIError(
             status_code=502,
@@ -1910,7 +1959,7 @@ async def _generate_or_502(
         ) from e
     except Exception as e:
         logger.exception("Unexpected quiz-agent failure; returning 502")
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         _log_generation_failed(body, request_id, "agent_error")
         raise QuizAPIError(
             status_code=502,
@@ -1921,7 +1970,7 @@ async def _generate_or_502(
 
 @router.post("/generate")
 async def generate_quiz(body: GenerateQuizBody, request: Request):
-    require_self(body.user_id, request)
+    await guard_off_loop(require_self, body.user_id, request)
     # The concrete trio is CHECK-constrained on quiz_attempts (0025 +
     # the #540 'adaptive' extension); reject drift before we run the
     # agent or write an attempt row.
@@ -1960,7 +2009,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # first, so probing can't consume a victim's quota) and BEFORE the
     # model call. Neither rejection is a backend failure, so neither emits
     # quiz.generation_failed.
-    retry_after = check_rate_limit(
+    retry_after, slot = claim_rate_limit(
         f"quiz_generate:{body.user_id}",
         limit=QUIZ_GENERATE_RATE_LIMIT,
         window_sec=QUIZ_GENERATE_RATE_WINDOW_SEC,
@@ -1987,7 +2036,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
         # results screen the student left open would otherwise spend their
         # quota eight times over and then 429 them having generated nothing.
         # Same rule _generate_or_502 follows on every one of its exits.
-        _refund_generate_slot(body.user_id)
+        _refund_generate_slot(body.user_id, slot)
         raise
     recovered = list(reserved.questions) if reserved else []
     missing = body.num_questions - len(recovered)
@@ -1997,6 +2046,11 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
             "quiz: daily spend cap reached user=%s request_id=%s",
             body.user_id, request_id,
         )
+        # #760: refused before anything was generated, so it must not cost a
+        # rate-limit slot. The cap can't be checked before the claim — whether
+        # it applies depends on how much G5 re-served — so hand back this
+        # request's exact slot instead.
+        _refund_generate_slot(body.user_id, slot)
         raise QuizAPIError(
             status_code=429,
             code=QuizErrorCode.QUIZ_DAILY_LIMIT_REACHED,
@@ -2035,6 +2089,7 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
                 concept_name=concept_name,
                 times_studied=node.get("times_studied"),
                 count=missing,
+                slot=slot,
             )
         except QuizAPIError:
             if not recovered:
@@ -2090,7 +2145,26 @@ async def generate_quiz(body: GenerateQuizBody, request: Request):
     # instead of 400ing on a column PostgREST's schema cache doesn't have.
     if exam_days_away is not None:
         attempt_row["exam_days_away"] = exam_days_away
-    _insert_attempt(attempt_row)
+    try:
+        _insert_attempt(attempt_row)
+    except Exception as e:
+        # #760: the quiz was generated (and billed) but there is no row to
+        # serve it from, so the student got nothing. Same three duties as
+        # every other failure exit: refund THIS request's slot, make the 502
+        # countable, and answer with the contract's retryable code rather
+        # than an opaque 500.
+        logger.exception(
+            "quiz: attempt insert failed after generation request_id=%s",
+            request_id,
+        )
+        _refund_generate_slot(body.user_id, slot)
+        _log_generation_failed(body, request_id, "attempt_insert_failed")
+        prompt_dimensions.clear()
+        raise QuizAPIError(
+            status_code=502,
+            code=QuizErrorCode.QUIZ_GENERATION_FAILED,
+            message="Quiz generation is temporarily unavailable. Please try again.",
+        ) from e
     if reserved is not None:
         # G5, closing the pair opened before the run: how this quiz was
         # actually assembled. Rides quiz.started on the F6 snapshot, which
@@ -2203,6 +2277,19 @@ def list_attempts(
         ) or []
         nodes = {n["id"]: n for n in node_rows}
 
+    # #760: derive status with the same answer activity GET /attempts/{id}
+    # uses, or the two disagree about an old-but-active attempt (the list
+    # said abandoned while the attempt itself said in_progress).
+    open_ids = {
+        r["id"] for r in rows
+        if not r.get("completed_at") and not r.get("abandoned_at")
+    }
+    try:
+        activity = _recent_activity(open_ids)
+    except Exception:
+        logger.exception("quiz: history activity read failed user=%s", user_id)
+        activity = {}
+
     attempts = []
     for r in rows:
         node = nodes.get(r.get("concept_node_id")) or {}
@@ -2210,7 +2297,7 @@ def list_attempts(
         delta = round(after - before, 4) if before is not None and after is not None else None
         attempts.append({
             "quiz_id": r["id"],
-            "status": _attempt_status(r),
+            "status": _attempt_status(r, last_activity_at=activity.get(r["id"])),
             "concept_node_id": r.get("concept_node_id"),
             "concept_name": node.get("concept_name"),
             "course_id": node.get("course_id"),
@@ -2576,74 +2663,10 @@ def _gamification_block(
     return {**paid, **snapshot}
 
 
-@router.post("/submit")
-def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
-    attempt = _load_owned_attempt(body.quiz_id, request)
-    user_id = attempt["user_id"]
-
-    # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
-    questions = decrypt_json_column(attempt["questions_json"])
-
-    # #129: completed_at is written on the first successful submit. A re-POST
-    # of the same quiz_id must not re-run apply_graph_update (double mastery
-    # delta + duplicate node_mastery_events row + streak bump), the background
-    # quiz-context task, or achievements. 409 rather than replaying the original
-    # 200: quiz_attempts stores no mastery_before/after, so faithfully
-    # reconstructing the first response would need a migration.
-    _refuse_if_completed(attempt)
-    # An abandoned attempt must not pay out mastery, XP or achievements —
-    # otherwise the TTL is a label and the sweep enforces nothing.
-    _refuse_if_abandoned(attempt)
-    # The read above is only the fast path — two CONCURRENT submits (a
-    # double-click on the final submit) would both pass it. The atomic claim
-    # below (conditional update on completed_at IS NULL, PR #464 review) is
-    # the real gate: exactly one request wins the row; the loser 409s before
-    # any mastery write. A crash after the claim leaves the attempt
-    # completed-but-scoreless (retry 409s) — strictly safer than double
-    # mastery. The final update further down fills score/total/answers_json.
-    claimed = table("quiz_attempts").update(
-        {"completed_at": datetime.now(timezone.utc).isoformat()},
-        filters={
-            "id": f"eq.{body.quiz_id}",
-            "completed_at": "is.null",
-            # Symmetric with abandon_attempt's claim (#537 G4). Without it the
-            # two claims can BOTH win — mid-quiz in one tab, Discard in
-            # another — and the row ends up completed AND abandoned.
-            # `_refuse_if_abandoned` above is only a pre-read; the filters are
-            # what actually arbitrate.
-            "abandoned_at": "is.null",
-        },
-    )
-    if not claimed:
-        # Two ways to lose the claim now, and they are different sentences to
-        # the student ("already submitted" vs "you discarded this"). The
-        # pre-read cannot see a stamp written since, so re-read rather than
-        # assume the completed case.
-        #
-        # That re-read is a REFINEMENT of an answer this branch already has.
-        # Losing the claim used to be infallible — no I/O between the refusal
-        # and the response — so a transient PostgREST failure here must fall
-        # back to the 409 a double-submit always got, not turn an ordinary
-        # double-click into a 500.
-        try:
-            current_rows = table("quiz_attempts").select(
-                "abandoned_at", filters={"id": f"eq.{body.quiz_id}"},
-            )
-        except Exception:
-            logger.warning(
-                "quiz: submit re-read failed after a lost claim attempt=%s; "
-                "answering already-completed", body.quiz_id, exc_info=True,
-            )
-            current_rows = None
-        if current_rows is not None:
-            if not current_rows:
-                # Deleted under us: neither sentence is true any more.
-                raise _attempt_not_found()
-            _refuse_if_abandoned(current_rows[0])
-        raise _already_completed()
-
-    concept_node_id = attempt["concept_node_id"]
-
+def _grade_submission(
+    body: SubmitQuizBody, questions: list[dict],
+) -> tuple[list[dict], list[dict], int]:
+    """Grade a claimed attempt: (results, graded_answers, score)."""
     # #541 C4: responses recorded through /attempts/{id}/answer are the
     # source of truth — a payload answer for the same question is ignored
     # (the recorded response was graded at answer time; letting the final
@@ -2711,13 +2734,64 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             "explanation": q.get("explanation", ""),
         })
 
-    total = len(questions)
+    return results, graded_answers, score
+
+
+def _release_submit_claim(quiz_id: str, claim_stamp: str) -> None:
+    """Undo the submit claim when grading/scoring failed before any write.
+
+    Conditional on THIS request's stamp and a still-NULL score, so it can
+    only reopen the row this request closed and never one that was scored.
+    Best-effort: if the release itself fails the attempt stays stranded,
+    which is logged loudly rather than masking the original error.
+    """
+    try:
+        table("quiz_attempts").update(
+            {"completed_at": None},
+            filters={
+                "id": f"eq.{quiz_id}",
+                "completed_at": f"eq.{claim_stamp}",
+                "score": "is.null",
+            },
+            prefer_return_minimal=True,
+        )
+    except Exception:
+        logger.exception(
+            "quiz: submit claim release failed; attempt stranded "
+            "completed-but-scoreless quiz_id=%s", quiz_id,
+        )
+
+
+@router.post("/submit")
+def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request: Request):
+    attempt = _load_owned_attempt(body.quiz_id, request)
+    user_id = attempt["user_id"]
+
+    # #521: ciphertext str for new rows, plaintext JSONB for pre-backfill rows.
+    questions = decrypt_json_column(attempt["questions_json"])
+
+    # #129: completed_at is written on the first successful submit. A re-POST
+    # of the same quiz_id must not re-run apply_graph_update (double mastery
+    # delta + duplicate node_mastery_events row + streak bump), the background
+    # quiz-context task, or achievements. 409 rather than replaying the original
+    # 200: quiz_attempts stores no mastery_before/after, so faithfully
+    # reconstructing the first response would need a migration.
+    _refuse_if_completed(attempt)
+    # An abandoned attempt must not pay out mastery, XP or achievements —
+    # otherwise the TTL is a label and the sweep enforces nothing.
+    _refuse_if_abandoned(attempt)
+
+    concept_node_id = attempt["concept_node_id"]
 
     # Owner-scoped read: the attempt's concept node must belong to the
     # attempt's owner. A missing/foreign node means we'd otherwise write
     # mastery to someone else's row (IDOR) — refuse before any write.
     # mastery_events was DROPPED in 0023 (events moved to node_mastery_events);
     # we no longer read or write that column here.
+    #
+    # #760: BEFORE the claim. A pure precondition that 404s after the claim
+    # stranded the attempt completed-but-scoreless — every retry 409'd and no
+    # XP was ever paid. Refusing here leaves the attempt open.
     node_rows = table("graph_nodes").select(
         "concept_name,mastery_score,course_id",
         filters={"id": f"eq.{concept_node_id}", "user_id": f"eq.{user_id}"},
@@ -2729,6 +2803,83 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
             message="We couldn't find that concept in your knowledge graph.",
         )
     node = node_rows[0]
+
+    # The read above is only the fast path — two CONCURRENT submits (a
+    # double-click on the final submit) would both pass it. The atomic claim
+    # below (conditional update on completed_at IS NULL, PR #464 review) is
+    # the real gate: exactly one request wins the row; the loser 409s before
+    # any mastery write.
+    #
+    # #760: once claimed, the SCORE must land. Grading + the score write come
+    # next, and a failure in them releases the claim (nothing else has been
+    # written yet, so a retry is safe). The graph/mastery update runs only
+    # after the score is persisted and is best-effort: its failure is logged
+    # and emitted, never allowed to strand the attempt scoreless.
+    claim_stamp = datetime.now(timezone.utc).isoformat()
+    claimed = table("quiz_attempts").update(
+        {"completed_at": claim_stamp},
+        filters={
+            "id": f"eq.{body.quiz_id}",
+            "completed_at": "is.null",
+            # Symmetric with abandon_attempt's claim (#537 G4). Without it the
+            # two claims can BOTH win — mid-quiz in one tab, Discard in
+            # another — and the row ends up completed AND abandoned.
+            # `_refuse_if_abandoned` above is only a pre-read; the filters are
+            # what actually arbitrate.
+            "abandoned_at": "is.null",
+        },
+    )
+    if not claimed:
+        # Two ways to lose the claim now, and they are different sentences to
+        # the student ("already submitted" vs "you discarded this"). The
+        # pre-read cannot see a stamp written since, so re-read rather than
+        # assume the completed case.
+        #
+        # That re-read is a REFINEMENT of an answer this branch already has.
+        # Losing the claim used to be infallible — no I/O between the refusal
+        # and the response — so a transient PostgREST failure here must fall
+        # back to the 409 a double-submit always got, not turn an ordinary
+        # double-click into a 500.
+        try:
+            current_rows = table("quiz_attempts").select(
+                "abandoned_at", filters={"id": f"eq.{body.quiz_id}"},
+            )
+        except Exception:
+            logger.warning(
+                "quiz: submit re-read failed after a lost claim attempt=%s; "
+                "answering already-completed", body.quiz_id, exc_info=True,
+            )
+            current_rows = None
+        if current_rows is not None:
+            if not current_rows:
+                # Deleted under us: neither sentence is true any more.
+                raise _attempt_not_found()
+            _refuse_if_abandoned(current_rows[0])
+        raise _already_completed()
+
+    try:
+        results, graded_answers, score = _grade_submission(body, questions)
+        total = len(questions)
+        # The score lands FIRST and alone (#760): everything after it is
+        # best-effort, so nothing after it can strand the attempt scoreless.
+        table("quiz_attempts").update(
+            {
+                "score": score,
+                "total": total,
+                # The reconciled set (recorded responses winning over payload),
+                # not the raw request — the attempt's stored answers must agree
+                # with the score computed from them.
+                "answers_json": encrypt_json(graded_answers),
+                # completed_at was already stamped by the atomic claim above.
+            },
+            filters={"id": f"eq.{body.quiz_id}"},
+        )
+    except Exception:
+        # Nothing else has been written: hand the attempt back so a retry
+        # can grade it, rather than leave it completed with no score.
+        _release_submit_claim(body.quiz_id, claim_stamp)
+        raise
+
     mastery_before = node["mastery_score"]
     # #543 E1: the model is a named seam now (services/quiz_config.py).
     # The numbers are unchanged — see docs/quiz-mastery-model.md for the
@@ -2756,52 +2907,79 @@ def submit_quiz(body: SubmitQuizBody, background_tasks: BackgroundTasks, request
     # bumps times_studied/last_studied_at, records the event (now in
     # node_mastery_events), and updates the streak. We don't touch graph_nodes
     # or node_mastery_events directly — that's the graph slice's territory.
-    applied = apply_graph_update(
-        user_id,
-        {
-            "updated_nodes": [
-                {
-                    "concept_name": node["concept_name"],
-                    "mastery_delta": mastery_delta,
-                    "reason": f"Quiz: {score}/{total} correct",
-                    "event_type": event_type,
-                }
-            ]
-        },
-        course_id=node.get("course_id"),
-    )
-    # #542 D1 (review): persist what the GRAPH actually wrote, not what we
-    # predicted. apply_graph_update owns the write — it resolves the node by
-    # normalized concept name and clamps the result — so its reported
-    # before/after is the only value that can't disagree with graph_nodes.
-    # Falls back to the local computation if the call returned nothing
-    # recognisable (it degrades rather than raising).
-    for change in applied or []:
-        if isinstance(change, dict) and change.get("after") is not None:
-            mastery_before = change.get("before", mastery_before)
-            # NB: mastery_after is the imported model function (#543 E1);
-            # the value lives in mastery_score_after.
-            mastery_score_after = change["after"]
-            mastery_delta = mastery_score_after - mastery_before
-            break
+    #
+    # #760: best-effort. The score is already persisted; a graph failure here
+    # must not turn a scored submit into a 500 (whose retry would 409 and pay
+    # no XP). It is logged and emitted, and the attempt keeps NULL mastery
+    # columns — history then shows no delta rather than one the graph never
+    # took.
+    try:
+        applied = apply_graph_update(
+            user_id,
+            {
+                "updated_nodes": [
+                    {
+                        "concept_name": node["concept_name"],
+                        "mastery_delta": mastery_delta,
+                        "reason": f"Quiz: {score}/{total} correct",
+                        "event_type": event_type,
+                    }
+                ]
+            },
+            course_id=node.get("course_id"),
+        )
+    except Exception:
+        logger.exception(
+            "quiz: mastery update failed after scoring quiz_id=%s concept=%s",
+            body.quiz_id, concept_node_id,
+        )
+        events_service.log_event(
+            "quiz.mastery_write_failed",
+            category="error",
+            user_id=user_id,
+            request_id=current_request_id(),
+            payload={"quiz_id": body.quiz_id, "concept_node_id": concept_node_id},
+        )
+        mastery_written = False
+        # Mastery did not move: report it as unchanged, not as predicted.
+        mastery_score_after = mastery_before
+        mastery_delta = 0.0
+    else:
+        mastery_written = True
+        # #542 D1 (review): persist what the GRAPH actually wrote, not what
+        # we predicted. apply_graph_update owns the write — it resolves the
+        # node by normalized concept name and clamps the result — so its
+        # reported before/after is the only value that can't disagree with
+        # graph_nodes. Falls back to the local computation if the call
+        # returned nothing recognisable (it degrades rather than raising).
+        for change in applied or []:
+            if isinstance(change, dict) and change.get("after") is not None:
+                mastery_before = change.get("before", mastery_before)
+                # NB: mastery_after is the imported model function (#543 E1);
+                # the value lives in mastery_score_after.
+                mastery_score_after = change["after"]
+                mastery_delta = mastery_score_after - mastery_before
+                break
 
-    table("quiz_attempts").update(
-        {
-            "score": score,
-            "total": total,
-            # The reconciled set (recorded responses winning over payload),
-            # not the raw request — the attempt's stored answers must agree
-            # with the score computed from them.
-            "answers_json": encrypt_json(graded_answers),
-            # #542 D1: the mastery snapshot — without it a replayed/audited
-            # submit can't reconstruct what the student saw, and history
-            # can't show progression. Plaintext scalars (#521 rationale).
-            "mastery_before": mastery_before,
-            "mastery_after": mastery_score_after,
-            # completed_at was already stamped by the atomic claim above.
-        },
-        filters={"id": f"eq.{body.quiz_id}"},
-    )
+    if mastery_written:
+        try:
+            table("quiz_attempts").update(
+                {
+                    # #542 D1: the mastery snapshot — without it a
+                    # replayed/audited submit can't reconstruct what the
+                    # student saw, and history can't show progression.
+                    # Plaintext scalars (#521 rationale).
+                    "mastery_before": mastery_before,
+                    "mastery_after": mastery_score_after,
+                },
+                filters={"id": f"eq.{body.quiz_id}"},
+            )
+        except Exception:
+            # The score and the graph both landed; only the history snapshot
+            # is missing. Not worth failing the submit that earned it.
+            logger.exception(
+                "quiz: mastery snapshot write failed quiz_id=%s", body.quiz_id,
+            )
 
     node2_rows = table("graph_nodes").select(
         "concept_name",

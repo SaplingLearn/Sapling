@@ -99,6 +99,7 @@ renders the element.
 | Admin allowlist | `allowlist` | `frontend/src/components/screens/admin/AllowlistTab.tsx` (the `allowlist` tab: waitlist with status filters, row selection + bulk approve behind a confirm dialog, per-row "you're in" invite status) |
 | Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
+| Settings | `settings` | `frontend/src/components/screens/Settings.tsx` (the `/settings` screen — tab rail + the Data tab's product-analytics opt-out) — added with the PostHog frontend integration |
 | Achievements | `achievements` (see note below) | `frontend/src/components/screens/Achievements.tsx` (tab bar, showcase) + `frontend/src/components/screens/achievements/HeroCard.tsx` (level/XP hero) + `LeaderboardTab.tsx` + `ActivityTab.tsx` — the `/achievements` screen added across Tasks 13–14, testids added with the Task 17 E2E journey |
 
 Two surfaces do **not** carry their testids in the screen file named by the
@@ -203,7 +204,9 @@ route:
 | `tutor-interrupted` | the "Interrupted" marker inside a stopped/failed assistant bubble (ADR 0020, #356; the partial text stays in the bubble itself) |
 | `tutor-retry` | the Retry button inside that marker — re-dispatches the interrupted turn |
 | `tutor-back-to-learn` | the chat header's breadcrumb back to the session picker (`screens/Learn.tsx::BackToLearnLink`) |
-| `tutor-resume-loading` | the transient loading state while a `/learn?resume=` deep link hydrates (#164) |
+| `tutor-resume-loading` | the transient loading state while a session resume hydrates — a `/learn?resume=` deep link (#164) or any in-app resume (#762) |
+| `tutor-session-ended` | the banner shown when the server refuses a turn because the session has ended (409, #762); the composer is disabled while it shows |
+| `tutor-session-ended-new` | that banner's "Start a new session" button — starts a fresh session on the same topic |
 | `tutor-focus-concept-description` | the knowledge-map rail's "Focused concept" card description text (`screens/Learn.tsx`) — stored `description` if the node has one, else the AI-fetched blurb (`POST /api/graph/{user}/concept-description`, #446), else the connected-concepts fallback sentence |
 | `tutor-topic-picker` | the entry screen's topic dropdown trigger (`screens/Learn.tsx::TopicPicker`) — opens the concept/custom-topic search |
 | `tutor-topic-search` | the search input inside the open topic dropdown; Enter picks the first match, or the typed text as a custom topic |
@@ -253,6 +256,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-adjust-start` | its "Start · {count} {difficulty}" — saves and starts in one |
 | `quiz-seg-count` / `quiz-seg-difficulty` / `quiz-seg-feedback` | the three `ui/SegmentedControl`s both dialogs share; each option is `${testid}-${value}` |
 | `quiz-generating` | the skeleton question screen while a quiz is being written |
+| `quiz-cancel-generate` | its "Cancel" — aborts the generation and returns to quiz home (#760) |
 | `quiz-panel` | question root (`phase: active \| answered`) |
 | `quiz-progress` | the question rail's progress dots (`ui/ProgressDots`) |
 | `quiz-answer-options` | answer radiogroup |
@@ -269,6 +273,7 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-flag` | "This question is confusing" (toggles, `aria-pressed`; persists nothing) |
 | `quiz-ask` | "Ask about this" — opens the tutor sheet |
 | `quiz-leave` | "Leave" |
+| `quiz-cancel-submit` | "Cancel" in place of Leave while scoring (`phase: submitting`) — aborts the submit and returns to the final verdict (#760) |
 | `quiz-leave-dialog` / `quiz-leave-cancel` / `quiz-leave-confirm` | the leave confirmation |
 | `quiz-ask-panel` | the tutor sheet (`ui/Sheet`) |
 | `quiz-ask-panel-close` | its × — the `Sheet` derives it as `${testid}-close` |
@@ -294,7 +299,6 @@ journeys keep anchoring: `quiz-panel`, `quiz-start`, `quiz-cancel`,
 | `quiz-error-retry` / `quiz-error-back` | its "Try again" and "Back" |
 | `tree-node-recent-quizzes` | the tree node panel's "Recent quizzes" block (`screens/Tree.tsx`) |
 | `tree-node-recent-quiz-{attemptId}` | one row in it, suffixed with the attempt's `quiz_id` per the stable-domain-id rule |
-| `dashboard-review-due` | the "Review what's due" quiz entry point (`screens/Dashboard.tsx`) — three call sites, but exactly one mounts for a given layout/viewport |
 
 The last three carry another surface's prefix because they render in that
 surface's file. They are listed here because they are quiz entry points, and a
@@ -304,10 +308,11 @@ quiz journey is what drives them.
 
 | testid | element |
 | --- | --- |
-| `graph-container` | graph wrapper root (sized box holding 2D or 3D) |
-| `graph-mode-toggle` | 2D ⇄ 3D toggle |
-| `graph-node-items` | hidden a11y node list (`<ul>`) — the whole-list handle; mirrors the rendered nodes 1:1 (2D and 3D) |
-| `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course (2D and 3D) |
+| `graph-container` | graph wrapper root (sized box holding the 2D graph) |
+| `graph-color-toggle` | "Mastery colors" switch (`aria-pressed`) — flips every graph between course colours and the per-tier mastery palette; persisted as `sapling.kg.colors` |
+| `graph-color-legend` | tier legend (Mastered/Learning/Struggling/Unexplored), shown only in mastery colours |
+| `graph-node-items` | hidden a11y node list (`<ul>`) — the whole-list handle; mirrors the rendered nodes 1:1 |
+| `graph-node-item` | one a11y list entry (`<li>`); carries `data-node-id={node.id}` so tests assert by node identity, never by label — concept names are only unique per course |
 | `graph-node-activate` | the activation `<button>` inside an a11y entry (when the graph is clickable) |
 | `graph-node` | 2D SVG node group (`<g>`); carries `data-node-id={node.id}` |
 | `graph-node-circle` | the main circle inside a 2D node group — the mark that encodes the mastery tier as `opacity` |
@@ -316,7 +321,7 @@ quiz journey is what drives them.
 | `graph-add-concept` | Tree toolbar: "＋ Add concept" opener (#330) — rendered only when a single course pill is selected (the "all" filter gives no course to attribute the node to) |
 | `graph-add-concept-input` | the concept-name `<input>` (Enter submits, Escape cancels) |
 | `graph-add-concept-submit` | the "Add" button — POSTs create-or-merge, toasts, reloads the graph |
-| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when a renderer throws; never contains a graph |
+| `graph-crash-fallback` | graph-local crash placeholder (#538) — rendered by the wrapper's error boundary when the renderer throws; never contains a graph |
 | `graph-crash-retry` | "Try again" button inside the crash placeholder — wired to the boundary's reset |
 
 `graph-node-item` / `graph-node` carry the node id as a separate
@@ -388,10 +393,12 @@ never collide in the DOM.
 | `dashboard-courses-key-toggle` | expand/collapse toggle of the "My courses" key overlay on the graph panel (default sidebar layout; the key starts collapsed) |
 | `dashboard-course-code` | a course row's code/name label inside the expanded key — repeated per course with **no suffix** (deliberate deviation from the suffix rule above: journeys select a row by seeded content, `getByTestId(…).filter({ hasText })`, so no per-row identity is exposed) |
 | `dashboard-courses-manage` | the cog inside the expanded key that opens the Courses & Semesters hub (the hub's own semester tabs are plain text buttons — journeys select them by role/name, e.g. "All semesters" / "Fall 2025") |
-| `dashboard-resume-{sessionId}` | a "Where you left off" card — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
-
-`dashboard-review-due` also lives in `screens/Dashboard.tsx`; it is documented
-with the `quiz` surface it links into.
+| `dashboard-resume-{sessionId}` | Today's plan session item — deep-links to `/learn?resume={sessionId}` (#164), suffixed with the session's own id per the stable-domain-id rule |
+| `dashboard-today-column` / `dashboard-streak` / `dashboard-plan` / `dashboard-mastery` | the sidebar layout's right column and its three cards (`dashboard/TodayColumn.tsx`) |
+| `dashboard-plan-progress` | the plan's "N of M done today" line |
+| `dashboard-plan-quiz` / `dashboard-plan-first-session` / `dashboard-plan-due-{assignmentId}` | plan items other than the session resume |
+| `dashboard-action-start` / `dashboard-action-calendar` | the greeting row's Start learning / Calendar buttons |
+| `dashboard-course-rows` / `dashboard-mastery-tree` | the mastery card's per-course rows and its Open Tree link |
 
 ### `calendar`
 
@@ -585,6 +592,8 @@ Added with the upload → SSE → library journey (#387).
 | `library-detail-delete` | detail panel "Delete document" (click-twice confirm) |
 | `library-concepts-toggle-all` | detail panel "Expand all" / "Collapse all" |
 | `library-concept-toggle-{idx}` | one concept accordion toggle (render index) |
+| `library-load-error` | load-failure notice (#769): the full error state when nothing has loaded, or an inline banner over the last-loaded list |
+| `library-load-retry` | that notice's "Try again" / "Retry" button |
 
 ### `landing-graph`
 
@@ -643,6 +652,24 @@ vacuously and stays as a guard on anything added later.
 The `landing-surface-*` ids suffix the *surface* rather than a render index
 because each one mounts exactly once and the surface name is the stable
 domain id here.
+
+### `settings`
+
+Added with the PostHog frontend integration (the `analytics.spec.ts`
+journey reaches `/settings` by clicking the side nav's "Settings" link — a
+role locator, since `SideNav.tsx` is not a testid surface — checks the
+opt-out shows the account's saved setting, and asserts the E2E build sends
+no analytics).
+
+| testid | element |
+| --- | --- |
+| `settings-tab-${tab}` | the tab rail buttons — `tab` is the fixed tab key: `profile` / `cosmetics` / `preferences` / `notifications` / `data` |
+| `settings-analytics` | the Data tab's "Product analytics" card root (its description lists everything PostHog receives: pageviews, product events, AI-generation records, server error reports — all keyed to the Sapling account ID) |
+| `settings-analytics-toggle` | its switch (the shared `Toggle`: `role="switch"` + `aria-checked`) — shows and PATCHes the account's `analytics_opt_out`, which governs both the browser's pageviews and the backend's PostHog mirror (opt-out stops capture first, opt-in saves first). Usable whenever the account answer has loaded — also in a build that sends no pageviews (no key, local mode, the E2E/test build), with the `product_analytics` flag off, and under Do Not Track / GPC. **Disabled** only until that answer has loaded (or after a failed read) and while a save is in flight |
+| `settings-analytics-note` | the status line under it ("Loading your saved setting…" / "We couldn't load your saved setting…" / "No choice is saved to your account yet…" / "On — saved to your account…" (+ DNT/GPC or "Page views couldn't start in this browser…" variants) / "Off — saved to your account…" / "Off in this browser for this visit only…") |
+| `settings-analytics-reload` | "Try again" inside the note, shown only after the account read failed — re-reads the settings (`lib/accountSettings.ts`) |
+| `settings-analytics-retry` | "Retry saving" inside the note, shown only after an opt-out whose account save failed (off in this browser for this visit only) — re-sends `analytics_opt_out: true` |
+| `settings-toggle-${key}` | a Notifications-tab switch (the same `Toggle`) — `key` is the `user_settings` field it PATCHes: `notification_email` / `notification_push` / `notification_in_app` / `activity_status_visible` |
 
 ### `adminfb`
 
@@ -733,6 +760,13 @@ backlog: `ProfileView.tsx`'s buttons already carried testids from Task 16,
 and `Achievements.tsx`'s one pre-existing untagged button (showcase
 "remove") was tagged (`achievements-showcase-remove-{achievementId}`)
 rather than baselined.
+
+`screens/Settings.tsx` (`settings` surface) joined the `files` list with
+the same treatment. Its pre-existing untagged buttons and inputs (profile
+form, avatar picker, accent swatches, export/delete, cosmetics manager) are
+baselined in `frontend/eslint-suppressions.json`, so only NEW interactive
+elements there must carry a testid. The tab rail and the shared `Toggle`
+switch (analytics opt-out and the Notifications toggles) entered tagged.
 
 ### Adding a surface
 

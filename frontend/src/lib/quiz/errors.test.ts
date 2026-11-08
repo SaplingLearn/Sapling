@@ -161,6 +161,7 @@ describe("describeQuizError — coded envelope", () => {
       "QUIZ_HTTP_ERROR",
       "UNKNOWN",
       "NETWORK",
+      "TIMEOUT",
     ];
     for (const code of QUIZ_ERROR_CODES) {
       const out = describeQuizError(apiError(500, { code }));

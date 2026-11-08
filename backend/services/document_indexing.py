@@ -29,7 +29,11 @@ import httpx
 
 from db.connection import table
 from services.academics import offering_course_id
-from services.chunk_visibility import decide_visibility
+from services.chunk_visibility import (
+    decide_visibility,
+    record_sources,
+    withdraw_document_chunks,
+)
 from services.chunker import chunk_for_category
 from services.encryption import decrypt, decrypt_if_present
 from services.events_service import log_event
@@ -43,6 +47,14 @@ INDEXED = "indexed"
 PARTIAL = "partial"
 FAILED = "failed"
 SKIPPED = "skipped"
+#: Terminal: the sweeper has given up on this row (#758). STORED, never
+#: derived from `index_attempts >= INDEX_MAX_ATTEMPTS`: that comparison reads
+#: an env var, so changing it used to flip which rows counted as terminal.
+#: Written when an attempt that spends the last of the budget fails, when the
+#: failure is one no retry can fix (TERMINAL_ERRORS), and by the SQL claim's
+#: reaper for a row whose final attempt died holding its lease. Only a forced
+#: re-index (the admin endpoint) takes a row out of it.
+EXHAUSTED = "exhausted"
 
 #: Statuses a claim may take a row from. `indexing` is deliberately absent: it
 #: is only reclaimable once its lease has expired, which the SQL claim and the
@@ -58,8 +70,8 @@ INDEX_LEASE_SECONDS = int(os.getenv("INDEX_LEASE_SECONDS", "600"))
 _INLINE_TRIES = 3
 _BACKOFF_SECONDS = (1, 4)
 
-#: Failures no retry can fix. Recorded with the attempt budget spent, so they
-#: stay visible on the admin list and the sweeper never claims them again.
+#: Failures no retry can fix. Recorded EXHAUSTED at once, so they stay
+#: visible on the admin list and the sweeper never claims them again.
 TERMINAL_ERRORS = frozenset({"no_extracted_text", "no_chunks", "no_course"})
 
 
@@ -118,13 +130,16 @@ def index_document(
         if not force:
             if status in (INDEXED, SKIPPED):
                 return IndexOutcome(status, row.get("index_chunk_count") or 0)
+            if status == EXHAUSTED:
+                return IndexOutcome(status, row.get("index_chunk_count") or 0,
+                                    row.get("index_error"))
             if (row.get("index_attempts") or 0) >= INDEX_MAX_ATTEMPTS:
                 return IndexOutcome(status, error=row.get("index_error"))
         lease = _claim_one(row, force=force)
         if lease is None:
             return IndexOutcome(INDEXING)
 
-    was_recovery = claimed or row.get("index_status") in (PARTIAL, FAILED)
+    was_recovery = claimed or row.get("index_status") in (PARTIAL, FAILED, EXHAUSTED)
     try:
         outcome = _run(row)
     except Exception as exc:
@@ -134,6 +149,24 @@ def index_document(
         # there for good. So every failure is recorded, whatever raised it.
         logger.exception("[RAG] indexing doc %s failed", doc_id)
         outcome = IndexOutcome(FAILED, error=type(exc).__name__)
+
+    # `_load` refused a deleted row, but only at the start: a delete that
+    # lands while this attempt embeds still sees its chunks arrive after the
+    # delete path withdrew what was there (#758). The sources this attempt
+    # wrote are already in the ledger, so whichever of the two runs second
+    # sees the other's effect — the same ordering argument as rag_service's
+    # post-index consent reconcile.
+    if outcome.status != SKIPPED and _deleted_since_load(doc_id):
+        logger.info(
+            "[RAG] doc %s was deleted while it indexed — withdrawing its chunks",
+            doc_id,
+        )
+        withdraw_document_chunks(doc_id, row["user_id"])
+
+    # What the row records: the attempt's own result, unless that spent the
+    # last of the budget or can never succeed — then the terminal state. The
+    # event below keeps reporting the attempt's result (failed | partial).
+    stored = _terminal_if_spent(outcome, _attempt_number(row, claimed=claimed, force=force))
 
     if tracking:
         if outcome.status == SKIPPED and not first_attempt:
@@ -145,10 +178,10 @@ def index_document(
             # of every recovery path. Only a never-attempted upload records it.
             _restore(doc_id, prior, claimed=claimed, lease=lease)
         else:
-            _finish(doc_id, outcome, lease=lease)
+            _finish(doc_id, stored, lease=lease)
     _report(row, outcome, was_recovery=was_recovery, tracking=tracking,
             claimed=claimed, force=force)
-    return outcome
+    return stored if tracking else outcome
 
 
 # ── reading the row ─────────────────────────────────────────────────────────
@@ -162,6 +195,20 @@ def _load(doc_id: str) -> dict | None:
         "*", filters={"id": f"eq.{doc_id}", "deleted_at": "is.null"}, limit=1,
     )
     return rows[0] if rows else None
+
+
+def _deleted_since_load(doc_id: str) -> bool:
+    """Whether the row is gone or soft-deleted now. A failed read says no:
+    retrieval refuses chunks whose every source is deleted anyway."""
+    try:
+        rows = table("documents").select(
+            "deleted_at", filters={"id": f"eq.{doc_id}"}, limit=1,
+        )
+    except Exception:
+        logger.warning("[RAG] could not re-check doc %s for deletion", doc_id,
+                       exc_info=True)
+        return False
+    return not rows or rows[0].get("deleted_at") is not None
 
 
 def _course_code(offering_id: str | None) -> str | None:
@@ -305,6 +352,10 @@ def _run(row: dict) -> IndexOutcome:
             error = type(exc).__name__
             break
 
+        # Every try, not just the best: ids are content-addressed, so what any
+        # try upserted is live now and must be findable when the document is
+        # deleted (#758).
+        record_sources(getattr(result, "chunk_ids", ()), doc_id)
         if result.embedding_disabled:
             # #439: the seam turned embedding off (every function-mode run).
             # rag_service owns that rule; this only records it as the designed
@@ -401,6 +452,21 @@ def _write_if_held(doc_id: str, data: dict, lease: str | None, what: str) -> Non
         )
 
 
+def _attempt_number(row: dict, *, claimed: bool, force: bool) -> int:
+    """The attempt this run is: the sweeper's claim already counted it in the
+    row it handed over; an own claim counts it now (a forced one from 1)."""
+    before = row.get("index_attempts") or 0
+    return before if claimed else (1 if force else before + 1)
+
+
+def _terminal_if_spent(outcome: IndexOutcome, attempt: int) -> IndexOutcome:
+    if outcome.status not in (FAILED, PARTIAL):
+        return outcome
+    if outcome.error in TERMINAL_ERRORS or attempt >= INDEX_MAX_ATTEMPTS:
+        return outcome._replace(status=EXHAUSTED)
+    return outcome
+
+
 def _finish(doc_id: str, outcome: IndexOutcome, *, lease: str | None) -> None:
     # `index_leased_at` is deliberately left as the claim set it. On a
     # finished row it records when the last attempt BEGAN, and the claim
@@ -413,8 +479,6 @@ def _finish(doc_id: str, outcome: IndexOutcome, *, lease: str | None) -> None:
         "index_chunk_count": outcome.chunk_count,
         "index_error": outcome.error,
     }
-    if outcome.error in TERMINAL_ERRORS:
-        data["index_attempts"] = INDEX_MAX_ATTEMPTS
     _write_if_held(doc_id, data, lease, f"index outcome {outcome.status!r}")
 
 
@@ -423,10 +487,14 @@ def _restore(doc_id: str, prior: dict, *, claimed: bool, lease: str | None) -> N
     if claimed:
         # The SQL claim already overwrote the status and spent an attempt, and
         # neither was real work: back to the queue, attempt refunded.
+        # The error goes too: the claim cleared it, and a `pending` row
+        # carrying the previous attempt's error class reads as a failure that
+        # did not happen (#758).
         data = {
             "index_status": PENDING,
             "index_attempts": max((prior["index_attempts"] or 1) - 1, 0),
             "index_leased_at": None,
+            "index_error": None,
         }
     else:
         # Everything as it was, the last real attempt's time included — or the
@@ -440,10 +508,7 @@ def _report(
     claimed: bool, force: bool,
 ) -> None:
     doc_id = row["id"]
-    # The attempt this outcome belongs to: the sweeper's claim already counted
-    # it in the row it handed over; an own claim counted it just now.
-    before = row.get("index_attempts") or 0
-    attempts = before if claimed else (1 if force else before + 1)
+    attempts = _attempt_number(row, claimed=claimed, force=force)
     if outcome.status in (FAILED, PARTIAL):
         log_event(
             "rag.index_failed",

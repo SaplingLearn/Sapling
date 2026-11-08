@@ -70,11 +70,13 @@ def _make_factory(user_rows, earned_rows, insert_sink):
     ]
     factory("user_achievements").select.return_value = earned_rows
 
-    def _capture_insert(payload):
+    def _capture_insert(payload, **_kw):
         insert_sink.append(payload)
         return [{}]
 
     factory("user_achievements").insert.side_effect = _capture_insert
+    # The grant is an ON CONFLICT DO NOTHING upsert since #767.
+    factory("user_achievements").upsert.side_effect = _capture_insert
     factory("achievements").select.return_value = [{
         "slug": "first_login", "name": "First Steps", "xp_reward": 0, "status": "live",
     }]

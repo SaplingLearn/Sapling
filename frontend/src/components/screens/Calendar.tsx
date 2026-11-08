@@ -257,7 +257,7 @@ export function Calendar() {
         </>
       )}
       <button className="btn btn--sm" onClick={() => setUploadOpen(true)}>
-        <Icon name="up" size={12} /> Import syllabus
+        <Icon name="upload" size={12} /> Import syllabus
       </button>
       {googleConnected ? (
         <>

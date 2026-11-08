@@ -272,6 +272,12 @@ export interface UserSettings {
   accent_color: string | null;
   profile_visibility: string;
   activity_status_visible: boolean;
+  // Product-analytics opt-out (PostHog), account-wide: governs the browser's
+  // pageviews AND the backend's mirror (#677). The backend always sends it;
+  // it stays optional only so a response without it is handled explicitly:
+  // lib/analytics.ts treats it as `unset` — nothing starts in the browser,
+  // the Settings switch stays usable (shown off), and it is not re-read.
+  analytics_opt_out?: boolean;
 }
 
 // ── Gradebook ────────────────────────────────────────────────────────────────
@@ -424,7 +430,8 @@ export interface EmailBroadcast {
   id: string;
   subject: string;
   audience: string;
-  status: "sending" | "sent" | "failed";
+  /** partial = some sent, some failed (or the run died part-way); skipped = nothing sent, nothing failed. */
+  status: "sending" | "sent" | "partial" | "skipped" | "failed";
   recipient_count: number;
   sent_count: number;
   skipped_count: number;
@@ -432,6 +439,11 @@ export interface EmailBroadcast {
   created_at: string;
   sent_at: string | null;
   created_by: string | null;
+  heartbeat_at?: string | null;
+  /** `sending` with no heartbeat for a while: the run is dead and can be resumed. */
+  stale?: boolean;
+  /** Stale, failed or partial: `POST /broadcasts/{id}/resume` will re-run it. */
+  resumable?: boolean;
 }
 
 /** POST /api/admin/email/broadcasts/preview: the real server-rendered email (a full HTML document). Sends nothing. */

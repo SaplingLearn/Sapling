@@ -101,6 +101,42 @@ function errorFieldsFrom(body: unknown): { code?: string; requestId?: string } {
   return { code, requestId };
 }
 
+// ── Global 401 (#756) ─────────────────────────────────────────────────────────
+// A 401 from any session-authenticated call means the server no longer honours
+// this browser's session (expired, signed out elsewhere, account deleted). Until
+// #756 nothing noticed until the next profile refetch, so a dead session kept
+// its identity — and its analytics identify — in the tab. fetchJSON now tells
+// the listeners (UserContext tears the identity down); it still throws, so each
+// caller's own error handling is unchanged.
+
+type SessionExpiredListener = () => void;
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+
+/** Subscribe to "a session-authenticated call answered 401". Returns the
+ * unsubscribe. */
+export function onSessionExpired(listener: SessionExpiredListener): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+/** The /pending endpoints authenticate with the pending token in their body,
+ * not the session cookie: their 401 says nothing about a session. */
+function isSessionAuthenticated(path: string): boolean {
+  return !path.startsWith('/api/auth/pending/');
+}
+
+function notifySessionExpired(): void {
+  for (const listener of [...sessionExpiredListeners]) {
+    try {
+      listener();
+    } catch (err) {
+      console.error('[api] session-expired listener failed', err);
+    }
+  }
+}
+
 /**
  * The one sanctioned request helper: same-origin `API_URL` so the `sapling_session`
  * cookie rides along (a cross-origin `NEXT_PUBLIC_API_URL` fetch drops it — the
@@ -113,6 +149,7 @@ export async function fetchJSON<T>(path: string, options?: RequestInit): Promise
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
+  if (res.status === 401 && isSessionAuthenticated(path)) notifySessionExpired();
   if (!res.ok) {
     const err = await res.text();
     const body = parseErrorBody(err);
@@ -175,6 +212,9 @@ export const getLocalSeedStatus = () => fetchJSON<LocalSeedStatus>('/api/auth/lo
 export interface PendingStatus {
   email: string;
   on_waitlist: boolean;
+  /** #757: an admin approved the address since this sign-in; a fresh
+   * sign-in now gets in (the pending token itself is never a session). */
+  approved?: boolean;
 }
 export const getPendingStatus = (token: string) =>
   fetchJSON<PendingStatus>('/api/auth/pending/status', {
@@ -233,9 +273,11 @@ export const addCourse = (userId: string, courseId: string, color?: string, nick
     body: JSON.stringify({ course_id: courseId, ...(color ? { color } : {}), ...(nickname ? { nickname } : {}), ...(term ? { term } : {}) }),
   });
 
-export const deleteCourse = (userId: string, courseId: string) =>
+// Drops ONE term's enrollment (#766): `term` is the semester label to drop;
+// omitted = the backend's current term. Other terms' gradebooks survive.
+export const deleteCourse = (userId: string, courseId: string, term?: string) =>
   fetchJSON<{ deleted: boolean }>(
-    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}`,
+    `/api/graph/${userId}/courses/${encodeURIComponent(courseId)}${term ? `?term=${encodeURIComponent(term)}` : ''}`,
     { method: 'DELETE' }
   );
 
@@ -295,6 +337,18 @@ export const startSession = (
     }),
   });
 
+/**
+ * One id per student turn (#761/#762), sent UNCHANGED on the stream, its
+ * JSON fallback and any Retry of that turn: the backend dedupes the turn's
+ * writes on it and replays an already-persisted reply (`replayed: true`)
+ * instead of running the turn twice. Must match `^[A-Za-z0-9_\-]{8,128}$`.
+ */
+export function newTurnId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export const sendChat = (
   sessionId: string,
   userId: string,
@@ -302,8 +356,9 @@ export const sendChat = (
   mode: string,
   useSharedContext = true,
   modelPref?: ModelPref,
+  turnId?: string,
 ) =>
-  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[] }>('/api/learn/chat', {
+  fetchJSON<{ reply: string; graph_update: any; mastery_changes: any[]; replayed?: boolean }>('/api/learn/chat', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
@@ -312,6 +367,7 @@ export const sendChat = (
       mode,
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     }),
   });
 
@@ -326,6 +382,8 @@ export interface ChatResult {
   mastery_changes: MasteryChange[];
   session_id?: string;
   graph_state?: any;
+  /** The server already had this `turn_id`'s reply and replayed it (#761). */
+  replayed?: boolean;
 }
 
 interface StreamEvent {
@@ -460,6 +518,7 @@ export const streamChat = (
   useSharedContext = true,
   modelPref?: ModelPref,
   handlers: StreamChatHandlers = {},
+  turnId?: string,
 ): Promise<ChatResult> => {
   return consumeChatStream(
     '/api/learn/chat/stream',
@@ -470,6 +529,7 @@ export const streamChat = (
       mode,
       use_shared_context: useSharedContext,
       ...(modelPref ? { model_pref: modelPref } : {}),
+      ...(turnId ? { turn_id: turnId } : {}),
     },
     handlers,
   );
@@ -804,14 +864,46 @@ export interface UploadEvent {
   data?: Record<string, unknown> | null;
 }
 
+/**
+ * How an upload stream ended (#759) — a function of the server's terminal
+ * events alone:
+ *   - `error:failed` (with or without an earlier `result`) → `failed`, with
+ *     the server's message. A post-result failure means nothing was saved.
+ *   - `result` then `status:done` carrying a `document_id` → `processed`.
+ *   - `status:done` without a saved document → `failed`.
+ * `result` is the `result` event's data: a DocumentProcessingResult dump
+ * (an idempotent replay sends the same shape plus `id`/`replayed`).
+ */
+export interface UploadResultData {
+  id?: string;
+  replayed?: boolean;
+  classification?: { category?: string; is_syllabus?: boolean };
+  summary?: { abstract?: string };
+  concepts?: { concepts?: Array<{ name?: string; description?: string }> };
+  [key: string]: unknown;
+}
+
+export type UploadOutcome =
+  | { kind: 'processed'; documentId: string; result: UploadResultData }
+  | { kind: 'failed'; message: string; requestId?: string; afterResult: boolean };
+
+/**
+ * Streams POST /api/documents/upload. Resolves to an UploadOutcome whenever
+ * the server reached a terminal event; rejects only on transport failure
+ * (HTTP error before the stream opened, network drop, abort) or a stream
+ * that closed with no terminal event.
+ */
 export async function uploadDocumentStream(
   formData: FormData,
   onEvent: (event: UploadEvent) => void,
   signal?: AbortSignal,
   requestId?: string,
-): Promise<any> {
+): Promise<UploadOutcome> {
   const { streamSSE } = await import('./sse');
-  let finalDoc: any = null;
+  let result: UploadResultData | null = null;
+  let failure: { message: string; requestId?: string } | null = null;
+  let done = false;
+  let documentId: string | undefined;
   const headers: Record<string, string> = {};
   if (requestId) headers['X-Request-ID'] = requestId;
   for await (const e of streamSSE<UploadEvent>(
@@ -819,21 +911,38 @@ export async function uploadDocumentStream(
     { method: 'POST', body: formData, signal, credentials: 'include', headers },
   )) {
     onEvent(e.data);
+    const data = (e.data.data ?? {}) as Record<string, unknown>;
     if (e.event === 'result') {
-      // result.data carries the full DocumentProcessingResult (orchestrator)
-      // OR the legacy-fallback persisted row. Both expose `id`/`document_id`.
-      finalDoc = e.data.data ?? null;
-    }
-    if (e.event === 'status' && e.data.step === 'done') {
-      // The done event carries { document_id } when the row persisted.
-      const docIdFromDone = (e.data.data as { document_id?: string } | undefined)?.document_id;
-      if (docIdFromDone && finalDoc && typeof finalDoc === 'object' && !('id' in finalDoc)) {
-        finalDoc = { ...finalDoc, id: docIdFromDone };
+      result = data as UploadResultData;
+    } else if (e.event === 'error' && e.data.step === 'failed') {
+      failure = {
+        message: e.data.message,
+        requestId: typeof data.request_id === 'string' ? data.request_id : undefined,
+      };
+    } else if (e.event === 'status' && e.data.step === 'done') {
+      done = true;
+      if (typeof data.document_id === 'string' && data.document_id) {
+        documentId = data.document_id;
       }
     }
   }
-  if (!finalDoc) throw new Error('Upload stream ended without a result event.');
-  return finalDoc;
+  if (failure) {
+    return {
+      kind: 'failed',
+      message: failure.message || 'Document processing failed. Please try again.',
+      requestId: failure.requestId,
+      afterResult: result !== null,
+    };
+  }
+  if (result && documentId) return { kind: 'processed', documentId, result };
+  if (done) {
+    return {
+      kind: 'failed',
+      message: 'The server finished without saving the document. Please try again.',
+      afterResult: result !== null,
+    };
+  }
+  throw new Error('Upload stream ended before the server finished.');
 }
 
 export const updateDocumentCategory = (documentId: string, userId: string, category: string) =>
@@ -1385,6 +1494,12 @@ export const adminSendBroadcast = (payload: { subject: string; body: string; aud
 export const adminListBroadcasts = () =>
   fetchJSON<{ broadcasts: EmailBroadcast[] }>('/api/admin/email/broadcasts');
 
+/** Re-run a stalled/failed/partial broadcast through the per-recipient dedupe (202). */
+export const adminResumeBroadcast = (id: string) =>
+  fetchJSON<{ broadcast: EmailBroadcast }>(`/api/admin/email/broadcasts/${encodeURIComponent(id)}/resume`, {
+    method: 'POST',
+  });
+
 // Admin — audit
 export const adminAuditLog = (params?: {
   page?: number; page_size?: number; action?: string; target_type?: string; actor_id?: string;
@@ -1524,7 +1639,9 @@ export interface Semester {
 }
 
 export const getSemesters = () =>
-  fetchJSON<{ semesters: Semester[] }>('/api/semesters');
+  // current_term_id: the server's current term (#766) — prefer it over the
+  // browser clock (lib/semesters.ts::currentTerm).
+  fetchJSON<{ semesters: Semester[]; current_term_id?: string | null }>('/api/semesters');
 
 // ── Gradebook ────────────────────────────────────────────────────────────────
 
@@ -1690,11 +1807,25 @@ export const uploadSyllabus = (input: {
 
 export type GradescopeAuthMode = 'password' | 'cookies';
 
+/** #770: `disconnected` = no saved credentials (course links may survive);
+ *  `needs_reauth` = saved, but Gradescope rejected them on the last login. */
+export type GradescopeConnectionState = 'disconnected' | 'needs_reauth' | 'connected';
+
+/** Machine code for the last sync attempt's failure (null = it succeeded). */
+export type GradescopeSyncError = 'auth_failed' | 'fetch_failed' | 'write_failed' | 'partial_write';
+
 export interface GradescopeStatus {
   has_credentials: boolean;
   auth_mode: GradescopeAuthMode | null;
   last_synced_at: string | null;
   credentials_updated_at?: string | null;
+  // Optional so a backend without the #770 migration still type-checks; read
+  // it through components/Gradebook/gradescopeState.ts, which derives it.
+  state?: GradescopeConnectionState;
+  connected?: boolean;
+  needs_reauth?: boolean;
+  last_attempt_at?: string | null;
+  last_sync_error?: GradescopeSyncError | null;
 }
 
 export type GradescopeConnectInput =
@@ -1961,3 +2092,9 @@ export const adminUploadAchievementIcon = (
       method: 'POST',
       body: JSON.stringify({ file_base64: fileBase64, content_type: contentType }),
     });
+
+// #764: the sender withdraws a pending friend request.
+export const cancelFriendRequest = (requestId: string, userId: string) =>
+  fetchJSON<{ cancelled: boolean }>(
+    `/api/social/friends/requests/${encodeURIComponent(requestId)}?user_id=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' });

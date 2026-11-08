@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { submitFeedback } from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 import { useScrollLock } from "@/lib/useScrollLock";
+import { releaseFeedbackSlot, tryClaimFeedbackSlot } from "@/lib/feedbackSlot";
 import { useToast } from "./ToastProvider";
 
 const DELAY_MS = 45_000;
@@ -60,9 +61,16 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
     const now = Date.now();
     const cooledDown = testOverride || !last || now - last > COOLDOWN_MS;
     if (!cooledDown) return;
-    const t = setTimeout(() => { if (!cancelled) setOpen(true); }, DELAY_MS);
+    // The session prompt may already be on screen (#762) — then skip this
+    // pulse rather than stack a second modal on it.
+    const t = setTimeout(() => {
+      if (!cancelled && tryClaimFeedbackSlot("global")) setOpen(true);
+    }, DELAY_MS);
     return () => { cancelled = true; clearTimeout(t); };
   }, [passive, isAuthenticated, testOverride]);
+
+  // Give the one-prompt slot back if the shell unmounts mid-prompt.
+  useEffect(() => () => releaseFeedbackSlot("global"), []);
 
   useEffect(() => {
     if (openProp !== undefined) setOpen(openProp);
@@ -70,6 +78,7 @@ export function FeedbackFlow({ passive = true, open: openProp, onClose }: Feedba
 
   const close = useCallback((recordCooldown: boolean) => {
     setOpen(false);
+    releaseFeedbackSlot("global");
     setRating(null);
     setSelected([]);
     setComment("");

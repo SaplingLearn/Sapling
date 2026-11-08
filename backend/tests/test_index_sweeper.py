@@ -17,6 +17,7 @@ from services import index_sweeper
 @pytest.fixture
 def real_mode(monkeypatch):
     monkeypatch.setenv("SAPLING_MODEL_MODE", "real")
+    monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("INDEX_SWEEPER_ENABLED", raising=False)
 
 
@@ -164,11 +165,46 @@ def test_it_is_on_by_default_in_real_mode(real_mode):
     assert index_sweeper.sweeper_enabled() is True
 
 
+def test_it_is_on_when_app_env_is_unset(real_mode, monkeypatch):
+    """APP_ENV defaults to production (config.py, fail-closed), so a deploy
+    that sets nothing keeps the drain."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    assert index_sweeper.sweeper_enabled() is True
+
+
+@pytest.mark.parametrize("env", ["staging", "local", "test", " Staging "])
+def test_it_is_off_by_default_outside_production(real_mode, monkeypatch, env):
+    """A pass every 300 s keeps a Railway Serverless service from ever
+    sleeping, so staging and PR previews billed as always-on."""
+    monkeypatch.setenv("APP_ENV", env)
+    assert index_sweeper.sweeper_enabled() is False
+
+
+@pytest.mark.parametrize("value", ["true", "1", "on", "yes"])
+def test_it_can_be_forced_on_outside_production(real_mode, monkeypatch, value):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", value)
+    assert index_sweeper.sweeper_enabled() is True
+
+
+def test_forcing_it_on_still_needs_real_model_mode(real_mode, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", "true")
+    monkeypatch.setenv("SAPLING_MODEL_MODE", "function")
+    assert index_sweeper.sweeper_enabled() is False
+
+
+def test_a_blank_switch_follows_app_env(real_mode, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("INDEX_SWEEPER_ENABLED", "  ")
+    assert index_sweeper.sweeper_enabled() is False
+
+
 # ── lifecycle ───────────────────────────────────────────────────────────────
 
 
 def test_start_and_stop(real_mode, monkeypatch):
-    monkeypatch.setattr(index_sweeper, "sweep_once", lambda: 0)
+    monkeypatch.setattr(index_sweeper, "sweep_once", lambda stop=None: 0)
 
     async def scenario():
         index_sweeper.start_sweeper()
@@ -196,7 +232,7 @@ def test_the_loop_survives_a_sweep_that_raises(real_mode, monkeypatch):
     """One bad sweep must not end recovery for the life of the process."""
     calls = []
 
-    def flaky():
+    def flaky(stop=None):
         calls.append(1)
         if len(calls) == 1:
             raise RuntimeError("transient")
@@ -215,6 +251,52 @@ def test_the_loop_survives_a_sweep_that_raises(real_mode, monkeypatch):
 
     asyncio.run(scenario())
     assert len(calls) >= 2
+
+
+def test_a_stop_ends_the_pass_before_its_next_claim(real_mode, claims, driven):
+    import threading
+
+    state, asked = claims
+    state["rows"] = [{"id": "d1"}, {"id": "d2"}]
+    stop = threading.Event()
+    stop.set()
+
+    assert index_sweeper.sweep_once(stop) == 0
+    assert asked == []
+
+
+def test_shutdown_stops_a_batch_already_running_in_its_thread(real_mode, claims,
+                                                              monkeypatch):
+    """#758: cancelling the loop task does not stop its `to_thread` batch.
+    Before the fix that batch kept claiming through shutdown, each claim
+    spending an attempt and a 600 s lease the dying process never finished —
+    so a run of deploys exhausted healthy documents."""
+    import threading
+
+    state, asked = claims
+    state["rows"] = [{"id": f"d{i}"} for i in range(5)]
+    entered, release = threading.Event(), threading.Event()
+    seen = []
+
+    def slow_index(doc_id, **kw):
+        seen.append(doc_id)
+        entered.set()
+        release.wait(5)
+
+    monkeypatch.setattr(index_sweeper, "index_document", slow_index)
+    monkeypatch.setattr(index_sweeper, "SWEEP_INTERVAL_SECONDS", 0)
+
+    async def scenario():
+        index_sweeper.start_sweeper()
+        assert await asyncio.to_thread(entered.wait, 5)
+        await index_sweeper.stop_sweeper()
+        release.set()
+    # asyncio.run joins the default executor, so the batch's thread has
+    # finished by the time it returns.
+    asyncio.run(scenario())
+
+    assert seen == ["d0"]
+    assert len(asked) == 1
 
 
 def test_the_app_lifespan_starts_and_stops_the_sweeper():

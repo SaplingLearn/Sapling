@@ -154,6 +154,25 @@ describe("GradebookLanding semester chips", () => {
     }
   });
 
+  it("preselects the SERVER's current term over the browser clock (#766)", async () => {
+    // The browser clock sits in Fall 2024; the server says Spring 2025.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2024, 9, 1));
+    try {
+      mockedGetSemesters.mockResolvedValue({ semesters: SEMESTERS, current_term_id: "spring-2025" });
+      mockedGetCourses.mockResolvedValue({
+        courses: [course("bio", "Fall 2024"), course("psy", "Spring 2025")],
+      });
+
+      render(<GradebookLanding />);
+
+      const chip = await screen.findByRole("button", { name: "Spring 2025" });
+      expect(chip.getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("opens the term named by ?semester= so archived courses deep-link", async () => {
     window.history.replaceState({}, "", "/gradebook?semester=Fall+2024");
     mockedGetCourses.mockResolvedValue({

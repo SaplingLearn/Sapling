@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GradescopeSyncModal } from './GradescopeSyncModal';
-import { getGradescopeStatus, listGradescopeCourses, listGradescopeLinks, syncGradescopeCourse, connectGradescopeViaBuSso, saveGradescopeCredentials } from '@/lib/api';
+import { getGradescopeStatus, listGradescopeCourses, listGradescopeLinks, syncGradescopeCourse, connectGradescopeViaBuSso, saveGradescopeCredentials, deleteGradescopeCredentials } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   getGradescopeStatus: vi.fn(), saveGradescopeCredentials: vi.fn(),
@@ -27,9 +27,16 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
+/** The typed rejection routes/gradescope.py answers for stored creds (#770). */
+function gsReauth(detail: string) {
+  return Object.assign(new Error(JSON.stringify({ detail })), {
+    status: 409, code: 'gradescope_reauth_required',
+  });
+}
+
 describe('Gradescope sync results', () => {
   it('returns to sign-in when a session expires during sync', async () => {
-    vi.mocked(syncGradescopeCourse).mockRejectedValue(Object.assign(new Error('{"detail":"Gradescope session expired."}'), { status: 401 }));
+    vi.mocked(syncGradescopeCourse).mockRejectedValue(gsReauth('Gradescope session expired.'));
     const user = userEvent.setup();
     render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Sync now' }));
@@ -70,7 +77,7 @@ describe('Gradescope sync results', () => {
 
   it('asks for reconnection when saved credentials no longer authenticate', async () => {
     vi.mocked(listGradescopeLinks).mockResolvedValue({ links: [] });
-    vi.mocked(listGradescopeCourses).mockRejectedValue(Object.assign(new Error('{"detail":"Session expired"}'), { status: 401 }));
+    vi.mocked(listGradescopeCourses).mockRejectedValue(gsReauth('Session expired'));
     render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
     expect(await screen.findByText('Connect Gradescope')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Session expired');
@@ -192,19 +199,21 @@ describe('Gradescope sync results', () => {
     ],
     [
       'an SSO failure whose detail is a page dump',
-      401,
+      422,
       "SSO ended at an unexpected URL: https://example.edu/x. page=https://example.edu/x title='Oops' elements=[a[text='Help' href='']]",
       'BU sign-in failed. Try again, or connect with session cookies instead.',
     ],
     [
       'a wrong BU password',
-      401,
+      422,
       'BU login failed — username or password is incorrect.',
       'BU login failed. Username or password is incorrect.',
     ],
   ])('explains %s in BU SSO terms, not Sapling-session terms', async (_case, status, detail, copy) => {
     vi.mocked(connectGradescopeViaBuSso).mockRejectedValue(
-      Object.assign(new Error(JSON.stringify({ detail })), { status }),
+      Object.assign(new Error(JSON.stringify({ detail })), {
+        status, ...(status === 422 ? { code: 'gradescope_auth_failed' } : {}),
+      }),
     );
     const user = userEvent.setup();
     render(<GradescopeSyncModal open reconnect userId="u1" onClose={vi.fn()} />);
@@ -214,5 +223,64 @@ describe('Gradescope sync results', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in & send Duo push' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(copy);
     expect(screen.getByRole('alert')).not.toHaveTextContent('Your session expired');
+  });
+
+  it('leaves a Sapling 401 to the session handling instead of asking for Gradescope sign-in', async () => {
+    // #770: a 401 means Sapling's own session expired. Sending the student to
+    // the Gradescope sign-in choices for it was the wrong remedy.
+    vi.mocked(syncGradescopeCourse).mockRejectedValue(
+      Object.assign(new Error('{"detail":"Not authenticated"}'), { status: 401 }),
+    );
+    const user = userEvent.setup();
+    render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Not authenticated'));
+    expect(screen.queryByText('Connect Gradescope')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
+  });
+
+  it('goes straight to reconnecting when the saved sign-in is already known to be rejected', async () => {
+    vi.mocked(getGradescopeStatus).mockResolvedValue({
+      has_credentials: true, auth_mode: 'cookies', last_synced_at: null,
+      state: 'needs_reauth', needs_reauth: true, connected: false,
+    });
+    render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Connect Gradescope')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Reconnect');
+    expect(syncGradescopeCourse).not.toHaveBeenCalled();
+  });
+
+  it('lets only the newest state load decide the stage', async () => {
+    // StrictMode runs the open effect twice, so two refreshState calls race.
+    // The older answer (linked, ready to sync) must not override the newer
+    // one (disconnected) when it lands last.
+    let resolveOld!: (value: Awaited<ReturnType<typeof getGradescopeStatus>>) => void;
+    vi.mocked(getGradescopeStatus)
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
+      .mockResolvedValueOnce({ has_credentials: false, auth_mode: null, last_synced_at: null });
+    render(
+      <React.StrictMode>
+        <GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />
+      </React.StrictMode>,
+    );
+    expect(await screen.findByText('Connect Gradescope')).toBeInTheDocument();
+    await act(async () => resolveOld({ has_credentials: true, auth_mode: 'cookies', last_synced_at: null }));
+    expect(screen.getByText('Connect Gradescope')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+    expect(listGradescopeLinks).not.toHaveBeenCalled();
+  });
+
+  it('cannot remove credentials while a sync is running', async () => {
+    vi.mocked(syncGradescopeCourse).mockImplementation(() => new Promise(() => {}));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<GradescopeSyncModal open userId="u1" saplingCourseId="c1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    const reset = screen.getByRole('button', { name: 'Use different account' });
+    expect(reset).toBeDisabled();
+    await user.click(reset);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(deleteGradescopeCredentials).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });

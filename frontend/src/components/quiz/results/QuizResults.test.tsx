@@ -135,6 +135,7 @@ function actions(): QuizActions {
     practiseMissed: vi.fn(),
     nextInQueue: vi.fn(),
     exit: vi.fn(),
+    cancel: vi.fn(),
     flag: vi.fn(),
     dismissError: vi.fn(),
     retry: vi.fn(),

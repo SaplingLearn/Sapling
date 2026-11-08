@@ -98,3 +98,11 @@ redis>=5.0,<9
 # and by tests/dependency_manifest.py. Listed explicitly so it never depends on
 # arriving transitively; requirements.lock pins the exact version.
 packaging>=24
+
+# PostHog product analytics, LLM analytics and error tracking
+# (services/posthog_client.py, ADR 0028). Optional at runtime: unset
+# POSTHOG_PROJECT_TOKEN (or function mode / tests) keeps it fully inert. No otel
+# extra: LLM analytics are $ai_generation events from the usage chokepoint,
+# not an OTel span export.
+# Upper bound: a PostHog major can change the capture/context API surface.
+posthog>=7.0,<8

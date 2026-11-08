@@ -1,37 +1,10 @@
 'use client';
 
-/**
- * The landing hero — main's title screen, carried onto the v5 page.
- *
- * The v5 port's own hero (the DM Sans lede row, the WebGL panel rig in
- * `lib/landing/hero3d`, the info box and SCROLL TO EXPLORE cue) was judged not
- * good enough for the top of the page, so this is the hero `main` ships,
- * lifted out of the page component it used to live in and made a section of
- * its own. Everything below it — the descent band, the acts, the gallery, the
- * journal, the closing — is v5's and untouched.
- *
- * What this keeps from main: the rotating 2D point-cloud canvas, the two
- * floating knowledge-state cards, the Playfair wordmark + tagline (the
- * wordmark a size up from main's 10rem), the beta CTA and the SEE WHAT'S
- * INSIDE cue, and the mouse tilt + scroll parallax that ties them together.
- * What it takes from v5: the lede between the tagline and the CTA, which is
- * v5's copy verbatim. What it no longer owns: the intro overlay,
- * the navbar and the beta modal, which the v5 page provides. The wordmark and
- * tagline arrive through `useLanding`'s intro scramble rather than a timer of
- * this component's own, so the hero cascades in exactly as the v5 overlay
- * clears.
- *
- * The section carries `.landing-page` so main's scoped landing CSS (the mesh
- * blobs, the panel surfaces, the marketing tokens) applies inside it without
- * being re-declared for `.landing-v5`; the v5 root sets the same #f2f4f0
- * ground, so the scope's own background is a no-op.
- */
-
 import { useEffect, useRef, type CSSProperties } from 'react';
 import { PenSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { IS_TEST_MODE, now, random } from '@/lib/testMode';
-import { LeafI } from './LeafI';
+import { SaplingWordmark } from '@/components/SaplingWordmark';
 
 // Hand-tuned atmospheric orb palettes, hardcoded because they feed canvas
 // fillStyle where CSS var() doesn't resolve. Anchored on the olive brand
@@ -64,14 +37,11 @@ const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 export function Hero({
   heroMounted,
-  heroText1,
   heroText2,
   onBeta,
 }: {
   /** True once the intro overlay has cleared and the hero may rise. */
   heroMounted: boolean;
-  /** The wordmark, mid-scramble or settled. */
-  heroText1: string;
   /** The tagline under it, likewise. */
   heroText2: string;
   onBeta: () => void;
@@ -323,7 +293,7 @@ export function Hero({
 
   return (
     <section
-      className="landing-page antialiased relative min-h-svh flex items-center justify-center"
+      className="landing-page antialiased relative min-h-svh flex flex-col items-center justify-center gap-12 pt-28 pb-8"
       style={{ fontFamily: 'var(--font-inter), sans-serif', color: 'var(--text, #1a1a1a)', background: 'transparent' }}
     >
       <div aria-hidden className="absolute inset-0 pointer-events-none z-0">
@@ -396,18 +366,14 @@ export function Hero({
             point cloud behind the letterforms only: it reaches zero before
             the column's edges, so the cards keep their focus. */}
         <span aria-hidden="true" style={HERO_SCRIM} />
-        {/* The wordmark scrambles in client-side, so the accessible name is
-            the only server-rendered trace of it — public-seo.spec pins that. */}
         <h1 aria-label="Sapling" style={{
           opacity: heroMounted ? 1 : 0,
           transform: heroMounted ? 'translateY(0)' : 'translateY(25px)',
-          transition: 'all 700ms cubic-bezier(0.22,1,0.36,1) 300ms',
-        }} className="font-aleo text-[clamp(4rem,13.5vw,13rem)] font-semibold leading-[1.1] pb-[0.115em] tracking-tight px-4 text-[var(--brand-forest)]">
-          {/* The scramble locks letters left to right, so the leaf goes in the
-              moment the "i" locks, not when the whole word settles. */}
-          <span style={{ whiteSpace: 'nowrap' }}>
-            {heroText1.startsWith('Sapli') ? <>Sapl<LeafI />{heroText1.slice(5)}</> : (heroText1 || ' ')}
-          </span>
+          transition: 'opacity 700ms ease 300ms, transform 700ms ease 300ms',
+          margin: '0 auto',
+          width: 'min(78vw, 700px)',
+        }}>
+          <SaplingWordmark width={700} decorative style={{ width: '100%' }} />
         </h1>
 
         <p style={{
@@ -453,7 +419,7 @@ export function Hero({
       </div>
 
       {/* Scroll Indicator */}
-      <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="absolute bottom-8 left-1/2 z-20 landing-animate-float-indicator flex flex-col items-center">
+      <div style={{ opacity: heroMounted ? 1 : 0, transition: 'opacity 1s ease 1.2s' }} className="relative z-20 flex shrink-0 flex-col items-center">
         <div className="w-px h-14 landing-divider-v" />
         <span className="font-plex-mono text-xs tracking-[0.4em] whitespace-nowrap text-[var(--text-dim)] opacity-70 mt-3">SEE WHAT&apos;S INSIDE</span>
       </div>
