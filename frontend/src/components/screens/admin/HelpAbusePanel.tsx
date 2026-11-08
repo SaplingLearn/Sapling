@@ -176,9 +176,9 @@ export function HelpAbusePanel({ data }: { data: LoopHelpAbuse | null | undefine
       {heading}
       <p style={muted}>
         A check item <strong>bottoms out</strong> when its hints reach H{data.bottom_out_rung} (a completion
-        problem) or H6 (the full solution). Rapid attempts came less than the band&apos;s independent
-        time (45 s; 90 s for a novice) after the latest hint; repeats said nothing the student&apos;s
-        earlier attempts on the item had not. &ldquo;Would hold&rdquo; counts bottom-outs reached through an
+        problem) or H6 (the full solution). Rapid attempts came sooner after the latest hint than the
+        band&apos;s independent-time gate (the time alone an attempt needs before it counts); repeats said
+        nothing the student&apos;s earlier attempts on the item had not. &ldquo;Would hold&rdquo; counts bottom-outs reached through an
         attempt the strict gate would not count. A novice on the worked-example path reaches H5 by design,
         so read that band with its attempts. Compare the gate rows before switching the strict gate on.
       </p>
