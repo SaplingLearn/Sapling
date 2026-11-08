@@ -20,6 +20,20 @@ on:
       - 'backend/routes/learn.py'
       - 'backend/services/graph_service.py'
       - 'backend/services/graph_context.py'
+      # The learning loop's datasets (loop_tutor, misconception_confront,
+      # session_close, grader, decisions, check_items, the rung judge) score
+      # the SERVED path: the policy, leak, turn-shape and evidence modules,
+      # the loop route's served helpers, the learning decision seam and the
+      # stream helpers; the replay harness patches ai_budget and
+      # events_service and the decisions gate reads llm_pricing (spec
+      # section 13 A142).
+      - 'backend/learning/**'
+      - 'backend/routes/learn_loop.py'
+      - 'backend/services/learning_decisions.py'
+      - 'backend/services/chat_stream.py'
+      - 'backend/services/ai_budget.py'
+      - 'backend/services/events_service.py'
+      - 'backend/services/llm_pricing.py'
 
 jobs:
   evals:
