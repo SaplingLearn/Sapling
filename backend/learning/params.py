@@ -581,6 +581,14 @@ POSTTEST_ITEM_MATCHES = ("exact", "difficulty", "format", "none", "no_pretest")
 # Where the posed item came from (posttest_poses.item_source): one of the
 # concept's protected reserves, or a fresh unprotected item (a fallback).
 POSTTEST_ITEM_SOURCES = ("reserve", "fallback")
+# Spec §13 A130 (flag `probe_matched_pretest`): the POSTTEST_ITEM_MATCHES levels
+# at which a non-reserve item is a PARALLEL pretest form of a concept's post-test
+# reserves (checks.pretest_form) — the same format and difficulty, else the same
+# difficulty in another format (A126's second level: the cognitive demand
+# matched). The drafter's bank holds one item per format × difficulty and the
+# reserves take theirs, so an exact form exists only where a cell holds a
+# duplicate; a format-only or no match is no parallel form at all.
+PRETEST_FORM_MATCHES = ("exact", "difficulty")
 # † the formats the reserves are drawn in, at the reserve difficulty
 # (CHECK_ITEM_DIFFICULTIES[1]), in order: the two strong channels first (spec
 # §3.1: free_response and mc_reasoned), selected-response second — the audit's
@@ -684,6 +692,29 @@ ITEM_LINT_LONGEST_MARGIN = 0.25
 # words than the distractor that repeats the most ("clang association", one of
 # the item-writing cues a test-wise student uses without knowing the content)
 ITEM_LINT_STEM_OVERLAP_MARGIN = 2
+
+# ── Empirical item statistics (spec §13 A131; learning/item_stats.py) ──────
+# Classical item analysis over students' first unassisted attempts, shown to
+# staff in the review queue. It flags; it never writes lint_flags or a hold.
+# † the fewest students behind a statistic before it may flag an item — the
+# p-value's n for too_easy / too_hard, the item–rest correlation's n for the
+# discrimination flags. At 30 a p-value near 0.9 or 0.1 carries a Wilson 95%
+# interval of about ±0.11 (the arithmetic behind ITEM_AUDIT_SAMPLE_DEFAULT)
+# and a correlation near 0 a standard error of about 1/√30 ≈ 0.18: enough to
+# point staff at an item, not to judge it — staff decide.
+ITEM_STATS_MIN_N = 30
+# † conventional classical-test-theory cut-points, not validated for this
+# loop: an item more than 90% of students get right on their first unaided
+# try says little about who has learned the concept; under 20% it is beyond
+# the material or its key is wrong; an item–rest correlation under 0.20
+# separates students poorly (the bottom of Ebel's discrimination bands), and
+# a negative one favours the students who do worse on the concept's other
+# items — the classic sign of a miskeyed or misleading item.
+ITEM_STATS_EASY_P = 0.90
+ITEM_STATS_HARD_P = 0.20
+ITEM_STATS_LOW_DISCRIMINATION = 0.20
+# The flags, in the order they are listed (the admin page labels each).
+ITEM_STATS_FLAGS = ("too_easy", "too_hard", "low_discrimination", "negative_discrimination")
 
 # ── Check-item alignment (spec §13 A119) ────────────────────────────────────
 # † items per check_items_verify call (agents/check_items_verify.py): one

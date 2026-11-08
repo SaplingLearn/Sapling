@@ -61,6 +61,7 @@ from learning.params import (
     POSTTEST_RESERVE_FORMATS,
     POSTTEST_RESERVE_MIN_LEFT,
     POSTTEST_SKIP_REASONS,
+    PRETEST_FORM_MATCHES,
 )
 
 _SEP = "\x1f"  # unit separator: never appears in normalized text
@@ -1643,6 +1644,24 @@ def rank_chunks_for_concept(
 # ── selection ──────────────────────────────────────────────────────────────
 
 
+def serve_quality(item) -> tuple[int, int, bool]:
+    """How a serving picker ranks two items its own rule treats as equal
+    (spec §13 A129): a confirmed key first (`_verify_rank`: an independent
+    blind solve agreed, staff approved it or an audit found it correct, A124),
+    then the item-flaw lint tier (`lint_rank`: linted clean, never linted,
+    flagged — A113, A119, A128), then, between two flagged items, one with its
+    sources before an `unsourced` one (A128). It is the post-test's order
+    (`_quality_rank`, A126) without its hash tie-break, refined by A128's
+    provenance, so no picker contradicts the post-test.
+
+    Every picker compares it only AFTER its own rule's keys (the difficulty
+    target, the strand, the channel, novelty, the reserve exclusions), so it
+    only ever chooses among items that rule leaves equal, and a flagged item
+    still serves when it is all the rule allows. It is no evidence weight: a
+    flag is not a wrong key, and a held item is never servable at all."""
+    return (_verify_rank(item), lint_rank(item), unsourced(item))
+
+
 def select_item(
     items: Iterable[CheckItem],
     *,
@@ -1651,12 +1670,14 @@ def select_item(
     exclude_hashes: Iterable[str] = (),
 ) -> CheckItem | None:
     """A servable item (A34: it states a final answer; A124: not held) of exactly `format`
-    whose hash is not excluded: the first at exactly `difficulty` (ties by
-    (created_at, id)), else the nearest difficulty (lower first on ties), else
-    None. Format is never substituted — each format is a different evidence
-    channel (spec §3.1). A128: at the chosen difficulty an item with its
-    sources goes before an `unsourced` one — difficulty stays first, because
-    the band's target is a learning requirement and provenance is support."""
+    whose hash is not excluded: the nearest to `difficulty` (exactly it first,
+    then the nearest, lower first on ties), else None. Format is never
+    substituted — each format is a different evidence channel (spec §3.1).
+    At the chosen difficulty, the best by `serve_quality` (A129: a confirmed
+    key, then clean, never-linted, flagged; A128: an item with its sources
+    before an `unsourced` one), then the oldest (created_at, id). Difficulty
+    stays first, because the band's target is a learning requirement and an
+    item's quality is a preference among items that meet it."""
     excluded = set(exclude_hashes)
     candidates = [
         i
@@ -1670,7 +1691,7 @@ def select_item(
         key=lambda i: (
             abs(i.difficulty - difficulty),
             i.difficulty,
-            unsourced(i),
+            *serve_quality(i),
             i.created_at or "",
             i.id,
         ),
@@ -1794,6 +1815,47 @@ def pretest_match(item, pretest) -> str:
         return "no_pretest"
     same_d, same_f = item.difficulty == pretest.difficulty, item.format == pretest.format
     return "exact" if same_d and same_f else "difficulty" if same_d else "format" if same_f else "none"
+
+
+def pretest_form(items: Sequence[CheckItem], excluded: Iterable[str] = ()) -> CheckItem | None:
+    """The concept's matched pretest form (spec §13 A130, flag
+    `probe_matched_pretest`): the item the probe asks FIRST on a concept the
+    student has no graded evidence on, so that the answer — the concept's
+    anchor, its A112 pretest — is parallel to the post-test reserves the
+    delayed outcome will be measured on (A126).
+
+    Among the servable items (A34, A124) that are neither a reserve
+    (`posttest_reserve_hashes`, over the whole bank) nor in `excluded` (what
+    the student must not be asked: seen, revealed, reported, asked, withdrawn):
+    the best by its matches to the reserves (`pretest_match`), compared as
+    their sorted ranks — so a form exact to one reserve and difficulty-matched
+    to the other comes before one difficulty-matched to both — kept only when
+    its best match is in PRETEST_FORM_MATCHES (the same format and difficulty,
+    else the same difficulty; a format-only or no match is no parallel form);
+    then A129's serve_quality; then the reserves' format order
+    (POSTTEST_RESERVE_FORMATS: the strong channels first); then the lowest
+    hash. None when the bank has no reserve or no parallel form is left: the
+    probe then keeps its own first-item rule. Never a reserve: a reserve asked
+    now would be no fresh outcome item later."""
+    reserves = posttest_reserve_hashes(items)
+    if not reserves:
+        return None
+    by_hash = {i.question_hash: i for i in items}
+    protected = [by_hash[h] for h in reserves]
+    skip = set(excluded) | set(reserves)
+    acceptable = max(_MATCH_RANK[m] for m in PRETEST_FORM_MATCHES)
+    best: tuple | None = None
+    chosen: CheckItem | None = None
+    for item in items:
+        if item.question_hash in skip or not is_servable(item):
+            continue
+        matches = tuple(sorted(_MATCH_RANK[pretest_match(r, item)] for r in protected))
+        if matches[0] > acceptable:
+            continue
+        key = (matches, *serve_quality(item), _reserve_format_rank(item.format), item.question_hash)
+        if best is None or key < best:
+            best, chosen = key, item
+    return chosen
 
 
 class PosttestChoice(NamedTuple):

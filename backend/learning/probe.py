@@ -28,15 +28,28 @@ from learning.params import (
 
 class ProbeItem(Protocol):
     """The caller binds a stored check item to the student's node_id. It may
-    also say `unsourced: bool` (spec §13 A128: drafted from extracted text
-    after a failed index) — read with a False default, so an item without it
-    ranks as sourced."""
+    also say `quality: tuple` (spec §13 A129: how the item ranks by its key
+    and its lint, lower first — the caller's `checks.serve_quality`; this
+    module never imports checks) or, without it, `unsourced: bool` (A128:
+    drafted from extracted text after a failed index). Both are read with
+    defaults, so an item that says neither ranks as a confirmed, clean,
+    sourced one."""
 
     id: str
     node_id: str
     format: str
     difficulty: int
     question_hash: str
+
+
+def _quality(item) -> tuple:
+    """The item's serving quality (spec §13 A129), lower first: its own
+    `quality` when the caller bound one; else confirmed and clean, with A128's
+    `unsourced` alone ranking it after an equal item with its sources."""
+    quality = getattr(item, "quality", None)
+    if quality is not None:
+        return tuple(quality)
+    return (0, 0, bool(getattr(item, "unsourced", False)))
 
 
 class ProbeObservation(TypedDict):
@@ -125,6 +138,18 @@ def independent_observations(history: Sequence[ProbeObservation]) -> list[ProbeO
     return independent
 
 
+def graded_strands(history: Sequence[ProbeObservation]) -> frozenset[str]:
+    """The strands (node ids) with at least one GRADED observation in the
+    history — a recorded outcome, so evidence the concept is anchored on (an
+    unavailable, refused or ungraded answer wrote none). Spec §13 A130: such a
+    strand's next item is no pretest, so it is never steered."""
+    return frozenset(
+        h["node_id"]
+        for h in history
+        if isinstance(h, Mapping) and isinstance(h.get("node_id"), str) and _graded_outcome(h) is not None
+    )
+
+
 def _by_node(history: Sequence[ProbeObservation]) -> dict[str, list[ProbeObservation]]:
     grouped: dict[str, list[ProbeObservation]] = defaultdict(list)
     for observation in history:
@@ -209,6 +234,7 @@ def next_probe_item(
     channel_for_format: Mapping[str, str],
     asked_per_node: Mapping[str, int] | None = None,
     history: Sequence[ProbeObservation] | None = None,
+    pretest_forms: Mapping[str, str] | None = None,
 ) -> ProbeItem | None:
     """Pick a novel item fairly across eligible, unfinished skill strands.
 
@@ -219,6 +245,14 @@ def next_probe_item(
     Pass all eligible items, including asked ones. Explicit observation counts
     include withdrawn items; history/counts can only increase fatigue counts.
     Old callers without history retain the starting-item heuristic and caps.
+
+    `pretest_forms` (spec §13 A130, flag `probe_matched_pretest`; None = off):
+    node → the question hash of its matched pretest form, for the concepts the
+    caller found no graded evidence on. While the chosen strand has no graded
+    observation in `history` either, its form — when it is still a candidate —
+    replaces the belief-band heuristic for that one item: the answer becomes
+    the concept's anchor, its pretest. Strand fairness, the caps and every
+    exclusion stand; a strand with a graded answer is never steered.
     """
     history = history or []
     asked = set(asked_hashes) | {
@@ -259,6 +293,13 @@ def next_probe_item(
 
     # Choose the strand before comparing different kinds of adaptive keys.
     node_id = min(candidates, key=lambda n: (per_node[n], n))
+    form = (pretest_forms or {}).get(node_id)
+    if form is not None and node_id not in graded_strands(by_node[node_id]):
+        # A130: the concept's first graded answer is its pretest (the A112
+        # anchor) — ask the form parallel to its post-test reserves
+        chosen = next((it for it in candidates[node_id] if it.question_hash == form), None)
+        if chosen is not None:
+            return chosen
     correct, incorrect = _evidence(independent_by_node[node_id])
     # Selection may avoid contaminated shapes using assisted misses too;
     # _evidence above still excludes them from all diagnostic claims.
@@ -277,9 +318,14 @@ def next_probe_item(
             0 if PROBE_TARGET_LO <= es <= PROBE_TARGET_HI else 1,
             abs(es - mid),
             it.difficulty,
-            # A128: among equal challenges an item with its sources goes first
-            # (never ahead of the adaptive difficulty: the diagnosis decides that)
-            bool(getattr(it, "unsourced", False)),
+            # A129 (A128's sourced-first among them): among equal challenges —
+            # the same difficulty and, through the channel's guess and slip,
+            # the same expected success, so in practice the same format — a
+            # confirmed key, then clean, never-linted, flagged. Never ahead of
+            # the strand, the adaptive difficulty or the channel: the diagnosis
+            # decides those, so a flagged item still serves when it is all the
+            # strand has at the challenge the diagnosis wants.
+            *_quality(it),
             it.question_hash,
         )
 

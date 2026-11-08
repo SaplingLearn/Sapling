@@ -23,6 +23,14 @@
  * correct / wrong / ambiguous, and shows the course's key-error rate with its
  * Wilson 95% interval. "Wrong" or "ambiguous" holds the item; "correct"
  * confirms its key.
+ *
+ * Item statistics (spec §13 A131): name a course and the queue shows, under
+ * each of its questions, the classical item analysis of students' first
+ * unassisted attempts — n, the share right (with its Wilson 95% interval) and
+ * the item–rest discrimination — and a "Flagged by data" view lists the
+ * course's questions the numbers flag (too easy, too hard, low or negative
+ * discrimination), queued or not, with the same Approve / Retire. A flag asks
+ * staff to look; nothing is written to the question.
  */
 
 import React from "react";
@@ -36,16 +44,20 @@ import {
   adminAuditCheckItem,
   adminCheckItemAuditSample,
   adminCheckItemQueue,
+  adminCheckItemStats,
   adminRetireCheckItem,
   type AdminAuditItem,
   type AdminAuditSample,
   type AdminCheckItemEntry,
   type AdminCheckItemQueue,
   type AdminCheckItemText,
+  type AdminItemStatsReport,
   type AuditCounts,
   type CheckItemAuditVerdict,
   type CheckItemKeyStatus,
   type CheckItemLintFlag,
+  type ItemStats,
+  type ItemStatsFlag,
   type LoopReportReason,
 } from "@/lib/api";
 
@@ -86,6 +98,14 @@ export const VERDICT_LABELS: Record<CheckItemAuditVerdict, string> = {
   correct: "Key correct",
   wrong: "Key wrong",
   ambiguous: "Ambiguous",
+};
+
+// spec §13 A131: what the numbers flag (each only from `min_n` students)
+export const ITEM_STATS_FLAG_LABELS: Record<ItemStatsFlag, string> = {
+  too_easy: "Too easy: almost everyone gets it right first time",
+  too_hard: "Too hard: few get it right first time — check the key",
+  low_discrimination: "Low discrimination: doesn't separate stronger from weaker students",
+  negative_discrimination: "Negative discrimination: stronger students get it wrong more often — check the key",
 };
 
 const REASONS = Object.keys(REPORT_REASON_LABELS) as LoopReportReason[];
@@ -149,11 +169,19 @@ function ReviewBody() {
   );
 }
 
+type QueueFilter = "queue" | "data";
+
 function QueueBody() {
   const toast = useToast();
   const [queue, setQueue] = React.useState<AdminCheckItemQueue | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  // spec §13 A131: one course's item statistics, read on demand (a journal scan)
+  const [statsCourse, setStatsCourse] = React.useState("");
+  const [stats, setStats] = React.useState<AdminItemStatsReport | null>(null);
+  const [statsError, setStatsError] = React.useState<string | null>(null);
+  const [statsLoading, setStatsLoading] = React.useState(false);
+  const [filter, setFilter] = React.useState<QueueFilter>("queue");
 
   // State is set only after the read settles (never synchronously in the effect).
   const load = React.useCallback(async () => {
@@ -167,6 +195,28 @@ function QueueBody() {
   }, []);
 
   React.useEffect(() => { void load(); }, [load]);
+
+  const loadStats = async (courseId: string) => {
+    if (!courseId) return;
+    setStatsLoading(true);
+    try {
+      setStats(await adminCheckItemStats(courseId));
+      setStatsError(null);
+    } catch (err) {
+      setStatsError(humanizeError(err, "Couldn't load the item statistics."));
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  // the course's numbers, by stored item id (a queued row of another course has none)
+  const statsById = React.useMemo(() => {
+    const out = new Map<string, ItemStats>();
+    for (const row of stats?.items ?? []) out.set(row.id, row);
+    return out;
+  }, [stats]);
+  const statsFor = (entry: AdminCheckItemEntry) =>
+    stats && entry.course_id === stats.course_id ? statsById.get(entry.id) : undefined;
 
   const act = async (entry: AdminCheckItemEntry, action: "approve" | "retire") => {
     setBusyId(entry.id);
@@ -185,12 +235,22 @@ function QueueBody() {
           : "Retired for the whole course.";
       }
       // the decision is per course question: every row of it leaves the queue
+      const decided = (i: AdminCheckItemEntry) =>
+        i.course_id === entry.course_id && i.question_hash === entry.question_hash;
       setQueue((q) => {
         if (!q) return q;
-        const left = q.items.filter(
-          (i) => !(i.course_id === entry.course_id && i.question_hash === entry.question_hash),
-        );
+        const left = q.items.filter((i) => !decided(i));
         return { ...q, items: left, count: Math.max(0, q.count - (q.items.length - left.length)) };
+      });
+      // … and the "Flagged by data" view: decided on these numbers (A131)
+      setStats((s) => {
+        if (!s) return s;
+        const left = s.flagged.filter((i) => !decided(i));
+        return {
+          ...s,
+          flagged: left,
+          flagged_count: Math.max(0, s.flagged_count - (s.flagged.length - left.length)),
+        };
       });
       toast.success(message);
     } catch (err) {
@@ -200,9 +260,112 @@ function QueueBody() {
     }
   };
 
+  const courseId = statsCourse.trim();
+  const showData = filter === "data" && stats !== null;
   return (
     <div data-testid="admin-items" style={{ padding: "24px 32px", display: "grid", gap: 16, maxWidth: 960 }}>
-      {error && !queue ? (
+      <form
+        aria-label="Item statistics"
+        style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+        onSubmit={(e) => { e.preventDefault(); void loadStats(courseId); }}
+      >
+        <input
+          data-testid="admin-items-stats-course"
+          aria-label="Course id for item statistics"
+          placeholder="Course id for item statistics"
+          value={statsCourse}
+          onChange={(e) => setStatsCourse(e.target.value)}
+          style={{
+            flex: 1, maxWidth: 320, padding: "7px 12px",
+            border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
+            fontSize: 13, background: "var(--bg-input)",
+          }}
+        />
+        <button
+          type="submit"
+          data-testid="admin-items-stats-load"
+          className="btn btn--sm"
+          disabled={!courseId || statsLoading}
+        >
+          {statsLoading ? "Loading…" : "Show item statistics"}
+        </button>
+      </form>
+      {statsError && (
+        <div role="alert" data-testid="admin-items-stats-error" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          {statsError}
+        </div>
+      )}
+      {stats && (
+        <>
+          <div data-testid="admin-items-stats-summary" style={{ color: "var(--text-muted)", fontSize: 13 }}>
+            Item statistics for {stats.course_id}: each question&apos;s students&apos; first unassisted
+            attempts, from {stats.rows_scanned} graded answer{stats.rows_scanned === 1 ? "" : "s"}. A
+            question is flagged only from {stats.min_n} students; a flag asks you to look — nothing is
+            changed until you approve or retire it.
+            {stats.truncated ? " The read hit its limit, so the newest answers are not counted." : ""}
+          </div>
+          <div role="group" aria-label="Which questions to show" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              data-testid="admin-items-filter-queue"
+              className={filter === "queue" ? "btn btn--sm btn--primary" : "btn btn--sm"}
+              aria-pressed={filter === "queue"}
+              onClick={() => setFilter("queue")}
+            >
+              Review queue
+            </button>
+            <button
+              type="button"
+              data-testid="admin-items-filter-data"
+              className={filter === "data" ? "btn btn--sm btn--primary" : "btn btn--sm"}
+              aria-pressed={filter === "data"}
+              onClick={() => setFilter("data")}
+            >
+              Flagged by data ({stats.flagged_count})
+            </button>
+          </div>
+        </>
+      )}
+      {showData ? (
+        stats.flagged.length === 0 && stats.flagged_count > 0 ? (
+          // every question of the page was decided; more are flagged beyond it
+          <div data-testid="admin-items-data-more" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
+            <span>{stats.flagged_count} more flagged — load the statistics again to see them.</span>
+            <button
+              type="button"
+              data-testid="admin-items-data-reload"
+              className="btn btn--sm"
+              disabled={statsLoading}
+              onClick={() => void loadStats(stats.course_id)}
+            >
+              Load again
+            </button>
+          </div>
+        ) : stats.flagged.length === 0 ? (
+          <div data-testid="admin-items-data-empty" style={{ color: "var(--text-muted)", fontSize: 14 }}>
+            The numbers flag no question in {stats.course_id}.
+          </div>
+        ) : (
+          <>
+            {stats.flagged_count > stats.flagged.length && (
+              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                Showing the first {stats.flagged.length} of {stats.flagged_count}.
+              </div>
+            )}
+            {stats.flagged.map((entry) => (
+              <QueueRow
+                key={entry.id}
+                entry={entry}
+                stats={entry.stats}
+                minN={stats.min_n}
+                busy={busyId === entry.id}
+                onApprove={() => void act(entry, "approve")}
+                onRetire={() => void act(entry, "retire")}
+              />
+            ))}
+          </>
+        )
+      ) : error && !queue ? (
         <div role="alert" style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--text-muted)", fontSize: 13 }}>
           <span>{error}</span>
           <button type="button" data-testid="admin-items-retry" className="btn btn--sm" onClick={() => void load()}>
@@ -227,12 +390,50 @@ function QueueBody() {
             <QueueRow
               key={entry.id}
               entry={entry}
+              stats={statsFor(entry)}
+              minN={stats?.min_n}
               busy={busyId === entry.id}
               onApprove={() => void act(entry, "approve")}
               onRetire={() => void act(entry, "retire")}
             />
           ))}
         </>
+      )}
+    </div>
+  );
+}
+
+const pctStat = (v: number | null) => (v === null ? "—" : `${Math.round(v * 100)}%`);
+
+/** Spec §13 A131: one question's numbers — n, the share right with its Wilson
+ *  95% interval, the item–rest discrimination — and what they flag. */
+function ItemStatsLine({ id, stats, minN }: { id: string; stats: ItemStats; minN?: number }) {
+  return (
+    <div data-testid={`admin-items-stats-${id}`} style={{ display: "grid", gap: 6, fontSize: 13 }}>
+      <div style={{ color: "var(--text-muted)" }}>
+        {stats.n === 0 ? (
+          "No unassisted first attempt yet."
+        ) : (
+          <>
+            {stats.n} student{stats.n === 1 ? "" : "s"}&apos; first unassisted attempt
+            {stats.n === 1 ? "" : "s"}: {pctStat(stats.p_value)} right (95% CI {pctStat(stats.p_ci_low)}–
+            {pctStat(stats.p_ci_high)}) · discrimination{" "}
+            {stats.discrimination === null ? "—" : stats.discrimination.toFixed(2)} ({stats.discrimination_n}{" "}
+            with other answers on the concept)
+            {minN !== undefined && stats.flags.length === 0 && stats.n < minN
+              ? ` · too few to flag (${minN} needed)`
+              : ""}
+          </>
+        )}
+      </div>
+      {stats.flags.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {stats.flags.map((f) => (
+            <span key={f} className="chip chip--err" data-testid={`admin-items-data-flag-${id}-${f}`}>
+              {ITEM_STATS_FLAG_LABELS[f] ?? f}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -281,9 +482,12 @@ function ItemText({ item }: { item: AdminCheckItemText }) {
 }
 
 function QueueRow({
-  entry, busy, onApprove, onRetire,
+  entry, stats, minN, busy, onApprove, onRetire,
 }: {
   entry: AdminCheckItemEntry;
+  /** spec §13 A131: the question's numbers, once its course's statistics are loaded */
+  stats?: ItemStats;
+  minN?: number;
   busy: boolean;
   onApprove: () => void;
   onRetire: () => void;
@@ -317,6 +521,7 @@ function QueueRow({
         ))}
       </div>
       <ItemText item={entry} />
+      {stats && <ItemStatsLine id={entry.id} stats={stats} minN={minN} />}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {!entry.retire_pending && (
           <button

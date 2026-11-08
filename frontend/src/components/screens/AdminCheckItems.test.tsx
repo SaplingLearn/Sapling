@@ -33,6 +33,7 @@ const api = vi.hoisted(() => ({
   adminRetireCheckItem: vi.fn(),
   adminCheckItemAuditSample: vi.fn(),
   adminAuditCheckItem: vi.fn(),
+  adminCheckItemStats: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
 
@@ -41,7 +42,9 @@ import type {
   AdminAuditSample,
   AdminCheckItemEntry,
   AdminCheckItemQueue,
+  AdminItemStatsReport,
   AuditCounts,
+  ItemStats,
 } from "@/lib/api";
 import { AdminCheckItems } from "./AdminCheckItems";
 
@@ -110,6 +113,29 @@ const auditSample = (items: AdminAuditItem[], summary: Partial<AuditCounts> = {}
 
 const queue = (items: AdminCheckItemEntry[], over: Partial<AdminCheckItemQueue> = {}): AdminCheckItemQueue => ({
   items, count: items.length, page_size: 100, quarantine_min_reporters: 2, ...over,
+});
+
+// spec §13 A131
+const itemStats = (over: Partial<ItemStats> = {}): ItemStats => ({
+  n: 42, correct: 39, p_value: 39 / 42, p_ci_low: 0.81, p_ci_high: 0.98,
+  discrimination: 0.05, discrimination_n: 38, flags: ["too_easy", "low_discrimination"],
+  numbers_changed_at: "2026-11-07T10:00:00+00:00",
+  ...over,
+});
+
+const statsReport = (over: Partial<AdminItemStatsReport> = {}): AdminItemStatsReport => ({
+  course_id: "c1", min_n: 30, easy_p: 0.9, hard_p: 0.2, low_discrimination: 0.2,
+  rows_scanned: 512, truncated: false,
+  items: [
+    { id: "i1", concept_key: "recursion", question_hash: "qh1", format: "mc_reason", difficulty: 2, ...itemStats() },
+    { id: "i9", concept_key: "recursion", question_hash: "qh9", format: "free", difficulty: 1, ...itemStats({ n: 0, correct: 0, p_value: null, p_ci_low: null, p_ci_high: null, discrimination: null, discrimination_n: 0, flags: [], numbers_changed_at: null }) },
+  ],
+  flagged: [
+    { ...entry({ id: "i7", question_hash: "qh7", prompt: "A question nobody flagged otherwise" }), stats: itemStats({ flags: ["negative_discrimination"], discrimination: -0.3 }) },
+  ],
+  flagged_count: 1,
+  page_size: 100,
+  ...over,
 });
 
 beforeEach(() => {
@@ -343,5 +369,107 @@ describe("AdminCheckItems — key audit (spec §13 A124)", () => {
     fireEvent.click(await screen.findByTestId("admin-audit-correct-a1"));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(api.adminCheckItemAuditSample).toHaveBeenCalledTimes(2);
+  });
+
+  // ── spec §13 A131: empirical item statistics ─────────────────────────────
+
+  const loadStats = async (course = "c1") => {
+    fireEvent.change(screen.getByTestId("admin-items-stats-course"), { target: { value: course } });
+    fireEvent.click(screen.getByTestId("admin-items-stats-load"));
+    await screen.findByTestId("admin-items-stats-summary");
+  };
+
+  it("shows a course's numbers under its queued questions, not another course's", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(
+      queue([entry(), entry({ id: "i2", course_id: "c2", question_hash: "qh2" })]),
+    );
+    api.adminCheckItemStats.mockResolvedValue(statsReport());
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-row-i1");
+    expect(screen.queryByTestId("admin-items-stats-i1")).toBeNull(); // nothing read until asked
+    await loadStats();
+    expect(api.adminCheckItemStats).toHaveBeenCalledWith("c1");
+    const line = screen.getByTestId("admin-items-stats-i1");
+    expect(line.textContent).toContain("42 students' first unassisted attempts: 93% right (95% CI 81%–98%)");
+    expect(line.textContent).toContain("discrimination 0.05 (38 with other answers on the concept)");
+    expect(screen.getByTestId("admin-items-data-flag-i1-too_easy").textContent).toContain("Too easy");
+    expect(screen.getByTestId("admin-items-data-flag-i1-low_discrimination")).toBeTruthy();
+    expect(screen.queryByTestId("admin-items-stats-i2")).toBeNull(); // another course
+    expect(screen.getByTestId("admin-items-stats-summary").textContent).toContain("only from 30 students");
+  });
+
+  it("lists the questions the data flags, queued or not, and a decision clears them", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([entry()]));
+    api.adminCheckItemStats.mockResolvedValue(statsReport());
+    api.adminApproveCheckItem.mockResolvedValue({ id: "i7", status: "approved", restored: false });
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-row-i1");
+    await loadStats();
+    const data = screen.getByTestId("admin-items-filter-data");
+    expect(data.textContent).toBe("Flagged by data (1)");
+    fireEvent.click(data);
+    expect(data.getAttribute("aria-pressed")).toBe("true");
+    const row = screen.getByTestId("admin-items-row-i7");
+    expect(row.textContent).toContain("A question nobody flagged otherwise");
+    expect(screen.getByTestId("admin-items-data-flag-i7-negative_discrimination").textContent).toContain(
+      "check the key",
+    );
+    expect(screen.queryByTestId("admin-items-row-i1")).toBeNull(); // the queue is behind the other filter
+    fireEvent.click(screen.getByTestId("admin-items-approve-i7"));
+    await waitFor(() => expect(api.adminApproveCheckItem).toHaveBeenCalledWith("i7"));
+    expect(await screen.findByTestId("admin-items-data-empty")).toBeTruthy();
+    expect(screen.getByTestId("admin-items-filter-data").textContent).toBe("Flagged by data (0)");
+    fireEvent.click(screen.getByTestId("admin-items-filter-queue"));
+    expect(screen.getByTestId("admin-items-row-i1")).toBeTruthy();
+  });
+
+  it("after deciding the whole page it offers the rest, never 'nothing flagged'", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([]));
+    api.adminCheckItemStats
+      .mockResolvedValueOnce(statsReport({ flagged_count: 3, page_size: 1 }))
+      .mockResolvedValueOnce(statsReport({ flagged_count: 2, page_size: 1 }));
+    api.adminRetireCheckItem.mockResolvedValue({ id: "i7", status: "retired", items: 1, students: 0, voided: 0 });
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-empty");
+    await loadStats();
+    fireEvent.click(screen.getByTestId("admin-items-filter-data"));
+    const retire = screen.getByTestId("admin-items-retire-i7");
+    fireEvent.click(retire);
+    fireEvent.click(retire);
+    expect((await screen.findByTestId("admin-items-data-more")).textContent).toContain("2 more flagged");
+    expect(screen.queryByTestId("admin-items-data-empty")).toBeNull();
+    fireEvent.click(screen.getByTestId("admin-items-data-reload"));
+    await waitFor(() => expect(api.adminCheckItemStats).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("admin-items-row-i7")).toBeTruthy();
+  });
+
+  it("says when a question has no unassisted first attempt yet", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([entry({ id: "i9", question_hash: "qh9" })]));
+    api.adminCheckItemStats.mockResolvedValue(statsReport());
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-row-i9");
+    await loadStats();
+    expect(screen.getByTestId("admin-items-stats-i9").textContent).toBe("No unassisted first attempt yet.");
+  });
+
+  it("a failed statistics read says so and keeps the queue", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([entry()]));
+    api.adminCheckItemStats.mockRejectedValue(new Error("503"));
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-row-i1");
+    fireEvent.change(screen.getByTestId("admin-items-stats-course"), { target: { value: "c1" } });
+    fireEvent.click(screen.getByTestId("admin-items-stats-load"));
+    expect(await screen.findByTestId("admin-items-stats-error")).toBeTruthy();
+    expect(screen.getByTestId("admin-items-row-i1")).toBeTruthy();
+    expect(screen.queryByTestId("admin-items-filter-data")).toBeNull();
+  });
+
+  it("names a cut-short read", async () => {
+    api.adminCheckItemQueue.mockResolvedValue(queue([]));
+    api.adminCheckItemStats.mockResolvedValue(statsReport({ truncated: true }));
+    render(<AdminCheckItems />);
+    await screen.findByTestId("admin-items-empty");
+    await loadStats();
+    expect(screen.getByTestId("admin-items-stats-summary").textContent).toContain("newest answers are not counted");
   });
 });
