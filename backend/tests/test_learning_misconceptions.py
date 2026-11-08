@@ -498,7 +498,11 @@ def test_resolve_marks_open_rows_of_another_item_in_one_conditional_update():
         mocks_t.update.return_value = closed
         assert misconceptions.resolve("u1", "n1", ["k1", "k1"], by_item="ci9") == closed
     upd = mocks["misconceptions"].update.call_args
-    assert "resolved_at" in upd[0][0]
+    payload = upd[0][0]
+    assert set(payload) == {"resolved_at", "resolved_reason"}
+    # why it closed: a value the CHECK in force admits (TestResolvedReasonMigration)
+    assert payload["resolved_reason"] == misconceptions.RESOLVED_BY_ISOMORPH
+    assert misconceptions.RESOLVED_BY_ISOMORPH == "correct_unassisted_isomorph"
     f = upd[1]["filters"]
     assert f["resolved_at"] == "is.null"
     assert f["user_id"] == "eq.u1" and f["node_id"] == "eq.n1"
@@ -1464,6 +1468,75 @@ class TestFollowupMigration:
         for line in sql.splitlines():
             if "UNIQUE" in line.upper():
                 assert "evidence_text" not in line
+
+
+# ── spec §13 A127 × A123: why a misconception closed ────────────────────────
+
+#: A123's CHECK list as applied; its migration is immutable, so this is history.
+A123_RESOLVED_REASONS = ("evidence_void",)
+_REASON_CHECK = re.compile(
+    r"CHECK\s*\(\s*resolved_reason IS NULL\s+OR\s+resolved_reason IN\s*\(([^)]*)\)\s*\)", re.I
+)
+
+
+def _ddl(sql: str) -> str:
+    """The SQL without its comment lines (a header may quote an older CHECK)."""
+    return "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
+
+
+def _reason_checks() -> list[tuple[str, tuple[str, ...]]]:
+    """Every misconceptions.resolved_reason CHECK list the migrations define, in
+    apply order."""
+    return [
+        (path.name, tuple(v.strip().strip("'") for v in m.group(1).split(",")))
+        for path in sorted(MIG_DIR.glob("*.sql"))
+        for m in _REASON_CHECK.finditer(_ddl(path.read_text()))
+    ]
+
+
+class TestResolvedReasonMigration:
+    def test_the_check_in_force_admits_exactly_the_two_closures(self):
+        """The two writers of resolved_at each record a reason: A123's void
+        closure and A127's resolve(). The last CHECK the migrations apply names
+        exactly those two, so neither writer's UPDATE is refused and no third
+        value can be written. No widening drops a value an earlier CHECK
+        allowed, so no closed row is left violating the CHECK in force."""
+        from learning.evidence_void import MISCONCEPTION_VOID_REASON
+        from learning.misconceptions import RESOLVED_BY_ISOMORPH
+
+        checks = _reason_checks()
+        assert [values for _, values in checks] == [
+            A123_RESOLVED_REASONS,
+            ("evidence_void", "correct_unassisted_isomorph"),
+        ]
+        name, in_force = checks[-1]
+        assert name.endswith("_learning_misconception_resolved_reason.sql"), name
+        assert set(in_force) == {MISCONCEPTION_VOID_REASON, RESOLVED_BY_ISOMORPH}
+        for (_, earlier), (_, later) in zip(checks, checks[1:]):
+            assert set(earlier) <= set(later)
+
+    def test_the_widening_replaces_the_narrow_check_by_its_body(self):
+        """One migration, after A123's, swaps the CHECK. It finds the narrow
+        constraint by its definition, never by an assumed name alone (a DROP by
+        name no-ops on a suffixed variant and leaves the narrow CHECK enforced:
+        20260828172725). It adds the wide one only when none is present
+        (re-runnable), NOT VALID (a strict superset, so no scan), and writes no
+        row (a row closed before keeps its NULL)."""
+        hits = sorted(MIG_DIR.glob("*_learning_misconception_resolved_reason.sql"))
+        assert len(hits) == 1, hits
+        void = sorted(MIG_DIR.glob("*_learning_evidence_void.sql"))
+        assert len(void) == 1 and hits[0].name > void[0].name, "must sort after A123's"
+        assert re.fullmatch(r"\d{14}_learning_misconception_resolved_reason\.sql", hits[0].name)
+        ddl = _ddl(hits[0].read_text())
+        assert "'public.misconceptions'::regclass" in ddl
+        assert "NOT ILIKE '%correct_unassisted_isomorph%'" in ddl
+        assert "DROP CONSTRAINT %I" in ddl
+        assert "DROP CONSTRAINT IF EXISTS" not in ddl, "never by an assumed name alone"
+        assert "IF NOT EXISTS" in ddl
+        assert "ADD CONSTRAINT misconceptions_resolved_reason_check" in ddl
+        assert ddl.count("NOT VALID") == 1
+        assert not re.search(r"\b(UPDATE|DELETE|INSERT)\b", ddl, re.I), "no row is relabelled"
+        assert len(_REASON_CHECK.findall(ddl)) == 1
 
 
 def test_every_unreleased_eval_case_is_a_line_production_would_send():

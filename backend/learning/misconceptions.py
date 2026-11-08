@@ -374,6 +374,13 @@ def record(
 
 
 _RESOLVED_COLS = "id,node_id,wrong_key,check_item_id,count"
+#: misconceptions.resolved_reason of a misconception resolve() closes (spec §13
+#: A127): the student answered an ISOMORPH (the same concept, another question
+#: than the one it was recorded on) correctly and unassisted. A123's void
+#: closure writes learning.evidence_void.MISCONCEPTION_VOID_REASON instead. The
+#: column's CHECK admits exactly these two
+#: (20261108110805_learning_misconception_resolved_reason.sql).
+RESOLVED_BY_ISOMORPH = "correct_unassisted_isomorph"
 
 
 def _in_list(values: Iterable[str]) -> str:
@@ -387,7 +394,8 @@ def resolve(user_id: str, node_id: str, wrong_keys: Iterable[str], *, by_item: s
     concept, another question), never the question the misconception was
     recorded on. ONE conditional UPDATE … RETURNING (`resolved_at IS NULL` in
     the filter), so a row another request closed first is never closed — or
-    reported — twice. A later record of the same key opens a fresh row (the
+    reported — twice. The row records why it closed: `resolved_reason` is
+    RESOLVED_BY_ISOMORPH. A later record of the same key opens a fresh row (the
     open-row unique index, A75 (f)): a relapse is a new misconception.
     Returns the closed rows [{id, node_id, wrong_key, check_item_id, count}],
     identifier-shaped keys only; [] when nothing is asked (no key, no item) or
@@ -398,7 +406,7 @@ def resolve(user_id: str, node_id: str, wrong_keys: Iterable[str], *, by_item: s
     try:
         rows = (
             table("misconceptions").update(
-                {"resolved_at": _now()},
+                {"resolved_at": _now(), "resolved_reason": RESOLVED_BY_ISOMORPH},
                 filters={
                     "user_id": f"eq.{user_id}",
                     "node_id": f"eq.{node_id}",
