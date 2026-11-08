@@ -7,11 +7,11 @@ google-auth-oauthlib==1.4.0
 google-api-python-client==2.197.0
 python-dotenv==1.2.2
 pytesseract==0.3.13
-pillow==12.2.0
-pypdf==6.13.3
+pillow==13.0.0
+pypdf==6.21.4
 pypdfium2==5.10.1
 httpx==0.28.1
-cryptography>=42,<46
+cryptography>=50.0.2,<51
 mammoth==1.12.0
 python-pptx==1.0.2
 recost==0.1.3
