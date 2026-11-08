@@ -988,11 +988,17 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
     expect(Number(onItem.n)).toBe(0);
     expect(await evidenceCount(USER_LOOP)).toBe(evidenceBefore); // no BKT/FSRS movement from the guess
     // ...and its answer, once shown, makes the item exposed for good (A88's durable reveal).
+    // While the card was open the item was a POSED item (the served-text scan's
+    // set); the answer spent it, so that 'posed' row is closed (review fix).
     const reveals = (await queryRaw(
-      `SELECT kind, source FROM learning_reveals WHERE user_id = $1 AND question_hash = $2`,
+      `SELECT kind, source, graded_at IS NOT NULL AS closed FROM learning_reveals
+        WHERE user_id = $1 AND question_hash = $2 ORDER BY kind`,
       [USER_LOOP, guessHash],
-    )) as { kind: string; source: string }[];
-    expect(reveals).toEqual([{ kind: "reveal", source: "prequestion" }]);
+    )) as { kind: string; source: string; closed: boolean }[];
+    expect(reveals).toEqual([
+      { kind: "posed", source: "prequestion", closed: true },
+      { kind: "reveal", source: "prequestion", closed: false },
+    ]);
     const [doc] = (await queryRaw(
       `SELECT loop_state->>'concept' AS concept, loop_state->'prequestion' AS prequestion FROM sessions WHERE id = $1`,
       [sessionId],
