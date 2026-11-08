@@ -58,7 +58,25 @@ export interface ChatMsg {
    *  crisis-support card instead of a tutor reply. Rendered as the calm card,
    *  never as a tutor bubble; `content` keeps the same copy as text. */
   crisisSupport?: CrisisSupport;
+  /** Shown elsewhere on screen right now (the learning loop's check card shows
+   *  its pose and hint): the row stays in the log — announced when it arrives
+   *  and read in order — but is not painted, so nothing renders twice. Clearing
+   *  the flag only paints it: no node is added, so nothing is announced again. */
+  visuallyHidden?: boolean;
 }
+
+/** The standard visually-hidden recipe: kept in the accessibility tree, painted nowhere. */
+const VISUALLY_HIDDEN: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  margin: -1,
+  padding: 0,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 interface ChatPanelProps {
   messages: ChatMsg[];
@@ -83,6 +101,8 @@ interface ChatPanelProps {
   /** Re-dispatch an interrupted turn (ADR 0020). Receives the interrupted
    *  message; Learn re-sends its `retryText` after dropping the failed pair. */
   onRetry?: (m: ChatMsg) => void;
+  /** The composer's textarea, for a parent that moves keyboard focus to it. */
+  composerRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
 export function ChatPanel({
@@ -98,6 +118,7 @@ export function ChatPanel({
   streamingStatus,
   onStop,
   onRetry,
+  composerRef,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isStreaming = streamingText !== null && streamingText !== undefined;
@@ -111,6 +132,9 @@ export function ChatPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       {header && <div>{header}</div>}
+      {/* Focusable (tabIndex 0): the log scrolls on its own, and a scrolling
+          region must be reachable from the keyboard (WCAG 2.1.1) — the arrow
+          keys then scroll the history. */}
       <div
         ref={scrollRef}
         role="log"
@@ -119,6 +143,7 @@ export function ChatPanel({
         aria-atomic="false"
         aria-label="Conversation"
         data-testid="tutor-messages"
+        tabIndex={0}
         style={{
           flex: 1,
           overflowY: "auto",
@@ -161,6 +186,7 @@ export function ChatPanel({
         draftSeedKey={draftSeedKey}
         streaming={isStreaming}
         onStop={onStop}
+        composerRef={composerRef}
       />
     </div>
   );
@@ -175,6 +201,7 @@ interface ChatInputBarProps {
   draftSeedKey?: number;
   streaming?: boolean;
   onStop?: () => void;
+  composerRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
 const ChatInputBar = React.memo(function ChatInputBar({
@@ -186,8 +213,17 @@ const ChatInputBar = React.memo(function ChatInputBar({
   draftSeedKey,
   streaming,
   onStop,
+  composerRef,
 }: ChatInputBarProps) {
   const [text, setText] = useState<string>(draftSeed ?? "");
+  const barRef = useRef<HTMLDivElement>(null);
+  const ownInputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = composerRef ?? ownInputRef;
+  // The composer is disabled while a reply streams, and a disabled control
+  // loses keyboard focus to the page. A message sent from the composer (its
+  // textarea or Send) puts focus back in the textarea when the reply ends —
+  // unless something else (a posed check, a dialog) has taken focus by then.
+  const refocus = useRef(false);
 
   // Apply seed when parent bumps the key (e.g. after a mode switch).
   useEffect(() => {
@@ -196,15 +232,24 @@ const ChatInputBar = React.memo(function ChatInputBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftSeedKey]);
 
+  useEffect(() => {
+    if (disabled || !refocus.current) return;
+    refocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) inputRef.current?.focus();
+  }, [disabled, inputRef]);
+
   const submit = () => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
+    refocus.current = !!barRef.current?.contains(document.activeElement);
     onSend(trimmed);
     setText("");
   };
 
   return (
     <div
+      ref={barRef}
       style={{
         padding: "12px 32px 20px",
         borderTop: "1px solid var(--border)",
@@ -239,6 +284,7 @@ const ChatInputBar = React.memo(function ChatInputBar({
         }}
       >
         <textarea
+          ref={inputRef}
           data-testid="tutor-input"
           aria-label="Message"
           value={text}
@@ -308,11 +354,13 @@ const Message = React.memo(function Message({
   return (
     <div
       className="fade-in"
+      data-visually-hidden={m.visuallyHidden ? "true" : undefined}
       style={{
         display: "flex",
         gap: 12,
         maxWidth: isUser ? "70%" : "85%",
         alignSelf: isUser ? "flex-end" : "flex-start",
+        ...(m.visuallyHidden ? VISUALLY_HIDDEN : null),
       }}
     >
       {!isUser && (
