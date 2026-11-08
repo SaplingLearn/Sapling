@@ -15,20 +15,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { mockNext, mockAnswer, mockSummary } = vi.hoisted(() => ({
+const { mockNext, mockAnswer, mockSummary, mockReport, flags } = vi.hoisted(() => ({
   mockNext: vi.fn(),
   mockAnswer: vi.fn(),
   mockSummary: vi.fn(),
+  mockReport: vi.fn(),
+  flags: {} as Record<string, string>,
 }));
 
-// The real module for everything else (budgetPauseOf, ApiError); the three
-// review clients are mocked.
+// The real module for everything else (budgetPauseOf, ApiError); the review
+// clients (and spec §13 A113's report client) are mocked.
 vi.mock("@/lib/api", async (orig) => ({
   ...(await orig<typeof import("@/lib/api")>()),
   getReviewNext: mockNext,
   answerReview: mockAnswer,
   getReviewSummary: mockSummary,
+  reportCheckItem: mockReport,
 }));
+// Every flag "off" unless a test turns it on (the provider's own default).
+vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] ?? "off" }));
 
 import { ApiError } from "@/lib/api";
 import { DueQueue } from "./DueQueue";
@@ -72,6 +77,88 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  for (const key of Object.keys(flags)) delete flags[key];
+});
+
+describe("DueQueue — Report this question (spec §13 A113)", () => {
+  it("offers no report control while the item_reports flag is off", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    expect(screen.queryByTestId("review-report")).toBeNull();
+  });
+
+  it("reports the served check with a reason, then moves to the next item", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockReport.mockResolvedValue({ reported: true, first: true, retired: false });
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    // a short list of reasons — never a text box
+    expect(screen.getByTestId("review-report-reasons").querySelector("textarea, input")).toBeNull();
+    await userEvent.click(screen.getByTestId("review-report-reason-wrong_answer"));
+    expect(mockReport).toHaveBeenCalledWith({
+      surface: "review", user_id: "u1", session_id: "sess-1", item_id: "ci-1", course_id: "c1",
+      reason: "wrong_answer",
+    });
+    expect(await screen.findByTestId("review-reported")).toBeTruthy();
+    expect(screen.getByTestId("review-item").textContent).toContain("Which one?");
+    expect(mockNext).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("review-report-reasons")).toBeNull(); // the next item starts closed
+  });
+
+  it("can report an item after answering it (the corrective hint shows the key)", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(null));
+    mockAnswer.mockResolvedValue(graded({ correct: false, hint: "Answer: a loop" }));
+    mockReport.mockResolvedValue({ reported: true, first: true, retired: false });
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-submit"));
+    await screen.findByTestId("review-hint");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-wrong_answer"));
+    expect(await screen.findByTestId("review-reported")).toBeTruthy();
+    expect(screen.getByTestId("review-empty")).toBeTruthy();
+  });
+
+  it("keeps the reasons open when the report fails, and cancel closes them", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValue(next(FREE));
+    mockReport.mockRejectedValue(new Error("down"));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-unclear"));
+    expect(await screen.findByText("Couldn't report that question.")).toBeTruthy();
+    expect(screen.getByTestId("review-report-reasons")).toBeTruthy();
+    expect(screen.queryByTestId("review-reported")).toBeNull();
+    await userEvent.click(screen.getByTestId("review-report-cancel"));
+    expect(screen.queryByTestId("review-report-reasons")).toBeNull();
+    expect(mockNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-polls when the report finds the queue moved on (409)", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(null));
+    mockReport.mockRejectedValue(conflict("review session expired"));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.click(screen.getByTestId("review-report"));
+    await userEvent.click(screen.getByTestId("review-report-reason-not_from_my_course"));
+    expect(await screen.findByTestId("review-empty")).toBeTruthy();
+    expect(screen.queryByTestId("review-reported")).toBeNull();
+  });
+
+  it("offers no report on a flashcard", async () => {
+    flags.item_reports = "on";
+    mockNext.mockResolvedValue(next(CARD));
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    expect(screen.queryByTestId("review-report")).toBeNull();
+  });
 });
 
 describe("DueQueue", () => {

@@ -32,6 +32,7 @@ PURE_MODULES = (
     "arms.py",  # PKG-14: variant_for (ids + the arm label in, a variant out)
     "calibration.py",  # BKT predictions vs unassisted outcomes (admin KPI report)
     "learning_gain.py",  # A112: pre/post outcomes per fixed post-test window (admin KPI report)
+    "item_lint.py",  # A113: item-flaw flags of a check item (text in, codes out)
     "interleave.py",  # A114: confusable partners + the review serve order (keys in, order out)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")

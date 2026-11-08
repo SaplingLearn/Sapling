@@ -549,3 +549,29 @@ LOOP_SCAN_POSED_MAX = 200
 # answer-position look-back) and this many more non-space characters (option
 # keyword contexts, number-word phrases), snapped back to the sentence start
 LOOP_SCAN_CONTEXT_CHARS = 96
+
+# ── Check-item quality guards (spec §13 A113; GitHub #695; the 2026-11-07 ──
+# direction audit, "Item quality": peer-sourced keys no instructor reviews)
+# A student's "Report this question": the reasons, enums only (no free text is
+# ever stored), and the surfaces a report comes from. The migration's CHECK
+# lists and the route's body model read the same values (pinned by
+# tests/test_learning_item_quality.py).
+ITEM_REPORT_REASONS = ("wrong_answer", "unclear", "not_from_my_course")
+ITEM_REPORT_SURFACES = ("loop", "review")
+# † distinct students whose reports retire an item course-wide (#695 suggests
+# 2). One report only stops serving the item to its reporter; a second,
+# independent reporter retires the peer-sourced key for the whole course. The
+# database counts (`check_item_report`, under a per-item lock), so two reports
+# arriving together retire it exactly once. Reports newer than an admin's
+# approval count afresh.
+ITEM_REPORT_RETIRE_MIN_REPORTERS = 2
+# † item-flaw linter (learning/item_lint.py): the correct option is "uniquely the
+# longest" when it is longer than every distractor by at least this fraction of
+# the longest distractor (characters, whitespace runs collapsed). LLM-written
+# MCQs make the key the longest option far more often than 1 in 4 (the eval's
+# McCorrectNotLongestEvaluator records 0.5); the margin keeps near-ties out.
+ITEM_LINT_LONGEST_MARGIN = 0.25
+# † the correct option repeats at least this many more distinct stem content
+# words than the distractor that repeats the most ("clang association", one of
+# the item-writing cues a test-wise student uses without knowing the content)
+ITEM_LINT_STEM_OVERLAP_MARGIN = 2

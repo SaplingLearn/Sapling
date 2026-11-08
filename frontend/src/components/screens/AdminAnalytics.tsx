@@ -14,6 +14,7 @@
 
 import React from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { TopBar } from "../TopBar";
 import { useToast } from "../ToastProvider";
 import { useUser } from "@/context/UserContext";
@@ -320,6 +321,13 @@ export function LearningLoopPanelBody({ d }: { d: LearningLoopKpisData }) {
         at fixed windows after the concept was first graded. Answers only, never the mastery estimate.
       </p>
       <LearningGainTable gain={d.learning_gain} />
+      {/* spec §13 A113: the items themselves — flagged by the linter or reported by students */}
+      <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "16px 0 0" }}>
+        Are the questions valid?{" "}
+        <Link data-testid="admin-loop-items-link" href="/admin/check-items" style={{ color: "var(--accent)" }}>
+          Review flagged and reported check items
+        </Link>
+      </p>
     </>
   );
 }

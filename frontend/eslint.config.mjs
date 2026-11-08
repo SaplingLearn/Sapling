@@ -87,6 +87,9 @@ const eslintConfig = [
       // Learning loop (PKG-13): the loop-path Learn screen and its budget banner.
       "src/components/learn/LoopLearn.tsx",
       "src/components/learn/BudgetPausedBanner.tsx",
+      // "Report this question" (spec §13 A113), shared by the loop and review
+      // surfaces; its testids are passed in. New file, no baselined backlog.
+      "src/components/learn/ReportQuestion.tsx",
       "src/components/screens/Library.tsx",
       "src/components/screens/Calendar.tsx",
       "src/components/screens/Gradebook/Landing.tsx",
@@ -96,6 +99,8 @@ const eslintConfig = [
       "src/components/Gradebook/AssignmentList.tsx",
       "src/components/Gradebook/AssignmentModal.tsx",
       "src/components/screens/AdminAnalytics.tsx",
+      // The /admin/check-items review queue (spec §13 A113). New file, no backlog.
+      "src/components/screens/AdminCheckItems.tsx",
       "src/components/screens/Tree.tsx",
       // Learning loop review queue (PKG-12) — the launch Study surface.
       "src/components/learn/DueQueue.tsx",

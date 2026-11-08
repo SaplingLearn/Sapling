@@ -338,3 +338,30 @@ describe('explicit delayed retention checks', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Report this question and the review queue (spec §13 A113)', () => {
+  it('POSTs the report as given: enums and ids only', async () => {
+    const { reportCheckItem } = await import('./api');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json({ reported: true, first: true, retired: false }));
+    const loop = { surface: 'loop', user_id: 'u', session_id: 's1', question_hash: 'qh', reason: 'unclear' } as const;
+    expect(await reportCheckItem(loop)).toEqual({ reported: true, first: true, retired: false });
+    expect(urlOf()).toContain('/api/learn/loop/report');
+    expect(initOf().method).toBe('POST');
+    expect(bodyOf()).toEqual(loop);
+  });
+  it('the admin queue reads GET /queue and decides by item id', async () => {
+    const { adminApproveCheckItem, adminCheckItemQueue, adminRetireCheckItem } = await import('./api');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ items: [], count: 0, page_size: 100, retire_min_reporters: 2 }))
+      .mockResolvedValueOnce(json({ id: 'i/1', status: 'approved' }))
+      .mockResolvedValueOnce(json({ id: 'i/1', status: 'retired', items: 1 }));
+    await adminCheckItemQueue();
+    await adminApproveCheckItem('i/1');
+    await adminRetireCheckItem('i/1');
+    expect(urlOf(0)).toContain('/api/admin/check-items/queue');
+    expect(urlOf(1)).toContain('/api/admin/check-items/i%2F1/approve');
+    expect(urlOf(2)).toContain('/api/admin/check-items/i%2F1/retire');
+    expect(initOf(1).method).toBe('POST');
+    expect(initOf(2).method).toBe('POST');
+  });
+});

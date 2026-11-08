@@ -8,6 +8,7 @@ REAL flush_pending persists it through the patched apply_graph_update."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -1161,3 +1162,80 @@ def test_answer_decides_the_recheck_through_the_one_helper(gate_on, one_item, gr
     assert args[:3] == ("u", "n1", None) and kw["now"] == NOW and kw["item"].question_hash == "q1"
     (ev,) = applied[0]["graph_update"]["evidence"]
     assert ev["same_session_recheck"] is True
+
+
+# ── spec §13 A113: never a reported or retired item; clean items first ──────
+
+
+@pytest.fixture
+def reported():
+    state: set[str] = set()
+    with patch("routes.learn_loop.reported_hashes", side_effect=lambda u: set(state)) as reads:
+        yield SimpleNamespace(hashes=state, reads=reads)
+
+
+def _one_concept(tables, *items):
+    tables["spans"] = _due("n1")  # A112: the first window is open
+    tables["graph_nodes"] = [{"id": "n1", "course_id": "c", "concept_name": "k1"}]
+    tables["check_items"] = list(items)
+
+
+def test_start_never_poses_an_item_the_student_reported(
+    gate_on, tables, freeze_now, seen_revealed, reported
+):
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"), item("k1", "q2"))  # q1 would be the reserve
+    reported.hashes.add("q1")
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q2"
+    reported.reads.assert_called_once_with("u")  # read once per request
+    reported.hashes.add("q2")
+    tables["poses"].clear()
+    assert client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"] == []
+
+
+def test_start_replaces_an_open_or_bound_pose_whose_item_was_reported(
+    gate_on, tables, freeze_now, seen_revealed, reported
+):
+    """An open pose returns its item again (A87), and an expired one keeps its
+    item bound (A93) — unless the student reported that item since: it is
+    never posed again, so the node gets a fresh one."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q1"), item("k1", "q2"))
+    _pose(tables, qh="q1")
+    reported.hashes.add("q1")
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q2"
+    assert tables["poses"][("u", "n1", W1)]["question_hash"] == "q2"  # the pose itself moved
+    expired = NOW - timedelta(hours=params.POSTTEST_POSE_TTL_HOURS + 1)
+    _pose(tables, qh="q1", posed=expired)
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q2"
+
+
+def test_start_never_poses_a_retired_item(gate_on, tables, freeze_now, seen_revealed, reported):
+    """A retired item is deleted from the course's items (check_item_service's
+    A23 retire path): an open pose of it is withdrawn, never re-posed."""
+    freeze_now(NOW)
+    _one_concept(tables, item("k1", "q2"))  # q1 retired: gone from the course's items
+    _pose(tables, qh="q1")
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q2"
+
+
+def test_start_prefers_a_lint_clean_item(gate_on, tables, freeze_now, seen_revealed, reported):
+    freeze_now(NOW)
+    flagged = item("k1", "q1").model_copy(update={"lint_flags": ["negative_stem"]})
+    unlinted = item("k1", "q2")
+    clean = item("k1", "q3").model_copy(update={"lint_flags": []})
+    _one_concept(tables, flagged, unlinted, clean)
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q3"
+    tables["poses"].clear()
+    seen_revealed(seen={"q3"})
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q2"  # never linted beats flagged
+    tables["poses"].clear()
+    seen_revealed(seen={"q2", "q3"})
+    (served,) = client.post(START, json={"course_id": "c", "user_id": "u"}).json()["items"]
+    assert served["question_hash"] == "q1"  # flagged only when nothing else is left

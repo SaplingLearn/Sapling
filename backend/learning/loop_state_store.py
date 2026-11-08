@@ -308,6 +308,27 @@ def revealed_hashes(user_id: str) -> set[str]:
     return revealed
 
 
+def reported_hashes(user_id: str) -> set[str]:
+    """Items the user reported ("Report this question", spec §13 A113): never
+    served to them again — every selection that excludes seen_hashes and
+    revealed_hashes excludes these too (in-session checks, the goal preflight,
+    the probe, review and the post-test). One owner-scoped read of the
+    reports table (its writer is learning/item_reports.py; this module never
+    inserts). Raises on a failed read, like the two sets above."""
+    return {
+        row["question_hash"]
+        for row in page_all(
+            table(_REPORTS),
+            "question_hash",
+            filters={"user_id": f"eq.{user_id}"},
+            order="question_hash",
+        )
+        if row.get("question_hash")
+    }
+
+
 # PKG-14 (spec §13 A88): the learning_reveals table (its writers and the
 # marker reader live in learning/reveal_store.py; this module never inserts)
 _REVEALS = "learning_reveals"
+# A113: the check_item_reports table (written by learning/item_reports.py)
+_REPORTS = "check_item_reports"

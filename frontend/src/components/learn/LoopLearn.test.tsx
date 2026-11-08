@@ -41,9 +41,12 @@ const api = vi.hoisted(() => ({
   startLoopSession: vi.fn(), setLoopGoal: vi.fn(), nextLoopProbe: vi.fn(), answerLoopProbe: vi.fn(),
   getLoopPlan: vi.fn(), approveLoopPlan: vi.fn(), streamLoopChat: vi.fn(), streamLoopCheckAnswer: vi.fn(),
   postLoopAttempt: vi.fn(), requestLoopHint: vi.fn(), requestLoopHintTurn: vi.fn(), closeLoopSession: vi.fn(),
-  getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(),
+  getGraph: vi.fn(), nextLoopCheck: vi.fn(), submitLoopRating: vi.fn(), reportCheckItem: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<typeof import("@/lib/api")>()), ...api }));
+// Every flag "off" (the provider's default) unless a test turns one on.
+const flags = vi.hoisted(() => ({}) as Record<string, string>);
+vi.mock("@/context/FlagsContext", () => ({ useFlag: (key: string) => flags[key] ?? "off" }));
 
 import { ApiError } from "@/lib/api";
 import { LoopLearn } from "./LoopLearn";
@@ -69,6 +72,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   viewport.mobile = false;
+  for (const key of Object.keys(flags)) delete flags[key];
   search.params = new URLSearchParams();
   Object.values(api).forEach((f) => f.mockReset());
   router.replace.mockReset();
@@ -1904,5 +1908,69 @@ describe("explicit goal fresh-practice preflight", () => {
     expect(screen.queryByTestId("loop-practice-unavailable")).toBeNull();
     expect(screen.queryByTestId("loop-plan-approve")).toBeNull();
     expect(screen.getByTestId("loop-goal-summary").textContent).toContain("Explore the whole course");
+  });
+});
+
+describe("LoopLearn — Report this question (spec §13 A113)", () => {
+  it("offers no report control while the item_reports flag is off", async () => {
+    await withCheckItem();
+    expect(screen.queryByTestId("loop-check-report")).toBeNull();
+  });
+
+  it("reports the posed check with a reason, takes the card down and says so", async () => {
+    flags.item_reports = "on";
+    api.reportCheckItem.mockResolvedValue({ reported: true, first: true, retired: false });
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-report"));
+    // a short list of reasons — never a text box
+    expect(screen.getByTestId("loop-check-report-reasons").querySelector("textarea, input")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-check-report-reason-unclear"));
+    await waitFor(() => expect(screen.queryByTestId("loop-check-prompt")).toBeNull());
+    expect(api.reportCheckItem).toHaveBeenCalledWith({
+      surface: "loop", user_id: "u1", session_id: "s2", question_hash: "qh7", reason: "unclear",
+    });
+    expect(screen.getByTestId("loop-check-reported").textContent).toContain("won't be shown to you again");
+    expect(screen.getByTestId("loop-phase").getAttribute("data-phase")).toBe("teach");
+    expect(screen.getByTestId("loop-check-me")).toBeTruthy(); // another check is one click away
+    expect(api.streamLoopCheckAnswer).not.toHaveBeenCalled(); // nothing was answered or graded
+  });
+
+  it("keeps the card and the reasons when the report fails", async () => {
+    flags.item_reports = "on";
+    api.reportCheckItem.mockRejectedValue(new Error("down"));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-report"));
+    fireEvent.click(screen.getByTestId("loop-check-report-reason-wrong_answer"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(screen.getByTestId("loop-check-prompt")).toBeTruthy();
+    expect(screen.getByTestId("loop-check-report-reasons")).toBeTruthy();
+    expect(screen.queryByTestId("loop-check-reported")).toBeNull();
+    fireEvent.click(screen.getByTestId("loop-check-report-cancel"));
+    expect(screen.queryByTestId("loop-check-report-reasons")).toBeNull();
+    expect(screen.getByTestId("loop-check-report")).toBeTruthy();
+  });
+
+  it("takes the card down when the question was already withdrawn for the course", async () => {
+    flags.item_reports = "on";
+    api.reportCheckItem.mockRejectedValue(new ApiError("withdrawn", 409, { body: { detail: "check item withdrawn" } }));
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-report"));
+    fireEvent.click(screen.getByTestId("loop-check-report-reason-wrong_answer"));
+    await waitFor(() => expect(screen.queryByTestId("loop-check-prompt")).toBeNull());
+    expect(screen.getByTestId("loop-check-reported")).toBeTruthy();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("a fresh check clears the reported note", async () => {
+    flags.item_reports = "on";
+    api.reportCheckItem.mockResolvedValue({ reported: true, first: true, retired: false });
+    await withCheckItem();
+    fireEvent.click(screen.getByTestId("loop-check-report"));
+    fireEvent.click(screen.getByTestId("loop-check-report-reason-not_from_my_course"));
+    await screen.findByTestId("loop-check-reported");
+    api.nextLoopCheck.mockResolvedValue({ phase: "check", check: { ...pose, question_hash: "qh8", prompt: "Another one?" } });
+    fireEvent.click(screen.getByTestId("loop-check-me"));
+    expect((await screen.findByTestId("loop-check-prompt")).getAttribute("data-question-hash")).toBe("qh8");
+    expect(screen.queryByTestId("loop-check-reported")).toBeNull();
   });
 });

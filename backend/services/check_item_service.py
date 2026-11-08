@@ -15,6 +15,12 @@ an encrypted column (invariant 9).
 Sources (A23): an item is drafted only from a document that is shared course
 material — `chunk_visibility.decide_visibility` decides, never re-derived
 here — and only from its SHARED chunks.
+
+Quality (A113): every stored row carries learning.item_lint's flags
+(`lint_flags`, plaintext codes — flagged items are stored, never dropped); a
+question retired for its course (ITEM_REPORT_RETIRE_MIN_REPORTERS reporters or
+an admin; learning/item_reports.py) is never stored again, and
+`retire_course_item` retires one through the same retire path as A23/A34.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ import json
 import logging
 import threading
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
@@ -53,6 +59,8 @@ from learning.checks import (
     stored_rubric,
     validate_draft,
 )
+from learning.item_lint import LINT_FLAGS, lint_check_item, lint_item
+from learning.item_reports import retired_hashes
 from learning.params import (
     CHECK_ITEM_CONCEPTS_PER_CALL,
     CHECK_ITEM_DIFFICULTIES,
@@ -87,8 +95,10 @@ _COLUMNS = (
     "id,course_id,concept_key,document_id,format,difficulty,prompt,reference_answer,"
     "rubric_json,common_wrong_json,options_json,correct_option,answer_kind,"
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
-    "source_document_ids,question_hash,graded,created_at,final_answer"
+    "source_document_ids,question_hash,graded,created_at,final_answer,lint_flags"
 )
+#: The plaintext columns the A113 review queue lists an item by (never text).
+_QUEUE_COLUMNS = "id,course_id,concept_key,question_hash,format,difficulty,lint_flags"
 
 #: What derive_key names the secret the correct mc_reason option's slot is
 #: keyed with (A37): the client is sent each item's question_hash, so the slot
@@ -126,6 +136,8 @@ def _build_row(
     wrong = [w.model_dump() for w in common_wrong(draft)]
     options = None
     correct_option = None
+    texts: list[str] = []
+    correct: int | None = None
     if draft.format == _MC_REASON:
         # A37: code letters the options and places the correct one at a slot
         # keyed by the server secret; the stored shape ([{letter, text,
@@ -133,6 +145,8 @@ def _build_row(
         lettered, letter = lettered_options(draft, slot_key=derive_key(OPTION_SLOT_PURPOSE))
         options = encrypt_json([o.model_dump() for o in lettered])
         correct_option = encrypt_if_present(letter)
+        texts = [o.text for o in lettered]
+        correct = next(i for i, o in enumerate(lettered) if o.letter == letter)
     numeric = draft.answer_kind == _NUMERIC
     return {
         "id": item_id(course_id, key, qh),
@@ -161,11 +175,17 @@ def _build_row(
         "question_hash": qh,
         # A32: every generated item is practice material, never graded coursework.
         "graded": False,
+        # A113: the item-flaw linter over the STORED shape (lettered options,
+        # the correct one by its letter) — what lint_check_item reads back, so
+        # the backfill agrees. Codes only; flagged items are stored, not dropped.
+        "lint_flags": lint_item(draft.prompt, texts, correct),
     }
 
 
 # A top-up draft whose prompt a stored item of the concept already has (A37).
 _REPEAT = "repeat: the prompt is a stored item's"
+# A draft whose prompt is a question retired for the course (A113).
+_RETIRED = "retired: the prompt repeats a question withdrawn from this course"
 
 
 class _ConceptWrite(NamedTuple):
@@ -192,16 +212,18 @@ def _store_drafts(
     rows stored (the top-up's missing count); the rest are logged, not stored.
     A draft whose row id is in `exclude_ids` (the top-up's stored items: the
     id is the prompt's question_hash) is a repeat: dropped before `limit`
-    counts it, so it never rewrites the stored item or takes a new one's slot."""
+    counts it, so it never rewrites the stored item or takes a new one's slot.
+    A draft of a question retired for the course (A113) is dropped the same
+    way, after one read of the batch's hashes; that read raises like the upsert
+    does, so a blip drops the batch (the caller reports StorageError) rather
+    than risk re-publishing a retired key."""
     allowed = set(allowed_chunk_ids)
     exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
     if not source_docs and document_id:
         source_docs = [document_id]
-    rows: list[dict] = []
-    seen: set[str] = set()
-    mc_drops: list[str] = []
-    surplus = repeats = 0
+    # (draft format, the reasons it was dropped) or (draft format, its row), in draft order
+    built: list[tuple[str, str | dict]] = []
     for draft in drafts:
         draft, repairs = repair_draft(draft)
         if repairs:
@@ -221,19 +243,44 @@ def _store_drafts(
                 draft.format,
                 "; ".join(reasons),
             )
-            if draft.format == _MC_REASON:
-                mc_drops.append("; ".join(reasons))
+            built.append((draft.format, "; ".join(reasons)))
             continue
-        row = _build_row(
-            course_id, concept_key, document_id, draft, allowed=allowed, source_docs=source_docs
+        built.append(
+            (
+                draft.format,
+                _build_row(
+                    course_id,
+                    concept_key,
+                    document_id,
+                    draft,
+                    allowed=allowed,
+                    source_docs=source_docs,
+                ),
+            )
         )
+    hashes = [b["question_hash"] for _, b in built if isinstance(b, dict)]
+    retired = retired_hashes(course_id, hashes) if hashes else set()
+    rows: list[dict] = []
+    seen: set[str] = set()
+    mc_drops: list[str] = []
+    surplus = repeats = withdrawn = 0
+    for fmt, row in built:
+        if not isinstance(row, dict):
+            if fmt == _MC_REASON:
+                mc_drops.append(row)
+            continue
+        if row["question_hash"] in retired:
+            withdrawn += 1
+            if fmt == _MC_REASON:
+                mc_drops.append(_RETIRED)
+            continue
         if row["id"] in seen:
             # Same normalized prompt twice in one batch: one upsert may not
             # name a row twice (PostgREST rejects it), and it is one item.
             continue
         if row["id"] in exclude:
             repeats += 1
-            if draft.format == _MC_REASON:
+            if fmt == _MC_REASON:
                 mc_drops.append(_REPEAT)
             continue
         if limit is not None and len(rows) >= limit:
@@ -246,6 +293,14 @@ def _store_drafts(
             "check items: %d draft(s) repeat a stored item's prompt; not stored "
             "(course=%s concept=%s)",
             repeats,
+            course_id,
+            concept_key,
+        )
+    if withdrawn:
+        logger.info(
+            "check items: %d draft(s) repeat a question retired for the course; not stored "
+            "(course=%s concept=%s)",
+            withdrawn,
             course_id,
             concept_key,
         )
@@ -351,7 +406,16 @@ def _row_to_item(row: dict) -> CheckItem:
         created_at=row.get("created_at"),
         # A34: None on a legacy row — checks.is_servable keeps it from being served.
         final_answer=decrypt_if_present(row.get("final_answer")),
+        # A113: None on a row the linter has not read yet (plaintext codes).
+        lint_flags=_lint_flags(row.get("lint_flags")),
     )
+
+
+def _lint_flags(value) -> list[str] | None:
+    """The stored lint codes, or None (never linted, or not a list of strings)."""
+    if not isinstance(value, list):
+        return None
+    return [v for v in value if isinstance(v, str)]
 
 
 def _to_items(rows) -> list[CheckItem]:
@@ -494,6 +558,75 @@ def coverage(course_id: str) -> tuple[int, int]:
     return len(concepts & with_items), len(concepts)
 
 
+# ── item quality (A113): the admin review queue and the lint backfill ──────
+#
+# The queue lists items by plaintext columns only (_QUEUE_COLUMNS) and
+# decrypts just the page it shows, through items_by_ids (_row_to_item, the
+# single decrypt boundary).
+
+
+def flagged_item_rows() -> list[dict]:
+    """Every item the linter flagged (lint_flags overlaps LINT_FLAGS), by its
+    plaintext columns, paged."""
+    flags = "ov.{" + ",".join(pg_quote_value(f) for f in LINT_FLAGS) + "}"
+    return list(page_all(table(_TABLE), _QUEUE_COLUMNS, filters={"lint_flags": flags}, order="id"))
+
+
+def item_rows_for(keys: Iterable[tuple[str, str]]) -> list[dict]:
+    """The stored rows of these (course_id, question_hash) course items, by
+    their plaintext columns: one `in.(...)` read per _HASH_BATCH hashes, the
+    course matched here. A retired item has no row."""
+    wanted = {(c, h) for c, h in keys if c and h}
+    hashes = sorted({h for _, h in wanted})
+    out: list[dict] = []
+    for start in range(0, len(hashes), _HASH_BATCH):
+        batch = hashes[start : start + _HASH_BATCH]
+        rows = table(_TABLE).select(
+            _QUEUE_COLUMNS,
+            filters={"question_hash": f"in.({','.join(pg_quote_value(h) for h in batch)})"},
+            order="id",
+        )
+        out.extend(r for r in rows or [] if (r.get("course_id"), r.get("question_hash")) in wanted)
+    return out
+
+
+def items_to_lint(course_id: str | None = None, *, relint: bool = False) -> Iterator[CheckItem]:
+    """The items scripts/backfill_check_item_lint.py reads, decrypted: those
+    never linted (lint_flags NULL), or every item with `relint` (after a
+    linter change); one course or all. Paged, in id order."""
+    filters: dict[str, str] = {}
+    if course_id:
+        filters["course_id"] = f"eq.{course_id}"
+    if not relint:
+        filters["lint_flags"] = "is.null"
+    for row in page_all(table(_TABLE), _COLUMNS, filters=filters, order="id"):
+        items = _to_items([row])
+        if items:
+            yield items[0]
+
+
+def lint_update(item: CheckItem) -> list[str] | None:
+    """The item's lint flags as the write path would store them now, or None
+    when they equal what is stored (nothing to write)."""
+    flags = lint_check_item(item)
+    return None if item.lint_flags == flags else flags
+
+
+def store_lint_flags(flags: Iterable[str], item_ids: Iterable[str]) -> int:
+    """Write one set of lint codes (a plaintext column) onto these items,
+    _DOC_ID_BATCH ids per `in.(...)` update; returns how many ids were sent.
+    Raises on a failed write."""
+    ids = [i for i in dict.fromkeys(item_ids) if i]
+    for start in range(0, len(ids), _DOC_ID_BATCH):
+        batch = ids[start : start + _DOC_ID_BATCH]
+        table(_TABLE).update(
+            {"lint_flags": list(flags)},
+            filters={"id": "in.(" + ",".join(pg_quote_value(i) for i in batch) + ")"},
+            prefer_return_minimal=True,
+        )
+    return len(ids)
+
+
 # ── sources (A23 privacy) ──────────────────────────────────────────────────
 
 
@@ -628,6 +761,21 @@ def retire_items_by_id(item_ids: Iterable[str]) -> int:
     if ids:
         logger.info("check items retired by id: %d", retired)
     return retired
+
+
+def retire_course_item(course_id: str, question_hash: str) -> int:
+    """A113: retire one question course-wide — every row of the course with
+    this question_hash (one per concept that holds it) — through
+    retire_items_by_id, the A23/A34 retire path. Evidence already written
+    from it stays (node_mastery_events keys no foreign key on the item), and
+    a session whose current check it was finds it withdrawn (A23). Returns
+    how many rows went; raises on a failed read or delete (the caller
+    reports it; the decision is already recorded, so a re-run finishes it)."""
+    rows = table(_TABLE).select(
+        "id",
+        filters={"course_id": f"eq.{course_id}", "question_hash": f"eq.{question_hash}"},
+    )
+    return retire_items_by_id(r["id"] for r in rows or [] if r.get("id"))
 
 
 def _withdrawn_sources(document_ids: Iterable[str]) -> list[str]:

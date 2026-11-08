@@ -1704,8 +1704,8 @@ def test_sr_key_names_the_claim_key():
 
 def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
     """Post-merge (PKG-07): review's A23 readers resolve to loop_state_store's
-    seen_hashes / revealed_hashes, and a queue build with a due concept reads
-    them and excludes both."""
+    seen_hashes / revealed_hashes — and, spec §13 A113, reported_hashes — and
+    a queue build with a due concept reads them and excludes all three."""
     from learning import loop_state_store, review
 
     monkeypatch.undo()  # drop the autouse "nothing excluded" stubs
@@ -1717,8 +1717,11 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
     monkeypatch.setattr(
         loop_state_store, "revealed_hashes", lambda uid: reads.append("rev") or {"q-rev"}
     )
+    monkeypatch.setattr(
+        loop_state_store, "reported_hashes", lambda uid: reads.append("rep") or {"q-rep"}
+    )
     past = (NOW - timedelta(days=3)).isoformat()
-    pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q-seen", "q-rev", "q-new")]
+    pool = [_check_item("n1", q, "mc_reason", 2) for q in ("q-seen", "q-rev", "q-rep", "q-new")]
     factory, _ = _tables(
         {
             "learner_state": [_due_row("n1", 0.5, past)],
@@ -1729,7 +1732,7 @@ def test_due_concepts_read_pkg07s_seen_and_revealed_sets(monkeypatch):
     monkeypatch.setattr(review, "table", factory)
     monkeypatch.setattr(review, "list_items", lambda course, key: pool)
     queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state={})
-    assert reads == ["seen", "rev"]
+    assert reads == ["seen", "rev", "rep"]
     assert [i.question_hash for i in queue] == ["q-new"] and stats["unservable"] == 0
 
 
@@ -2890,3 +2893,117 @@ def test_a_review_after_a_release_is_graded_as_a_recheck(monkeypatch, journal, r
     since = (NOW - timedelta(hours=params.RECHECK_RELEASE_WINDOW_HOURS)).isoformat()
     assert reads == [(USER, "n-due", since)]
     assert "attempts" not in loop_state  # the rule only reads the review's document
+
+
+# ── "Report this question" in the review queue (spec §13 A113; GitHub #695) ──
+
+
+def test_due_queue_never_serves_a_reported_item_in_either_pass(monkeypatch):
+    """A reported item is excluded like a revealed one: in the strict pass, in
+    the fallback, and as the open item a refresh would otherwise re-serve."""
+    from learning import review
+
+    past = (NOW - timedelta(days=1)).isoformat()
+    factory, _ = _tables(
+        {
+            "flashcards": [],
+            "learner_state": [_due_row("n-a", 0.9, past)],
+            "graph_nodes": [{"id": "n-a", "course_id": COURSE, "concept_name": "A"}],
+        }
+    )
+    monkeypatch.setattr(review, "table", factory)
+    monkeypatch.setattr(review, "decayed_p", lambda p, elapsed, s: p)
+    fmt = params.REVIEW_FORMAT_BY_BAND["profic"]
+    diff = params.REVIEW_DIFFICULTY_BY_BAND["profic"]
+    pool = [_check_item("n-a", h, fmt, diff) for h in ("qh-reported", "qh-seen")]
+    monkeypatch.setattr(review, "list_items", lambda course_id, concept_key, **kw: list(pool))
+    monkeypatch.setattr(review, "seen_hashes", lambda user_id: {"qh-seen"})
+    monkeypatch.setattr(review, "reported_hashes", lambda user_id: {"qh-reported"})
+    # the reported item is the one the session has open for the concept
+    loop_state = {"sr": {}, "review": {"spent_s": 0}, "open": {"n-a": {"item_id": "ci-qh-reported", "served_at": 0.0}}}
+    queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state=loop_state)
+    assert [i.question_hash for i in queue] == ["qh-seen"]  # the fallback, never the reported one
+    pool[:] = [i for i in pool if i.question_hash == "qh-reported"]
+    queue, stats = review.due_queue_with_stats(USER, COURSE, NOW, loop_state=loop_state)
+    assert queue == [] and stats["unservable"] == 1
+
+
+def _report(**over):
+    return {
+        "surface": "review",
+        "user_id": USER,
+        "session_id": _sid(),
+        "course_id": COURSE,
+        "item_id": "ci-qh-1",
+        "reason": "not_from_my_course",
+        **over,
+    }
+
+
+@pytest.fixture
+def review_report(monkeypatch):
+    """The served review item, today's view of it, and the report store faked;
+    the `item_reports` flag on. /report carries the A20 rate-limit dependency
+    (it reads llm_usage): overridden here, as tests/test_learn_loop_routes.py does."""
+    from learning import item_reports, review
+    from main import app
+    from services import ai_budget
+
+    app.dependency_overrides[ai_budget.enforce_rate_limit] = lambda: None
+    item = _check_item("n-due", "qh-1")
+    view = {"sr": {}, "review": {"spent_s": 0, "served_hashes": ["qh-1"]}}
+    ns = SimpleNamespace(item=item, view=view, calls=[], events=MagicMock())
+    monkeypatch.setattr("routes.learn_loop.get_check_item", lambda item_id: ns.item if item_id == item.id else None)
+    monkeypatch.setattr(review, "peek_review_session", lambda u, c, now: ns.view)
+    monkeypatch.setattr("routes.learn_loop.flag_on", lambda key, uid: True)
+    monkeypatch.setattr("routes.learn_loop.events_service", ns.events)
+
+    def record(user_id, course_id, question_hash, *, reason, surface):
+        ns.calls.append((user_id, course_id, question_hash, reason, surface))
+        return item_reports.ReportOutcome(first=True, reporters=1, retire=False)
+
+    monkeypatch.setattr("routes.learn_loop.item_reports.record_report", record)
+    yield ns
+    app.dependency_overrides.pop(ai_budget.enforce_rate_limit, None)
+
+
+def test_a_served_review_item_is_reported_and_no_longer_answerable(client, monkeypatch, store, review_report):
+    _opened(store, "n-due", "ci-qh-1")
+    with _loop():
+        r = client.post("/api/learn/loop/report", json=_report())
+    assert r.status_code == 200, r.text
+    assert r.json() == {"reported": True, "first": True, "retired": False}
+    assert review_report.calls == [(USER, COURSE, "qh-1", "not_from_my_course", "review")]
+    assert "n-due" not in store.state.extra.get("open", {})  # its open entry is dropped
+    (event,) = [c for c in review_report.events.log_event.call_args_list if c.args[0] == "learn.check_item_reported"]
+    assert event.kwargs["payload"]["surface"] == "review"
+    # a stale client that answers it anyway is refused: the item is not served
+    _session(monkeypatch)
+    _check_answer_seams(monkeypatch, review_report.item)
+    body = {"user_id": USER, "session_id": _sid(), "course_id": COURSE, "kind": "check",
+            "item_id": "ci-qh-1", "answer": "x"}
+    with _loop():
+        answer = client.post(f"{REVIEW}/answer", json=body)
+    assert answer.status_code == 409 and answer.json()["detail"] == "review item not served"
+
+
+def test_a_graded_review_item_keeps_its_record_when_reported(client, store, review_report):
+    store.state.extra["open"] = {"n-due": {"item_id": "ci-qh-1", "served_at": 0.0, "graded_at": 1.0}}
+    with _loop():
+        r = client.post("/api/learn/loop/report", json=_report())
+    assert r.status_code == 200
+    assert store.state.extra["open"]["n-due"]["graded_at"] == 1.0
+
+
+def test_only_an_item_todays_review_served_can_be_reported(client, store, review_report):
+    with _loop():
+        expired = client.post("/api/learn/loop/report", json=_report(session_id="yesterday"))
+        review_report.view = {"sr": {}, "review": {"spent_s": 0, "served_hashes": []}}
+        not_served = client.post("/api/learn/loop/report", json=_report())
+        gone = client.post("/api/learn/loop/report", json=_report(item_id="ci-withdrawn"))
+        other_course = client.post("/api/learn/loop/report", json=_report(course_id="not-mine"))
+    assert expired.status_code == 409 and expired.json()["detail"] == "review session expired"
+    assert not_served.status_code == 404 and not_served.json()["detail"] == "review item not served"
+    assert gone.status_code == 409 and gone.json()["detail"] == "check item withdrawn"
+    assert other_course.status_code == 404
+    assert review_report.calls == []

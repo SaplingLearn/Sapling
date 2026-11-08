@@ -1466,6 +1466,20 @@ export const submitLoopRating = (sessionId: string, rating: LoopRating) =>
 export const closeLoopSession = (sessionId: string, userId: string) =>
   loopPost<LoopCloseResponse>('/close', { session_id: sessionId, user_id: userId });
 
+/** "Report this question" (spec §13 A113; #695): enums only — no free text is
+ *  ever sent or stored. Behind the `item_reports` flag (404 while it is off). */
+export type LoopReportReason = 'wrong_answer' | 'unclear' | 'not_from_my_course';
+export type LoopReportBody =
+  // the loop's check card: the session's posed check, by its hash
+  | { surface: 'loop'; user_id: string; session_id: string; question_hash: string; reason: LoopReportReason }
+  // Study's review queue: today's review session's served item, by its id
+  | { surface: 'review'; user_id: string; session_id: string; item_id: string; course_id?: string; reason: LoopReportReason };
+/** `first` false: already reported (nothing new recorded); `retired`: this
+ *  report retired the question for the whole course. */
+export interface LoopReportResult { reported: true; first: boolean; retired: boolean }
+export const reportCheckItem = (body: LoopReportBody) =>
+  loopPost<LoopReportResult>('/report', body);
+
 export interface RetentionItem extends LoopCheckItem { node_id: string }
 export type RetentionAnswerResult =
   | { graded: false; refused: true }
@@ -2025,6 +2039,53 @@ export const adminErrors = (params?: {
 // spec §10 / A110: the learning loop's KPIs, gates and BKT calibration
 export const adminLearningLoopKpis = (params?: { from?: string; to?: string }) =>
   fetchJSON<LearningLoopKpisData>(`/api/admin/analytics/learning-loop${analyticsQuery(params)}`);
+
+// Admin — learning-loop check-item review queue (spec §13 A113;
+// backend/routes/admin_check_items.py). Items the item-flaw linter flagged or
+// students reported; the text comes decrypted for the first `page_size` only.
+export type CheckItemLintFlag =
+  | 'correct_longest'
+  | 'correct_repeats_stem'
+  | 'all_or_none_of_above'
+  | 'duplicate_options'
+  | 'negative_stem';
+export interface AdminCheckItemEntry {
+  id: string;
+  course_id: string;
+  concept_key: string;
+  question_hash: string;
+  format: 'free' | 'teachback' | 'mc_reason';
+  difficulty: number;
+  lint_flags: CheckItemLintFlag[];
+  reports: Record<LoopReportReason, number> & { total: number };
+  last_reported_at: string | null;
+  status: 'approved' | 'retired' | null;
+  reviewed_at: string | null;
+  /** The retire was decided but the question is still stored: retire it again. */
+  retire_pending: boolean;
+  prompt: string | null;
+  options: { letter: string; text: string; correct: boolean }[] | null;
+  final_answer: string | null;
+  reference_answer: string | null;
+}
+export interface AdminCheckItemQueue {
+  items: AdminCheckItemEntry[];
+  count: number;
+  page_size: number;
+  retire_min_reporters: number;
+}
+export const adminCheckItemQueue = () =>
+  fetchJSON<AdminCheckItemQueue>('/api/admin/check-items/queue');
+export const adminApproveCheckItem = (itemId: string) =>
+  fetchJSON<{ id: string; status: 'approved' }>(
+    `/api/admin/check-items/${encodeURIComponent(itemId)}/approve`,
+    { method: 'POST' },
+  );
+export const adminRetireCheckItem = (itemId: string) =>
+  fetchJSON<{ id: string; status: 'retired'; items: number }>(
+    `/api/admin/check-items/${encodeURIComponent(itemId)}/retire`,
+    { method: 'POST' },
+  );
 
 // Careers
 export const submitJobApplication = async (data: {

@@ -41,6 +41,7 @@ import {
   nextLoopCheck,
   nextLoopProbe,
   postLoopAttempt,
+  reportCheckItem,
   requestLoopHint,
   requestLoopHintTurn,
   resumeSession,
@@ -64,15 +65,18 @@ import {
   type LoopProbeItem,
   type LoopProbeAnswerResult,
   type LoopRating,
+  type LoopReportReason,
   type LoopSessionStatus,
   type LoopTurnResult,
   type StreamChatHandlers,
 } from "@/lib/api";
+import { useFlag } from "@/context/FlagsContext";
 import { BudgetPausedBanner, tutorPauseMessage } from "./BudgetPausedBanner";
 import { initialLoopState, reduceLoopEvent } from "./loopState";
 import { readResumeParam } from "./resumeParam";
 import styles from "./LoopLearn.module.css";
 import { DiagnosisSummary, GoalEditor } from "./LearningScope";
+import { ReportQuestion } from "./ReportQuestion";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -86,6 +90,9 @@ const CLOSED_ELSEWHERE_COPY = "This session was closed — start a new one to ke
 const CONTINUE_MESSAGE = "Let's continue.";
 const FEEDBACK_PENDING_DETAIL = "feedback pending; retry feedback before another check";
 const FEEDBACK_PENDING_COPY = "Your answer is recorded. Retry feedback before another check.";
+// spec §13 A113 (#695): the check card's "Report this question" went through
+const REPORTED_COPY = "Thanks — that question is reported and won't be shown to you again. Use Check me for another.";
+const WITHDRAWN_DETAIL = "check item withdrawn";
 
 /** Plain-English lines for POST /hint's denial reasons (routes/learn_loop.py::hint). */
 const HINT_DENIED_COPY: Record<string, string> = {
@@ -175,6 +182,8 @@ export function LoopLearn() {
   const router = useRouter();
   const pathname = usePathname();
   const isMobile = useIsMobile();
+  // spec §13 A113 (#695): "Report this question" on the check card
+  const reportsOn = useFlag("item_reports") === "on";
   const [state, dispatch] = useReducer(reduceLoopEvent, undefined, initialLoopState);
   const [deepLink] = useState(() => readDeepLink(searchParams));
 
@@ -1140,6 +1149,35 @@ export function LoopLearn() {
     }
   };
 
+  /** "Report this question" (spec §13 A113): the server records the reason and
+   *  takes the check off this session — it is never served to this student
+   *  again — so the card goes and "Check me" brings another. */
+  const reportItem = async (reason: LoopReportReason): Promise<boolean> => {
+    if (!sessionId || !item || attemptBusy || pendingGrade) return false;
+    const g = gen.current;
+    try {
+      await reportCheckItem({
+        surface: "loop", user_id: userId, session_id: sessionId, question_hash: item.question_hash, reason,
+      });
+    } catch (err) {
+      if (g !== gen.current) return false;
+      const { status, detail } = extractErrorDetail(err);
+      // already withdrawn for the whole course (other students reported it): gone either way
+      if (!(status === 409 && detail === WITHDRAWN_DETAIL)) {
+        reportError(err, "Couldn't report that question. Try again.");
+        return false;
+      }
+    }
+    if (g !== gen.current) return true;
+    invalidateHint();
+    dispatch({ type: "check", item: null });
+    dispatch({ type: "phase", phase: "teach" });
+    setAttempt(EMPTY_DRAFT);
+    setHint(null);
+    setCheckNote(REPORTED_COPY);
+    return true;
+  };
+
   const checkMe = async () => {
     if (!sessionId || checkBusy || feedbackPending || starting || scopeLoading || pendingGrade) return;
     const g = gen.current;
@@ -1623,6 +1661,7 @@ export function LoopLearn() {
             onSubmit={() => void submitAttempt(false)}
             onIdk={() => void submitAttempt(true)}
             onHint={() => void askHint()}
+            onReport={reportsOn ? reportItem : undefined}
           />
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1656,7 +1695,15 @@ export function LoopLearn() {
                 Start with {firstConcept.concept_name}
               </button>
             )}
-            {checkNote && <span role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{checkNote}</span>}
+            {checkNote && (
+              <span
+                role="status"
+                data-testid={checkNote === REPORTED_COPY ? "loop-check-reported" : undefined}
+                style={{ fontSize: 13, color: "var(--text-muted)" }}
+              >
+                {checkNote}
+              </span>
+            )}
           </div>
         )}
         {closeNote && <div role="status" style={{ fontSize: 13, color: "var(--text-muted)" }}>{closeNote}</div>}
@@ -2076,7 +2123,7 @@ function PlanPanel({
 }
 
 function CheckCard({
-  item, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint,
+  item, draft, setDraft, busy, hint, hintBusy, hintRetry, onSubmit, onIdk, onHint, onReport,
 }: {
   item: LoopCheckItem;
   draft: Draft;
@@ -2088,6 +2135,8 @@ function CheckCard({
   onSubmit: () => void;
   onIdk: () => void;
   onHint: () => void;
+  /** spec §13 A113: present while the `item_reports` flag is on. */
+  onReport?: (reason: LoopReportReason) => Promise<boolean>;
 }) {
   const mc = item.format === "mc_reason";
   const canSubmit = !busy && (mc ? draft.option !== "" : draft.answer.trim() !== "");
@@ -2175,6 +2224,7 @@ function CheckCard({
           {hint.reply}
         </div>
       )}
+      {onReport && <ReportQuestion testIdPrefix="loop-check-report" disabled={busy} onReport={onReport} />}
     </div>
   );
 }
