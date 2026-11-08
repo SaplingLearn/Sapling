@@ -30,6 +30,9 @@ from routes.admin import router as admin_router
 from routes.admin_analytics import router as admin_analytics_router
 from routes.admin_documents import router as admin_documents_router
 from routes.admin_email import router as admin_email_router
+from routes.admin_accounts import router as admin_accounts_router
+from routes.admin_account_sync import router as admin_account_sync_router
+from routes.internal_account_sync import router as internal_account_sync_router
 from routes.email import router as email_router
 from routes.newsletter import router as newsletter_router
 from routes.internal_metrics import router as internal_metrics_router
@@ -376,6 +379,10 @@ app.include_router(profile_router,     prefix="/api/profile")
 # generic admin_router route that could otherwise shadow them.
 app.include_router(admin_flags_router, prefix="/api/admin/flags")
 app.include_router(flags_router,       prefix="/api/flags")
+# Admin account tools (seed by major / wipe / copy between environments).
+# Mounted before the generic admin router so its /accounts paths win.
+app.include_router(admin_accounts_router, prefix="/api/admin/accounts")
+app.include_router(admin_account_sync_router, prefix="/api/admin/accounts")
 app.include_router(admin_router,       prefix="/api/admin")
 app.include_router(admin_analytics_router, prefix="/api/admin/analytics")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")
@@ -392,6 +399,9 @@ app.include_router(gamification.router, prefix="/api/gamification", dependencies
 # Server-to-server (Canopy's hourly poll): bearer-token auth of its own, no user
 # session, 404 unless CANOPY_METRICS_TOKEN is set. See routes/internal_metrics.py.
 app.include_router(internal_metrics_router, prefix="/api/internal")
+# Server-to-server account copy between staging and prod; own bearer token
+# (ACCOUNT_SYNC_INBOUND_TOKEN, unset -> 404), never auth_guard.
+app.include_router(internal_account_sync_router, prefix="/api/internal/account-sync")
 
 
 @app.get("/api/health")

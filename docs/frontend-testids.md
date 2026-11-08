@@ -96,6 +96,7 @@ renders the element.
 | Admin feedback | `adminfb` | `frontend/src/components/screens/Admin.tsx` (the `feedback` tab — decrypted-server-side feedback + issue-report review, #520) |
 | Admin users | `admin-user` (+ `admin-users-summary`) | `frontend/src/components/screens/Admin.tsx` (the `users` tab — people with access, and the "Remove access" confirm that sends one back to the Allowlist) |
 | Admin feature flags | `flag` (+ `admin-tab-*`) | `frontend/src/components/screens/admin/FeatureFlags.tsx` + `FlagPanel.tsx` (the `flags` tab — grouped list with a Visible/Hidden switch per flag, and a right-hand panel for rollout, per-user/per-role overrides, and a per-student check; #620/ADR 0029). The tab-bar buttons across every Admin tab carry `admin-tab-{tab}` (added with this surface, tagged directly in `Admin.tsx`). |
+| Admin account tools | `admin-account` | `frontend/src/components/screens/admin/AccountToolsDialog.tsx` (the per-account dialog opened from Admin → Users: environment badge, seed-by-major, wipe, copy to/from the peer environment, all behind a typed email confirmation) |
 | Admin allowlist | `allowlist` | `frontend/src/components/screens/admin/AllowlistTab.tsx` (the `allowlist` tab: waitlist with status filters, row selection + bulk approve behind a confirm dialog, per-row "you're in" invite status) |
 | Admin email | `email` | `frontend/src/components/screens/admin/EmailBroadcasts.tsx` (the `email` tab: compose + preview, audience picker with live counts, test send, typed-confirmation broadcast, history) |
 | Profile | `profile` | `frontend/src/components/ProfileView.tsx` (the add-friend action rendered on another user's profile — `Settings.tsx` and `app/(shell)/profile/[userId]/page.tsx` both mount `ProfileView`, but the interactive control lives in this one file) — added with the gamification/friends work (Task 16/17) |
@@ -484,17 +485,47 @@ baselined backlog — every button/input in them is tagged.
 ### `admin-user`
 
 Added with the waitlist-approval-at-sign-in change (PR #741). Admin → Users
-lists only approved accounts; the one per-row action is "Remove access",
-which confirms in an in-page `Dialog` before calling `adminRemoveUserAccess`
+lists only approved accounts; the per-row actions are "Account tools" (opens
+the `admin-account` dialog below) and "Remove access", which confirms in an
+in-page `Dialog` before calling `adminRemoveUserAccess`
 (`PATCH /api/admin/users/{id}/unapprove`). Only these elements are tagged —
 `Admin.tsx` stays out of the lint `files` list (see Enforcement).
 
 | testid | element |
 | --- | --- |
 | `admin-users-summary` | the "N users" count line above the table |
+| `admin-user-account-tools-{userId}` | a row's "Account tools" button; opens the `admin-account` dialog, never calls the API directly |
 | `admin-user-remove-access-{userId}` | a row's "Remove access" button; opens the confirm dialog, never calls the API directly |
 | `admin-user-remove-body` | the confirm dialog's explanation (what removal does) |
 | `admin-user-remove-confirm` / `admin-user-remove-cancel` | the confirm dialog's buttons; confirm calls `adminRemoveUserAccess` then reloads the list |
+
+### `admin-account`
+
+Added with the admin account tools (spec
+`docs/superpowers/specs/2026-11-08-admin-account-tools-design.md`). The dialog
+lives in `admin/AccountToolsDialog.tsx` (in the lint `files` list, no
+baselined backlog) and is opened per row from Admin → Users. It reads
+`GET /api/admin/accounts/meta` on open; every action stays disabled until the
+admin types the account's email (case-insensitive; the user id for an
+undecryptable row). Success toasts and closes; an error toasts and keeps it
+open.
+
+| testid | element |
+| --- | --- |
+| `admin-account-tools` | dialog content root |
+| `admin-account-env` | the environment banner (`data-env` = the raw `env` from `/meta`; danger style on production) |
+| `admin-account-env-badge` | the upper-cased environment name inside it (`PRODUCTION` / `STAGING` / `LOCAL`) |
+| `admin-account-meta-loading` / `admin-account-meta-error` | `/meta` in flight / failed |
+| `admin-account-meta-retry` | the "Try again" button in the `/meta` error state |
+| `admin-account-confirm-input` | the shared typed-confirmation input (account email) that arms every action |
+| `admin-account-major` | the major `<select>` (options from `/meta` `majors`) |
+| `admin-account-major-courses` | the selected major's course list (one `<li>` per catalog code) |
+| `admin-account-seed` | "Seed {major}"; calls `adminSeedAccount` (`POST /{id}/seed`) |
+| `admin-account-wipe` | "Wipe data"; calls `adminWipeAccount` (`POST /{id}/wipe`) |
+| `admin-account-copy-push` / `admin-account-copy-pull` | "Copy to/from {peer_env}"; call `adminCopyAccount` with `push` / `pull`. Rendered only when `/meta` `sync.configured` |
+| `admin-account-copy-unconfigured` | the muted note shown instead of the copy buttons when sync isn't configured |
+| `admin-account-copy-unreachable` | shown (and both copy buttons disabled) when sync is configured but `peer_env` is null |
+| `admin-account-close` | the footer "Close" button (disabled while an action runs) |
 
 ### `allowlist`
 
