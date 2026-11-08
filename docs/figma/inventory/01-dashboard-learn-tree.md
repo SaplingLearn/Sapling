@@ -31,7 +31,7 @@ Paths relative to `frontend/src/` unless noted; specs in `frontend/e2e/`; seed =
 | dashboard/upcoming-empty | "No upcoming assignments." | upcoming → [] | Dashboard.tsx:640-642 | — |
 | dashboard/upcoming-chips | OVERDUE / NOW / Nh / Nd warn / Nd info chips | due offsets vs clock | Dashboard.tsx:643-669 | — |
 | dashboard/empty-new-student | All empties combined | `rich-user-new` | — | — |
-| dashboard/courses-key-expanded | Always-open bottom-right key, one row per course (dot + code); "Open courses →" sits on the course list in the right column | courses exist | graph/CoursesKey.tsx | dashboard-courses-key, dashboard-courses-manage, dashboard-course-code |
+| dashboard/courses-key-expanded | Always-open bottom-right key, one row per course (dot + code); "Courses · Manage →" heads the course list in the right column | courses exist | graph/CoursesKey.tsx | dashboard-courses-key, dashboard-courses-manage, dashboard-course-code |
 | dashboard/courses-key-empty-term | "Nothing enrolled this semester." on the right column's course list; no key | active term with no courses | dashboard/TodayColumn.tsx | dashboard-courses-manage |
 | dashboard/courses-key-hidden | No overlay | 0 courses | Dashboard.tsx:1200 | — |
 | dashboard/suggest-banner | "Try this next: {concept}" + Start quiz + Dismiss; node pulses | `?suggest=<name>` | Dashboard.tsx:763-783 | — |

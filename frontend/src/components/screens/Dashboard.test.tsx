@@ -159,7 +159,7 @@ describe("Dashboard course list by active semester", () => {
     layoutState.pref = "sidebar";
     // A stored semester none of the enrolled courses belong to → courseProgress
     // is empty, but courses exist, so the course list says so (and keeps its
-    // "Open courses →" link to switch semester) while the graph key, with
+    // "Courses · Manage →" link to switch semester) while the graph key, with
     // nothing to key, stays away.
     window.localStorage.setItem(ACTIVE_SEMESTER_STORAGE_KEY, "Summer 2026");
 

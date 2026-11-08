@@ -311,7 +311,7 @@ export function TodayColumn(props: {
   navigate: (href: string) => void;
   openCourses: () => void;
   /** Per-course progress rows, rendered at the foot of the mastery card,
-   *  under an "Open courses →" link to the Courses & Semesters hub. */
+   *  under a "Courses · Manage →" header (the Courses & Semesters hub). */
   courseRows?: React.ReactNode;
 }) {
   const { sessions, nodes, assignments, hasCourses, stats, bestStreak, xpDays, today, weekDays, nowMs, courseLabel, relTime, navigate, openCourses, courseRows } = props;
@@ -508,28 +508,31 @@ export function TodayColumn(props: {
             </div>
           </>
         )}
+        {/* The course list's own header, like "Upcoming · Calendar →": a
+            label on the left so the link never sits alone on its line. */}
         <div
           style={{
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-            marginTop: 10, paddingTop: 6, borderTop: "1px solid var(--border)",
+            marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border)",
           }}
         >
-          {!courseRows && (
-            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              {hasCourses ? "Nothing enrolled this semester." : "No courses yet."}
-            </span>
-          )}
+          <div className="label-micro">Courses</div>
           <button
             type="button"
             className="btn btn--ghost btn--sm"
             data-testid="dashboard-courses-manage"
             onClick={openCourses}
             title="Add or remove courses, switch semester"
-            style={{ marginLeft: "auto", marginRight: -8, fontSize: 12, height: 24, padding: "0 8px" }}
+            style={{ marginRight: -8, fontSize: 12, height: 24, padding: "0 8px" }}
           >
-            Open courses →
+            Manage →
           </button>
         </div>
+        {!courseRows && (
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+            {hasCourses ? "Nothing enrolled this semester." : "No courses yet."}
+          </div>
+        )}
         {courseRows && (
           // basis 0 + grow: the rows take the card's spare height (up to
           // COURSE_ROW_MAX each, so a tall window doesn't strand them) and

@@ -66,7 +66,7 @@ export function CoursesKey({
   selectHint?: string;
 }) {
   // No course in the graph → nothing to key. (Managing courses lives with the
-  // host's course list, e.g. the Dashboard's "Open courses →".)
+  // host's course list, e.g. the Dashboard's "Courses · Manage →".)
   if (courseProgress.length === 0) return null;
 
   // A white outline painted BEHIND the glyphs (`paint-order: stroke fill`)

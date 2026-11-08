@@ -341,12 +341,22 @@ export function Tree() {
 
   const detailPanel = selected && (
     <>
-      <button className="btn btn--ghost btn--sm" onClick={() => setSelected(null)} aria-label="Close detail panel">
-        <Icon name="x" size={12} />
-      </button>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-        <span style={{ width: 10, height: 10, borderRadius: "50%", background: selected.color }} />
-        <span className="label-micro">{selected.subject}</span>
+      {/* Course on the left, close in the top-right corner. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: selected.color, flexShrink: 0 }} />
+          <span className="label-micro" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {selected.subject}
+          </span>
+        </div>
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => setSelected(null)}
+          aria-label="Close detail panel"
+          style={{ flexShrink: 0, marginRight: -6, width: 28, height: 28, padding: 0, justifyContent: "center" }}
+        >
+          <Icon name="x" size={14} />
+        </button>
       </div>
       <h2 className="h-serif" style={{ fontSize: 24, margin: "6px 0 12px", fontWeight: 500 }}>
         {selected.name}
