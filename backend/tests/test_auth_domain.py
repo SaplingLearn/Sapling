@@ -1,3 +1,11 @@
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
 import routes.auth as auth
 
 
@@ -22,3 +30,34 @@ def test_multiple_domains(monkeypatch):
 def test_empty_allowlist_allows_any(monkeypatch):
     monkeypatch.setattr(auth, "ALLOWED_EMAIL_DOMAINS", [])
     assert auth._email_domain_allowed("anyone@example.com") is True
+
+
+@pytest.mark.parametrize(
+    ("app_env", "allowed_domains", "expected"),
+    [
+        ("local", None, []),
+        ("production", None, ["bu.edu"]),
+        ("staging", None, ["bu.edu"]),
+        (None, None, ["bu.edu"]),
+        ("local", "bu.edu", ["bu.edu"]),
+        ("production", "", []),
+        ("local", " @BU.EDU, saplinglearn.com ", ["bu.edu", "saplinglearn.com"]),
+    ],
+)
+def test_domain_config_defaults_and_overrides(app_env, allowed_domains, expected):
+    # Isolate config's import-time settings from the developer's .env and from
+    # modules already imported by the test suite.
+    env = {**os.environ, "PYTHON_DOTENV_DISABLED": "1"}
+    for key, value in (("APP_ENV", app_env), ("ALLOWED_EMAIL_DOMAINS", allowed_domains)):
+        env.pop(key, None)
+        if value is not None:
+            env[key] = value
+    result = subprocess.run(
+        [sys.executable, "-c", "import config, json; print(json.dumps(config.ALLOWED_EMAIL_DOMAINS))"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == expected

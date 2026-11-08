@@ -25,6 +25,11 @@ os.environ.setdefault("ENCRYPTION_KEY", "0" * 64)  # 32-byte all-zero key for de
 # enters the FastAPI lifespan) doesn't reject the short dummy SESSION_SECRET the
 # CI env supplies. Production defaults APP_ENV=production (strict). #174.
 os.environ.setdefault("APP_ENV", "test")
+# Mirrors CI's dummy. The local .env example leaves ANTHROPIC_API_KEY blank,
+# and a blank key fails Claude requests before they reach the transport, so
+# without this a local run would never exercise the hermetic egress guard.
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    os.environ["ANTHROPIC_API_KEY"] = "dummy-not-used-in-tests"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

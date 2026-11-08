@@ -1,10 +1,10 @@
-# Local Supabase (Podman)
+# Local Supabase (Docker or Podman)
 
 Run the whole app — frontend → backend → database — against a **local** Supabase
 stack in containers, instead of testing against the live staging database.
 
-The stack (Postgres, PostgREST, Storage, Auth, Studio) runs under **rootless
-Podman** via the Supabase CLI. The backend and frontend run on the host so you
+The stack (Postgres, PostgREST, Storage, Auth, Studio) runs under Docker Desktop
+on Windows or rootless Podman on Linux via the Supabase CLI. The backend and frontend run on the host so you
 keep hot-reload.
 
 ## Prerequisites (one-time, host)
@@ -22,6 +22,45 @@ paru -S supabase-bin      # or: yay -S supabase-bin
 ```
 
 Verify: `supabase --version && podman ps`.
+
+### Windows (Docker Desktop)
+
+Install Docker Desktop with its WSL 2 backend. If WSL is missing, run
+`wsl --install --no-distribution` in an administrator PowerShell, then restart
+Windows when requested. Start Docker Desktop and wait for its engine to be ready.
+Node.js 20+ lets you run the Supabase CLI through `npx` without a global install.
+
+From PowerShell at the repository root, after creating the backend venv and
+copying both local env examples as described below:
+
+```powershell
+npx --yes supabase start
+$env:SUPABASE_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+Push-Location backend
+.\venv\Scripts\python.exe -m db.migrate
+Pop-Location
+docker exec supabase_db_sapling psql -U postgres -d postgres -c "NOTIFY pgrst, 'reload schema';"
+Push-Location backend
+.\venv\Scripts\python.exe -m db.seed_staging
+Pop-Location
+```
+
+The backend needs the database stack running, even when `ANTHROPIC_API_KEY` is
+blank. A backend health response alone does not confirm database connectivity.
+Keep both env files on the local database, with matching `SESSION_SECRET` values:
+
+```powershell
+Copy-Item backend/.env.local.example backend/.env
+Copy-Item frontend/.env.local.example frontend/.env.local
+```
+
+Copy only during first-time setup; preserve existing Google OAuth credentials
+when updating an existing env file. Fill in those credentials and `GEMINI_API_KEY`.
+If database requests return `401`, run `npx --yes supabase status -o env` and
+copy that local stack's `SERVICE_ROLE_KEY` into backend `SUPABASE_SERVICE_KEY`,
+and `ANON_KEY` into frontend `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Both Supabase URLs
+must point to the local API. Keep those values in the ignored env files.
+Restart both the backend and frontend after changing env files.
 
 The dev scripts (`scripts/local-up.sh`, `scripts/local-db-reset.sh`) run
 `db.migrate` / `db.seed_staging` through `backend/venv/bin/python`, so create the
@@ -81,12 +120,12 @@ redirect at `http://localhost:5000/api/auth/google/callback`. **One-time setup:*
 add that URI (and `http://localhost:5000/api/calendar/callback` for calendar) to
 the OAuth client's authorized redirect URIs in the Google Cloud console.
 
-Two local-only conveniences make it "just work", both strictly `IS_LOCAL`-gated so
+Two local-only conveniences make it "just work", both gated on `APP_ENV=local` so
 staging/prod are unaffected:
 
-- `ALLOWED_EMAIL_DOMAINS=` is empty locally, so **any** Google account can sign in
+- `ALLOWED_EMAIL_DOMAINS` defaults to empty with `APP_ENV=local`, so **any** Google account can sign in
   (prod restricts to the configured domains).
-- `routes/auth.py` **auto-approves new users when `IS_LOCAL`**, so a first sign-in
+- `routes/auth.py` **auto-approves new users when `APP_ENV=local`**, so a first sign-in
   skips the `/pending` approval wall (prod keeps the real approval gate).
 
 The backend `SESSION_SECRET` **must equal** `frontend/.env.local`'s. Signing in with
