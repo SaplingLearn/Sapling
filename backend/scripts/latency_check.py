@@ -23,7 +23,11 @@ Usage (from backend/, the local stack up — `make e2e-up` or your dev stack):
 
 With --flag both the script records the flag's current default variant,
 sets it to off then on (PATCH /api/admin/flags/jobs_queue as --admin-user),
-and restores it at the end. Note `jobs_queue` only moves work to the queue:
+and restores it at the end. After each flip it waits out the server's flag
+snapshot TTL (services/feature_flags.py, 30 s by default; --flag-settle) so
+every sample runs under the new value, and every pass uploads DIFFERENT bytes
+(the PDF plus a unique `%` comment line after it), so the content-addressed
+OCR cache cannot make the second pass's upload cheaper than the first's. Note `jobs_queue` only moves work to the queue:
 with it ON the upload's heavy work runs in `python -m worker`, so start one
 (`cd backend && python -m worker`) or the "on" numbers measure a queue nobody
 drains.
@@ -138,17 +142,38 @@ def chat_ttft(c: httpx.Client, user_id: str, session_id: str) -> float:
     return first
 
 
-def upload(c: httpx.Client, user_id: str, course_id: str, pdf: Path) -> float:
+def unique_pdf(raw: bytes, tag: str) -> bytes:
+    """`raw` with a PDF comment line appended, so each pass uploads bytes
+    the server has never hashed: extraction is cached on sha256(file bytes)
+    (services/extraction_service.py), and a second upload of the same file
+    would skip OCR and flatter whichever pass ran second. Readers ignore a
+    `%` comment after %%EOF."""
+    sep = b"" if raw.endswith((b"\n", b"\r")) else b"\n"
+    return raw + sep + f"%sapling-latency-check {tag}\n".encode("ascii")
+
+
+def upload(c: httpx.Client, user_id: str, course_id: str, name: str, body: bytes) -> float:
     """Run the streaming upload to completion; seconds it took."""
     started = time.perf_counter()
-    with pdf.open("rb") as fh:
-        files = {"file": (pdf.name, fh, "application/pdf")}
-        data = {"user_id": user_id, "course_id": course_id}
-        with c.stream("POST", "/api/documents/upload", files=files, data=data) as r:
-            r.raise_for_status()
-            for _ in r.iter_lines():
-                pass
+    files = {"file": (name, body, "application/pdf")}
+    data = {"user_id": user_id, "course_id": course_id}
+    with c.stream("POST", "/api/documents/upload", files=files, data=data) as r:
+        r.raise_for_status()
+        for _ in r.iter_lines():
+            pass
     return time.perf_counter() - started
+
+
+def flag_settle_seconds(override: float | None = None) -> float:
+    """How long to wait after flipping the flag: the server's flag snapshot
+    TTL (a worker keeps its snapshot that long, so samples taken sooner can
+    still run under the old value), plus a small margin. Read from
+    services/feature_flags.py rather than copied, never below its default."""
+    if override is not None:
+        return max(0.0, override)
+    from services.feature_flags import DEFAULT_SNAPSHOT_TTL_S, snapshot_ttl_s
+
+    return max(DEFAULT_SNAPSHOT_TTL_S, snapshot_ttl_s()) + 2.0
 
 
 def sample(c, user_id, session_id, n, gap, scenario: Scenario, until=None) -> None:
@@ -162,7 +187,7 @@ def sample(c, user_id, session_id, n, gap, scenario: Scenario, until=None) -> No
         time.sleep(gap)
 
 
-def run_pair(cl: Client, args, label: str) -> list[Scenario]:
+def run_pair(cl: Client, args, label: str, body: bytes) -> list[Scenario]:
     student = cl.session(args.user_id)
     session_id = start_session(student, args.user_id, args.course_id)
 
@@ -176,7 +201,8 @@ def run_pair(cl: Client, args, label: str) -> list[Scenario]:
 
     def _upload():
         try:
-            loaded.upload_seconds = upload(uploader, args.user_id, args.course_id, args.pdf)
+            loaded.upload_seconds = upload(uploader, args.user_id, args.course_id,
+                                           args.pdf.name, body)
         except Exception as exc:
             upload_err.append(f"{type(exc).__name__}: {exc}")
         finally:
@@ -233,6 +259,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="seconds the upload runs before the first loaded sample")
     p.add_argument("--flag", choices=("current", "off", "on", "both"), default="current",
                    help="jobs_queue setting(s) to measure under (default: leave it)")
+    p.add_argument("--flag-settle", type=float, default=None,
+                   help="seconds to wait after flipping the flag before sampling "
+                        "(default: the server's flag snapshot TTL + 2 s)")
     p.add_argument("--timeout", type=float, default=600.0)
     p.add_argument("--i-know", action="store_true",
                    help="allow a non-localhost --url (it still needs test-login)")
@@ -249,17 +278,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--pdf {args.pdf}: no such file", file=sys.stderr)
         return EXIT_USAGE
 
+    raw = args.pdf.read_bytes()
+    run_tag = uuid.uuid4().hex
     cl = Client(args.url, args.timeout)
     results: list[Scenario] = []
     if args.flag == "current":
-        results += run_pair(cl, args, "flag=current")
+        results += run_pair(cl, args, "flag=current", unique_pdf(raw, f"{run_tag}-current"))
     else:
         admin = cl.session(args.admin_user)
         before = flag_config(admin)
+        settle = flag_settle_seconds(args.flag_settle)
         try:
             for variant in (("off", "on") if args.flag == "both" else (args.flag,)):
                 set_flag(admin, only(variant))
-                results += run_pair(cl, args, f"{FLAG}={variant}")
+                print(f"{FLAG}={variant}: waiting {settle:.0f}s for the flag snapshot "
+                      "to expire on the server", file=sys.stderr)
+                time.sleep(settle)
+                results += run_pair(cl, args, f"{FLAG}={variant}",
+                                    unique_pdf(raw, f"{run_tag}-{variant}"))
         finally:
             set_flag(admin, before)
 
