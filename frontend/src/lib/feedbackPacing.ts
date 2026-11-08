@@ -12,8 +12,10 @@
  * 2. Never mid-learning. A learning surface holds prompts while one of its
  *    activities is in progress (`useFeedbackHold`: an open loop session from
  *    check-in to feedback, an open check card, a streaming tutor turn, a review
- *    item, a retention check). A prompt that comes due meanwhile waits for the
- *    release (`whenFeedbackFree`): the wrap-up, or leaving the surface.
+ *    item, a retention check), and a crisis-support card holds them while it is
+ *    on screen, on any surface (components/safety/CrisisSupportCard.tsx). A
+ *    prompt that comes due meanwhile waits for the release
+ *    (`whenFeedbackFree`): the wrap-up, or leaving the surface.
  * 3. At most one per learning session. The ledger keeps the ids of sessions
  *    that already had a prompt. The pulse counts against the session the
  *    student is in or has just wrapped up (`noteLearningSession`); the session

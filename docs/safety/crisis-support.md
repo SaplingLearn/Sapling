@@ -87,7 +87,11 @@ Frontend surfaces that render the card: the tutor (`Learn.tsx`), the learning
 loop (`LoopLearn.tsx`: chat, check answers, start, goal, probe, hints), the
 quiz's "Ask about this" panel, Study's review queue (`DueQueue`), the
 retention check, and the notetaker (chat, Summarize, Extract concepts, Send to
-tutor).
+tutor). While a card is on screen it holds the shell's feedback prompts
+(`frontend/src/lib/feedbackPacing.ts`), so no survey opens over it. On the
+notes actions the crisis screen runs before the learning loop's integrity
+guard (spec §13 A125): a student in crisis gets the card, never an integrity
+refusal.
 
 **Checked and not covered** (no student text reaches a model there):
 

@@ -2220,6 +2220,31 @@ describe("LoopLearn — crisis support (docs/safety/crisis-support.md)", () => {
     expect(screen.queryByTestId("loop-start-crisis")).toBeNull();
   });
 
+  // lib/feedbackPacing.ts: a crisis card holds the shell's prompts. The start
+  // card is the case LoopLearn's own hold misses: no session is open.
+  it("a start answered with the card holds the shell's prompts: the pulse never opens over it", async () => {
+    __resetFeedbackPacingForTests();
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    try {
+      search.params = new URLSearchParams({ topic: "i want to kill myself" });
+      api.listLoopSessionsFor.mockResolvedValue(listed([]));
+      api.startLoopSession.mockResolvedValueOnce({ session_id: null, initial_message: "…", reply: "…", crisis_support: crisisFixture });
+      render(<FeedbackFlow />);
+      render(<LoopLearn />);
+      await screen.findByTestId("loop-start-crisis");
+      await act(async () => {});
+      expect(feedbackHeld()).toBe(true);
+      act(() => { vi.advanceTimersByTime(45_000); });
+      act(() => { vi.advanceTimersByTime(10 * 60_000); });
+      expect(screen.queryByText("What's clicking?")).toBeNull();
+      expect(screen.getByTestId("loop-start-crisis")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a probe answer answered with the card is not graded: the item stays posed", async () => {
     api.listLoopSessionsFor.mockResolvedValue(listed([open("s2", "probe", "2026-09-21T10:00:00Z")]));
     api.nextLoopProbe.mockResolvedValue(probeItem);
