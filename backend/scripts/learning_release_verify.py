@@ -126,6 +126,12 @@ REQUIRED_COLUMNS = {
         "lint_flags": "ARRAY",
         "aligned_at": "timestamp with time zone",  # spec §13 A119: the alignment check ran
         "key_checked_at": "timestamp with time zone",  # spec §13 A124: the blind solve ran
+        # spec §13 A140: the varied drafter's surface descriptor (the context encrypted)
+        "surface_representation": "text",
+        "surface_context": "text",
+        # spec §13 A141: a multi-concept item's apex and components
+        "apex_key": "text",
+        "component_keys": "ARRAY",
     },
     # spec §13 A128: an upload's check-item drafting status and when it was set
     "documents": {

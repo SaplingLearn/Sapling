@@ -540,6 +540,20 @@ def _finite_float(text: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+def is_finite_number(text) -> bool:
+    """Whether `text` reads as one finite number — validate_draft's own
+    reading of a numeric canonical_answer (spec §13 A140: the varied drafter
+    states the canonical value and code reads the answer kind from it)."""
+    return _finite_float(text) is not None
+
+
+def numbered_steps(reference: str | None) -> int:
+    """How many numbered step lines ('1.' or '2)' at a line start) a
+    reference holds — the count the `stepwise` rules read (A17/A22; spec §13
+    A140: the varied drafter numbers its steps and code reads them)."""
+    return len(_STEP_LINE.findall(reference or ""))
+
+
 # An option named by its letter — "option B", "choice (C)", "Options B and D",
 # "Options: A. …", "Option B's claim", "option (b)", "option d". Code letters
 # the options after validation (A37), so a letter the agent wrote names

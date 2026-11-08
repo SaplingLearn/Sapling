@@ -158,6 +158,36 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "that time since the question was posed, so later rungs need only the "
             "8 s dwell. Judge it by the help-abuse report on the admin learning-"
             "loop page (by gate).", False),
+    # Learning loop spec §13 A140: surface-varied isomorphs. Resolved ONCE per
+    # drafting run for the uploader (services/check_item_service.py::
+    # drafting_flags: the varied drafter and its structured surface
+    # descriptor) and per pick for the student being served (the cue-
+    # familiarity tie-break in-session, on the isomorph re-ask and in review,
+    # and the review interleave's definitional-item rule). Server-only.
+    FlagDef("varied_isomorphs", ("off", "on"),
+            "Surface-varied isomorphs (A140): this uploader's check items are drafted "
+            "so each concept's items vary their scenario and representation, each "
+            "with a stored surface descriptor; for this student, every check, "
+            "isomorph re-ask and review pick prefers, among items its own rules "
+            "leave equal, one whose surface they have not met on the concept, and "
+            "the review interleave never pairs recall-or-definition items. On sends "
+            "a changed drafting prompt and output schema, so turn it on only after "
+            "the varied check_items eval dataset is recorded live and passes. Off: "
+            "drafting and every pick are byte-identical to before A140.", False),
+    # Learning loop spec §13 A141: multi-concept items. Resolved ONCE per
+    # drafting run for the uploader (the combination drafter, from the
+    # uploader's prerequisite edges) and per activation for the student (the
+    # ideas-combined dial in routes/learn_loop.py). Server-only.
+    FlagDef("multi_concept_items", ("off", "on"),
+            "Multi-concept items (A141): this uploader's uploads also draft items "
+            "that combine a concept with one or two of its direct prerequisites, "
+            "every component verified; this student is served one, once a session, "
+            "on a concept whose every component they are proficient in (p >= 0.95 "
+            "with a strong unassisted answer behind it) while its difficulty is at "
+            "the top, and the answer is a half-weight observation on that concept. "
+            "On sends new drafting prompts, so turn it on only after the multi-"
+            "concept eval dataset is recorded live and passes. Off: drafting and "
+            "every pick are byte-identical to before A141.", False),
     # docs/safety/crisis-support.md: the crisis-support path. On: a student
     # message that states suicidal ideation, self-harm or acute danger gets
     # the fixed resources card INSTEAD of a model turn, on every surface

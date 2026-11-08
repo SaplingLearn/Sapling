@@ -43,6 +43,8 @@ PURE_MODULES = (
     "quiz_evidence.py",  # A132: the quiz's stated confidence and lint gate (values in, decisions out)
     "help_abuse.py",  # A133: help abuse over the ledger, attempt and step events (rows in, report out)
     "cost_per_gain.py",  # A137: the loop's spend against its learning-gain pairs (admin KPI report)
+    "surface.py",  # A140: the surface descriptor and the cue-familiarity dial (descriptors in, ranks out)
+    "multi_concept.py",  # A141: combination identity, the gate and the session dial (keys/states in)
 )
 FORBIDDEN_IMPORT_ROOTS = ("agents", "pydantic_ai", "google", "db")
 # spec §8.6: every series AgentTask literal (the test iterates the ones that exist)
