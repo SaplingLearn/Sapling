@@ -332,25 +332,65 @@ def test_a_retry_keeps_the_stored_guess_and_serves_the_explanation_again(gate_on
     assert on.store["doc"]["prequestion"]["node-1"]["status"] == "resolved"
 
 
-def test_the_stored_row_is_the_commit_point(gate_on, on):
-    # review fix: a first request stored its guess and failed before the record
-    # moved (its claim given back). A retry with ANOTHER guess is a 409 and
-    # changes nothing; a retry of the same guess finishes the commit, and the
-    # transcript and the event are built from the stored row.
+@pytest.mark.parametrize(
+    "retry", [_answer(option="C"), _answer(no_idea=True), _answer(option="A", reason="edited"), _answer(option="A")]
+)
+def test_the_stored_row_is_the_commit_point_and_a_retry_explains_it(gate_on, on, retry):
+    # second review: a first request stored its guess, then failed before the
+    # record moved (its claim given back). ANY retry — another option, "No
+    # idea", an edited or empty reason — commits THAT stored guess and explains
+    # it: a 409 here left the student stuck behind a card nothing could close.
     on.store["doc"] = _posed()
     stored_first = {"question_hash": "qh-pq", "no_idea": False, "guess": {"option": "A", "reason": "it chains"}}
     on.pq_read_back.side_effect = lambda *a: stored_first
-    r, _ = _run(on, "/prequestion/answer", _answer(option="C"))
-    assert r.status_code == 409 and r.json()["detail"] == "a different guess was already saved for this question"
-    rec = on.store["doc"]["prequestion"]["node-1"]
-    assert rec["status"] == "posed" and "answer_claim" not in rec  # the claim was given back
-    on.record_reveals.assert_not_called()
-    assert not _saved(on) and not _events(on, "learn.prequestion")
-    r, _ = _run(on, "/prequestion/answer", _answer(option="A", reason="it chains"))
+    r, seen = _run(on, "/prequestion/answer", retry)
     assert r.status_code == 200, r.text
-    assert ("user", "My guess: A — it chains") in _saved(on)
+    assert PREQUESTION_LINE in seen["msg"]
+    assert [s for s in _saved(on) if s[0] == "user"] == [("user", "My guess: A — it chains")]
+    answered = _events(on, "learn.prequestion")[0]
+    assert answered["status"] == "answered" and answered["no_idea"] is False
     rec = on.store["doc"]["prequestion"]["node-1"]
-    assert rec["status"] == "resolved" and "answer_claim" not in rec and "answer_claim_at" not in rec
+    assert rec["status"] == "resolved" and rec["no_idea"] is False
+    assert "answer_claim" not in rec and "answer_claim_at" not in rec
+
+
+def test_a_commit_whose_card_was_superseded_meanwhile_is_a_409(gate_on, on):
+    # second review, item 3: a claim that stalled past its staleness lost its
+    # card to "Check me" — the commit must not flip it to answered over the check
+    on.store["doc"] = _posed()
+
+    def stalled(*_):
+        rec = on.store["doc"]["prequestion"]["node-1"]
+        on.store["doc"]["prequestion"]["node-1"] = {**rec, "status": "superseded"}  # claim keys kept
+        return {"question_hash": "qh-pq", "no_idea": True, "guess": None}
+
+    on.pq_read_back.side_effect = stalled
+    r, _ = _run(on, "/prequestion/answer", _answer(no_idea=True))
+    assert r.status_code == 409
+    assert on.store["doc"]["prequestion"]["node-1"]["status"] == "superseded"
+    assert not _saved(on) and "answered" not in [e["status"] for e in _events(on, "learn.prequestion")]
+
+
+def test_a_supersede_strips_a_stale_claim(gate_on, on):
+    doc = _posed(teach_turns=1)
+    doc["prequestion"]["node-1"].update(answer_claim="old", answer_claim_at=NOW - 10_000)  # stale
+    on.store["doc"] = doc
+    r = client.post("/api/learn/loop/check/next", json=_CHAT)
+    assert r.status_code == 200, r.text
+    rec = on.store["doc"]["prequestion"]["node-1"]
+    assert rec["status"] == "superseded" and "answer_claim" not in rec and "answer_claim_at" not in rec
+
+
+def test_the_posed_row_stays_open_when_the_reveal_was_lost(gate_on, on):
+    # second review, item 4: with no reveal recorded, the item stays in A88's scan
+    from routes.learn_loop import _spend_prequestion_item
+
+    with patch("routes.learn_loop._persist_reveals", return_value=False):
+        _spend_prequestion_item("u1", "s1", "qh-pq", at=NOW)
+    on.closed_rows.assert_not_called()
+    with patch("routes.learn_loop._persist_reveals", return_value=True):
+        _spend_prequestion_item("u1", "s1", "qh-pq", at=NOW)
+    on.closed_rows.assert_called_once_with("u1", "qh-pq")
 
 
 def test_a_failed_store_gives_the_claim_back_and_serves_nothing(gate_on, on):
@@ -723,6 +763,22 @@ def test_a_committed_reply_stands_when_a_turn_closed_the_prompt_meanwhile(gate_o
     assert ("user", "because") in _saved(on)
     assert [e["status"] for e in _events(on, "learn.self_explanation")] == ["replied"]
     assert not se.ack_due(on.store["doc"])  # nothing to acknowledge: the prompt was gone
+
+
+def test_a_reply_committed_twice_is_written_to_the_transcript_once(gate_on, on):
+    # second review, item 6: a slow request that won the close and its client
+    # retry (SAME) both reached the loop-state write; only the first records it
+    on.pq_flag.return_value = False
+    on.store["doc"] = _open_prompt()
+    pre = json.loads(json.dumps(on.store["doc"]))
+    body = {**_CHAT, "prompt_id": "p1", "reply": "because"}
+    with patch("routes.learn_loop._load_loop_state", return_value=pre):  # both read the open prompt
+        on.se_close.return_value = "same"  # the retry's write lands first and closes the prompt
+        assert client.post("/api/learn/loop/self-explain", json=body).status_code == 200
+        on.se_close.return_value = "won"  # then the slow winner's: the prompt is already closed
+        assert client.post("/api/learn/loop/self-explain", json=body).status_code == 200
+    assert [s for s in _saved(on) if s[0] == "user"] == [("user", "because")]
+    assert [e["status"] for e in _events(on, "learn.self_explanation")] == ["replied"]
 
 
 def test_the_reply_route_is_off_with_its_flag(gate_on, on):

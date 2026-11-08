@@ -39,7 +39,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from db.connection import page_all, pg_quote_value, table
+from db.connection import is_missing_relation, page_all, pg_quote_value, table
 from learning import params, void_store
 from learning.multi_concept import isomorph_class
 from learning.policy import WINDOW_KEEP, LoopState, Opportunity
@@ -376,15 +376,27 @@ def revealed_hashes(user_id: str) -> set[str]:
     # answer route's commit point), so the reveal holds even when both reveal
     # stores above failed. Read whatever the flag says now: a prequestion
     # answered while it was on stays revealed after it goes off.
-    for row in page_all(
-        table(_PREQUESTIONS),
-        "id,question_hash",
-        filters={"user_id": f"eq.{user_id}"},
-        order="id",
-    ):
-        if row.get("question_hash"):
-            revealed.add(row["question_hash"])
+    revealed.update(_answered_prequestion_hashes(user_id))
     return revealed
+
+
+def _answered_prequestion_hashes(user_id: str) -> set[str]:
+    """Spec §13 A138: the student's answered prequestions' items. Review fix:
+    a deploy ahead of the table's migration reads NO rows — exactly true, as
+    nothing can be stored without the table — instead of failing every
+    selection and grade; every other failure still raises (fail closed)."""
+    try:
+        return {
+            row["question_hash"]
+            for row in page_all(table(_PREQUESTIONS), "id,question_hash",
+                                filters={"user_id": f"eq.{user_id}"}, order="id")
+            if row.get("question_hash")
+        }
+    except Exception as exc:
+        if is_missing_relation(exc):
+            logger.warning("learning_prequestions is missing (migration not applied): no answered prequestions")
+            return set()
+        raise
 
 
 def reported_hashes(user_id: str) -> set[str]:

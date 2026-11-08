@@ -153,6 +153,26 @@ class SupabaseTable:
         return r.json()
 
 
+#: PostgREST's "table not in the schema cache" and Postgres' undefined_table:
+#: the relation does not exist (a deploy ahead of its migration).
+MISSING_RELATION_CODES = frozenset({"PGRST205", "42P01"})
+
+
+def is_missing_relation(exc: BaseException) -> bool:
+    """Whether a `table()` call failed because its TABLE does not exist —
+    read off the PostgREST error body (`raise_for_status`'s message omits it).
+    Any other failure, and anything unreadable, is False: callers keep failing
+    closed on everything but this one exactly-known case."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return False
+    try:
+        body = response.json()
+    except Exception:
+        return False
+    return isinstance(body, dict) and body.get("code") in MISSING_RELATION_CODES
+
+
 def pg_quote_value(value: str) -> str:
     """Double-quote a value for a PostgREST logic tree (``or=(…)``/``and=(…)``).
 

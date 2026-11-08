@@ -94,10 +94,16 @@ const LOOP_PREQUESTION_REPLY =
   "What would you check first on a question like this next time?";
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_PREQUESTION_ANSWER:
  *  the seeded prequestion items' OWN key (backend/db/seed_learning_teach_prompts.py
- *  — B is correct), never a check's, so the oracle judges each release apart. */
+ *  — B is correct), never a check's, and per ITEM: the key is this followed by
+ *  "<slug>-pq<n>", so the oracle judges each item's release apart. */
 const PREQUESTION_ANSWER = "the papa sentinel phrase";
-/** What the explanation leads with, from code: the guess's key. */
-const PREQUESTION_ANSWER_LEAD = `The answer: B. ${PREQUESTION_ANSWER}`;
+/** What the explanation leads with, from code: the guess's key — the seeded
+ *  item `rich-check-<slug>-mc-pq<n>`'s own sentinel. */
+function prequestionAnswerLead(checkItemId: string): string {
+  const m = /^rich-check-(.+)-mc-pq(\d+)$/.exec(checkItemId);
+  if (!m) throw new Error(`not a seeded prequestion item: ${checkItemId}`);
+  return `The answer: B. ${PREQUESTION_ANSWER} ${m[1]}-pq${m[2]}`;
+}
 /** Must match backend/agents/function_handlers_e2e.py::E2E_LOOP_SELF_EXPLAIN_ACK_BODY
  *  (spec §13 A139: the turn after a reply acknowledges it, flag on). */
 const LOOP_SELF_EXPLAIN_ACK_BODY = "Thanks for putting that step into your own words.";
@@ -957,16 +963,21 @@ test("spec §13 A138 (segment_prequestion on): a new segment opens on an ungrade
     const sessionId = await phase.getAttribute("data-session-id");
     expect(sessionId).toBeTruthy();
     const evidenceBefore = await evidenceCount(USER_LOOP);
+    const [posed] = (await queryRaw(
+      `SELECT loop_state->'prequestion'->(loop_state->>'concept')->>'check_item_id' AS id FROM sessions WHERE id = $1`,
+      [sessionId],
+    )) as { id: string }[];
+    const answerLead = prequestionAnswerLead(posed.id);
 
     // A wrong guess (A); the answer and its explanation follow in the same stream.
     await page.getByTestId("loop-prequestion-option-A").click();
     const explained = await markLoopStream(page, "/api/learn/loop/prequestion/answer/stream");
     await page.getByTestId("loop-prequestion-submit").click();
-    const replyParts = [PREQUESTION_ANSWER_LEAD, ...LOOP_PREQUESTION_REPLY.split("\n\n")];
+    const replyParts = [answerLead, ...LOOP_PREQUESTION_REPLY.split("\n\n")];
     const result = await expectCompletedLoopTurn(page, explained, replyParts);
     expect(result.graded).not.toBe(true); // never graded
     await expect(card).toHaveCount(0);
-    await expectTurn(page, `${PREQUESTION_ANSWER_LEAD}\n\n${LOOP_PREQUESTION_REPLY}`);
+    await expectTurn(page, `${answerLead}\n\n${LOOP_PREQUESTION_REPLY}`);
     await expect(page.getByTestId("loop-messages")).toContainText("My guess: A");
     await expect(page.getByTestId("tutor-stop")).toHaveCount(0);
 

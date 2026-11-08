@@ -410,14 +410,21 @@ off.
    self-explanation prompt; the reply encrypted in `reply_text`). Both are
    backend-only: RLS on, `service_role` holds SELECT + INSERT on the first and
    SELECT + INSERT + UPDATE on the second, nothing else. Apply it BEFORE the
-   code, without exception: since the review fixes, `revealed_hashes` reads
-   `learning_prequestions` on every selection and grade whatever the flags say
-   (an answered prequestion's item stays revealed after its flag goes off), and
-   that read fails closed. So code ahead of the migration grades every answer
-   with no credit until the table exists. A76's re-check read decides nothing
-   on a failure, and with both flags off nothing writes either table.
-   `--db-audit` requires both tables' 26 columns (`REQUIRED_COLUMNS`) and
-   refuses the wrong order.
+   code. Code ahead of it still runs correctly (second review: the first
+   wording here, "no credit on any grade", was wrong, and the code was worse,
+   because the read raised and took `/check/next`, the review queue and the
+   post-test down). `revealed_hashes` reads `learning_prequestions` on every
+   selection and grade whatever the flags say, so that an answered
+   prequestion's item stays revealed after its flag goes off. A missing table
+   (PostgREST PGRST205, Postgres 42P01) now reads as no rows, which is exactly
+   true because nothing can be stored without it. Every other read failure
+   still fails closed. A76's re-check read decides nothing on a failure. With
+   both flags off nothing writes either table, and with a flag on a write
+   answers 503. At every boot, `services/learning_schema_check.py` logs one
+   ERROR naming any missing wave-4 table or column. It warns only: staging
+   deploys code before its manual migrations, and refusing boot would turn
+   that correct state into an outage. `--db-audit` requires both tables' 26
+   columns (`REQUIRED_COLUMNS`).
 2. The flags `segment_prequestion` and `self_explanation_prompts` ship OFF.
    Off, the loop is byte-identical to the wave-4 base: every tutor request,
    served text and response (pinned by
