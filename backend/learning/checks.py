@@ -375,10 +375,47 @@ def answer_in(text: str | None, answer: str | None) -> bool:
     return contains_run(answer_run(text), answer_run(answer))
 
 
+def states_final_answer(item) -> bool:
+    """A34: whether the item states a final answer — what a leak check needs
+    (a legacy row's is None). The served-text scan reads every posed item that
+    states one, a held item included (learning/served_scan.py)."""
+    return bool(answer_run(getattr(item, "final_answer", None)))
+
+
+# ── key holds (A124) ───────────────────────────────────────────────────────
+#
+# An item whose key nobody has confirmed is HELD — never served, its key never
+# released — while one of these codes is in its lint_flags and
+# canonical_verified is false. The independent solve sets the first two
+# (learning/item_keys.py), a human audit verdict the last two; an admin's
+# approval (the A22 instructor confirmation) or an audit verdict "correct"
+# sets canonical_verified, which lifts the hold. Defined here, beside
+# is_servable, because the hold is part of what may be served.
+
+KEY_DISPUTED = "key_disputed"  # an independent solve gave a different answer
+KEY_UNSOLVED = "key_unsolved"  # an independent solve found the passages do not settle one
+KEY_AUDIT_WRONG = "key_audit_wrong"  # a human audit verdict: the key is wrong
+KEY_AUDIT_AMBIGUOUS = "key_audit_ambiguous"  # a human audit verdict: more than one answer fits
+#: Every hold code, in the order they are stored (after the A113 and A119 codes).
+KEY_HOLD_FLAGS = (KEY_DISPUTED, KEY_UNSOLVED, KEY_AUDIT_WRONG, KEY_AUDIT_AMBIGUOUS)
+
+
+def key_held_flags(flags, canonical_verified) -> bool:
+    """A124: held — a hold code among `flags` and the key not confirmed."""
+    return not canonical_verified and any(f in KEY_HOLD_FLAGS for f in flags or ())
+
+
+def key_held(item) -> bool:
+    """`key_held_flags` over a stored item (or anything with its lint_flags and
+    canonical_verified)."""
+    return key_held_flags(getattr(item, "lint_flags", None), getattr(item, "canonical_verified", False))
+
+
 def is_servable(item) -> bool:
     """A34: only an item that states a final answer can be leak-checked, so
-    only such an item is ever selected (fail closed; a legacy row is None)."""
-    return bool(answer_run(getattr(item, "final_answer", None)))
+    only such an item is ever selected (fail closed; a legacy row is None).
+    A124: and never a held one (a key nobody has confirmed after a dispute)."""
+    return states_final_answer(item) and not key_held(item)
 
 
 # ── identity ───────────────────────────────────────────────────────────────
@@ -1266,6 +1303,14 @@ def _stated_value(tokens: list[AnswerToken]) -> Decimal | None:
     return None
 
 
+def stated_value(text: str | None) -> Decimal | None:
+    """The value a numeric answer states, read by the A34 final-answer rule
+    (`_stated_value`): "v = 5 m/s" states 5, "1/2" 0.5, "2.5 × 10^-3" 0.0025;
+    None when it states no number. The A124 key check reads the independent
+    solve's numeric answer with it."""
+    return _stated_value(answer_tokens(text))
+
+
 def _correct_option_text(draft: CheckItemDraft) -> str | None:
     correct = [o.text for o in draft.options if o.is_correct]
     return correct[0] if len(correct) == 1 else None  # else the one_correct rule reports it
@@ -1545,7 +1590,7 @@ def select_item(
     difficulty: int,
     exclude_hashes: Iterable[str] = (),
 ) -> CheckItem | None:
-    """A servable item (A34: it states a final answer) of exactly `format`
+    """A servable item (A34: it states a final answer; A124: not held) of exactly `format`
     whose hash is not excluded: the first at exactly `difficulty` (ties by
     (created_at, id)), else the nearest difficulty (lower first on ties), else
     None. Format is never substituted — each format is a different evidence

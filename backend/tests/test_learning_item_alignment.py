@@ -43,6 +43,16 @@ from tests.test_learning_check_items import _ItemsTable, _cached_tables, _draft,
 MIG_DIR = pathlib.Path(__file__).resolve().parents[1] / "db" / "migrations"
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
 COURSE = "course-1"
+
+
+@pytest.fixture(autouse=True)
+def _keys_agree_with_every_draft(monkeypatch):
+    """Spec §13 A124: the key check runs on the same write right after the
+    alignment check; here every draft it reaches agrees with its key. The key
+    check is tests/test_learning_item_keys.py's (tests/key_check_fakes.py)."""
+    from tests.key_check_fakes import install_key_passthrough
+
+    install_key_passthrough(monkeypatch)
 _CHUNK = {"id": "c1", "chunk_index": 0, "chunk_text": "hash table text", "doc_id": "doc-1"}
 
 # ── the live item, verbatim ──────────────────────────────────────────────────
@@ -848,7 +858,7 @@ class TestBackfill:
             every = mocks["check_items"].select_with_count.call_args
         assert unchecked.kwargs["filters"] == {"course_id": "eq.c1", "aligned_at": "is.null"}
         assert every.kwargs["filters"] == {}
-        assert unchecked.args[0].endswith(",aligned_at")
+        assert unchecked.args[0].endswith(",aligned_at,key_checked_at")  # A124: a re-key carries it
 
 
 # ── the slot, the agent, the migration ──────────────────────────────────────

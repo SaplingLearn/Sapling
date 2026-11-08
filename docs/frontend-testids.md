@@ -89,7 +89,7 @@ renders the element.
 | Calendar | `calendar` | `frontend/src/components/screens/Calendar.tsx` (the `/calendar` screen — today just the #185 load-failure banner + retry) |
 | Gradebook | `gradebook` | `frontend/src/components/screens/Gradebook/Landing.tsx` + `Course.tsx` (the `/gradebook` screens), `frontend/src/components/Gradebook/TranscriptModal.tsx` (the transcript modal), `frontend/src/components/Gradebook/CourseCard.tsx` (the term-aware card links), `frontend/src/components/Gradebook/AssignmentList.tsx` + `AssignmentModal.tsx` (the add-assignment flow the #468 mutation leg drives) — added with the #139 term-switcher/transcript journey |
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
-| Admin check-item review | `admin-items` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged or students reported, with Approve / Retire — learning-loop spec §13 A113) |
+| Admin check-item review | `admin-items`, `admin-audit` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged, a key hold withdraws or students reported, with Approve / Retire — learning-loop spec §13 A113, A124 — and its Key audit tab, a stratified sample of one course's keys with the key-error rate — A124) |
 | Report a question | passed in (`loop-check-report`, `review-report`) | `frontend/src/components/learn/ReportQuestion.tsx` (the shared "Report this question" control; the `loop` and `review` call sites write its prefix — spec §13 A113, GitHub #695) |
 | Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
@@ -457,15 +457,26 @@ file entered the lint block new, so there is no baselined backlog.
 
 | testid | element |
 | --- | --- |
+| `admin-items-tab-{view}` | the page's two tabs (`queue` / `audit`): the review queue and the A124 key audit |
 | `admin-items` | the queue's root |
 | `admin-items-count` | "N to review" (and "showing the first P" when the queue is longer than a page) |
-| `admin-items-empty` | nothing flagged or reported is waiting |
+| `admin-items-empty` | nothing flagged, held or reported is waiting |
 | `admin-items-retry` | "Try again" after the queue failed to load (`error && !data` gate) |
-| `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer and the reference (`<details>`) |
+| `admin-items-row-{itemId}` | one queued check item: course · concept, format, flags, reports, the question with its key marked, the final answer, a numeric item's key value ± tolerance (A124) and the reference (`<details>`) |
+| `admin-items-held-{itemId}` | "Held — served to no one until approved" (spec §13 A124: a key hold withdraws it from students); absent once the key is confirmed |
 | `admin-items-reports-{itemId}-{reason}` | a report-count chip by reason (`wrong_answer` / `unclear` / `not_from_my_course`); absent at zero |
-| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), or what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`) |
-| `admin-items-approve-{itemId}` | Approve — reviewed, OK; every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
+| `admin-items-flag-{itemId}-{flag}` | an item-flaw lint chip (`correct_longest` / `correct_repeats_stem` / `all_or_none_of_above` / `duplicate_options` / `negative_stem`), what the A119 alignment check changed (`rubric_unasked_dropped` / `concept_retagged`), or why A124 held the key (`key_disputed` / `key_unsolved` / `key_audit_wrong` / `key_audit_ambiguous`) |
+| `admin-items-approve-{itemId}` | Approve — reviewed, OK, its key confirmed (A124: a held item is served again); every row of that course question leaves the queue until a newer report (absent on a retire-pending item) |
 | `admin-items-retire-{itemId}` | Retire — two clicks (`useConfirm`): withdraws the question for the whole course |
+| `admin-audit` | the Key audit tab's root (spec §13 A124: a stratified sample of one course's stored keys) |
+| `admin-audit-course` | the course id input |
+| `admin-audit-draw` | "Draw sample" (disabled until a course id is typed) |
+| `admin-audit-retry` | "Try again" after the sample failed to load |
+| `admin-audit-summary` | the course's key-error rate with its Wilson 95% interval, the wrong-or-ambiguous rate, the sample's size against the stored questions, and the rate among keys the solve verified |
+| `admin-audit-empty` | the course has no stored question to audit |
+| `admin-audit-row-{itemId}` | one sampled item: concept, format · difficulty, key status, and the same text as a queue row |
+| `admin-audit-status-{itemId}` | the key's status when audited (`Key verified` / `Key held` / `Key unverified`) |
+| `admin-audit-{verdict}-{itemId}` | a verdict button (`correct` / `wrong` / `ambiguous`), `aria-pressed` on the recorded one; "wrong" and "ambiguous" hold the item, "correct" confirms its key |
 
 ### `admin-tab-*` / `flag`
 

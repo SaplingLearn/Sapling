@@ -28,8 +28,9 @@ reply. Here:
 Same verdicts: `served_leaked` is `detect_leak(strict=True, given=…)` below H6
 on the same rules and the same text (tests pin the equivalence). An item whose
 rules cannot be built (`detect_leak` would raise) counts as stated — fail
-closed on the evidence side; a non-servable item is skipped. The window can
-only ADD hits at its edge relative to a whole-text scan (a cut copy run, an
+closed on the evidence side; an item that states no final answer is skipped (a
+key-held one, A124, is still scanned: it may have been posed before its hold).
+The window can only ADD hits at its edge relative to a whole-text scan (a cut copy run, an
 enumeration cut short) — never drop one shorter than the overlap — and the
 turn's final text is scanned WHOLE once more at completion (`_LoopTurn.complete`,
 A105), so no windowing gap survives the turn."""
@@ -40,7 +41,7 @@ import re
 from dataclasses import dataclass, field
 
 from learning import leak, params
-from learning.checks import is_servable
+from learning.checks import states_final_answer
 
 _SENTENCE_END = re.compile(r"[.?!][\"'”’)\]]*\s+|\n+")
 
@@ -105,8 +106,8 @@ def form_chars(item) -> int:
 
 @dataclass
 class ScanSet:
-    """One turn's scan set, compiled: (question_hash, rules | None) per servable
-    item — None when the rules cannot be built (always stated) — the given
+    """One turn's scan set, compiled: (question_hash, rules | None) per item that
+    states a final answer — None when the rules cannot be built (always stated) — the given
     text's provenance data, and the overlap a windowed scan keeps."""
 
     entries: list[tuple[str, object | None]]
@@ -122,7 +123,7 @@ class ScanSet:
         longest = 0
         longest_tokens = params.LEAK_NGRAM
         for item in items or []:
-            if not is_servable(item):
+            if not states_final_answer(item):
                 continue
             try:
                 rules = leak.served_rules(

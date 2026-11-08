@@ -596,3 +596,21 @@ ITEM_LINT_STEM_OVERLAP_MARGIN = 2
 # drafting call; a longer list (a model that over-returns, the backfill's
 # stored items) is verified in calls of this many.
 CHECK_ITEM_VERIFY_MAX_ITEMS = CHECK_ITEM_CONCEPTS_PER_CALL * CHECK_ITEM_INITIAL_PER_CONCEPT
+
+# ── Check-item key verification (spec §13 A124) ────────────────────────────
+# † items per check_items_solve call (agents/check_items_solve.py) and per
+# key-match call (agents/check_items_key_match.py): the A119 bound, so one
+# solve call covers a whole drafting call's valid drafts; a longer list (the
+# backfill's stored items) is solved in calls of this many.
+CHECK_ITEM_SOLVE_MAX_ITEMS = CHECK_ITEM_VERIFY_MAX_ITEMS
+# The human audit verdicts on a stored item's key (check_item_audits.verdict;
+# the migration's CHECK list and the admin route's body model read these).
+ITEM_AUDIT_VERDICTS = ("correct", "wrong", "ambiguous")
+# † items an audit sample draws by default, and the most one draw may ask for
+# (scripts/audit_check_item_keys.py, GET /api/admin/check-items/audit/sample):
+# 30 audited keys put a Wilson 95% interval's half-width near 0.11 at a 10%
+# error rate; the cap bounds one request's decrypts.
+ITEM_AUDIT_SAMPLE_DEFAULT = 30
+ITEM_AUDIT_SAMPLE_MAX = 200
+# The two-sided 95% standard-normal quantile of the audit's Wilson interval.
+WILSON_Z_95 = 1.959963984540054

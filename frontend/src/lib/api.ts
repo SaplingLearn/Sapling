@@ -2059,8 +2059,9 @@ export const adminLearningLoopKpis = (params?: { from?: string; to?: string }) =
 
 // Admin — learning-loop check-item review queue (spec §13 A113;
 // backend/routes/admin_check_items.py). Items the item-flaw linter flagged,
-// the alignment check changed (A119: the last two codes) or students reported;
-// the text comes decrypted for the first `page_size` only.
+// the alignment check changed (A119: rubric_unasked_dropped, concept_retagged),
+// a key hold withdraws (A124: the last four codes) or students reported; the
+// text comes decrypted for the first `page_size` only.
 export type CheckItemLintFlag =
   | 'correct_longest'
   | 'correct_repeats_stem'
@@ -2068,8 +2069,22 @@ export type CheckItemLintFlag =
   | 'duplicate_options'
   | 'negative_stem'
   | 'rubric_unasked_dropped'
-  | 'concept_retagged';
-export interface AdminCheckItemEntry {
+  | 'concept_retagged'
+  | 'key_disputed'
+  | 'key_unsolved'
+  | 'key_audit_wrong'
+  | 'key_audit_ambiguous';
+/** What staff judge an item's key by (decrypted by the server for admins only). */
+export interface AdminCheckItemText {
+  prompt: string | null;
+  options: { letter: string; text: string; correct: boolean }[] | null;
+  final_answer: string | null;
+  reference_answer: string | null;
+  /** A124: a numeric item's key value and tolerance (what the A22 gate grades with). */
+  canonical_answer: string | null;
+  tolerance: number | null;
+}
+export interface AdminCheckItemEntry extends AdminCheckItemText {
   id: string;
   course_id: string;
   concept_key: string;
@@ -2083,10 +2098,8 @@ export interface AdminCheckItemEntry {
   reviewed_at: string | null;
   /** The retire was decided but the question is still stored: retire it again. */
   retire_pending: boolean;
-  prompt: string | null;
-  options: { letter: string; text: string; correct: boolean }[] | null;
-  final_answer: string | null;
-  reference_answer: string | null;
+  /** A124: a key hold withdraws it from students until it is approved or retired. */
+  held: boolean;
 }
 export interface AdminCheckItemQueue {
   items: AdminCheckItemEntry[];
@@ -2105,6 +2118,58 @@ export const adminRetireCheckItem = (itemId: string) =>
   fetchJSON<{ id: string; status: 'retired'; items: number }>(
     `/api/admin/check-items/${encodeURIComponent(itemId)}/retire`,
     { method: 'POST' },
+  );
+
+// Admin — the human audit of check-item keys (spec §13 A124): a stratified
+// sample (format × difficulty × concept) staff judge correct / wrong /
+// ambiguous, and the course's key-error rate with a Wilson 95% interval.
+export type CheckItemAuditVerdict = 'correct' | 'wrong' | 'ambiguous';
+/** The key's status when it was (first) audited. */
+export type CheckItemKeyStatus = 'verified' | 'held' | 'unverified';
+export interface AuditRate {
+  rate: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+}
+export interface AuditCounts {
+  audited: number;
+  correct: number;
+  wrong: number;
+  ambiguous: number;
+  key_error: AuditRate;
+  key_error_or_ambiguous: AuditRate;
+}
+export interface AuditSummary extends AuditCounts {
+  by_key_status: Record<CheckItemKeyStatus, AuditCounts>;
+}
+export interface AdminAuditItem extends AdminCheckItemText {
+  id: string;
+  course_id: string;
+  concept_key: string;
+  question_hash: string;
+  format: 'free' | 'teachback' | 'mc_reason';
+  difficulty: number;
+  key_status: CheckItemKeyStatus;
+  verdict: CheckItemAuditVerdict | null;
+  audited_at: string | null;
+}
+export interface AdminAuditSample {
+  course_id: string;
+  seed: string;
+  /** Stored items the sample was drawn from. */
+  population: number;
+  items: AdminAuditItem[];
+  summary: AuditSummary;
+}
+export const adminCheckItemAuditSample = (courseId: string, n?: number) =>
+  fetchJSON<AdminAuditSample>(
+    `/api/admin/check-items/audit/sample?course_id=${encodeURIComponent(courseId)}` +
+      (n ? `&n=${n}` : ''),
+  );
+export const adminAuditCheckItem = (itemId: string, verdict: CheckItemAuditVerdict) =>
+  fetchJSON<{ id: string; verdict: CheckItemAuditVerdict; key_status: CheckItemKeyStatus; held: boolean }>(
+    `/api/admin/check-items/${encodeURIComponent(itemId)}/audit`,
+    { method: 'POST', body: JSON.stringify({ verdict }) },
   );
 
 // Careers

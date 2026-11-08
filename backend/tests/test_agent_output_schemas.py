@@ -92,6 +92,10 @@ EXPECTED_STRUCTURED_AGENTS = {
     "check_items_topup_agent",  # A37 top-up: the same CheckItemsOutput, one concept's mc_reason items
     # A119 alignment check: two flat lists of small rows (4 + 3 fields), 9 properties
     "check_items_verify_agent",
+    # A124 key check: the blind solve (one flat list of 4-field rows, 5 properties) and the
+    # free-text key match (one flat list of 3-field rows, 4 properties), on one slot
+    "check_items_solve_agent",
+    "check_items_key_match_agent",
     "topic_checklist_agent",
     "classifier_agent",
     "concept_describe_agent",

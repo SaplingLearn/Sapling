@@ -57,6 +57,9 @@ AgentTask = Literal[
     "check_items",
     # The drafted items' alignment check: rubric vs question, concept tag (§13 A119).
     "check_items_verify",
+    # The drafted items' key check: a blind independent solve, and the
+    # free-text key match on the same slot (§13 A124).
+    "check_items_solve",
     # The rubric grader and its one second opinion (PKG-05; spec §3.5, A22).
     "grader", "grader_second",
     # The typed decision seam's closed judgments (PKG-05b; spec §3.6, A24).
@@ -129,6 +132,19 @@ _DEFAULTS: dict[AgentTask, str] = {
     # A different model family from the check_items default, so the check is
     # not the drafter grading itself.
     "check_items_verify": "claude-haiku-5-5",
+    # The drafted items' key check (spec §13 A124): a blind independent solve
+    # of each item (agents/check_items_solve.py) and, for a free-text pair code
+    # cannot settle, the key match (agents/check_items_key_match.py). On Claude,
+    # NOT in the pending set, for A119's reason — the set guards quality gates
+    # recorded on Gemini, and this slot was born after ADR 0030 with no gate on
+    # either provider, so its baseline is recorded on Claude — and for one of
+    # its own: the solve must come from a different model family than the
+    # gemini-2.5-flash-lite drafter, or a correlated solver would agree with
+    # its own family's mistakes and a wrong key would pass as "verified". A
+    # Gemini default would have to join the pending set with nothing pending.
+    # When check_items moves to a claude-* model (A111's runbook), move this
+    # slot off that model too, for the same reason.
+    "check_items_solve": "claude-haiku-5-5",
     # The rubric grader (PKG-05): short per-item binary judgments (spec §2).
     "grader": "gemini-2.5-flash-lite",
     # One second opinion on a DIFFERENT model, same agent and prompt (spec
@@ -210,6 +226,10 @@ _ANTHROPIC_EFFORT: dict[AgentTask, Literal["low", "medium", "high"]] = {
     # A119: closed yes/no judgments per criterion and a pick from a listed set —
     # the grader's and the decision seam's kind of work, so their level.
     "check_items_verify": "low",
+    # A124: the solve works each item out (a computation, an application, a
+    # transfer question at difficulty 3) — the item author's kind of work, so
+    # check_items' level; the key match rides the slot.
+    "check_items_solve": "medium",
     "grader": "low",
     "grader_second": "medium",
     "learning_decision": "low",

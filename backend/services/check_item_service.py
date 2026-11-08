@@ -29,6 +29,25 @@ dropped, an item is re-tagged to the concept it tests, or rejected — with what
 changed recorded beside the lint codes and `aligned_at` stamped. The check
 failing closes the write (the call's drafts are dropped, a later run redrafts
 them). `create_items` stores without it: tests and evals only.
+
+Keys (A124): then every aligned draft is solved BLIND by a model of another
+family (agents/check_items_solve.py: the question, an mc_reason item's
+options under their stored letters and the call's passages — never the key,
+rubric or reference), and learning/item_keys.py compares the answer with the
+key in code (option letter; number within the tolerance; free text by equal
+answer tokens, else ONE key-match call per batch, agents/
+check_items_key_match.py). Agreement stores the item with
+`canonical_verified`; a different answer, or "the passages do not settle one",
+stores it HELD (`key_disputed` / `key_unsolved` in lint_flags) — never served,
+its key never released, listed first-class in the A113 review queue until an
+admin approves it (which confirms the key) or retires it; a draft the check
+gave no usable answer for is dropped alone; an unavailable check drops the
+call's drafts (fail closed). `key_checked_at` is stamped on every checked row.
+Held items are withdrawn from every student read here (`list_items`,
+`items_for_concepts`, `get_check_item`) exactly as a retired one is; the scan
+reads (`items_by_ids`, `items_by_hash`) and the admin reads keep them.
+scripts/backfill_check_item_keys.py checks stored rows; the human audit
+(`record_item_audit`, learning/item_audit.py) measures what is left.
 """
 
 from __future__ import annotations
@@ -39,7 +58,7 @@ import json
 import logging
 import threading
 from collections import deque
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
@@ -47,11 +66,16 @@ from typing import NamedTuple
 import config
 from agents._run import run_agent_sync
 from agents.check_items import CheckItemsUnavailable, draft_items
+from agents.check_items_key_match import MatchItem, match_keys, matches
+from agents.check_items_solve import SolveItem, solutions, solve_items
 from agents.check_items_topup import draft_mc_topup
 from agents.check_items_verify import VerifyItem, verdicts, verify_items
 from agents.deps import SaplingDeps
 from db.connection import page_all, pg_quote_value, table
 from learning.checks import (
+    KEY_AUDIT_AMBIGUOUS,
+    KEY_AUDIT_WRONG,
+    KEY_HOLD_FLAGS,
     CheckItem,
     CheckItemDraft,
     Option,
@@ -61,6 +85,8 @@ from learning.checks import (
     common_wrong,
     content_criteria,
     item_id,
+    key_held,
+    key_held_flags,
     lettered_options,
     parse_tolerance,
     question_hash,
@@ -75,8 +101,18 @@ from learning.item_alignment import (
     Alignment,
     Verdict,
     align,
-    alignment_flags,
+    kept_flags,
     merge_flags,
+)
+from learning.item_audit import AMBIGUOUS, CORRECT, WRONG
+from learning.item_keys import (
+    TO_MATCH,
+    KeyCheck,
+    KeySubject,
+    audited_flags,
+    checked_flags,
+    compare,
+    settle,
 )
 from learning.item_lint import LINT_FLAGS, lint_check_item, lint_item
 from learning.item_reports import retired_hashes
@@ -91,7 +127,9 @@ from learning.params import (
     CHECK_ITEM_MC_TOPUP_CALLS,
     CHECK_ITEM_REDRAFT_FAILURE_TTL_DAYS,
     CHECK_ITEM_REDRAFT_MAX_FAILURES,
+    CHECK_ITEM_SOLVE_MAX_ITEMS,
     CHECK_ITEM_VERIFY_MAX_ITEMS,
+    ITEM_AUDIT_VERDICTS,
 )
 from services.chunk_visibility import COURSE_MATERIAL, SHARED, _share_flags, decide_visibility
 from services.chunker import chunk_document
@@ -117,24 +155,33 @@ _COLUMNS = (
     "canonical_answer,tolerance,canonical_verified,stepwise,source_chunk_ids,"
     "source_document_ids,question_hash,graded,created_at,final_answer,lint_flags"
 )
-#: The plaintext columns the A113 review queue lists an item by (never text).
-_QUEUE_COLUMNS = "id,course_id,concept_key,question_hash,format,difficulty,lint_flags"
-#: What the A119 alignment backfill reads: every column, and when the alignment
-#: check last passed the row (NULL = never). Only the backfill reads it, so the
-#: request path's reads never depend on the A119 migration.
-_ALIGN_COLUMNS = _COLUMNS + ",aligned_at"
-#: Every code the review queue lists an item for: the A113 linter's and A119's.
-QUEUE_FLAGS = (*LINT_FLAGS, *ALIGNMENT_FLAGS)
+#: The plaintext columns the A113 review queue lists an item by (never text);
+#: canonical_verified says whether a key-hold code still holds it (A124).
+_QUEUE_COLUMNS = (
+    "id,course_id,concept_key,question_hash,format,difficulty,lint_flags,canonical_verified"
+)
+#: What the A119 alignment backfill reads: every column, when the alignment
+#: check last passed the row (NULL = never) and when the A124 key check did (a
+#: re-key carries it). Only the backfills read them, so the request path's reads
+#: never depend on the A119 or A124 migrations.
+_ALIGN_COLUMNS = _COLUMNS + ",aligned_at,key_checked_at"
+#: What the A124 key backfill reads: every column, and when the key check last
+#: ran on the row (NULL = never).
+_KEY_COLUMNS = _COLUMNS + ",key_checked_at"
+#: Every code the review queue lists an item for: the A113 linter's, A119's
+#: and the A124 key holds.
+QUEUE_FLAGS = (*LINT_FLAGS, *ALIGNMENT_FLAGS, *KEY_HOLD_FLAGS)
 
 #: What derive_key names the secret the correct mc_reason option's slot is
 #: keyed with (A37): the client is sent each item's question_hash, so the slot
 #: must not be computable from it alone.
 OPTION_SLOT_PURPOSE = "check_items.option_slot.v1"
 
-#: A24 stub for services/decisions.py::item_answerable (PKG-05b): "is this item
-#: answerable from these passages?". Nothing in the series sets it and nothing
-#: calls it — do not add a call site here.
-answerable_hook: Callable[[list[str], str, str], bool] | None = None
+# The A24 answerable stub ("is this item answerable from these
+# passages?", meant for services/learning_decisions.py::item_answerable and
+# never called) is gone: the A124 blind solve answers that question for every
+# draft before it is stored — an item the passages do not settle is held
+# (`key_unsolved`), never served.
 
 
 def concept_key(name: str) -> str:
@@ -155,6 +202,8 @@ def _build_row(
     source_docs: list[str],
     flags: Iterable[str] = (),
     aligned_at: str | None = None,
+    verified: bool = False,
+    key_checked_at: str | None = None,
 ) -> dict:
     qh = question_hash(draft.prompt)  # PLAINTEXT, before encryption
     # A37 review: an mc_reason rubric ends with code's reason criterion.
@@ -195,8 +244,9 @@ def _build_row(
         "canonical_answer": encrypt_if_present(draft.canonical_answer) if numeric else None,
         "tolerance": parse_tolerance(draft),
         # A22: never an agent output; true only on an independent agreement
-        # check or an instructor confirmation, neither of which the series builds.
-        "canonical_verified": False,
+        # check (A124: the blind solve agreed with the key) or an instructor
+        # confirmation (an admin's approval, an audit verdict "correct").
+        "canonical_verified": verified,
         "stepwise": draft.stepwise,
         "source_chunk_ids": clean_chunk_ids(draft, allowed),
         "source_document_ids": source_docs,
@@ -206,11 +256,15 @@ def _build_row(
         # A113: the item-flaw linter over the STORED shape (lettered options,
         # the correct one by its letter) — what lint_check_item reads back, so
         # the backfill agrees. Codes only; flagged items are stored, not dropped.
-        # A119: then what the alignment check changed (learning.item_alignment).
+        # A119: then what the alignment check changed (learning.item_alignment);
+        # A124: then a key-hold code when the blind solve disputed the key.
         "lint_flags": merge_flags(lint_item(draft.prompt, texts, correct), flags),
         # A119: when the alignment check passed this draft; None = never checked
         # (create_items), which the alignment backfill picks up.
         "aligned_at": aligned_at,
+        # A124: when the key check ran on this draft (agreed or held); None =
+        # never (create_items), which the key backfill picks up.
+        "key_checked_at": key_checked_at,
     }
 
 
@@ -224,23 +278,30 @@ class _ConceptWrite(NamedTuple):
     """What one concept's write stored and dropped."""
 
     ids: list[str]  # the rows upserted
-    mc_reason: dict[str, int]  # of those, the mc_reason rows: id -> difficulty
-    mc_drops: list[str]  # each dropped mc_reason draft's reasons, "; "-joined
-    # A119: drafts dropped because the alignment check gave no complete verdict
-    # for them — the check's outcome, not the concept's (A41's allowlist)
+    # of those, the mc_reason rows a student can be served (A124: a held one is
+    # not, so it counts toward no A37 floor): id -> difficulty
+    mc_reason: dict[str, int]
+    # each dropped (or, A124, held) mc_reason draft's reasons, "; "-joined
+    mc_drops: list[str]
+    # A119/A124: drafts dropped because a check gave no complete verdict for
+    # them — the check's outcome, not the concept's (A41's allowlist)
     unverified: int = 0
 
 
 class _Screened(NamedTuple):
     """One draft after repair and validation (and, on the generation path, the
-    A119 alignment check): stored as `draft`, or dropped for `reasons`."""
+    A119 alignment check and the A124 key check): stored as `draft`, or
+    dropped for `reasons`."""
 
     format: str
     draft: CheckItemDraft | None  # repaired and valid; None = dropped
-    reasons: str = ""  # why it was dropped, "; "-joined
-    flags: tuple[str, ...] = ()  # A119: what the alignment check changed
+    # why it was dropped (or, A124, why it is stored held), "; "-joined
+    reasons: str = ""
+    flags: tuple[str, ...] = ()  # A119: what the alignment check changed; A124: a hold code
     aligned: bool = False  # A119: the alignment check passed it
-    unverified: bool = False  # A119: dropped for want of a verdict
+    unverified: bool = False  # A119/A124: dropped for want of a verdict
+    verified: bool = False  # A124: the blind solve agreed with its key
+    key_checked: bool = False  # A124: the key check ran on it (agreed or held)
 
 
 def _screen(course_id: str, concept_key: str, drafts: Iterable[CheckItemDraft]) -> list[_Screened]:
@@ -286,8 +347,8 @@ def _store_drafts(
 ) -> _ConceptWrite:
     """create_items, saying what it stored and why each mc_reason draft was
     dropped (the A37 top-up feeds those reasons back): `_screen`, then
-    `_store_screened`. No alignment check (A119): the generation path screens,
-    aligns and stores in `_write_checked`."""
+    `_store_screened`. No alignment check (A119) and no key check (A124): the
+    generation path screens, aligns, solves and stores in `_write_checked`."""
     return _store_screened(
         course_id,
         concept_key,
@@ -321,24 +382,27 @@ def _store_screened(
     way, after one read of the batch's hashes; that read raises like the upsert
     does, so a blip drops the batch (the caller reports StorageError) rather
     than risk re-publishing a retired key. A119: an aligned draft carries the
-    check's flags and `aligned_at`."""
+    check's flags and `aligned_at`. A124: a key-checked draft carries
+    `key_checked_at` and, agreed, `canonical_verified`; a held one its hold
+    code — it is stored, but serves no one, so it takes no `limit` slot and
+    counts toward no A37 floor, and its hold reason reaches the top-up."""
     allowed = set(allowed_chunk_ids)
     exclude = set(exclude_ids)
     source_docs = sorted({d for d in source_document_ids if d})
     if not source_docs and document_id:
         source_docs = [document_id]
-    aligned_at = _utcnow().isoformat()
-    # (draft format, the reasons it was dropped) or (draft format, its row), in draft order
-    built: list[tuple[str, str | dict]] = []
+    stamp = _utcnow().isoformat()
+    # (the entry, the reasons it was dropped) or (the entry, its row), in draft order
+    built: list[tuple[_Screened, str | dict]] = []
     unverified = 0
     for entry in screened:
         if entry.draft is None:
-            built.append((entry.format, entry.reasons))
+            built.append((entry, entry.reasons))
             unverified += entry.unverified
             continue
         built.append(
             (
-                entry.format,
+                entry,
                 _build_row(
                     course_id,
                     concept_key,
@@ -347,7 +411,9 @@ def _store_screened(
                     allowed=allowed,
                     source_docs=source_docs,
                     flags=entry.flags,
-                    aligned_at=aligned_at if entry.aligned else None,
+                    aligned_at=stamp if entry.aligned else None,
+                    verified=entry.verified,
+                    key_checked_at=stamp if entry.key_checked else None,
                 ),
             )
         )
@@ -356,8 +422,9 @@ def _store_screened(
     rows: list[dict] = []
     seen: set[str] = set()
     mc_drops: list[str] = []
-    surplus = repeats = withdrawn = 0
-    for fmt, row in built:
+    surplus = repeats = withdrawn = served = 0
+    for entry, row in built:
+        fmt = entry.format
         if not isinstance(row, dict):
             if fmt == _MC_REASON:
                 mc_drops.append(row)
@@ -376,11 +443,17 @@ def _store_screened(
             if fmt == _MC_REASON:
                 mc_drops.append(_REPEAT)
             continue
-        if limit is not None and len(rows) >= limit:
+        held = _row_held(row)
+        if limit is not None and not held and served >= limit:
             surplus += 1
             continue
         seen.add(row["id"])
         rows.append(row)
+        if held:
+            if fmt == _MC_REASON and entry.reasons:
+                mc_drops.append(entry.reasons)
+        else:
+            served += 1
     if repeats:
         logger.info(
             "check items: %d draft(s) repeat a stored item's prompt; not stored "
@@ -410,10 +483,15 @@ def _store_screened(
         table(_TABLE).upsert(rows, on_conflict=_ON_CONFLICT)
     return _ConceptWrite(
         [r["id"] for r in rows],
-        {r["id"]: r["difficulty"] for r in rows if r["format"] == _MC_REASON},
+        {r["id"]: r["difficulty"] for r in rows if r["format"] == _MC_REASON and not _row_held(r)},
         mc_drops,
         unverified,
     )
+
+
+def _row_held(row: dict) -> bool:
+    """A124: a stored row (its plaintext columns) is held off every student path."""
+    return key_held_flags(row.get("lint_flags"), row.get("canonical_verified"))
 
 
 def create_items(
@@ -429,8 +507,9 @@ def create_items(
     rule), validate it (invalid → dropped + WARNING naming every rule), then
     upsert every valid row in ONE call on (course_id, concept_key,
     question_hash). Returns the stored ids. Raises on a PostgREST failure (the
-    caller logs it). It runs NO alignment check (A119) and stamps no
-    `aligned_at`: tests and evals call it; generation writes through
+    caller logs it). It runs NO alignment check (A119) and NO key check
+    (A124), and stamps neither `aligned_at` nor `key_checked_at` (its rows are
+    unverified): tests and evals call it; generation writes through
     `_write_checked`, and no application module calls this (pinned)."""
     return _store_drafts(
         course_id,
@@ -526,6 +605,15 @@ def _to_items(rows) -> list[CheckItem]:
     return items
 
 
+def _unheld(items: Iterable[CheckItem]) -> list[CheckItem]:
+    """A124: the items no key hold withdraws. The student reads below drop a
+    held item as if it were retired (A23: nothing serves a deleted item, and
+    every loop and review path already handles an item gone mid-session — a
+    posed check, an open post-test pose or a served review item reads as
+    withdrawn, its key never released)."""
+    return [i for i in items if not key_held(i)]
+
+
 def list_items(
     course_id: str,
     concept_key: str,
@@ -533,31 +621,37 @@ def list_items(
     format: str | None = None,
     difficulty: int | None = None,
 ) -> list[CheckItem]:
-    """Every item for one course concept, filtered on plaintext columns only."""
+    """Every item for one course concept a student may be served (A124: no
+    held one), filtered on plaintext columns only."""
     filters = {"course_id": f"eq.{course_id}", "concept_key": f"eq.{concept_key}"}
     if format is not None:
         filters["format"] = f"eq.{format}"
     if difficulty is not None:
         filters["difficulty"] = f"eq.{difficulty}"
     rows = table(_TABLE).select(_COLUMNS, filters=filters, order="created_at,id")
-    return _to_items(rows)
+    return _unheld(_to_items(rows))
 
 
-
-def get_check_item(item_id: str) -> CheckItem | None:
+def get_check_item(item_id: str, *, include_held: bool = False) -> CheckItem | None:
     """One item by its plaintext `id` (PKG-07: the loop route's ACTIVE item),
     decoded by the same `_row_to_item` decrypt boundary, so `final_answer` and
     `canonical_answer` come back decrypted like every other column. A missing
-    id, no row, or a row that cannot be read → None (never raised)."""
+    id, no row, or a row that cannot be read → None (never raised). A124: a
+    held item → None too (withdrawn, as a retired one is) unless
+    `include_held` — the admin review queue's read."""
     if not item_id:
         return None
     rows = table(_TABLE).select(_COLUMNS, filters={"id": f"eq.{item_id}"}, limit=1)
     items = _to_items(rows)
+    if not include_held:
+        items = _unheld(items)
     return items[0] if items else None
 
+
 def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str, list[CheckItem]]:
-    """Every item for the given keys, in ONE `in.(...)` select, grouped by key
-    (every requested key present, [] when it has none)."""
+    """Every item a student may be served (A124: no held one) for the given
+    keys, in ONE `in.(...)` select, grouped by key (every requested key
+    present, [] when it has none)."""
     keys = list(dict.fromkeys(k for k in concept_keys if k))
     if not keys:
         return {}
@@ -570,7 +664,7 @@ def items_for_concepts(course_id: str, concept_keys: Iterable[str]) -> dict[str,
         order="created_at,id",
     )
     grouped: dict[str, list[CheckItem]] = {k: [] for k in keys}
-    for item in _to_items(rows):
+    for item in _unheld(_to_items(rows)):
         grouped.setdefault(item.concept_key, []).append(item)
     return grouped
 
@@ -582,7 +676,8 @@ _HASH_BATCH = 100
 def items_by_hash(hashes) -> list[CheckItem]:
     """The items with these question hashes, every course (PKG-14, spec §13
     A88: the open post-test poses a served turn is scanned against), decrypted,
-    in batches of _HASH_BATCH. The caller matches each to its pose's course."""
+    in batches of _HASH_BATCH. The caller matches each to its pose's course.
+    A held item is kept (A124): one posed before its hold is still scanned."""
     keys = sorted({h for h in hashes or [] if h})
     out: list[CheckItem] = []
     for i in range(0, len(keys), _HASH_BATCH):
@@ -599,8 +694,10 @@ def items_by_hash(hashes) -> list[CheckItem]:
 def items_by_ids(ids) -> list[CheckItem]:
     """The items with these plaintext ids, decrypted, in batches of _HASH_BATCH
     (PKG-14, spec §13 A101: the served-text scan set's posed steps and review
-    items in a few `in.(...)` reads instead of one get_check_item per id).
-    Raises on a failed read (the scan set's caller fails closed)."""
+    items in a few `in.(...)` reads instead of one get_check_item per id; the
+    admin review queue's text). Raises on a failed read (the scan set's caller
+    fails closed). A held item is kept (A124): the scan still covers one posed
+    before its hold, and staff review it."""
     keys = sorted({i for i in ids or [] if i})
     out: list[CheckItem] = []
     for i in range(0, len(keys), _HASH_BATCH):
@@ -614,11 +711,31 @@ def items_by_ids(ids) -> list[CheckItem]:
     return out
 
 
+#: rows per read while course_has_items looks for an item no key hold withdraws
+_HAS_ITEMS_PAGE = 50
+
+
 def course_has_items(course_id: str) -> bool:
-    """Whether the course has any item (feeds /probe/next's no_check_items and
-    the A26 "No check items for this course yet" state)."""
-    rows = table(_TABLE).select("id", filters={"course_id": f"eq.{course_id}"}, limit=1)
-    return bool(rows)
+    """Whether the course has any item a student may be served — a held one
+    (A124) does not count (feeds /probe/next's no_check_items and the A26 "No
+    check items for this course yet" state). Plaintext columns only, read a
+    page at a time until one unheld row: almost always the first row, all of
+    them only for a course whose every item is held."""
+    offset = 0
+    while True:
+        rows = table(_TABLE).select(
+            "id,lint_flags,canonical_verified",
+            filters={"course_id": f"eq.{course_id}"},
+            order="id",
+            limit=_HAS_ITEMS_PAGE,
+            offset=offset,
+        )
+        rows = rows or []
+        if any(not _row_held(r) for r in rows):
+            return True
+        if len(rows) < _HAS_ITEMS_PAGE:
+            return False
+        offset += _HAS_ITEMS_PAGE
 
 
 def count_items(course_id: str, concept_key: str) -> int:
@@ -704,9 +821,10 @@ def items_to_lint(course_id: str | None = None, *, relint: bool = False) -> Iter
 def lint_update(item: CheckItem) -> list[str] | None:
     """The item's lint flags as the write path would store them now, or None
     when they equal what is stored (nothing to write). The A119 alignment codes
-    already stored are kept: they record what the alignment check changed,
-    which no re-lint can see again."""
-    flags = merge_flags(lint_check_item(item), alignment_flags(item.lint_flags))
+    and the A124 key-hold codes already stored are kept: they record what the
+    alignment check changed and what a key check or audit decided, which no
+    re-lint can see again (dropping a hold code would release a held key)."""
+    flags = merge_flags(lint_check_item(item), kept_flags(item.lint_flags))
     return None if item.lint_flags == flags else flags
 
 
@@ -819,19 +937,18 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
     """Write what the check changed on one stored item: its rubric rebuilt
     from the kept criteria (checks.rubric_entries — numbered and closed with
     the reason criterion exactly as a fresh item's), its flags (the linter's
-    over the stored shape, the alignment codes already stored and the new
-    ones), `aligned_at`. On the same concept the row is updated in place. A
-    re-tag re-keys it: the row as stored (every other column's ciphertext
-    copied untouched) is upserted under (course_id, the tested concept,
+    over the stored shape, the alignment and A124 key-hold codes already
+    stored and the new ones), `aligned_at`. On the same concept the row is
+    updated in place. A re-tag re-keys it: the row as stored (every other
+    column's ciphertext copied untouched, `canonical_verified` and the A124
+    `key_checked_at` with it) is upserted under (course_id, the tested concept,
     question_hash) — its new id — and the old row deleted through the A23 retire
     path. Evidence is never written. Returns the item's id after the write;
     raises on a failed write (a re-run finishes a half-done re-key: the old
     row is still unchecked)."""
     criteria = content_criteria(item)
     update: dict = {
-        "lint_flags": merge_flags(
-            lint_check_item(item), alignment_flags(item.lint_flags), result.flags
-        ),
+        "lint_flags": merge_flags(lint_check_item(item), kept_flags(item.lint_flags), result.flags),
         "aligned_at": at,
     }
     if len(result.keep) < len(criteria):
@@ -841,12 +958,266 @@ def apply_item_alignment(row: dict, item: CheckItem, result: Alignment, *, at: s
         table(_TABLE).update(update, filters={"id": f"eq.{item.id}"}, prefer_return_minimal=True)
         return item.id
     new_id = item_id(item.course_id, result.concept_key, item.question_hash)
-    columns = _COLUMNS.split(",")
+    columns = [*_COLUMNS.split(","), "key_checked_at"]
     moved = {c: row[c] for c in columns if c in row}
     moved.update(update, id=new_id, concept_key=result.concept_key)
     table(_TABLE).upsert([moved], on_conflict=_ON_CONFLICT)
     retire_items_by_id([item.id])
     return new_id
+
+
+# ── key backfill (A124) ─────────────────────────────────────────────────────
+#
+# scripts/backfill_check_item_keys.py solves stored items blind, through the
+# same agents and the same learning.item_keys rules as the write path, from
+# the passages of the documents each item cites (A23: shared course material
+# only, ranked for its concept as a drafting call ranks them). What it may
+# write: agreed → canonical_verified and the model's hold code cleared;
+# disputed or not settled → the model's hold code (held, unless the key was
+# already confirmed: a model never un-confirms a key — an earlier agreement,
+# an admin's approval or an audit verdict "correct" stand, and the dispute is
+# only recorded for staff); `key_checked_at` either way. An item a human
+# audited wrong or ambiguous is never re-checked (a model never overrules a
+# human). Nothing is ever deleted; an outage changes nothing.
+
+
+def items_to_key_check(
+    course_id: str | None = None, *, reverify: bool = False
+) -> list[tuple[dict, CheckItem]]:
+    """The rows the key backfill reads, each with its decrypted item: those
+    never key-checked (key_checked_at NULL), or every row with `reverify`; one
+    course or all. Paged in id order and read IN FULL before the caller writes
+    anything (a write moves a row out of the `key_checked_at IS NULL` paging).
+    A row that cannot be read is skipped (logged)."""
+    filters: dict[str, str] = {}
+    if course_id:
+        filters["course_id"] = f"eq.{course_id}"
+    if not reverify:
+        filters["key_checked_at"] = "is.null"
+    out: list[tuple[dict, CheckItem]] = []
+    for row in page_all(table(_TABLE), _KEY_COLUMNS, filters=filters, order="id"):
+        items = _to_items([row])
+        if items:
+            out.append((row, items[0]))
+    return out
+
+
+def _source_rows(document_ids: Iterable[str]) -> list[dict]:
+    """The live (not deleted) document rows `source_chunks` needs, by id, in
+    _DOC_ID_BATCH batches. Raises on a failed read."""
+    ids = sorted({d for d in document_ids if d})
+    rows: list[dict] = []
+    for start in range(0, len(ids), _DOC_ID_BATCH):
+        batch = ids[start : start + _DOC_ID_BATCH]
+        rows.extend(
+            table("documents").select(
+                "id,user_id,shareability,shareability_confidence,extracted_text",
+                filters={
+                    "id": "in.(" + ",".join(pg_quote_value(d) for d in batch) + ")",
+                    "deleted_at": "is.null",
+                },
+            )
+            or []
+        )
+    return rows
+
+
+def key_check_passages(rows: Iterable[dict], names: dict[str, str]) -> dict[str, list[dict]]:
+    """{concept_key: passages} for the stored rows' concepts: every source
+    document the concept's rows cite (`source_document_ids`, else
+    `document_id`), read through `source_chunks` — shared course material
+    only, its SHARED chunks (A23) — and ranked for the concept's name
+    (`names`, else the key) exactly as a drafting call ranks them (at most
+    CHECK_ITEM_MAX_CHUNKS). A concept whose sources yield nothing maps to []:
+    the caller leaves its items unchecked rather than solve them blind of
+    their course material. Raises on a failed read."""
+    docs_by_key: dict[str, set[str]] = {}
+    for row in rows:
+        cited = list(row.get("source_document_ids") or []) or [row.get("document_id")]
+        docs_by_key.setdefault(row.get("concept_key") or "", set()).update(d for d in cited if d)
+    chunks_by_doc = {
+        doc["id"]: source_chunks(doc)
+        for doc in _source_rows(d for docs in docs_by_key.values() for d in docs)
+    }
+    out: dict[str, list[dict]] = {}
+    for key, docs in docs_by_key.items():
+        chunks = [c for d in sorted(docs) for c in chunks_by_doc.get(d, [])]
+        out[key] = rank_chunks_for_concept(names.get(key) or key, chunks, limit=CHECK_ITEM_MAX_CHUNKS)
+    return out
+
+
+def check_stored_keys(
+    course_id: str, items: list[CheckItem], passages: list[dict], *, flex: bool = True
+) -> list[KeyCheck] | None:
+    """The A124 decision for each stored item, in order: a blind solve of the
+    item as stored (its stored options and letters) from `passages`,
+    compared with its stored key in code, and the key match for free-text
+    pairs code cannot settle. None when the check was unavailable — the
+    backfill then changes nothing. Usage is recorded against the system actor."""
+    if not items:
+        return []
+    deps = SaplingDeps(
+        user_id="",
+        course_id=course_id,
+        supabase=None,
+        request_id=current_request_id() or f"check_items_solve:{course_id}",
+        feature="check_items_solve",
+    )
+    return _key_checks_for([_item_key_subject(i) for i in items], passages, deps=deps, flex=flex)
+
+
+def _linted(flags, item: CheckItem) -> list[str]:
+    """A stored row's flags, the A113 linter's codes filled in when it was
+    never linted (NULL): a write of a key or audit code makes the column
+    non-NULL, which says "linted" to the lint backfill and the post-test's
+    lint tiers, so it must hold the linter's answer too."""
+    return list(flags) if flags is not None else lint_check_item(item)
+
+
+def key_check_update(item: CheckItem, check: KeyCheck, *, at: str) -> dict:
+    """The columns the key backfill writes for one stored item it checked:
+    its flags with the model's hold code replaced (checked_flags; a
+    never-linted row linted now), the stamp, and `canonical_verified` true on
+    an agreement or false on a dispute of a key nobody had confirmed — never
+    lowered from true (a confirmed key stays confirmed; its dispute is
+    recorded, and the review queue lists it)."""
+    update: dict = {
+        "lint_flags": checked_flags(_linted(item.lint_flags, item), check),
+        "key_checked_at": at,
+    }
+    if check.verified:
+        update["canonical_verified"] = True
+    elif not item.canonical_verified:
+        update["canonical_verified"] = False
+    return update
+
+
+def apply_key_check(item: CheckItem, update: dict) -> None:
+    """Write `key_check_update`'s columns onto one stored item (its plaintext
+    columns only). Raises on a failed write."""
+    table(_TABLE).update(update, filters={"id": f"eq.{item.id}"}, prefer_return_minimal=True)
+
+
+def audit_decided(item: CheckItem) -> bool:
+    """A human audit verdict holds the item's key (`key_audit_wrong` /
+    `key_audit_ambiguous`): no model run ever re-checks it."""
+    return any(f in (KEY_AUDIT_WRONG, KEY_AUDIT_AMBIGUOUS) for f in item.lint_flags or ())
+
+
+def confirm_course_item(course_id: str, question_hash: str) -> None:
+    """A124: an admin's approval is the A22 instructor confirmation of the
+    key — `canonical_verified` on every row of the course item (one per
+    concept that holds the question), which lifts a key hold. Flags are kept
+    (the history of what held it). Raises on a failed write."""
+    table(_TABLE).update(
+        {"canonical_verified": True},
+        filters={"course_id": f"eq.{course_id}", "question_hash": f"eq.{question_hash}"},
+        prefer_return_minimal=True,
+    )
+
+
+# ── the key audit (A124): a human measurement ───────────────────────────────
+#
+# Staff judge a stratified sample of a course's stored keys (learning/
+# item_audit.py draws it) correct, wrong or ambiguous. One row per course item
+# in check_item_audits (the latest verdict wins; the key's status at its first
+# audit is kept, so the by-status rates stay a measurement of the key check).
+# A verdict also acts on the item, as staff's word: "correct" confirms the key
+# (canonical_verified; an earlier audit hold cleared); "wrong" / "ambiguous"
+# holds it (canonical_verified false, `key_audit_wrong` / `key_audit_ambiguous`)
+# until an approval or a later "correct" — a key staff found wrong is never
+# served again on their say-so alone. Hashes, ids, enums and timestamps only.
+
+_AUDITS = "check_item_audits"
+_AUDITS_ON_CONFLICT = "course_id,question_hash"
+_AUDIT_ROW_COLUMNS = (
+    "course_id,question_hash,item_id,concept_key,format,difficulty,key_status,verdict,"
+    "audited_by,audited_at"
+)
+#: The hold code each non-"correct" verdict sets.
+_AUDIT_HOLD = {WRONG: KEY_AUDIT_WRONG, AMBIGUOUS: KEY_AUDIT_AMBIGUOUS}
+
+
+def key_status(item) -> str:
+    """The key's status as the audit records it: `verified` (confirmed),
+    `held` (A124 hold) or `unverified` (never checked, or checked with no
+    verdict). Reads a CheckItem or a plaintext row."""
+    get = item.get if isinstance(item, dict) else (lambda k: getattr(item, k, None))
+    if get("canonical_verified"):
+        return "verified"
+    return "held" if key_held_flags(get("lint_flags"), False) else "unverified"
+
+
+def audit_population(course_id: str) -> list[dict]:
+    """The course's stored items an audit samples, by plaintext columns:
+    every row that states a final answer (A34; a legacy row without one is
+    never served). final_answer is read only to see that it is set — never
+    decrypted, never filtered on (invariant 9) — and not returned. Paged."""
+    out: list[dict] = []
+    for row in page_all(
+        table(_TABLE),
+        _QUEUE_COLUMNS + ",final_answer",
+        filters={"course_id": f"eq.{course_id}"},
+        order="id",
+    ):
+        if row.get("final_answer") is None or not row.get("id"):
+            continue
+        out.append({k: v for k, v in row.items() if k != "final_answer"})
+    return out
+
+
+def course_audit_rows(course_id: str) -> list[dict]:
+    """Every recorded audit verdict of the course (check_item_audits), paged."""
+    return list(
+        page_all(
+            table(_AUDITS),
+            _AUDIT_ROW_COLUMNS,
+            filters={"course_id": f"eq.{course_id}"},
+            order="question_hash",
+        )
+    )
+
+
+def record_item_audit(item: CheckItem, verdict: str, *, auditor: str | None) -> str:
+    """Record staff's verdict on a stored item's key and act on the item (see
+    above). Returns the key status the audit row carries. Raises on a failed
+    read or write: the caller answers 503, and recording the same verdict
+    again finishes it (the row is upserted, the item updates are absolute)."""
+    if verdict not in ITEM_AUDIT_VERDICTS:
+        raise ValueError(f"unknown audit verdict {verdict!r}")
+    scope = {"course_id": f"eq.{item.course_id}", "question_hash": f"eq.{item.question_hash}"}
+    earlier = table(_AUDITS).select("key_status", filters=scope, limit=1) or []
+    status = earlier[0].get("key_status") if earlier else key_status(item)
+    table(_AUDITS).upsert(
+        [
+            {
+                "course_id": item.course_id,
+                "question_hash": item.question_hash,
+                "item_id": item.id,
+                "concept_key": item.concept_key,
+                "format": item.format,
+                "difficulty": item.difficulty,
+                "key_status": status,
+                "verdict": verdict,
+                "audited_by": auditor,
+                "audited_at": _utcnow().isoformat(),
+            }
+        ],
+        on_conflict=_AUDITS_ON_CONFLICT,
+    )
+    code = _AUDIT_HOLD.get(verdict)
+    # every row of the course item (one per concept that holds the question —
+    # the same prompt): a never-linted one is linted from the audited item
+    for row in table(_TABLE).select("id,lint_flags", filters=scope) or []:
+        table(_TABLE).update(
+            {
+                "lint_flags": audited_flags(_linted(row.get("lint_flags"), item), code),
+                "canonical_verified": verdict == CORRECT,
+            },
+            filters={"id": f"eq.{row['id']}"},
+            prefer_return_minimal=True,
+        )
+    return status
 
 
 # ── sources (A23 privacy) ──────────────────────────────────────────────────
@@ -1155,6 +1526,7 @@ class _CallWrite(NamedTuple):
     recheck_failed: bool = False  # the pre-write re-check failed: drafts dropped
     withdrawn: bool = False  # a source was withdrawn: drafts dropped, or items retired
     verify_failed: bool = False  # A119: the alignment check was unavailable: drafts dropped
+    key_check_failed: bool = False  # A124: the key check was unavailable: drafts dropped
 
 
 # ── alignment (A119) ───────────────────────────────────────────────────────
@@ -1343,6 +1715,176 @@ def _align_screened(
     return out
 
 
+# ── keys (A124) ────────────────────────────────────────────────────────────
+#
+# After the alignment check, every draft the call still holds valid is solved
+# BLIND on the check_items_solve slot (agents/check_items_solve.py: question,
+# an mc_reason item's options under their stored letters, the call's passages;
+# never the key, rubric or reference), CHECK_ITEM_SOLVE_MAX_ITEMS per call, and
+# learning/item_keys.py compares each answer with the key in code. A free-text
+# pair code cannot settle (not the same answer tokens) goes to ONE key-match
+# call per solve call (agents/check_items_key_match.py). Agreement stores the
+# item verified; a different answer or "the passages do not settle one" stores
+# it HELD with its code (never served, listed for staff); a draft with no
+# usable answer is dropped alone (the check's outcome, not its concept's). The
+# rule when either call is unavailable is FAIL CLOSED, as A119's: the call's
+# drafts are dropped, `learn.check_items_failed` (KeyCheckUnavailable) is
+# reported, and the concepts count as unavailable, never as their own failure
+# (A41) — an unchecked key is exactly what the check exists to stop, and a drop
+# costs only a redraft. A stored item is never changed on an outage.
+
+#: `learn.check_items_failed` reason when the key check was unavailable.
+_KEY_CHECK_UNAVAILABLE = "KeyCheckUnavailable"
+
+
+def _draft_key_subject(draft: CheckItemDraft) -> KeySubject:
+    """A valid draft as the key check reads it: an mc_reason draft's options
+    under the letters it will be STORED with (checks.lettered_options with the
+    server's slot key, exactly as _build_row letters them), so the letter the
+    solver picks is compared with the stored correct letter."""
+    options: tuple[tuple[str, str], ...] = ()
+    letter = None
+    if draft.format == _MC_REASON:
+        lettered, letter = lettered_options(draft, slot_key=derive_key(OPTION_SLOT_PURPOSE))
+        options = tuple((o.letter, o.text) for o in lettered)
+    numeric = draft.answer_kind == _NUMERIC
+    return KeySubject(
+        draft.format,
+        draft.prompt,
+        options,
+        draft.answer_kind,
+        letter,
+        draft.canonical_answer if numeric else None,
+        parse_tolerance(draft),
+        draft.final_answer,
+    )
+
+
+def _item_key_subject(item: CheckItem) -> KeySubject:
+    """A stored item as the key check reads it (its stored options and key)."""
+    return KeySubject(
+        item.format,
+        item.prompt,
+        tuple((o.letter, o.text) for o in item.options or []),
+        item.answer_kind,
+        item.correct_option,
+        item.canonical_answer if item.answer_kind == _NUMERIC else None,
+        item.tolerance,
+        item.final_answer or "",
+    )
+
+
+def _key_checks_for(
+    subjects: list[KeySubject], passages: list[dict], *, deps: SaplingDeps, flex: bool
+) -> list[KeyCheck] | None:
+    """The key check's decision for each subject, in order: a blind solve of
+    CHECK_ITEM_SOLVE_MAX_ITEMS subjects per call from `passages`, compared in
+    code, and one key-match call over that batch's free-text pairs code could
+    not settle. None when any call was unavailable: the caller's rule decides
+    what that means."""
+    out: list[KeyCheck] = []
+    for start in range(0, len(subjects), CHECK_ITEM_SOLVE_MAX_ITEMS):
+        batch = subjects[start : start + CHECK_ITEM_SOLVE_MAX_ITEMS]
+        ids = [str(n) for n in range(1, len(batch) + 1)]
+        items = [
+            SolveItem(i, s.format, s.prompt, s.options, s.answer_kind) for i, s in zip(ids, batch)
+        ]
+        result = run_agent_sync(solve_items(passages, items, deps=deps, flex=flex))
+        if isinstance(result, CheckItemsUnavailable):
+            return None
+        solved = solutions(result)
+        outcomes = [compare(s, solved.get(i)) for i, s in zip(ids, batch)]
+        pairs = [
+            MatchItem(i, s.prompt, s.final_answer, solved[i].answer)
+            for i, s, outcome in zip(ids, batch, outcomes)
+            if outcome == TO_MATCH
+        ]
+        same: dict[str, bool] = {}
+        if pairs:
+            found = run_agent_sync(match_keys(pairs, deps=deps, flex=flex))
+            if isinstance(found, CheckItemsUnavailable):
+                return None
+            same = matches(found)
+        out.extend(settle(outcome, same.get(i)) for i, outcome in zip(ids, outcomes))
+    return out
+
+
+def _solve_screened(
+    screened: dict[str, list[_Screened]],
+    passages: list[dict],
+    *,
+    deps: SaplingDeps,
+    flex: bool,
+    course_id: str,
+) -> dict[str, list[_Screened]] | None:
+    """A124: the key check over every valid draft of the call, from the
+    passages the call drafted from. Agreed → kept, `verified`; disputed or not
+    settled by the passages → kept HELD (its hold code added to its flags, its
+    reason kept for the A37 top-up); no usable answer → dropped alone
+    (`unverified`). Every kept draft is marked key-checked. Returns the screened
+    drafts per concept key, every drop with its reason in place; None when the
+    check was unavailable (the caller fails closed). No valid draft → no call."""
+    valid = [entry for rows in screened.values() for entry in rows if entry.draft is not None]
+    if not valid:
+        return screened
+    found = _key_checks_for(
+        [_draft_key_subject(e.draft) for e in valid], passages, deps=deps, flex=flex
+    )
+    if found is None:
+        return None
+    check_at = iter(found)  # `valid` order: the loop below walks the same order
+    out: dict[str, list[_Screened]] = {}
+    verified = held = unverified = 0
+    for key, rows in screened.items():
+        out[key] = []
+        for entry in rows:
+            if entry.draft is None:
+                out[key].append(entry)
+                continue
+            check = next(check_at)
+            if check.unverified:
+                unverified += 1
+                logger.warning(
+                    "check item draft dropped by the key check (course=%s concept=%s "
+                    "format=%s): %s",
+                    course_id,
+                    key,
+                    entry.format,
+                    check.reason,
+                )
+                out[key].append(_Screened(entry.format, None, check.reason or "", unverified=True))
+                continue
+            if check.verified:
+                verified += 1
+                out[key].append(entry._replace(verified=True, key_checked=True))
+                continue
+            held += 1
+            logger.warning(
+                "check item draft HELD by the key check (course=%s concept=%s format=%s "
+                "question_hash=%s): %s",
+                course_id,
+                key,
+                entry.format,
+                question_hash(entry.draft.prompt)[:12],
+                check.flag,
+            )
+            out[key].append(
+                entry._replace(
+                    flags=(*entry.flags, check.flag), reasons=check.reason or "", key_checked=True
+                )
+            )
+    logger.info(
+        "check items key check (course=%s): %d draft(s) solved, %d verified, %d held, "
+        "%d unverified",
+        course_id,
+        len(valid),
+        verified,
+        held,
+        unverified,
+    )
+    return out
+
+
 def _write_checked(
     drafts_by_key: dict[str, list[CheckItemDraft]],
     sources: _CallSources,
@@ -1358,13 +1900,15 @@ def _write_checked(
     exclude_ids: Iterable[str] = (),
 ) -> _CallWrite:
     """One call's write: its drafts screened (repair, validation), then the
-    A119 alignment check against the run's course concepts `scope`, then
-    A23's source re-check on both sides of the write. A concept whose write
-    fails is reported (StorageError) and left out of `stored`; a withdrawn
-    source is added to `gone`. An unavailable alignment check drops the
-    call's drafts (fail closed, `verify_failed`). `limit` and `exclude_ids`
-    (the top-up's) bind the call's own concepts; a concept a draft was
-    re-tagged to is stored under no cap."""
+    A119 alignment check against the run's course concepts `scope`, then the
+    A124 key check (a blind solve from the call's passages), then A23's source
+    re-check on both sides of the write. A concept whose write fails is
+    reported (StorageError) and left out of `stored`; a withdrawn source is
+    added to `gone`. An unavailable alignment check drops the call's drafts
+    (fail closed, `verify_failed`), and so does an unavailable key check
+    (`key_check_failed`). `limit` and `exclude_ids` (the top-up's) bind the
+    call's own concepts; a concept a draft was re-tagged to is stored under no
+    cap."""
     screened = {key: _screen(course_id, key, drafts) for key, drafts in drafts_by_key.items()}
     aligned = _align_screened(screened, scope, deps=deps, flex=flex, course_id=course_id)
     if aligned is None:
@@ -1375,6 +1919,17 @@ def _write_checked(
         )
         _report_failure(user_id, document_id, course_id, _VERIFY_UNAVAILABLE)
         return _CallWrite({}, verify_failed=True)
+    aligned = _solve_screened(
+        aligned, sources.passages, deps=deps, flex=flex, course_id=course_id
+    )
+    if aligned is None:
+        logger.warning(
+            "check items: the key check was unavailable (course=%s); the call's drafts "
+            "are dropped — fail closed, a later run drafts them again (A124)",
+            course_id,
+        )
+        _report_failure(user_id, document_id, course_id, _KEY_CHECK_UNAVAILABLE)
+        return _CallWrite({}, key_check_failed=True)
     # A23: the sources were read before a call that can take minutes. A
     # document deleted or opted out meanwhile had its items retired while
     # these did not exist yet, so re-check right before writing...
@@ -1432,14 +1987,18 @@ def _write_checked(
     return _CallWrite(stored, withdrawn=retired)
 
 
-def _stored_items(course_id: str, key: str) -> dict[str, tuple[str | None, int | None]]:
-    """The concept's stored items, id -> (format, difficulty) (plaintext
-    columns only, invariant 9)."""
+def _stored_items(course_id: str, key: str) -> dict[str, tuple[str | None, int | None, bool]]:
+    """The concept's stored items, id -> (format, difficulty, held) (plaintext
+    columns only, invariant 9; held = A124's key hold)."""
     rows = table(_TABLE).select(
-        "id,format,difficulty",
+        "id,format,difficulty,lint_flags,canonical_verified",
         filters={"course_id": f"eq.{course_id}", "concept_key": f"eq.{key}"},
     )
-    return {r["id"]: (r.get("format"), r.get("difficulty")) for r in rows or [] if r.get("id")}
+    return {
+        r["id"]: (r.get("format"), r.get("difficulty"), _row_held(r))
+        for r in rows or []
+        if r.get("id")
+    }
 
 
 def _report_topup(
@@ -1473,7 +2032,8 @@ class _TopUp(NamedTuple):
 
     created: int  # rows written, under any concept (a re-tagged draft's included)
     own: int  # of those, the concept's own
-    unverified: bool  # A119: the alignment check was unavailable or left drafts unanswered
+    # A119/A124: the alignment or the key check was unavailable or left drafts unanswered
+    unverified: bool
 
 
 _NO_TOPUP = _TopUp(0, 0, False)
@@ -1500,10 +2060,11 @@ def _top_up_mc_reason(
     the concept's own passages and told why its mc_reason drafts were
     dropped. The drafts pass the same repair and validation (no rule is
     relaxed), the same A119 alignment check against the run's concepts
-    `scope`, and the write the same A23 re-checks. The count is the one read
-    after the pass's write, which alone says what the concept holds (a pass
-    item retired meanwhile is not counted); a top-up draft whose prompt a
-    stored item already has is a repeat, not stored. Each call is billed by
+    `scope`, the same A124 key check, and the write the same A23 re-checks.
+    The count is the one read after the pass's write, which alone says what
+    the concept holds (a pass item retired meanwhile is not counted, nor a
+    held one: it serves no one, A124); a top-up draft whose prompt a stored
+    item already has is a repeat, not stored. Each call is billed by
     the agent (llm_usage feature check_items_topup) and counted here
     (`learn.check_items_topup`). A concept still below is logged with its drop
     reasons and left to a later generation run or backfill, which drafts it
@@ -1522,7 +2083,7 @@ def _top_up_mc_reason(
         )
         _report_failure(user_id, document_id, course_id, _STORAGE_ERROR)
         return _NO_TOPUP
-    have = {i: d for i, (fmt, d) in stored_items.items() if fmt == _MC_REASON}
+    have = {i: d for i, (fmt, d, held) in stored_items.items() if fmt == _MC_REASON and not held}
     exclude = set(stored_items)
     drops = list(first.mc_drops)
     created = own = calls = 0
@@ -1583,7 +2144,11 @@ def _top_up_mc_reason(
         # a draft the A119 check filed under another concept included
         created += sum(len(w.ids) for w in write.stored.values())
         own += stored
-        unverified |= write.verify_failed or bool(result is not None and result.unverified)
+        unverified |= (
+            write.verify_failed
+            or write.key_check_failed
+            or bool(result is not None and result.unverified)
+        )
         if result is not None and not write.withdrawn:
             have.update(result.mc_reason)
             exclude.update(result.ids)
@@ -1640,11 +2205,17 @@ _CONCEPT_FAILURE_REASONS = frozenset({"UnexpectedModelBehavior"})
 
 
 def _drafting_version() -> str:
-    """The drafting prompts' versions and the model, and the A119 alignment
-    check's prompt and model (it decides what of a draft is stored): a change
-    to any is a new source, so a concept stalled under the old one is drafted
-    again."""
-    from agents import check_items, check_items_topup, check_items_verify
+    """The drafting prompts' versions and the model, the A119 alignment
+    check's prompt and model, and the A124 key check's prompts and model (each
+    decides what of a draft is stored): a change to any is a new source, so a
+    concept stalled under the old one is drafted again."""
+    from agents import (
+        check_items,
+        check_items_key_match,
+        check_items_solve,
+        check_items_topup,
+        check_items_verify,
+    )
     from agents._providers import model_name_for
 
     return "|".join(
@@ -1654,6 +2225,9 @@ def _drafting_version() -> str:
             model_name_for("check_items"),
             check_items_verify._PROMPT_HASH,
             model_name_for("check_items_verify"),
+            check_items_solve._PROMPT_HASH,
+            check_items_key_match._PROMPT_HASH,
+            model_name_for("check_items_solve"),
         )
     )
 
@@ -1818,8 +2392,10 @@ def generate_for_concepts(
     counts the top-up's items too.
     Every call's drafts go through the A119 alignment check against ALL of
     the run's concept names (the scope a draft may be re-tagged into, the
-    `max_concepts` cut and the skipped keys included); an unavailable check
-    drops the call's drafts and counts its concepts unavailable.
+    `max_concepts` cut and the skipped keys included), then the A124 key
+    check (a blind solve from the call's passages: agreed → verified,
+    disputed → stored held); an unavailable check drops the call's drafts and
+    counts its concepts unavailable.
     Synchronous: it runs in a worker thread with no event loop.
     `user_id=None` (the backfill) records usage against the system actor.
     A concept at CHECK_ITEM_REDRAFT_MAX_FAILURES failed passes on an unchanged
@@ -1961,9 +2537,10 @@ def generate_for_concepts(
             deps=deps,
             flex=flex,
         )
-        if write.recheck_failed or write.verify_failed:
+        if write.recheck_failed or write.verify_failed or write.key_check_failed:
             # no concept's fault: neither a re-check blip nor an unavailable
-            # alignment check (A119) is counted for a concept (A41)
+            # alignment check (A119) or key check (A124) is counted for a
+            # concept (A41)
             unavailable += len(batch)
             continue
         created += sum(len(w.ids) for w in write.stored.values())
