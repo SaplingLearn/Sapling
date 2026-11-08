@@ -7,7 +7,7 @@
  * Any other flag keeps its own variant names. Pure functions only.
  */
 import type { AdminFlag } from "@/lib/api";
-import { NAV_SECTIONS } from "@/lib/navFeatures";
+import { NAV_SECTIONS, NESTED_NAV_FEATURES } from "@/lib/navFeatures";
 
 export type FlagMeta = { title: string; group: string; hideFlag: boolean };
 
@@ -22,6 +22,8 @@ export function flagMeta(key: string): FlagMeta {
       if (item.flag === key) return { title: item.label, group: section.label, hideFlag: true };
     }
   }
+  const nested = NESTED_NAV_FEATURES.find((item) => item.flag === key);
+  if (nested) return { title: nested.label, group: nested.section, hideFlag: true };
   return { title: humanize(key), group: OTHER_GROUP, hideFlag: false };
 }
 
