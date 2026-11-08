@@ -475,3 +475,57 @@ describe("DueQueue launch polish (PKG-13; spec §11.3, §3.5)", () => {
     expect(screen.queryByTestId("review-item")).toBeNull();
   });
 });
+
+describe("DueQueue — stated confidence (spec §13 A127)", () => {
+  const sent = () => mockAnswer.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  it("a check offers the optional control; a skip sends no confidence and never blocks Check", async () => {
+    mockNext.mockResolvedValue(next(FREE));
+    mockAnswer.mockResolvedValue(graded());
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    const group = screen.getByTestId("review-confidence");
+    expect(group.getAttribute("role")).toBe("radiogroup");
+    expect(group.querySelectorAll('[aria-checked="true"]').length).toBe(0);
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    expect((screen.getByTestId("review-submit") as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect("confidence" in sent()).toBe(false); // absent, never a default
+    // answered: the control goes with the Check button
+    await screen.findByTestId("review-hint");
+    expect(screen.queryByTestId("review-confidence")).toBeNull();
+  });
+
+  it("a chosen confidence rides a free answer and an mc_reason answer", async () => {
+    mockNext.mockResolvedValueOnce(next(FREE)).mockResolvedValueOnce(next(MC));
+    mockAnswer.mockResolvedValue(graded());
+    render(<DueQueue userId="u1" courseId="c1" />);
+    await screen.findByTestId("review-item");
+    await userEvent.type(screen.getByTestId("review-answer-input"), "the base case");
+    await userEvent.click(screen.getByTestId("review-confidence-sure"));
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect(sent()).toEqual({
+      user_id: "u1", session_id: "sess-1", course_id: "c1", kind: "check", item_id: "ci-1",
+      answer: "the base case", confidence: "sure",
+    });
+    await userEvent.click(await screen.findByTestId("review-next"));
+    await screen.findByText("A. base case");
+    // the next item starts with none chosen
+    expect(screen.getByTestId("review-confidence-sure").getAttribute("aria-checked")).toBe("false");
+    await userEvent.click(screen.getByTestId("review-option-B"));
+    await userEvent.click(screen.getByTestId("review-confidence-guessing"));
+    await userEvent.click(screen.getByTestId("review-submit"));
+    expect(sent()).toMatchObject({ selected_option: "B", confidence: "guessing" });
+  });
+
+  it("a flashcard has no confidence control (its self-rating says how it went)", async () => {
+    mockNext.mockResolvedValue(next(CARD));
+    mockAnswer.mockResolvedValue(graded({ hint: null }));
+    render(<DueQueue userId="u1" />);
+    await screen.findByText("Q?");
+    await userEvent.click(screen.getByTestId("review-flip"));
+    expect(screen.queryByTestId("review-confidence")).toBeNull();
+    await userEvent.click(screen.getByTestId("review-rate-3"));
+    expect("confidence" in sent()).toBe(false);
+  });
+});

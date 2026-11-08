@@ -90,6 +90,9 @@ const eslintConfig = [
       // "Report this question" (spec §13 A113), shared by the loop and review
       // surfaces; its testids are passed in. New file, no baselined backlog.
       "src/components/learn/ReportQuestion.tsx",
+      // The stated-confidence control (spec §13 A127), shared by the loop's check
+      // and probe cards and the review card; its testids are passed in. New file.
+      "src/components/learn/ConfidenceControl.tsx",
       "src/components/screens/Library.tsx",
       "src/components/screens/Calendar.tsx",
       "src/components/screens/Gradebook/Landing.tsx",

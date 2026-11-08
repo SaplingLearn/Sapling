@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from agents._providers import slot_warnings
 from db.connection import pg_quote_value, table
 from learning.calibration import calibration as bkt_calibration
+from learning.calibration import confidence_calibration
 from learning.calibration import eligible as calibration_eligible
 from learning.earnest_revise import earnest_revise
 from learning.evidence_void import is_void_row, pose_is_void
@@ -536,7 +537,10 @@ _REVEAL_EVENT = "zpd.reveal"  # spec §13 A88 (m5): a solution SERVED for an ope
 #: row was graded against — what the void rule (learning/evidence_void.py) keys on
 _EVIDENCE_COLS = (
     "id,node_id,session_id,correct,assisted,max_rung,question_hash,created_at,"
-    "channel,p_before,weight,check_item_id,graph_nodes!inner(course_id)"
+    "channel,p_before,weight,check_item_id,"
+    # spec §13 A127: the student's stated confidence (metacognitive calibration)
+    "student_confidence,"
+    "graph_nodes!inner(course_id)"
 )
 TrendDirection = Literal["falling", "flat", "rising", "insufficient"]
 
@@ -614,6 +618,37 @@ class Calibration(BaseModel):
     excluded_void: int = 0
 
 
+class ConfidenceLevel(BaseModel):
+    """One stated-confidence level (learning/calibration.py, spec §13 A127)."""
+
+    level: str | None  # a STUDENT_CONFIDENCE_LEVELS label; None = a value no label names
+    stated: float  # the level's value on the 0..1 scale
+    n: int
+    correct: int
+    observed: float | None  # None when n = 0, never a zero
+
+
+class ConfidenceReport(BaseModel):
+    """The student's stated confidence against correctness (metacognitive
+    calibration, spec §13 A127). None rates mean nothing to judge."""
+
+    n: int
+    mean_stated: float | None
+    observed_rate: float | None
+    overconfidence: float | None  # mean stated − observed; above 0 = surer than right
+    brier: float | None
+    levels: list[ConfidenceLevel]
+
+
+class ChannelConfidenceReport(ConfidenceReport):
+    channel: str
+
+
+class ConfidenceCalibration(BaseModel):
+    all: ConfidenceReport
+    channels: list[ChannelConfidenceReport]  # only channels with a stated confidence
+
+
 class GainSummary(BaseModel):
     """Pre/post outcomes over (student, concept) pairs (learning/learning_gain.py,
     spec §13 A112): the probe's unassisted pretest against the unassisted
@@ -676,6 +711,8 @@ class LearningLoopKpis(BaseModel):
     earnest_revise: EarnestRevise
     gates: Gates
     calibration: Calibration
+    # spec §13 A127: do students know what they know? stated confidence vs correctness
+    confidence_calibration: ConfidenceCalibration
     learning_gain: LearningGain
     # A128: the active evidence-slot warnings ([] when none; never blocking)
     slot_warnings: list[SlotWarning] = Field(default_factory=list)
@@ -936,14 +973,16 @@ def learning_loop_kpis(
 ) -> LearningLoopKpis:
     """Spec §10: in-band share, the htc_k trend, next-session unassisted success,
     and the zero-leak, ceiling-compliance and earnest-revise (A109) gates; the
-    BKT calibration (A110) and the pre/post learning gain of the post-tests
-    answered in the range, per fixed window (A112). One void rule (A123) for
-    every evidence read here: an observation graded against an item staff
-    retired is left out — of the calibration (counted in `excluded_void`), the
-    next-session success, the learning gain's post-tests (counted per window in
-    `excluded_retired`) and its pretests; the active evidence-slot warnings of
-    this process's configuration (A128); `truncated: true` means a scan cap cut
-    the aggregation short."""
+    BKT calibration (A110), the students' own confidence calibration per
+    channel (A127: stated confidence vs correctness, over the same evidence
+    scan) and the pre/post learning gain of the post-tests answered in the
+    range, per fixed window (A112). One void rule (A123) for every evidence
+    read here: an observation graded against an item staff retired is left out
+    — of the BKT calibration (counted in `excluded_void`), the confidence
+    calibration, the next-session success, the learning gain's post-tests
+    (counted per window in `excluded_retired`) and its pretests; the active
+    evidence-slot warnings of this process's configuration (A128);
+    `truncated: true` means a scan cap cut the aggregation short."""
     require_admin(request)
     response.headers["Cache-Control"] = "private"
     from_iso, to_iso = _resolve_range(from_, to)
@@ -1007,6 +1046,9 @@ def learning_loop_kpis(
             earnest_revise_ok=None if earnest.gate == "inconclusive" else earnest.gate == "pass",
         ),
         calibration=Calibration(**bkt_calibration(valid), excluded_void=excluded_void),
+        # A123 × A127: the one void rule here too — a confidence stated on a
+        # grade against a retired item is no calibration evidence either
+        confidence_calibration=ConfidenceCalibration(**confidence_calibration(valid)),
         learning_gain=LearningGain(**learning_gain(poses, pretests, retired=retired)),
         slot_warnings=[SlotWarning(**w) for w in slot_warnings()],
         truncated=events_truncated or evidence_truncated or poses_truncated,

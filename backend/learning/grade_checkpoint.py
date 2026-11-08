@@ -15,7 +15,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from learning.evidence import Channel, Evidence, GraderBackend, PlanningPersistenceUnavailable, planning_observation
+from learning.evidence import (
+    Channel,
+    Evidence,
+    GraderBackend,
+    PlanningPersistenceUnavailable,
+    StudentConfidence,
+    planning_observation,
+    stated_confidence,
+)
 from learning.misconceptions import Attempt, is_key
 from learning.params import LADDER_MAX_RUNG
 from services.encryption import decrypt, encrypt
@@ -33,6 +41,8 @@ class _Answer(_Metadata):
     selected_option: str | None
     reason: str | None
     idk: bool
+    # spec §13 A127: the stated confidence label; absent on a checkpoint saved before it
+    confidence: StudentConfidence | None = None
 
 
 class _Observation(_Metadata):
@@ -93,6 +103,9 @@ class _Diagnosis(_Metadata):
     confront: _Marker | None
     cleared: _Marker | None
     record: _Marker | None
+    # spec §13 A127: the keys a correct answer may close (misconceptions.
+    # resolvable_keys); absent on a checkpoint saved before A127 → none
+    resolve: list[str] = Field(default_factory=list)
 
 
 class _CheckContinuation(_Metadata):
@@ -141,6 +154,13 @@ def _bind_observation(observation: _Observation, ev: Evidence) -> None:
             raise ValueError("Goal observation provenance disagrees")
 
 
+def _bind_answer(answer: _Answer | None, ev: Evidence) -> None:
+    """Spec §13 A127: the stated confidence the evidence carries is the
+    answer's label on the rule's scale (none for an idk or a skip)."""
+    if answer is not None and stated_confidence(answer.confidence, idk=answer.idk) != ev.student_confidence:
+        raise ValueError("Grade answer confidence disagrees with evidence")
+
+
 def _bind_diagnosis(diagnosis: _Diagnosis | None, ev: Evidence) -> None:
     if diagnosis is None:
         return
@@ -149,6 +169,12 @@ def _bind_diagnosis(diagnosis: _Diagnosis | None, ev: Evidence) -> None:
         raise ValueError("Grade diagnosis disagrees with evidence")
     if attempt.wrong_key is not None and not is_key(attempt.wrong_key):
         raise ValueError("Invalid grade diagnosis key")
+    if attempt.confidence != ev.student_confidence:  # A127: the student's, on both
+        raise ValueError("Grade diagnosis confidence disagrees with evidence")
+    if diagnosis.resolve and (not ev.correct or ev.idk):
+        raise ValueError("Only a correct answer closes a misconception")
+    if any(not is_key(key) for key in diagnosis.resolve):
+        raise ValueError("Invalid grade resolution key")
     diagnosis.attempt = attempt.model_dump(mode="json")
     for marker in (diagnosis.confront, diagnosis.cleared, diagnosis.record):
         if marker is not None and marker.node_id != ev.node_id:
@@ -169,6 +195,7 @@ def _continuation(kind: str, raw: dict, evidences: list[Evidence]) -> dict:
             value.answer.question_hash != ev.question_hash or value.answer.idk != ev.idk
         ):
             raise ValueError("Probe continuation answer disagrees with evidence")
+        _bind_answer(value.answer, ev)
         if value.diagnosis is not None and (value.diagnosis.confront or value.diagnosis.cleared):
             raise ValueError("A probe diagnosis never touches the confrontation marker")
         _bind_diagnosis(value.diagnosis, ev)
@@ -189,6 +216,7 @@ def _continuation(kind: str, raw: dict, evidences: list[Evidence]) -> dict:
         raise ValueError("Check refusal provenance disagrees with evidence")
     if value.graded.goal_observation is not None:
         _bind_observation(value.graded.goal_observation, ev)
+    _bind_answer(value.answer, ev)
     _bind_diagnosis(value.diagnosis, ev)
     result = value.model_dump(mode="json")
     if value.graded.goal_observation is None:

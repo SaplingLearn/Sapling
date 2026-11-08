@@ -43,6 +43,9 @@ REQUIRED_COLUMNS = {
         "retention": "double precision",
         "same_session_recheck": "boolean",
         "propagated_to": "jsonb",
+        # spec §13 A127: the student's stated confidence (never the grader's
+        # `confidence`); learning_evidence_commit refuses the key without it
+        "student_confidence": "double precision",
     },
     # spec §13 A123: the append-only void record, the quarantine, misconception support
     "learning_evidence_voids": {

@@ -15,6 +15,10 @@
 // "Report this question" (spec §13 A113; #695), while the `item_reports` flag is on:
 // a check item — answered or not — can be reported with a reason from a short list;
 // the server stops serving it to this student and the panel moves to the next item.
+//
+// "How sure are you?" (spec §13 A127): an optional Guessing / Fairly sure / Sure
+// on a check (never a flashcard — its forgot / hard / easy rating already says how
+// it went). Sent with the answer only when chosen; it never holds up "Check".
 import React from "react";
 import {
   answerReview,
@@ -27,11 +31,13 @@ import {
   type ReviewAnswerResponse,
   type ReviewNextResponse,
   type ReviewSummaryResponse,
+  type StudentConfidence,
 } from "@/lib/api";
 import { useFlag } from "@/context/FlagsContext";
 import { extractErrorDetail } from "@/lib/errorMessage";
 import { useFeedbackHold } from "@/lib/feedbackPacing";
 import { BudgetPausedBanner, formatResetAt } from "./BudgetPausedBanner";
+import { ConfidenceControl } from "./ConfidenceControl";
 import { ReportQuestion } from "./ReportQuestion";
 import { useCrisisSupport } from "../safety/CrisisSupportCard";
 
@@ -72,6 +78,8 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
   const [answer, setAnswer] = React.useState("");
   const [choice, setChoice] = React.useState("");
   const [reason, setReason] = React.useState("");
+  // spec §13 A127: null until chosen; a skip sends none
+  const [confidence, setConfidence] = React.useState<StudentConfidence | null>(null);
   const [flipped, setFlipped] = React.useState(false);
   const [result, setResult] = React.useState<ReviewAnswerResponse | null>(null);
   const [alreadyGraded, setAlreadyGraded] = React.useState(false);
@@ -110,6 +118,7 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
       setAnswer("");
       setChoice("");
       setReason("");
+      setConfidence(null);
       setFlipped(false);
       setResult(null);
       setAlreadyGraded(false);
@@ -140,12 +149,13 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
     setBusy(true);
     setError(null);
     try {
+      const stated = confidence ? { confidence } : {}; // A127: only when chosen
       const body =
         item.kind === "flashcard"
           ? { rating: extra.rating }
           : item.format === "mc_reason"
-            ? { selected_option: choice, reason: reason || undefined }
-            : { answer };
+            ? { selected_option: choice, reason: reason || undefined, ...stated }
+            : { answer, ...stated };
       const r = await answerReview({
         user_id: userId,
         session_id: next.session_id,
@@ -321,6 +331,14 @@ export function DueQueue({ userId, courseId }: { userId: string; courseId?: stri
                   disabled={answered}
                   onChange={(e) => setAnswer(e.target.value)}
                   rows={3}
+                />
+              )}
+              {!answered && (
+                <ConfidenceControl
+                  testIdPrefix="review-confidence"
+                  value={confidence}
+                  onChange={setConfidence}
+                  disabled={busy}
                 />
               )}
               {!answered && (

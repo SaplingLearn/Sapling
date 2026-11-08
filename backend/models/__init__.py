@@ -3,6 +3,7 @@ from typing import Optional, Union, List, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from services.quiz_config import QUIZ_MIN_QUESTIONS, QUIZ_MAX_QUESTIONS
+from learning.evidence import StudentConfidence
 from learning.params import GRADER_ANSWER_MAX_CHARS
 
 
@@ -148,6 +149,11 @@ class ActionBody(BaseModel):
 # No loop body carries model_pref: the loop picks its tier in code (spec A15).
 # Free text is bounded by the grader's own answer bound, so an over-long
 # submission is a 422 before anything is scanned or graded (HANDOFF-05/06).
+# Spec §13 A127: the check, probe and review answer bodies take an optional
+# `confidence` — the student's stated confidence, one of
+# learning.evidence.StudentConfidence ("guessing" / "fairly_sure" / "sure");
+# any other value, and any field the body does not name, is a 422. Absent =
+# skipped (recorded as absent, never as a default). The post-test takes none.
 
 
 class LoopAttemptBody(BaseModel):
@@ -170,7 +176,10 @@ class LoopHintBody(BaseModel):
 
 class LoopCheckAnswerBody(BaseModel):
     """PKG-07 /api/learn/loop/check/answer(/stream) — an explicit answer
-    submission, the ONLY loop-chat evidence path (spec A16)."""
+    submission, the ONLY loop-chat evidence path (spec A16). Unknown fields are
+    a 422 (spec §13 A127)."""
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
     user_id: str
     question_hash: str
@@ -178,6 +187,7 @@ class LoopCheckAnswerBody(BaseModel):
     option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
     reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)
     idk: bool = False
+    confidence: Optional[StudentConfidence] = None  # spec §13 A127; ignored on an idk
 
 
 class LoopCheckNextBody(BaseModel):
@@ -202,7 +212,9 @@ class ProbeAnswerBody(BaseModel):
     item, graded through grade_answer (A16). The answer fields are PKG-07's
     LoopCheckAnswerBody's, so the client sends one shape to every loop check;
     above GRADER_ANSWER_MAX_CHARS the body is a 422 and the item stays posed
-    (A33: padding is never a skip)."""
+    (A33: padding is never a skip). Unknown fields are a 422 (spec §13 A127)."""
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
     user_id: str
     question_hash: str
@@ -210,6 +222,7 @@ class ProbeAnswerBody(BaseModel):
     option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
     reason: str = Field("", max_length=GRADER_ANSWER_MAX_CHARS)  # mc_reason (A22)
     idk: bool = False
+    confidence: Optional[StudentConfidence] = None  # spec §13 A127; ignored on an idk
 
 
 class PlanApproveBody(BaseModel):
@@ -241,6 +254,9 @@ class ReviewAnswerBody(BaseModel):
     selected_option: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
     reason: Optional[str] = Field(None, max_length=GRADER_ANSWER_MAX_CHARS)
     rating: Optional[int] = None
+    # spec §13 A127: a check's stated confidence (optional); a flashcard's own
+    # self-rating already says how it went, so a flashcard body takes none
+    confidence: Optional[StudentConfidence] = None
 
     @model_validator(mode="after")
     def _answer_fits_kind(self):
@@ -248,6 +264,8 @@ class ReviewAnswerBody(BaseModel):
             raise ValueError("a check answer needs answer or selected_option")
         if self.kind == "flashcard" and self.rating not in (1, 2, 3):
             raise ValueError("a flashcard answer needs rating 1, 2 or 3")
+        if self.kind == "flashcard" and self.confidence is not None:
+            raise ValueError("a flashcard answer takes no confidence")
         return self
 
 

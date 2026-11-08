@@ -895,6 +895,12 @@ def _calculate_evidence(user_id: str, evidences: list[Evidence], prepared, reten
             "same_session_recheck": ev.same_session_recheck,
             "propagated_to": [target_id for target_id, *_ in targets],
         }
+        if ev.student_confidence is not None:
+            # Spec §13 A127: the student's stated confidence, beside the
+            # grader's `confidence` (never the same column). Absent when none
+            # was stated, so an evidence row without one is the row it was
+            # before A127 — its plan, and its operation's fingerprint, unchanged.
+            event_row["student_confidence"] = ev.student_confidence
         provenance = planning_observation(ev)
         if provenance is not None:
             event_row["planning_observation"] = provenance

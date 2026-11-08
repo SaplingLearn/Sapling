@@ -143,6 +143,26 @@ const loopFixture = {
     posttest: emptyCalibration,
     excluded_void: 0,
   },
+  // spec §13 A127: one channel; "sure" right 2 of 4 (overconfident), no "fairly_sure" answers
+  confidence_calibration: {
+    all: {
+      n: 5, mean_stated: 0.72, observed_rate: 0.4, overconfidence: 0.32, brier: 0.31,
+      levels: [
+        { level: "guessing", stated: 0.2, n: 1, correct: 0, observed: 0 },
+        { level: "fairly_sure", stated: 0.55, n: 0, correct: 0, observed: null },
+        { level: "sure", stated: 0.85, n: 4, correct: 2, observed: 0.5 },
+      ],
+    },
+    channels: [{
+      channel: "free_response",
+      n: 5, mean_stated: 0.72, observed_rate: 0.4, overconfidence: 0.32, brier: 0.31,
+      levels: [
+        { level: "guessing", stated: 0.2, n: 1, correct: 0, observed: 0 },
+        { level: "fairly_sure", stated: 0.55, n: 0, correct: 0, observed: null },
+        { level: "sure", stated: 0.85, n: 4, correct: 2, observed: 0.5 },
+      ],
+    }],
+  },
   learning_gain: learningGain,
   truncated: false,
 };
@@ -389,6 +409,45 @@ describe("Learning loop panel (spec §10, §13 A110)", () => {
     expect(screen.getByTestId("admin-loop-calibration-void").textContent).toContain(
       "3 answers to retired questions left out",
     );
+  });
+
+  it("shows the students' stated confidence against correctness per channel (spec §13 A127)", () => {
+    render(<LearningLoopPanelBody d={loopFixture} />);
+    const table = screen.getByTestId("admin-loop-confidence");
+    expect(within(table).getByText("Overconfidence")).toBeTruthy();
+    expect(within(table).getByText("+32.0 pp")).toBeTruthy();
+    const sure = screen.getByTestId("admin-loop-confidence-free_response-sure");
+    expect(within(sure).getByText("Free response")).toBeTruthy();
+    expect(within(sure).getByText("Sure")).toBeTruthy();
+    expect(within(sure).getByText("4")).toBeTruthy(); // answers
+    expect(within(sure).getByText("85%")).toBeTruthy(); // stated
+    expect(within(sure).getByText("50%")).toBeTruthy(); // correct
+    // a level nobody chose reads as a dash, never a zero rate
+    const fairly = screen.getByTestId("admin-loop-confidence-free_response-fairly_sure");
+    expect(within(fairly).getByText("—")).toBeTruthy();
+    expect(within(screen.getByTestId("admin-loop-confidence-free_response-all")).getByText("40%")).toBeTruthy();
+  });
+
+  it("says so when no answer in the range stated a confidence", () => {
+    const none = {
+      ...loopFixture,
+      confidence_calibration: {
+        all: {
+          n: 0, mean_stated: null, observed_rate: null, overconfidence: null, brier: null,
+          levels: [
+            { level: "guessing", stated: 0.2, n: 0, correct: 0, observed: null },
+            { level: "fairly_sure", stated: 0.55, n: 0, correct: 0, observed: null },
+            { level: "sure", stated: 0.85, n: 0, correct: 0, observed: null },
+          ],
+        },
+        channels: [],
+      },
+    };
+    render(<LearningLoopPanelBody d={none} />);
+    expect(screen.getByTestId("admin-loop-confidence").textContent).toContain(
+      "No answers with a stated confidence in this range.",
+    );
+    expect(screen.queryByTestId("admin-loop-confidence-free_response-all")).toBeNull();
   });
 
   it("marks a failing gate", () => {

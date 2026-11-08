@@ -655,6 +655,33 @@ export interface LoopCalibrationReport {
   bins: LoopCalibrationBin[];
 }
 
+/** One stated-confidence level of the students' calibration report (spec §13
+ *  A127, learning/calibration.py): `level` is guessing / fairly_sure / sure, or
+ *  null for a value the current mapping no longer names. Null `observed` = n 0. */
+export interface LoopConfidenceLevel {
+  level: string | null;
+  stated: number;
+  n: number;
+  correct: number;
+  observed: number | null;
+}
+
+/** The students' stated confidence against correctness (metacognitive
+ *  calibration). `overconfidence` = mean stated − observed; above 0, students
+ *  were surer than right. Null rates mean nothing to judge — never zeros. */
+export interface LoopConfidenceReport {
+  n: number;
+  mean_stated: number | null;
+  observed_rate: number | null;
+  overconfidence: number | null;
+  brier: number | null;
+  levels: LoopConfidenceLevel[];
+}
+
+export interface LoopChannelConfidenceReport extends LoopConfidenceReport {
+  channel: string;
+}
+
 /** Pre/post outcomes over (student, concept) pairs: the concept's probe
  *  pretest against its unassisted delayed post-test (spec §13 A112). Observed
  *  answers only, never p_known; null rates mean n = 0 — never zeros. */
@@ -708,6 +735,10 @@ export interface LearningLoopKpisData {
      *  retired, so void evidence (spec §13 A123) — the drop, visible */
     excluded_void: number;
   };
+  /** the students' own calibration: stated confidence vs correctness, per
+   *  channel (spec §13 A127; void evidence left out, A123); only channels with
+   *  a stated confidence are listed */
+  confidence_calibration: { all: LoopConfidenceReport; channels: LoopChannelConfidenceReport[] };
   /** post-tests answered in the range, per fixed window (spec §13 A112) */
   learning_gain: { delayed_min_days: number; windows: LoopGainWindow[] };
   /** spec §13 A128: the API process's active evidence-slot warnings (its current

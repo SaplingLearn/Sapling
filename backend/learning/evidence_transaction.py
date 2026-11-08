@@ -44,12 +44,23 @@ class EvidenceVoidRefused(PlanningPersistenceUnavailable):
     """A void was asked for a check item staff have not retired (nothing written)."""
 
 
+def _semantic(ev: Evidence) -> dict:
+    """One evidence's identity in the fingerprint. Spec §13 A127: an absent
+    `student_confidence` is left out, so an operation committed before the field
+    existed fingerprints the same after the deploy (a recovered grade replays,
+    never conflicts); a stated one is part of the identity."""
+    out = ev.model_dump(mode="json", exclude={"operation_id"})
+    if out.get("student_confidence") is None:
+        out.pop("student_confidence", None)
+    return out
+
+
 def fingerprint(user_id: str, course_id: str | None, evidences: list[Evidence], retention) -> str:
     value = {
         "user_id": user_id,
         "course_id": course_id,
         "retention": retention,
-        "evidence": [ev.model_dump(mode="json", exclude={"operation_id"}) for ev in evidences],
+        "evidence": [_semantic(ev) for ev in evidences],
     }
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(encoded.encode()).hexdigest()

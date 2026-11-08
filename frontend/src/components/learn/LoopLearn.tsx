@@ -71,6 +71,7 @@ import {
   type LoopSessionStatus,
   type LoopTurnResult,
   type StreamChatHandlers,
+  type StudentConfidence,
 } from "@/lib/api";
 import { useFlag } from "@/context/FlagsContext";
 import { forgetEndedSession, noteLearningSession, rememberEndedSession, useFeedbackHold } from "@/lib/feedbackPacing";
@@ -82,6 +83,7 @@ import { DiagnosisSummary, GoalEditor } from "./LearningScope";
 import { ReportQuestion } from "./ReportQuestion";
 import { CrisisSupportCard, useCrisisSupport } from "../safety/CrisisSupportCard";
 import { crisisSupportIn, type CrisisSupport } from "@/lib/crisisSupport";
+import { ConfidenceControl } from "./ConfidenceControl";
 
 // ── Copy ─────────────────────────────────────────────────────────────────
 const NO_CHECK_ITEMS_COPY =
@@ -168,8 +170,18 @@ const shortDate = (iso: string) => {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
-type Draft = { answer: string; option: string; reason: string };
-const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "" };
+/** An answer being written. `confidence` (spec §13 A127) is the student's stated
+ *  confidence — null until chosen, and a skip sends none. */
+type Draft = { answer: string; option: string; reason: string; confidence: StudentConfidence | null };
+const EMPTY_DRAFT: Draft = { answer: "", option: "", reason: "", confidence: null };
+
+/** The answer fields a draft submits: `confidence` only when chosen (A127). */
+function draftAnswer(draft: Draft, format: string): LoopCheckAnswer {
+  const a: LoopCheckAnswer = format === "mc_reason"
+    ? { option: draft.option, reason: draft.reason, idk: false }
+    : { answer: draft.answer, idk: false };
+  return draft.confidence ? { ...a, confidence: draft.confidence } : a;
+}
 type HintView = { denied: string } | { reply: string } | null;
 
 /** The Learn deep links (Dashboard, Tree, notetaker, quiz): read ONCE at mount,
@@ -852,11 +864,8 @@ export function LoopLearn() {
     if (!sessionId || !probeItem || probeBusy || pendingGrade) return;
     ++turnEpoch.current;
     const g = gen.current;
-    const a: LoopCheckAnswer = idk
-      ? { idk: true }
-      : probeItem.format === "mc_reason"
-        ? { option: probeDraft.option, reason: probeDraft.reason, idk: false }
-        : { answer: probeDraft.answer, idk: false };
+    // an idk states no confidence (spec §13 A127)
+    const a: LoopCheckAnswer = idk ? { idk: true } : draftAnswer(probeDraft, probeItem.format);
     setProbeBusy(true);
     setProbeNote(null);
     try {
@@ -1127,11 +1136,8 @@ export function LoopLearn() {
   const submitAttempt = async (idk: boolean) => {
     if (!sessionId || !item || attemptBusy || pendingGrade) return;
     const g = gen.current;
-    const a: LoopCheckAnswer = idk
-      ? { idk: true }
-      : item.format === "mc_reason"
-        ? { option: attempt.option, reason: attempt.reason, idk: false }
-        : { answer: attempt.answer, idk: false };
+    // an idk states no confidence (spec §13 A127)
+    const a: LoopCheckAnswer = idk ? { idk: true } : draftAnswer(attempt, item.format);
     const shown = idk
       ? "I don't know."
       : item.format === "mc_reason"
@@ -2152,6 +2158,12 @@ function ProbePanel({
                     }}
                   />
                 )}
+                <ConfidenceControl
+                  testIdPrefix="loop-probe-confidence"
+                  value={draft.confidence}
+                  onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
+                  disabled={busy}
+                />
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <button data-testid="loop-probe-submit" className="btn btn--primary" disabled={!canSubmit} onClick={onSubmit}>
                     {busy ? "Checking…" : "Submit"}
@@ -2344,6 +2356,12 @@ function CheckCard({
           }}
         />
       )}
+      <ConfidenceControl
+        testIdPrefix="loop-check-confidence"
+        value={draft.confidence}
+        onChange={(confidence) => setDraft((d) => ({ ...d, confidence }))}
+        disabled={busy}
+      />
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button data-testid="loop-attempt-submit" className="btn btn--sm btn--primary" disabled={!canSubmit} onClick={onSubmit}>
           Submit answer

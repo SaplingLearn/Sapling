@@ -91,6 +91,7 @@ renders the element.
 | Admin analytics | `admin-analytics` | `frontend/src/components/screens/AdminAnalytics.tsx` (the `/admin/analytics` dashboard — range presets/inputs, cost group-by toggle, per-panel retry) — added with the #121 data layer |
 | Admin check-item review | `admin-items`, `admin-audit` | `frontend/src/components/screens/AdminCheckItems.tsx` (the `/admin/check-items` queue of learning-loop check items the item-flaw linter flagged, a key hold withdraws or students reported, with Approve / Retire — learning-loop spec §13 A113, A124 — and its Key audit tab, a stratified sample of one course's keys with the key-error rate — A124) |
 | Report a question | passed in (`loop-check-report`, `review-report`) | `frontend/src/components/learn/ReportQuestion.tsx` (the shared "Report this question" control; the `loop` and `review` call sites write its prefix — spec §13 A113, GitHub #695) |
+| Stated confidence | passed in (`loop-check-confidence`, `loop-probe-confidence`, `review-confidence`) | `frontend/src/components/learn/ConfidenceControl.tsx` (the shared optional "How sure are you?" radio group — Guessing / Fairly sure / Sure — on the loop's check and probe cards and the review card, never the post-test; the call sites write its prefix — spec §13 A127) |
 | Landing knowledge graph demo | `landing-graph` | `frontend/src/components/marketing/graph/KnowledgeGraphDemo.tsx` (the pre-auth landing page's interactive course-picker + laid-out concept graph, wearing the `landing-surface` chrome with an inspector rail and mastery legend since #344 step 3) |
 | Landing feature bands | `landing-band` | `frontend/src/components/marketing/FeatureBand.tsx` (the three full-width bands below the graph; content + side-alternation in `featureBands.tsx`, #344 step 2) |
 | Landing surface bento | `landing-bento` | `frontend/src/components/marketing/SurfaceBento.tsx` (the four-tile grid of built product surfaces, #344 step 2) |
@@ -448,6 +449,7 @@ entered the lint block new, so there is no baselined backlog.
 | `admin-analytics-users-sort-events` / `-cost` / `-tokens` | Top-users table column-sort headers (#122) — first click sorts desc, second flips |
 | `admin-loop-items-link` | the Learning loop panel's link to the `/admin/check-items` review queue (spec §13 A113) |
 | `admin-loop-calibration-void` | the calibration's "N answers to retired questions left out" line (spec §13 A123: void evidence; absent at zero) |
+| `admin-loop-confidence` | the Learning loop panel's "Do students know what they know?" table (spec §13 A127): stated confidence vs correctness; rows `admin-loop-confidence-{channel}-{level}` (`other` for a value no level names) and `admin-loop-confidence-{channel}-all` |
 
 ### `admin-items`
 
@@ -651,6 +653,9 @@ loop active (`GET /api/learn/loop/review/active` 200 — a gate-only probe; the 
 | `review-answer-input` | free-response answer textarea (a `free` check) |
 | `review-option-{letter}` | one stored `mc_reason` option radio, suffixed with the option's own letter (stored order; correctness never marked, A22) |
 | `review-reason-input` | the one-sentence reason textarea of an `mc_reason` check |
+| `review-confidence` | the optional "How sure are you?" radio group on a check, never a flashcard (spec §13 A127; shared `ConfidenceControl`); hidden once the answer is graded |
+| `review-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/review/answer` as `confidence` |
+| `review-confidence-clear` | "Clear" — takes the choice back |
 | `review-submit` | "Check" / "Try again" — sends a check answer |
 | `review-flip` | "Show answer" on a flashcard |
 | `review-rate-1` / `review-rate-2` / `review-rate-3` | a flashcard self-rating (forgot / hard / easy) |
@@ -703,6 +708,9 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-probe-input` | free/teachback probe answer textarea |
 | `loop-probe-option-{letter}` | one served `mc_reason` option (stored order; never marked correct, A22) |
 | `loop-probe-reason` | the one-sentence reason input (`mc_reason`) |
+| `loop-probe-confidence` | the optional "How sure are you?" radio group on the probe card (spec §13 A127; `role="radiogroup"`, labelled by its question): one tab stop, arrow keys move and choose; nothing chosen = nothing sent |
+| `loop-probe-confidence-{guessing,fairly_sure,sure}` | one level (`role="radio"`, `aria-checked`); a chosen one rides `/probe/answer` as `confidence` (never with an idk) |
+| `loop-probe-confidence-clear` | "Clear" — takes the choice back (shown only while one is chosen) |
 | `loop-probe-submit` | submit the probe answer (`/probe/answer`) |
 | `loop-probe-idk` | "I don't know" (submits `idk: true`, no answer text) |
 | `loop-probe-reference` | the answer shown after a wrong answer or idk (spec §3.3) |
@@ -718,6 +726,9 @@ inside `loop-messages` is `ChatPanel`, whose own `tutor-*` ids
 | `loop-attempt-input` | free/teachback attempt textarea |
 | `loop-attempt-option-{letter}` | one served `mc_reason` option in the attempt box |
 | `loop-attempt-reason` | the one-sentence reason input in the attempt box (`mc_reason`) |
+| `loop-check-confidence` | the optional "How sure are you?" radio group on the check card (spec §13 A127), as `loop-probe-confidence`; it never holds up `loop-attempt-submit` |
+| `loop-check-confidence-{guessing,fairly_sure,sure}` | one level; a chosen one rides `/check/answer/stream` as `confidence` (never with an idk) |
+| `loop-check-confidence-clear` | "Clear" — takes the choice back |
 | `loop-attempt-submit` | submit the attempt to `/check/answer/stream` (never a chat turn, A16) |
 | `loop-attempt-idk` | "I don't know" in the attempt box (`idk: true`) |
 | `loop-hint-button` | request a hint: records the draft as an attempt (`/step/attempt`), moves the rung (`/hint`), then fetches the hint turn (`/action`) |

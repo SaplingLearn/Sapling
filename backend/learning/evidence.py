@@ -32,6 +32,7 @@ from learning.params import (
     RUNG_ASSISTED_MIN,
     RUNG_NO_CREDIT_MIN,
     STRONG_CHANNELS,
+    STUDENT_CONFIDENCE_LEVELS,
     WEIGHT_ASSISTED,
     WEIGHT_LOW_CONFIDENCE,
     WEIGHT_SAME_SESSION_RECHECK,
@@ -56,6 +57,22 @@ GraderBackend = Literal[
 MisconceptionVerdict = Literal[
     "none", "unknown", "slip", "misconception", "gap", "not_known", "novice"
 ]
+
+#: Spec §13 A127: the student's stated confidence on a check, probe or review
+#: answer — the labels of params.STUDENT_CONFIDENCE_LEVELS (pinned by test), the
+#: answer bodies' enum. Optional everywhere: a skip is absent, never a default.
+StudentConfidence = Literal["guessing", "fairly_sure", "sure"]
+
+
+def stated_confidence(label: str | None, *, idk: bool = False) -> float | None:
+    """Spec §13 A127: a stated confidence label on the §3.3 rule's 0..1 scale
+    (params.STUDENT_CONFIDENCE_LEVELS). None for no label — a skipped control
+    is absent, never a default — and for an idk: "I don't know" states no
+    confidence in an answer. An unknown label raises KeyError (the body models
+    refuse one first)."""
+    if idk or label is None:
+        return None
+    return STUDENT_CONFIDENCE_LEVELS[label]
 
 
 class PlanningPersistenceUnavailable(RuntimeError):
@@ -125,9 +142,11 @@ __all__ = [
     "Evidence",
     "GraderBackend",
     "MisconceptionVerdict",
+    "StudentConfidence",
     "evidence_weight",
     "flush_pending",
     "is_strong_channel",
+    "stated_confidence",
 ]
 
 
@@ -143,6 +162,12 @@ class Evidence(BaseModel):
     check_item_id: str | None = None
     question_hash: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)  # grader confidence
+    # Spec §13 A127: the STUDENT's stated confidence (stated_confidence of the
+    # answer's label), journaled as node_mastery_events.student_confidence for
+    # the metacognitive calibration report. Never the grader's `confidence`
+    # above, never a weight (evidence_weight does not read it); None = none
+    # stated (a skip, an idk, the post-test, the quiz).
+    student_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     same_session_recheck: bool = False
     grader_backend: GraderBackend | None = None  # A22 provenance; PKG-05 reopen of PKG-03
     # PKG-10 reopen of PKG-03 (spec §5): the rule's verdict (None when it did not

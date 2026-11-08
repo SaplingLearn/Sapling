@@ -127,6 +127,7 @@ from learning.misconceptions import (
     open_for,
     record,
     recheck_after_release,
+    resolve_after_grade,
     set_confront,
     slip_or_misconception,
 )
@@ -4141,6 +4142,8 @@ async def _grade_submission(
         selected_option=body.option,
         reason=body.reason,
         idk=idk,
+        # spec §13 A127: the stated confidence; an idk (a box or a phrase) states none
+        confidence=None if idk else body.confidence,
     )
     try:
         outcome = await grade_answer(
@@ -4589,6 +4592,9 @@ def _finish_check_checkpoint(checkpoint, scope, request, *, loop_on, deps=None, 
                                          _item_like(item), CheckAnswer.model_validate(c["answer"]))
             except Exception:
                 logger.warning("optional misconception rollup unavailable after saved grade")
+        # spec §13 A127: a correct, unassisted answer on an isomorph closes the
+        # misconceptions its item tests — after the flush and the claimed save
+        _resolve_misconceptions(checkpoint, diagnosis, committed, surface="check", request=request)
     ask = held.get("checks", 0) >= ZPD_RATING_EVERY_N_CHECKS
     return _Submission("feedback", state, c["rendered"], scope, c["verdict"], refused=c["refused"], ask_rating=ask)
 
@@ -4620,6 +4626,38 @@ def _write_misconception(user_id: str, outcome, item, answer: CheckAnswer) -> No
         grader_answer_text(item, answer),
         question_hash=getattr(item, "question_hash", None),  # A123: the supporting attempt's item
     )
+
+
+def _resolve_misconceptions(
+    checkpoint, diagnosis: dict | None, committed: dict, *, surface: str, request: Request
+) -> list[str]:
+    """Spec §13 A127: close what a correct, unassisted answer on an isomorph
+    closes — the keys the hook listed for this answer (`diagnosis["resolve"]`:
+    the item's keys but one the student's reason matched), judged on the
+    grade's FINAL observation (`committed`: the single writer's, with the help
+    floor's rung and any re-check it forced). Called by the check route and
+    the probe after their one flush and the claimed save that recorded the
+    grade (A75 (a)'s order), so a failed flush closes nothing. It never changes
+    the response, the phase or the next item (the probe stays a diagnostic,
+    A120 (e)). A checkpoint saved before A127 lists no keys: nothing to close.
+    Never raises."""
+    keys = (diagnosis or {}).get("resolve") or []
+    if not keys:
+        return []
+    try:
+        return resolve_after_grade(
+            checkpoint.user_id,
+            committed["node_id"],
+            keys=keys,
+            item_id=committed.get("check_item_id"),
+            attempt=committed,
+            surface=surface,
+            session_id=checkpoint.session_id,
+            request_id=_request_id(request),
+        )
+    except Exception:
+        logger.warning("misconception resolution unavailable after saved grade")
+        return []
 
 
 def _submission_turn(
@@ -6812,6 +6850,8 @@ async def _probe_submission(body: ProbeAnswerBody, request: Request, *, loop_on:
         selected_option=body.option,
         reason=body.reason,
         idk=idk,
+        # spec §13 A127: the stated confidence; an idk (a box or a phrase) states none
+        confidence=None if idk else body.confidence,
     )
     try:
         outcome = await grade_answer(
@@ -6957,6 +6997,9 @@ def _finish_probe_checkpoint(checkpoint, request, *, loop_on, deps=None):
             )
         except Exception:
             logger.warning("probe misconception not recorded after saved grade")
+    # spec §13 A127 (same order): a correct, unassisted probe answer on an
+    # isomorph closes what its item tests; the response below is unchanged
+    _resolve_misconceptions(checkpoint, diagnosis, committed, surface="probe", request=request)
     if out.get("done"):
         _emit_probe_done(saved, checkpoint.user_id, _request_id(request))
     response = {
@@ -7397,6 +7440,7 @@ async def review_answer(body: ReviewAnswerBody, request: Request) -> dict:
             card_row=card_row,
             selected_option=body.selected_option,
             reason=body.reason,
+            confidence=body.confidence,  # spec §13 A127 (a check's; a flashcard body has none)
             deps=deps,
             claim=claim,
             # A88/A93: an item with recorded help anywhere has no unassisted credit

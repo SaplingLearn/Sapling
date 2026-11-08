@@ -16,6 +16,14 @@ The session attempt log and the confrontation marker live in the
 `confront` (ids, enums, bools, numbers and the plaintext key only — spec §4
 "no free text"). Every reader and writer goes through the accessors below,
 so the shape lives in one file.
+
+Spec §13 A127 closes a misconception: a correct, unassisted first attempt
+(`resolves`) on an isomorph — another question on the same concept — whose
+item lists the key (`resolvable_keys`) resolves the student's open row
+(`resolve`, one conditional UPDATE), after the grading route's flush and
+claimed save, with one `learn.misconception_resolved` event per row
+(`resolve_after_grade`). A resolved row leaves every reader (`open_for`,
+`open_keys`): the learner brief, the session close and the review interleave.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -41,8 +50,14 @@ from learning.params import (
     RECHECK_RELEASE_WINDOW_HOURS,
 )
 from services.encryption import encrypt_if_present
+from services.events_service import log_event
 
 logger = logging.getLogger("sapling.learning.misconceptions")
+
+#: Spec §13 A127: one closed misconception (the event names the surface that
+#: closed it: the check route, the probe or the review).
+RESOLVED_EVENT = "learn.misconception_resolved"
+RESOLVE_SURFACES = ("check", "probe", "review")
 
 #: The rule's verdict: the six spec §3.3 verdicts plus "none" (a plain correct
 #: attempt with nothing to diagnose). One type with Evidence.verdict.
@@ -73,9 +88,9 @@ class Attempt(BaseModel):
     node_id: str  # the student's graph_nodes.id (items key on concept_key, A2)
     correct: bool
     wrong_key: str | None = None  # only a key the student's reason matched (A22)
-    confidence: float | None = Field(
-        default=None, ge=0.0, le=1.0
-    )  # STUDENT-stated; never the grader's
+    # STUDENT-stated (A127: evidence.stated_confidence of the answer's label);
+    # never the grader's. None = none stated.
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     difficulty: int
     idk: bool = False
     isomorph_of: str | None = None  # the question_hash this attempt re-asks
@@ -131,6 +146,46 @@ def slip_or_misconception(history: list[Attempt]) -> Verdict:
     if last.confidence is not None and last.confidence <= GAP_CONFIDENCE_MAX:
         return "gap"
     return "unknown"
+
+
+# ── resolution (spec §13 A127; pure) ────────────────────────────────────────
+
+
+def resolves(attempt: Mapping) -> bool:
+    """Spec §13 A127, the attempt half of the resolution rule: a correct,
+    unassisted first attempt — correct, not an idk, rung 0 (no hint and no
+    reveal: the grading route's help floor already raised the rung of an item
+    with recorded help or a released answer, A88/A93), not assisted, and not a
+    re-check after a release (§13 A76: never an unassisted first attempt).
+    Reads the FINAL evidence of the grade (or the single writer's committed
+    observation of it) — never the grader's or the student's confidence."""
+    if not isinstance(attempt, Mapping):
+        return False
+    rung = attempt.get("max_rung")
+    return (
+        attempt.get("correct") is True
+        and not attempt.get("idk")
+        and isinstance(rung, int)
+        and not isinstance(rung, bool)
+        and rung == 0
+        and not attempt.get("assisted")
+        and not attempt.get("same_session_recheck")
+    )
+
+
+def resolvable_keys(
+    item, *, correct: bool, idk: bool = False, matched_wrong_key: str | None = None
+) -> list[str]:
+    """Spec §13 A127: the misconceptions a graded answer to `item` can close —
+    every identifier-shaped key the item lists among its common wrong reasons
+    (what the item tests), and only for a correct answer that is no idk. The
+    key the student's reason matched stays open: a right answer for a reason
+    the grader matched to that misconception (§3.3 "right answer, wrong reason")
+    shows it held, never gone. Sorted, deduplicated; [] otherwise."""
+    if not correct or idk:
+        return []
+    listed = {getattr(w, "key", None) for w in getattr(item, "common_wrong", None) or []}
+    return sorted(k for k in listed if is_key(k) and k != matched_wrong_key)
 
 
 # ── the session attempt log and the marker (sessions.loop_state) ────────────
@@ -268,15 +323,6 @@ def _now() -> str:
     return _utcnow().isoformat()
 
 
-def _open_filters(user_id: str, node_id: str, wrong_key: str) -> dict:
-    return {
-        "user_id": f"eq.{user_id}",
-        "node_id": f"eq.{node_id}",
-        "wrong_key": f"eq.{wrong_key}",
-        "resolved_at": "is.null",
-    }
-
-
 def record(
     user_id: str,
     node_id: str,
@@ -327,33 +373,134 @@ def record(
         return {}
 
 
-def resolve(user_id: str, node_id: str, wrong_key: str) -> int:
-    """Mark the open row(s) for the key resolved. Returns rows touched; 0 on
-    a DB error. Never raises. (No caller yet: PKG-12's review is the natural one.)"""
+_RESOLVED_COLS = "id,node_id,wrong_key,check_item_id,count"
+
+
+def _in_list(values: Iterable[str]) -> str:
+    return f"in.({','.join(pg_quote_value(v) for v in values)})"
+
+
+def resolve(user_id: str, node_id: str, wrong_keys: Iterable[str], *, by_item: str) -> list[dict]:
+    """Spec §13 A127: close the student's OPEN misconceptions on `node_id` among
+    `wrong_keys` that were recorded on an item other than `by_item` — the item
+    whose correct, unassisted answer closes them must be an isomorph (same
+    concept, another question), never the question the misconception was
+    recorded on. ONE conditional UPDATE … RETURNING (`resolved_at IS NULL` in
+    the filter), so a row another request closed first is never closed — or
+    reported — twice. A later record of the same key opens a fresh row (the
+    open-row unique index, A75 (f)): a relapse is a new misconception.
+    Returns the closed rows [{id, node_id, wrong_key, check_item_id, count}],
+    identifier-shaped keys only; [] when nothing is asked (no key, no item) or
+    on a DB error. Never raises, never reads evidence_text."""
+    keys = sorted({k for k in wrong_keys or [] if is_key(k)})
+    if not keys or not by_item or not node_id:
+        return []
     try:
-        t = table("misconceptions")
-        filters = _open_filters(user_id, node_id, wrong_key)
-        rows = t.select("id", filters=filters) or []
-        if rows:
-            t.update({"resolved_at": _now()}, filters=filters)
-        return len(rows)
-    except Exception as exc:
-        logger.warning(
-            "misconceptions.resolve failed for %s/%s/%s: %s",
-            user_id,
-            node_id,
-            wrong_key,
-            type(exc).__name__,
+        rows = (
+            table("misconceptions").update(
+                {"resolved_at": _now()},
+                filters={
+                    "user_id": f"eq.{user_id}",
+                    "node_id": f"eq.{node_id}",
+                    "wrong_key": _in_list(keys),
+                    "resolved_at": "is.null",
+                    # an isomorph: recorded on another question (or on none)
+                    "or": f"(check_item_id.is.null,check_item_id.neq.{pg_quote_value(by_item)})",
+                    "select": _RESOLVED_COLS,  # never the encrypted evidence_text
+                },
+            )
+            or []
         )
-        return 0
+    except Exception as exc:  # fail closed: a diagnosis, never a gate
+        logger.warning(
+            "misconceptions.resolve failed for %s/%s: %s", user_id, node_id, type(exc).__name__
+        )
+        return []
+    return [dict(r) for r in rows if isinstance(r, dict) and is_key(r.get("wrong_key"))]
+
+
+def resolve_after_grade(
+    user_id: str,
+    node_id: str,
+    *,
+    keys: Iterable[str],
+    item_id: str | None,
+    attempt: Mapping,
+    surface: str,
+    session_id: str | None = None,
+    request_id: str | None = None,
+) -> list[str]:
+    """Spec §13 A127: the resolution rule, applied by a grading route AFTER its
+    one flush and the claimed save that recorded the grade (A75 (a)'s order: a
+    failed flush closes nothing). `attempt` is the grade's final evidence (or
+    the writer's committed observation of it), `keys` what the answered item
+    can close (`resolvable_keys`), `item_id` the answered item. When the
+    attempt `resolves`, the open rows recorded on another item are closed
+    (`resolve`) and one `learn.misconception_resolved` event (ids, the key,
+    counts, the surface) is logged per closed row. Returns the closed keys. A
+    store failure closes nothing and never raises; an unknown `surface` is a
+    caller bug (ValueError), raised before any read."""
+    if surface not in RESOLVE_SURFACES:
+        raise ValueError(f"unknown resolution surface {surface!r}")
+    if not resolves(attempt) or not item_id:
+        return []
+    closed = resolve(user_id, node_id, keys, by_item=item_id)
+    for row in closed:
+        log_event(
+            RESOLVED_EVENT,
+            category="usage",
+            user_id=user_id,
+            request_id=request_id,
+            payload={
+                "node_id": node_id,
+                "wrong_key": row["wrong_key"],
+                "check_item_id": item_id,
+                "recorded_on": row.get("check_item_id"),
+                "count": int(row.get("count") or 0),
+                "surface": surface,
+                **({"session_id": session_id} if session_id else {}),
+            },
+        )
+    return [row["wrong_key"] for row in closed]
+
+
+def open_keys(user_id: str, keys: Iterable[str]) -> set[str]:
+    """Spec §13 A127: which of `keys` the student still holds — an OPEN row on
+    any node, seen within MISCONCEPTION_RECENT_DAYS (open_for's window). The
+    learner brief lists a recent close's key only when it is still open, so a
+    misconception resolved since that close drops out. One read; no read for an
+    empty list; set() on a DB error (never raises: the brief then lists none of
+    them rather than a closed one)."""
+    wanted = sorted({k for k in keys or [] if is_key(k)})
+    if not wanted:
+        return set()
+    since = (_utcnow() - timedelta(days=MISCONCEPTION_RECENT_DAYS)).isoformat()
+    try:
+        rows = (
+            table("misconceptions").select(
+                "wrong_key",
+                filters={
+                    "user_id": f"eq.{user_id}",
+                    "wrong_key": _in_list(wanted),
+                    "resolved_at": "is.null",
+                    "last_seen_at": f"gte.{since}",
+                },
+            )
+            or []
+        )
+    except Exception as exc:
+        logger.warning("misconceptions.open_keys failed for %s: %s", user_id, type(exc).__name__)
+        return set()
+    return {r["wrong_key"] for r in rows if isinstance(r, dict) and r.get("wrong_key") in wanted}
 
 
 def open_for(user_id: str, node_ids: list[str]) -> list[dict]:
     """Open misconceptions for the student on the given nodes, seen within
-    MISCONCEPTION_RECENT_DAYS (F6: resolve() has no caller yet, so an old row
-    would otherwise re-list forever): [{node_id, wrong_key, count}], count
-    descending; only identifier-shaped keys. No read for an empty id list.
-    Never reads evidence_text; [] on a DB error (never raises)."""
+    MISCONCEPTION_RECENT_DAYS (F6: one the student never meets again stops
+    re-listing; a resolved one — spec §13 A127 — never lists):
+    [{node_id, wrong_key, count}], count descending; only identifier-shaped
+    keys. No read for an empty id list. Never reads evidence_text; [] on a DB
+    error (never raises)."""
     ids = list(dict.fromkeys(n for n in node_ids or [] if n))
     if not ids:
         return []

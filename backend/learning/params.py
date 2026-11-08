@@ -131,8 +131,23 @@ MISCONCEPTION_MIN_ISOMORPHS = 2
 # PKG-10 † (spec §13 A6): spec §3.3 says "wrong with low confidence -> gap" with
 # no cut-point. Student-stated confidence at or below this is "low"; above it
 # and below MISCONCEPTION_CONFIDENCE is "unknown" (re-ask an isomorph). A/B
-# candidate. Unused on the served path until a student confidence field exists.
+# candidate. Read on the served path since spec §13 A127 (the 3-point control).
 GAP_CONFIDENCE_MAX = 0.4
+# † Spec §13 A127: the student's stated confidence — "Guessing" / "Fairly sure"
+# / "Sure" on the loop's check and probe cards and on the review card (never
+# the post-test) — on the 0..1 scale the §3.3 rule reads (Attempt.confidence)
+# and the evidence journal keeps (node_mastery_events.student_confidence). Each
+# label is the midpoint of the rule's band it stands for: "guessing" of
+# [0, GAP_CONFIDENCE_MAX] (a wrong answer → gap), "fairly_sure" of
+# (GAP_CONFIDENCE_MAX, MISCONCEPTION_CONFIDENCE) (→ unknown), "sure" of
+# [MISCONCEPTION_CONFIDENCE, 1] (→ misconception). A skipped control is absent
+# (None), never a default level. The labels are the body models' enum (pinned
+# by tests/test_learning_confidence_resolve.py). A/B candidate.
+STUDENT_CONFIDENCE_LEVELS: dict[str, float] = {
+    "guessing": 0.2,
+    "fairly_sure": 0.55,
+    "sure": 0.85,
+}
 # PKG-10: the longest wrong_key the misconception store keeps and the learner
 # brief renders (an identifier: [a-z0-9][a-z0-9_]*; PKG-09's brief pattern).
 MISCONCEPTION_KEY_MAX_CHARS = 64
@@ -144,9 +159,10 @@ MISCONCEPTION_KEY_MAX_CHARS = 64
 # confrontation marker waits.
 MISCONCEPTION_CONFRONT_MIN_RUNG = 4
 # PKG-10 fix round (F6) †: the learner brief and the session close list an open
-# misconception only when it was seen within this many days. resolve() has no
-# caller yet (PKG-12 / PKG-14), so without a window an old misconception would
-# re-list forever. A/B candidate.
+# misconception only when it was seen within this many days, so one the student
+# never meets again stops re-listing. Spec §13 A127 closes a misconception on a
+# correct unassisted answer to an isomorph (misconceptions.resolve); the window
+# still bounds one with no such answer. A/B candidate.
 MISCONCEPTION_RECENT_DAYS = 30
 # PKG-10 (spec §13 A76) †: a release (a wrong/idk answer, or a worked answer
 # shown) on a concept in ANOTHER session makes the next graded item on that

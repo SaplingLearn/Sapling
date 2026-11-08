@@ -242,6 +242,7 @@ def test_one_matched_probe_answer_is_unknown_and_records_nothing(graded):
         "confront": None,
         "cleared": None,
         "record": None,
+        "resolve": [],  # spec §13 A127: a wrong answer closes nothing
     }
     [attempt] = attempts_of(deps.loop_state)
     assert attempt["wrong_key"] == KEY and attempt["correct"] is False
@@ -501,8 +502,9 @@ def test_a_probe_checkpoint_round_trips_its_diagnosis_and_answer():
     sealed = cp.seal(cp.GradeCheckpoint.model_validate(data))
     assert "private probe answer" not in sealed  # encrypted at rest
     recovered = cp.open_checkpoint(sealed, **bindings(data))
-    assert recovered.continuation["diagnosis"] == _diagnosis()
-    assert recovered.continuation["answer"] == _ANSWER
+    # spec §13 A127's fields read as none on a checkpoint saved without them
+    assert recovered.continuation["diagnosis"] == {**_diagnosis(), "resolve": []}
+    assert recovered.continuation["answer"] == {**_ANSWER, "confidence": None}
 
 
 def test_a_probe_checkpoint_saved_before_a120_still_opens():

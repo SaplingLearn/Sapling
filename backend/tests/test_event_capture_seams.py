@@ -173,6 +173,9 @@ def test_event_taxonomy_is_pinned():
         "learn.probe_done",
         "learn.plan_approved",
         "learn.session_closed",  # PKG-09: the loop session's close (counts/bools only)
+        # spec §13 A127: an open misconception closed by a correct unassisted
+        # isomorph answer. Emit coverage lives in test_learning_confidence_resolve.py.
+        "learn.misconception_resolved",
         "review.session_started",     # PKG-12: a daily review session row (not session.started)
         "review.served",              # PKG-12: one per kind in a built review queue
         "review.graded",              # PKG-12: one per graded review answer
