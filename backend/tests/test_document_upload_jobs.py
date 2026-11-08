@@ -626,7 +626,7 @@ _INLINE_STEPS = [("status", "start"), ("progress", "classify"), ("progress", "cl
 def test_flag_off_stream_is_unchanged_and_never_touches_the_queue():
     a, b, c, d = _route_agent_patches()
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
          patch.object(dj, "stage_and_enqueue", side_effect=AssertionError("staged")), \
          patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
@@ -648,7 +648,7 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
 
     result = _make_orchestrator_result()
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
          patch.object(dj, "sync_via_queue", side_effect=AssertionError("queued")), \
          patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
@@ -675,7 +675,7 @@ def test_flag_off_sync_is_unchanged_and_never_touches_the_queue():
 def test_flag_on_stream_relays_the_worker_and_runs_nothing_inline():
     done = {"id": "up-1", "stage": "done", "progress": _FULL_PROGRESS, "document_id": "doc-7"}
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch("routes.documents._existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", return_value="up-1") as stage, \
@@ -700,7 +700,7 @@ def test_flag_on_stream_relays_the_worker_and_runs_nothing_inline():
 def test_flag_on_stream_runs_inline_when_the_queue_cannot_take_it():
     a, b, c, d = _route_agent_patches()
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", return_value=None), \
          patch("routes.documents.extract_text_from_file", return_value=_text()) as ext, \
@@ -729,7 +729,7 @@ def _sync_post(client):
 def _sync_flag_on(**over):
     base = dict(
         validate=patch("routes.documents._validate_user"),
-        offering=patch("routes.documents.resolve_offering", return_value="off-1"),
+        offering=patch("routes.documents.require_course_enrollment", return_value="off-1"),
         replay=patch("routes.documents._existing_doc_by_request_id", return_value=None),
         flag=patch.object(dj, "flag_on", return_value=True),
         stage=patch.object(dj, "stage_and_enqueue", return_value="up-1"),
@@ -1095,7 +1095,7 @@ def _claiming_stage(*_a, **_k):
 def test_flag_on_stream_records_the_inline_runs_outcome_on_the_row():
     a, b, c, d = _route_agent_patches()
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", side_effect=_claiming_stage), \
          patch.object(dj, "finish_inline") as finish, \
@@ -1114,7 +1114,7 @@ def test_flag_on_stream_records_the_inline_runs_outcome_on_the_row():
 
 def test_flag_on_stream_records_an_inline_failure_with_its_code():
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch("routes.documents._existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", side_effect=_claiming_stage), \
@@ -1128,7 +1128,7 @@ def test_flag_on_stream_records_an_inline_failure_with_its_code():
 def test_flag_on_stream_records_nothing_when_the_worker_ran_it():
     done = {"id": "up-1", "stage": "done", "progress": _FULL_PROGRESS, "document_id": "doc-7"}
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch("routes.documents._existing_doc_by_request_id", return_value=None), \
          patch.object(dj, "flag_on", return_value=True), \
          patch.object(dj, "stage_and_enqueue", return_value="up-1"), \
@@ -1182,7 +1182,7 @@ def test_sync_adopts_a_duplicate_that_saved_first_instead_of_500():
 
     winner = {"id": "doc-w", "file_name": "notes.pdf", "summary": "s", "concept_notes": []}
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
          patch("routes.documents.extract_text_from_file", return_value=_text()), \
          patch("routes.documents._existing_doc_by_request_id", side_effect=[None, winner]), \
@@ -1199,7 +1199,7 @@ def test_sync_still_fails_when_the_insert_fails_and_nothing_was_saved():
     from tests.test_documents_routes import _make_orchestrator_result
 
     with patch("routes.documents._validate_user"), \
-         patch("routes.documents.resolve_offering", return_value="off-1"), \
+         patch("routes.documents.require_course_enrollment", return_value="off-1"), \
          patch.object(dj, "flag_on", return_value=False), \
          patch("routes.documents.extract_text_from_file", return_value=_text()), \
          patch("routes.documents._existing_doc_by_request_id", return_value=None), \
