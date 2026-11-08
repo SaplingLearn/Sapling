@@ -358,7 +358,7 @@ def test_shadow_without_a_subject_runs_as_service_and_reports(wire, keys, monkey
     (_, _, kwargs), = wire.for_table("notes")
     assert "headers" not in kwargs
     assert events[0][0] == "db.unscoped_query" and events[0][1]["table"] == "notes"
-    assert "unscoped query" in caplog.text
+    assert "db_user_scope.divergence event=db.unscoped_query kind=no_subject mode=shadow" in caplog.text
 
 
 def test_enforce_postgrest_403_is_scoped_access_denied_404(wire, real_guard, keys, monkeypatch, events):
@@ -425,7 +425,8 @@ def test_shadow_serves_the_service_answer_and_logs_divergence(
     assert "headers" not in service[2]
     assert scoped[2]["headers"]["apikey"] == ANON
     assert events == [("db.rls_shadow_divergence",
-                       {"table": "notes", "route": "/probe", "service_count": 2, "scoped_count": 1})]
+                       {"table": "notes", "route": "/probe", "kind": "fewer_rows", "method": "GET",
+                        "op": "select", "service_count": 2, "scoped_count": 1})]
     assert "db.rls_shadow_divergence" in caplog.text
 
 

@@ -493,3 +493,124 @@ def errors(
         total=total, limit=limit, offset=offset, errors=items,
         truncated=series_truncated, series=series,
     )
+
+
+# ── db_user_scope rollout report (#115) ──────────────────────────────────────
+#
+# docs/security/db-user-scope-rollout.md: the "read the report" step of the
+# shadow -> enforce ladder. Two views of the same signal: `top` groups the
+# db.* events every worker wrote to the `events` table over the window (the
+# cross-worker, survives-a-deploy view), and `process` is THIS worker's
+# in-process tally since boot (db/scope_report.py), which also carries what
+# the events cannot: shadow-read coverage and the inventory of writes shadow
+# could not verify.
+
+_DB_SCOPE_EVENTS = ("db.rls_shadow_divergence", "db.unscoped_query", "db.rls_denied")
+
+
+class DbScopeWindow(BaseModel):
+    from_: str = Field(serialization_alias="from")
+    to: str
+    hours: int
+
+
+class DbScopeGroup(BaseModel):
+    event: str
+    kind: str
+    mode: str
+    method: str
+    route: str
+    target: str
+    op: str
+    status: str | None = None
+    code: str | None = None
+    count: int
+    users: int
+    first_seen: str | None = None
+    last_seen: str | None = None
+    sample_request_ids: list[str]
+
+
+class DbScopeReport(BaseModel):
+    window: DbScopeWindow
+    total: int
+    groups: int
+    top: list[DbScopeGroup]
+    truncated: bool = False
+    process: dict
+
+
+def _db_scope_key(event_type: str, payload: dict) -> tuple:
+    """The grouping key for one db.* event row. Rows written before the
+    report existed carry no kind/method/op; derive what they imply."""
+    status = payload.get("status", payload.get("error"))
+    kind = payload.get("kind")
+    if not kind:
+        if event_type == "db.unscoped_query":
+            kind = "no_subject"
+        elif event_type == "db.rls_denied":
+            kind = "denied"
+        elif status is not None:
+            kind = "error"
+        else:
+            svc, scp = _as_int(payload.get("service_count")), _as_int(payload.get("scoped_count"))
+            kind = "fewer_rows" if scp < svc else "more_rows" if scp > svc else "different_ids"
+    mode = payload.get("mode") or {"db.rls_shadow_divergence": "shadow",
+                                   "db.rls_denied": "enforce"}.get(event_type, "?")
+    return (
+        event_type, str(kind), str(mode), str(payload.get("method") or "?"),
+        str(payload.get("route") or "?"), str(payload.get("table") or "?"),
+        str(payload.get("op") or "?"),
+        None if status is None else str(status),
+        None if not payload.get("code") else str(payload["code"]),
+    )
+
+
+@router.get("/db-scope", response_model=DbScopeReport)
+def db_scope_report(
+    request: Request,
+    response: Response,
+    hours: int = Query(24, ge=1, le=720),
+    limit: int = Query(50, ge=1, le=500),
+) -> DbScopeReport:
+    """Top `db_user_scope` divergences by route + table over the last `hours`,
+    plus this worker's in-process tally. Ids, counts and codes only."""
+    require_admin(request)
+    response.headers["Cache-Control"] = "private"
+    from db import scope_report
+    from db.connection import pg_quote_value
+
+    now = datetime.now(timezone.utc)
+    from_iso, to_iso = (now - timedelta(hours=hours)).isoformat(), now.isoformat()
+    rows, truncated = _scan_range(
+        "events", "created_at,event_type,user_id,request_id,payload", from_iso, to_iso,
+        extra_filters={"event_type": "in.(" + ",".join(pg_quote_value(e) for e in _DB_SCOPE_EVENTS) + ")"},
+    )
+    groups: dict[tuple, dict] = {}
+    for r in rows:
+        payload = r.get("payload") if isinstance(r.get("payload"), dict) else {}
+        key = _db_scope_key(r.get("event_type") or "?", payload)
+        g = groups.setdefault(key, {"count": 0, "users": set(), "first": None, "last": None,
+                                    "rids": []})
+        g["count"] += 1
+        if r.get("user_id"):
+            g["users"].add(r["user_id"])
+        at = r.get("created_at")
+        if at:
+            g["first"] = at if g["first"] is None or at < g["first"] else g["first"]
+            g["last"] = at if g["last"] is None or at > g["last"] else g["last"]
+        rid = r.get("request_id")
+        if rid and len(g["rids"]) < 3 and rid not in g["rids"]:
+            g["rids"].append(rid)
+    ranked = sorted(groups.items(), key=lambda kv: (-kv[1]["count"], kv[0][4], kv[0][5]))
+    fields = ("event", "kind", "mode", "method", "route", "target", "op", "status", "code")
+    top = [
+        DbScopeGroup(**dict(zip(fields, key)), count=g["count"], users=len(g["users"]),
+                     first_seen=g["first"], last_seen=g["last"], sample_request_ids=g["rids"])
+        for key, g in ranked[:limit]
+    ]
+    return DbScopeReport(
+        window=DbScopeWindow(from_=from_iso, to=to_iso, hours=hours),
+        total=len(rows), groups=len(groups), top=top, truncated=truncated,
+        process=scope_report.snapshot(limit),
+    )

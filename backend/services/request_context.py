@@ -83,12 +83,15 @@ class RequestView:
       drops the scope. A context copied into a task or thread during the
       request therefore never keeps the scope — its headers and session
       cookie — alive after the response.
+    * ``method`` — the HTTP method (a plain string, safe to keep after the
+      request ends); db/scope.py's shadow report (#115) names it.
     """
 
-    __slots__ = ("state", "_scope", "_template")
+    __slots__ = ("state", "method", "_scope", "_template")
 
     def __init__(self, scope: dict) -> None:
         self.state: dict = scope.setdefault("state", {})
+        self.method: str | None = scope.get("method")
         self._scope: dict | None = scope
         self._template: str | None = None
 
@@ -178,6 +181,12 @@ def current_route_template() -> str | None:
     nothing matched yet)."""
     view = _REQUEST_CTX.get()
     return view.route_template() if view is not None else None
+
+
+def current_method() -> str | None:
+    """The current request's HTTP method, or None outside a request."""
+    view = _REQUEST_CTX.get()
+    return view.method if view is not None else None
 
 
 def current_session_user() -> str | None:
