@@ -38,6 +38,7 @@ const hasDueDate = (a: Assignment): a is DatedAssignment => !!a.due_date;
 // The desktop greeting's line box. The header actions centre on this line,
 // so both read from one place.
 const HERO_PAD_TOP = 6;
+const HERO_PAD_BOTTOM = 18;
 const HERO_FONT = 42;
 const HERO_LINE_HEIGHT = 1.15;
 
@@ -575,7 +576,7 @@ export function Dashboard() {
     <div
       style={{
         textAlign: useLegacyPanels && !isMobile ? "center" : "left",
-        padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 18px`,
+        padding: isMobile ? "14px 4px 14px" : `${HERO_PAD_TOP}px 0 ${HERO_PAD_BOTTOM}px`,
       }}
     >
       <h1
@@ -895,14 +896,14 @@ export function Dashboard() {
         // row, so the graph and the right column start on the same line and
         // stretch to the same bottom edge.
         <div style={{ padding: "18px 32px 24px", display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "stretch", justifyContent: "space-between", gap: 16 }}>
             <div style={{ minWidth: 0 }}>{heroBlock}</div>
-            {/* Same box as the greeting's first line, so the buttons centre on it. */}
+            {/* Bottom-aligned with the quote: both sides of the header end on
+                one line, the same distance above the cards. */}
             <div
               style={{
-                paddingTop: HERO_PAD_TOP,
-                height: HERO_PAD_TOP + HERO_FONT * HERO_LINE_HEIGHT,
-                display: "flex", alignItems: "center", flexShrink: 0,
+                paddingBottom: HERO_PAD_BOTTOM,
+                display: "flex", alignItems: "flex-end", flexShrink: 0,
               }}
             >
               <DashboardActions navigate={(href) => router.push(href)} />
