@@ -21,6 +21,8 @@ ENCRYPTED = (
     "options_json",
     "correct_option",
     "canonical_answer",
+    # spec §13 A140: a varied draft's surface context label (item content)
+    "surface_context",
 )
 
 
@@ -35,6 +37,8 @@ def test_the_list_matches_what_the_service_encrypts():
     src = (REPO / "backend" / "services" / "check_item_service.py").read_text()
     body = src.split("def _build_row(", 1)[1].split("\ndef ", 1)[0]
     direct = set(re.findall(r'"(\w+)": encrypt_(?:if_present|json)\(', body))
+    # A140: the surface context is set on the row after it is built (varied runs only)
+    direct |= set(re.findall(r'row\["(\w+)"\] = encrypt_(?:if_present|json)\(', body))
     # options_json / correct_option are encrypted into locals first (mc_reason only)
     assert re.search(r"options = encrypt_json\(", body)
     assert re.search(r"correct_option = encrypt_if_present\(", body)

@@ -228,6 +228,9 @@ _CIPHERTEXT_MANIFEST: tuple[tuple[str, str, str], ...] = (
     ("check_items", "id", "options_json"),
     ("check_items", "id", "correct_option"),
     ("check_items", "id", "canonical_answer"),
+    # spec §13 A140: the varied drafter's surface context label names the
+    # item's scenario (item content); its representation is a plaintext enum
+    ("check_items", "id", "surface_context"),
     # Learning loop PKG-09: the session close (encrypted JSON) and the learner
     # brief (encrypted text; "" is still a ciphertext, so null = not built yet).
     ("sessions", "id", "close_json"),
