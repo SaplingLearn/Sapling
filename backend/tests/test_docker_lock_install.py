@@ -230,6 +230,38 @@ def _install_matching(predicate):
 _DOCKERFILE = read("Dockerfile")
 
 
+def _stages(text: str) -> dict[str, str]:
+    """Each named build stage's text, from its FROM to the next (#116).
+
+    The image is multi-stage (api / heavy / worker / full); the ordering rules
+    below hold WITHIN the stage that installs torch, not across the file, where
+    the api stage's lock COPY legitimately comes first. Lines before the first
+    FROM (the global ARG) belong to no stage.
+    """
+    out: dict[str, str] = {}
+    name, buf = None, []
+    for line in text.splitlines(keepends=True):
+        m = re.match(r"FROM\s+(\S+)(?:\s+AS\s+(\S+))?", line.strip(), re.IGNORECASE)
+        if m:
+            if name is not None:
+                out[name] = "".join(buf)
+            name, buf = (m.group(2) or f"<final:{m.group(1)}>"), []
+        buf.append(line)
+    if name is not None:
+        out[name] = "".join(buf)
+    return out
+
+
+_STAGES = _stages(_DOCKERFILE)
+
+
+def _torch_stage() -> str:
+    """The one stage that installs torch from the CPU index."""
+    found = [t for t in _STAGES.values() if any(_is_cpu_torch_step(a) for a in _installs(t))]
+    assert len(found) == 1, "exactly one stage must install CPU torch"
+    return found[0]
+
+
 # --- Dockerfile wiring -------------------------------------------------------
 
 
@@ -279,7 +311,7 @@ def test_constraints_pin_everything_the_cpu_index_step_installed():
     """Without the pins, the constrained install may replace the CPU-index builds
     with PyPI's (CUDA on Linux). #700 was torchvision slipping through that way.
     `pin` takes no names: it reads the step's report, so no list is repeated."""
-    cmds = _run_commands(_DOCKERFILE)
+    cmds = _run_commands(_torch_stage())
     derive = _positions(
         cmds,
         lambda c: c == ["python", _SCRIPT, "constraints", "requirements.lock", ">", _CONSTRAINTS],
@@ -295,12 +327,16 @@ def test_constraints_pin_everything_the_cpu_index_step_installed():
 
 
 def test_verify_and_pip_check_run_after_the_last_install():
-    cmds = _run_commands(_DOCKERFILE)
-    last_install = max(_positions(cmds, lambda c: _pip_install_args(c) is not None))
-    verify = _positions(cmds, lambda c: c == ["python", _SCRIPT, "verify", "requirements.lock"])
-    pip_check = _positions(cmds, lambda c: c == ["pip", "check"])
-    assert verify and verify[-1] > last_install
-    assert pip_check and pip_check[-1] > last_install
+    """In EVERY stage that installs anything (api and heavy)."""
+    installing = [t for t in _STAGES.values() if _installs(t)]
+    assert len(installing) >= 2, "the api and heavy stages both install"
+    for text in installing:
+        cmds = _run_commands(text)
+        last_install = max(_positions(cmds, lambda c: _pip_install_args(c) is not None))
+        verify = _positions(cmds, lambda c: c == ["python", _SCRIPT, "verify", "requirements.lock"])
+        pip_check = _positions(cmds, lambda c: c == ["pip", "check"])
+        assert verify and verify[-1] > last_install
+        assert pip_check and pip_check[-1] > last_install
 
 
 def test_cpu_torch_smoke_runs_after_the_last_install():
@@ -315,7 +351,7 @@ def test_cpu_torch_smoke_runs_after_the_last_install():
 
 def test_torch_layer_is_cached_ahead_of_the_lock():
     """A lock bump must not re-download torch, so its RUN comes before the lock COPY."""
-    instrs = _instructions(_DOCKERFILE)
+    instrs = _instructions(_torch_stage())
 
     def first(predicate):
         return next(i for i, (instr, cmds) in enumerate(instrs) if predicate(instr, cmds))
@@ -333,13 +369,53 @@ def test_torch_layer_is_cached_ahead_of_the_lock():
     assert script_copy < constrained_run
 
 
+# --- the image split (#116) ----------------------------------------------------
+
+
+def test_the_default_image_is_still_the_full_one():
+    """With no --target and no build argument, Railway keeps building what it
+    always has until someone opts in: the LAST stage resolves the
+    SAPLING_IMAGE_TARGET argument, whose default is `full`."""
+    assert re.search(r"^ARG SAPLING_IMAGE_TARGET=full$", _DOCKERFILE, re.MULTILINE)
+    last_from = re.findall(r"^FROM\s+(.+)$", _DOCKERFILE, re.MULTILINE)[-1].strip()
+    assert last_from == "${SAPLING_IMAGE_TARGET}"
+    assert {"api", "heavy", "worker", "full"} <= set(_STAGES)
+    assert re.search(r"^FROM heavy AS full$", _STAGES["full"], re.MULTILINE)
+    assert re.search(r"^FROM heavy AS worker$", _STAGES["worker"], re.MULTILINE)
+    assert 'CMD ["uvicorn", "main:app"' in _STAGES["full"]
+    assert 'CMD ["python", "-m", "worker"]' in _STAGES["worker"]
+
+
+def test_the_api_image_has_no_torch_ocr_or_chromium():
+    """docs/architecture-hardening-plan.md phase 2: "API image has no
+    torch/Chromium". The api stage installs requirements.txt under the lock
+    and nothing else."""
+    api = _STAGES["api"]
+    assert re.match(r"FROM python:", api), "the api stage must not build on heavy"
+    installs = _installs(api)
+    assert installs and all(_is_constrained(a) for a in installs)
+    assert not any(_is_cpu_torch_step(a) for a in installs)
+    assert all("requirements-worker.txt" not in a for a in installs)
+    assert "playwright install" not in api
+    assert "tesseract" not in api
+    assert 'CMD ["uvicorn", "main:app"' in api
+
+
+def test_the_heavy_image_installs_the_worker_extras_under_the_lock():
+    heavy = _STAGES["heavy"]
+    worker_installs = [a for a in _installs(heavy) if "requirements-worker.txt" in a]
+    assert worker_installs and all(_is_constrained(a) and "requirements.txt" in a
+                                   for a in worker_installs)
+    assert "playwright install --with-deps chromium" in re.sub(r"\\\n\s*", "", heavy)
+
+
 def test_image_python_matches_the_lock_and_ci():
     """The lock is compiled for one Python and applied as hard constraints; all three must agree."""
-    image = re.search(r"^FROM python:(\d+\.\d+)", _DOCKERFILE, re.MULTILINE).group(1)
+    images = re.findall(r"^FROM python:(\d+\.\d+)", _DOCKERFILE, re.MULTILINE)
     lock = re.search(r"--python-version (\d+\.\d+)", read("requirements.lock")).group(1)
     ci = re.findall(r"python-version:\s*[\"']?(\d+\.\d+)", read("../.github/workflows/ci.yml"))
     assert ci and set(ci) == {lock}, (ci, lock)
-    assert image == lock
+    assert images and set(images) == {lock}, (images, lock)
 
 
 def test_no_ci_lane_installs_the_unlocked_requirements():

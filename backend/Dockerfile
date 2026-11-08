@@ -1,7 +1,50 @@
 # Keep in step with requirements.lock's `--python-version` and ci.yml's
 # python-version: the lock is compiled for this Python and applied here as hard
 # constraints (tests/test_docker_lock_install.py checks all three agree).
-FROM python:3.13-slim
+#
+# Three images from one file (#116, docs/architecture-hardening-plan.md phase 2):
+#
+#   api     FastAPI only. requirements.txt under the lock: no torch, Docling,
+#           transformers or Chromium (tests/test_api_image_imports.py proves the
+#           app imports and starts without them).
+#   worker  `python -m worker`: the api's packages plus requirements-worker.txt
+#           (the OCR stack, CPU torch) and Chromium for BU SSO.
+#   full    the worker image with the API's command: what Railway has always
+#           built, and STILL THE DEFAULT. The api image is only safe to serve
+#           once nothing on the API's request path needs OCR or Chromium, i.e.
+#           `jobs_queue` is on for everyone and the upload pipeline runs in the
+#           worker (docs/deploy/railway.md, "Cut-over order").
+#
+# Choosing one: `docker build --target api|worker|full backend`, or (Railway,
+# which has no build-target setting) the SAPLING_IMAGE_TARGET build argument,
+# which the last stage below resolves. Railway passes a service variable of that
+# name to the build because it is declared as an ARG here. Unset = `full`.
+ARG SAPLING_IMAGE_TARGET=full
+
+# ── api ──────────────────────────────────────────────────────────────────────
+# The lock applied as constraints, exactly as in the heavy stage below (its
+# comment explains why), minus the CPU torch step and its pins: nothing here
+# installs torch, so there is nothing to keep off PyPI's CUDA builds.
+FROM python:3.13-slim AS api
+
+WORKDIR /app
+
+COPY requirements.txt requirements.lock ./
+COPY scripts/lock_constraints.py scripts/lock_constraints.py
+RUN python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt \
+    && pip install --no-cache-dir -c /tmp/lock-constraints.txt -r requirements.txt \
+    && python scripts/lock_constraints.py verify requirements.lock \
+    && pip check \
+    && rm /tmp/lock-constraints.txt
+
+COPY . .
+
+EXPOSE 5000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
+
+# ── heavy: everything the worker needs (base of `worker` and `full`) ─────────
+FROM python:3.13-slim AS heavy
 
 # tesseract needed by pytesseract (legacy OCR fallback);
 # libgl1 + libglib2.0-0 needed by docling/opencv for layout-aware extraction
@@ -15,11 +58,11 @@ WORKDIR /app
 
 # Dependencies (#694). CI and the E2E lane install requirements.lock with
 # --require-hashes; this image cannot, because the lock deliberately leaves out
-# the OCR stack (torch/docling/transformers) and --require-hashes is
-# all-or-nothing. Installing the bare requirements.txt let every transitive
-# dependency float: genai-prices 0.1.x reached the deployed image while CI
-# pinned 0.0.66, and every llm_usage row recorded 0 tokens for two months
-# (#689). So the lock is applied as CONSTRAINTS instead:
+# the OCR stack (torch/docling/transformers, requirements-worker.txt) and
+# --require-hashes is all-or-nothing. Installing the bare requirements let every
+# transitive dependency float: genai-prices 0.1.x reached the deployed image
+# while CI pinned 0.0.66, and every llm_usage row recorded 0 tokens for two
+# months (#689). So the lock is applied as CONSTRAINTS instead:
 #
 #   1. torch AND torchvision from the CPU-only wheel index, so CUDA stays out
 #      of the image. torchvision is not a direct requirement, but docling
@@ -42,12 +85,13 @@ WORKDIR /app
 #      any of them with a PyPI (CUDA) build. The lock never pins those names
 #      (tests/dependency_manifest.py OCR_STACK); if it ever did at another
 #      version, pip's resolver fails step 3 rather than picking one.
-#   3. requirements.txt under `-c`: every package the lock pins resolves to the
-#      locked version or the build FAILS. Packages the lock does not list
-#      install unconstrained: the OCR stack itself AND its own dependencies
-#      that nothing else pulls in (numpy, scipy, huggingface-hub, tokenizers,
-#      safetensors, opencv, ...). Those still float, so for the OCR path this
-#      image is NOT exactly what CI tests; CI does not install the OCR stack.
+#   3. requirements.txt + requirements-worker.txt under `-c`: every package the
+#      lock pins resolves to the locked version or the build FAILS. Packages
+#      the lock does not list install unconstrained: the OCR stack itself AND
+#      its own dependencies that nothing else pulls in (numpy, scipy,
+#      huggingface-hub, tokenizers, safetensors, opencv, ...). Those still
+#      float, so for the OCR path this image is NOT exactly what CI tests; CI
+#      does not install the OCR stack.
 #   4. `verify` fails the build if any installed package differs from its lock
 #      pin or any nvidia-*/cuda-* distribution is installed. `cpu-torch` fails
 #      it unless torch.version.cuda is None, torch and everything that
@@ -59,11 +103,11 @@ WORKDIR /app
 RUN pip install --no-cache-dir --no-deps --index-url https://download.pytorch.org/whl/cpu \
     --report /tmp/cpu-index-report.json "torch>=2.5,<3" torchvision
 
-COPY requirements.txt requirements.lock ./
+COPY requirements.txt requirements-worker.txt requirements.lock ./
 COPY scripts/lock_constraints.py scripts/lock_constraints.py
 RUN python scripts/lock_constraints.py constraints requirements.lock > /tmp/lock-constraints.txt \
     && python scripts/lock_constraints.py pin >> /tmp/lock-constraints.txt \
-    && pip install --no-cache-dir -c /tmp/lock-constraints.txt -r requirements.txt \
+    && pip install --no-cache-dir -c /tmp/lock-constraints.txt -r requirements.txt -r requirements-worker.txt \
     && python scripts/lock_constraints.py verify requirements.lock \
     && python scripts/lock_constraints.py cpu-torch \
     && pip check \
@@ -77,4 +121,17 @@ COPY . .
 
 EXPOSE 5000
 
+# ── worker ───────────────────────────────────────────────────────────────────
+# No port, no healthcheck: it serves nothing (worker/__main__.py).
+FROM heavy AS worker
+
+CMD ["python", "-m", "worker"]
+
+# ── full: today's image (the API's command on the heavy image) ───────────────
+FROM heavy AS full
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
+
+# ── the image a plain `docker build` (and Railway) produces ─────────────────
+# Must stay LAST: with no --target, the last stage is the result.
+FROM ${SAPLING_IMAGE_TARGET}
