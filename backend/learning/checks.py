@@ -61,6 +61,7 @@ from learning.params import (
     POSTTEST_RESERVE_FORMATS,
     POSTTEST_RESERVE_MIN_LEFT,
     POSTTEST_SKIP_REASONS,
+    PRETEST_FORM_MATCHES,
 )
 
 _SEP = "\x1f"  # unit separator: never appears in normalized text
@@ -1814,6 +1815,47 @@ def pretest_match(item, pretest) -> str:
         return "no_pretest"
     same_d, same_f = item.difficulty == pretest.difficulty, item.format == pretest.format
     return "exact" if same_d and same_f else "difficulty" if same_d else "format" if same_f else "none"
+
+
+def pretest_form(items: Sequence[CheckItem], excluded: Iterable[str] = ()) -> CheckItem | None:
+    """The concept's matched pretest form (spec §13 A130, flag
+    `probe_matched_pretest`): the item the probe asks FIRST on a concept the
+    student has no graded evidence on, so that the answer — the concept's
+    anchor, its A112 pretest — is parallel to the post-test reserves the
+    delayed outcome will be measured on (A126).
+
+    Among the servable items (A34, A124) that are neither a reserve
+    (`posttest_reserve_hashes`, over the whole bank) nor in `excluded` (what
+    the student must not be asked: seen, revealed, reported, asked, withdrawn):
+    the best by its matches to the reserves (`pretest_match`), compared as
+    their sorted ranks — so a form exact to one reserve and difficulty-matched
+    to the other comes before one difficulty-matched to both — kept only when
+    its best match is in PRETEST_FORM_MATCHES (the same format and difficulty,
+    else the same difficulty; a format-only or no match is no parallel form);
+    then A129's serve_quality; then the reserves' format order
+    (POSTTEST_RESERVE_FORMATS: the strong channels first); then the lowest
+    hash. None when the bank has no reserve or no parallel form is left: the
+    probe then keeps its own first-item rule. Never a reserve: a reserve asked
+    now would be no fresh outcome item later."""
+    reserves = posttest_reserve_hashes(items)
+    if not reserves:
+        return None
+    by_hash = {i.question_hash: i for i in items}
+    protected = [by_hash[h] for h in reserves]
+    skip = set(excluded) | set(reserves)
+    acceptable = max(_MATCH_RANK[m] for m in PRETEST_FORM_MATCHES)
+    best: tuple | None = None
+    chosen: CheckItem | None = None
+    for item in items:
+        if item.question_hash in skip or not is_servable(item):
+            continue
+        matches = tuple(sorted(_MATCH_RANK[pretest_match(r, item)] for r in protected))
+        if matches[0] > acceptable:
+            continue
+        key = (matches, *serve_quality(item), _reserve_format_rank(item.format), item.question_hash)
+        if best is None or key < best:
+            best, chosen = key, item
+    return chosen
 
 
 class PosttestChoice(NamedTuple):

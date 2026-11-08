@@ -103,6 +103,7 @@ from learning.checks import (
     is_servable,
     posttest_reserves,
     posttest_skip_reason,
+    pretest_form,
     pretest_match,
     select_item,
     serve_quality,
@@ -6701,6 +6702,32 @@ def _plan_prereq_edges(user_id: str, node_ids: list[str]) -> list[tuple[str, str
     return out
 
 
+#: Spec §13 A130: the matched pretest probe start (services/feature_flags.py).
+PROBE_MATCHED_PRETEST_FLAG = "probe_matched_pretest"
+
+
+def _unanchored_skills(user_id: str, skills: list[str], history: list) -> frozenset[str]:
+    """Spec §13 A130: the probe's skills whose next graded answer is their
+    pretest — no graded answer in this session's probe history
+    (`probe.graded_strands`) and no anchor in the evidence journal: the
+    `posttest_anchors` SQL function, the one anchor rule the post-test
+    windows, the due read and evidence_spans share (a void row anchors
+    nothing). The anchors are read only when some skill could still be
+    steered. A failed read steers nothing this time — a WARNING, and the
+    probe keeps its own first-item rule (the pose later records how well the
+    outcome item matched whatever pretest was asked)."""
+    open_skills = [n for n in skills if n not in probe_policy.graded_strands(history)]
+    if not open_skills:
+        return frozenset()
+    try:
+        rows, _ = posttest_anchors(user_id=user_id)
+    except Exception as exc:
+        logger.warning("probe: anchors unread (%s); no matched pretest this time", type(exc).__name__)
+        return frozenset()
+    anchored = {row.get("node_id") for row in rows}
+    return frozenset(n for n in open_skills if n not in anchored)
+
+
 def _probe_course_has_items(course_id: str) -> bool:
     """A23: one `limit=1` read; False for a session with no course."""
     return bool(course_id) and course_has_items(course_id)
@@ -6920,6 +6947,15 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         for qh in posttest_reserves([it for it in items if it.node_id == n])
     }
     by_hash = {it.question_hash: it for it in items}
+    # spec §13 A130 (flag probe_matched_pretest, off by default): the skills
+    # whose next graded answer is their pretest — no graded probe answer in
+    # this session and no anchor in the journal — start on a form parallel to
+    # their post-test reserves. Off: no anchors read, nothing steered.
+    unanchored = (
+        _unanchored_skills(body.user_id, skills, _probe_doc(dict(state)).get("history") or [])
+        if items and flag_on(PROBE_MATCHED_PRETEST_FLAG, body.user_id)
+        else frozenset()
+    )
     now = _now_s()
     out: dict = {}
 
@@ -6943,14 +6979,27 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
         practice = pr.setdefault("practice_reserves", {})
         asked = {h.get("question_hash") for h in pr["history"]}
         current_hash = cur.get("question_hash") if isinstance(cur, dict) else None
+        forms: dict[str, str] = {}  # A130: node → its matched pretest form
         for node in skills:
             eligible = [it.question_hash for it in items if it.node_id == node
                         and it.question_hash not in reserves | revealed | seen | asked | set(pr["unavailable"])
                         and it.question_hash != current_hash and is_servable(it)]
+            # A130: what a pretest form may not be (the reserves are its own rule)
+            spent = revealed | seen | asked | set(pr["unavailable"]) | ({current_hash} - {None})
+            bank = [it for it in items if it.node_id == node] if node in unanchored else []
+            best = pretest_form(bank, spent) if bank else None
             if practice.get(node) not in eligible:
                 practice.pop(node, None)
-                if eligible:
-                    practice[node] = max(eligible)
+                # A130: teaching keeps another fresh item when there is one, so
+                # the probe can ask the best form; with only the form fresh,
+                # teaching keeps it (the reserve predates the flag)
+                spare = [qh for qh in eligible if best is None or qh != best.question_hash] or eligible
+                if spare:
+                    practice[node] = max(spare)
+            if bank:
+                form = pretest_form(bank, spent | {practice.get(node)} - {None})
+                if form is not None:
+                    forms[node] = form.question_hash
         practice_hashes = set(practice.values())
         pr["available_difficulties"] = {
             n: sorted({it.difficulty for it in items if it.node_id == n
@@ -6989,6 +7038,8 @@ def probe_next(body: ProbeNextBody, request: Request) -> dict:
                 channel_for_format=CHANNEL_FOR_FORMAT,
                 asked_per_node=per_node,
                 history=pr["history"],
+                # A130: only with a form to ask, so the flag-off call is the one before it
+                **({"pretest_forms": forms} if forms else {}),
             )
 
         item = pick(seen) or pick(set())  # seen items only when nothing unseen is left

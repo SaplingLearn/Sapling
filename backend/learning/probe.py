@@ -138,6 +138,18 @@ def independent_observations(history: Sequence[ProbeObservation]) -> list[ProbeO
     return independent
 
 
+def graded_strands(history: Sequence[ProbeObservation]) -> frozenset[str]:
+    """The strands (node ids) with at least one GRADED observation in the
+    history — a recorded outcome, so evidence the concept is anchored on (an
+    unavailable, refused or ungraded answer wrote none). Spec §13 A130: such a
+    strand's next item is no pretest, so it is never steered."""
+    return frozenset(
+        h["node_id"]
+        for h in history
+        if isinstance(h, Mapping) and isinstance(h.get("node_id"), str) and _graded_outcome(h) is not None
+    )
+
+
 def _by_node(history: Sequence[ProbeObservation]) -> dict[str, list[ProbeObservation]]:
     grouped: dict[str, list[ProbeObservation]] = defaultdict(list)
     for observation in history:
@@ -222,6 +234,7 @@ def next_probe_item(
     channel_for_format: Mapping[str, str],
     asked_per_node: Mapping[str, int] | None = None,
     history: Sequence[ProbeObservation] | None = None,
+    pretest_forms: Mapping[str, str] | None = None,
 ) -> ProbeItem | None:
     """Pick a novel item fairly across eligible, unfinished skill strands.
 
@@ -232,6 +245,14 @@ def next_probe_item(
     Pass all eligible items, including asked ones. Explicit observation counts
     include withdrawn items; history/counts can only increase fatigue counts.
     Old callers without history retain the starting-item heuristic and caps.
+
+    `pretest_forms` (spec §13 A130, flag `probe_matched_pretest`; None = off):
+    node → the question hash of its matched pretest form, for the concepts the
+    caller found no graded evidence on. While the chosen strand has no graded
+    observation in `history` either, its form — when it is still a candidate —
+    replaces the belief-band heuristic for that one item: the answer becomes
+    the concept's anchor, its pretest. Strand fairness, the caps and every
+    exclusion stand; a strand with a graded answer is never steered.
     """
     history = history or []
     asked = set(asked_hashes) | {
@@ -272,6 +293,13 @@ def next_probe_item(
 
     # Choose the strand before comparing different kinds of adaptive keys.
     node_id = min(candidates, key=lambda n: (per_node[n], n))
+    form = (pretest_forms or {}).get(node_id)
+    if form is not None and node_id not in graded_strands(by_node[node_id]):
+        # A130: the concept's first graded answer is its pretest (the A112
+        # anchor) — ask the form parallel to its post-test reserves
+        chosen = next((it for it in candidates[node_id] if it.question_hash == form), None)
+        if chosen is not None:
+            return chosen
     correct, incorrect = _evidence(independent_by_node[node_id])
     # Selection may avoid contaminated shapes using assisted misses too;
     # _evidence above still excludes them from all diagnostic claims.

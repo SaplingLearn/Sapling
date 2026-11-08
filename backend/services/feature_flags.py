@@ -97,6 +97,18 @@ REGISTRY: dict[str, FlagDef] = {f.key: f for f in (
             "Show students a 'retention check due' badge on Study and the Dashboard "
             "when a delayed post-test window is open with an item to pose (A126).",
             True),
+    # Learning loop spec §13 A130: the matched pretest probe start
+    # (checks.pretest_form, read by routes/learn_loop.py::probe_next). Server-
+    # only: the probe route picks the item. It changes the measurement
+    # protocol — which item is each new concept's pretest — so, like
+    # retention_due_badge, it is switched on deliberately at a trial boundary,
+    # never by a deploy.
+    FlagDef("probe_matched_pretest", ("off", "on"),
+            "The probe asks a concept's first question, when the student has no graded "
+            "answer on it yet, in a form parallel to its delayed post-test items (same "
+            "format and difficulty, else the same difficulty; A130), so pre/post pairs "
+            "are matched. Changes the measurement protocol: switch it on at a trial "
+            "boundary. Off: the probe's choice is unchanged.", False),
     # Learning loop spec §13 A118: upload prerequisite edges
     # (services/concept_prereqs.py). Resolved ONCE per upload, for the
     # uploading student, by upload_prereqs_on; that one answer picks the

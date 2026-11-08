@@ -580,6 +580,14 @@ POSTTEST_ITEM_MATCHES = ("exact", "difficulty", "format", "none", "no_pretest")
 # Where the posed item came from (posttest_poses.item_source): one of the
 # concept's protected reserves, or a fresh unprotected item (a fallback).
 POSTTEST_ITEM_SOURCES = ("reserve", "fallback")
+# Spec §13 A130 (flag `probe_matched_pretest`): the POSTTEST_ITEM_MATCHES levels
+# at which a non-reserve item is a PARALLEL pretest form of a concept's post-test
+# reserves (checks.pretest_form) — the same format and difficulty, else the same
+# difficulty in another format (A126's second level: the cognitive demand
+# matched). The drafter's bank holds one item per format × difficulty and the
+# reserves take theirs, so an exact form exists only where a cell holds a
+# duplicate; a format-only or no match is no parallel form at all.
+PRETEST_FORM_MATCHES = ("exact", "difficulty")
 # † the formats the reserves are drawn in, at the reserve difficulty
 # (CHECK_ITEM_DIFFICULTIES[1]), in order: the two strong channels first (spec
 # §3.1: free_response and mc_reasoned), selected-response second — the audit's
