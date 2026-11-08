@@ -12,6 +12,8 @@ Evaluators check the contracts in agents/concept_extraction.py:
   page numbers, chapter headers) — the system prompt forbids these.
 - Names read as Title Case noun phrases (soft signal; partial credit).
 - The list is ordered by importance descending.
+- Spec §13 A118: the share of the prerequisite relations the code-side
+  validator keeps (services/concept_prereqs.py::resolve_prerequisites).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from agents.concept_extraction import ConceptList, concept_extraction_agent
+from services.concept_prereqs import resolve_prerequisites
 from _replay import run_with_cassette  # noqa: E402  (sibling, sys.path-injected)
 
 
@@ -100,6 +103,27 @@ class OrderedByImportanceEvaluator(Evaluator[str, ConceptList]):
             if cur > prev:  # strict descending allowing equals
                 return 0.0
         return 1.0
+
+
+@dataclass
+class PrerequisitesKeptEvaluator(Evaluator[str, ConceptList]):
+    """Spec §13 A118: the share of the model's prerequisite relations that
+    resolve_prerequisites keeps — every endpoint one of the case's own concepts
+    (these cases pass no course context), no self-loop, repeat, cycle or
+    implied shortcut. Vacuously 1.0 for a case with no relations, which is
+    every cassette recorded before A118: re-record on the Claude slot before
+    upload_prereq_edges goes beyond staff, and this measures the relations."""
+
+    def evaluate(self, ctx: EvaluatorContext[str, ConceptList]) -> float:
+        relations = [(r.prerequisite, r.dependent) for r in ctx.output.prerequisites]
+        if not relations:
+            return 1.0
+        kept = resolve_prerequisites(
+            relations,
+            document_concepts=[(c.name, c.importance) for c in ctx.output.concepts],
+            course_concepts=[c.name for c in ctx.output.concepts],
+        )
+        return len(kept.edges) / len(relations)
 
 
 CASES: list[Case[str, None]] = [
@@ -328,6 +352,7 @@ def make_dataset() -> Dataset[str, None]:
             NoAdministrativeNamesEvaluator(),
             AllNamesTitleCaseEvaluator(),
             OrderedByImportanceEvaluator(),
+            PrerequisitesKeptEvaluator(),
         ],
     )
 
