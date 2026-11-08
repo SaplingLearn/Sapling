@@ -3165,10 +3165,15 @@ def _apply_band_control(state: dict, entry: dict) -> bool:
     move = policy.cursor_move(action, repair_available=available)
     if move is policy.CursorMove.STAY:
         return False
+    # spec §13 A121 × A122: every move records why the cursor moved
+    # (mark_cursor_reason, read by plan_focus); a plan-order advance clears it
+    wheelspin = action is policy.BandAction.WHEELSPIN
     if move is policy.CursorMove.ADVANCE:
-        _advance_cursor(state)
+        if _advance_cursor(state) and wheelspin:
+            mark_cursor_reason(state, "wheelspin_moved")  # moved on, no prerequisite to repair
     else:
         _repair_cursor(state, prereq, action, replace=move is policy.CursorMove.REPAIR_REPLACE)
+        mark_cursor_reason(state, "wheelspin_moved" if wheelspin else "prerequisite_repair")
     return True
 
 
@@ -3200,11 +3205,14 @@ def _worked_example_shown(state: dict, node_id: str) -> bool:
 
 def mark_cursor_reason(state: dict, reason: str) -> None:
     """THE HOOK for a cursor move that is not plan order (spec §13 A121 × A122).
-    A122's prerequisite-repair and wheelspin moves are not on this base; when
-    they land, each calls this right after it moves `plan.cursor` / `concept`,
-    with "prerequisite_repair" or "wheelspin_moved", so the v2 tutor's teach
-    turns say why the plan is on the new concept (`plan_focus`). The next
-    plan-order advance (`_advance_cursor`) clears it."""
+    A122's band control calls it right after it moves `plan.cursor` / `concept`
+    (`_apply_band_control`): "prerequisite_repair" after a repair that comes
+    back (EASIER_CHECK_PREREQS), "wheelspin_moved" after wheel-spin's move — a
+    repair in the concept's place, or moving on when there is none — so the v2
+    tutor's teach turns say why the plan is on the new concept (`plan_focus`).
+    The next plan-order advance (`_advance_cursor`) clears it. PKG-10's isomorph
+    re-ask moves no cursor: plan_focus reads it off the attempt log, exactly
+    while the re-ask is pending."""
     if reason not in _MOVE_REASONS:
         raise ValueError(f"not a cursor move reason: {reason!r} (expected one of {_MOVE_REASONS})")
     plan = state.get("plan")

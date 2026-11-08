@@ -642,3 +642,77 @@ def test_upload_prerequisite_edges_feed_band_controls_prerequisite_status():
     with patch("routes.learn_loop._prerequisite_edges", return_value=[]):
         none = learn_loop._prerequisites("u1", "node-1")
         assert policy.prerequisite_status(none) is policy.PrerequisiteStatus.UNKNOWN
+
+
+# ── A121 × A122: every cursor move says why the plan is on its concept ──────
+
+_FOCUS_NAMES = {"node-0": "Load Factor", "node-1": "Hash Tables", "node-2": "Open Addressing"}
+
+
+def _v2_teach_message(seams) -> str:
+    """The next teach turn's model message with `loop_tutor_v2` on."""
+    from tests.test_learning_turn_template import _chat, _names
+
+    seams.v2.return_value = True
+    with _names(_FOCUS_NAMES):
+        _, seen = _chat()
+    return seen["msg"]
+
+
+@pytest.mark.parametrize(
+    "window,reads,edges,correct,concept,reason",
+    [
+        ([MISS], dict(p=0.4, prereqs={"node-0": 0.2}), [("node-0", "node-1")], False,
+         "node-0", "prerequisite_repair"),
+        ([HIT, MISS] * 5, dict(p=0.3, opps=10, streak=2, prereqs={"node-0": 0.25}),
+         [("node-0", "node-1")], False, "node-0", "wheelspin_moved"),
+        ([HIT, MISS] * 5, dict(p=0.3, opps=10, streak=2), [], False, "node-2", "wheelspin_moved"),
+        ([STEADY] * 16, dict(p=0.97, opps=16, streak=16), [], True, "node-2", "plan_order"),
+    ],
+    ids=["repair-returns", "wheelspin-repairs", "wheelspin-moves-on", "stop-practice"],
+)
+def test_every_band_control_move_records_why_the_cursor_moved(
+    loop, window, reads, edges, correct, concept, reason
+):
+    """Spec §13 A121 × A122: each band-control cursor move records its reason
+    with `mark_cursor_reason` right after it moves the cursor — a repair that
+    comes back "prerequisite_repair"; wheel-spin's move, a repair in the
+    concept's place or moving on, "wheelspin_moved"; stop practice is plan
+    order (`_advance_cursor` clears the reason) — so plan_focus reports it, and
+    with `loop_tutor_v2` on the next teach turn names the new concept and why."""
+    from agents.loop_tutor import plan_focus_block, plan_focus_line
+    from routes.learn_loop import plan_focus
+
+    _learner_reads(loop, **reads)
+    _answer(loop, window, correct=correct, edges=edges)
+    assert plan_focus(loop.store["doc"]) == (concept, reason)
+    msg = _v2_teach_message(loop)
+    assert plan_focus_line(reason) in msg and plan_focus_block(_FOCUS_NAMES[concept]) in msg
+
+
+def test_a_repair_that_comes_back_returns_to_plan_order(loop):
+    from routes.learn_loop import _advance_cursor, plan_focus
+
+    _learner_reads(loop, p=0.4, prereqs={"node-0": 0.2})
+    _answer(loop, [MISS], correct=False, edges=[("node-0", "node-1")])
+    doc = loop.store["doc"]
+    assert plan_focus(doc) == ("node-0", "prerequisite_repair")
+    assert _advance_cursor(doc) is True  # the prerequisite's checks done: back to the concept
+    assert plan_focus(doc) == ("node-1", "plan_order") and "cursor_reason" not in doc["plan"]
+
+
+def test_an_unknown_answer_names_the_isomorph_reask_until_it_is_answered(seams, gate_on):
+    """PKG-10's isomorph re-ask moves no cursor, so it records nothing: plan_focus
+    reads it off the session attempt log (A121) by the same predicate
+    `_isomorph_after_unknown` re-asks by — while the re-ask is pending, and never
+    after it is answered (a recorded reason would outlive it)."""
+    from agents.loop_tutor import plan_focus_line
+    from routes.learn_loop import plan_focus
+
+    unknown = {"question_hash": "qh-1", "node_id": "node-1", "correct": False, "difficulty": 2}
+    seams.store["doc"] = {**routes._plan_state(), "attempts": [unknown]}
+    assert plan_focus(seams.store["doc"]) == ("node-1", "isomorph_reask")
+    assert plan_focus_line("isomorph_reask") in _v2_teach_message(seams)
+    answered = {"question_hash": "qh-2", "node_id": "node-1", "correct": True, "difficulty": 2}
+    seams.store["doc"]["attempts"].append(answered)
+    assert plan_focus(seams.store["doc"]) == ("node-1", "plan_order")
